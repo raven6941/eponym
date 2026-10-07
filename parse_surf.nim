@@ -23,7 +23,8 @@ import preterm, strutils
 type
   TokKind = enum
     tkEof, tkIdent,
-    tkDef, tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
+    tkDef, tkPostulate, tkElim, tkRed,
+    tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
     tkLParen, tkRParen, tkLBrace, tkRBrace,
     tkColon, tkColonEq, tkDot, tkComma, tkArrow, tkEq
@@ -45,7 +46,8 @@ proc fail(loc: Loc, msg: string): ref ParseError =
 # --- lexer -----------------------------------------------------------
 
 const keywords = [
-  ("def", tkDef), ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
+  ("def", tkDef), ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
+  ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
 
 proc isIdentStart(c: char): bool = c.isAlphaAscii or c == '_'
@@ -240,11 +242,40 @@ proc parseDef(p: var Parser): SurfDef =
   let body = p.parseTerm()
   SurfDef(name: nm.lexeme, tele: tele, retTy: retTy, body: body, loc: t.loc)
 
-proc parseProgram*(src: string): seq[SurfDef] =
+proc parsePostulate(p: var Parser): SurfDecl =
+  let t = p.expect(tkPostulate, "'postulate'")
+  let nm = p.expect(tkIdent, "postulate name")
+  discard p.expect(tkColon, "':'")
+  let ty = p.parseTerm()
+  SurfDecl(kind: dkPostulate, name: nm.lexeme, ty: ty, dloc: t.loc)
+
+proc parseElim(p: var Parser): SurfDecl =
+  let t = p.expect(tkElim, "'elim'")
+  let nm = p.expect(tkIdent, "eliminator name")
+  discard p.expect(tkColon, "':'")
+  let ty = p.parseTerm()
+  SurfDecl(kind: dkElim, name: nm.lexeme, ty: ty, dloc: t.loc)
+
+proc parseRed(p: var Parser): SurfDecl =
+  let t = p.expect(tkRed, "'red'")
+  let lhs = p.parseTerm()
+  discard p.expect(tkColonEq, "':='")
+  let rhs = p.parseTerm()
+  SurfDecl(kind: dkRed, lhs: lhs, rhs: rhs, rloc: t.loc)
+
+proc parseDecl(p: var Parser): SurfDecl =
+  case p.peek().kind
+  of tkDef: SurfDecl(kind: dkDef, def: p.parseDef())
+  of tkPostulate: p.parsePostulate()
+  of tkElim: p.parseElim()
+  of tkRed: p.parseRed()
+  else: raise fail(p.peek().loc, "expected 'def', 'postulate', 'elim' or 'red'")
+
+proc parseProgram*(src: string): seq[SurfDecl] =
   ## Parse a whole program; raises ParseError with source location.
   var p = Parser(toks: lex(src), pos: 0)
   while p.peek().kind != tkEof:
-    result.add p.parseDef()
+    result.add p.parseDecl()
 
 # --- tests ------------------------------------------------------------
 
@@ -264,23 +295,23 @@ def withLet (A : ?) (x : A) : A :=
   let y : A = x in y
 """)
   assert prog.len == 4
-  assert prog[0].name == "twice"
-  assert $prog[0].desugarTy() == "Pi (A : ?). Pi (f : A -> A). Pi (x : A). A"
-  assert $prog[0].desugarTm() ==
+  assert prog[0].def.name == "twice"
+  assert $prog[0].def.desugarTy() == "Pi (A : ?). Pi (f : A -> A). Pi (x : A). A"
+  assert $prog[0].def.desugarTm() ==
     "lam (A : ?). lam (f : A -> A). lam (x : A). f (f x)"
-  assert $prog[1].desugarTm() ==
+  assert $prog[1].def.desugarTm() ==
     "lam (A : ?). lam (B : ?). lam (x : A). lam (y : B). x"
-  assert $prog[2].desugarTy() ==
+  assert $prog[2].def.desugarTy() ==
     "Pi (A : ?). Pi (B : ?). Pi (p : Sig (u : A). B). Sig (v : B). A"
-  assert $prog[2].desugarTm() ==
+  assert $prog[2].def.desugarTm() ==
     "lam (A : ?). lam (B : ?). lam (p : Sig (u : A). B). (snd p, fst p)"
-  assert $prog[3].desugarTm() ==
+  assert $prog[3].def.desugarTm() ==
     "lam (A : ?). lam (x : A). let y : A = x in y"
 
   # locations are tracked (Nim's `"""` strips the leading newline)
-  assert prog[0].body.loc.line == 2
-  assert prog[0].body.loc.col == 3
-  assert prog[2].name == "pairSwap"
+  assert prog[0].def.body.loc.line == 2
+  assert prog[0].def.body.loc.col == 3
+  assert prog[2].def.name == "pairSwap"
 
   # errors point at source
   try:
@@ -298,7 +329,7 @@ def withLet (A : ?) (x : A) : A :=
 
   # round trip through the renderer
   let rt = parseProgram("def id (A : ?) (x : A) : A := x")
-  assert $rt[0].desugarTm() == "lam (A : ?). lam (x : A). x"
+  assert $rt[0].def.desugarTm() == "lam (A : ?). lam (x : A). x"
 
   # implicit binders and holes (Experiment 3)
   let imp = parseProgram("""
@@ -307,12 +338,27 @@ def useHole : 1 := _
 def impPi : Pi {A : ?}. A -> A := lam {A : ?}. lam (x : A). x
 """)
   assert imp.len == 3
-  assert imp[0].tele[0].impl
-  assert not imp[0].tele[1].impl
-  assert $imp[0].desugarTy() == "Pi {A : ?}. Pi (x : A). A"
-  assert $imp[0].desugarTm() == "lam {A : ?}. lam (x : A). x"
-  assert imp[1].body.kind == pkHole
-  assert $imp[2].desugarTy() == "Pi {A : ?}. A -> A"
-  assert $imp[2].desugarTm() == "lam {A : ?}. lam (x : A). x"
+  assert imp[0].def.tele[0].impl
+  assert not imp[0].def.tele[1].impl
+  assert $imp[0].def.desugarTy() == "Pi {A : ?}. Pi (x : A). A"
+  assert $imp[0].def.desugarTm() == "lam {A : ?}. lam (x : A). x"
+  assert imp[1].def.body.kind == pkHole
+  assert $imp[2].def.desugarTy() == "Pi {A : ?}. A -> A"
+  assert $imp[2].def.desugarTm() == "lam {A : ?}. lam (x : A). x"
+
+
+  # postulate / elim / red declarations (Experiment 4)
+  let decls = parseProgram("""
+postulate Bool : ?
+postulate true : Bool
+elim boolElim : Pi (C : Bool -> ?). C true -> C false -> Pi (b : Bool). C b
+red boolElim C t f true  := t
+red boolElim C t f false := f
+""")
+  assert decls.len == 5
+  assert decls[0].kind == dkPostulate and decls[0].name == "Bool"
+  assert decls[2].kind == dkElim and decls[2].name == "boolElim"
+  assert decls[3].kind == dkRed
+  assert decls[3].lhs.kind == pkApp
 
   echo "parse_surf: all tests passed"

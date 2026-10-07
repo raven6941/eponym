@@ -22,6 +22,7 @@
 #===============================================================================
 
 import sequtils
+import tables
 
 type
   Const* = enum cStar, cOne, cVoid, cZero   # ?  1  hi  O
@@ -34,7 +35,15 @@ type
     ## raises on tMeta as a safety net if the invariant is violated.
     ## tPi/tSi/tLam carry `impl`: implicit-binder metadata written by
     ## the elaborator and preserved (but never interpreted) by the core.
-  WhnfKind = enum wRef, wPi, wSi, wLam, wPair, wConst
+  WhnfKind = enum wRef, wPi, wSi, wLam, wPair, wConst, wRed
+  ## A registered reduction rule (Experiment 4): an eliminator applied to
+  ## `nargs` arguments (last = scrutinee) reduces according to `cases`
+  ## when the scrutinee's head is a registered constructor. Each case maps
+  ## a constructor refId to a contractum *template*: a Term in the context
+  ## [elim args except scrutinee (nargs-1 vars), ctor args (m vars)].
+  RedRule = object
+    nargs: int
+    cases: Table[int, Term]
   ElimVKind = enum eApp, eFst, eSnd, eAbsurd
   Scope* = object
     adv*: string   # display hint, as in the paper's Scope
@@ -90,6 +99,11 @@ type
       fstV, sndV: Value
     of wConst:
       c: Const
+    of wRed:
+      ## an eliminator with registered reduction rules, accumulating args
+      elimId: int
+      rule: RedRule
+      args: seq[Value]   # accumulated so far (function position order)
   Value* = ref object
     syn*: Term   # the syntax, glued (§6.6) -- makes instantiation easy
     whnf: Whnf
@@ -171,7 +185,7 @@ proc `$`*(t: Term): string =
 type Supply* = object
   n: int
 
-proc freshId(s: var Supply): int =
+proc freshId*(s: var Supply): int =
   inc s.n
   s.n
 
@@ -179,6 +193,36 @@ proc newDefRef*(s: var Supply, typ, val: Value): Term =
   ## A closed definition reference for the elaborator's global scope:
   ## earlier elaborated defs become R nodes later defs can mention.
   mkR(freshId(s), typ, true, val)
+
+proc newPostulateRef*(s: var Supply, typ: Value): Term =
+  ## Experiment 4: a parameter-like global (type former or constructor).
+  ## Never unfolds; stays neutral.
+  mkR(freshId(s), typ, false, nil)
+
+proc newRedRef*(s: var Supply, typ: Value, nargs: int): Term =
+  ## Experiment 4: an eliminator reference whose value is a registered
+  ## reduction rule. `red` declarations add cases to the rule table.
+  let id = freshId(s)
+  let r = mkR(id, typ, true, nil)
+  r.refVal = Value(syn: r,
+    whnf: Whnf(kind: wRed, elimId: id,
+               rule: RedRule(nargs: nargs, cases: initTable[int, Term]()),
+               args: newSeq[Value]()))
+  r
+
+proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term) =
+  ## Experiment 4: register one constructor case on an eliminator.
+  ## Raises on duplicates (overlapping rules would break confluence).
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  if ctorId in w.rule.cases:
+    raise newException(ValueError, "duplicate reduction rule for constructor")
+  w.rule.cases[ctorId] = tmpl
+
+proc redNargs*(elim: Term): int =
+  ## number of arguments (incl. scrutinee) the eliminator takes
+  elim.refVal.whnf.rule.nargs
 
 proc freshPara(s: var Supply, ty: Value): Value =
   ## vpara: a fresh neutral parameter of the given type
@@ -344,16 +388,41 @@ proc substSpine*(t: Term, spine: seq[Term]): Term =
 
 ## --- evaluation (§6.6) -------------------------------------------------------
 
-proc eval(t: Term, env: seq[Value]): Value  # forward
+proc eval*(t: Term, env: seq[Value]): Value  # forward
 
 proc evalScope(sc: Scope, env: seq[Value]): ScoVal =
   ScoVal(syn: Scope(adv: sc.adv, bdy: substEnv(sc.bdy, env, 1)),
          fn: proc(x: Value): Value = eval(sc.bdy, envAdd(env, x)))
 
+proc fireRed(elimId: int, rule: RedRule, args: seq[Value]): Whnf =
+  ## Experiment 4: try to fire a registered reduction rule. `args` has
+  ## length rule.nargs (last = scrutinee).
+  let scrut = args[^1]
+  if scrut.whnf.kind == wRef and scrut.whnf.refId in rule.cases:
+    var cargs: seq[Term] = @[]
+    for e in scrut.whnf.spine:
+      if e.kind != eApp:  # projections on the scrutinee: stay neutral
+        return Whnf(kind: wRef, refId: elimId,
+                    spine: args.mapIt(ElimV(kind: eApp, arg: it)))
+      cargs.add(e.arg.syn)
+    let inst = substSpine(rule.cases[scrut.whnf.refId],
+                          args[0..^2].mapIt(it.syn) & cargs)
+    return eval(inst, @[]).whnf
+  # fully applied but the scrutinee is not constructor-headed: neutral
+  Whnf(kind: wRef, refId: elimId, spine: args.mapIt(ElimV(kind: eApp, arg: it)))
+
 proc applyWhnf(f, a: Value): Whnf =
   ## the computational half of $$ for application
   case f.whnf.kind
   of wLam: f.whnf.lscope.fn(a).whnf       # beta, by host application
+  of wRed:                                # Experiment 4: registered eliminator
+    let args2 = f.whnf.args & @[a]
+    if args2.len == f.whnf.rule.nargs:
+      fireRed(f.whnf.elimId, f.whnf.rule, args2)
+    elif args2.len < f.whnf.rule.nargs:
+      Whnf(kind: wRed, elimId: f.whnf.elimId, rule: f.whnf.rule, args: args2)
+    else:
+      raise newException(ValueError, "eliminator applied to too many arguments")
   of wRef:                                # inert: grow the spine
     Whnf(kind: wRef, refId: f.whnf.refId,
          spine: f.whnf.spine & @[ElimV(kind: eApp, arg: a)])
@@ -405,7 +474,7 @@ proc evalWhnf(t: Term, env: seq[Value]): Whnf =
     raise newException(ValueError,
       "cannot evaluate open metavariable ?m" & $t.metaId)
 
-proc eval(t: Term, env: seq[Value]): Value =
+proc eval*(t: Term, env: seq[Value]): Value =
   ## eval t γ = close t γ ⇓ whnv t γ  (paper §6.6)
   Value(syn: substEnv(t, env, 0), whnf: evalWhnf(t, env))
 
@@ -494,6 +563,13 @@ proc structuralEq(s: var Supply, a, b: Value) =
         raise newException(ValueError, "spine mismatch")
       if ea.kind == eApp:
         structuralEq(s, ea.arg, eb.arg)
+  of wRed:
+    ## partially applied eliminators: same eliminator, same accumulated args
+    ## (fully applied stuck eliminators are rebuilt as wRef by applyWhnf)
+    if a.whnf.elimId != b.whnf.elimId or a.whnf.args.len != b.whnf.args.len:
+      raise newException(ValueError, "eliminator mismatch")
+    for i in 0 ..< a.whnf.args.len:
+      structuralEq(s, a.whnf.args[i], b.whnf.args[i])
 
 proc areEqual(s: var Supply, ty, a, b: Value) =
   ## type-directed conversion (§6.7)

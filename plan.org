@@ -238,6 +238,14 @@
   elaboration. Honest costs: iteration bounds (fall back to NbE),
   first-order binder encoding, no why-not explanations.
 
+  Round-4 extension (2026-10-07): *negative caching via
+  die-graphs* (Zakhour et al., POPL 2025). When NbE *refutes*
+  =t1 ≡ t2= (different head constructors), record a disequality
+  edge between the e-classes instead of a bare miss — congruence
+  propagates ≠ for free and later merge attempts are immediate
+  contradictions. Turns the cache from positive-only into a
+  decider with pruning power.
+
   Round-3 additions (2026-10-07): (a) index the equation/rule set in
   a matching triemap (Peyton Jones & Graf 2023) keyed by LHS patterns
   — one traversal per probe, returns all applicable rules with
@@ -304,13 +312,24 @@
   1. Relational ETT evaluator in Nim: =evalᵒ(term, env, value)= with
      logic variables, unification, =fresh=/=conde=. Directions:
      forward evaluation; backward synthesis (programs from values).
+     Substrate: µKanren-style stream kernel (portable, no Prolog
+     runtime).
   2. Relational typing: =typeᵒ(term, ty, ctx)=. Modes: infer (term →
      ty), check (term × ty → bool), synth (ty → term, i.e. proof
      search).
   3. Stage each mode with Nim macros: the relation is the single
      source; generate per-mode efficient implementations at compile
-     time. Compare staged-check against the hand-written =infer= from
+     time. Reference implementation: multi-stage miniKanren
+     (Ballantyne et al., PLDI 2025) — =gather= vs =fallback=
+     for staging-time non-determinism, =later= for staging-time
+     termination, holes in interpreted programs. Compare
+     staged-check against the hand-written =infer= from
      Experiment 2 on performance and error quality.
+  3b. Table the relations (Kudasov's canonical bank over the
+     µKanren kernel): memoize against canonical fresh variables,
+     =prune= by observational key. This is also the
+     =research[T]= subproblem cache — persist the table across
+     compilations, content-addressed.
   4. Iteration test: extend the relation with a new construct,
      re-stage, confirm evaluator + checker + synthesizer all update.
   5. Compile-time synthesis with spec-hash cache (Aaron's idea,

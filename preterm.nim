@@ -141,6 +141,20 @@ type
     body*: PreTerm
     loc*: Loc
 
+  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed
+  SurfDecl* = object
+    ## A top-level declaration (Experiment 4 adds postulate/elim/red).
+    case kind*: DeclKind
+    of dkDef: def*: SurfDef
+    of dkPostulate, dkElim:
+      name*: string
+      ty*: PreTerm
+      dloc*: Loc
+    of dkRed:
+      lhs*: PreTerm   # application pattern: elim v1..v(k-1) (ctor w1..wm)
+      rhs*: PreTerm   # contractum template
+      rloc*: Loc
+
 proc desugarTy*(d: SurfDef): PreTerm =
   ## Telescope to nested Pis (implicit entries to implicit Pis).
   result = d.retTy
