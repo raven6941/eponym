@@ -96,7 +96,7 @@ proc zonk*(ms: MetaStore, t: Term): Term =
     let sp = t.metaSpine.mapIt(zonk(ms, it))
     if e.solution.isNil: tmMeta(t.metaId, sp)
     else: zonk(ms, substSpine(e.solution, sp))
-  of tV, tR, tC: t
+  of tV, tR, tC, tInt, tPrim: t
   of tPi, tSi, tLam:
     mkBinder(t.kind, zonk(ms, t.dom),
               Scope(adv: t.scope.adv, bdy: zonk(ms, t.scope.bdy)), t.impl)
@@ -123,7 +123,7 @@ proc findUnsolved*(ms: MetaStore, t: Term): tuple[found: bool, id: int, loc: Loc
       let r = findUnsolved(ms, s)
       if r.found: return r
     (false, 0, noLoc)
-  of tV, tR, tC: (false, 0, noLoc)
+  of tV, tR, tC, tInt, tPrim: (false, 0, noLoc)
   of tPi, tSi, tLam:
     let r = findUnsolved(ms, t.dom)
     if r.found: r else: findUnsolved(ms, t.scope.bdy)
@@ -152,7 +152,7 @@ proc occursSyn(id: int, t: Term): bool =
   of tMeta:
     if t.metaId == id: return true
     t.metaSpine.anyIt(occursSyn(id, it))
-  of tV, tR, tC: false
+  of tV, tR, tC, tInt, tPrim: false
   of tPi, tSi, tLam:
     occursSyn(id, t.dom) or occursSyn(id, t.scope.bdy)
   of tPair:
@@ -186,7 +186,7 @@ proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
       if j < inv.len and inv[j] >= 0: vv(inv[j] + depth)
       else: raise uerr(loc,
         "cannot solve metavariable: variable V" & $t.idx & " escapes the spine")
-  of tR, tC: t
+  of tR, tC, tInt, tPrim: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(renameAt(it, inv, depth, n, loc)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, renameAt(t.dom, inv, depth, n, loc),
@@ -261,6 +261,10 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
   case a1.kind
   of tC:
     if a1.c != b1.c: raise uerr(loc, "constant mismatch")
+  of tInt:
+    if a1.intVal != b1.intVal: raise uerr(loc, "integer mismatch")
+  of tPrim:
+    if a1.primOp != b1.primOp: raise uerr(loc, "primitive op mismatch")
   of tR:
     if a1.refId != b1.refId: raise uerr(loc, "neutral mismatch")
   of tV:

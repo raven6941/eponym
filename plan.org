@@ -435,7 +435,7 @@
   with =cong suc= in the step case. Tests in =src/elab.nim=,
   example in =examples/12-eq-plusReducesZ.ep=.
 
-* Experiment 11 (proposed 2026-10-07) — primitive efficient types
+* Experiment 11 (complete 2026-10-07) — primitive efficient types
 
   Question: can Eponym have machine-efficient numbers without
   giving up the inductive core?
@@ -452,6 +452,13 @@
   Success: =42 + 17= computes to =59= via the primitive reduction;
   the core's =data Nat= still works for proofs. No unary in
   surface examples.
+
+  Result (2026-10-07): Complete. Added =wInt=/=tInt= to core for
+  integer literals, =wPrim=/=tPrim= for primitive ops (addInt, subInt,
+  mulInt) that compute via host operations. Parser handles integer
+  literals (single =1= remains unit type for backward compat).
+  =42 + 17= reduces to =59=; =data Nat= coexists for proofs.
+  Tests in =src/elab.nim=, example in =examples/13-primint.ep=.
 
   Note: binary naturals via =data= (Experiment 5 follow-up,
   demonstrated 2026-10-07) show the mechanism generalizes beyond

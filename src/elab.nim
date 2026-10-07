@@ -69,6 +69,8 @@ proc prettyTerm(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
     if t.idx < ctx.len and ctx[t.idx].name != "_": ctx[t.idx].name
     else: "V" & $t.idx
   of tC: $t.c
+  of tInt: $t.intVal
+  of tPrim: $t.primOp
   of tPi, tSi, tLam:
     let adv = if t.scope.adv != "_": t.scope.adv else: "_"
     let kindStr =
@@ -135,6 +137,15 @@ proc resolveVar(ctx: Ctx, globals: Globals, name: string,
                 loc: Loc): tuple[tm, ty: Term] =
   for i, e in ctx:
     if e.name == name: return (vv(i), e.ty)
+  # Experiment 11: primitive Int operations
+  if name in ["addInt", "subInt", "mulInt"] and "Int" in globals:
+    let intTy = globals["Int"].tm
+    let opTy = tmPi(intTy, "_", tmPi(intTy, "_", intTy))
+    let op = case name
+      of "addInt": opAdd
+      of "subInt": opSub
+      else: opMul
+    return (tmPrim(op, opTy), opTy)
   if name in globals:
     let g = globals[name]
     return (g.tm, g.ty)
@@ -221,6 +232,12 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkHole:
     let tyM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
     (freshMeta(ms, tyM, ctx.len, 0, pre.loc), tyM)
+  of pkInt:
+    # Experiment 11: integer literal; type is the postulated Int
+    if "Int" notin globals:
+      raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?'")
+    let intTy = globals["Int"].tm  # the R node for Int
+    (tmInt(pre.intVal), intTy)
   of pkPi:
     let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar))
@@ -1036,5 +1053,34 @@ data Eq (A : ?) (x : A) : A -> ? where
 | refl : Eq A x x
 def bad : Eq Nat zero (suc zero) := refl Nat zero
 """, "not convertible")
+
+  # --- Experiment 11: primitive efficient types ----------------------
+  # postulate Int with integer literals and primitive ops (+, -, *)
+  # that reduce via host computation (not unary s(s(z))).
+  let intDefs = elabCheck("""
+postulate Int : ?
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def fortyTwo : Int := 42
+def sum : Int := addInt 42 17
+def pf : Eq Int sum 59 := refl Int sum
+def diff : Int := subInt 100 58
+def pf2 : Eq Int diff 42 := refl Int diff
+def prod : Int := mulInt 6 7
+def pf3 : Eq Int prod 42 := refl Int prod
+""")
+  assert intDefs.len == 7
+  echo "ok: primitive Int literals and ops compute (Experiment 11)"
+  # data Nat still works for proofs alongside primitive Int
+  let bothDefs = elabCheck("""
+postulate Int : ?
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def n : Nat := suc (suc zero)
+def i : Int := 42
+""")
+  assert bothDefs.len == 2
+  echo "ok: data Nat and primitive Int coexist"
 
   echo "--- all elaborator tests passed ---"

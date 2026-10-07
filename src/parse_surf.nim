@@ -22,7 +22,7 @@ import preterm, strutils
 
 type
   TokKind = enum
-    tkEof, tkIdent,
+    tkEof, tkIdent, tkInt,
     tkDef, tkPostulate, tkElim, tkRed, tkData, tkWhere,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
@@ -82,9 +82,17 @@ proc lex(src: string): seq[Token] =
     elif c == '?':
       result.add Token(kind: tkUniv, lexeme: "?", loc: curLoc())
       inc col; inc i
-    elif c == '1':
-      result.add Token(kind: tkUnitTy, lexeme: "1", loc: curLoc())
-      inc col; inc i
+    elif c in {'0'..'9'}:
+      let l = curLoc()
+      var j = i
+      while j < src.len and src[j] in {'0'..'9'}: inc j
+      let w = src[i ..< j]
+      col += j - i; i = j
+      if w == "1":
+        # Single 1 is the unit type (backward compat); use 01 for the integer
+        result.add Token(kind: tkUnitTy, lexeme: "1", loc: l)
+      else:
+        result.add Token(kind: tkInt, lexeme: w, loc: l)
     elif c == '<' and i + 1 < src.len and src[i+1] == '>':
       result.add Token(kind: tkUnitV, lexeme: "<>", loc: curLoc())
       col += 2; i += 2
@@ -140,7 +148,7 @@ proc expect(p: var Parser, k: TokKind, what: string): Token =
     raise fail(result.loc, "expected " & what & ", got '" & result.lexeme & "'")
 
 proc isAtomStart(k: TokKind): bool =
-  k in {tkIdent, tkUniv, tkUnitTy, tkUnitV, tkEmptyTy, tkLParen,
+  k in {tkIdent, tkInt, tkUniv, tkUnitTy, tkUnitV, tkEmptyTy, tkLParen,
         tkLam, tkPi, tkSig, tkFst, tkSnd}
 
 proc parseTerm(p: var Parser): PreTerm  # forward
@@ -168,6 +176,7 @@ proc parseAtom(p: var Parser): PreTerm =
   of tkUnitTy: mkUnitTy(t.loc)
   of tkUnitV: mkUnitV(t.loc)
   of tkEmptyTy: mkEmptyTy(t.loc)
+  of tkInt: mkInt(parseInt(t.lexeme), t.loc)
   of tkLParen:
     let e = p.parseTerm()
     let t2 = p.next()
