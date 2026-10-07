@@ -210,7 +210,7 @@
   [[https://github.com/raven6941/notes/blob/main/carette-kiselyov-shan-finally-tagless.org][Carette/Kiselyov/Shan
   2009]]; [[https://github.com/raven6941/notes/blob/main/encodings.org][encodings note]].
 
-* Experiment 9 (proposed 2026-10-07) — erasure-aware elaboration (QTT-lite)
+* Experiment 9 (complete 2026-10-07, basic) — erasure-aware elaboration (QTT-lite)
 
   Question: can we get QTT's killer feature — erasure — with a
   weeks-scale experiment instead of a theory change?
@@ -224,6 +224,12 @@
   B's QTT direction cheaply and serves the "useful system" bar
   directly (performance of resulting programs). Note: erasure *is* a
   stage distinction — connects to the staging thread.
+
+  Result (2026-10-07): Basic mechanism complete. =(0 x : T)= syntax
+  marks erased binders; the =erased= flag threads from surface
+  through PreTerm to core Term (tPi/tSi/tLam). Pretty-printer shows
+  =Pi(0 ...=. Full usage checking (reject erased var in relevant
+  position) and codegen erasure are future work.
 
   References:
   [[https://github.com/raven6941/notes/blob/main/quantitative-type-theory.org][QTT vision and practice

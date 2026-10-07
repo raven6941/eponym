@@ -28,6 +28,7 @@ type
     kind*: PreKind
     name*: string     # pkVar name; binder name for pkPi/pkSigma/pkLam/pkLet
     impl*: bool       # pkPi/pkLam: implicit binder (Experiment 3)
+    erased*: bool     # pkPi/pkLam/pkSigma: erased binder (Experiment 9)
     intVal*: int      # pkInt: the literal value (Experiment 11)
     c1*: PreTerm      # Pi/Sig: dom; Lam: binder type (may be nil); App: fn
                       # Pair: first; Fst/Snd: target; Let: annotation (may be nil)
@@ -51,18 +52,19 @@ proc mkUnitV*(loc = noLoc): PreTerm =
 proc mkEmptyTy*(loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkEmptyTy)
 proc mkPi*(binder: string, dom, cod: PreTerm, loc = noLoc,
-           impl = false): PreTerm =
-  PreTerm(loc: loc, kind: pkPi, name: binder, impl: impl, c1: dom, c2: cod)
+           impl = false, erased = false): PreTerm =
+  PreTerm(loc: loc, kind: pkPi, name: binder, impl: impl, erased: erased, c1: dom, c2: cod)
 proc mkArrow*(dom, cod: PreTerm, loc = noLoc): PreTerm =
   ## Non-dependent function type; renders as `dom -> cod`.
   mkPi("_", dom, cod, loc)
 proc mkLam*(binder: string, ty, body: PreTerm, loc = noLoc,
-            impl = false): PreTerm =
-  PreTerm(loc: loc, kind: pkLam, name: binder, impl: impl, c1: ty, c2: body)
+            impl = false, erased = false): PreTerm =
+  PreTerm(loc: loc, kind: pkLam, name: binder, impl: impl, erased: erased, c1: ty, c2: body)
 proc mkApp*(fn, arg: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkApp, c1: fn, c2: arg)
-proc mkSigma*(binder: string, dom, cod: PreTerm, loc = noLoc): PreTerm =
-  PreTerm(loc: loc, kind: pkSigma, name: binder, c1: dom, c2: cod)
+proc mkSigma*(binder: string, dom, cod: PreTerm, loc = noLoc,
+              erased = false): PreTerm =
+  PreTerm(loc: loc, kind: pkSigma, name: binder, erased: erased, c1: dom, c2: cod)
 proc mkPair*(a, b: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkPair, c1: a, c2: b)
 proc mkFst*(p: PreTerm, loc = noLoc): PreTerm =
@@ -84,7 +86,7 @@ proc `==`*(a, b: PreTerm): bool =
   if a.isNil and b.isNil: return true
   if a.isNil or b.isNil: return false
   a.kind == b.kind and a.name == b.name and a.impl == b.impl and
-    a.intVal == b.intVal and
+    a.erased == b.erased and a.intVal == b.intVal and
     a.c1 == b.c1 and a.c2 == b.c2 and a.c3 == b.c3
 
 # --- rendering (canonical surface syntax) ----------------------------
@@ -142,9 +144,9 @@ proc `$`*(p: PreTerm): string = render(p, 0)
 type
   SurfDef* = object
     ## A surface definition: `def name (x1 : T1) ... : Ret := body`.
-    ## Telescope entries may be implicit (`{x : T}`).
+    ## Telescope entries may be implicit (`{x : T}`) or erased (`(0 x : T)`).
     name*: string
-    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool]]
+    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]]
     retTy*: PreTerm
     body*: PreTerm
     loc*: Loc
@@ -153,7 +155,7 @@ type
   DataCtor* = object
     ## One constructor in a `data` declaration.
     name*: string
-    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool]]
+    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]]
     retTy*: PreTerm   # F params indices
     cloc*: Loc
   SurfDecl* = object
@@ -171,7 +173,7 @@ type
       rloc*: Loc
     of dkData:
       dname*: string
-      params*: seq[tuple[name: string, ty: PreTerm, impl: bool]]
+      params*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]]
       indexTy*: PreTerm  # indices -> ?  (e.g. Nat -> ?)
       ctors*: seq[DataCtor]
       daloc*: Loc

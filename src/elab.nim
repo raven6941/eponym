@@ -143,9 +143,18 @@ proc prettyTerm(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
   of tPi, tSi, tLam:
     let adv = if t.scope.adv != "_": t.scope.adv else: "_"
     let kindStr =
-      if t.kind == tPi: (if t.impl: "Pi{" else: "Pi(")
-      elif t.kind == tSi: (if t.impl: "Si{" else: "Si(")
-      else: (if t.impl: "L{" else: "L(")
+      if t.kind == tPi:
+        if t.erased: "Pi(0 "
+        elif t.impl: "Pi{"
+        else: "Pi("
+      elif t.kind == tSi:
+        if t.erased: "Si(0 "
+        elif t.impl: "Si{"
+        else: "Si("
+      else:
+        if t.erased: "L(0 "
+        elif t.impl: "L{"
+        else: "L("
     let ctx2 = @[CtxEntry(name: adv, ty: t.dom)] & ctx
     kindStr & prettyTerm(t.dom, ctx, refNames) & ", " & adv & ". " &
       prettyTerm(t.scope.bdy, ctx2, refNames) & ")"
@@ -310,7 +319,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkPi:
     let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar))
-    (tmPi(d, pre.name, c, pre.impl), tmC(cStar))
+    (tmPi(d, pre.name, c, pre.impl, pre.erased), tmC(cStar))
   of pkSigma:
     let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar))
@@ -320,7 +329,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       if pre.c1.isNil: freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
       else: checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply)
-    (tmLam(d, pre.name, b, pre.impl), tmPi(d, pre.name, bty, pre.impl))
+    (tmLam(d, pre.name, b, pre.impl, pre.erased), tmPi(d, pre.name, bty, pre.impl, pre.erased))
   of pkApp:
     var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply)
     (f, fty) = insertImplicits(pre, f, fty, ctx.len, ms)
@@ -372,7 +381,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         unifyElab(ms, ad, dom, pre.loc)
         ad
     let b = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, codBdy)
-    tmLam(d, pre.name, b, pre.impl)
+    tmLam(d, pre.name, b, pre.impl, pre.erased)
   of pkPair:
     let h = headTy(ms, expTy)
     if h.kind == tSi:
@@ -615,11 +624,11 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
 # Index positions in red patterns are dummy variables (unused in the
 # contractum); fireRed's spine convention already accounts for them.
 
-proc mkPis(tele: seq[tuple[name: string, ty: PreTerm, impl: bool]],
+proc mkPis(tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]],
            body: PreTerm, loc: Loc): PreTerm =
   result = body
   for i in countdown(tele.high, 0):
-    result = mkPi(tele[i].name, tele[i].ty, result, loc, tele[i].impl)
+    result = mkPi(tele[i].name, tele[i].ty, result, loc, tele[i].impl, tele[i].erased)
 
 proc flattenPiPre(pre: PreTerm):
     tuple[tele: seq[tuple[name: string, ty: PreTerm]], body: PreTerm] =
@@ -661,7 +670,7 @@ proc elimNameFor(dname: string): string =
     result[0] = result[0].toLowerAscii()
   result &= "Elim"
 
-proc famAppPre(famName: string, params: seq[tuple[name: string, ty: PreTerm, impl: bool]],
+proc famAppPre(famName: string, params: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]],
                idxTerms: seq[PreTerm], loc: Loc): PreTerm =
   result = mkVar(famName, loc)
   for p in params: result = mkApp(result, mkVar(p.name, loc), loc)
@@ -1178,5 +1187,15 @@ def pf2 : Eq Int (addInt 20 22) 42 := by refl
 postulate Int : ?
 def bad : Int := by nosuchtac
 """, "unknown tactic")
+
+  # --- Experiment 9: QTT-lite erasure (basic) ------------------------
+  # (0 x : T) marks an erased binder. The flag threads through to the
+  # core Term; full usage checking and codegen erasure are future work.
+  let erasedDefs = elabCheck("""
+def const (0 A : ?) (x : A) : A := x
+def id2 (0 A : ?) : A -> A := lam (x : A). x
+""")
+  assert erasedDefs.len == 2
+  echo "ok: erased binders (0 x : T) elaborate (Experiment 9)"
 
   echo "--- all elaborator tests passed ---"
