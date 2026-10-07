@@ -1,4 +1,9 @@
 ett
 ett_init
+elab
+ett_mac
+preterm
+parse_surf
+mac_surf
 nimcache/
 *.o

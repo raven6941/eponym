@@ -22,16 +22,16 @@
 #===============================================================================
 
 type
-  Const = enum cStar, cOne, cVoid, cZero   # ?  1  hi  O
-  TermKind = enum
+  Const* = enum cStar, cOne, cVoid, cZero   # ?  1  hi  O
+  TermKind* = enum
     tR, tV, tPi, tSi, tLam, tPair, tApp, tFst, tSnd, tAbsurd, tC, tLet
   WhnfKind = enum wRef, wPi, wSi, wLam, wPair, wConst
   ElimVKind = enum eApp, eFst, eSnd, eAbsurd
-  Scope = object
-    adv: string   # display hint, as in the paper's Scope
-    bdy: Term
-  Term = ref object
-    case kind: TermKind
+  Scope* = object
+    adv*: string   # display hint, as in the paper's Scope
+    bdy*: Term
+  Term* = ref object
+    case kind*: TermKind
     of tR:
       refId: int
       refTyp: Value
@@ -40,8 +40,8 @@ type
     of tV:
       idx: int
     of tPi, tSi, tLam:
-      dom: Term
-      scope: Scope
+      dom*: Term
+      scope*: Scope
     of tPair:
       pFst, pSnd: Term
       pScope: Scope
@@ -77,7 +77,7 @@ type
       fstV, sndV: Value
     of wConst:
       c: Const
-  Value = ref object
+  Value* = ref object
     syn: Term    # the syntax, glued (§6.6) -- makes instantiation easy
     whnf: Whnf
 
@@ -86,13 +86,13 @@ type
 proc mkR(id: int, typ: Value, isDefn: bool, dval: Value): Term =
   Term(kind: tR, refId: id, refTyp: typ, refIsDefn: isDefn, refVal: dval)
 
-proc vv(i: int): Term = Term(kind: tV, idx: i)
+proc vv*(i: int): Term = Term(kind: tV, idx: i)
 
-proc tmPi(dom: Term, adv: string, bdy: Term): Term =
+proc tmPi*(dom: Term, adv: string, bdy: Term): Term =
   Term(kind: tPi, dom: dom, scope: Scope(adv: adv, bdy: bdy))
-proc tmSi(dom: Term, adv: string, bdy: Term): Term =
+proc tmSi*(dom: Term, adv: string, bdy: Term): Term =
   Term(kind: tSi, dom: dom, scope: Scope(adv: adv, bdy: bdy))
-proc tmLam(dom: Term, adv: string, bdy: Term): Term =
+proc tmLam*(dom: Term, adv: string, bdy: Term): Term =
   Term(kind: tLam, dom: dom, scope: Scope(adv: adv, bdy: bdy))
 
 proc mkBinder(k: TermKind, dom: Term, sc: Scope): Term =
@@ -102,14 +102,15 @@ proc mkBinder(k: TermKind, dom: Term, sc: Scope): Term =
   of tLam: tmLam(dom, sc.adv, sc.bdy)
   else: raise newException(ValueError, "mkBinder: not a binder")
 
-proc tmPair(fstT, sndT: Term, adv: string, ranBdy: Term): Term =
+proc tmPair*(fstT, sndT: Term, adv: string, ranBdy: Term): Term =
   Term(kind: tPair, pFst: fstT, pSnd: sndT, pScope: Scope(adv: adv, bdy: ranBdy))
-proc tmApp(f, a: Term): Term = Term(kind: tApp, fn: f, arg: a)
-proc tmFst(s: Term): Term = Term(kind: tFst, sub: s)
-proc tmSnd(s: Term): Term = Term(kind: tSnd, sub: s)
-proc tmAbsurd(z: Term): Term = Term(kind: tAbsurd, sub: z)
-proc tmLet(v, ty: Term, adv: string, bdy: Term): Term =
+proc tmApp*(f, a: Term): Term = Term(kind: tApp, fn: f, arg: a)
+proc tmFst*(s: Term): Term = Term(kind: tFst, sub: s)
+proc tmSnd*(s: Term): Term = Term(kind: tSnd, sub: s)
+proc tmAbsurd*(z: Term): Term = Term(kind: tAbsurd, sub: z)
+proc tmLet*(v, ty: Term, adv: string, bdy: Term): Term =
   Term(kind: tLet, letVal: v, letTy: ty, letScope: Scope(adv: adv, bdy: bdy))
+proc tmC*(c: Const): Term = Term(kind: tC, c: c)
 
 proc tStar(): Term = Term(kind: tC, c: cStar)
 proc tOne(): Term = Term(kind: tC, c: cOne)
@@ -146,22 +147,32 @@ proc `$`(t: Term): string =
   of tLet: "Let(" & $t.letVal & " : " & $t.letTy & ", " & $t.letScope & ")"
 
 ## --- fresh parameters / definitions ------------------------------------------
+## The supply is threaded explicitly (the paper's Checking-monad threading)
+## rather than held in a global: the Nim VM cannot capture module-level state,
+## so compile-time checking via macros needs the supply as a parameter. This
+## also makes the core reentrant.
 
-var freshSupply = 0
+type Supply* = object
+  n: int
 
-proc freshId(): int =
-  inc freshSupply
-  freshSupply
+proc freshId(s: var Supply): int =
+  inc s.n
+  s.n
 
-proc freshPara(ty: Value): Value =
+proc newDefRef*(s: var Supply, typ, val: Value): Term =
+  ## A closed definition reference for the elaborator's global scope:
+  ## earlier elaborated defs become R nodes later defs can mention.
+  mkR(freshId(s), typ, true, val)
+
+proc freshPara(s: var Supply, ty: Value): Value =
   ## vpara: a fresh neutral parameter of the given type
-  let id = freshId()
+  let id = freshId(s)
   Value(syn: mkR(id, ty, false, nil),
         whnf: Whnf(kind: wRef, refId: id, spine: newSeq[ElimV]()))
 
-proc freshDefn(v, ty: Value): Value =
+proc freshDefn(s: var Supply, v, ty: Value): Value =
   ## vdefn: a fresh reference carrying a local definition
-  let id = freshId()
+  let id = freshId(s)
   Value(syn: mkR(id, ty, true, v),
         whnf: Whnf(kind: wRef, refId: id, spine: newSeq[ElimV]()))
 
@@ -311,7 +322,7 @@ proc eval(t: Term, env: seq[Value]): Value =
 
 ## --- smart value constructors (§6.5) ------------------------------------------
 
-proc vStar(): Value =
+proc vStar*(): Value =
   Value(syn: tStar(), whnf: Whnf(kind: wConst, c: cStar))
 proc vOne(): Value =
   Value(syn: tOne(), whnf: Whnf(kind: wConst, c: cOne))
@@ -328,11 +339,11 @@ proc vAbsurd(): Value =
 
 ## --- the typechecker (§§6.5, 6.7) ----------------------------------------------
 
-proc infer(t: Term): Value
-proc check(ty: Value, t: Term): Value
-proc synth(t: Term): tuple[val: Value, typ: Value]
-proc areEqual(ty, a, b: Value)
-proc structuralEq(a, b: Value)
+proc infer(s: var Supply, t: Term): Value
+proc check*(s: var Supply, ty: Value, t: Term): Value
+proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value]
+proc areEqual(s: var Supply, ty, a, b: Value)
+proc structuralEq(s: var Supply, a, b: Value)
 proc isPi(v: Value): tuple[dom: Value, sc: ScoVal]
 proc isSi(v: Value): tuple[dom: Value, sc: ScoVal]
 proc isZero(v: Value)
@@ -349,25 +360,25 @@ proc isZero(v: Value) =
   if not (v.whnf.kind == wConst and v.whnf.c == cZero):
     raise newException(ValueError, "not the empty type: " & $v.syn)
 
-proc synth(t: Term): tuple[val: Value, typ: Value] =
-  let ty = infer(t)
+proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value] =
+  let ty = infer(s, t)
   (eval(t, @[]), ty)
 
-proc check(ty: Value, t: Term): Value =
-  let s = synth(t)
-  areEqual(vStar(), ty, s.typ)
-  s.val
+proc check*(s: var Supply, ty: Value, t: Term): Value =
+  let r = synth(s, t)
+  areEqual(s, vStar(), ty, r.typ)
+  r.val
 
-proc structuralEq(a, b: Value) =
+proc structuralEq(s: var Supply, a, b: Value) =
   ## structural equality on weak-head forms, with eta for lambdas vs neutrals
   if a.whnf.kind != b.whnf.kind:
     if a.whnf.kind == wLam and b.whnf.kind == wRef:
-      let x = freshPara(nil)
-      structuralEq(a.whnf.lscope.fn(x), vApp(b, x))
+      let x = freshPara(s, nil)
+      structuralEq(s, a.whnf.lscope.fn(x), vApp(b, x))
       return
     if a.whnf.kind == wRef and b.whnf.kind == wLam:
-      let x = freshPara(nil)
-      structuralEq(vApp(a, x), b.whnf.lscope.fn(x))
+      let x = freshPara(s, nil)
+      structuralEq(s, vApp(a, x), b.whnf.lscope.fn(x))
       return
     raise newException(ValueError, "mismatch: " & $a.syn & " vs " & $b.syn)
   case a.whnf.kind
@@ -375,15 +386,15 @@ proc structuralEq(a, b: Value) =
     if a.whnf.c != b.whnf.c:
       raise newException(ValueError, "constant mismatch")
   of wPi, wSi:
-    structuralEq(a.whnf.dom, b.whnf.dom)
-    let x = freshPara(a.whnf.dom)
-    structuralEq(a.whnf.tscope.fn(x), b.whnf.tscope.fn(x))
+    structuralEq(s, a.whnf.dom, b.whnf.dom)
+    let x = freshPara(s, a.whnf.dom)
+    structuralEq(s, a.whnf.tscope.fn(x), b.whnf.tscope.fn(x))
   of wLam:
-    let x = freshPara(nil)
-    structuralEq(a.whnf.lscope.fn(x), b.whnf.lscope.fn(x))
+    let x = freshPara(s, nil)
+    structuralEq(s, a.whnf.lscope.fn(x), b.whnf.lscope.fn(x))
   of wPair:
-    structuralEq(a.whnf.fstV, b.whnf.fstV)
-    structuralEq(a.whnf.sndV, b.whnf.sndV)
+    structuralEq(s, a.whnf.fstV, b.whnf.fstV)
+    structuralEq(s, a.whnf.sndV, b.whnf.sndV)
   of wRef:
     if a.whnf.refId != b.whnf.refId or a.whnf.spine.len != b.whnf.spine.len:
       raise newException(ValueError, "neutral mismatch")
@@ -393,26 +404,26 @@ proc structuralEq(a, b: Value) =
       if ea.kind != eb.kind:
         raise newException(ValueError, "spine mismatch")
       if ea.kind == eApp:
-        structuralEq(ea.arg, eb.arg)
+        structuralEq(s, ea.arg, eb.arg)
 
-proc areEqual(ty, a, b: Value) =
+proc areEqual(s: var Supply, ty, a, b: Value) =
   ## type-directed conversion (§6.7)
   case ty.whnf.kind
   of wConst:
     let c = ty.whnf.c
     if c == cOne or c == cZero:
       return  # proof-irrelevant: no need to look
-    structuralEq(a, b)
+    structuralEq(s, a, b)
   of wPi:
-    let x = freshPara(ty.whnf.dom)
-    areEqual(ty.whnf.tscope.fn(x), vApp(a, x), vApp(b, x))
+    let x = freshPara(s, ty.whnf.dom)
+    areEqual(s, ty.whnf.tscope.fn(x), vApp(a, x), vApp(b, x))
   of wSi:
-    areEqual(ty.whnf.dom, vFst(a), vFst(b))
-    areEqual(ty.whnf.tscope.fn(vFst(a)), vSnd(a), vSnd(b))
+    areEqual(s, ty.whnf.dom, vFst(a), vFst(b))
+    areEqual(s, ty.whnf.tscope.fn(vFst(a)), vSnd(a), vSnd(b))
   else:
-    structuralEq(a, b)
+    structuralEq(s, a, b)
 
-proc infer(t: Term): Value =
+proc infer(s: var Supply, t: Term): Value =
   ## infer implements the typing rules of Fig. 6.2, syntax-directed (§6.5.1).
   ## Terms are always closed here: binders are instantiated with fresh
   ## parameters on entry, so the V case never arises.
@@ -427,47 +438,47 @@ proc infer(t: Term): Value =
     of cVoid: vOne()
     of cZero: vStar()
   of tPi, tSi:
-    let domV = check(vStar(), t.dom)
-    let x = freshPara(domV)
-    discard check(vStar(), instantiate(t.scope, x))
+    let domV = check(s, vStar(), t.dom)
+    let x = freshPara(s, domV)
+    discard check(s, vStar(), instantiate(t.scope, x))
     vStar()
   of tLam:
-    let domV = check(vStar(), t.dom)
-    let x = freshPara(domV)
-    let ranV = infer(instantiate(t.scope, x))
+    let domV = check(s, vStar(), t.dom)
+    let x = freshPara(s, domV)
+    let ranV = infer(s, instantiate(t.scope, x))
     let asc = abstractR(x.syn.refId, t.scope.adv, ranV.syn)
     vPi(domV, ScoVal(syn: asc,
                      fn: proc(v: Value): Value = eval(asc.bdy, @[v])))
   of tApp:
-    let fty = infer(t.fn)
+    let fty = infer(s, t.fn)
     let (dom, sc) = isPi(fty)
-    let av = check(dom, t.arg)
+    let av = check(s, dom, t.arg)
     sc.fn(av)
   of tPair:
     let pScope = t.pScope
     let pSnd = t.pSnd
-    let s = synth(t.pFst)
-    let x = freshPara(s.typ)
-    discard check(vStar(), instantiate(pScope, x))
+    let r = synth(s, t.pFst)
+    let x = freshPara(s, r.typ)
+    discard check(s, vStar(), instantiate(pScope, x))
     let rsc = ScoVal(syn: pScope,
                      fn: proc(v: Value): Value = eval(pScope.bdy, @[v]))
-    discard check(rsc.fn(s.val), pSnd)
-    vSi(s.typ, rsc)
+    discard check(s, rsc.fn(r.val), pSnd)
+    vSi(r.typ, rsc)
   of tFst:
-    let (dom, _) = isSi(infer(t.sub))
+    let (dom, _) = isSi(infer(s, t.sub))
     dom
   of tSnd:
-    let s = synth(t.sub)
-    let (_, sc) = isSi(s.typ)
-    sc.fn(vFst(s.val))
+    let r = synth(s, t.sub)
+    let (_, sc) = isSi(r.typ)
+    sc.fn(vFst(r.val))
   of tAbsurd:
-    isZero(infer(t.sub))
+    isZero(infer(s, t.sub))
     vAbsurd()
   of tLet:
-    let styv = check(vStar(), t.letTy)
-    let sv = check(styv, t.letVal)
-    let x = freshDefn(sv, styv)
-    let ttyv = infer(instantiate(t.letScope, x))
+    let styv = check(s, vStar(), t.letTy)
+    let sv = check(s, styv, t.letVal)
+    let x = freshDefn(s, sv, styv)
+    let ttyv = infer(s, instantiate(t.letScope, x))
     let asc = abstractR(x.syn.refId, t.letScope.adv, ttyv.syn)
     ScoVal(syn: asc, fn: proc(v: Value): Value = eval(asc.bdy, @[v])).fn(sv)
 
@@ -501,6 +512,7 @@ let letT = tmLet(tTt(), tOne(), "x", vv(0))
 ## --- tests --------------------------------------------------------------------
 
 when isMainModule:
+  var tcSupply = Supply()  # explicit fresh-name supply (no globals)
   echo "--- records (the AST is the view) ---"
   echo "twice    : ", $twiceT
   echo "pairSwap : ", $pairSwapT
@@ -548,22 +560,22 @@ when isMainModule:
   echo "--- typechecker tests ---"
 
   # twice checks; inferred type matches Pi(X:? ). (X->X) -> X->X
-  let twTy = infer(twiceT)
+  let twTy = infer(tcSupply, twiceT)
   echo "twice : ", $twTy.syn
   let arrX = tmPi(vv(0), "x", vv(1))
   let expTwTyT = tmPi(tStar(), "X", tmPi(arrX, "f", tmPi(vv(1), "x", vv(2))))
-  areEqual(vStar(), twTy, eval(expTwTyT, @[]))
+  areEqual(tcSupply, vStar(), twTy, eval(expTwTyT, @[]))
   echo "ok: twice checks"
 
   # polyId 1 <> : 1
   let t9t = tmApp(tmApp(polyIdT, tOne()), tTt())
-  discard check(vOne(), t9t)
-  areEqual(vStar(), infer(t9t), vOne())
+  discard check(tcSupply, vOne(), t9t)
+  areEqual(tcSupply, vStar(), infer(tcSupply, t9t), vOne())
   echo "ok: polyId 1 <> : 1"
 
   proc rejects(t: Term): bool =
     try:
-      discard infer(t)
+      discard infer(tcSupply, t)
       false
     except ValueError:
       true
@@ -578,24 +590,24 @@ when isMainModule:
   echo "ok: absurd <> rejected (non-empty scrutinee)"
 
   # pairSwap checks
-  let psTy = infer(pairSwapT)
+  let psTy = infer(tcSupply, pairSwapT)
   echo "pairSwap : ", $psTy.syn
   echo "ok: pairSwap checks"
 
   # proof irrelevance for 1: any two inhabitants convertible
-  let q1 = freshPara(vOne())
-  let q2 = freshPara(vOne())
-  areEqual(vOne(), q1, q2)
+  let q1 = freshPara(tcSupply, vOne())
+  let q2 = freshPara(tcSupply, vOne())
+  areEqual(tcSupply, vOne(), q1, q2)
   echo "ok: proof irrelevance for 1"
 
   # const checks with the dependent type Pi(A:? ). Pi(B:? ). A -> B -> A
-  let cTy = infer(constT)
+  let cTy = infer(tcSupply, constT)
   echo "const : ", $cTy.syn
   let expCT = tmPi(tStar(), "A",
                 tmPi(tStar(), "B",
                  tmPi(vv(1), "a",
                   tmPi(vv(2), "b", vv(3)))))
-  areEqual(vStar(), cTy, eval(expCT, @[]))
+  areEqual(tcSupply, vStar(), cTy, eval(expCT, @[]))
   echo "ok: const checks"
 
   echo "--- all tests passed ---"
