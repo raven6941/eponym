@@ -1,0 +1,40 @@
+#+TITLE: Decision log — eponym
+
+* Format
+
+  Each entry: date, context, options considered, decision, consequences.
+  Entries are appended, never rewritten — superseded decisions get a new
+  entry pointing back. Branches: experiment work happens on
+  =exp-NN-short-name= branches, merged to =main= when the experiment
+  concludes with a decision recorded here.
+
+* 2026-10-07 — Initial encoding as elaborator target
+
+  Context: ETT implemented twice (finally-tagless =ett.nim=, initial
+  =ett_init.nim=).
+  Options: (a) elaborate into =Sym[R]=-polymorphic tagless terms;
+  (b) elaborate into the =Term= AST.
+  Decision: (b). Elaboration (metavariables, unification, implicit
+  insertion) inspects and transforms terms; tagless terms are opaque.
+  Every serious elaborator is syntax + values.
+  Consequences: =ett.nim= kept as differential-testing reference;
+  =termToSym= fold is the bridge. Reusable finding recorded in the
+  knowledge base.
+
+* 2026-10-07 — ETT as starting core
+
+  Context: which core to elaborate into.
+  Options: ETT; OTT; cubical; QTT; containers (see knowledge base).
+  Decision: ETT for Experiments 1–2 (core-independent anyway); Track B
+  decision gate before Experiment 3 (core-sensitive: unification,
+  reduction, inductives).
+  Consequences: Experiments 1–2 must not bake in ETT-specific
+  assumptions beyond what the core interface needs.
+
+* 2026-10-07 — Project/knowledge split
+
+  Context: where do plans and findings live.
+  Decision: project plans, decisions, and progress in this repo;
+  reusable ideas, paper notes, and findings in raven6941/notes
+  (shared zettelkasten). Cross-links via GitHub URLs.
+  Consequences: =plan.org=, =research.org=, this log live here.
