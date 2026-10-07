@@ -212,6 +212,45 @@ proc newPrinter(): Sym[string] =
   )
 
 ## ---------------------------------------------------------------------------
+## 4b. Instance 2b: erasing code generator (Experiment 8: staging)
+##
+##    A Sym[string] that produces untyped lambda-calculus code by erasing
+##    types. The same ETT term (e.g. `twice`) denotes a value under
+##    `evalSym`, pretty syntax under `newPrinter`, and executable code
+##    here — staging as just another interpretation (Carette/Kiselyov/Shan).
+## ---------------------------------------------------------------------------
+
+proc newCodeGen(): Sym[string] =
+  let ns = NameSupply(next: 0)
+  proc fresh(hint: string): string =
+    result = hint & $ns.next
+    inc ns.next
+  Sym[string](
+    # Types erase to a placeholder (no runtime representation)
+    cStar: proc(): string = "/*: ?*/",
+    cUnit: proc(): string = "/*: 1*/",
+    cTt: proc(): string = "()",
+    cEmpty: proc(): string = "/*: O*/",
+    # Pi/Sigma erase; the domain is not represented at runtime
+    cPi: proc(dom: string, cod: proc(x: string): string): string =
+      let x = fresh("x")
+      "/*Pi*/ " & cod(x),
+    cLam: proc(dom: string, body: proc(x: string): string): string =
+      let x = fresh("x")
+      "(\\" & x & ". " & body(x) & ")",
+    cApp: proc(f, a: string): string =
+      "(" & f & " " & a & ")",
+    cSigma: proc(dom: string, cod: proc(x: string): string): string =
+      let x = fresh("x")
+      "/*Sigma*/ " & cod(x),
+    cPair: proc(a, b: string): string =
+      "(" & a & ", " & b & ")",
+    cFst: proc(p: string): string = "(fst " & p & ")",
+    cSnd: proc(p: string): string = "(snd " & p & ")",
+    cAbsurd: proc(z: string): string = "(absurd " & z & ")"
+  )
+
+## ---------------------------------------------------------------------------
 ## 5. Instance 3: the typechecker (bidirectional, after the paper §§6.5-6.7)
 ##
 ##    This is a *third* interpretation of the same Sym[R] interface:
@@ -431,6 +470,13 @@ when isMainModule:
   echo "polyId   : ", polyId(pr)
   echo "const    : ", constFn(pr)
   echo "pairSwap : ", pairSwap(pr)
+
+  echo "--- staged code generation (Experiment 8) ---"
+  let cg = newCodeGen()
+  echo "twice    : ", twice(cg)
+  echo "polyId   : ", polyId(cg)
+  echo "const    : ", constFn(cg)
+  echo "pairSwap : ", pairSwap(cg)
 
   echo "--- evaluation tests ---"
   let ev = evalSym
