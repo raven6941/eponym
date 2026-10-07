@@ -46,6 +46,34 @@ proc unifyElab(ms: var MetaStore, a, b: Term, loc: Loc) =
   except UnifyError as e:
     raise elabErr(loc, e.msg)
 
+proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
+              ctxLen: int) =
+  ## Conversion for the inferred-vs-expected check (Experiment 5b):
+  ## compare up to full reduction — delta-unfolding of
+  ## definitions, beta, and the registered wRed rules — via the core
+  ## evaluator, then the core's type-directed conversion (areEqual).
+  ## Free variables become fresh neutral parameters, so open terms
+  ## evaluate soundly; both sides share one environment, so the same
+  ## variable is the same parameter on each side.
+  ## While unsolved metavariables remain, fall back to pattern
+  ## unification instead: evaluation cannot solve flex constraints,
+  ## and unify is the only thing that can.
+  let a1 = zonk(ms, a)
+  let b1 = zonk(ms, b)
+  if findUnsolved(ms, a1).found or findUnsolved(ms, b1).found:
+    unifyElab(ms, a1, b1, loc)
+    return
+  var env = newSeq[Value](ctxLen)
+  for i in 0 ..< ctxLen:
+    env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
+  let va = eval(a1, env)
+  let vb = eval(b1, env)
+  try:
+    areEqual(s, vStar(), va, vb)
+  except ValueError as e:
+    raise elabErr(loc, "inferred type " & $a1 &
+      " does not match expected type " & $b1 & ": not convertible (" & e.msg & ")")
+
 type
   CtxEntry = object
     name: string
@@ -137,12 +165,12 @@ proc insertImplicits(pre: PreTerm, tm, ty: Term, ctxLen: int,
   (f, fty)
 
 proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
-             ms: var MetaStore): tuple[tm, ty: Term]
+             ms: var MetaStore, supply: var Supply): tuple[tm, ty: Term]
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
-             ms: var MetaStore, expTy: Term): Term
+             ms: var MetaStore, supply: var Supply, expTy: Term): Term
 
 proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
-             ms: var MetaStore): tuple[tm, ty: Term] =
+             ms: var MetaStore, supply: var Supply): tuple[tm, ty: Term] =
   ## Synthesis mode.
   case pre.kind
   of pkVar:
@@ -156,57 +184,57 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     let tyM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
     (freshMeta(ms, tyM, ctx.len, 0, pre.loc), tyM)
   of pkPi:
-    let d = checkTm(pre.c1, ctx, globals, ms, tmC(cStar))
-    let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, tmC(cStar))
+    let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
+    let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar))
     (tmPi(d, pre.name, c, pre.impl), tmC(cStar))
   of pkSigma:
-    let d = checkTm(pre.c1, ctx, globals, ms, tmC(cStar))
-    let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, tmC(cStar))
+    let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
+    let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar))
     (tmSi(d, pre.name, c), tmC(cStar))
   of pkLam:
     let d =
       if pre.c1.isNil: freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
-      else: checkTm(pre.c1, ctx, globals, ms, tmC(cStar))
-    let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d), globals, ms)
+      else: checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
+    let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply)
     (tmLam(d, pre.name, b, pre.impl), tmPi(d, pre.name, bty, pre.impl))
   of pkApp:
-    var (f, fty) = inferTm(pre.c1, ctx, globals, ms)
+    var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply)
     (f, fty) = insertImplicits(pre, f, fty, ctx.len, ms)
     let (dom, codBdy, impl, _) = ensurePi(ms, pre.loc, fty, ctx.len)
     if impl:
       raise elabErr(pre.loc,
         "cannot apply explicitly to an implicit argument")
-    let a = checkTm(pre.c2, ctx, globals, ms, dom)
+    let a = checkTm(pre.c2, ctx, globals, ms, supply, dom)
     (tmApp(f, a), subst(codBdy, 0, a))
   of pkPair:
     # Non-dependent Sigma with metavariable components (as the core's cPair).
     let aM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
     let bM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
-    let a = checkTm(pre.c1, ctx, globals, ms, aM)
-    let b = checkTm(pre.c2, ctx, globals, ms, bM)
+    let a = checkTm(pre.c1, ctx, globals, ms, supply, aM)
+    let b = checkTm(pre.c2, ctx, globals, ms, supply, bM)
     (tmPair(a, b, "_", weaken(bM)), tmSi(aM, "_", weaken(bM)))
   of pkFst:
-    let (p, pty) = inferTm(pre.c1, ctx, globals, ms)
+    let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply)
     let (dom, _, _) = ensureSi(ms, pre.loc, pty, ctx.len)
     (tmFst(p), dom)
   of pkSnd:
-    let (p, pty) = inferTm(pre.c1, ctx, globals, ms)
+    let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply)
     let (_, codBdy, _) = ensureSi(ms, pre.loc, pty, ctx.len)
     (tmSnd(p), subst(codBdy, 0, tmFst(p)))
   of pkLet:
     let (v, vty) =
-      if pre.c1.isNil: inferTm(pre.c2, ctx, globals, ms)
+      if pre.c1.isNil: inferTm(pre.c2, ctx, globals, ms, supply)
       else:
-        let aty = checkTm(pre.c1, ctx, globals, ms, tmC(cStar))
-        (checkTm(pre.c2, ctx, globals, ms, aty), aty)
-    let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms)
+        let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
+        (checkTm(pre.c2, ctx, globals, ms, supply, aty), aty)
+    let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply)
     (tmLet(v, vty, pre.name, b), subst(bty, 0, v))
   of pkAnn:
-    let ty = checkTm(pre.c2, ctx, globals, ms, tmC(cStar))
-    (checkTm(pre.c1, ctx, globals, ms, ty), ty)
+    let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
+    (checkTm(pre.c1, ctx, globals, ms, supply, ty), ty)
 
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
-             ms: var MetaStore, expTy: Term): Term =
+             ms: var MetaStore, supply: var Supply, expTy: Term): Term =
   ## Checking mode against an expected type.
   case pre.kind
   of pkLam:
@@ -214,49 +242,45 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     let d =
       if pre.c1.isNil: dom
       else:
-        let ad = checkTm(pre.c1, ctx, globals, ms, tmC(cStar))
+        let ad = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
         unifyElab(ms, ad, dom, pre.loc)
         ad
-    let b = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, codBdy)
+    let b = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, codBdy)
     tmLam(d, pre.name, b, pre.impl)
   of pkPair:
     let h = headTy(ms, expTy)
     if h.kind == tSi:
-      let a = checkTm(pre.c1, ctx, globals, ms, h.dom)
-      let b = checkTm(pre.c2, ctx, globals, ms, subst(h.scope.bdy, 0, a))
+      let a = checkTm(pre.c1, ctx, globals, ms, supply, h.dom)
+      let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(h.scope.bdy, 0, a))
       tmPair(a, b, h.scope.adv, h.scope.bdy)
     elif h.kind == tMeta:
       let (dom, codBdy, adv) = ensureSi(ms, pre.loc, expTy, ctx.len)
-      let a = checkTm(pre.c1, ctx, globals, ms, dom)
-      let b = checkTm(pre.c2, ctx, globals, ms, subst(codBdy, 0, a))
+      let a = checkTm(pre.c1, ctx, globals, ms, supply, dom)
+      let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(codBdy, 0, a))
       tmPair(a, b, adv, codBdy)
     else:
       raise elabErr(pre.loc, "pair " & $pre &
         " checked against a non-Sigma type")
   of pkLet:
     if pre.c1.isNil:
-      let (v, vty) = inferTm(pre.c2, ctx, globals, ms)
-      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms)
+      let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply)
+      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply)
       unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
       tmLet(v, vty, pre.name, b)
     else:
-      let aty = checkTm(pre.c1, ctx, globals, ms, tmC(cStar))
-      let v = checkTm(pre.c2, ctx, globals, ms, aty)
-      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms)
+      let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
+      let v = checkTm(pre.c2, ctx, globals, ms, supply, aty)
+      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply)
       unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
       tmLet(v, aty, pre.name, b)
   of pkAnn:
-    let ty = checkTm(pre.c2, ctx, globals, ms, tmC(cStar))
-    let t = checkTm(pre.c1, ctx, globals, ms, ty)
+    let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
+    let t = checkTm(pre.c1, ctx, globals, ms, supply, ty)
     unifyElab(ms, ty, expTy, pre.loc)
     t
   else:
-    let (t, ty) = inferTm(pre, ctx, globals, ms)
-    try:
-      unify(ms, ty, expTy, pre.loc)
-    except UnifyError as e:
-      raise elabErr(pre.loc, "inferred type " & $zonk(ms, ty) &
-        " does not match expected type " & $zonk(ms, expTy) & ": " & e.msg)
+    let (t, ty) = inferTm(pre, ctx, globals, ms, supply)
+    convElab(ms, supply, ty, expTy, pre.loc, ctx.len)
     t
 
 type
@@ -270,7 +294,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
                ms: var MetaStore): ElabDef =
   ## Elaborate one `def` (the Experiment 2/3 pipeline, unchanged).
   # 1. elaborate the type; it must be a type and contain no metas
-  let (tyTm0, tyTy) = inferTm(d.desugarTy(), @[], globals, ms)
+  let (tyTm0, tyTy) = inferTm(d.desugarTy(), @[], globals, ms, supply)
   unifyElab(ms, tyTy, tmC(cStar), d.loc)
   let tyT = zonk(ms, tyTm0)
   let ru = findUnsolved(ms, tyT)
@@ -283,7 +307,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
       raise elabErr(d.loc,
         "ill-formed type of '" & d.name & "': " & e.msg)
   # 2. elaborate the body against the type; zonk; reject leftovers
-  let tmT0 = checkTm(d.desugarTm(), @[], globals, ms, tyT)
+  let tmT0 = checkTm(d.desugarTm(), @[], globals, ms, supply, tyT)
   let tmT = zonk(ms, tmT0)
   let ru2 = findUnsolved(ms, tmT)
   if ru2.found:
@@ -310,7 +334,7 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
   ## reduction rule table on the R node for later `red` declarations.
   if name in globals:
     raise elabErr(loc, "duplicate declaration '" & name & "'")
-  let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms)
+  let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms, supply)
   unifyElab(ms, tyTy, tmC(cStar), loc)
   let tyT = zonk(ms, tyTm0)
   let ru = findUnsolved(ms, tyT)
@@ -437,7 +461,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
     ctorTy = h.scope.bdy
   # elaborate the contractum (inference mode — the rule is trusted, like
   # an axiom; a production system would check it against the motive)
-  let (rhsTm0, _) = inferTm(rhs, ctx, globals, ms)
+  let (rhsTm0, _) = inferTm(rhs, ctx, globals, ms, supply)
   let rhsTm = zonk(ms, rhsTm0)
   let ru = findUnsolved(ms, rhsTm)
   if ru.found:
@@ -736,7 +760,7 @@ def letU : 1 :=
   expectElabErr("def bad : 1 :=\n  (<>, <>)\n",
     "checked against a non-Sigma type")
   expectElabErr("def bad (A : ?) (p : Sig (u : A). A) : ? :=\n  fst (snd p, fst p)\n",
-    "cannot unify")
+    "not convertible")
   expectElabErr("def bad (A : ?) : ? :=\n  _\n",
     "unsolved metavariable")
   expectElabErr("def bad : ? :=\n  lam x. x x\n",
@@ -883,6 +907,49 @@ def lenIsTwo : Nat :=
   assert dataVecDefs.len == 2
   assert dataSucDepth(eval(dataVecDefs[1].tmTm, @[])) == 2
   echo "ok: data Vec (indexed) desugars; eliminator computes (length = 2)"
+
+  # --- Experiment 5b: conversion in checkTm -------------------------
+  # The inferred-vs-expected check now compares up to reduction: `add`
+  # (recursing on its first argument here) fires in types, so
+  # `Vec A (add zero n)` is accepted where `Vec A n` is expected.
+  # Before this change, syntactic unification rejected it — the
+  # documented gap in Experiment 5's decision-log entry.
+  let convDefs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+def add (m : Nat) (n : Nat) : Nat :=
+  natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
+def vnil : Vec Nat (add zero zero) :=
+  nil Nat
+def constNil (A : ?) (x : A) : Vec A (add zero zero) :=
+  nil A
+def append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
+    : Vec A (add m n) :=
+  vecElim A (lam (i : Nat). lam (v : Vec A i). Vec A (add i n))
+            ys
+            (lam (i : Nat). lam (x : A). lam (xs : Vec A i).
+              lam (ih : Vec A (add i n)). cons A (add i n) x ih)
+            m xs
+""")
+  assert convDefs.len == 4
+  echo "ok: checkTm converts up to reduction (vnil, constNil, Vec append)"
+  # ...but genuinely different indices are still rejected
+  expectElabErr("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+def add (m : Nat) (n : Nat) : Nat :=
+  natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
+def bad : Vec Nat (add (suc zero) zero) :=
+  nil Nat
+""", "not convertible")
 
   # data errors: constructor return must be the family
   expectElabErr("""

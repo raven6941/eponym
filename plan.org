@@ -133,6 +133,12 @@
   just unification) in =checkTm= — the unifier doesn't unfold
   definitions or fire =wRed= rules. That's the next gap to close.
 
+  Resolved 2026-10-07 (Experiment 5b): =checkTm='s
+  inferred-vs-expected check now uses =convElab= — full conversion
+  via the core evaluator + =areEqual= when no unsolved metas remain,
+  pattern unification otherwise. =Vec append= elaborates; details in
+  decisions.org.
+
 * Experiment 6 (stretch) — Tactics and reflection
 
   Question: can elaboration steps be reflected and scripted, Turnstile+-style?

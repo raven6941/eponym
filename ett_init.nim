@@ -237,8 +237,12 @@ proc redNargs*(elim: Term): int =
   ## number of arguments (incl. scrutinee) the eliminator takes
   elim.refVal.whnf.rule.nargs
 
-proc freshPara(s: var Supply, ty: Value): Value =
-  ## vpara: a fresh neutral parameter of the given type
+proc freshPara*(s: var Supply, ty: Value): Value =
+  ## vpara: a fresh neutral parameter of the given type.
+  ## Exported for the elaborator's conversion check (Experiment 5b):
+  ## free variables become neutral parameters so open
+  ## terms can be evaluated. The type may be nil — conversion never
+  ## inspects a parameter's type, only its identity.
   let id = freshId(s)
   Value(syn: mkR(id, ty, false, nil),
         whnf: Whnf(kind: wRef, refId: id, spine: newSeq[ElimV]()))
@@ -523,7 +527,7 @@ proc vAbsurd(): Value =
 proc infer(s: var Supply, t: Term): Value
 proc check*(s: var Supply, ty: Value, t: Term): Value
 proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value]
-proc areEqual(s: var Supply, ty, a, b: Value)
+proc areEqual*(s: var Supply, ty, a, b: Value)
 proc structuralEq(s: var Supply, a, b: Value)
 proc isPi(v: Value): tuple[dom: Value, sc: ScoVal]
 proc isSi(v: Value): tuple[dom: Value, sc: ScoVal]
@@ -594,8 +598,10 @@ proc structuralEq(s: var Supply, a, b: Value) =
     for i in 0 ..< a.whnf.args.len:
       structuralEq(s, a.whnf.args[i], b.whnf.args[i])
 
-proc areEqual(s: var Supply, ty, a, b: Value) =
-  ## type-directed conversion (§6.7)
+proc areEqual*(s: var Supply, ty, a, b: Value) =
+  ## type-directed conversion (§6.7). Exported for the elaborator's
+  ## conversion check (Experiment 5b); raises ValueError
+  ## on mismatch, like the rest of the core.
   case ty.whnf.kind
   of wConst:
     let c = ty.whnf.c
