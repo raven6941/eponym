@@ -71,6 +71,21 @@ proc zonkHead*(ms: MetaStore, t: Term): Term =
     cur = substSpine(e.solution, cur.metaSpine)
   cur
 
+proc unifyHead(ms: MetaStore, t: Term): Term =
+  ## Head-normalize for unification: unfold solved metas (at the head
+  ## and in function position) and beta-reduce. No delta-unfolding of
+  ## definitions — rigid heads stay rigid. (Experiment 4: eliminator
+  ## motives are lambdas, so `C true` with `C := lam u. Bool` must
+  ## head-reduce before the rigid-rigid comparison.)
+  var cur = zonkHead(ms, t)
+  while true:
+    if cur.kind != tApp: return cur
+    let f = unifyHead(ms, cur.fn)
+    if f.kind == tLam:
+      cur = zonkHead(ms, subst(f.scope.bdy, 0, cur.arg))
+    else:
+      return tmApp(f, cur.arg)
+
 proc zonk*(ms: MetaStore, t: Term): Term =
   ## Substitute every solved metavariable, recursively.
   if t.isNil: return nil
@@ -219,8 +234,8 @@ proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) 
 # --- unification ---------------------------------------------------------------
 
 proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
-  let a1 = zonkHead(ms, a)
-  let b1 = zonkHead(ms, b)
+  let a1 = unifyHead(ms, a)
+  let b1 = unifyHead(ms, b)
   if a1.kind == tMeta and b1.kind == tMeta and a1.metaId == b1.metaId:
     # flex-flex, same meta: unify the spines
     if a1.metaSpine.len != b1.metaSpine.len:

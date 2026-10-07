@@ -143,10 +143,11 @@ def pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A :=
 
   assert mDefs.len == 3 and sDefs.len == 3
   for i in 0 ..< 3:
-    assert mDefs[i].name == sDefs[i].name
+    assert sDefs[i].kind == dkDef
+    assert mDefs[i].name == sDefs[i].def.name
     # same preterm AST from both front ends (locations ignored by ==)
-    assert mDefs[i].desugarTy() == sDefs[i].desugarTy(), "type mismatch: " & mDefs[i].name
-    assert mDefs[i].desugarTm() == sDefs[i].desugarTm(), "term mismatch: " & mDefs[i].name
+    assert mDefs[i].desugarTy() == sDefs[i].def.desugarTy(), "type mismatch: " & mDefs[i].name
+    assert mDefs[i].desugarTm() == sDefs[i].def.desugarTm(), "term mismatch: " & mDefs[i].name
 
   # locations survive from the Nim AST
   assert mDefs[0].loc.line > 0

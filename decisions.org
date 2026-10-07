@@ -90,6 +90,51 @@
   stay the Experiment 5 datatype mechanism. Decision held open for
   Aaron — see the memo's two open questions.
 
+* Experiment 4 results (2026-10-07)
+  - Built extensible reduction: =postulate= (parameter-like global),
+    =elim= (eliminator with a reduction rule table), and =red=
+    (one constructor case) declarations. New constructs bring their
+    own reduction rules; the core evaluator was extended once (a
+    =wRed= whnf + firing logic in =applyWhnf=), never per-construct.
+    Demos: Bool eliminator (=not true= reduces to =false=) and Nat
+    eliminator with constructor arguments (=add two two= reduces to
+    =suc^4 zero=, verified by evaluation). All 8 module suites pass.
+  - Key design decision: *the rule lives in the value, not in a
+    threaded registry.* The eliminator's R node carries a =wRed=
+    whnf holding the rule table; =applyWhnf= consults it when the
+    eliminator is fully applied and the scrutinee is
+    constructor-headed. This avoided threading a registry through
+    =eval=/=check=/=infer=/=areEqual= (~12 procs, the
+    Supply-precedent alternative). Stuck eliminators (neutral
+    scrutinee) rebuild as =wRef= neutrals, so conversion needs no
+    new neutral case; only partial applications stay =wRed= (with a
+    =structuralEq= case).
+  - De Bruijn frame bug (caught by the Nat test, invisible to Bool):
+    the contractum template's context is innermost-first =[n, s, z,
+    C]=, but =fireRed= passed the spine outermost-first =[C, z, s,
+    n]=. Single-variable templates (Bool) pass by accident;
+    multi-variable ones scramble. Lesson, again: every
+    substitution must match the context's variable order — test
+    with ≥2 variables.
+  - The unifier needed head-beta: eliminator motives are lambdas,
+    so =C true= with =C := lam u. Bool= is a redex the syntactic
+    unifier couldn't see through. Added =unifyHead= (unfold solved
+    metas at head/function position + beta; no delta-unfolding, so
+    rigid heads stay rigid).
+  - Limitations (honest): the contractum is *trusted* — elaborated
+    in inference mode, not checked against the instantiated motive
+    (a production system would; that's Experiment 5+ territory).
+    =red= patterns require distinct bare variables; the parser
+    doesn't support multi-name binders =(m n : Nat)=. Non-terminating
+    rules (=red f x := f x=) would loop the evaluator — the rule
+    author's obligation, as in any rewrite system.
+  - Turnstile+ comparison: our =red= is =define-red= without
+    reflected names — rules are keyed by constructor head, and
+    neutrals rebuild as =wRef= rather than carrying a
+    =reflect-name= property. Sufficient because our rules are
+    first-order constructor patterns; reflected names would matter
+    for higher-order patterns.
+
 * Experiment 3 results (2026-10-07)
   - Built =unify.nim= (Miller pattern unification: spine inversion,
     occurs check, eta, zonk) + rewrote =elab.nim= as full bidirectional
