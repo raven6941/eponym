@@ -30,6 +30,8 @@ succeeds.
 - **13-primint.ep** — Primitive machine integers: literals and `addInt`,
   `subInt`, `mulInt` compute via host operations (Experiment 11).
   No unary `s(s(z))`.
+- **14-tactics.ep** — Tactics: `by refl` proves equalities by reflexivity,
+  `by assumption` finds a matching hypothesis (Experiment 6).
 
 ## Running
 

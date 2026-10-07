@@ -23,7 +23,7 @@ import preterm, strutils
 type
   TokKind = enum
     tkEof, tkIdent, tkInt,
-    tkDef, tkPostulate, tkElim, tkRed, tkData, tkWhere,
+    tkDef, tkPostulate, tkElim, tkRed, tkData, tkWhere, tkBy,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
     tkLParen, tkRParen, tkLBrace, tkRBrace,
@@ -47,7 +47,7 @@ proc fail(loc: Loc, msg: string): ref ParseError =
 
 const keywords = [
   ("def", tkDef), ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
-  ("data", tkData), ("where", tkWhere),
+  ("data", tkData), ("where", tkWhere), ("by", tkBy),
   ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
 
@@ -149,7 +149,7 @@ proc expect(p: var Parser, k: TokKind, what: string): Token =
 
 proc isAtomStart(k: TokKind): bool =
   k in {tkIdent, tkInt, tkUniv, tkUnitTy, tkUnitV, tkEmptyTy, tkLParen,
-        tkLam, tkPi, tkSig, tkFst, tkSnd}
+        tkLam, tkPi, tkSig, tkFst, tkSnd, tkBy}
 
 proc parseTerm(p: var Parser): PreTerm  # forward
 
@@ -177,6 +177,9 @@ proc parseAtom(p: var Parser): PreTerm =
   of tkUnitV: mkUnitV(t.loc)
   of tkEmptyTy: mkEmptyTy(t.loc)
   of tkInt: mkInt(parseInt(t.lexeme), t.loc)
+  of tkBy:
+    let tac = p.expect(tkIdent, "tactic name after 'by'")
+    PreTerm(loc: t.loc, kind: pkBy, name: tac.lexeme)
   of tkLParen:
     let e = p.parseTerm()
     let t2 = p.next()
