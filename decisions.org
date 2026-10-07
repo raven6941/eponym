@@ -76,6 +76,20 @@
   =bindSym= internals, hygiene edge cases). See
   [[https://github.com/raven6941/notes/blob/main/design/nimony-nim3-macro-future.org][Nimony note]].
 
+* PROPOSED 2026-10-07 — Track B gate resolution (awaiting Aaron)
+
+  Full evaluation in =track-b-gate.org=. Argument in brief: the
+  gate's blocking dependency is weaker than stated. Experiment 3
+  (unification) is elaborator-layer work against decidable
+  conversion, which both cores give; Experiment 4 (reduction) is
+  NbE + e-graph cache machinery, core-independent; only
+  Experiment 5 (inductives) genuinely needs the core/datatype
+  story settled, and containers compose with either core.
+  Proposed: no core swap for Experiments 3–4; OTT stays the
+  designated successor for equality-heavy surface work; containers
+  stay the Experiment 5 datatype mechanism. Decision held open for
+  Aaron — see the memo's two open questions.
+
 * Experiment 2 results (2026-10-07)
   - Built =elab.nim= (bidirectional-lite elaborator) + =ett_mac.nim=
     (=ett"..."= macro). All Experiment 1 programs (=twice=, =constFn=,
