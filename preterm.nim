@@ -141,9 +141,16 @@ type
     body*: PreTerm
     loc*: Loc
 
-  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed
+  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData
+  DataCtor* = object
+    ## One constructor in a `data` declaration.
+    name*: string
+    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool]]
+    retTy*: PreTerm   # F params indices
+    cloc*: Loc
   SurfDecl* = object
-    ## A top-level declaration (Experiment 4 adds postulate/elim/red).
+    ## A top-level declaration (Experiment 4 adds postulate/elim/red;
+    ## Experiment 5 adds data).
     case kind*: DeclKind
     of dkDef: def*: SurfDef
     of dkPostulate, dkElim:
@@ -154,6 +161,12 @@ type
       lhs*: PreTerm   # application pattern: elim v1..v(k-1) (ctor w1..wm)
       rhs*: PreTerm   # contractum template
       rloc*: Loc
+    of dkData:
+      dname*: string
+      params*: seq[tuple[name: string, ty: PreTerm, impl: bool]]
+      indexTy*: PreTerm  # indices -> ?  (e.g. Nat -> ?)
+      ctors*: seq[DataCtor]
+      daloc*: Loc
 
 proc desugarTy*(d: SurfDef): PreTerm =
   ## Telescope to nested Pis (implicit entries to implicit Pis).

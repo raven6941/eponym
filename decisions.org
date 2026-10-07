@@ -90,6 +90,44 @@
   stay the Experiment 5 datatype mechanism. Decision held open for
   Aaron — see the memo's two open questions.
 
+* Experiment 5 results (2026-10-07)
+  - =data= declarations desugar to Experiment 4's
+    =postulate=/=elim=/=red= and elaborate through the same path.
+    =data Nat= generates the type former, constructors, eliminator,
+    and reduction rules; =add two two= reduces to 4. =data Vec (A :
+    ?)= is an indexed family; the generated =vecElim= computes
+    (length of a 2-vector reduces to 2). All 8 suites pass.
+  - Key design: the desugarer generates =red= rules with *dummy
+    index variables* (=idx0=) in the eliminator's index positions.
+    The contractum never mentions them; =fireRed='s spine
+    convention already accounts for them. This avoids unifying
+    indices during rule elaboration — the constructor's indices
+    are determined by its return type, not by pattern unification.
+  - Constructor patterns may reference already-bound params
+    (=(nil A)= where =A= is the eliminator's param). =elabRedDecl=
+    now allows leading already-bound variables in the scrutinee
+    pattern (=nParams=); =fireRed= skips them when building =cargs=.
+    The =RedRule= stores =nParams= for this.
+  - De Bruijn frame bug (again!): =fireRed='s =cargs= were in
+    application order but the template expects innermost-first.
+    Single-argument constructors (=suc=) mask it; =cons= (3 args)
+    exposed it. Lesson, third time: every substitution must match
+    the context's variable order — test with ≥2 variables,
+    *including constructor arguments*.
+  - Limitation (honest): full dependently-typed programming like
+    =append= with =add= in the return type needs *conversion* in
+    =checkTm=, not just Miller unification. =add zero n ≡ n= holds
+    by the =wRed= rule, but =unifyElab= is syntactic (up to beta)
+    and doesn't unfold definitions or fire rules. The =data=
+    mechanism itself is sound; the typechecker's conversion is
+    the gap. Fixing it means making =checkTm= use the evaluator
+    (conversion) for the inferred-vs-expected check, not just
+    unification. That's the next experiment's work.
+  - Turnstile+/Levitation connection: our =data= is Dybjer-style
+    (generative, per-family eliminator). Levitation's =Desc=
+    universe (datatypes-as-data) is the alternative: elaborate
+    =data= to codes, keep the core closed. Worth an experiment.
+
 * Experiment 4 results (2026-10-07)
   - Built extensible reduction: =postulate= (parameter-like global),
     =elim= (eliminator with a reduction rule table), and =red=

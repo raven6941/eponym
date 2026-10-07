@@ -23,11 +23,11 @@ import preterm, strutils
 type
   TokKind = enum
     tkEof, tkIdent,
-    tkDef, tkPostulate, tkElim, tkRed,
+    tkDef, tkPostulate, tkElim, tkRed, tkData, tkWhere,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
     tkLParen, tkRParen, tkLBrace, tkRBrace,
-    tkColon, tkColonEq, tkDot, tkComma, tkArrow, tkEq
+    tkColon, tkColonEq, tkDot, tkComma, tkArrow, tkEq, tkPipe
   Token = object
     kind: TokKind
     lexeme: string
@@ -47,6 +47,7 @@ proc fail(loc: Loc, msg: string): ref ParseError =
 
 const keywords = [
   ("def", tkDef), ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
+  ("data", tkData), ("where", tkWhere),
   ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
 
@@ -107,6 +108,9 @@ proc lex(src: string): seq[Token] =
       inc col; inc i
     elif c == '=':
       result.add Token(kind: tkEq, lexeme: "=", loc: curLoc())
+      inc col; inc i
+    elif c == '|':
+      result.add Token(kind: tkPipe, lexeme: "|", loc: curLoc())
       inc col; inc i
     elif c == ':':
       let l = curLoc()
@@ -263,13 +267,42 @@ proc parseRed(p: var Parser): SurfDecl =
   let rhs = p.parseTerm()
   SurfDecl(kind: dkRed, lhs: lhs, rhs: rhs, rloc: t.loc)
 
+proc parseData(p: var Parser): SurfDecl =
+  ## data Vec (A : ?) : Nat -> ? where
+  ## | nil : Vec A zero
+  ## | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+  let t = p.expect(tkData, "'data'")
+  let nm = p.expect(tkIdent, "datatype name")
+  var params: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
+  while p.peek().kind in {tkLParen, tkLBrace}:
+    params.add p.parseBinder()
+  discard p.expect(tkColon, "':'")
+  let indexTy = p.parseTerm()
+  discard p.expect(tkWhere, "'where'")
+  var ctors: seq[DataCtor] = @[]
+  while p.peek().kind == tkPipe:
+    discard p.next()
+    let cnm = p.expect(tkIdent, "constructor name")
+    var tele: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
+    while p.peek().kind in {tkLParen, tkLBrace}:
+      tele.add p.parseBinder()
+    discard p.expect(tkColon, "':'")
+    let retTy = p.parseTerm()
+    ctors.add DataCtor(name: cnm.lexeme, tele: tele, retTy: retTy,
+                       cloc: cnm.loc)
+  if ctors.len == 0:
+    raise fail(t.loc, "data declaration needs at least one constructor")
+  SurfDecl(kind: dkData, dname: nm.lexeme, params: params, indexTy: indexTy,
+           ctors: ctors, daloc: t.loc)
+
 proc parseDecl(p: var Parser): SurfDecl =
   case p.peek().kind
   of tkDef: SurfDecl(kind: dkDef, def: p.parseDef())
   of tkPostulate: p.parsePostulate()
   of tkElim: p.parseElim()
   of tkRed: p.parseRed()
-  else: raise fail(p.peek().loc, "expected 'def', 'postulate', 'elim' or 'red'")
+  of tkData: p.parseData()
+  else: raise fail(p.peek().loc, "expected 'def', 'postulate', 'elim', 'red' or 'data'")
 
 proc parseProgram*(src: string): seq[SurfDecl] =
   ## Parse a whole program; raises ParseError with source location.
