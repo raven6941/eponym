@@ -5,5 +5,15 @@ ett_mac
 preterm
 parse_surf
 mac_surf
+run_examples
 nimcache/
 *.o
+# Compiled binaries (in src/ or tests/ when built)
+src/ett
+src/ett_init
+src/elab
+src/ett_mac
+src/preterm
+src/parse_surf
+src/mac_surf
+tests/run_examples

@@ -44,10 +44,10 @@ Requires Nim 2.x (built with 2.2.12 via
 
 ```sh
 export PATH=$HOME/.nimble/bin:$PATH
-nim c -r elab.nim        # elaborator: all suites
-nim c -r run_examples.nim # 11 documented example programs
-nim c -r ett.nim         # finally-tagless ETT: 16 tests
-nim c -r ett_init.nim    # initial-encoding ETT: 16 tests
+nim c -r --path:src src/elab.nim        # elaborator: all suites
+nim c -r --path:src tests/run_examples.nim # 11 documented example programs
+nim c -r --path:src src/ett.nim         # finally-tagless ETT: 16 tests
+nim c -r --path:src src/ett_init.nim    # initial-encoding ETT: 16 tests
 ```
 
 ## Examples

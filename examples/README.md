@@ -29,5 +29,5 @@ succeeds.
 
 ```sh
 export PATH=$HOME/.nimble/bin:$PATH
-nim c -r run_examples.nim
+nim c -r --path:src tests/run_examples.nim
 ```

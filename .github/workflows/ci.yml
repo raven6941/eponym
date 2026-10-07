@@ -16,5 +16,8 @@ jobs:
           nim --version
           for f in ett ett_init preterm parse_surf mac_surf elab ett_mac; do
             echo "=== $f ==="
-            nim c -r --hints:off "$f.nim" || exit 1
+            nim c -r --hints:off --path:src "src/$f.nim" || exit 1
           done
+      - name: Run examples
+        run: |
+          nim c -r --hints:off --path:src "tests/run_examples.nim" || exit 1
