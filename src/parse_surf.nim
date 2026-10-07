@@ -153,18 +153,23 @@ proc isAtomStart(k: TokKind): bool =
 
 proc parseTerm(p: var Parser): PreTerm  # forward
 
-proc parseBinder(p: var Parser): tuple[name: string, ty: PreTerm, impl: bool] =
+proc parseBinder(p: var Parser): tuple[name: string, ty: PreTerm, impl: bool, erased: bool] =
   ## "(" name ":" term ")" | "{" name ":" term "}"  (braces = implicit)
+  ## "(0" name ":" term ")"  (0 = erased, Experiment 9)
   let t = p.next()
   let impl = t.kind == tkLBrace
   if not impl and t.kind != tkLParen:
     raise fail(t.loc, "expected '(' or '{', got '" & t.lexeme & "'")
+  var erased = false
+  if not impl and p.peek().kind == tkInt and p.peek().lexeme == "0":
+    discard p.next()  # consume the 0
+    erased = true
   let xn = p.expect(tkIdent, "binder name")
   discard p.expect(tkColon, "':'")
   let ty = p.parseTerm()
   if impl: discard p.expect(tkRBrace, "'}'")
   else: discard p.expect(tkRParen, "')'")
-  (xn.lexeme, ty, impl)
+  (xn.lexeme, ty, impl, erased)
 
 proc parseAtom(p: var Parser): PreTerm =
   let t = p.next()
@@ -203,7 +208,7 @@ proc parseAtom(p: var Parser): PreTerm =
     else:
       let b = p.parseBinder()
       discard p.expect(tkDot, "'.'")
-      mkLam(b.name, b.ty, p.parseTerm(), t.loc, b.impl)
+      mkLam(b.name, b.ty, p.parseTerm(), t.loc, b.impl, b.erased)
   of tkPi, tkSig:
     let b = p.parseBinder()
     if b.impl and t.kind == tkSig:
@@ -211,7 +216,7 @@ proc parseAtom(p: var Parser): PreTerm =
     discard p.expect(tkDot, "'.'")
     let body = p.parseTerm()
     case t.kind
-    of tkPi: mkPi(b.name, b.ty, body, t.loc, b.impl)
+    of tkPi: mkPi(b.name, b.ty, body, t.loc, b.impl, b.erased)
     else: mkSigma(b.name, b.ty, body, t.loc)
   of tkFst:
     mkFst(p.parseAtom(), t.loc)
@@ -248,7 +253,7 @@ proc parseTerm(p: var Parser): PreTerm =
 proc parseDef(p: var Parser): SurfDef =
   let t = p.expect(tkDef, "'def'")
   let nm = p.expect(tkIdent, "definition name")
-  var tele: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
+  var tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]] = @[]
   while p.peek().kind in {tkLParen, tkLBrace}:
     let b = p.parseBinder()
     tele.add b
@@ -285,7 +290,7 @@ proc parseData(p: var Parser): SurfDecl =
   ## | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
   let t = p.expect(tkData, "'data'")
   let nm = p.expect(tkIdent, "datatype name")
-  var params: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
+  var params: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]] = @[]
   while p.peek().kind in {tkLParen, tkLBrace}:
     params.add p.parseBinder()
   discard p.expect(tkColon, "':'")
@@ -295,7 +300,7 @@ proc parseData(p: var Parser): SurfDecl =
   while p.peek().kind == tkPipe:
     discard p.next()
     let cnm = p.expect(tkIdent, "constructor name")
-    var tele: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
+    var tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]] = @[]
     while p.peek().kind in {tkLParen, tkLBrace}:
       tele.add p.parseBinder()
     discard p.expect(tkColon, "':'")
