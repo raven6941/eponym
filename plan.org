@@ -64,7 +64,15 @@
   References: =ett_init.nim= (=infer=); [[https://github.com/raven6941/notes/blob/main/design/staging.org][staging]];
   [[https://github.com/raven6941/notes/blob/main/background/turnstile.org][Turnstile]] §2.
 
-* Experiment 3 — Implicits, metavariables, unification
+* Experiment 3 — Implicits, metavariables, unification [DONE 2026-10-07]
+
+  Result: yes — it runs at macro-expansion time. =unify.nim= (Miller
+  pattern unification) + bidirectional =inferTm=/=checkTm= with implicit
+  insertion; =polyId <>=, =constI <> <>=, unannotated =lam x. x= all
+  elaborate, zonk, and pass the core's =check=; =ett= macro
+  accepts/rejects at compile time. Demos adapted (no vectors/identity
+  type in ETT core — same mechanism on =polyId=/=constI=). Full
+  findings in decisions.org ("Experiment 3 results").
 
   Question: the first genuinely hard elaboration step — can it run at
   macro-expansion time?
