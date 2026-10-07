@@ -1,0 +1,20 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nim
+        run: |
+          curl -sSf https://nim-lang.org/choosenim/init.sh | sh -s -- -y
+          echo "$HOME/.nimble/bin" >> $GITHUB_PATH
+      - name: Select Nim version
+        run: choosenim 2.2.12
+      - name: Run test suites
+        run: |
+          nim --version
+          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac; do
+            echo "=== $f ==="
+            nim c -r --hints:off "$f.nim" || exit 1
+          done
