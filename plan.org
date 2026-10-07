@@ -236,7 +236,7 @@
   (McBride 2016; Brady 2021)]]; [[https://github.com/raven6941/notes/blob/main/alternative-cores.org][alternative
   cores]].
 
-* Experiment 10 (proposed 2026-10-07) — e-graph conversion cache
+* Experiment 10 (complete 2026-10-07, basic) — e-graph conversion cache
 
   Question: can equality saturation memoize conversion without
   replacing NbE?
@@ -253,6 +253,13 @@
   elaboration; no behavior change on any existing test. Lowest-risk
   e-graph experiment in the program; do before any saturation-based
   elaboration. Honest costs: iteration bounds (fall back to NbE),
+
+  Result (2026-10-07): Basic memo table complete (src/egraph.nim).
+  convElab probes cache before NbE; on miss, runs NbE and merges on
+  success. Key includes ctx length for soundness. Observed: 97 hits,
+  38 misses on Vec-heavy test (no behavior change). Full e-class
+  merging with union-find across different keys is future work —
+  currently a memo table, not yet a true e-graph.
   first-order binder encoding, no why-not explanations.
 
   Round-4 extension (2026-10-07): *negative caching via
