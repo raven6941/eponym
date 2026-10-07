@@ -75,3 +75,31 @@
   elaborate → emit); avoid deep =NimNode= coupling (=getImpl=,
   =bindSym= internals, hygiene edge cases). See
   [[https://github.com/raven6941/notes/blob/main/design/nimony-nim3-macro-future.org][Nimony note]].
+
+* Experiment 2 results (2026-10-07)
+  - Built =elab.nim= (bidirectional-lite elaborator) + =ett_mac.nim=
+    (=ett"..."= macro). All Experiment 1 programs (=twice=, =constFn=,
+    =pairSwap=) elaborate and check; ill-typed programs fail compilation
+    with errors naming surface terms at string-relative line/col.
+  - Pairs need an expected Sigma type: synthesis cannot invent the
+    range, so =elabChk= takes the expected type as a *Term* and reuses
+    the expected Sigma's scope directly as the pair's =pScope= (same
+    de Bruijn frame: one binder over the context). Verification stays
+    with the core's =check= — the expected type only guides.
+  - Cross-def references work via closed =R= nodes (=newDefRef=);
+    later defs mention earlier ones.
+  - Unannotated lambdas/lets rejected in synthesis mode; nested
+    ascriptions guide but are not separately verified (Experiment 3:
+    full bidirectional check).
+  - Macro-in-VM constraint (major find): Nim's VM cannot capture
+    module-level =var=, so the core's global =freshSupply= broke
+    compile-time checking ("cannot evaluate at compile time").
+    Fix: threaded an explicit =Supply= through =infer=, =check=,
+    =synth=, =structuralEq=, =areEqual= (the paper's Checking-monad
+    threading — the global was our simplification). Core is now
+    reentrant; all 16 existing tests pass unchanged in behavior.
+    Lesson for macro-based elaboration in Nim: no global mutable
+    state anywhere on the compile-time path.
+  - Export facade added to =ett_init.nim= (=Const*=, =TermKind*=,
+    =Term*=, =Value*=, constructors, =tmC*=, =check*=, =vStar*=,
+    =newDefRef*=); elaborator lives in its own module.
