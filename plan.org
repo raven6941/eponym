@@ -211,6 +211,32 @@
   (McBride 2016; Brady 2021)]]; [[https://github.com/raven6941/notes/blob/main/design/alternative-cores.org][alternative
   cores]].
 
+* Experiment 10 (proposed 2026-10-07) — e-graph conversion cache
+
+  Question: can equality saturation memoize conversion without
+  replacing NbE?
+
+  Build: one e-graph per module over elaborated terms; every
+  =areEqual(t1, t2)= first probes e-class membership (O(α) hit skips
+  NbE); on miss, run NbE as the oracle and on success merge the
+  e-classes. Sound by construction — the e-graph only remembers
+  equalities NbE proved. Extension: user-proved propositional lemmas
+  as conditional rewrite rules (Lean-egg style), undischarged
+  side-conditions becoming holes.
+
+  Success: measurable compile-time speedup on conversion-heavy
+  elaboration; no behavior change on any existing test. Lowest-risk
+  e-graph experiment in the program; do before any saturation-based
+  elaboration. Honest costs: iteration bounds (fall back to NbE),
+  first-order binder encoding, no why-not explanations.
+
+  References:
+  [[https://github.com/raven6941/notes/blob/main/concepts/egraph-conversion-cache.org][e-graph conversion cache]];
+  [[https://github.com/raven6941/notes/blob/main/background/willsey-egg-2021.org][egg (Willsey et al.)]];
+  [[https://github.com/raven6941/notes/blob/main/background/rossel-lean-egg-2026.org][Lean-egg]];
+  [[https://github.com/raven6941/notes/blob/main/questions/elaboration-as-saturation.org][elaboration as saturation]]
+  (the ambitious sibling — research bet, not engineering).
+
 * Track B — alternative cores (decision gate before Experiment 3)
 
   Experiments 1–2 are core-independent; 3–5 are core-sensitive
