@@ -19,7 +19,7 @@
   - initial encoding (=ett_init.nim=): de Bruijn =Term= AST, glued values,
     =infer= / =check= / =areEqual=.
   Decision: the initial encoding is the elaborator target
-  (see [[https://github.com/raven6941/notes/blob/main/design/encodings.org][encoding comparison]]).
+  (see [[https://github.com/raven6941/notes/blob/main/encodings.org][encoding comparison]]).
   Repo: =github.com/raven6941/eponym=.
 
 * Experiment 1 — Surface syntax via macros
@@ -36,8 +36,8 @@
   Success: =twice=, =const=, =pairSwap= expressible; parse errors point at
   source. Pick one front end (or a hybrid) for Experiment 2.
 
-  References: [[https://github.com/raven6941/notes/blob/main/background/turnstile.org][Turnstile]] §2–3 (syntax
-  patterns *are* the surface syntax); [[https://github.com/raven6941/notes/blob/main/design/nim-macros.org][Nim
+  References: [[https://github.com/raven6941/notes/blob/main/turnstile.org][Turnstile]] §2–3 (syntax
+  patterns *are* the surface syntax); [[https://github.com/raven6941/notes/blob/main/nim-macros.org][Nim
   macro notes]].
 
 * Experiment 2 — Compile-time elaboration and checking [DONE 2026-10-07]
@@ -61,8 +61,8 @@
   =structuralEq= =areEqual= (the paper's Checking-monad threading); core is
   now reentrant. Details in decisions.org.
 
-  References: =ett_init.nim= (=infer=); [[https://github.com/raven6941/notes/blob/main/design/staging.org][staging]];
-  [[https://github.com/raven6941/notes/blob/main/background/turnstile.org][Turnstile]] §2.
+  References: =ett_init.nim= (=infer=); [[https://github.com/raven6941/notes/blob/main/staging.org][staging]];
+  [[https://github.com/raven6941/notes/blob/main/turnstile.org][Turnstile]] §2.
 
 * Experiment 3 — Implicits, metavariables, unification [DONE 2026-10-07]
 
@@ -84,13 +84,13 @@
   Success: the classic demos — =refl=, =cong=, vector =append= with
   implicit length arguments inferred, not written.
 
-  References: [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] on Cur
+  References: [[https://github.com/raven6941/notes/blob/main/turnstile-plus.org][Turnstile+]] on Cur
   (unification, implicits); Kovács's
-  [[https://github.com/raven6941/notes/blob/main/background/kovacs-elaboration-zoo.org][elaboration-zoo]] for the
+  [[https://github.com/raven6941/notes/blob/main/kovacs-elaboration-zoo.org][elaboration-zoo]] for the
   algorithm (port its ideas; consult Norell's
-  [[https://github.com/raven6941/notes/blob/main/background/norell-thesis.org][thesis]] when the zoo's
+  [[https://github.com/raven6941/notes/blob/main/norell-thesis.org][thesis]] when the zoo's
   simplifications bite); Dunfield & Krishnaswami's
-  [[https://github.com/raven6941/notes/blob/main/background/dunfield-krishnaswami-bidirectional.org][bidirectional
+  [[https://github.com/raven6941/notes/blob/main/dunfield-krishnaswami-bidirectional.org][bidirectional
   discipline]] for how much can stay un-annotated.
 
   Risk note: this is where "convincingly" is won or lost. If unification
@@ -116,7 +116,7 @@
   Success: add a new type former without touching the core evaluator;
   reduction stays confluent on the test suite.
 
-  References: [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] §4.1
+  References: [[https://github.com/raven6941/notes/blob/main/turnstile-plus.org][Turnstile+]] §4.1
   (=define-red=, reflected names).
 
 * Experiment 5 — Indexed inductive families [DONE 2026-10-07]
@@ -144,7 +144,7 @@
   Question: can elaboration steps be reflected and scripted, Turnstile+-style?
 
   Only if 1–5 land. Their tactic system is the model
-  ([[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] §7).
+  ([[https://github.com/raven6941/notes/blob/main/turnstile-plus.org][Turnstile+]] §7).
 
   Concretization (proposed 2026-10-07, Lean 4-inspired): expose the
   elaborator's metavariable/hole state through a Nim API callable from
@@ -152,7 +152,7 @@
   metaprograms as ordinary compiled code, no VM. A =by= block runs Nim
   code that inspects goals and constructs =Term=s. The LSP server of
   Experiment 7 calls the same API the tactics use: one interface, two
-  clients. See [[https://github.com/raven6941/notes/blob/main/background/lean4-theorem-prover.org][Lean 4 note]].
+  clients. See [[https://github.com/raven6941/notes/blob/main/lean4-theorem-prover.org][Lean 4 note]].
 
 * Experiment 7 — interactive tooling without a bespoke editor
 
@@ -165,7 +165,7 @@
   Modern equivalents are Agda/Idris holes and Lean 4's infoview — Lean 4
   is the existence proof that LSP can carry rich interactive dependent
   programming (see the
-  [[https://github.com/raven6941/notes/blob/main/concepts/sheds-and-interactive-tooling.org][sheds note]]).
+  [[https://github.com/raven6941/notes/blob/main/sheds-and-interactive-tooling.org][sheds note]]).
 
   Build: a small LSP server over our elaborator exposing diagnostics
   (elaboration status, stuck constraints, errors at surface locations),
@@ -196,8 +196,8 @@
   the existing evaluator/printer/checker.
 
   References:
-  [[https://github.com/raven6941/notes/blob/main/background/carette-kiselyov-shan-finally-tagless.org][Carette/Kiselyov/Shan
-  2009]]; [[https://github.com/raven6941/notes/blob/main/design/encodings.org][encodings note]].
+  [[https://github.com/raven6941/notes/blob/main/carette-kiselyov-shan-finally-tagless.org][Carette/Kiselyov/Shan
+  2009]]; [[https://github.com/raven6941/notes/blob/main/encodings.org][encodings note]].
 
 * Experiment 9 (proposed 2026-10-07) — erasure-aware elaboration (QTT-lite)
 
@@ -215,8 +215,8 @@
   stage distinction — connects to the staging thread.
 
   References:
-  [[https://github.com/raven6941/notes/blob/main/background/quantitative-type-theory.org][QTT vision and practice
-  (McBride 2016; Brady 2021)]]; [[https://github.com/raven6941/notes/blob/main/design/alternative-cores.org][alternative
+  [[https://github.com/raven6941/notes/blob/main/quantitative-type-theory.org][QTT vision and practice
+  (McBride 2016; Brady 2021)]]; [[https://github.com/raven6941/notes/blob/main/alternative-cores.org][alternative
   cores]].
 
 * Experiment 10 (proposed 2026-10-07) — e-graph conversion cache
@@ -257,10 +257,10 @@
   annotated union-find for α-absorption of e-classes (binder problem).
 
   References:
-  [[https://github.com/raven6941/notes/blob/main/concepts/egraph-conversion-cache.org][e-graph conversion cache]];
-  [[https://github.com/raven6941/notes/blob/main/background/willsey-egg-2021.org][egg (Willsey et al.)]];
-  [[https://github.com/raven6941/notes/blob/main/background/rossel-lean-egg-2026.org][Lean-egg]];
-  [[https://github.com/raven6941/notes/blob/main/questions/elaboration-as-saturation.org][elaboration as saturation]]
+  [[https://github.com/raven6941/notes/blob/main/egraph-conversion-cache.org][e-graph conversion cache]];
+  [[https://github.com/raven6941/notes/blob/main/willsey-egg-2021.org][egg (Willsey et al.)]];
+  [[https://github.com/raven6941/notes/blob/main/rossel-lean-egg-2026.org][Lean-egg]];
+  [[https://github.com/raven6941/notes/blob/main/elaboration-as-saturation.org][elaboration as saturation]]
   (the ambitious sibling — research bet, not engineering).
 
 * Track B — alternative cores (decision gate before Experiment 3)
@@ -269,7 +269,7 @@
   (unification, reduction, and inductives all depend on the core's
   equality and datatype story). Before investing in 3–5, evaluate
   whether ETT is still the right core — see
-  [[https://github.com/raven6941/notes/blob/main/design/alternative-cores.org][the alternative-cores note]].
+  [[https://github.com/raven6941/notes/blob/main/alternative-cores.org][the alternative-cores note]].
 
   Candidates, in evaluation order: Observational Type Theory
   (ETT-done-right, same lineage), containers/polynomial functors (as
@@ -289,7 +289,7 @@
   different tool; stage each direction into efficient code à la Amin &
   Rompf 2018 (a direction is a "modified semantics"; staging it is the
   Futamura move). See
-  [[https://github.com/raven6941/notes/blob/main/concepts/relational-staged-interpreters.org][the concept note]].
+  [[https://github.com/raven6941/notes/blob/main/relational-staged-interpreters.org][the concept note]].
 
   Round-3 bridge (2026-10-07): egglog already unifies relations +
   union-find; Kmett's annotated union-find (groupoid relation
@@ -352,10 +352,10 @@
   tool). Start after Experiment 2 lands, in parallel with 3.
 
   References:
-  [[https://github.com/raven6941/notes/blob/main/background/byrd-relational-interpreters.org][Byrd et al. 2012]];
-  [[https://github.com/raven6941/notes/blob/main/background/amin-rompf-collapsing-towers.org][Amin & Rompf 2018]] §8
+  [[https://github.com/raven6941/notes/blob/main/byrd-relational-interpreters.org][Byrd et al. 2012]];
+  [[https://github.com/raven6941/notes/blob/main/amin-rompf-collapsing-towers.org][Amin & Rompf 2018]] §8
   (stage polymorphism via type classes — the =Sym[R]= analogy);
-  [[https://github.com/raven6941/notes/blob/main/background/brown-palsberg-typed-self-evaluation.org][Brown & Palsberg 2017]]
+  [[https://github.com/raven6941/notes/blob/main/brown-palsberg-typed-self-evaluation.org][Brown & Palsberg 2017]]
   (the typed endpoint).
 
 * Cross-cutting concerns (all experiments)
@@ -428,6 +428,6 @@
 
 * Related
   - [[file:research.org][Research question]]
-  - [[https://github.com/raven6941/notes/blob/main/design/staging.org][Staging]]
-  - [[https://github.com/raven6941/notes/blob/main/design/nim-macros.org][Nim macros]]
-  - [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]]
+  - [[https://github.com/raven6941/notes/blob/main/staging.org][Staging]]
+  - [[https://github.com/raven6941/notes/blob/main/nim-macros.org][Nim macros]]
+  - [[https://github.com/raven6941/notes/blob/main/turnstile-plus.org][Turnstile+]]

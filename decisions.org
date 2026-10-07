@@ -74,7 +74,7 @@
   pre-porting. Rule: keep the macro layer thin (parse string →
   elaborate → emit); avoid deep =NimNode= coupling (=getImpl=,
   =bindSym= internals, hygiene edge cases). See
-  [[https://github.com/raven6941/notes/blob/main/design/nimony-nim3-macro-future.org][Nimony note]].
+  [[https://github.com/raven6941/notes/blob/main/nimony-nim3-macro-future.org][Nimony note]].
 
 * PROPOSED 2026-10-07 — Track B gate resolution (awaiting Aaron)
 

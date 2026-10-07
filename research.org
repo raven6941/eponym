@@ -22,7 +22,7 @@
   - *Tooling that meets the user halfway.* Epigram's productivity story
     leaned on a bespoke editor that understood sheds. The question is
     whether LSP-based tooling fills that gap (see Experiment 7 and the
-    [[https://github.com/raven6941/notes/blob/main/concepts/sheds-and-interactive-tooling.org][sheds note]]).
+    [[https://github.com/raven6941/notes/blob/main/sheds-and-interactive-tooling.org][sheds note]]).
   - *Compile-time errors, in surface terms.* Ill-typed programs fail
     during compilation with messages about the user's code and source
     locations — never about generated internals.
@@ -37,13 +37,13 @@
 
   - Turnstile/Turnstile+ demonstrated that macros can host full type
     systems — including dependent ones — by reusing host infrastructure
-    (see [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+ notes]]).
+    (see [[https://github.com/raven6941/notes/blob/main/turnstile-plus.org][Turnstile+ notes]]).
   - Nim macros are compile-time programs with full AST access, so the
     elaborator itself can run *during* compilation
-    (see [[https://github.com/raven6941/notes/blob/main/design/nim-macros.org][Nim macro notes]]).
+    (see [[https://github.com/raven6941/notes/blob/main/nim-macros.org][Nim macro notes]]).
   - We have a solid, tested ETT core in the initial encoding to elaborate
-    into (see [[https://github.com/raven6941/notes/blob/main/design/encodings.org][encoding comparison]] and
-    [[https://github.com/raven6941/notes/blob/main/design/staging.org][staging]]).
+    into (see [[https://github.com/raven6941/notes/blob/main/encodings.org][encoding comparison]] and
+    [[https://github.com/raven6941/notes/blob/main/staging.org][staging]]).
 
 * Why it might not
 
@@ -56,6 +56,6 @@
 
 * Related
   - [[file:plan.org][Experiment plan]]
-  - [[https://github.com/raven6941/notes/blob/main/background/turnstile.org][Turnstile (2017)]]
-  - [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+ (2020)]]
-  - [[https://github.com/raven6941/notes/blob/main/design/staging.org][Staging]]
+  - [[https://github.com/raven6941/notes/blob/main/turnstile.org][Turnstile (2017)]]
+  - [[https://github.com/raven6941/notes/blob/main/turnstile-plus.org][Turnstile+ (2020)]]
+  - [[https://github.com/raven6941/notes/blob/main/staging.org][Staging]]
