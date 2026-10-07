@@ -154,6 +154,49 @@
   goal). They compose; the criterion is which core makes the wanted
   surface features expressible and elaborable.
 
+* Track C — relational × staged interpreters (language-design test-bed)
+
+  Question: can one relational spec of the language yield many
+  efficient tools — evaluator, checker, synthesizer — via staging, so
+  that iterating on the language design stays cheap?
+
+  Background: write the interpreter as a relation (=evalᵒ= à la Byrd,
+  Holk & Friedman 2012) and each *direction* of the relation becomes a
+  different tool; stage each direction into efficient code à la Amin &
+  Rompf 2018 (a direction is a "modified semantics"; staging it is the
+  Futamura move). See
+  [[https://github.com/raven6941/notes/blob/main/concepts/relational-staged-interpreters.org][the concept note]].
+
+  Build, in order:
+  1. Relational ETT evaluator in Nim: =evalᵒ(term, env, value)= with
+     logic variables, unification, =fresh=/=conde=. Directions:
+     forward evaluation; backward synthesis (programs from values).
+  2. Relational typing: =typeᵒ(term, ty, ctx)=. Modes: infer (term →
+     ty), check (term × ty → bool), synth (ty → term, i.e. proof
+     search).
+  3. Stage each mode with Nim macros: the relation is the single
+     source; generate per-mode efficient implementations at compile
+     time. Compare staged-check against the hand-written =infer= from
+     Experiment 2 on performance and error quality.
+  4. Iteration test: extend the relation with a new construct,
+     re-stage, confirm evaluator + checker + synthesizer all update.
+
+  Success: one spec change propagates to all tools; staged tools
+  within a small constant of hand-written ones; a synthesis demo
+  (e.g. synthesize =pairSwap= from its type).
+
+  Relationship to the main line: feeds Experiments 2–3 (infer/check
+  are modes of one relation; unification *is* relational), Experiment
+  6 (synth mode = tactic search), Experiment 7 (synthesis as an IDE
+  tool). Start after Experiment 2 lands, in parallel with 3.
+
+  References:
+  [[https://github.com/raven6941/notes/blob/main/background/byrd-relational-interpreters.org][Byrd et al. 2012]];
+  [[https://github.com/raven6941/notes/blob/main/background/amin-rompf-collapsing-towers.org][Amin & Rompf 2018]] §8
+  (stage polymorphism via type classes — the =Sym[R]= analogy);
+  [[https://github.com/raven6941/notes/blob/main/background/brown-palsberg-typed-self-evaluation.org][Brown & Palsberg 2017]]
+  (the typed endpoint).
+
 * Cross-cutting concerns (all experiments)
 
   - *Error messages.* Surface terms, source locations. Our =Term=s need
