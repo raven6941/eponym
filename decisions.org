@@ -76,6 +76,63 @@
   =bindSym= internals, hygiene edge cases). See
   [[https://github.com/raven6941/notes/blob/main/design/nimony-nim3-macro-future.org][Nimony note]].
 
+* PROPOSED 2026-10-07 — Track B gate resolution (awaiting Aaron)
+
+  Full evaluation in =track-b-gate.org=. Argument in brief: the
+  gate's blocking dependency is weaker than stated. Experiment 3
+  (unification) is elaborator-layer work against decidable
+  conversion, which both cores give; Experiment 4 (reduction) is
+  NbE + e-graph cache machinery, core-independent; only
+  Experiment 5 (inductives) genuinely needs the core/datatype
+  story settled, and containers compose with either core.
+  Proposed: no core swap for Experiments 3–4; OTT stays the
+  designated successor for equality-heavy surface work; containers
+  stay the Experiment 5 datatype mechanism. Decision held open for
+  Aaron — see the memo's two open questions.
+
+* Experiment 3 results (2026-10-07)
+  - Built =unify.nim= (Miller pattern unification: spine inversion,
+    occurs check, eta, zonk) + rewrote =elab.nim= as full bidirectional
+    =inferTm=/=checkTm= with implicit-argument insertion. Demos pass:
+    =polyId {A} (x:A)=, =constI {A}{B}=, =pairSwapI {A}{B}= applied
+    *without* type arguments (=polyId <>=, =constI <> <>=); unannotated
+    =lam x. x= and =let f = lam x. x in f <>= infer. All Experiment 2
+    programs still elaborate; =ett= macro accepts/rejects at compile
+    time. All 7 module test suites pass.
+  - Demos adapted from the plan: ETT core has no vectors and no
+    identity type, so =refl=/=cong=/vector-=append= are inexpressible.
+    The *mechanism* under test (implicit Pi insertion + Miller
+    unification solving the implicit args from explicit ones) is
+    identical for =polyId=/=constI=; vectors would only add datatype
+    boilerplate (Experiment 5). Recorded, not hidden.
+  - Metas live in the core =Term= (=tMeta= with occurrence spine) but
+    are zonked *before* the core's =check= ever runs; =eval=/=infer=
+    raise on =tMeta= as a safety net (never fires on the success
+    path). The core's soundness story is unchanged: what it checks is
+    meta-free. =impl= flags on Pi/Si/Lam are elaborator metadata —
+    preserved by every core structural operation, never interpreted.
+  - No surface syntax for explicit implicit application: implicits are
+    always inferred/inserted. Holes =_= elaborate to metas; leftover
+    unsolved metas (including in types) are errors carrying the
+    creation location.
+  - Two de Bruijn frame bugs found by testing, both worth remembering:
+    (a) extending the elaborator context must *weaken every stored
+    type* into the new frame (not just the new entry) — =ext= now maps
+    =weaken= over all entries; (b) =subst='s old "closed substitute"
+    contract was wrong for open terms: the substitute must be weakened
+    when going under binders (was invisible before because the only
+    substitutes were closed =R= nodes). Both are the same lesson:
+    every operation that moves a term across a binder boundary must
+    adjust the frame — audit all of them when touching substitution.
+  - The elaborator no longer needs =Supply= (fresh metas use the
+    meta store's own counter); only =elabCheck= keeps it for
+    =newDefRef= and core checking. Unification runs on syntax (Terms),
+    not values — rigid-rigid under binders is direct structural
+    recursion since de Bruijn makes V0 = V0.
+  - Proceeded on the current core per the Track B memo's *proposed*
+    resolution (Experiment 3 is core-independent elaborator work);
+    the memo still awaits Aaron's ratification.
+
 * Experiment 2 results (2026-10-07)
   - Built =elab.nim= (bidirectional-lite elaborator) + =ett_mac.nim=
     (=ett"..."= macro). All Experiment 1 programs (=twice=, =constFn=,

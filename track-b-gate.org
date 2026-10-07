@@ -1,0 +1,106 @@
+#+TITLE: Track B decision gate — core evaluation (2026-10-07)
+
+* The question
+
+  =plan.org= places a Track B decision gate before Experiment 3:
+  Experiments 3–5 are core-sensitive (unification, reduction,
+  inductives all depend on the core's equality and datatype story),
+  so "evaluate whether ETT is still the right core" before investing
+  there. See
+  [[https://github.com/raven6941/notes/blob/main/design/alternative-cores.org][the
+  alternative-cores note]] and the decisions log
+  ("ETT as starting core", 2026-10-07).
+
+* What the two research rounds changed
+
+  Round 1 retired the biggest unknown: OTT's metatheory risk.
+  Pujet & Tabareau 2022 (TTobs with normalization, decidable
+  conversion/checking, consistency, algorithmic canonicity,
+  mechanized in Agda, plus quotient types) makes OTT implementable
+  now, not a sketch — "the lowest-risk upgrade available."
+  Round 2 (egg/egglog/Lean-egg) added Experiment 10: the e-graph
+  conversion cache. Its key negative finding — nobody uses e-graphs
+  for kernel conversion in dependent types, and the gap has reasons
+  (binders, metas, termination, errors) — matters here: conversion
+  stays NbE-backed in both cores, so the conversion cache is
+  core-independent too.
+  (Sources: notes/design/alternative-cores.org,
+  notes/background/pujet-tabareau-ott-now-for-good.org,
+  notes/concepts/egraph-conversion-cache.org.)
+
+* Per-experiment analysis
+
+** Experiment 3 — implicits, metavariables, unification
+
+   This is elaborator-layer work: metavariables in =Term=, pattern
+   unification à la McBride/Norell, implicit-argument insertion,
+   bidirectional elaboration. Unification happens *against* the
+   core's conversion, and both cores give decidable conversion
+   (ETT via our NbE =areEqual=; OTT via Pujet & Tabareau).
+   Nothing in the unification algorithm is ETT-specific — the
+   elaborator already targets the initial =Term= encoding (decisions
+   log, "Initial encoding as elaborator target"), and the
+   alternative-cores note itself says the elaborator architecture is
+   "largely core-independent."
+
+   Verdict: NO core blocker. Experiment 3 can proceed on ETT.
+
+** Experiment 4 — extensible reduction
+
+   NbE evaluator + e-graph conversion cache (Experiment 10) are the
+   machinery; both are core-independent in implementation, and
+   orthogonal to the core choice. OTT's observational equality would
+   make equality *compute* more at the type former — a different
+   reduction behavior to *extend toward*, not a prerequisite to
+   *start from*.
+
+   Verdict: NO core blocker. Proceed on ETT; keep OTT's reduction
+   behavior as a later extension target.
+
+** Experiment 5 — inductives / datatypes
+
+   This is where the core choice actually bites: ETT's datatype
+   story is "extend the core per family"; containers give one
+   generic description language + one generic eliminator; OTT's
+   equality changes what datatype equalities compute to. But the
+   containers layer composes with *either* core (alternative-cores
+   note; Abbott containers background note).
+
+   Verdict: decision deferred to just before Experiment 5, with the
+   recommendation unchanged: containers as the datatype mechanism
+   on whichever core we run, and if equality-with-computational-content
+   is wanted by then, OTT as the core swap.
+
+* The one thing ETT is genuinely weak at
+
+  Equality: =coe= bureaucracy, no funext. OTT is the Epigram-lineage
+  fix (Altenkirch, McBride & Swierstra — two of three Reloaded
+  authors). Nothing in Experiments 1–4 needs funext; it becomes
+  real only when surface programs want it (Experiment 6+ tactic
+  work, or dependent pairs with dependent ranges).
+
+* Proposed gate resolution
+
+  1. No core swap for Experiments 3–4. The gate's blocking
+     dependency is weaker than stated: the unification and reduction
+     experiments are elaborator/conversion work, and both are
+     core-independent. Start Experiment 3 on the ETT core now.
+  2. Keep OTT as the designated successor core for equality-heavy
+     surface work (funext, computational equality); re-open the
+     gate explicitly if a surface feature demands it.
+  3. Containers remain the planned datatype mechanism for
+     Experiment 5, composing with either core.
+  4. QTT-lite multiplicities (Experiment 9) stay a separate,
+     orthogonal extension track.
+
+  If accepted: record as a decisions.org entry, mark Track B gate
+  resolved in =plan.org=, and open the =exp-03= branch.
+
+* Open questions for Aaron
+
+  - Accept the resolution as stated, or swap to OTT *now* and
+    absorb the porting cost (re-implement =ett_init.nim='s checker
+    with observational equality) before Experiment 3?
+  - If we stay on ETT: should the OTT port live as an explicit
+    tracked experiment (Experiment 11?) or stay an unnumbered
+    future option?

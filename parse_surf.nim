@@ -4,16 +4,17 @@
 # Surface syntax:
 #   program := def+
 #   def     := "def" name tele ":" term ":=" term
-#   tele    := ("(" name ":" term ")")*
+#   tele    := (binder)*
+#   binder  := "(" name ":" term ")" | "{" name ":" term "}"  -- {} = implicit
 #   term    := arrow
 #   arrow   := app ("->" arrow)?              -- right associative
 #   app     := atom+
 #   atom    := "(" term ")" | "(" term "," term ")" | "(" term ":" term ")"
-#            | "lam" "(" name ":" term ")" "." term
-#            | "Pi" "(" name ":" term ")" "." term
+#            | "lam" binder "." term | "Pi" binder "." term
 #            | "Sig" "(" name ":" term ")" "." term
 #            | "let" name (":" term)? "=" term "in" term
 #            | "fst" atom | "snd" atom
+#            | "_"                                     -- hole (Experiment 3)
 #            | name | "?" | "1" | "<>" | "O"
 # Comments: `--` to end of line.
 
@@ -24,7 +25,8 @@ type
     tkEof, tkIdent,
     tkDef, tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
-    tkLParen, tkRParen, tkColon, tkColonEq, tkDot, tkComma, tkArrow, tkEq
+    tkLParen, tkRParen, tkLBrace, tkRBrace,
+    tkColon, tkColonEq, tkDot, tkComma, tkArrow, tkEq
   Token = object
     kind: TokKind
     lexeme: string
@@ -89,6 +91,12 @@ proc lex(src: string): seq[Token] =
     elif c == ')':
       result.add Token(kind: tkRParen, lexeme: ")", loc: curLoc())
       inc col; inc i
+    elif c == '{':
+      result.add Token(kind: tkLBrace, lexeme: "{", loc: curLoc())
+      inc col; inc i
+    elif c == '}':
+      result.add Token(kind: tkRBrace, lexeme: "}", loc: curLoc())
+      inc col; inc i
     elif c == ',':
       result.add Token(kind: tkComma, lexeme: ",", loc: curLoc())
       inc col; inc i
@@ -131,10 +139,25 @@ proc isAtomStart(k: TokKind): bool =
 
 proc parseTerm(p: var Parser): PreTerm  # forward
 
+proc parseBinder(p: var Parser): tuple[name: string, ty: PreTerm, impl: bool] =
+  ## "(" name ":" term ")" | "{" name ":" term "}"  (braces = implicit)
+  let t = p.next()
+  let impl = t.kind == tkLBrace
+  if not impl and t.kind != tkLParen:
+    raise fail(t.loc, "expected '(' or '{', got '" & t.lexeme & "'")
+  let xn = p.expect(tkIdent, "binder name")
+  discard p.expect(tkColon, "':'")
+  let ty = p.parseTerm()
+  if impl: discard p.expect(tkRBrace, "'}'")
+  else: discard p.expect(tkRParen, "')'")
+  (xn.lexeme, ty, impl)
+
 proc parseAtom(p: var Parser): PreTerm =
   let t = p.next()
   case t.kind
-  of tkIdent: mkVar(t.lexeme, t.loc)
+  of tkIdent:
+    if t.lexeme == "_": mkHole(t.loc)  # hole (Experiment 3)
+    else: mkVar(t.lexeme, t.loc)
   of tkUniv: mkUniv(t.loc)
   of tkUnitTy: mkUnitTy(t.loc)
   of tkUnitV: mkUnitV(t.loc)
@@ -153,18 +176,25 @@ proc parseAtom(p: var Parser): PreTerm =
       discard p.expect(tkRParen, "')'")
       mkAnn(e, ty, t.loc)
     else: raise fail(t2.loc, "expected ',', ':', or ')', got '" & t2.lexeme & "'")
-  of tkLam, tkPi, tkSig:
-    discard p.expect(tkLParen, "'('")
-    let xn = p.expect(tkIdent, "binder name")
-    discard p.expect(tkColon, "':'")
-    let ty = p.parseTerm()
-    discard p.expect(tkRParen, "')'")
+  of tkLam:
+    # lam x. body (unannotated, Experiment 3) | lam (x : T). body | lam {x : T}. body
+    if p.peek().kind == tkIdent:
+      let xn = p.next()
+      discard p.expect(tkDot, "'.'")
+      mkLam(xn.lexeme, nil, p.parseTerm(), t.loc)
+    else:
+      let b = p.parseBinder()
+      discard p.expect(tkDot, "'.'")
+      mkLam(b.name, b.ty, p.parseTerm(), t.loc, b.impl)
+  of tkPi, tkSig:
+    let b = p.parseBinder()
+    if b.impl and t.kind == tkSig:
+      raise fail(t.loc, "implicit Sigma binders are not supported")
     discard p.expect(tkDot, "'.'")
     let body = p.parseTerm()
     case t.kind
-    of tkLam: mkLam(xn.lexeme, ty, body, t.loc)
-    of tkPi: mkPi(xn.lexeme, ty, body, t.loc)
-    else: mkSigma(xn.lexeme, ty, body, t.loc)
+    of tkPi: mkPi(b.name, b.ty, body, t.loc, b.impl)
+    else: mkSigma(b.name, b.ty, body, t.loc)
   of tkFst:
     mkFst(p.parseAtom(), t.loc)
   of tkSnd:
@@ -200,14 +230,10 @@ proc parseTerm(p: var Parser): PreTerm =
 proc parseDef(p: var Parser): SurfDef =
   let t = p.expect(tkDef, "'def'")
   let nm = p.expect(tkIdent, "definition name")
-  var tele: seq[tuple[name: string, ty: PreTerm]] = @[]
-  while p.peek().kind == tkLParen:
-    discard p.next()
-    let xn = p.expect(tkIdent, "binder name")
-    discard p.expect(tkColon, "':'")
-    let ty = p.parseTerm()
-    discard p.expect(tkRParen, "')'")
-    tele.add (xn.lexeme, ty)
+  var tele: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
+  while p.peek().kind in {tkLParen, tkLBrace}:
+    let b = p.parseBinder()
+    tele.add b
   discard p.expect(tkColon, "':'")
   let retTy = p.parseTerm()
   discard p.expect(tkColonEq, "':='")
@@ -273,5 +299,20 @@ def withLet (A : ?) (x : A) : A :=
   # round trip through the renderer
   let rt = parseProgram("def id (A : ?) (x : A) : A := x")
   assert $rt[0].desugarTm() == "lam (A : ?). lam (x : A). x"
+
+  # implicit binders and holes (Experiment 3)
+  let imp = parseProgram("""
+def polyId {A : ?} (x : A) : A := x
+def useHole : 1 := _
+def impPi : Pi {A : ?}. A -> A := lam {A : ?}. lam (x : A). x
+""")
+  assert imp.len == 3
+  assert imp[0].tele[0].impl
+  assert not imp[0].tele[1].impl
+  assert $imp[0].desugarTy() == "Pi {A : ?}. Pi (x : A). A"
+  assert $imp[0].desugarTm() == "lam {A : ?}. lam (x : A). x"
+  assert imp[1].body.kind == pkHole
+  assert $imp[2].desugarTy() == "Pi {A : ?}. A -> A"
+  assert $imp[2].desugarTm() == "lam {A : ?}. lam (x : A). x"
 
   echo "parse_surf: all tests passed"

@@ -21,10 +21,19 @@
 # lives directly in the R node instead of a separate Reference table.
 #===============================================================================
 
+import sequtils
+
 type
   Const* = enum cStar, cOne, cVoid, cZero   # ?  1  hi  O
   TermKind* = enum
-    tR, tV, tPi, tSi, tLam, tPair, tApp, tFst, tSnd, tAbsurd, tC, tLet
+    tR, tV, tPi, tSi, tLam, tPair, tApp, tFst, tSnd, tAbsurd, tC, tLet,
+    tMeta
+    ## tMeta: an elaborator metavariable (Experiment 3). The core never
+    ## assigns or evaluates them: the elaborator zonks (substitutes all
+    ## solutions) before calling check/infer, and every core operation
+    ## raises on tMeta as a safety net if the invariant is violated.
+    ## tPi/tSi/tLam carry `impl`: implicit-binder metadata written by
+    ## the elaborator and preserved (but never interpreted) by the core.
   WhnfKind = enum wRef, wPi, wSi, wLam, wPair, wConst
   ElimVKind = enum eApp, eFst, eSnd, eAbsurd
   Scope* = object
@@ -33,27 +42,31 @@ type
   Term* = ref object
     case kind*: TermKind
     of tR:
-      refId: int
-      refTyp: Value
-      refIsDefn: bool
-      refVal: Value
+      refId*: int
+      refTyp*: Value
+      refIsDefn*: bool
+      refVal*: Value
     of tV:
-      idx: int
+      idx*: int
     of tPi, tSi, tLam:
       dom*: Term
       scope*: Scope
+      impl*: bool
+    of tMeta:
+      metaId*: int
+      metaSpine*: seq[Term]  # innermost-first; one entry per creation-var
     of tPair:
-      pFst, pSnd: Term
-      pScope: Scope
+      pFst*, pSnd*: Term
+      pScope*: Scope
     of tApp:
-      fn, arg: Term
+      fn*, arg*: Term
     of tFst, tSnd, tAbsurd:
-      sub: Term
+      sub*: Term
     of tC:
-      c: Const
+      c*: Const
     of tLet:
-      letVal, letTy: Term
-      letScope: Scope
+      letVal*, letTy*: Term
+      letScope*: Scope
   ElimV = object
     case kind: ElimVKind
     of eApp:
@@ -78,7 +91,7 @@ type
     of wConst:
       c: Const
   Value* = ref object
-    syn: Term    # the syntax, glued (§6.6) -- makes instantiation easy
+    syn*: Term   # the syntax, glued (§6.6) -- makes instantiation easy
     whnf: Whnf
 
 ## --- constructors ------------------------------------------------------------
@@ -88,18 +101,20 @@ proc mkR(id: int, typ: Value, isDefn: bool, dval: Value): Term =
 
 proc vv*(i: int): Term = Term(kind: tV, idx: i)
 
-proc tmPi*(dom: Term, adv: string, bdy: Term): Term =
-  Term(kind: tPi, dom: dom, scope: Scope(adv: adv, bdy: bdy))
-proc tmSi*(dom: Term, adv: string, bdy: Term): Term =
-  Term(kind: tSi, dom: dom, scope: Scope(adv: adv, bdy: bdy))
-proc tmLam*(dom: Term, adv: string, bdy: Term): Term =
-  Term(kind: tLam, dom: dom, scope: Scope(adv: adv, bdy: bdy))
+proc tmPi*(dom: Term, adv: string, bdy: Term, impl = false): Term =
+  Term(kind: tPi, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl)
+proc tmSi*(dom: Term, adv: string, bdy: Term, impl = false): Term =
+  Term(kind: tSi, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl)
+proc tmLam*(dom: Term, adv: string, bdy: Term, impl = false): Term =
+  Term(kind: tLam, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl)
+proc tmMeta*(id: int, spine: seq[Term]): Term =
+  Term(kind: tMeta, metaId: id, metaSpine: spine)
 
-proc mkBinder(k: TermKind, dom: Term, sc: Scope): Term =
+proc mkBinder*(k: TermKind, dom: Term, sc: Scope, impl: bool): Term =
   case k
-  of tPi: tmPi(dom, sc.adv, sc.bdy)
-  of tSi: tmSi(dom, sc.adv, sc.bdy)
-  of tLam: tmLam(dom, sc.adv, sc.bdy)
+  of tPi: tmPi(dom, sc.adv, sc.bdy, impl)
+  of tSi: tmSi(dom, sc.adv, sc.bdy, impl)
+  of tLam: tmLam(dom, sc.adv, sc.bdy, impl)
   else: raise newException(ValueError, "mkBinder: not a binder")
 
 proc tmPair*(fstT, sndT: Term, adv: string, ranBdy: Term): Term =
@@ -126,19 +141,20 @@ proc `$`(c: Const): string =
   of cVoid: "hi"
   of cZero: "O"
 
-proc `$`(t: Term): string  # forward (mutual with Scope)
+proc `$`*(t: Term): string  # forward (mutual with Scope)
 
 proc `$`(s: Scope): string = s.adv & ". " & $s.bdy
 
-proc `$`(t: Term): string =
+proc `$`*(t: Term): string =
   if t == nil: return "<nil>"
   case t.kind
   of tR: "R" & $t.refId
   of tV: "V" & $t.idx
   of tC: $t.c
-  of tPi: "Pi(" & $t.dom & ", " & $t.scope & ")"
-  of tSi: "Si(" & $t.dom & ", " & $t.scope & ")"
-  of tLam: "L(" & $t.dom & ", " & $t.scope & ")"
+  of tPi: (if t.impl: "Pi{" else: "Pi(") & $t.dom & ", " & $t.scope & ")"
+  of tSi: (if t.impl: "Si{" else: "Si(") & $t.dom & ", " & $t.scope & ")"
+  of tLam: (if t.impl: "L{" else: "L(") & $t.dom & ", " & $t.scope & ")"
+  of tMeta: "?m" & $t.metaId
   of tPair: "P(" & $t.pFst & ", " & $t.pSnd & ", " & $t.pScope & ")"
   of tApp: "(" & $t.fn & " :$ A " & $t.arg & ")"
   of tFst: "(" & $t.sub & " :$ P0)"
@@ -178,27 +194,36 @@ proc freshDefn(s: var Supply, v, ty: Value): Value =
 
 ## --- substitution, instantiation, abstraction (§6.4.1) -----------------------
 
-proc subst(t: Term, depth: int, s: Term): Term =
-  ## substitute closed term s for V depth; drop indices above depth
+proc weaken*(t: Term): Term  # forward (used by subst)
+
+proc subst*(t: Term, depth: int, s: Term): Term =
+  ## Substitute s for V depth; drop indices above depth. s may be open: it
+  ## is weakened on going under binders. (The old contract said "closed s";
+  ## Experiment 3 instantiates Pi/Sigma codomains with open elaborated
+  ## arguments, so the substitute is weakened like any other free term.)
+  ## Exported for the elaborator.
   case t.kind
   of tV:
     if t.idx == depth: s
     elif t.idx > depth: vv(t.idx - 1)
     else: t
   of tR, tC: t
+  of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(subst(it, depth, s)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, subst(t.dom, depth, s),
-             Scope(adv: t.scope.adv, bdy: subst(t.scope.bdy, depth + 1, s)))
+             Scope(adv: t.scope.adv,
+                   bdy: subst(t.scope.bdy, depth + 1, weaken(s))),
+             t.impl)
   of tPair:
     tmPair(subst(t.pFst, depth, s), subst(t.pSnd, depth, s),
-           t.pScope.adv, subst(t.pScope.bdy, depth + 1, s))
+           t.pScope.adv, subst(t.pScope.bdy, depth + 1, weaken(s)))
   of tApp: tmApp(subst(t.fn, depth, s), subst(t.arg, depth, s))
   of tFst: tmFst(subst(t.sub, depth, s))
   of tSnd: tmSnd(subst(t.sub, depth, s))
   of tAbsurd: tmAbsurd(subst(t.sub, depth, s))
   of tLet:
     tmLet(subst(t.letVal, depth, s), subst(t.letTy, depth, s),
-          t.letScope.adv, subst(t.letScope.bdy, depth + 1, s))
+          t.letScope.adv, subst(t.letScope.bdy, depth + 1, weaken(s)))
 
 proc instantiate(sc: Scope, v: Value): Term =
   ## sc // v : instantiate the bound variable with (the syntax of) v
@@ -212,9 +237,11 @@ proc absGo(t: Term, id: int, depth: int): Term =
   of tV:
     if t.idx >= depth: vv(t.idx + 1) else: t
   of tC: t
+  of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(absGo(it, id, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, absGo(t.dom, id, depth),
-             Scope(adv: t.scope.adv, bdy: absGo(t.scope.bdy, id, depth + 1)))
+             Scope(adv: t.scope.adv, bdy: absGo(t.scope.bdy, id, depth + 1)),
+             t.impl)
   of tPair:
     tmPair(absGo(t.pFst, id, depth), absGo(t.pSnd, id, depth),
            t.pScope.adv, absGo(t.pScope.bdy, id, depth + 1))
@@ -239,9 +266,11 @@ proc substEnv(t: Term, env: seq[Value], depth: int): Term =
     elif j < depth + env.len: env[j - depth].syn
     else: vv(j - env.len)
   of tR, tC: t
+  of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(substEnv(it, env, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, substEnv(t.dom, env, depth),
-             Scope(adv: t.scope.adv, bdy: substEnv(t.scope.bdy, env, depth + 1)))
+             Scope(adv: t.scope.adv, bdy: substEnv(t.scope.bdy, env, depth + 1)),
+             t.impl)
   of tPair:
     tmPair(substEnv(t.pFst, env, depth), substEnv(t.pSnd, env, depth),
            t.pScope.adv, substEnv(t.pScope.bdy, env, depth + 1))
@@ -257,6 +286,61 @@ proc envAdd(env: seq[Value], v: Value): seq[Value] =
   # Prepend: env[0] is always the *innermost* binding, so V i = env[i].
   # (Appending would require indexing from the back in tV/substEnv.)
   @[v] & env
+
+proc weakenAt(t: Term, depth: int): Term =
+  ## shift free de Bruijn indices >= depth up by one
+  case t.kind
+  of tV:
+    if t.idx >= depth: vv(t.idx + 1) else: t
+  of tR, tC: t
+  of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(weakenAt(it, depth)))
+  of tPi, tSi, tLam:
+    mkBinder(t.kind, weakenAt(t.dom, depth),
+             Scope(adv: t.scope.adv, bdy: weakenAt(t.scope.bdy, depth + 1)),
+             t.impl)
+  of tPair:
+    tmPair(weakenAt(t.pFst, depth), weakenAt(t.pSnd, depth),
+           t.pScope.adv, weakenAt(t.pScope.bdy, depth + 1))
+  of tApp: tmApp(weakenAt(t.fn, depth), weakenAt(t.arg, depth))
+  of tFst: tmFst(weakenAt(t.sub, depth))
+  of tSnd: tmSnd(weakenAt(t.sub, depth))
+  of tAbsurd: tmAbsurd(weakenAt(t.sub, depth))
+  of tLet:
+    tmLet(weakenAt(t.letVal, depth), weakenAt(t.letTy, depth),
+          t.letScope.adv, weakenAt(t.letScope.bdy, depth + 1))
+
+proc weaken*(t: Term): Term =
+  ## shift all free de Bruijn indices up by one (Experiment 3: eta-expansion
+  ## in the unifier)
+  weakenAt(t, 0)
+
+proc substSpine*(t: Term, spine: seq[Term]): Term =
+  ## Substitute spine[i] for V i all at once; drop indices >= spine.len.
+  ## (Experiment 3: instantiating a solved metavariable's solution with the
+  ## occurrence spine.)
+  case t.kind
+  of tV:
+    if t.idx < spine.len: spine[t.idx]
+    else: vv(t.idx - spine.len)
+  of tR, tC: t
+  of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(substSpine(it, spine)))
+  of tPi, tSi, tLam:
+    let sp = @[vv(0)] & spine.mapIt(weaken(it))
+    mkBinder(t.kind, substSpine(t.dom, spine),
+             Scope(adv: t.scope.adv, bdy: substSpine(t.scope.bdy, sp)),
+             t.impl)
+  of tPair:
+    let sp = @[vv(0)] & spine.mapIt(weaken(it))
+    tmPair(substSpine(t.pFst, spine), substSpine(t.pSnd, spine),
+           t.pScope.adv, substSpine(t.pScope.bdy, sp))
+  of tApp: tmApp(substSpine(t.fn, spine), substSpine(t.arg, spine))
+  of tFst: tmFst(substSpine(t.sub, spine))
+  of tSnd: tmSnd(substSpine(t.sub, spine))
+  of tAbsurd: tmAbsurd(substSpine(t.sub, spine))
+  of tLet:
+    let sp = @[vv(0)] & spine.mapIt(weaken(it))
+    tmLet(substSpine(t.letVal, spine), substSpine(t.letTy, spine),
+          t.letScope.adv, substSpine(t.letScope.bdy, sp))
 
 ## --- evaluation (§6.6) -------------------------------------------------------
 
@@ -315,6 +399,11 @@ proc evalWhnf(t: Term, env: seq[Value]): Whnf =
   of tSnd: projWhnf(eval(t.sub, env), false)
   of tAbsurd: vAbsurdV(eval(t.sub, env)).whnf
   of tLet: evalWhnf(t.letScope.bdy, envAdd(env, eval(t.letVal, env)))
+  of tMeta:
+    # The elaborator zonks (substitutes all solutions) before any core
+    # operation; reaching here means the invariant was violated.
+    raise newException(ValueError,
+      "cannot evaluate open metavariable ?m" & $t.metaId)
 
 proc eval(t: Term, env: seq[Value]): Value =
   ## eval t γ = close t γ ⇓ whnv t γ  (paper §6.6)
@@ -474,6 +563,9 @@ proc infer(s: var Supply, t: Term): Value =
   of tAbsurd:
     isZero(infer(s, t.sub))
     vAbsurd()
+  of tMeta:
+    raise newException(ValueError,
+      "metavariable ?m" & $t.metaId & " escaped into core inference")
   of tLet:
     let styv = check(s, vStar(), t.letTy)
     let sv = check(s, styv, t.letVal)
