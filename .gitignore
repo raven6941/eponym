@@ -17,3 +17,5 @@ src/preterm
 src/parse_surf
 src/mac_surf
 tests/run_examples
+src/lsp
+src/egraph
