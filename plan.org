@@ -70,7 +70,13 @@
   implicit length arguments inferred, not written.
 
   References: [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] on Cur
-  (unification, implicits); Kovács's elaboration-zoo for the algorithm.
+  (unification, implicits); Kovács's
+  [[https://github.com/raven6941/notes/blob/main/background/kovacs-elaboration-zoo.org][elaboration-zoo]] for the
+  algorithm (port its ideas; consult Norell's
+  [[https://github.com/raven6941/notes/blob/main/background/norell-thesis.org][thesis]] when the zoo's
+  simplifications bite); Dunfield & Krishnaswami's
+  [[https://github.com/raven6941/notes/blob/main/background/dunfield-krishnaswami-bidirectional.org][bidirectional
+  discipline]] for how much can stay un-annotated.
 
   Risk note: this is where "convincingly" is won or lost. If unification
   at compile time is painful or slow, that *is* the result — record it.
@@ -108,12 +114,30 @@
   Note: this may force extending the ETT core. That is a finding, not a
   failure — record what the core lacked.
 
+  De-risk option (proposed 2026-10-07): containers first. Implement
+  strictly positive datatypes via container functors (shapes +
+  positions, one generic eliminator — Abbott, Altenkirch & Ghani,
+  [[https://github.com/raven6941/notes/blob/main/background/abbott-containers.org][containers]];
+  indexed containers for families like =Vec=). If the generic
+  eliminator checks and computes, Experiment 5's hardest part
+  collapses into "elaborate =data= declarations to container
+  descriptions"; per-family compilation only if the generic route
+  proves inadequate.
+
 * Experiment 6 (stretch) — Tactics and reflection
 
   Question: can elaboration steps be reflected and scripted, Turnstile+-style?
 
   Only if 1–5 land. Their tactic system is the model
   ([[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] §7).
+
+  Concretization (proposed 2026-10-07, Lean 4-inspired): expose the
+  elaborator's metavariable/hole state through a Nim API callable from
+  macros, so users write elaboration-time tactics *in Nim* —
+  metaprograms as ordinary compiled code, no VM. A =by= block runs Nim
+  code that inspects goals and constructs =Term=s. The LSP server of
+  Experiment 7 calls the same API the tactics use: one interface, two
+  clients. See [[https://github.com/raven6941/notes/blob/main/background/lean4-theorem-prover.org][Lean 4 note]].
 
 * Experiment 7 — interactive tooling without a bespoke editor
 
@@ -138,6 +162,47 @@
 
   This experiment is the tooling half of "convincingly": a useful system
   anyone would actually want to use needs it.
+
+* Experiment 8 (proposed 2026-10-07) — staged ETT evaluator via tagless-final
+
+  Question: can our finally-tagless core do what Carette, Kiselyov &
+  Shan showed — evaluator, compiler, partial evaluator as *instances*
+  of one =Sym[R]= interface?
+
+  Build: a staging/partial-evaluation instance for =ett.nim='s
+  =Sym[R]=, producing residual code from ETT terms — a compiler from
+  ETT obtained as just another interpretation. Keeps both encodings
+  productive (initial for elaboration, tagless-final for staged
+  interpretation) and prototypes the "stage the interpreter, get a
+  compiler" moral for our core.
+
+  Success: staged evaluation of a test program yields residual code
+  with the interpretive overhead removed; the instance composes with
+  the existing evaluator/printer/checker.
+
+  References:
+  [[https://github.com/raven6941/notes/blob/main/background/carette-kiselyov-shan-finally-tagless.org][Carette/Kiselyov/Shan
+  2009]]; [[https://github.com/raven6941/notes/blob/main/design/encodings.org][encodings note]].
+
+* Experiment 9 (proposed 2026-10-07) — erasure-aware elaboration (QTT-lite)
+
+  Question: can we get QTT's killer feature — erasure — with a
+  weeks-scale experiment instead of a theory change?
+
+  Build: add 0/1/ω multiplicities to binders in the ETT core (or
+  start with just 0 = erased, following Idris 2); check usage during
+  elaboration; erase 0-quantity subterms at emission.
+
+  Success: =Vec= length indices and equality proofs erase; the
+  emitted/evaluated code carries no proof overhead. This tests Track
+  B's QTT direction cheaply and serves the "useful system" bar
+  directly (performance of resulting programs). Note: erasure *is* a
+  stage distinction — connects to the staging thread.
+
+  References:
+  [[https://github.com/raven6941/notes/blob/main/background/quantitative-type-theory.org][QTT vision and practice
+  (McBride 2016; Brady 2021)]]; [[https://github.com/raven6941/notes/blob/main/design/alternative-cores.org][alternative
+  cores]].
 
 * Track B — alternative cores (decision gate before Experiment 3)
 
@@ -210,7 +275,11 @@
     story.
   - *The convincing bar.* A small Software-Foundations-style corpus —
     Turnstile+ did volume 1 in Cur; even a fragment of one is a strong
-    signal.
+    signal. Include an *annotation-burden measurement* (proposed
+    2026-10-07): port the Dunfield & Krishnaswami "annotations only at
+    redexes" discipline and measure how much the user must write over
+    the corpus — the most direct operationalization of "useful system
+    anyone would want to use".
 
 * Explicit non-goals
 
