@@ -44,10 +44,18 @@ Requires Nim 2.x (built with 2.2.12 via
 
 ```sh
 export PATH=$HOME/.nimble/bin:$PATH
-nim c -r elab.nim       # elaborator: all suites
-nim c -r ett.nim        # finally-tagless ETT: 16 tests
-nim c -r ett_init.nim   # initial-encoding ETT: 16 tests
+nim c -r elab.nim        # elaborator: all suites
+nim c -r run_examples.nim # 11 documented example programs
+nim c -r ett.nim         # finally-tagless ETT: 16 tests
+nim c -r ett_init.nim    # initial-encoding ETT: 16 tests
 ```
+
+## Examples
+
+See `examples/` — 11 self-contained `.ep` programs with header
+comments, from basic `twice` through indexed `Vec` with `append`.
+They're the regression suite (`run_examples.nim`) and the
+documentation of what the system can do.
 
 ## Layout
 
