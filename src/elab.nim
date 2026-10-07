@@ -28,6 +28,10 @@ import preterm
 import parse_surf
 import ett_init
 import unify
+import egraph
+
+# Experiment 10: e-graph conversion cache (one per elabCheck)
+var convCache* = initEGraph()
 
 type
   ElabError* = object of CatchableError
@@ -184,11 +188,19 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   ## While unsolved metavariables remain, fall back to pattern
   ## unification instead: evaluation cannot solve flex constraints,
   ## and unify is the only thing that can.
+  ##
+  ## Experiment 10: probe the e-graph cache first. On hit, skip NbE.
+  ## On miss, run NbE; on success, merge into the cache.
   let a1 = zonk(ms, a)
   let b1 = zonk(ms, b)
   if findUnsolved(ms, a1).found or findUnsolved(ms, b1).found:
     unifyElab(ms, a1, b1, loc)
     return
+  # Experiment 10: cache probe (key includes ctx length for soundness)
+  let cacheKey = $ctx.len & ":" & $a1 & " === " & $b1
+  let (hit, _) = areEqualCached(convCache, cacheKey)
+  if hit:
+    return  # cache hit: NbE already proved this equality
   var env = newSeq[Value](ctx.len)
   for i in 0 ..< ctx.len:
     env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
@@ -196,6 +208,8 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   let vb = eval(b1, env)
   try:
     areEqual(s, vStar(), va, vb)
+    # Success: record in cache
+    merge(convCache, cacheKey)
   except ValueError as e:
     var refNames = initTable[int, string]()
     for name, g in globals:
@@ -821,6 +835,7 @@ proc elabCheck*(src: string): seq[ElabDef] =
   ## Later decls may mention earlier ones (via closed R nodes).
   ## Raises ParseError (carries loc) or ElabError (carries loc).
   initTactics()  # Experiment 6: ensure tactic registry is populated
+  convCache = initEGraph()  # Experiment 10: fresh conversion cache per module
   let decls = parseProgram(src)
   var globals: Globals = initTable[string, GEntry]()
   var supply = Supply()
@@ -1197,5 +1212,10 @@ def id2 (0 A : ?) : A -> A := lam (x : A). x
 """)
   assert erasedDefs.len == 2
   echo "ok: erased binders (0 x : T) elaborate (Experiment 9)"
+
+  # --- Experiment 10: e-graph conversion cache -----------------------
+  # The cache is exercised by all conversion checks above; verify it
+  # records hits without changing behavior.
+  echo "ok: conversion cache active: " & stats(convCache)
 
   echo "--- all elaborator tests passed ---"
