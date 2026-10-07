@@ -35,7 +35,7 @@ type
     ## raises on tMeta as a safety net if the invariant is violated.
     ## tPi/tSi/tLam carry `impl`: implicit-binder metadata written by
     ## the elaborator and preserved (but never interpreted) by the core.
-  WhnfKind = enum wRef, wPi, wSi, wLam, wPair, wConst, wRed
+  WhnfKind* = enum wRef, wPi, wSi, wLam, wPair, wConst, wRed
   ## A registered reduction rule (Experiment 4): an eliminator applied to
   ## `nargs` arguments (last = scrutinee) reduces according to `cases`
   ## when the scrutinee's head is a registered constructor. Each case maps
@@ -193,6 +193,11 @@ proc newDefRef*(s: var Supply, typ, val: Value): Term =
   ## A closed definition reference for the elaborator's global scope:
   ## earlier elaborated defs become R nodes later defs can mention.
   mkR(freshId(s), typ, true, val)
+
+proc whnfKind*(v: Value): WhnfKind = v.whnf.kind
+proc whnfRefId*(v: Value): int = v.whnf.refId
+proc whnfSpineLen*(v: Value): int = v.whnf.spine.len
+proc whnfSpineArg*(v: Value, i: int): Value = v.whnf.spine[i].arg
 
 proc newPostulateRef*(s: var Supply, typ: Value): Term =
   ## Experiment 4: a parameter-like global (type former or constructor).
@@ -396,7 +401,7 @@ proc evalScope(sc: Scope, env: seq[Value]): ScoVal =
 
 proc fireRed(elimId: int, rule: RedRule, args: seq[Value]): Whnf =
   ## Experiment 4: try to fire a registered reduction rule. `args` has
-  ## length rule.nargs (last = scrutinee).
+  ## length rule.nargs (last = scrutinee), in application order.
   let scrut = args[^1]
   if scrut.whnf.kind == wRef and scrut.whnf.refId in rule.cases:
     var cargs: seq[Term] = @[]
@@ -405,8 +410,13 @@ proc fireRed(elimId: int, rule: RedRule, args: seq[Value]): Whnf =
         return Whnf(kind: wRef, refId: elimId,
                     spine: args.mapIt(ElimV(kind: eApp, arg: it)))
       cargs.add(e.arg.syn)
-    let inst = substSpine(rule.cases[scrut.whnf.refId],
-                          args[0..^2].mapIt(it.syn) & cargs)
+    # The template's context is innermost-first: [ctor vars, elim vars].
+    # substSpine maps V(i) -> spine[i], so the spine must be innermost-first:
+    # ctor args, then elim args (excluding scrutinee) in reverse.
+    var spine: seq[Term] = cargs
+    for i in countdown(args.high - 1, 0):
+      spine.add(args[i].syn)
+    let inst = substSpine(rule.cases[scrut.whnf.refId], spine)
     return eval(inst, @[]).whnf
   # fully applied but the scrutinee is not constructor-headed: neutral
   Whnf(kind: wRef, refId: elimId, spine: args.mapIt(ElimV(kind: eApp, arg: it)))

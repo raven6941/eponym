@@ -54,6 +54,8 @@ type
   GEntry = object
     tm: Term                     # the R node, for building terms
     ty: Term                     # elaborated + zonked type, for implicits
+    isElim: bool                 # Experiment 4: declared with 'elim'
+    elimNargs: int               # Experiment 4: eliminator arity (incl. scrutinee)
   Globals = Table[string, GEntry]
 
 proc ext(ctx: Ctx, name: string, ty: Term): Ctx =
@@ -264,47 +266,184 @@ type
     tmTm*: Term
     loc*: Loc
 
+proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
+               ms: var MetaStore): ElabDef =
+  ## Elaborate one `def` (the Experiment 2/3 pipeline, unchanged).
+  # 1. elaborate the type; it must be a type and contain no metas
+  let (tyTm0, tyTy) = inferTm(d.desugarTy(), @[], globals, ms)
+  unifyElab(ms, tyTy, tmC(cStar), d.loc)
+  let tyT = zonk(ms, tyTm0)
+  let ru = findUnsolved(ms, tyT)
+  if ru.found:
+    raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
+      " in the type of '" & d.name & "'")
+  let tyV =
+    try: check(supply, vStar(), tyT)
+    except ValueError as e:
+      raise elabErr(d.loc,
+        "ill-formed type of '" & d.name & "': " & e.msg)
+  # 2. elaborate the body against the type; zonk; reject leftovers
+  let tmT0 = checkTm(d.desugarTm(), @[], globals, ms, tyT)
+  let tmT = zonk(ms, tmT0)
+  let ru2 = findUnsolved(ms, tmT)
+  if ru2.found:
+    raise elabErr(ru2.loc, "unsolved metavariable ?m" & $ru2.id &
+      " in the definition of '" & d.name & "'")
+  # 3. the core verifies the zonked (meta-free) terms
+  let tmV =
+    try: check(supply, tyV, tmT)
+    except ValueError as e:
+      raise elabErr(d.loc, "definition '" & d.name &
+        "' does not check against its declared type: " & e.msg &
+        "\n  expected: " & $d.desugarTy() &
+        "\n  body:     " & $d.desugarTm())
+  if d.name in globals:
+    raise elabErr(d.loc, "duplicate definition '" & d.name & "'")
+  globals[d.name] = GEntry(tm: newDefRef(supply, tyV, tmV), ty: tyT)
+  ElabDef(name: d.name, tyTm: tyT, tmTm: tmT, loc: d.loc)
+
+proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
+                       globals: var Globals, supply: var Supply,
+                       ms: var MetaStore, isElim: bool) =
+  ## Experiment 4: `postulate name : Ty` / `elim name : Ty`.
+  ## A parameter-like global; `elim` additionally installs an empty
+  ## reduction rule table on the R node for later `red` declarations.
+  if name in globals:
+    raise elabErr(loc, "duplicate declaration '" & name & "'")
+  let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms)
+  unifyElab(ms, tyTy, tmC(cStar), loc)
+  let tyT = zonk(ms, tyTm0)
+  let ru = findUnsolved(ms, tyT)
+  if ru.found:
+    raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
+      " in the type of '" & name & "'")
+  let tyV =
+    try: check(supply, vStar(), tyT)
+    except ValueError as e:
+      raise elabErr(loc, "ill-formed type of '" & name & "': " & e.msg)
+  # the type must be a Pi spine (for `elim`: determines the arity)
+  var nargs = 0
+  var tyHead = tyT
+  while true:
+    let h = headTy(ms, tyHead)
+    if h.kind != tPi: break
+    inc nargs
+    tyHead = h.scope.bdy  # already in the extended frame
+  if isElim and nargs < 1:
+    raise elabErr(loc, "eliminator '" & name &
+      "' must have a Pi type (at least the scrutinee argument)")
+  let tm =
+    if isElim: newRedRef(supply, tyV, nargs)
+    else: newPostulateRef(supply, tyV)
+  globals[name] = GEntry(tm: tm, ty: tyT, isElim: isElim, elimNargs: nargs)
+
+proc flattenAppSpine(pre: PreTerm): seq[PreTerm] =
+  ## head-first application spine
+  var cur = pre
+  var rev: seq[PreTerm] = @[]
+  while cur.kind == pkApp:
+    rev.add(cur.c2); cur = cur.c1
+  rev.add(cur)
+  for i in countdown(rev.high, 0):
+    result.add(rev[i])
+
+proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
+                 globals: var Globals, supply: var Supply,
+                 ms: var MetaStore) =
+  ## Experiment 4: `red elim v1..v(k-1) scPat := contractum`,
+  ## where scPat is `ctor` or `(ctor w1..wm)`, all bare variables.
+  ## Elaborates the contractum in the pattern context and registers
+  ## the case on the eliminator's rule table.
+  let spine = flattenAppSpine(lhs)
+  if spine[0].kind != pkVar:
+    raise elabErr(loc, "red pattern must start with the eliminator name")
+  let elimName = spine[0].name
+  if elimName notin globals:
+    raise elabErr(loc, "unbound eliminator '" & elimName & "'")
+  let g = globals[elimName]
+  if not g.isElim:
+    raise elabErr(loc, "'" & elimName &
+      "' is not an eliminator (declare it with 'elim')")
+  let nargs = g.elimNargs
+  if spine.len != nargs + 1:
+    raise elabErr(loc, "eliminator '" & elimName & "' takes " & $nargs &
+      " arguments; red pattern has " & $(spine.len - 1))
+  # eliminator argument patterns: distinct bare variables
+  var elimVars: seq[string] = @[]
+  for i in 1 ..< nargs:
+    if spine[i].kind != pkVar:
+      raise elabErr(loc,
+        "eliminator arguments in a red pattern must be bare variables")
+    elimVars.add(spine[i].name)
+  # scrutinee pattern: `ctor` or `(ctor w1..wm)`, bare variables
+  let scSpine = flattenAppSpine(spine[nargs])
+  if scSpine[0].kind != pkVar:
+    raise elabErr(loc, "scrutinee pattern must be a constructor application")
+  let ctorName = scSpine[0].name
+  var ctorVars: seq[string] = @[]
+  for i in 1 ..< scSpine.len:
+    if scSpine[i].kind != pkVar:
+      raise elabErr(loc,
+        "constructor arguments in a red pattern must be bare variables")
+    ctorVars.add(scSpine[i].name)
+  let allVars = elimVars & ctorVars
+  if allVars.deduplicate().len != allVars.len:
+    raise elabErr(loc, "pattern variables in a red rule must be distinct")
+  if ctorName notin globals:
+    raise elabErr(loc, "unbound constructor '" & ctorName & "'")
+  let cg = globals[ctorName]
+  if cg.tm.kind != tR:
+    raise elabErr(loc, "constructor '" & ctorName & "' must be a postulate")
+  # introduce the eliminator variables, types from the eliminator's Pi spine
+  var ctx: Ctx = @[]
+  var elimTy = g.ty
+  for nm in elimVars:
+    let h = headTy(ms, elimTy)
+    if h.kind != tPi:
+      raise elabErr(loc, "eliminator type is not a Pi spine of length " &
+        $nargs)
+    ctx = ext(ctx, nm, h.dom)   # h.dom is in the current frame
+    elimTy = h.scope.bdy        # already in the extended frame
+  # introduce the constructor variables, types from the constructor's Pi spine
+  var ctorTy = cg.ty
+  for nm in ctorVars:
+    let h = headTy(ms, ctorTy)
+    if h.kind != tPi:
+      raise elabErr(loc, "constructor '" & ctorName & "' does not take " &
+        $ctorVars.len & " arguments")
+    ctx = ext(ctx, nm, h.dom)
+    ctorTy = h.scope.bdy
+  # elaborate the contractum (inference mode — the rule is trusted, like
+  # an axiom; a production system would check it against the motive)
+  let (rhsTm0, _) = inferTm(rhs, ctx, globals, ms)
+  let rhsTm = zonk(ms, rhsTm0)
+  let ru = findUnsolved(ms, rhsTm)
+  if ru.found:
+    raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
+      " in the contractum of a red rule")
+  try:
+    attachRedCase(g.tm, cg.tm.refId, rhsTm)
+  except ValueError as e:
+    raise elabErr(loc, e.msg)
+
 proc elabCheck*(src: string): seq[ElabDef] =
-  ## Parse, elaborate, and typecheck a surface program, def by def.
-  ## Later defs may mention earlier ones (via closed R nodes).
+  ## Parse, elaborate, and typecheck a surface program, decl by decl.
+  ## Later decls may mention earlier ones (via closed R nodes).
   ## Raises ParseError (carries loc) or ElabError (carries loc).
-  let defs = parseProgram(src)
+  let decls = parseProgram(src)
   var globals: Globals = initTable[string, GEntry]()
   var supply = Supply()
   var ms = initMetaStore()
-  for d in defs:
-    # 1. elaborate the type; it must be a type and contain no metas
-    let (tyTm0, tyTy) = inferTm(d.desugarTy(), @[], globals, ms)
-    unifyElab(ms, tyTy, tmC(cStar), d.loc)
-    let tyT = zonk(ms, tyTm0)
-    let ru = findUnsolved(ms, tyT)
-    if ru.found:
-      raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
-        " in the type of '" & d.name & "'")
-    let tyV =
-      try: check(supply, vStar(), tyT)
-      except ValueError as e:
-        raise elabErr(d.loc,
-          "ill-formed type of '" & d.name & "': " & e.msg)
-    # 2. elaborate the body against the type; zonk; reject leftovers
-    let tmT0 = checkTm(d.desugarTm(), @[], globals, ms, tyT)
-    let tmT = zonk(ms, tmT0)
-    let ru2 = findUnsolved(ms, tmT)
-    if ru2.found:
-      raise elabErr(ru2.loc, "unsolved metavariable ?m" & $ru2.id &
-        " in the definition of '" & d.name & "'")
-    # 3. the core verifies the zonked (meta-free) terms
-    let tmV =
-      try: check(supply, tyV, tmT)
-      except ValueError as e:
-        raise elabErr(d.loc, "definition '" & d.name &
-          "' does not check against its declared type: " & e.msg &
-          "\n  expected: " & $d.desugarTy() &
-          "\n  body:     " & $d.desugarTm())
-    if d.name in globals:
-      raise elabErr(d.loc, "duplicate definition '" & d.name & "'")
-    globals[d.name] = GEntry(tm: newDefRef(supply, tyV, tmV), ty: tyT)
-    result.add(ElabDef(name: d.name, tyTm: tyT, tmTm: tmT, loc: d.loc))
+  for d in decls:
+    case d.kind
+    of dkDef:
+      result.add(elabDefDecl(d.def, globals, supply, ms))
+    of dkPostulate:
+      elabPostulateDecl(d.name, d.ty, d.dloc, globals, supply, ms, false)
+    of dkElim:
+      elabPostulateDecl(d.name, d.ty, d.dloc, globals, supply, ms, true)
+    of dkRed:
+      elabRedDecl(d.lhs, d.rhs, d.rloc, globals, supply, ms)
 
 when isMainModule:
   # --- Experiment 2's programs still elaborate --------------------------------
@@ -405,5 +544,83 @@ def constLam : Pi (A : ?) . A -> A :=
   except ParseError as e:
     assert e.loc.line > 0
     echo "ok: ParseError at line " & $e.loc.line & ": " & e.msg.splitLines()[0]
+
+  # --- Experiment 4: postulate / elim / red; reduction fires ------------------
+  let boolDefs = elabCheck("""
+postulate Bool : ?
+postulate true : Bool
+postulate false : Bool
+elim boolElim : Pi (C : Bool -> ?). C true -> C false -> Pi (b : Bool). C b
+red boolElim C t f true  := t
+red boolElim C t f false := f
+def not (b : Bool) : Bool :=
+  boolElim (lam (u : Bool). Bool) false true b
+def notTrue : Bool := not true
+def notFalse : Bool := not false
+""")
+  assert boolDefs.len == 3
+  # not true reduces to false; not false reduces to true.
+  # The postulate refIds come from the argument positions: `not true`
+  # is tApp(R_not, R_true), `not false` is tApp(R_not, R_false).
+  let trueId = boolDefs[1].tmTm.arg.refId
+  let falseId = boolDefs[2].tmTm.arg.refId
+  assert trueId != falseId
+  let notTrueV = eval(boolDefs[1].tmTm, @[])
+  assert notTrueV.whnfKind == wRef and notTrueV.whnfRefId == falseId and
+    notTrueV.whnfSpineLen == 0, "not true should reduce to false"
+  let notFalseV = eval(boolDefs[2].tmTm, @[])
+  assert notFalseV.whnfKind == wRef and notFalseV.whnfRefId == trueId and
+    notFalseV.whnfSpineLen == 0, "not false should reduce to true"
+  echo "ok: Bool eliminator reduces (not true = false, not false = true)"
+
+  # Nat: constructor with arguments; recursive rule; stuck scrutinee
+  let natDefs = elabCheck("""
+postulate Nat : ?
+postulate zero : Nat
+postulate suc : Nat -> Nat
+elim natElim : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+red natElim C z s zero    := z
+red natElim C z s (suc n) := s n (natElim C z s n)
+def two : Nat := suc (suc zero)
+def add (m : Nat) (n : Nat) : Nat :=
+  natElim (lam (u : Nat). Nat) m (lam (p : Nat). lam (ih : Nat). suc ih) n
+def four : Nat := add two two
+def stuckTest (n : Nat) : Nat :=
+  natElim (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). p) n
+""")
+  assert natDefs.len == 4
+  let twoTm = natDefs[0].tmTm  # suc (suc zero)
+  let sucId = twoTm.fn.refId
+  let zeroId = twoTm.arg.arg.refId
+  proc sucDepth(v: Value): int =
+    if v.whnfKind == wRef and v.whnfRefId == sucId and v.whnfSpineLen == 1:
+      1 + sucDepth(v.whnfSpineArg(0))
+    elif v.whnfKind == wRef and v.whnfRefId == zeroId and v.whnfSpineLen == 0:
+      0
+    else: -1000
+  let depth4 = sucDepth(eval(natDefs[2].tmTm, @[]))
+  assert depth4 == 4, "add two two should reduce to suc^4 zero, got depth " & $depth4
+  echo "ok: Nat eliminator reduces (add two two = 4); neutral scrutinee stays stuck"
+
+  # red errors: duplicate rule, non-eliminator, wrong arity
+  expectElabErr("""
+postulate Bool : ?
+postulate true : Bool
+elim boolElim : Pi (C : Bool -> ?). C true -> Pi (b : Bool). C b
+red boolElim C t true := t
+red boolElim C t true := t
+""", "duplicate reduction rule")
+  expectElabErr("""
+postulate Bool : ?
+postulate true : Bool
+postulate notElim : Bool -> Bool
+red notElim x true := x
+""", "not an eliminator")
+  expectElabErr("""
+postulate Bool : ?
+postulate true : Bool
+elim boolElim : Pi (C : Bool -> ?). C true -> Pi (b : Bool). C b
+red boolElim C true := true
+""", "takes 3 arguments")
 
   echo "--- all elaborator tests passed ---"

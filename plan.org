@@ -96,7 +96,15 @@
   Risk note: this is where "convincingly" is won or lost. If unification
   at compile time is painful or slow, that *is* the result — record it.
 
-* Experiment 4 — Extensible reduction ("normalization by macro expansion", Nim-style)
+* Experiment 4 — Extensible reduction ("normalization by macro expansion", Nim-style) [DONE 2026-10-07]
+
+  Result: yes — =postulate= / =elim= / =red= declarations let new
+  constructs bring their own reduction rules; the core evaluator
+  grew one extension point (=wRed= whnf, rule in the value, no
+  threaded registry) and is never touched per-construct. Bool and
+  Nat eliminators reduce (=not true= → =false=, =add two two= →
+  =suc^4 zero=); stuck scrutinees stay neutral; all 8 suites pass.
+  Full findings in decisions.org ("Experiment 4 results").
 
   Question: can new constructs bring their own reduction rules, as in
   Turnstile+'s =define-red=?
