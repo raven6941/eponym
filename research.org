@@ -1,0 +1,61 @@
+#+TITLE: Research question: a dependently typed language embedded in Nim
+
+* The question
+
+  Can Nim's metaprogramming facilities (macros, templates, compile-time
+  function execution) plus a compile-time elaborator *convincingly* host a
+  dependently typed language embedded in Nim?
+
+  "Embedded" here means Turnstile-style: the surface language lives inside
+  Nim source, elaboration runs during compilation, and the trusted core is
+  our ETT — not Nim's own type system.
+
+* What "convincingly" means
+
+  Is this a *useful* dependently typed system that anyone would actually
+  want to use? Usefulness, not just technical feasibility:
+
+  - *Productive to write in.* The elaborator does the bureaucratic work
+    — bidirectional checking, implicit arguments, metavariables,
+    unification. Programs read like dependently typed programs, not
+    host-language plumbing with extra steps.
+  - *Tooling that meets the user halfway.* Epigram's productivity story
+    leaned on a bespoke editor that understood sheds. The question is
+    whether LSP-based tooling fills that gap (see Experiment 7 and the
+    [[https://github.com/raven6941/notes/blob/main/concepts/sheds-and-interactive-tooling.org][sheds note]]).
+  - *Compile-time errors, in surface terms.* Ill-typed programs fail
+    during compilation with messages about the user's code and source
+    locations — never about generated internals.
+  - *Extensible.* New constructs (datatypes, eliminators) without
+    rewriting the core — the Turnstile+ bar.
+  - *Performant enough.* Compile-time elaboration cost stays acceptable
+    as programs grow; we measure it.
+  - *Expressive.* Real dependently typed programs (vectors, proofs), not
+    just Church encodings of the test suite.
+
+* Why this might work
+
+  - Turnstile/Turnstile+ demonstrated that macros can host full type
+    systems — including dependent ones — by reusing host infrastructure
+    (see [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+ notes]]).
+  - Nim macros are compile-time programs with full AST access, so the
+    elaborator itself can run *during* compilation
+    (see [[https://github.com/raven6941/notes/blob/main/design/nim-macros.org][Nim macro notes]]).
+  - We have a solid, tested ETT core in the initial encoding to elaborate
+    into (see [[https://github.com/raven6941/notes/blob/main/design/encodings.org][encoding comparison]] and
+    [[https://github.com/raven6941/notes/blob/main/design/staging.org][staging]]).
+
+* Why it might not
+
+  - Nim's macro system was not designed for this: hygiene, source
+    locations, and error reporting may fight us where Racket's expander
+    cooperated.
+  - Elaboration is still all our code — macros buy syntax and staging, not
+    unification. The hard part doesn't move.
+  - Compile-time performance is unknown until measured.
+
+* Related
+  - [[file:plan.org][Experiment plan]]
+  - [[https://github.com/raven6941/notes/blob/main/background/turnstile.org][Turnstile (2017)]]
+  - [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+ (2020)]]
+  - [[https://github.com/raven6941/notes/blob/main/design/staging.org][Staging]]

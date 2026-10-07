@@ -1,0 +1,184 @@
+#+TITLE: Experiment plan: dependently typed Nim
+
+* Overview
+
+  The question (see [[file:research.org][research question]]) is attacked as a
+  sequence of experiments, each with a question, a build, and a success
+  criterion. Experiments are ordered so each one is meaningful even if the
+  next fails — a negative result is a finding about Nim's metaprogramming,
+  not a wasted build.
+
+  Status of each experiment is tracked here. Per-experiment lab notes go
+  under =experiments/= once started.
+
+* Phase 0 — ETT core (done, 2026-10-06/07)
+
+  Two implementations of Epigram's Type Theory in Nim, tested:
+  - finally-tagless (=ett.nim=): =Sym[R]= interface, evaluator, printer,
+    typechecker instances;
+  - initial encoding (=ett_init.nim=): de Bruijn =Term= AST, glued values,
+    =infer= / =check= / =areEqual=.
+  Decision: the initial encoding is the elaborator target
+  (see [[https://github.com/raven6941/notes/blob/main/design/encodings.org][encoding comparison]]).
+  Repo: =github.com/raven6941/eponym=.
+
+* Experiment 1 — Surface syntax via macros
+
+  Question: what surface syntax can Nim macros deliver, and at what cost?
+
+  Build two front ends for a tiny fragment (Π, λ, →, application, let,
+  plus =?=, =1=, =O=), both producing the same preterm AST:
+  - (a) string-literal DSL with a hand-written parser: full syntactic
+    freedom, manual source-location tracking;
+  - (b) Nim-AST shaping via macros/templates over =quote do:= blocks:
+    constrained by Nim's grammar, but positions and hygiene come free.
+
+  Success: =twice=, =const=, =pairSwap= expressible; parse errors point at
+  source. Pick one front end (or a hybrid) for Experiment 2.
+
+  References: [[https://github.com/raven6941/notes/blob/main/background/turnstile.org][Turnstile]] §2–3 (syntax
+  patterns *are* the surface syntax); [[https://github.com/raven6941/notes/blob/main/design/nim-macros.org][Nim
+  macro notes]].
+
+* Experiment 2 — Compile-time elaboration and checking
+
+  Question: can a Nim macro drive naming→de Bruijn elaboration plus our
+  =infer= at compile time, with good errors?
+
+  Build: elaborator =preterm → Term= (name resolution, de Bruijn indices),
+  invoked inside a macro body; run =infer= there; on failure call
+  =error(info, msg)= with surface locations attached.
+
+  Success: well-typed programs elaborate silently; ill-typed ones fail
+  compilation with errors naming *surface* terms. This is the Turnstile
+  analogy checkpoint: their type rules run during expansion; our checker
+  runs during expansion.
+
+  References: =ett_init.nim= (=infer=); [[https://github.com/raven6941/notes/blob/main/design/staging.org][staging]];
+  [[https://github.com/raven6941/notes/blob/main/background/turnstile.org][Turnstile]] §2.
+
+* Experiment 3 — Implicits, metavariables, unification
+
+  Question: the first genuinely hard elaboration step — can it run at
+  macro-expansion time?
+
+  Build: extend =Term= with metavariables; pattern unification (à la
+  McBride/Norell); implicit-argument insertion; bidirectional elaboration
+  (infer vs. check against an expected type).
+
+  Success: the classic demos — =refl=, =cong=, vector =append= with
+  implicit length arguments inferred, not written.
+
+  References: [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] on Cur
+  (unification, implicits); Kovács's elaboration-zoo for the algorithm.
+
+  Risk note: this is where "convincingly" is won or lost. If unification
+  at compile time is painful or slow, that *is* the result — record it.
+
+* Experiment 4 — Extensible reduction ("normalization by macro expansion", Nim-style)
+
+  Question: can new constructs bring their own reduction rules, as in
+  Turnstile+'s =define-red=?
+
+  Build: a compile-time registry mapping head symbols to reduction rules,
+  consulted by our evaluator; a declaration form that registers
+  constructors, an eliminator, and its reduction rules.
+
+  Success: add a new type former without touching the core evaluator;
+  reduction stays confluent on the test suite.
+
+  References: [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] §4.1
+  (=define-red=, reflected names).
+
+* Experiment 5 — Indexed inductive families
+
+  Question: can a =data= declaration elaborate into ETT core + eliminators?
+
+  Build: declarations à la Dybjer — indexed families, constructors,
+  dependent eliminator (start with simple "view from the left" pattern
+  matching). Targets: =Nat=, =Vec=.
+
+  Success: =Vec append= with length indices checks; the eliminator
+  computes.
+
+  References: [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] §5
+  (inductives in Cur); *The Gentle Art of Levitation*;
+  *Eliminating Dependent Pattern Matching*.
+
+  Note: this may force extending the ETT core. That is a finding, not a
+  failure — record what the core lacked.
+
+* Experiment 6 (stretch) — Tactics and reflection
+
+  Question: can elaboration steps be reflected and scripted, Turnstile+-style?
+
+  Only if 1–5 land. Their tactic system is the model
+  ([[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] §7).
+
+* Experiment 7 — interactive tooling without a bespoke editor
+
+  Question: Epigram's productivity story depended on a purpose-built
+  editor that understood sheds. Can LSP-based tooling fill the same gap
+  for our embedded language?
+
+  Background: a shed is an unchecked, user-owned region of the document;
+  the system tracks elaboration status around it (white/yellow/brown).
+  Modern equivalents are Agda/Idris holes and Lean 4's infoview — Lean 4
+  is the existence proof that LSP can carry rich interactive dependent
+  programming (see the
+  [[https://github.com/raven6941/notes/blob/main/concepts/sheds-and-interactive-tooling.org][sheds note]]).
+
+  Build: a small LSP server over our elaborator exposing diagnostics
+  (elaboration status, stuck constraints, errors at surface locations),
+  code actions (hole commands: refine, case-split, give), and hover
+  (goals/types at metavariables).
+
+  Success: a realistic interactive session — e.g. developing =Vec append=
+  hole-by-hole — in a stock editor, no bespoke UI.
+
+  This experiment is the tooling half of "convincingly": a useful system
+  anyone would actually want to use needs it.
+
+* Track B — alternative cores (decision gate before Experiment 3)
+
+  Experiments 1–2 are core-independent; 3–5 are core-sensitive
+  (unification, reduction, and inductives all depend on the core's
+  equality and datatype story). Before investing in 3–5, evaluate
+  whether ETT is still the right core — see
+  [[https://github.com/raven6941/notes/blob/main/design/alternative-cores.org][the alternative-cores note]].
+
+  Candidates, in evaluation order: Observational Type Theory
+  (ETT-done-right, same lineage), containers/polynomial functors (as
+  the datatype mechanism), cubical type theory (if HITs become a
+  goal), Quantitative Type Theory (if erasure/linearity becomes a
+  goal). They compose; the criterion is which core makes the wanted
+  surface features expressible and elaborable.
+
+* Cross-cutting concerns (all experiments)
+
+  - *Error messages.* Surface terms, source locations. Our =Term=s need
+    location info from day one of Experiment 2 — Turnstile's emphasis,
+    and easy to under-invest in.
+  - *Phase discipline and performance.* Measure compile-time elaboration
+    cost as programs grow; know what runs at expansion time vs. runtime.
+  - *Reuse audit.* What of Nim's infrastructure do we actually reuse
+    (hygiene via =gensym=/=inject=, source locations) vs. reimplement
+    (everything type-related)? Compare honestly with Turnstile's reuse
+    story.
+  - *The convincing bar.* A small Software-Foundations-style corpus —
+    Turnstile+ did volume 1 in Cur; even a fragment of one is a strong
+    signal.
+
+* Explicit non-goals
+
+  - Reusing Nim's *type system* for dependent checking. Like Racket (which
+    is untyped), the host contributes syntax, staging, and tooling — the
+    dependent checker is ours.
+  - Universe polymorphism / cumulativity. ETT has =? : ?=; that's enough
+    rope for now.
+
+* Related
+  - [[file:research.org][Research question]]
+  - [[https://github.com/raven6941/notes/blob/main/design/staging.org][Staging]]
+  - [[https://github.com/raven6941/notes/blob/main/design/nim-macros.org][Nim macros]]
+  - [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]]
