@@ -283,6 +283,15 @@
   — the Track C vision with the Experiment 10 machinery as its
   substrate.
 
+  Aaron's substrate idea (2026-10-07): implement the =evalᵒ=
+  relation over a union-find where reduction steps are unions and
+  values are e-class annotations (Kmett-style: =find= returns
+  (representative, value)) — "when =e_i ~> e_j= and =e_j= goes to
+  =val_m=, =e_i= goes there directly" by path compression. This is
+  e-class analyses (egg) and tabling (SLG) as one mechanism; value
+  conflicts on union *detect* non-confluence. Forward and synth
+  directions share the memoization.
+
   Build, in order:
   1. Relational ETT evaluator in Nim: =evalᵒ(term, env, value)= with
      logic variables, unification, =fresh=/=conde=. Directions:
@@ -296,6 +305,15 @@
      Experiment 2 on performance and error quality.
   4. Iteration test: extend the relation with a new construct,
      re-stage, confirm evaluator + checker + synthesizer all update.
+  5. Compile-time synthesis with spec-hash cache (Aaron's idea,
+     2026-10-07): a =synth"..."= macro — declare properties as a
+     relation query, search at macro-expansion time, splice the
+     witness as if hand-written. Cache witness-by-spec across
+     compiles, keyed on the hash of the specification *plus the
+     transitive closure of the relation definitions* (Nix-style
+     dependency hashing; stale-relation ⇒ stale-witness is the
+     correctness hazard). Canonical witness ordering required so
+     the cache is a function of the spec.
 
   Success: one spec change propagates to all tools; staged tools
   within a small constant of hand-written ones; a synthesis demo
