@@ -99,8 +99,8 @@ type
   ScoVal = object
     syn: Scope
     fn: proc(x: Value): Value
-  Whnf = ref object
-    case kind: WhnfKind
+  Whnf* = ref object
+    case kind*: WhnfKind
     of wRef:
       refId: int
       spine: seq[ElimV]
@@ -119,13 +119,13 @@ type
       rule: RedRule
       args: seq[Value]   # accumulated so far (function position order)
     of wInt:
-      intVal: int
+      intVal*: int
     of wPrim:
       op: PrimOp
       pargs: seq[Value]  # accumulated so far (function position order)
   Value* = ref object
     syn*: Term   # the syntax, glued (§6.6) -- makes instantiation easy
-    whnf: Whnf
+    whnf*: Whnf
 
 ## --- constructors ------------------------------------------------------------
 
@@ -459,7 +459,7 @@ proc fireRed(elimId: int, rule: RedRule, args: seq[Value]): Whnf =
   # fully applied but the scrutinee is not constructor-headed: neutral
   Whnf(kind: wRef, refId: elimId, spine: args.mapIt(ElimV(kind: eApp, arg: it)))
 
-proc applyWhnf(f, a: Value): Whnf =
+proc applyWhnf*(f, a: Value): Whnf =
   ## the computational half of $$ for application
   case f.whnf.kind
   of wLam: f.whnf.lscope.fn(a).whnf       # beta, by host application

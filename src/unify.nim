@@ -24,6 +24,7 @@ import sequtils
 import strutils
 import preterm   # Loc
 import ett_init
+import egraph
 
 type
   UnifyError* = object of CatchableError
@@ -37,9 +38,11 @@ type
   MetaStore* = object
     nextId*: int
     entries*: Table[int, MetaEntry]
+    convCache*: EGraph  # Experiment 10: conversion cache (per elabCheck)
 
 proc initMetaStore*(): MetaStore =
-  MetaStore(nextId: 0, entries: initTable[int, MetaEntry]())
+  MetaStore(nextId: 0, entries: initTable[int, MetaEntry](),
+            convCache: initEGraph())
 
 proc uerr(loc: Loc, msg: string): ref UnifyError =
   # No location prefix here: the elaborator catches UnifyError and re-raises

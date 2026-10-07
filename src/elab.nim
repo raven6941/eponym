@@ -30,9 +30,6 @@ import ett_init
 import unify
 import egraph
 
-# Experiment 10: e-graph conversion cache (one per elabCheck)
-var convCache* = initEGraph()
-
 type
   ElabError* = object of CatchableError
     loc*: Loc
@@ -61,16 +58,6 @@ type
     isElim: bool                 # Experiment 4: declared with 'elim'
     elimNargs: int               # Experiment 4: eliminator arity (incl. scrutinee)
   Globals = Table[string, GEntry]
-  # Experiment 6: tactics. A tactic inspects the goal (expected type)
-  # and context, and returns a Term. Registered by name.
-  Tactic* = proc(goal: Term, ctx: Ctx, globals: Globals,
-                 ms: var MetaStore, supply: var Supply,
-                 loc: Loc): Term {.closure.}
-
-var tacticRegistry* = initTable[string, Tactic]()
-
-proc registerTactic*(name: string, tac: Tactic) =
-  tacticRegistry[name] = tac
 
 # Forward declaration for use in tactics
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
@@ -127,9 +114,7 @@ proc tacRefl(goal: Term, ctx: Ctx, globals: Globals,
   let reflTm = globals["refl"].tm
   tmApp(tmApp(reflTm, aTy), x)
 
-proc initTactics*() =
-  registerTactic("assumption", tacAssumption)
-  registerTactic("refl", tacRefl)
+# (initTactics removed: built-ins are dispatched directly in pkBy case)
 
 proc prettyTerm(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
   ## User-facing pretty-printer: uses names from the context and globals
@@ -189,8 +174,8 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   ## unification instead: evaluation cannot solve flex constraints,
   ## and unify is the only thing that can.
   ##
-  ## Experiment 10: probe the e-graph cache first. On hit, skip NbE.
-  ## On miss, run NbE; on success, merge into the cache.
+  ## Experiment 10: probe the e-graph cache first (in ms.convCache).
+  ## On hit, skip NbE. On miss, run NbE; on success, merge into the cache.
   let a1 = zonk(ms, a)
   let b1 = zonk(ms, b)
   if findUnsolved(ms, a1).found or findUnsolved(ms, b1).found:
@@ -198,7 +183,7 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     return
   # Experiment 10: cache probe (key includes ctx length for soundness)
   let cacheKey = $ctx.len & ":" & $a1 & " === " & $b1
-  let (hit, _) = areEqualCached(convCache, cacheKey)
+  let (hit, _) = areEqualCached(ms.convCache, cacheKey)
   if hit:
     return  # cache hit: NbE already proved this equality
   var env = newSeq[Value](ctx.len)
@@ -209,7 +194,7 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   try:
     areEqual(s, vStar(), va, vb)
     # Success: record in cache
-    merge(convCache, cacheKey)
+    merge(ms.convCache, cacheKey)
   except ValueError as e:
     var refNames = initTable[int, string]()
     for name, g in globals:
@@ -428,11 +413,13 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     unifyElab(ms, ty, expTy, pre.loc)
     t
   of pkBy:
-    # Experiment 6: run a tactic against the expected type
-    if pre.name notin tacticRegistry:
-      raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
-    let tac = tacticRegistry[pre.name]
-    tac(expTy, ctx, globals, ms, supply, pre.loc)
+    # Experiment 6: run a built-in tactic against the expected type.
+    # (Custom tactic registration removed; built-ins are sufficient
+    # for the macro embedding path.)
+    case pre.name
+    of "refl": tacRefl(expTy, ctx, globals, ms, supply, pre.loc)
+    of "assumption": tacAssumption(expTy, ctx, globals, ms, supply, pre.loc)
+    else: raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
   else:
     let (t, ty) = inferTm(pre, ctx, globals, ms, supply)
     convElab(ms, supply, ty, expTy, pre.loc, ctx, globals)
@@ -834,12 +821,10 @@ proc elabCheck*(src: string): seq[ElabDef] =
   ## Parse, elaborate, and typecheck a surface program, decl by decl.
   ## Later decls may mention earlier ones (via closed R nodes).
   ## Raises ParseError (carries loc) or ElabError (carries loc).
-  initTactics()  # Experiment 6: ensure tactic registry is populated
-  convCache = initEGraph()  # Experiment 10: fresh conversion cache per module
   let decls = parseProgram(src)
   var globals: Globals = initTable[string, GEntry]()
   var supply = Supply()
-  var ms = initMetaStore()
+  var ms = initMetaStore()  # includes fresh convCache (Experiment 10)
   for d in decls:
     result.add(elabDecl(d, globals, supply, ms))
 
@@ -1214,8 +1199,8 @@ def id2 (0 A : ?) : A -> A := lam (x : A). x
   echo "ok: erased binders (0 x : T) elaborate (Experiment 9)"
 
   # --- Experiment 10: e-graph conversion cache -----------------------
-  # The cache is exercised by all conversion checks above; verify it
-  # records hits without changing behavior.
-  echo "ok: conversion cache active: " & stats(convCache)
+  # The cache is exercised by all conversion checks above (now stored
+  # in MetaStore.convCache, fresh per elabCheck).
+  echo "ok: conversion cache exercised (Experiment 10)"
 
   echo "--- all elaborator tests passed ---"

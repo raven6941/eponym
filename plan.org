@@ -58,6 +58,13 @@
   cross-def refs via =R= nodes) + =ett"..."= macro (=ett_mac.nim=). Key find:
   Nim's VM cannot capture module-level =var=, so the core's global
   =freshSupply= was threaded explicitly through =infer= =check= =synth=
+
+  Extension (2026-10-07): =ettEmbed= macro generates callable Nim procs
+  from =ett= blocks. Each =def : Int -> ... -> Int= becomes
+  =proc name(args: varargs[int]): int= that evaluates the elaborated term
+  at runtime (via =ett_embed.callIntFunc=). Compile-time elaboration
+  ensures well-typedness; runtime re-elaboration (cached) provides the
+  evaluable terms. Enables embedding verified code in normal Nim programs.
   =structuralEq= =areEqual= (the paper's Checking-monad threading); core is
   now reentrant. Details in decisions.org.
 
