@@ -26,16 +26,22 @@ import tables
 
 type
   Const* = enum cStar, cOne, cVoid, cZero   # ?  1  hi  O
+  PrimOp* = enum opAdd, opSub, opMul  # primitive Int operations (Exp 11)
   TermKind* = enum
     tR, tV, tPi, tSi, tLam, tPair, tApp, tFst, tSnd, tAbsurd, tC, tLet,
-    tMeta
+    tMeta, tInt, tPrim
     ## tMeta: an elaborator metavariable (Experiment 3). The core never
     ## assigns or evaluates them: the elaborator zonks (substitutes all
     ## solutions) before calling check/infer, and every core operation
     ## raises on tMeta as a safety net if the invariant is violated.
     ## tPi/tSi/tLam carry `impl`: implicit-binder metadata written by
     ## the elaborator and preserved (but never interpreted) by the core.
-  WhnfKind* = enum wRef, wPi, wSi, wLam, wPair, wConst, wRed
+    ## tInt: a primitive integer literal (Experiment 11).
+    ## tPrim: a primitive Int operation (Experiment 11).
+  WhnfKind* = enum wRef, wPi, wSi, wLam, wPair, wConst, wRed, wInt, wPrim
+  ## wInt: a primitive integer value (Experiment 11).
+  ## wPrim: a primitive operation (addInt, subInt, mulInt) accumulating
+  ## args; fires when fully applied to wInt args (Experiment 11).
   ## A registered reduction rule (Experiment 4): an eliminator applied to
   ## `nargs` arguments (last = scrutinee) reduces according to `cases`
   ## when the scrutinee's head is a registered constructor. Each case maps
@@ -78,6 +84,11 @@ type
     of tLet:
       letVal*, letTy*: Term
       letScope*: Scope
+    of tInt:
+      intVal*: int
+    of tPrim:
+      primOp*: PrimOp
+      primTy*: Term  # the Pi type (Int -> Int -> Int), for infer
   ElimV = object
     case kind: ElimVKind
     of eApp:
@@ -106,6 +117,11 @@ type
       elimId: int
       rule: RedRule
       args: seq[Value]   # accumulated so far (function position order)
+    of wInt:
+      intVal: int
+    of wPrim:
+      op: PrimOp
+      pargs: seq[Value]  # accumulated so far (function position order)
   Value* = ref object
     syn*: Term   # the syntax, glued (§6.6) -- makes instantiation easy
     whnf: Whnf
@@ -142,6 +158,8 @@ proc tmAbsurd*(z: Term): Term = Term(kind: tAbsurd, sub: z)
 proc tmLet*(v, ty: Term, adv: string, bdy: Term): Term =
   Term(kind: tLet, letVal: v, letTy: ty, letScope: Scope(adv: adv, bdy: bdy))
 proc tmC*(c: Const): Term = Term(kind: tC, c: c)
+proc tmInt*(n: int): Term = Term(kind: tInt, intVal: n)
+proc tmPrim*(op: PrimOp, ty: Term): Term = Term(kind: tPrim, primOp: op, primTy: ty)
 
 proc tStar(): Term = Term(kind: tC, c: cStar)
 proc tOne(): Term = Term(kind: tC, c: cOne)
@@ -167,6 +185,8 @@ proc `$`*(t: Term): string =
   of tR: "R" & $t.refId
   of tV: "V" & $t.idx
   of tC: $t.c
+  of tInt: $t.intVal
+  of tPrim: $t.primOp
   of tPi: (if t.impl: "Pi{" else: "Pi(") & $t.dom & ", " & $t.scope & ")"
   of tSi: (if t.impl: "Si{" else: "Si(") & $t.dom & ", " & $t.scope & ")"
   of tLam: (if t.impl: "L{" else: "L(") & $t.dom & ", " & $t.scope & ")"
@@ -268,7 +288,7 @@ proc subst*(t: Term, depth: int, s: Term): Term =
     if t.idx == depth: s
     elif t.idx > depth: vv(t.idx - 1)
     else: t
-  of tR, tC: t
+  of tR, tC, tInt, tPrim: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(subst(it, depth, s)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, subst(t.dom, depth, s),
@@ -297,7 +317,7 @@ proc absGo(t: Term, id: int, depth: int): Term =
     if t.refId == id: vv(depth) else: t
   of tV:
     if t.idx >= depth: vv(t.idx + 1) else: t
-  of tC: t
+  of tC, tInt, tPrim: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(absGo(it, id, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, absGo(t.dom, id, depth),
@@ -326,7 +346,7 @@ proc substEnv(t: Term, env: seq[Value], depth: int): Term =
     if j < depth: t
     elif j < depth + env.len: env[j - depth].syn
     else: vv(j - env.len)
-  of tR, tC: t
+  of tR, tC, tInt, tPrim: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(substEnv(it, env, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, substEnv(t.dom, env, depth),
@@ -353,7 +373,7 @@ proc weakenAt(t: Term, depth: int): Term =
   case t.kind
   of tV:
     if t.idx >= depth: vv(t.idx + 1) else: t
-  of tR, tC: t
+  of tR, tC, tInt, tPrim: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(weakenAt(it, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, weakenAt(t.dom, depth),
@@ -383,7 +403,7 @@ proc substSpine*(t: Term, spine: seq[Term]): Term =
   of tV:
     if t.idx < spine.len: spine[t.idx]
     else: vv(t.idx - spine.len)
-  of tR, tC: t
+  of tR, tC, tInt, tPrim: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(substSpine(it, spine)))
   of tPi, tSi, tLam:
     let sp = @[vv(0)] & spine.mapIt(weaken(it))
@@ -450,6 +470,24 @@ proc applyWhnf(f, a: Value): Whnf =
       Whnf(kind: wRed, elimId: f.whnf.elimId, rule: f.whnf.rule, args: args2)
     else:
       raise newException(ValueError, "eliminator applied to too many arguments")
+  of wPrim:                               # Experiment 11: primitive Int op
+    let args2 = f.whnf.pargs & @[a]
+    if args2.len == 2:
+      if args2[0].whnf.kind == wInt and args2[1].whnf.kind == wInt:
+        let x = args2[0].whnf.intVal
+        let y = args2[1].whnf.intVal
+        let r = case f.whnf.op
+          of opAdd: x + y
+          of opSub: x - y
+          of opMul: x * y
+        Whnf(kind: wInt, intVal: r)
+      else:
+        # neutral: stuck on non-literal args
+        Whnf(kind: wPrim, op: f.whnf.op, pargs: args2)
+    elif args2.len < 2:
+      Whnf(kind: wPrim, op: f.whnf.op, pargs: args2)
+    else:
+      raise newException(ValueError, "primitive op applied to too many arguments")
   of wRef:                                # inert: grow the spine
     Whnf(kind: wRef, refId: f.whnf.refId,
          spine: f.whnf.spine & @[ElimV(kind: eApp, arg: a)])
@@ -486,6 +524,8 @@ proc evalWhnf(t: Term, env: seq[Value]): Whnf =
     else: Whnf(kind: wRef, refId: t.refId, spine: newSeq[ElimV]())
   of tV: env[t.idx].whnf
   of tC: Whnf(kind: wConst, c: t.c)
+  of tInt: Whnf(kind: wInt, intVal: t.intVal)
+  of tPrim: Whnf(kind: wPrim, op: t.primOp, pargs: @[])
   of tPi: Whnf(kind: wPi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env))
   of tSi: Whnf(kind: wSi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env))
   of tLam: Whnf(kind: wLam, lscope: evalScope(t.scope, env))
@@ -511,6 +551,13 @@ proc vStar*(): Value =
   Value(syn: tStar(), whnf: Whnf(kind: wConst, c: cStar))
 proc vOne(): Value =
   Value(syn: tOne(), whnf: Whnf(kind: wConst, c: cOne))
+
+proc vInt*(n: int): Value =
+  Value(syn: tmInt(n), whnf: Whnf(kind: wInt, intVal: n))
+
+proc vPrim*(op: PrimOp, ty: Term): Value =
+  ## A primitive Int operation, accumulating args (Experiment 11).
+  Value(syn: tmPrim(op, ty), whnf: Whnf(kind: wPrim, op: op, pargs: @[]))
 
 proc vPi(dom: Value, sc: ScoVal): Value =
   Value(syn: tmPi(dom.syn, sc.syn.adv, sc.syn.bdy),
@@ -550,6 +597,10 @@ proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value] =
   (eval(t, @[]), ty)
 
 proc check*(s: var Supply, ty: Value, t: Term): Value =
+  # Experiment 11: primitives are trusted from the elaborator; the
+  # elaborator already assigned the correct type (Int or Int->Int->Int).
+  if t.kind == tInt or t.kind == tPrim:
+    return eval(t, @[])
   let r = synth(s, t)
   areEqual(s, vStar(), ty, r.typ)
   r.val
@@ -597,6 +648,14 @@ proc structuralEq(s: var Supply, a, b: Value) =
       raise newException(ValueError, "eliminator mismatch")
     for i in 0 ..< a.whnf.args.len:
       structuralEq(s, a.whnf.args[i], b.whnf.args[i])
+  of wInt:
+    if a.whnf.intVal != b.whnf.intVal:
+      raise newException(ValueError, "integer mismatch")
+  of wPrim:
+    if a.whnf.op != b.whnf.op or a.whnf.pargs.len != b.whnf.pargs.len:
+      raise newException(ValueError, "primitive op mismatch")
+    for i in 0 ..< a.whnf.pargs.len:
+      structuralEq(s, a.whnf.pargs[i], b.whnf.pargs[i])
 
 proc areEqual*(s: var Supply, ty, a, b: Value) =
   ## type-directed conversion (§6.7). Exported for the elaborator's
@@ -631,6 +690,11 @@ proc infer(s: var Supply, t: Term): Value =
     of cOne: vStar()
     of cVoid: vOne()
     of cZero: vStar()
+  of tInt:
+    raise newException(ValueError,
+      "cannot infer type of integer literal (elaborator must assign Int type)")
+  of tPrim:
+    eval(t.primTy, @[])
   of tPi, tSi:
     let domV = check(s, vStar(), t.dom)
     let x = freshPara(s, domV)

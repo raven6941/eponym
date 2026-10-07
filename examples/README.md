@@ -27,6 +27,9 @@ succeeds.
 - **12-eq-plusReducesZ.ep** — Propositional equality: `Eq`, `refl`, J
   (`eqElim`), `cong`, and the `plusReducesZ` benchmark (Experiment 12).
   `refl` typechecks up to conversion.
+- **13-primint.ep** — Primitive machine integers: literals and `addInt`,
+  `subInt`, `mulInt` compute via host operations (Experiment 11).
+  No unary `s(s(z))`.
 
 ## Running
 

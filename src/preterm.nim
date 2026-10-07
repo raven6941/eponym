@@ -19,13 +19,15 @@ type
     pkPi, pkLam, pkApp,            # Pi, lam, application
     pkSigma, pkPair, pkFst, pkSnd, # Sig, pairs, projections
     pkLet, pkAnn,                  # let, ascription
-    pkHole                        # _ (Experiment 3: elaborator hole)
+    pkHole,                       # _ (Experiment 3: elaborator hole)
+    pkInt                         # integer literal (Experiment 11)
 
   PreTerm* = ref object
     loc*: Loc
     kind*: PreKind
     name*: string     # pkVar name; binder name for pkPi/pkSigma/pkLam/pkLet
     impl*: bool       # pkPi/pkLam: implicit binder (Experiment 3)
+    intVal*: int      # pkInt: the literal value (Experiment 11)
     c1*: PreTerm      # Pi/Sig: dom; Lam: binder type (may be nil); App: fn
                       # Pair: first; Fst/Snd: target; Let: annotation (may be nil)
                       # Ann: the term
@@ -72,6 +74,8 @@ proc mkAnn*(e, ty: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkAnn, c1: e, c2: ty)
 proc mkHole*(loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkHole)
+proc mkInt*(n: int, loc = noLoc): PreTerm =
+  PreTerm(loc: loc, kind: pkInt, intVal: n)
 
 # --- structural equality (ignores source locations) ------------------
 
@@ -79,6 +83,7 @@ proc `==`*(a, b: PreTerm): bool =
   if a.isNil and b.isNil: return true
   if a.isNil or b.isNil: return false
   a.kind == b.kind and a.name == b.name and a.impl == b.impl and
+    a.intVal == b.intVal and
     a.c1 == b.c1 and a.c2 == b.c2 and a.c3 == b.c3
 
 # --- rendering (canonical surface syntax) ----------------------------
@@ -92,6 +97,7 @@ proc render(p: PreTerm, prec: int): string =
   case p.kind
   of pkVar: p.name
   of pkHole: "_"
+  of pkInt: $p.intVal
   of pkUniv: "?"
   of pkUnitTy: "1"
   of pkUnitV: "<>"

@@ -1,0 +1,17 @@
+# Primitive efficient integers: literals and ops compute via host.
+# Experiment: 11
+# No unary s(s(z)) — 42 is a machine integer, addInt computes directly.
+
+postulate Int : ?
+
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+
+def sum : Int := addInt 42 17
+def pf : Eq Int sum 59 := refl Int sum
+
+def diff : Int := subInt 100 58
+def pf2 : Eq Int diff 42 := refl Int diff
+
+def prod : Int := mulInt 6 7
+def pf3 : Eq Int prod 42 := refl Int prod
