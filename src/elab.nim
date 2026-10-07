@@ -998,4 +998,43 @@ data Bad : ? where
 | mk : Nat
 """, "must be the family")
 
+  # --- Experiment 12: propositional equality -------------------------
+  # Eq as an indexed family; refl, J (eqElim), cong, plusReducesZ.
+  # refl typechecks up to conversion (Experiment 5b), not just
+  # syntactic equality.
+  let eqDefs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def two : Nat := suc (suc zero)
+def add (m : Nat) (n : Nat) : Nat :=
+  natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
+def four : Nat := suc (suc (suc (suc zero)))
+def r1 : Eq Nat zero zero := refl Nat zero
+def r2 : Eq Nat (add two two) four := refl Nat (add two two)
+def cong (A : ?) (B : ?) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
+    : Eq B (f x) (f y) :=
+  eqElim A x (lam (z : A). lam (q : Eq A x z). Eq B (f x) (f z))
+         (refl B (f x)) y p
+def plusReducesZ (n : Nat) : Eq Nat n (add n zero) :=
+  natElim (lam (m : Nat). Eq Nat m (add m zero))
+          (refl Nat zero)
+          (lam (k : Nat). lam (ih : Eq Nat k (add k zero)).
+            cong Nat Nat (lam (x : Nat). suc x) k (add k zero) ih)
+          n
+""")
+  assert eqDefs.len == 7
+  echo "ok: Eq/refl/J/cong/plusReducesZ (Experiment 12)"
+  # refl rejects genuinely unequal terms
+  expectElabErr("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def bad : Eq Nat zero (suc zero) := refl Nat zero
+""", "not convertible")
+
   echo "--- all elaborator tests passed ---"

@@ -409,7 +409,7 @@
 
   See notes: [[https://github.com/raven6941/notes/blob/main/polynomial-functors-unifying-substrate.org][polynomial functors as unifying substrate]].
 
-* Experiment 12 (proposed 2026-10-07) — propositional equality
+* Experiment 12 (complete 2026-10-07) — propositional equality
 
   Question: can Eponym express and prove equalities?
 
@@ -427,6 +427,13 @@
   Success: =plusReducesZ= elaborates and the proof computes. The
   broken-append diagnostic (Experiment 5b follow-up) still rejects
   with a good error.
+
+  Result (2026-10-07): Complete. The existing =data= machinery
+  handled =Eq= directly — no new elaborator code needed. =refl=
+  typechecks up to conversion (Experiment 5b); J (=eqElim=) is
+  auto-generated; =cong= derived; =plusReducesZ= proves by induction
+  with =cong suc= in the step case. Tests in =src/elab.nim=,
+  example in =examples/12-eq-plusReducesZ.ep=.
 
 * Experiment 11 (proposed 2026-10-07) — primitive efficient types
 

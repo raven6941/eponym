@@ -24,6 +24,9 @@ succeeds.
 - **11-vec-append-conv.ep** — Vec `append` with `add` in the indices.
   Requires full conversion in `checkTm` (Experiment 5b), not just
   unification.
+- **12-eq-plusReducesZ.ep** — Propositional equality: `Eq`, `refl`, J
+  (`eqElim`), `cong`, and the `plusReducesZ` benchmark (Experiment 12).
+  `refl` typechecks up to conversion.
 
 ## Running
 
