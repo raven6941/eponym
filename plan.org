@@ -184,7 +184,7 @@
   This experiment is the tooling half of "convincingly": a useful system
   anyone would actually want to use needs it.
 
-* Experiment 8 (proposed 2026-10-07) — staged ETT evaluator via tagless-final
+* Experiment 8 (complete 2026-10-07) — staged ETT evaluator via tagless-final
 
   Question: can our finally-tagless core do what Carette, Kiselyov &
   Shan showed — evaluator, compiler, partial evaluator as *instances*
@@ -200,6 +200,11 @@
   Success: staged evaluation of a test program yields residual code
   with the interpretive overhead removed; the instance composes with
   the existing evaluator/printer/checker.
+
+  Result (2026-10-07): Complete (basic). Added =newCodeGen(): Sym[string]=,
+  an erasing code generator producing untyped lambda-calculus. The same
+  =twice= term denotes a value (evalSym), pretty syntax (newPrinter),
+  and executable code (newCodeGen) — staging as just another interpretation.
 
   References:
   [[https://github.com/raven6941/notes/blob/main/carette-kiselyov-shan-finally-tagless.org][Carette/Kiselyov/Shan
