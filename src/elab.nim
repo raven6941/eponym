@@ -57,6 +57,75 @@ type
     isElim: bool                 # Experiment 4: declared with 'elim'
     elimNargs: int               # Experiment 4: eliminator arity (incl. scrutinee)
   Globals = Table[string, GEntry]
+  # Experiment 6: tactics. A tactic inspects the goal (expected type)
+  # and context, and returns a Term. Registered by name.
+  Tactic* = proc(goal: Term, ctx: Ctx, globals: Globals,
+                 ms: var MetaStore, supply: var Supply,
+                 loc: Loc): Term {.closure.}
+
+var tacticRegistry* = initTable[string, Tactic]()
+
+proc registerTactic*(name: string, tac: Tactic) =
+  tacticRegistry[name] = tac
+
+# Forward declaration for use in tactics
+proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
+              ctx: Ctx, globals: Globals)
+
+# --- Basic tactics (Experiment 6) ------------------------------------
+
+proc tacAssumption(goal: Term, ctx: Ctx, globals: Globals,
+                   ms: var MetaStore, supply: var Supply,
+                   loc: Loc): Term =
+  ## Find a hypothesis in ctx whose type matches the goal (up to conversion).
+  for i, e in ctx:
+    try:
+      # Use conversion check: elaborate e.ty and goal, compare via convElab
+      # For now, simple syntactic check via unification
+      var msCopy = ms  # don't pollute the real store on failure
+      unify(msCopy, e.ty, goal, loc)
+      return vv(i)
+    except:
+      continue
+  raise elabErr(loc, "assumption: no hypothesis matches the goal")
+
+proc tacRefl(goal: Term, ctx: Ctx, globals: Globals,
+             ms: var MetaStore, supply: var Supply,
+             loc: Loc): Term =
+  ## For Eq A x y goals where x and y are convertible, return refl.
+  # Goal should be ((Eq A) x) y — an application spine of length 3
+  # (head Eq applied to A, x, y)
+  var spine: seq[Term] = @[]
+  var cur = goal
+  while cur.kind == tApp:
+    spine.add(cur.arg)
+    cur = cur.fn
+  spine.add(cur)
+  # spine is now [y, x, A, Eq] (reversed); we need 4 elements
+  if spine.len != 4:
+    raise elabErr(loc, "refl: goal is not an equality (spine length " &
+      $spine.len & ")")
+  let eqHead = spine[3]
+  let aTy = spine[2]
+  let x = spine[1]
+  let y = spine[0]
+  # Check head is Eq (a tR node)
+  if eqHead.kind != tR:
+    raise elabErr(loc, "refl: goal head is not Eq")
+  # Check x and y are convertible via full conversion (Experiment 5b)
+  try:
+    convElab(ms, supply, x, y, loc, ctx, globals)
+  except ElabError as e:
+    raise elabErr(loc, "refl: sides are not convertible: " & e.msg)
+  # Build refl A x : Eq A x x
+  if "refl" notin globals:
+    raise elabErr(loc, "refl: 'refl' not in scope")
+  let reflTm = globals["refl"].tm
+  tmApp(tmApp(reflTm, aTy), x)
+
+proc initTactics*() =
+  registerTactic("assumption", tacAssumption)
+  registerTactic("refl", tacRefl)
 
 proc prettyTerm(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
   ## User-facing pretty-printer: uses names from the context and globals
@@ -287,6 +356,8 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkAnn:
     let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
     (checkTm(pre.c1, ctx, globals, ms, supply, ty), ty)
+  of pkBy:
+    raise elabErr(pre.loc, "'by' tactic requires an expected type (use in checking mode)")
 
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
              ms: var MetaStore, supply: var Supply, expTy: Term): Term =
@@ -333,6 +404,12 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     let t = checkTm(pre.c1, ctx, globals, ms, supply, ty)
     unifyElab(ms, ty, expTy, pre.loc)
     t
+  of pkBy:
+    # Experiment 6: run a tactic against the expected type
+    if pre.name notin tacticRegistry:
+      raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
+    let tac = tacticRegistry[pre.name]
+    tac(expTy, ctx, globals, ms, supply, pre.loc)
   else:
     let (t, ty) = inferTm(pre, ctx, globals, ms, supply)
     convElab(ms, supply, ty, expTy, pre.loc, ctx, globals)
@@ -734,6 +811,7 @@ proc elabCheck*(src: string): seq[ElabDef] =
   ## Parse, elaborate, and typecheck a surface program, decl by decl.
   ## Later decls may mention earlier ones (via closed R nodes).
   ## Raises ParseError (carries loc) or ElabError (carries loc).
+  initTactics()  # Experiment 6: ensure tactic registry is populated
   let decls = parseProgram(src)
   var globals: Globals = initTable[string, GEntry]()
   var supply = Supply()
@@ -1082,5 +1160,23 @@ def i : Int := 42
 """)
   assert bothDefs.len == 2
   echo "ok: data Nat and primitive Int coexist"
+
+  # --- Experiment 6: tactics and reflection -------------------------
+  # `by` blocks run Nim tactics against the expected type.
+  let tacDefs = elabCheck("""
+postulate Int : ?
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def pf1 : Eq Int 42 42 := by refl
+def id (x : Int) : Int := by assumption
+def pf2 : Eq Int (addInt 20 22) 42 := by refl
+""")
+  assert tacDefs.len == 3
+  echo "ok: by refl and by assumption tactics (Experiment 6)"
+  # unknown tactic is an error
+  expectElabErr("""
+postulate Int : ?
+def bad : Int := by nosuchtac
+""", "unknown tactic")
 
   echo "--- all elaborator tests passed ---"

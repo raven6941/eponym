@@ -1,0 +1,15 @@
+# Tactics: `by` blocks run Nim tactics against the expected type.
+# Experiment: 6
+# `by refl` proves equalities by reflexivity (up to conversion).
+# `by assumption` finds a matching hypothesis.
+
+postulate Int : ?
+
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+
+def pf1 : Eq Int 42 42 := by refl
+
+def pf2 : Eq Int (addInt 20 22) 42 := by refl
+
+def id (x : Int) : Int := by assumption

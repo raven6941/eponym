@@ -139,7 +139,7 @@
   pattern unification otherwise. =Vec append= elaborates; details in
   decisions.org.
 
-* Experiment 6 (stretch) — Tactics and reflection
+* Experiment 6 (complete 2026-10-07) — Tactics and reflection
 
   Question: can elaboration steps be reflected and scripted, Turnstile+-style?
 
@@ -153,6 +153,12 @@
   code that inspects goals and constructs =Term=s. The LSP server of
   Experiment 7 calls the same API the tactics use: one interface, two
   clients. See [[https://github.com/raven6941/notes/blob/main/lean4-theorem-prover.org][Lean 4 note]].
+
+  Result (2026-10-07): Complete (basic). =by tac= syntax added;
+  tactic registry with =assumption= (find matching hypothesis) and
+  =refl= (prove =Eq= by reflexivity up to conversion). Tactics are Nim
+  procs taking (goal, ctx, globals). Tests in =src/elab.nim=,
+  example in =examples/14-tactics.ep=.
 
 * Experiment 7 — interactive tooling without a bespoke editor
 

@@ -20,7 +20,8 @@ type
     pkSigma, pkPair, pkFst, pkSnd, # Sig, pairs, projections
     pkLet, pkAnn,                  # let, ascription
     pkHole,                       # _ (Experiment 3: elaborator hole)
-    pkInt                         # integer literal (Experiment 11)
+    pkInt,                        # integer literal (Experiment 11)
+    pkBy                          # by tactic (Experiment 6)
 
   PreTerm* = ref object
     loc*: Loc
@@ -98,6 +99,7 @@ proc render(p: PreTerm, prec: int): string =
   of pkVar: p.name
   of pkHole: "_"
   of pkInt: $p.intVal
+  of pkBy: "by " & p.name
   of pkUniv: "?"
   of pkUnitTy: "1"
   of pkUnitV: "<>"
