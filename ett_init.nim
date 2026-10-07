@@ -44,6 +44,8 @@ type
   RedRule = object
     nargs: int
     cases: Table[int, Term]
+    nParams: int  # leading scrutinee spine args that are (already-bound)
+                  # params, not fresh ctor vars (Experiment 5: data)
   ElimVKind = enum eApp, eFst, eSnd, eAbsurd
   Scope* = object
     adv*: string   # display hint, as in the paper's Scope
@@ -215,15 +217,21 @@ proc newRedRef*(s: var Supply, typ: Value, nargs: int): Term =
                args: newSeq[Value]()))
   r
 
-proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term) =
+proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term, nParams = 0) =
   ## Experiment 4: register one constructor case on an eliminator.
   ## Raises on duplicates (overlapping rules would break confluence).
+  ## nParams (Experiment 5): leading scrutinee spine args that are
+  ## already-bound params, not fresh ctor vars.
   let w = elim.refVal.whnf
   if w.kind != wRed:
     raise newException(ValueError, "not an eliminator reference")
   if ctorId in w.rule.cases:
     raise newException(ValueError, "duplicate reduction rule for constructor")
   w.rule.cases[ctorId] = tmpl
+  if w.rule.nParams == 0:
+    w.rule.nParams = nParams
+  elif w.rule.nParams != nParams:
+    raise newException(ValueError, "inconsistent param count in reduction rules")
 
 proc redNargs*(elim: Term): int =
   ## number of arguments (incl. scrutinee) the eliminator takes
@@ -405,15 +413,20 @@ proc fireRed(elimId: int, rule: RedRule, args: seq[Value]): Whnf =
   let scrut = args[^1]
   if scrut.whnf.kind == wRef and scrut.whnf.refId in rule.cases:
     var cargs: seq[Term] = @[]
-    for e in scrut.whnf.spine:
+    # Skip the leading params (Experiment 5); only fresh ctor vars
+    # become substitution arguments.
+    for i in rule.nParams ..< scrut.whnf.spine.len:
+      let e = scrut.whnf.spine[i]
       if e.kind != eApp:  # projections on the scrutinee: stay neutral
         return Whnf(kind: wRef, refId: elimId,
                     spine: args.mapIt(ElimV(kind: eApp, arg: it)))
       cargs.add(e.arg.syn)
     # The template's context is innermost-first: [ctor vars, elim vars].
     # substSpine maps V(i) -> spine[i], so the spine must be innermost-first:
-    # ctor args, then elim args (excluding scrutinee) in reverse.
-    var spine: seq[Term] = cargs
+    # ctor args reversed, then elim args (excluding scrutinee) reversed.
+    var spine: seq[Term] = @[]
+    for i in countdown(cargs.high, 0):
+      spine.add(cargs[i])
     for i in countdown(args.high - 1, 0):
       spine.add(args[i].syn)
     let inst = substSpine(rule.cases[scrut.whnf.refId], spine)

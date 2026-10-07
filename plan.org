@@ -119,33 +119,19 @@
   References: [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] §4.1
   (=define-red=, reflected names).
 
-* Experiment 5 — Indexed inductive families
+* Experiment 5 — Indexed inductive families [DONE 2026-10-07]
 
-  Question: can a =data= declaration elaborate into ETT core + eliminators?
+  Result: yes — =data= declarations elaborate to ETT core +
+  eliminators via desugaring to =postulate=/=elim=/=red=
+  (Experiment 4). =data Nat= and =data Vec (A : ?) : Nat -> ?= both
+  work; the generated eliminators compute (=add two two= → 4,
+  length of a 2-vector → 2). Constructor patterns can reference
+  params; index positions use dummy variables. Full findings in
+  decisions.org ("Experiment 5 results").
 
-  Build: declarations à la Dybjer — indexed families, constructors,
-  dependent eliminator (start with simple "view from the left" pattern
-  matching). Targets: =Nat=, =Vec=.
-
-  Success: =Vec append= with length indices checks; the eliminator
-  computes.
-
-  References: [[https://github.com/raven6941/notes/blob/main/background/turnstile-plus.org][Turnstile+]] §5
-  (inductives in Cur); *The Gentle Art of Levitation*;
-  *Eliminating Dependent Pattern Matching*.
-
-  Note: this may force extending the ETT core. That is a finding, not a
-  failure — record what the core lacked.
-
-  De-risk option (proposed 2026-10-07): containers first. Implement
-  strictly positive datatypes via container functors (shapes +
-  positions, one generic eliminator — Abbott, Altenkirch & Ghani,
-  [[https://github.com/raven6941/notes/blob/main/background/abbott-containers.org][containers]];
-  indexed containers for families like =Vec=). If the generic
-  eliminator checks and computes, Experiment 5's hardest part
-  collapses into "elaborate =data= declarations to container
-  descriptions"; per-family compilation only if the generic route
-  proves inadequate.
+  Limitation: =append= with =add= in types needs conversion (not
+  just unification) in =checkTm= — the unifier doesn't unfold
+  definitions or fire =wRed= rules. That's the next gap to close.
 
 * Experiment 6 (stretch) — Tactics and reflection
 

@@ -375,17 +375,30 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
       raise elabErr(loc,
         "eliminator arguments in a red pattern must be bare variables")
     elimVars.add(spine[i].name)
-  # scrutinee pattern: `ctor` or `(ctor w1..wm)`, bare variables
+  # scrutinee pattern: `ctor` or `(ctor w1..wm)`.
+  # Arguments may be fresh variables (bound as ctor vars) or references
+  # to already-bound eliminator variables (Experiment 5: `data`
+  # generates `(nil A)` where A is a param). Leading bound variables
+  # are the constructor's params (nParams); only fresh ones are ctor vars.
   let scSpine = flattenAppSpine(spine[nargs])
   if scSpine[0].kind != pkVar:
     raise elabErr(loc, "scrutinee pattern must be a constructor application")
   let ctorName = scSpine[0].name
   var ctorVars: seq[string] = @[]
+  var nParams = 0
+  var seenParamsDone = false
   for i in 1 ..< scSpine.len:
     if scSpine[i].kind != pkVar:
       raise elabErr(loc,
         "constructor arguments in a red pattern must be bare variables")
-    ctorVars.add(scSpine[i].name)
+    let vn = scSpine[i].name
+    if not seenParamsDone and vn in elimVars:
+      inc nParams
+    else:
+      seenParamsDone = true
+      if vn in elimVars or vn in ctorVars:
+        raise elabErr(loc, "pattern variables in a red rule must be distinct")
+      ctorVars.add(vn)
   let allVars = elimVars & ctorVars
   if allVars.deduplicate().len != allVars.len:
     raise elabErr(loc, "pattern variables in a red rule must be distinct")
@@ -404,13 +417,22 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
         $nargs)
     ctx = ext(ctx, nm, h.dom)   # h.dom is in the current frame
     elimTy = h.scope.bdy        # already in the extended frame
-  # introduce the constructor variables, types from the constructor's Pi spine
+  # introduce the constructor variables, types from the constructor's Pi spine.
+  # First instantiate the leading params with the already-bound variables
+  # (Experiment 5: `nil : Pi (A:? ). Vec A zero` applied to the elim's A).
   var ctorTy = cg.ty
+  for i in 0 ..< nParams:
+    let h = headTy(ms, ctorTy)
+    if h.kind != tPi:
+      raise elabErr(loc, "constructor '" & ctorName &
+        "' does not take enough arguments")
+    let varIdx = elimVars.len - 1 - i  # de Bruijn index of elimVars[i]
+    ctorTy = subst(h.scope.bdy, 0, vv(varIdx))
   for nm in ctorVars:
     let h = headTy(ms, ctorTy)
     if h.kind != tPi:
       raise elabErr(loc, "constructor '" & ctorName & "' does not take " &
-        $ctorVars.len & " arguments")
+        $(nParams + ctorVars.len) & " arguments")
     ctx = ext(ctx, nm, h.dom)
     ctorTy = h.scope.bdy
   # elaborate the contractum (inference mode — the rule is trusted, like
@@ -422,9 +444,212 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
       " in the contractum of a red rule")
   try:
-    attachRedCase(g.tm, cg.tm.refId, rhsTm)
+    attachRedCase(g.tm, cg.tm.refId, rhsTm, nParams)
   except ValueError as e:
     raise elabErr(loc, e.msg)
+
+# --- Experiment 5: data declarations -------------------------------------------
+# A `data` declaration desugars to postulate/elim/red (Experiment 4) and
+# goes through the same elaborators. The desugarer generates:
+#   postulate F : Pi (params...). indexTy
+#   postulate c : Pi (params...). Pi (tele...). retTy     (per constructor)
+#   elim fElim : Pi (params...)(C : Pi (idx...). F params idx -> ?).
+#                Pi (methods...). Pi (idx...)(v : F params idx). C idx v
+#   red fElim params C methods idxVars (c params teleVars) := contractum
+# Index positions in red patterns are dummy variables (unused in the
+# contractum); fireRed's spine convention already accounts for them.
+
+proc mkPis(tele: seq[tuple[name: string, ty: PreTerm, impl: bool]],
+           body: PreTerm, loc: Loc): PreTerm =
+  result = body
+  for i in countdown(tele.high, 0):
+    result = mkPi(tele[i].name, tele[i].ty, result, loc, tele[i].impl)
+
+proc flattenPiPre(pre: PreTerm):
+    tuple[tele: seq[tuple[name: string, ty: PreTerm]], body: PreTerm] =
+  var cur = pre
+  var tele: seq[tuple[name: string, ty: PreTerm]] = @[]
+  while cur.kind == pkPi:
+    tele.add((cur.name, cur.c1))
+    cur = cur.c2
+  (tele, cur)
+
+proc extractIndices(retTy: PreTerm, famName: string, nParams: int,
+                    loc: Loc): seq[PreTerm] =
+  ## retTy should be `F p1..pn i1..ik`; return [i1..ik] as PreTerms.
+  let spine = flattenAppSpine(retTy)
+  if spine.len == 0 or spine[0].kind != pkVar or spine[0].name != famName:
+    raise elabErr(loc, "constructor return type must be the family '" &
+      famName & "' applied to indices")
+  if spine.len < 1 + nParams:
+    raise elabErr(loc, "constructor return type missing parameters")
+  spine[1 + nParams .. ^1]
+
+proc mentionsFam(pre: PreTerm, famName: string): bool =
+  case pre.kind
+  of pkVar: pre.name == famName
+  of pkApp: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
+  of pkPi: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
+  of pkSigma: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
+  of pkLam: mentionsFam(pre.c2, famName)
+  of pkPair: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
+  of pkFst, pkSnd: mentionsFam(pre.c1, famName)
+  of pkLet: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName) or
+             mentionsFam(pre.c3, famName)
+  of pkAnn: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
+  else: false
+
+proc elimNameFor(dname: string): string =
+  result = dname
+  if result.len > 0:
+    result[0] = result[0].toLowerAscii()
+  result &= "Elim"
+
+proc famAppPre(famName: string, params: seq[tuple[name: string, ty: PreTerm, impl: bool]],
+               idxTerms: seq[PreTerm], loc: Loc): PreTerm =
+  result = mkVar(famName, loc)
+  for p in params: result = mkApp(result, mkVar(p.name, loc), loc)
+  for t in idxTerms: result = mkApp(result, t, loc)
+
+proc genElimTy(d: SurfDecl, loc: Loc): tuple[ty: PreTerm, methodNames: seq[string]] =
+  ## Generate the eliminator type PreTerm and the method binder names.
+  let famName = d.dname
+  let (indexTele, _) = flattenPiPre(d.indexTy)
+  var indexNames: seq[string] = @[]
+  for i in 0 ..< indexTele.len:
+    indexNames.add("i" & $i)
+  # C : Pi (idx...). F params idx -> ?
+  var cTy = mkArrow(famAppPre(famName, d.params,
+                             indexNames.mapIt(mkVar(it, loc)), loc),
+                    mkUniv(loc), loc)
+  for i in countdown(indexTele.high, 0):
+    cTy = mkPi(indexNames[i], indexTele[i].ty, cTy, loc)
+  # methods, one per constructor
+  var methodNames: seq[string] = @[]
+  var methodTys: seq[PreTerm] = @[]
+  for ci, ctor in d.ctors:
+    let mName = "m" & $ci & "_" & ctor.name
+    methodNames.add(mName)
+    var teleVars: seq[PreTerm] = @[]
+    for t in ctor.tele: teleVars.add(mkVar(t.name, loc))
+    var ctorApp = mkVar(ctor.name, loc)
+    for p in d.params: ctorApp = mkApp(ctorApp, mkVar(p.name, loc), loc)
+    for v in teleVars: ctorApp = mkApp(ctorApp, v, loc)
+    let retIndices = extractIndices(ctor.retTy, famName, d.params.len, ctor.cloc)
+    var mRet = mkVar("C", loc)
+    for ri in retIndices: mRet = mkApp(mRet, ri, loc)
+    mRet = mkApp(mRet, ctorApp, loc)
+    var mTy = mRet
+    var ihCount = 0
+    for i in countdown(ctor.tele.high, 0):
+      let argTy = ctor.tele[i].ty
+      if mentionsFam(argTy, famName):
+        let argIndices = extractIndices(argTy, famName, d.params.len, ctor.cloc)
+        var ihTy = mkVar("C", loc)
+        for ai in argIndices: ihTy = mkApp(ihTy, ai, loc)
+        ihTy = mkApp(ihTy, mkVar(ctor.tele[i].name, loc), loc)
+        mTy = mkPi("ih" & $ihCount, ihTy, mTy, loc)
+        inc ihCount
+      mTy = mkPi(ctor.tele[i].name, argTy, mTy, loc)
+    methodTys.add(mTy)
+  # Pi (params...)(C : cTy)(methods...)(idx...)(v : F params idx). C idx v
+  var vTy = famAppPre(famName, d.params,
+                      indexNames.mapIt(mkVar(it, loc)), loc)
+  var body = mkVar("C", loc)
+  for iNm in indexNames: body = mkApp(body, mkVar(iNm, loc), loc)
+  body = mkApp(body, mkVar("v", loc), loc)
+  var elimTy = mkPi("v", vTy, body, loc)
+  for i in countdown(indexNames.high, 0):
+    elimTy = mkPi(indexNames[i], indexTele[i].ty, elimTy, loc)
+  for i in countdown(methodNames.high, 0):
+    elimTy = mkPi(methodNames[i], methodTys[i], elimTy, loc)
+  elimTy = mkPi("C", cTy, elimTy, loc)
+  for i in countdown(d.params.high, 0):
+    elimTy = mkPi(d.params[i].name, d.params[i].ty, elimTy, d.daloc,
+                  d.params[i].impl)
+  (elimTy, methodNames)
+
+proc genRedDecls(d: SurfDecl, elimName: string, methodNames: seq[string],
+                 loc: Loc): seq[SurfDecl] =
+  ## Generate one `red` per constructor. Index positions are dummy
+  ## variables (fireRed's spine convention includes them; the
+  ## contractum never mentions them).
+  let famName = d.dname
+  let (indexTele, _) = flattenPiPre(d.indexTy)
+  var idxNames: seq[string] = @[]
+  for i in 0 ..< indexTele.len:
+    idxNames.add("idx" & $i)
+  for ci, ctor in d.ctors:
+    var lhs = mkVar(elimName, loc)
+    for p in d.params: lhs = mkApp(lhs, mkVar(p.name, loc), loc)
+    lhs = mkApp(lhs, mkVar("C", loc), loc)
+    for mn in methodNames: lhs = mkApp(lhs, mkVar(mn, loc), loc)
+    for iNm in idxNames: lhs = mkApp(lhs, mkVar(iNm, loc), loc)
+    var sc = mkVar(ctor.name, loc)
+    for p in d.params: sc = mkApp(sc, mkVar(p.name, loc), loc)
+    for t in ctor.tele: sc = mkApp(sc, mkVar(t.name, loc), loc)
+    lhs = mkApp(lhs, sc, loc)
+    # contractum: method teleVars recCalls...
+    var rhs = mkVar(methodNames[ci], loc)
+    for t in ctor.tele:
+      rhs = mkApp(rhs, mkVar(t.name, loc), loc)
+    for t in ctor.tele:
+      if mentionsFam(t.ty, famName):
+        let argIndices = extractIndices(t.ty, famName, d.params.len, ctor.cloc)
+        var rec = mkVar(elimName, loc)
+        for p in d.params: rec = mkApp(rec, mkVar(p.name, loc), loc)
+        rec = mkApp(rec, mkVar("C", loc), loc)
+        for mn in methodNames: rec = mkApp(rec, mkVar(mn, loc), loc)
+        for ai in argIndices: rec = mkApp(rec, ai, loc)
+        rec = mkApp(rec, mkVar(t.name, loc), loc)
+        rhs = mkApp(rhs, rec, loc)
+    result.add(SurfDecl(kind: dkRed, lhs: lhs, rhs: rhs, rloc: ctor.cloc))
+
+proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
+                  ms: var MetaStore) =
+  ## Experiment 5: desugar `data` to postulate/elim/red.
+  let loc = d.daloc
+  # name clash check for the generated binders
+  for p in d.params:
+    if p.name == "C":
+      raise elabErr(loc, "data parameter may not be named 'C' (reserved for the motive)")
+  for ctor in d.ctors:
+    for t in ctor.tele:
+      if t.name == "C":
+        raise elabErr(ctor.cloc, "constructor binder may not be named 'C' (reserved)")
+  # type former
+  elabPostulateDecl(d.dname, mkPis(d.params, d.indexTy, loc), loc,
+                    globals, supply, ms, false)
+  # constructors
+  for ctor in d.ctors:
+    discard extractIndices(ctor.retTy, d.dname, d.params.len, ctor.cloc)
+    var fullTele = d.params & ctor.tele
+    elabPostulateDecl(ctor.name, mkPis(fullTele, ctor.retTy, ctor.cloc),
+                      ctor.cloc, globals, supply, ms, false)
+  # eliminator
+  let elimName = elimNameFor(d.dname)
+  let (elimTy, methodNames) = genElimTy(d, loc)
+  elabPostulateDecl(elimName, elimTy, loc, globals, supply, ms, true)
+  # reduction rules
+  for rd in genRedDecls(d, elimName, methodNames, loc):
+    elabRedDecl(rd.lhs, rd.rhs, rd.rloc, globals, supply, ms)
+
+proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
+              ms: var MetaStore): seq[ElabDef] =
+  ## Elaborate one top-level declaration (Experiment 5: data desugars
+  ## to postulate/elim/red and goes through the same path).
+  ## Returns the defs it produced (only dkDef yields one directly).
+  case d.kind
+  of dkDef:
+    result.add(elabDefDecl(d.def, globals, supply, ms))
+  of dkPostulate:
+    elabPostulateDecl(d.name, d.ty, d.dloc, globals, supply, ms, false)
+  of dkElim:
+    elabPostulateDecl(d.name, d.ty, d.dloc, globals, supply, ms, true)
+  of dkRed:
+    elabRedDecl(d.lhs, d.rhs, d.rloc, globals, supply, ms)
+  of dkData:
+    elabDataDecl(d, globals, supply, ms)
 
 proc elabCheck*(src: string): seq[ElabDef] =
   ## Parse, elaborate, and typecheck a surface program, decl by decl.
@@ -435,15 +660,7 @@ proc elabCheck*(src: string): seq[ElabDef] =
   var supply = Supply()
   var ms = initMetaStore()
   for d in decls:
-    case d.kind
-    of dkDef:
-      result.add(elabDefDecl(d.def, globals, supply, ms))
-    of dkPostulate:
-      elabPostulateDecl(d.name, d.ty, d.dloc, globals, supply, ms, false)
-    of dkElim:
-      elabPostulateDecl(d.name, d.ty, d.dloc, globals, supply, ms, true)
-    of dkRed:
-      elabRedDecl(d.lhs, d.rhs, d.rloc, globals, supply, ms)
+    result.add(elabDecl(d, globals, supply, ms))
 
 when isMainModule:
   # --- Experiment 2's programs still elaborate --------------------------------
@@ -622,5 +839,58 @@ postulate true : Bool
 elim boolElim : Pi (C : Bool -> ?). C true -> Pi (b : Bool). C b
 red boolElim C true := true
 """, "takes 3 arguments")
+
+  # --- Experiment 5: data declarations --------------------------------------
+  # data Nat: non-indexed, desugars to postulate/elim/red
+  let dataNatDefs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def two : Nat := suc (suc zero)
+def add (m : Nat) (n : Nat) : Nat :=
+  natElim (lam (u : Nat). Nat) m (lam (p : Nat). lam (ih : Nat). suc ih) n
+def four : Nat := add two two
+""")
+  assert dataNatDefs.len == 3
+  let dataTwoTm = dataNatDefs[0].tmTm
+  let dataSucId = dataTwoTm.fn.refId
+  let dataZeroId = dataTwoTm.arg.arg.refId
+  proc dataSucDepth(v: Value): int =
+    if v.whnfKind == wRef and v.whnfRefId == dataSucId and v.whnfSpineLen == 1:
+      1 + dataSucDepth(v.whnfSpineArg(0))
+    elif v.whnfKind == wRef and v.whnfRefId == dataZeroId and v.whnfSpineLen == 0:
+      0
+    else: -1000
+  assert dataSucDepth(eval(dataNatDefs[2].tmTm, @[])) == 4
+  echo "ok: data Nat desugars; eliminator computes (add two two = 4)"
+
+  # data Vec: indexed family; the eliminator computes over indices
+  let dataVecDefs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+def v2 : Vec Nat (suc (suc zero)) :=
+  cons Nat (suc zero) (suc zero) (cons Nat zero zero (nil Nat))
+def lenIsTwo : Nat :=
+  vecElim Nat (lam (i : Nat). lam (v : Vec Nat i). Nat)
+            zero
+            (lam (i : Nat). lam (x : Nat). lam (xs : Vec Nat i). lam (ih : Nat). suc ih)
+            (suc (suc zero)) v2
+""")
+  assert dataVecDefs.len == 2
+  assert dataSucDepth(eval(dataVecDefs[1].tmTm, @[])) == 2
+  echo "ok: data Vec (indexed) desugars; eliminator computes (length = 2)"
+
+  # data errors: constructor return must be the family
+  expectElabErr("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Bad : ? where
+| mk : Nat
+""", "must be the family")
 
   echo "--- all elaborator tests passed ---"
