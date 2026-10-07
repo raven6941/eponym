@@ -8,8 +8,8 @@ postulate Int : ?
 data Eq (A : ?) (x : A) : A -> ? where
 | refl : Eq A x x
 
-def pf1 : Eq Int 42 42 := by refl
+proc pf1 : Eq Int 42 42= by refl
 
-def pf2 : Eq Int (addInt 20 22) 42 := by refl
+proc pf2 : Eq Int (addInt 20 22) 42= by refl
 
-def id (x : Int) : Int := by assumption
+proc id (x : Int) : Int= by assumption

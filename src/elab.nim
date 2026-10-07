@@ -516,7 +516,7 @@ proc flattenAppSpine(pre: PreTerm): seq[PreTerm] =
 proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
                  globals: var Globals, supply: var Supply,
                  ms: var MetaStore) =
-  ## Experiment 4: `red elim v1..v(k-1) scPat := contractum`,
+  ## Experiment 4: `red elim v1..v(k-1) scPat = contractum`,
   ## where scPat is `ctor` or `(ctor w1..wm)`, all bare variables.
   ## Elaborates the contractum in the pattern context and registers
   ## the case on the eliminator's rule table.
@@ -621,7 +621,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
 #   postulate c : Pi (params...). Pi (tele...). retTy     (per constructor)
 #   elim fElim : Pi (params...)(C : Pi (idx...). F params idx -> ?).
 #                Pi (methods...). Pi (idx...)(v : F params idx). C idx v
-#   red fElim params C methods idxVars (c params teleVars) := contractum
+#   red fElim params C methods idxVars (c params teleVars) = contractum
 # Index positions in red patterns are dummy variables (unused in the
 # contractum); fireRed's spine convention already accounts for them.
 
@@ -831,27 +831,27 @@ proc elabCheck*(src: string): seq[ElabDef] =
 when isMainModule:
   # --- Experiment 2's programs still elaborate --------------------------------
   let defs = elabCheck("""
-def twice (A : ?) (f : A -> A) (x : A) : A :=
+proc twice (A : ?) (f : A -> A) (x : A) : A =
   f (f x)
-def constFn (A : ?) (B : ?) (x : A) (y : B) : A :=
+proc constFn (A : ?) (B : ?) (x : A) (y : B) : A =
   x
-def pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A :=
+proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 """)
   assert defs.len == 3
   echo "ok: twice, constFn, pairSwap elaborate and check"
 
   let defs2 = elabCheck("""
-def myId (A : ?) (x : A) : A :=
+proc myId (A : ?) (x : A) : A =
   x
-def useId (A : ?) (x : A) : A :=
+proc useId (A : ?) (x : A) : A =
   myId A x
 """)
   assert defs2.len == 2
   echo "ok: later defs can mention earlier defs"
 
   let defs3 = elabCheck("""
-def withLet (A : ?) (x : A) : A :=
+proc withLet (A : ?) (x : A) : A =
   let y : A = x in y
 """)
   assert defs3.len == 1
@@ -859,17 +859,17 @@ def withLet (A : ?) (x : A) : A :=
 
   # --- Experiment 3: implicit arguments inferred -------------------------------
   let defs4 = elabCheck("""
-def polyId {A : ?} (x : A) : A :=
+proc polyId {A : ?} (x : A) : A =
   x
-def usePolyId : 1 :=
+proc usePolyId : 1 =
   polyId <>
-def constI {A : ?} {B : ?} (x : A) (y : B) : A :=
+proc constI {A : ?} {B : ?} (x : A) (y : B) : A =
   x
-def useConstI : 1 :=
+proc useConstI : 1 =
   constI <> <>
-def pairSwapI {A : ?} {B : ?} (p : Sig (u : A). B) : Sig (v : B). A :=
+proc pairSwapI {A : ?} {B : ?} (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
-def usePairSwapI : Sig (v : 1). 1 :=
+proc usePairSwapI : Sig (v : 1). 1 =
   pairSwapI (<>, <>)
 """)
   assert defs4.len == 6
@@ -877,9 +877,9 @@ def usePairSwapI : Sig (v : 1). 1 :=
 
   # --- Experiment 3: unannotated lambdas and lets infer ------------------------
   let defs5 = elabCheck("""
-def idU : Pi (A : ?). A -> A :=
+proc idU : Pi (A : ?). A -> A =
   lam A. lam x. x
-def letU : 1 :=
+proc letU : 1 =
   let f = lam x. x in f <>
 """)
   assert defs5.len == 2
@@ -896,33 +896,33 @@ def letU : 1 :=
       echo "ok: ElabError [" & frag & "] at line " & $e.loc.line &
         ", col " & $e.loc.col & ": " & e.msg.splitLines()[0]
 
-  expectElabErr("def bad (A : ?) (x : A) : A :=\n  1\n",
+  expectElabErr("proc bad (A : ?) (x : A) : A =\n  1\n",
     "does not match expected type")
-  expectElabErr("def bad : ? :=\n  x\n", "unbound variable 'x'")
-  expectElabErr("def bad : 1 :=\n  (<>, <>)\n",
+  expectElabErr("proc bad : ? =\n  x\n", "unbound variable 'x'")
+  expectElabErr("proc bad : 1 =\n  (<>, <>)\n",
     "checked against a non-Sigma type")
-  expectElabErr("def bad (A : ?) (p : Sig (u : A). A) : ? :=\n  fst (snd p, fst p)\n",
+  expectElabErr("proc bad (A : ?) (p : Sig (u : A). A) : ? =\n  fst (snd p, fst p)\n",
     "not convertible")
-  expectElabErr("def bad (A : ?) : ? :=\n  _\n",
+  expectElabErr("proc bad (A : ?) : ? =\n  _\n",
     "unsolved metavariable")
-  expectElabErr("def bad : ? :=\n  lam x. x x\n",
+  expectElabErr("proc bad : ? =\n  lam x. x x\n",
     "expected a function type")
-  expectElabErr("def bad : 1 :=\n  polyIdBad <>\n",
+  expectElabErr("proc bad : 1 =\n  polyIdBad <>\n",
     "unbound variable 'polyIdBad'")
 
   # --- annotated surface lambdas elaborate; mismatches caught by check --------
   let defs6 = elabCheck("""
-def constLam : Pi (A : ?) . A -> A :=
+proc constLam : Pi (A : ?) . A -> A =
   lam (A : ?) . lam (x : A) . x
 """)
   assert defs6.len == 1
   echo "ok: annotated surface lambda elaborates"
-  expectElabErr("def bad : ? :=\n  lam (x : ?) . x\n",
+  expectElabErr("proc bad : ? =\n  lam (x : ?) . x\n",
     "expected a function type")
 
   # --- parse errors propagate with locations ----------------------------------
   try:
-    discard elabCheck("def bad (A : ?) : :=\n  x\n")
+    discard elabCheck("proc bad (A : ?) : =\n  x\n")
     assert false, "expected ParseError"
   except ParseError as e:
     assert e.loc.line > 0
@@ -934,12 +934,12 @@ postulate Bool : ?
 postulate true : Bool
 postulate false : Bool
 elim boolElim : Pi (C : Bool -> ?). C true -> C false -> Pi (b : Bool). C b
-red boolElim C t f true  := t
-red boolElim C t f false := f
-def not (b : Bool) : Bool :=
+red boolElim C t f true  = t
+red boolElim C t f false = f
+proc not (b : Bool) : Bool =
   boolElim (lam (u : Bool). Bool) false true b
-def notTrue : Bool := not true
-def notFalse : Bool := not false
+proc notTrue : Bool = not true
+proc notFalse : Bool = not false
 """)
   assert boolDefs.len == 3
   # not true reduces to false; not false reduces to true.
@@ -962,13 +962,13 @@ postulate Nat : ?
 postulate zero : Nat
 postulate suc : Nat -> Nat
 elim natElim : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
-red natElim C z s zero    := z
-red natElim C z s (suc n) := s n (natElim C z s n)
-def two : Nat := suc (suc zero)
-def add (m : Nat) (n : Nat) : Nat :=
+red natElim C z s zero    = z
+red natElim C z s (suc n) = s n (natElim C z s n)
+proc two : Nat = suc (suc zero)
+proc add (m : Nat) (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) m (lam (p : Nat). lam (ih : Nat). suc ih) n
-def four : Nat := add two two
-def stuckTest (n : Nat) : Nat :=
+proc four : Nat = add two two
+proc stuckTest (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). p) n
 """)
   assert natDefs.len == 4
@@ -990,20 +990,20 @@ def stuckTest (n : Nat) : Nat :=
 postulate Bool : ?
 postulate true : Bool
 elim boolElim : Pi (C : Bool -> ?). C true -> Pi (b : Bool). C b
-red boolElim C t true := t
-red boolElim C t true := t
+red boolElim C t true = t
+red boolElim C t true = t
 """, "duplicate reduction rule")
   expectElabErr("""
 postulate Bool : ?
 postulate true : Bool
 postulate notElim : Bool -> Bool
-red notElim x true := x
+red notElim x true = x
 """, "not an eliminator")
   expectElabErr("""
 postulate Bool : ?
 postulate true : Bool
 elim boolElim : Pi (C : Bool -> ?). C true -> Pi (b : Bool). C b
-red boolElim C true := true
+red boolElim C true = true
 """, "takes 3 arguments")
 
   # --- Experiment 5: data declarations --------------------------------------
@@ -1012,10 +1012,10 @@ red boolElim C true := true
 data Nat : ? where
 | zero : Nat
 | suc (n : Nat) : Nat
-def two : Nat := suc (suc zero)
-def add (m : Nat) (n : Nat) : Nat :=
+proc two : Nat = suc (suc zero)
+proc add (m : Nat) (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) m (lam (p : Nat). lam (ih : Nat). suc ih) n
-def four : Nat := add two two
+proc four : Nat = add two two
 """)
   assert dataNatDefs.len == 3
   let dataTwoTm = dataNatDefs[0].tmTm
@@ -1038,9 +1038,9 @@ data Nat : ? where
 data Vec (A : ?) : Nat -> ? where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-def v2 : Vec Nat (suc (suc zero)) :=
+proc v2 : Vec Nat (suc (suc zero)) =
   cons Nat (suc zero) (suc zero) (cons Nat zero zero (nil Nat))
-def lenIsTwo : Nat :=
+proc lenIsTwo : Nat =
   vecElim Nat (lam (i : Nat). lam (v : Vec Nat i). Nat)
             zero
             (lam (i : Nat). lam (x : Nat). lam (xs : Vec Nat i). lam (ih : Nat). suc ih)
@@ -1063,14 +1063,14 @@ data Nat : ? where
 data Vec (A : ?) : Nat -> ? where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-def add (m : Nat) (n : Nat) : Nat :=
+proc add (m : Nat) (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
-def vnil : Vec Nat (add zero zero) :=
+proc vnil : Vec Nat (add zero zero) =
   nil Nat
-def constNil (A : ?) (x : A) : Vec A (add zero zero) :=
+proc constNil (A : ?) (x : A) : Vec A (add zero zero) =
   nil A
-def append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
-    : Vec A (add m n) :=
+proc append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
+    : Vec A (add m n) =
   vecElim A (lam (i : Nat). lam (v : Vec A i). Vec A (add i n))
             ys
             (lam (i : Nat). lam (x : A). lam (xs : Vec A i).
@@ -1087,9 +1087,9 @@ data Nat : ? where
 data Vec (A : ?) : Nat -> ? where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-def add (m : Nat) (n : Nat) : Nat :=
+proc add (m : Nat) (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
-def bad : Vec Nat (add (suc zero) zero) :=
+proc bad : Vec Nat (add (suc zero) zero) =
   nil Nat
 """, "not convertible")
 
@@ -1112,17 +1112,17 @@ data Nat : ? where
 | suc (n : Nat) : Nat
 data Eq (A : ?) (x : A) : A -> ? where
 | refl : Eq A x x
-def two : Nat := suc (suc zero)
-def add (m : Nat) (n : Nat) : Nat :=
+proc two : Nat = suc (suc zero)
+proc add (m : Nat) (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
-def four : Nat := suc (suc (suc (suc zero)))
-def r1 : Eq Nat zero zero := refl Nat zero
-def r2 : Eq Nat (add two two) four := refl Nat (add two two)
-def cong (A : ?) (B : ?) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
-    : Eq B (f x) (f y) :=
+proc four : Nat = suc (suc (suc (suc zero)))
+proc r1 : Eq Nat zero zero = refl Nat zero
+proc r2 : Eq Nat (add two two) four = refl Nat (add two two)
+proc cong (A : ?) (B : ?) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
+    : Eq B (f x) (f y) =
   eqElim A x (lam (z : A). lam (q : Eq A x z). Eq B (f x) (f z))
          (refl B (f x)) y p
-def plusReducesZ (n : Nat) : Eq Nat n (add n zero) :=
+proc plusReducesZ (n : Nat) : Eq Nat n (add n zero) =
   natElim (lam (m : Nat). Eq Nat m (add m zero))
           (refl Nat zero)
           (lam (k : Nat). lam (ih : Eq Nat k (add k zero)).
@@ -1138,7 +1138,7 @@ data Nat : ? where
 | suc (n : Nat) : Nat
 data Eq (A : ?) (x : A) : A -> ? where
 | refl : Eq A x x
-def bad : Eq Nat zero (suc zero) := refl Nat zero
+proc bad : Eq Nat zero (suc zero) = refl Nat zero
 """, "not convertible")
 
   # --- Experiment 11: primitive efficient types ----------------------
@@ -1148,13 +1148,13 @@ def bad : Eq Nat zero (suc zero) := refl Nat zero
 postulate Int : ?
 data Eq (A : ?) (x : A) : A -> ? where
 | refl : Eq A x x
-def fortyTwo : Int := 42
-def sum : Int := addInt 42 17
-def pf : Eq Int sum 59 := refl Int sum
-def diff : Int := subInt 100 58
-def pf2 : Eq Int diff 42 := refl Int diff
-def prod : Int := mulInt 6 7
-def pf3 : Eq Int prod 42 := refl Int prod
+proc fortyTwo : Int = 42
+proc sum : Int = addInt 42 17
+proc pf : Eq Int sum 59 = refl Int sum
+proc diff : Int = subInt 100 58
+proc pf2 : Eq Int diff 42 = refl Int diff
+proc prod : Int = mulInt 6 7
+proc pf3 : Eq Int prod 42 = refl Int prod
 """)
   assert intDefs.len == 7
   echo "ok: primitive Int literals and ops compute (Experiment 11)"
@@ -1164,8 +1164,8 @@ postulate Int : ?
 data Nat : ? where
 | zero : Nat
 | suc (n : Nat) : Nat
-def n : Nat := suc (suc zero)
-def i : Int := 42
+proc n : Nat = suc (suc zero)
+proc i : Int = 42
 """)
   assert bothDefs.len == 2
   echo "ok: data Nat and primitive Int coexist"
@@ -1176,24 +1176,24 @@ def i : Int := 42
 postulate Int : ?
 data Eq (A : ?) (x : A) : A -> ? where
 | refl : Eq A x x
-def pf1 : Eq Int 42 42 := by refl
-def id (x : Int) : Int := by assumption
-def pf2 : Eq Int (addInt 20 22) 42 := by refl
+proc pf1 : Eq Int 42 42 = by refl
+proc id (x : Int) : Int = by assumption
+proc pf2 : Eq Int (addInt 20 22) 42 = by refl
 """)
   assert tacDefs.len == 3
   echo "ok: by refl and by assumption tactics (Experiment 6)"
   # unknown tactic is an error
   expectElabErr("""
 postulate Int : ?
-def bad : Int := by nosuchtac
+proc bad : Int = by nosuchtac
 """, "unknown tactic")
 
   # --- Experiment 9: QTT-lite erasure (basic) ------------------------
   # (0 x : T) marks an erased binder. The flag threads through to the
   # core Term; full usage checking and codegen erasure are future work.
   let erasedDefs = elabCheck("""
-def const (0 A : ?) (x : A) : A := x
-def id2 (0 A : ?) : A -> A := lam (x : A). x
+proc const (0 A : ?) (x : A) : A = x
+proc id2 (0 A : ?) : A -> A = lam (x : A). x
 """)
   assert erasedDefs.len == 2
   echo "ok: erased binders (0 x : T) elaborate (Experiment 9)"

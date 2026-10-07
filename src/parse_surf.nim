@@ -1,22 +1,22 @@
 # parse_surf.nim — front end (a): hand-written parser for a small surface
 # syntax, producing preterm.PreTerm / SurfDef.
 #
-# Surface syntax:
-#   program := def+
-#   def     := "def" name tele ":" term ":=" term
-#   tele    := (binder)*
-#   binder  := "(" name ":" term ")" | "{" name ":" term "}"  -- {} = implicit
-#   term    := arrow
-#   arrow   := app ("->" arrow)?              -- right associative
-#   app     := atom+
-#   atom    := "(" term ")" | "(" term "," term ")" | "(" term ":" term ")"
+# Surface syntax (Nim-consistent):
+#   program = proc+
+#   proc    = "proc" name tele ":" term "=" term
+#   tele    = (binder)*
+#   binder  = "(" name ":" term ")" | "{" name ":" term "}"  -- {} = implicit
+#   term    = arrow
+#   arrow   = app ("->" arrow)?              -- right associative
+#   app     = atom+
+#   atom    = "(" term ")" | "(" term "," term ")" | "(" term ":" term ")"
 #            | "lam" binder "." term | "Pi" binder "." term
 #            | "Sig" "(" name ":" term ")" "." term
 #            | "let" name (":" term)? "=" term "in" term
 #            | "fst" atom | "snd" atom
 #            | "_"                                     -- hole (Experiment 3)
 #            | name | "?" | "1" | "<>" | "O"
-# Comments: `--` to end of line.
+# Comments: `--` or `#` to end of line.
 
 import preterm, strutils
 
@@ -46,7 +46,7 @@ proc fail(loc: Loc, msg: string): ref ParseError =
 # --- lexer -----------------------------------------------------------
 
 const keywords = [
-  ("def", tkDef), ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
+  ("proc", tkDef), ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
   ("data", tkData), ("where", tkWhere), ("by", tkBy),
   ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
@@ -66,7 +66,9 @@ proc lex(src: string): seq[Token] =
     elif c in {' ', '\t', '\r'}:
       inc col; inc i
     elif c == '-' and i + 1 < src.len and src[i+1] == '-':
-      while i < src.len and src[i] != '\n': inc i  # comment
+      while i < src.len and src[i] != '\n': inc i  # -- comment
+    elif c == '#':
+      while i < src.len and src[i] != '\n': inc i  # # comment (Nim-style)
     elif isIdentStart(c):
       let l = curLoc()
       var j = i
@@ -251,7 +253,7 @@ proc parseTerm(p: var Parser): PreTerm =
     lhs
 
 proc parseDef(p: var Parser): SurfDef =
-  let t = p.expect(tkDef, "'def'")
+  let t = p.expect(tkDef, "'proc'")
   let nm = p.expect(tkIdent, "definition name")
   var tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]] = @[]
   while p.peek().kind in {tkLParen, tkLBrace}:
@@ -259,7 +261,7 @@ proc parseDef(p: var Parser): SurfDef =
     tele.add b
   discard p.expect(tkColon, "':'")
   let retTy = p.parseTerm()
-  discard p.expect(tkColonEq, "':='")
+  discard p.expect(tkEq, "'='")
   let body = p.parseTerm()
   SurfDef(name: nm.lexeme, tele: tele, retTy: retTy, body: body, loc: t.loc)
 
@@ -280,7 +282,7 @@ proc parseElim(p: var Parser): SurfDecl =
 proc parseRed(p: var Parser): SurfDecl =
   let t = p.expect(tkRed, "'red'")
   let lhs = p.parseTerm()
-  discard p.expect(tkColonEq, "':='")
+  discard p.expect(tkEq, "'='")
   let rhs = p.parseTerm()
   SurfDecl(kind: dkRed, lhs: lhs, rhs: rhs, rloc: t.loc)
 
@@ -319,7 +321,7 @@ proc parseDecl(p: var Parser): SurfDecl =
   of tkElim: p.parseElim()
   of tkRed: p.parseRed()
   of tkData: p.parseData()
-  else: raise fail(p.peek().loc, "expected 'def', 'postulate', 'elim', 'red' or 'data'")
+  else: raise fail(p.peek().loc, "expected 'proc', 'postulate', 'elim', 'red' or 'data'")
 
 proc parseProgram*(src: string): seq[SurfDecl] =
   ## Parse a whole program; raises ParseError with source location.
@@ -331,17 +333,17 @@ proc parseProgram*(src: string): seq[SurfDecl] =
 
 when isMainModule:
   let prog = parseProgram("""
-def twice (A : ?) (f : A -> A) (x : A) : A :=
+proc twice (A : ?) (f : A -> A) (x : A) : A =
   f (f x)
 
 -- const and pairSwap
-def const (A : ?) (B : ?) (x : A) (y : B) : A :=
+proc const (A : ?) (B : ?) (x : A) (y : B) : A =
   x
 
-def pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A :=
+proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 
-def withLet (A : ?) (x : A) : A :=
+proc withLet (A : ?) (x : A) : A =
   let y : A = x in y
 """)
   assert prog.len == 4
@@ -365,27 +367,27 @@ def withLet (A : ?) (x : A) : A :=
 
   # errors point at source
   try:
-    discard parseProgram("def broken (A : ?) : A :=\n  f (")
+    discard parseProgram("proc broken (A : ?) : A =\n  f (")
     assert false, "should have raised"
   except ParseError as e:
     assert "line 2" in e.msg, e.msg
     assert e.loc.line == 2
 
   try:
-    discard parseProgram("def broken : := x")
+    discard parseProgram("proc broken : = x")
     assert false, "should have raised"
   except ParseError as e:
     assert "line 1" in e.msg
 
   # round trip through the renderer
-  let rt = parseProgram("def id (A : ?) (x : A) : A := x")
+  let rt = parseProgram("proc id (A : ?) (x : A) : A = x")
   assert $rt[0].def.desugarTm() == "lam (A : ?). lam (x : A). x"
 
   # implicit binders and holes (Experiment 3)
   let imp = parseProgram("""
-def polyId {A : ?} (x : A) : A := x
-def useHole : 1 := _
-def impPi : Pi {A : ?}. A -> A := lam {A : ?}. lam (x : A). x
+proc polyId {A : ?} (x : A) : A = x
+proc useHole : 1 = _
+proc impPi : Pi {A : ?}. A -> A = lam {A : ?}. lam (x : A). x
 """)
   assert imp.len == 3
   assert imp[0].def.tele[0].impl
@@ -402,8 +404,8 @@ def impPi : Pi {A : ?}. A -> A := lam {A : ?}. lam (x : A). x
 postulate Bool : ?
 postulate true : Bool
 elim boolElim : Pi (C : Bool -> ?). C true -> C false -> Pi (b : Bool). C b
-red boolElim C t f true  := t
-red boolElim C t f false := f
+red boolElim C t f true  = t
+red boolElim C t f false = f
 """)
   assert decls.len == 5
   assert decls[0].kind == dkPostulate and decls[0].name == "Bool"

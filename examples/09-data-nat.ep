@@ -4,7 +4,7 @@
 data Nat : ? where
 | zero : Nat
 | suc (n : Nat) : Nat
-def two : Nat := suc (suc zero)
-def add (m : Nat) (n : Nat) : Nat :=
+proc two : Nat= suc (suc zero)
+proc add (m : Nat) (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) m (lam (p : Nat). lam (ih : Nat). suc ih) n
-def four : Nat := add two two
+proc four : Nat= add two two
