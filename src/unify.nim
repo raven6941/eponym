@@ -78,7 +78,7 @@ proc unifyHead(ms: MetaStore, t: Term): Term =
   ## Head-normalize for unification: unfold solved metas (at the head
   ## and in function position) and beta-reduce. No delta-unfolding of
   ## definitions — rigid heads stay rigid. (Experiment 4: eliminator
-  ## motives are lambdas, so `C true` with `C := lam u. Bool` must
+  ## motives are lambdas, so `C true` with `C = lam u. Bool` must
   ## head-reduce before the rigid-rigid comparison.)
   var cur = zonkHead(ms, t)
   while true:
@@ -213,7 +213,7 @@ proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
 proc unify*(ms: var MetaStore, a, b: Term, loc: Loc)  # forward (mutual with solveMeta)
 
 proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) =
-  ## Solve ?m[spine] := t (Miller pattern fragment).
+  ## Solve ?m[spine] = t (Miller pattern fragment).
   if id notin ms.entries:
     raise uerr(loc, "unknown metavariable ?m" & $id)
   let e = ms.entries[id]
@@ -297,11 +297,11 @@ when isMainModule:
   var ms = initMetaStore()
   let loc = noLoc
 
-  # ?m0[V0] := 1, then zonk
+  # ?m0[V0] = 1, then zonk
   let m0 = freshMeta(ms, tmC(cStar), 1, 0, loc)
   unify(ms, m0, tmC(cOne), loc)
   assert $zonk(ms, m0) == "1"
-  echo "ok: solve ?m[V0] := 1"
+  echo "ok: solve ?m[V0] = 1"
 
   # occurs check
   let m1 = freshMeta(ms, tmC(cStar), 0, 0, loc)
@@ -312,7 +312,7 @@ when isMainModule:
     assert "occurs check" in e.msg
     echo "ok: occurs check fires"
 
-  # pattern spine violation: ?m[V0, V0] := 1
+  # pattern spine violation: ?m[V0, V0] = 1
   let m2 = freshMeta(ms, tmC(cStar), 1, 0, loc)
   let badSpine = tmMeta(m2.metaId, @[vv(0), vv(0)])
   try:
@@ -322,7 +322,7 @@ when isMainModule:
     assert "pattern spine" in e.msg
     echo "ok: non-pattern spine rejected"
 
-  # spine inversion: ?m[V1] := V1  ==>  stored solution V0 (creation ctx),
+  # spine inversion: ?m[V1] = V1  ==>  stored solution V0 (creation ctx),
   # while the value at the occurrence (spine [V1]) is V1
   var ms2 = initMetaStore()
   let m3 = freshMeta(ms2, tmC(cStar), 1, 1, loc)  # occurrence under 1 binder

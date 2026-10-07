@@ -32,7 +32,7 @@ proc findDef*(defs: seq[ElabDef], name: string): ElabDef =
   for d in defs:
     if d.name == name:
       return d
-  raise newException(ValueError, "def not found: " & name)
+  raise newException(ValueError, "proc not found: " & name)
 
 proc intToValue*(n: int): Value =
   ## Convert Nim int to ETT primitive Int value.

@@ -7,9 +7,9 @@ data Nat : ? where
 data Vec (A : ?) : Nat -> ? where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-def v2 : Vec Nat (suc (suc zero)) :=
+proc v2 : Vec Nat (suc (suc zero)) =
   cons Nat (suc zero) (suc zero) (cons Nat zero zero (nil Nat))
-def lenIsTwo : Nat :=
+proc lenIsTwo : Nat =
   vecElim Nat (lam (i : Nat). lam (v : Vec Nat i). Nat)
             zero
             (lam (i : Nat). lam (x : Nat). lam (xs : Vec Nat i). lam (ih : Nat). suc ih)

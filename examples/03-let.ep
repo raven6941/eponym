@@ -1,5 +1,5 @@
 # Let bindings. Tests let elaboration.
 # Experiment: 03
 
-def withLet (A : ?) (x : A) : A :=
+proc withLet (A : ?) (x : A) : A =
   let y : A = x in y

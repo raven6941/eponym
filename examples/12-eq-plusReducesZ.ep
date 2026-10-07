@@ -11,15 +11,15 @@ data Nat : ? where
 data Eq (A : ?) (x : A) : A -> ? where
 | refl : Eq A x x
 
-def add (m : Nat) (n : Nat) : Nat :=
+proc add (m : Nat) (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
 
-def cong (A : ?) (B : ?) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
-    : Eq B (f x) (f y) :=
+proc cong (A : ?) (B : ?) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
+    : Eq B (f x) (f y) =
   eqElim A x (lam (z : A). lam (q : Eq A x z). Eq B (f x) (f z))
          (refl B (f x)) y p
 
-def plusReducesZ (n : Nat) : Eq Nat n (add n zero) :=
+proc plusReducesZ (n : Nat) : Eq Nat n (add n zero) =
   natElim (lam (m : Nat). Eq Nat m (add m zero))
           (refl Nat zero)
           (lam (k : Nat). lam (ih : Eq Nat k (add k zero)).

@@ -133,11 +133,11 @@ when isMainModule:
       (snd(p), fst(p))
 
   let sDefs = parseProgram("""
-def twice (A : ?) (f : A -> A) (x : A) : A :=
+proc twice (A : ?) (f : A -> A) (x : A) : A =
   f (f x)
-def constFn (A : ?) (B : ?) (x : A) (y : B) : A :=
+proc constFn (A : ?) (B : ?) (x : A) (y : B) : A =
   x
-def pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A :=
+proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 """)
 

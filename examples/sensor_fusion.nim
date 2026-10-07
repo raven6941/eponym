@@ -31,21 +31,21 @@ data Vec (A : ?) : Nat -> ? where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 
-def three : Nat := suc (suc (suc zero))
-def two : Nat := suc (suc zero)
-def one : Nat := suc zero
+proc three : Nat = suc (suc (suc zero))
+proc two : Nat = suc (suc zero)
+proc one : Nat = suc zero
 
 -- Build a 3-element vector. The return TYPE is Vec Int three.
 -- The elaborator verifies the body: three cons cells, ending in nil.
 -- Delete a cons, and you get Vec Int two — a type error.
-def mkVec3 (a : Int) (b : Int) (c : Int) : Vec Int three :=
+proc mkVec3 (a : Int) (b : Int) (c : Int) : Vec Int three =
   cons Int two a (cons Int one b (cons Int zero c (nil Int)))
 
 -- 3-element dot product. We build Vec Int 3 for weights and inputs,
 -- proving the arity matches, then compute.
 -- The lets are checked: mkVec3 returns Vec Int three, as required.
-def dot3 (w1 : Int) (w2 : Int) (w3 : Int)
-         (x1 : Int) (x2 : Int) (x3 : Int) : Int :=
+proc dot3 (w1 : Int) (w2 : Int) (w3 : Int)
+         (x1 : Int) (x2 : Int) (x3 : Int) : Int =
   let ws = mkVec3 w1 w2 w3 in
   let xs = mkVec3 x1 x2 x3 in
   addInt (addInt (mulInt w1 x1) (mulInt w2 x2)) (mulInt w3 x3)

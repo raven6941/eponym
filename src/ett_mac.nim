@@ -65,9 +65,9 @@ macro ettEmbed*(src: string): untyped =
 
 when isMainModule:
   ett"""
-def twice (A : ?) (f : A -> A) (x : A) : A :=
+proc twice (A : ?) (f : A -> A) (x : A) : A =
   f (f x)
-def pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A :=
+proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 """
   echo "ok: ett macro accepts well-typed programs at compile time"

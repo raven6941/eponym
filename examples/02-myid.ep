@@ -1,7 +1,7 @@
 # Identity function and its use. Tests basic def and application.
 # Experiment: 02
 
-def myId (A : ?) (x : A) : A :=
+proc myId (A : ?) (x : A) : A =
   x
-def useId (A : ?) (x : A) : A :=
+proc useId (A : ?) (x : A) : A =
   myId A x

@@ -143,7 +143,7 @@ proc `$`*(p: PreTerm): string = render(p, 0)
 
 type
   SurfDef* = object
-    ## A surface definition: `def name (x1 : T1) ... : Ret := body`.
+    ## A surface definition: `def name (x1 : T1) ... : Ret = body`.
     ## Telescope entries may be implicit (`{x : T}`) or erased (`(0 x : T)`).
     name*: string
     tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]]
@@ -195,7 +195,7 @@ proc `$`*(d: SurfDef): string =
   for b in d.tele:
     if b.impl: result &= " {" & b.name & " : " & $b.ty & "}"
     else: result &= " (" & b.name & " : " & $b.ty & ")"
-  result &= " : " & $d.retTy & " :=\n  " & $d.body
+  result &= " : " & $d.retTy & " =\n  " & $d.body
 
 # --- tests ------------------------------------------------------------
 

@@ -5,9 +5,9 @@ postulate Bool : ?
 postulate true : Bool
 postulate false : Bool
 elim boolElim : Pi (C : Bool -> ?). C true -> C false -> Pi (b : Bool). C b
-red boolElim C t f true  := t
-red boolElim C t f false := f
-def not (b : Bool) : Bool :=
+red boolElim C t f true = t
+red boolElim C t f false= f
+proc not (b : Bool) : Bool =
   boolElim (lam (u : Bool). Bool) false true b
-def notTrue : Bool := not true
-def notFalse : Bool := not false
+proc notTrue : Bool= not true
+proc notFalse : Bool= not false
