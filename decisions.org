@@ -63,3 +63,15 @@
   Nim-embedded fragments.
   Consequences: Experiment 2 builds =ett"..."= macro on =parse_surf=;
   =mac_surf= stays as an alternative front end, not the main path.
+
+  Addendum 2026-10-07 (Nimony review): Nim 3 replaces Nim 2 macros
+  with compiler plugins (separate programs transforming NIF trees —
+  different API: =NifCursor=//=NifBuilder=, not =NimNode=). This
+  *confirms* the hybrid choice: the surface language lives in
+  strings parsed by our own code, so only a thin wrapper is
+  Nim-2-specific and would need porting. The =v2= import plugin
+  (shells out to a Nim 2 compiler) provides a compat bridge, so no
+  pre-porting. Rule: keep the macro layer thin (parse string →
+  elaborate → emit); avoid deep =NimNode= coupling (=getImpl=,
+  =bindSym= internals, hygiene edge cases). See
+  [[https://github.com/raven6941/notes/blob/main/design/nimony-nim3-macro-future.org][Nimony note]].
