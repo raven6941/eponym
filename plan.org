@@ -40,7 +40,7 @@
   patterns *are* the surface syntax); [[https://github.com/raven6941/notes/blob/main/design/nim-macros.org][Nim
   macro notes]].
 
-* Experiment 2 — Compile-time elaboration and checking
+* Experiment 2 — Compile-time elaboration and checking [DONE 2026-10-07]
 
   Question: can a Nim macro drive naming→de Bruijn elaboration plus our
   =infer= at compile time, with good errors?
@@ -53,6 +53,13 @@
   compilation with errors naming *surface* terms. This is the Turnstile
   analogy checkpoint: their type rules run during expansion; our checker
   runs during expansion.
+
+  Result: yes. =elab.nim= (bidirectional-lite: expected-type-guided pairs,
+  cross-def refs via =R= nodes) + =ett"..."= macro (=ett_mac.nim=). Key find:
+  Nim's VM cannot capture module-level =var=, so the core's global
+  =freshSupply= was threaded explicitly through =infer= =check= =synth=
+  =structuralEq= =areEqual= (the paper's Checking-monad threading); core is
+  now reentrant. Details in decisions.org.
 
   References: =ett_init.nim= (=infer=); [[https://github.com/raven6941/notes/blob/main/design/staging.org][staging]];
   [[https://github.com/raven6941/notes/blob/main/background/turnstile.org][Turnstile]] §2.
