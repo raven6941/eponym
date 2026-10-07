@@ -385,6 +385,25 @@
   - Universe polymorphism / cumulativity. ETT has =? : ?=; that's enough
     rope for now.
 
+* Experiment 12 (proposed 2026-10-07) — propositional equality
+
+  Question: can Eponym express and prove equalities?
+
+  Motivation: Idris/Lean boundary probe (2026-10-07). The
+  =plusReducesZ : (n : Nat) -> n = plus n Z= example is small,
+  self-contained, and currently impossible — no =Eq= type. Equality
+  unlocks the most examples per unit of implementation.
+
+  Build: =data Eq (A : ?) (x : A) : A -> ? where | refl : Eq A x x=
+  (or via =postulate=). The eliminator J: transport along proofs.
+  =cong= as a derived lemma. Must interact correctly with conversion
+  (Experiment 5b): =refl= should typecheck when the sides are
+  convertible, not just syntactically equal.
+
+  Success: =plusReducesZ= elaborates and the proof computes. The
+  broken-append diagnostic (Experiment 5b follow-up) still rejects
+  with a good error.
+
 * Experiment 11 (proposed 2026-10-07) — primitive efficient types
 
   Question: can Eponym have machine-efficient numbers without

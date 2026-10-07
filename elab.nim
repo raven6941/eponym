@@ -46,8 +46,54 @@ proc unifyElab(ms: var MetaStore, a, b: Term, loc: Loc) =
   except UnifyError as e:
     raise elabErr(loc, e.msg)
 
+type
+  CtxEntry = object
+    name: string
+    ty: Term
+  Ctx = seq[CtxEntry]            # innermost-first
+  GEntry = object
+    tm: Term                     # the R node, for building terms
+    ty: Term                     # elaborated + zonked type, for implicits
+    isElim: bool                 # Experiment 4: declared with 'elim'
+    elimNargs: int               # Experiment 4: eliminator arity (incl. scrutinee)
+  Globals = Table[string, GEntry]
+
+proc prettyTerm(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
+  ## User-facing pretty-printer: uses names from the context and globals
+  ## instead of internal IDs (R1, V6, ?m3).
+  if t == nil: return "<nil>"
+  case t.kind
+  of tR:
+    if t.refId in refNames: refNames[t.refId] else: "R" & $t.refId
+  of tV:
+    if t.idx < ctx.len and ctx[t.idx].name != "_": ctx[t.idx].name
+    else: "V" & $t.idx
+  of tC: $t.c
+  of tPi, tSi, tLam:
+    let adv = if t.scope.adv != "_": t.scope.adv else: "_"
+    let kindStr =
+      if t.kind == tPi: (if t.impl: "Pi{" else: "Pi(")
+      elif t.kind == tSi: (if t.impl: "Si{" else: "Si(")
+      else: (if t.impl: "L{" else: "L(")
+    let ctx2 = @[CtxEntry(name: adv, ty: t.dom)] & ctx
+    kindStr & prettyTerm(t.dom, ctx, refNames) & ", " & adv & ". " &
+      prettyTerm(t.scope.bdy, ctx2, refNames) & ")"
+  of tMeta: "?_"
+  of tPair:
+    "P(" & prettyTerm(t.pFst, ctx, refNames) & ", " &
+      prettyTerm(t.pSnd, ctx, refNames) & ")"
+  of tApp:
+    "(" & prettyTerm(t.fn, ctx, refNames) & " " &
+      prettyTerm(t.arg, ctx, refNames) & ")"
+  of tFst: "(" & prettyTerm(t.sub, ctx, refNames) & ".1)"
+  of tSnd: "(" & prettyTerm(t.sub, ctx, refNames) & ".2)"
+  of tAbsurd: "(absurd " & prettyTerm(t.sub, ctx, refNames) & ")"
+  of tLet:
+    "let " & prettyTerm(t.letVal, ctx, refNames) & " in " &
+      prettyTerm(t.letScope.bdy, @[CtxEntry(name: "_", ty: t.letTy)] & ctx, refNames)
+
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-              ctxLen: int) =
+              ctx: Ctx, globals: Globals) =
   ## Conversion for the inferred-vs-expected check (Experiment 5b):
   ## compare up to full reduction — delta-unfolding of
   ## definitions, beta, and the registered wRed rules — via the core
@@ -63,28 +109,20 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   if findUnsolved(ms, a1).found or findUnsolved(ms, b1).found:
     unifyElab(ms, a1, b1, loc)
     return
-  var env = newSeq[Value](ctxLen)
-  for i in 0 ..< ctxLen:
+  var env = newSeq[Value](ctx.len)
+  for i in 0 ..< ctx.len:
     env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
   let va = eval(a1, env)
   let vb = eval(b1, env)
   try:
     areEqual(s, vStar(), va, vb)
   except ValueError as e:
-    raise elabErr(loc, "inferred type " & $a1 &
-      " does not match expected type " & $b1 & ": not convertible (" & e.msg & ")")
-
-type
-  CtxEntry = object
-    name: string
-    ty: Term
-  Ctx = seq[CtxEntry]            # innermost-first
-  GEntry = object
-    tm: Term                     # the R node, for building terms
-    ty: Term                     # elaborated + zonked type, for implicits
-    isElim: bool                 # Experiment 4: declared with 'elim'
-    elimNargs: int               # Experiment 4: eliminator arity (incl. scrutinee)
-  Globals = Table[string, GEntry]
+    var refNames = initTable[int, string]()
+    for name, g in globals:
+      if g.tm.kind == tR: refNames[g.tm.refId] = name
+    raise elabErr(loc, "inferred type " & prettyTerm(a1, ctx, refNames) &
+      " does not match expected type " & prettyTerm(b1, ctx, refNames) &
+      ": not convertible (" & e.msg & ")")
 
 proc ext(ctx: Ctx, name: string, ty: Term): Ctx =
   ## Extend the context: every stored type is weakened into the new frame.
@@ -280,7 +318,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     t
   else:
     let (t, ty) = inferTm(pre, ctx, globals, ms, supply)
-    convElab(ms, supply, ty, expTy, pre.loc, ctx.len)
+    convElab(ms, supply, ty, expTy, pre.loc, ctx, globals)
     t
 
 type
