@@ -38,3 +38,28 @@
   reusable ideas, paper notes, and findings in raven6941/notes
   (shared zettelkasten). Cross-links via GitHub URLs.
   Consequences: =plan.org=, =research.org=, this log live here.
+
+* 2026-10-07 — Experiment 1: surface syntax front end
+
+  Context: two front ends built for the same preterm AST
+  (=preterm.nim=): (a) hand-written string parser (=parse_surf.nim=,
+  ~250 lines, full syntax: =?=, =Pi=/=Sig= binders, =let=, pairs);
+  (b) Nim-AST macro (=mac_surf.nim=) mapping proc definitions.
+  Both produce identical ASTs for twice/const/pairSwap (tested).
+  Findings:
+  - (b) reuses Nim's parser and gets locations free via lineInfoObj,
+    but Nim's grammar constrains the surface: =?= unusable (needs
+    =Univ=), Nim keywords unavailable as names (=const= failed),
+    dependent binders need encodings (=Sig(u, A, B)=), =let= sections
+    don't map to term-let.
+  - (a) has full syntactic freedom and precise errors, but the
+    surface is a string (no IDE support, we own the lexer).
+  - Nim ="""= strips the leading newline (location accounting note);
+    =bindSym= needs a NimNode, not a string.
+  Decision: hybrid for Experiment 2 — string literal *through* a
+  macro: full syntax freedom + compile-time elaboration/checking
+  inside macro expansion (the Turnstile analogy), errors via
+  =error()= at string-relative locations. (b) kept as reference for
+  Nim-embedded fragments.
+  Consequences: Experiment 2 builds =ett"..."= macro on =parse_surf=;
+  =mac_surf= stays as an alternative front end, not the main path.
