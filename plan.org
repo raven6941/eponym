@@ -379,6 +379,28 @@
   - Universe polymorphism / cumulativity. ETT has =? : ?=; that's enough
     rope for now.
 
+* Experiment 11 (proposed 2026-10-07) — primitive efficient types
+
+  Question: can Eponym have machine-efficient numbers without
+  giving up the inductive core?
+
+  Motivation (Aaron, 2026-10-07): unary =s(s(z))= in papers "screams
+  that we aren't talking about something we expect people to actually
+  use." A convincing system needs efficient numbers at the surface.
+
+  Build: =postulate Int : ?= with integer literals and primitive
+  operations (=+, -, *, ...=) that reduce via the =wRed= machinery
+  (Experiment 4). The core keeps its simple inductive types for
+  metatheory; the surface elaborates literals to the primitive.
+
+  Success: =42 + 17= computes to =59= via the primitive reduction;
+  the core's =data Nat= still works for proofs. No unary in
+  surface examples.
+
+  Note: binary naturals via =data= (Experiment 5 follow-up,
+  demonstrated 2026-10-07) show the mechanism generalizes beyond
+  unary, but primitives are the real usability answer.
+
 * Related
   - [[file:research.org][Research question]]
   - [[https://github.com/raven6941/notes/blob/main/design/staging.org][Staging]]
