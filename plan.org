@@ -385,6 +385,30 @@
   - Universe polymorphism / cumulativity. ETT has =? : ?=; that's enough
     rope for now.
 
+* Experiment 13 (possible future, 2026-10-07) — functorial datatypes
+
+  Question: can Eponym's =data= declarations expose their
+  polynomial-functor structure?
+
+  Motivation (Aaron, 2026-10-07): PolyTT (Topos Institute) makes
+  polynomial functors native to the type theory. The same structure
+  models datatypes (containers, W-types) and interaction (dynamical
+  systems, open games). If the theory speaks polynomial functors
+  natively, reasoning about code and reasoning about domains share
+  structure — a unifying substrate.
+
+  For Eponym: our =data= desugarer already generates eliminators
+  (catamorphisms). The experiment is to make the functorial
+  structure *explicit* — generic map/fold/traverse derived from the
+  functor, not generated per-type. Composition of datatypes via
+  functor composition.
+
+  Not a core replacement (PolyTT is experimental; our bottleneck is
+  equality, not datatype genericity). A design influence: take the
+  idea (functorial datatypes) without adopting the theory.
+
+  See notes: [[https://github.com/raven6941/notes/blob/main/polynomial-functors-unifying-substrate.org][polynomial functors as unifying substrate]].
+
 * Experiment 12 (proposed 2026-10-07) — propositional equality
 
   Question: can Eponym express and prove equalities?
