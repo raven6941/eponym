@@ -11,13 +11,18 @@ jobs:
           echo "$HOME/.nimble/bin" >> $GITHUB_PATH
       - name: Select Nim version
         run: choosenim 2.2.12
-      - name: Run test suites
+      - name: Build
         run: |
           nim --version
           for f in ett ett_init preterm parse_surf mac_surf elab ett_mac; do
-            echo "=== $f ==="
+            echo "=== build $f ==="
+            nim c --hints:off --path:src "src/$f.nim" || exit 1
+          done
+      - name: Test
+        run: |
+          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac; do
+            echo "=== test $f ==="
             nim c -r --hints:off --path:src "src/$f.nim" || exit 1
           done
-      - name: Run examples
-        run: |
+          echo "=== examples ==="
           nim c -r --hints:off --path:src "tests/run_examples.nim" || exit 1
