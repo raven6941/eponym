@@ -160,7 +160,7 @@
   procs taking (goal, ctx, globals). Tests in =src/elab.nim=,
   example in =examples/14-tactics.ep=.
 
-* Experiment 7 — interactive tooling without a bespoke editor
+* Experiment 7 (complete 2026-10-07, basic) — interactive tooling without a bespoke editor
 
   Question: Epigram's productivity story depended on a purpose-built
   editor that understood sheds. Can LSP-based tooling fill the same gap
@@ -180,6 +180,12 @@
 
   Success: a realistic interactive session — e.g. developing =Vec append=
   hole-by-hole — in a stock editor, no bespoke UI.
+
+  Result (2026-10-07): Basic LSP server complete (src/lsp.nim).
+  Stdio JSON-RPC; handles initialize, didOpen, didChange; publishes
+  diagnostics from elaborator (parse + elab errors at surface locations).
+  Tested with mock LSP session. Hover, code actions, and incremental
+  sync are future work.
 
   This experiment is the tooling half of "convincingly": a useful system
   anyone would actually want to use needs it.

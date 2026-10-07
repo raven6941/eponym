@@ -14,13 +14,13 @@ jobs:
       - name: Build
         run: |
           nim --version
-          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac; do
+          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac lsp egraph; do
             echo "=== build $f ==="
             nim c --hints:off --path:src "src/$f.nim" || exit 1
           done
       - name: Test
         run: |
-          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac; do
+          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac lsp egraph; do
             echo "=== test $f ==="
             nim c -r --hints:off --path:src "src/$f.nim" || exit 1
           done
