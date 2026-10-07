@@ -230,6 +230,16 @@
   elaboration. Honest costs: iteration bounds (fall back to NbE),
   first-order binder encoding, no why-not explanations.
 
+  Round-3 additions (2026-10-07): (a) index the equation/rule set in
+  a matching triemap (Peyton Jones & Graf 2023) keyed by LHS patterns
+  — one traversal per probe, returns all applicable rules with
+  substitutions, α-aware; also the natural index for the
+  elaborator's rewrite-rule set generally. (b) Witness-carrying
+  merges (Kmett-style annotated union-find): each union stores its
+  justification, turning the cache into a proof-producing structure
+  and attacking the no-why-not blocker. Longer-term: permutation-
+  annotated union-find for α-absorption of e-classes (binder problem).
+
   References:
   [[https://github.com/raven6941/notes/blob/main/concepts/egraph-conversion-cache.org][e-graph conversion cache]];
   [[https://github.com/raven6941/notes/blob/main/background/willsey-egg-2021.org][egg (Willsey et al.)]];
@@ -264,6 +274,14 @@
   Rompf 2018 (a direction is a "modified semantics"; staging it is the
   Futamura move). See
   [[https://github.com/raven6941/notes/blob/main/concepts/relational-staged-interpreters.org][the concept note]].
+
+  Round-3 bridge (2026-10-07): egglog already unifies relations +
+  union-find; Kmett's annotated union-find (groupoid relation
+  algebra) is the same algebraic shape. A relational interpreter
+  whose equality relation is a groupoid-annotated union-find would
+  let *one* structure serve evaluation, unification, and saturation
+  — the Track C vision with the Experiment 10 machinery as its
+  substrate.
 
   Build, in order:
   1. Relational ETT evaluator in Nim: =evalᵒ(term, env, value)= with
