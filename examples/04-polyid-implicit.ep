@@ -1,0 +1,15 @@
+# Polymorphic identity with implicit arguments. Tests implicit insertion.
+# Experiment: 04
+
+def polyId {A : ?} (x : A) : A :=
+  x
+def usePolyId : 1 :=
+  polyId <>
+def constI {A : ?} {B : ?} (x : A) (y : B) : A :=
+  x
+def useConstI : 1 :=
+  constI <> <>
+def pairSwapI {A : ?} {B : ?} (p : Sig (u : A). B) : Sig (v : B). A :=
+  (snd p, fst p)
+def usePairSwapI : Sig (v : 1). 1 :=
+  pairSwapI (<>, <>)

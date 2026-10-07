@@ -1,0 +1,10 @@
+# Naturals via data declaration. Tests Experiment 5 desugaring.
+# Experiment: 09
+
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def two : Nat := suc (suc zero)
+def add (m : Nat) (n : Nat) : Nat :=
+  natElim (lam (u : Nat). Nat) m (lam (p : Nat). lam (ih : Nat). suc ih) n
+def four : Nat := add two two

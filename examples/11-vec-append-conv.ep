@@ -1,0 +1,22 @@
+# Vec append with conversion. Tests Experiment 5b: checkTm uses full conversion.
+# Experiment: 11
+
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+def add (m : Nat) (n : Nat) : Nat :=
+  natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
+def vnil : Vec Nat (add zero zero) :=
+  nil Nat
+def constNil (A : ?) (x : A) : Vec A (add zero zero) :=
+  nil A
+def append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
+    : Vec A (add m n) :=
+  vecElim A (lam (i : Nat). lam (v : Vec A i). Vec A (add i n))
+            ys
+            (lam (i : Nat). lam (x : A). lam (xs : Vec A i).
+              lam (ih : Vec A (add i n)). cons A (add i n) x ih)
+            m xs

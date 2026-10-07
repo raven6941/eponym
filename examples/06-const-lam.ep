@@ -1,0 +1,5 @@
+# Constant function via lambda. Tests lam elaboration.
+# Experiment: 06
+
+def constLam : Pi (A : ?) . A -> A :=
+  lam (A : ?) . lam (x : A) . x

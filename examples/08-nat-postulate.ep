@@ -1,0 +1,15 @@
+# Naturals via postulate. Tests postulate with eliminator.
+# Experiment: 08
+
+postulate Nat : ?
+postulate zero : Nat
+postulate suc : Nat -> Nat
+elim natElim : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+red natElim C z s zero    := z
+red natElim C z s (suc n) := s n (natElim C z s n)
+def two : Nat := suc (suc zero)
+def add (m : Nat) (n : Nat) : Nat :=
+  natElim (lam (u : Nat). Nat) m (lam (p : Nat). lam (ih : Nat). suc ih) n
+def four : Nat := add two two
+def stuckTest (n : Nat) : Nat :=
+  natElim (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). p) n
