@@ -90,7 +90,51 @@
   stay the Experiment 5 datatype mechanism. Decision held open for
   Aaron — see the memo's two open questions.
 
+* Experiment 5b: conversion in checkTm (2026-10-07)
+  - Closed the documented gap: =checkTm='s inferred-vs-expected check
+    used syntactic Miller unification, so =Vec A (add zero n)= against
+    =Vec A n= was rejected even though the =wRed= rules make them
+    convertible. New =convElab= in =elab.nim=: zonk both sides; if
+    unsolved metas remain, fall back to pattern unification (evaluation
+    cannot solve flex constraints, and =unify= is the only thing that
+    can); otherwise evaluate both sides in one shared identity
+    environment — free variables become fresh neutral parameters via
+    the core's =freshPara=, so open terms evaluate soundly — and run
+    the core's =areEqual= guided by =*=, mirroring the core's own
+    =check=. =freshPara= and =areEqual= are now exported from
+    =ett_init.nim= (pure =*= additions, no behavior change).
+  - Only the =else= branch of =checkTm= changed (the genuine
+    inferred-vs-expected check). Ascriptions, =let= bodies, =pkAnn=,
+    and the =ensurePi/=ensureSi= domain checks keep =unifyElab= —
+    those are solving positions, and conversion must not run while
+    metas are still being assigned.
+  - Result: =vnil : Vec Nat (add zero zero)=, the open-context
+    =constNil=, and full =Vec append= (motive with =add= in the
+    indices: the nil case needs =add zero n ≡ n=, the cons case needs
+    =add (suc i) n ≡ suc (add i n)=) all elaborate; genuinely
+    different indices are still rejected ("not convertible"). The
+    test's =add= recurses on its *first* argument so the rules fire
+    under a neutral second argument. All 8 suites green, including
+    the compile-time =ett= macro suite (the new path runs =eval= /
+    =areEqual= inside the Nim VM without trouble).
+  - Honest deltas: (1) conversion ignores the implicit/explicit
+    binder flag — =Whnf= drops =impl=, while =unify= checked it —
+    so strictly more programs are accepted here; consistent with the
+    core checker's =areEqual=. (2) The mixed case — an unsolved meta
+    *under* a redex, e.g. =Vec A ?m= vs =Vec A (add zero ?m)= —
+    still fails: the fallback =unify= hits the occurs check. Fixing
+    that needs constraint postponement, Experiment 6+ territory.
+    (3) One test expectation updated: the =fst (snd p, fst p)=
+    program's error changed from "cannot unify" to "not convertible"
+    — same rejection, better message.
+  - Turnstile+ connection: this is their elaborator's conversion
+    check, except ours reuses the *core* evaluator and conversion
+    relation rather than a separate elaboration-time one — one
+    conversion relation for the whole system, as the paper's
+    dependent-type story wants.
+
 * Experiment 5 results (2026-10-07)
+  - =data= declarations desugar to Experiment 4's
   - =data= declarations desugar to Experiment 4's
     =postulate=/=elim=/=red= and elaborate through the same path.
     =data Nat= generates the type former, constructors, eliminator,
