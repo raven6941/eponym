@@ -19,3 +19,6 @@ src/mac_surf
 tests/run_examples
 src/lsp
 src/egraph
+examples/*
+!examples/*.nim
+!examples/*.ep
