@@ -1,5 +1,6 @@
 # Primitive efficient integers: literals and ops compute via host.
 # Experiment: 11
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
 # No unary s(s(z)) — 42 is a machine integer, addInt computes directly.
 
 postulate Int : ?

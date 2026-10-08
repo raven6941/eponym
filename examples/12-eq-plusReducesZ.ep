@@ -1,5 +1,7 @@
 # Propositional equality: Eq, refl, J, cong, plusReducesZ.
 # Experiment: 12
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
+# `data T : ? where` defines inductive types; in ettBlock: `data(T, Univ):` + indented `proc` ctors
 # Eq is an indexed family; refl typechecks up to conversion
 # (not just syntactic equality). J (eqElim) is the eliminator.
 # plusReducesZ is the Idris benchmark: (n : Nat) -> n = plus n Z.

@@ -1,5 +1,6 @@
 # Identity function and its use. Tests basic def and application.
 # Experiment: 02
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
 
 proc myId (A : ?) (x : A) : A =
   x
