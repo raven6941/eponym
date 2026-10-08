@@ -266,11 +266,13 @@ proc exitRec*() = dec currentDepth
 proc run*(q: RTerm, g: Goal, n = 10, maxDepth = 10): seq[RTerm] =
   ## Run with iterative deepening over depth.
   ## The Stream tree is built, then `take` processes it with worklist.
+  ## Note: freshCounter is NOT reset here; it must be globally unique.
+  ## Callers should create q via freshVar() before run, and the counter
+  ## continues monotonically to avoid ID collisions.
   result = @[]
   var seen: seq[string] = @[]
   for d in 1..maxDepth:
     depthLimit = d
-    freshCounter = 0
     currentDepth = 0
     let stream = g(emptySubst())
     let substs = take(n - result.len, stream)
