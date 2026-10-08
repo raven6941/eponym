@@ -12,6 +12,7 @@ import minikanren
 import rel_elab   # zeroTm, sucTm
 import rel_interp # addTm, mulTm
 import tables
+import sets
 
 # --- evalo as RelGoal data (simplified: zero/suc/add cases) ---
 #
@@ -54,15 +55,18 @@ when isMainModule:
   # Stage evalo(suc(zero), v) with tm static, v dynamic
   var staticEnv = initTable[string, RTerm]()
   staticEnv["__var_tm"] = sucTm(zeroTm())  # tm = suc(zero), ground/static
-  # v (__var_v) not in env → dynamic
+  # v (__var_v) is mOut: dynamic, must NOT be bound at staging time.
+  # It stays as a residual equation v=suc(vn).
+  var dynamicVars = initHashSet[string]()
+  dynamicVars.incl("__var_v")
 
   let rg = evaloData()
   echo "evalo RelGoal (tm=__var_tm, v=__var_v):"
   echo "  ", rg
   echo ""
 
-  let staged = stageGoal(rg, staticEnv)
-  echo "Staged with tm=suc(zero) static:"
+  let staged = stageGoal(rg, staticEnv, dynamicVars)
+  echo "Staged with tm=suc(zero) static, v dynamic (mOut):"
   echo "  Result kind: ", staged.kind
   echo ""
 
@@ -77,10 +81,8 @@ when isMainModule:
     echo ""
     echo "The static tm=suc(zero) pruned the zero and add branches."
     echo "The unifier learned n=zero and substituted it into the recursive"
-    echo "call; v=suc(vn) was solved at staging time (in the staging env)."
+    echo "call. v is mOut (dynamic), so v=suc(vn) stays as a residual equation."
     echo "This is the 1st projection: structure fixed, v dynamic."
-    echo "Note: surfacing v=suc(vn) in the residual interface needs the"
-    echo "mode-directed layer (v is mOut) — currently in the staging env."
   echo ""
   echo "Compare to staged_eval.nim: hand-writes stageEval(suc(zero)) = suc(zero)."
   echo "Here, the RULES derive the residual via branch pruning."

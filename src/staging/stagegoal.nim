@@ -13,6 +13,7 @@ import minikanren
 import tables
 import strutils
 import sequtils
+import sets
 
 type
   StagedGoalKind* = enum
@@ -58,23 +59,31 @@ proc occursIn(name: string, t: RTerm, env: Table[string, RTerm]): bool =
   of rkPair: occursIn(name, td.head, env) or occursIn(name, td.tail, env)
   of rkVar: false
 
-proc unifyStage(a, b: RTerm, env: var Table[string, RTerm]): UnifyResult =
+proc unifyStage(a, b: RTerm, env: var Table[string, RTerm],
+               dynamicVars: HashSet[string]): UnifyResult =
   ## Staging-time unification with binding propagation.
   ##
-  ## - Unbound placeholder vs t: bind (unless occurs-check fails) → Yes.
+  ## - Unbound placeholder vs t: bind (unless occurs-check fails or
+  ##   placeholder is in dynamicVars) → Yes.
   ##   This generalizes the old placeholder-vs-ground special case:
   ##   suc(__var_n) vs suc(zero) now learns n=zero through the
-  ##   constructors; __var_v vs suc(__var_vn) learns v=suc(vn).
+  ##   constructors; __var_v vs suc(__var_vn) learns v=suc(vn) UNLESS
+  ##   v is in dynamicVars (mOut), in which case it residualizes.
   ## - Head-constructor mismatch, even under dynamic subterms → No (prune).
   ## - Cyclic equation (n vs suc(n)) → Maybe (residualize).
   ##
   ## Bindings are recorded in env; applyEnv substitutes them into
   ## residual goals, which is what makes dropping solved equations sound.
+  ##
+  ## dynamicVars: placeholders that must NOT be bound at staging time
+  ## (e.g., mOut variables). Equations involving them residualize.
   let a2 = deref(a, env)
   let b2 = deref(b, env)
   if a2.kind == rkVar or b2.kind == rkVar:
     return urMaybe  # engine logic var: can't decide at staging time
   if isPlaceholder(a2):
+    if a2.name in dynamicVars:
+      return urMaybe  # mOut var: residualize, don't bind
     if isPlaceholder(b2) and a2.name == b2.name:
       return urYes
     if occursIn(a2.name, b2, env):
@@ -82,6 +91,8 @@ proc unifyStage(a, b: RTerm, env: var Table[string, RTerm]): UnifyResult =
     env[a2.name] = b2
     return urYes
   if isPlaceholder(b2):
+    if b2.name in dynamicVars:
+      return urMaybe  # mOut var: residualize, don't bind
     if occursIn(b2.name, a2, env):
       return urMaybe
     env[b2.name] = a2
@@ -93,9 +104,9 @@ proc unifyStage(a, b: RTerm, env: var Table[string, RTerm]): UnifyResult =
     # Ground atoms here (placeholders handled above)
     if a2.name == b2.name: urYes else: urNo
   of rkPair:
-    let h = unifyStage(a2.head, b2.head, env)
+    let h = unifyStage(a2.head, b2.head, env, dynamicVars)
     if h == urNo: return urNo
-    let t = unifyStage(a2.tail, b2.tail, env)
+    let t = unifyStage(a2.tail, b2.tail, env, dynamicVars)
     if t == urNo: return urNo
     if h == urYes and t == urYes: urYes else: urMaybe
   of rkVar:
@@ -140,16 +151,18 @@ proc mentionsVar(rg: RelGoal, varName: string): bool =
       rg.values.anyIt(termMentions(it, ph))
   of rgBranch: rg.vars.anyIt(termMentions(it, ph))
 
-proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm]): StagedGoal =
+proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
+               dynamicVars: HashSet[string] = initHashSet[string]()): StagedGoal =
   ## Stage a RelGoal given static bindings (mutated with learned bindings).
   ## staticEnv: maps __var_<name> to ground RTerm (static values)
+  ## dynamicVars: placeholders that must NOT be bound (e.g., mOut vars)
   case rg.kind
   of rgFail:
     StagedGoal(kind: sgFail)
   of rgSucceed:
     StagedGoal(kind: sgDone)
   of rgEq:
-    case unifyStage(rg.left, rg.right, staticEnv)
+    case unifyStage(rg.left, rg.right, staticEnv, dynamicVars)
     of urYes:
       StagedGoal(kind: sgDone)  # solved at staging time (bindings in env)
     of urNo:
@@ -160,11 +173,11 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm]): StagedGoal =
     # For prototype: always residualize (conservative)
     StagedGoal(kind: sgResidual, goal: rg)
   of rgConj:
-    let sa = stageGoal(rg.leftG, staticEnv)
+    let sa = stageGoal(rg.leftG, staticEnv, dynamicVars)
     if sa.kind == sgFail:
       return StagedGoal(kind: sgFail)
     # Bindings learned staging left are in staticEnv for right (conjunction)
-    let sb = stageGoal(rg.rightG, staticEnv)
+    let sb = stageGoal(rg.rightG, staticEnv, dynamicVars)
     if sb.kind == sgFail:
       return StagedGoal(kind: sgFail)
     if sa.kind == sgDone and sb.kind == sgDone:
@@ -179,8 +192,8 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm]): StagedGoal =
     # e.g. (x==5 ∧ f(x)) ∨ (x==6): right must not see x=5 from the left.)
     var envL = staticEnv
     var envR = staticEnv
-    let sa = stageGoal(rg.leftG, envL)
-    let sb = stageGoal(rg.rightG, envR)
+    let sa = stageGoal(rg.leftG, envL, dynamicVars)
+    let sb = stageGoal(rg.rightG, envR, dynamicVars)
     if sa.kind == sgFail:
       staticEnv = envR
       return finishResidual(sb, envR)  # left impossible, take right
@@ -203,7 +216,7 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm]): StagedGoal =
   of rgFresh:
     # Stage the body with the fresh var as dynamic (not in staticEnv).
     # The var remains a placeholder; if the body prunes to Fail, so do we.
-    let stagedBody = stageGoal(rg.body, staticEnv)
+    let stagedBody = stageGoal(rg.body, staticEnv, dynamicVars)
     case stagedBody.kind
     of sgFail:
       StagedGoal(kind: sgFail)
