@@ -53,26 +53,26 @@
 ## ---------------------------------------------------------------------------
 
 type
-  Sym[R] = object
+  Sym*[R] = object
     ## The universe of (small) types, `?` (we follow the paper: ?:?).
-    cStar: proc(): R
+    cStar*: proc(): R
     ## The unit type `1` and its canonical inhabitant `<>`.
-    cUnit: proc(): R
-    cTt: proc(): R
+    cUnit*: proc(): R
+    cTt*: proc(): R
     ## The empty type `O`.
-    cEmpty: proc(): R
+    cEmpty*: proc(): R
     ## Dependent function type, lambda (domain-annotated, as in the paper)
     ## and application.
-    cPi: proc(dom: R, cod: proc(x: R): R): R
-    cLam: proc(dom: R, body: proc(x: R): R): R
-    cApp: proc(f, a: R): R
+    cPi*: proc(dom: R, cod: proc(x: R): R): R
+    cLam*: proc(dom: R, body: proc(x: R): R): R
+    cApp*: proc(f, a: R): R
     ## Dependent pair type, pairing and the two projections.
-    cSigma: proc(dom: R, cod: proc(x: R): R): R
-    cPair: proc(a, b: R): R
-    cFst: proc(p: R): R
-    cSnd: proc(p: R): R
+    cSigma*: proc(dom: R, cod: proc(x: R): R): R
+    cPair*: proc(a, b: R): R
+    cFst*: proc(p: R): R
+    cSnd*: proc(p: R): R
     ## Ex falso: the eliminator for O (the paper's postfix `OE`).
-    cAbsurd: proc(z: R): R
+    cAbsurd*: proc(z: R): R
 
 ## ---------------------------------------------------------------------------
 ## 2. Derived combinators, valid for every instance
@@ -97,29 +97,29 @@ type
     case kind: ElimKind
     of ekApp: arg: Value
     else: discard
-  VKind = enum
+  VKind* = enum
     vkStar, vkUnit, vkTt, vkEmpty,   # constants: ?  1  <>  O
     vkPi, vkLam,                     # Pi-type and lambda (closures)
     vkSigma, vkPair,                 # Sigma-type and pair
     vkNeutral                        # stuck variable + elimination spine
-  Value = ref object
+  Value* = ref object
     ## Run-time values. Binders are host closures, so evaluation is just
     ## host-language beta-reduction -- the "functional representation" half
     ## of the paper's glued values (§6.6), without the syntactic half.
     ## Neutrals (free variables with stuck spines) only arise when the
     ## typechecker evaluates open terms; closed-term evaluation never
     ## produces them.
-    case kind: VKind
+    case kind*: VKind
     of vkPi, vkSigma:
-      dom: Value
-      cod: proc(x: Value): Value
+      dom*: Value
+      cod*: proc(x: Value): Value
     of vkLam:
-      body: proc(x: Value): Value
+      body*: proc(x: Value): Value
     of vkPair:
-      fstV, sndV: Value
+      fstV*, sndV*: Value
     of vkNeutral:
-      neutId: int
-      spine: seq[Elim]
+      neutId*: int
+      spine*: seq[Elim]
     else:
       discard
 
