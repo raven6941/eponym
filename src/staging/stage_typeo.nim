@@ -3,7 +3,8 @@
 ## Takes typeo as RelGoal data, with ty static (ground) and tm dynamic.
 ## Derives a type-specialized checker via stageGoal rules.
 ##
-## Compare to src/elaborator.nim (hand-written). This derives it.
+## Compare to rel_elab.typeo (hand-written). This derives it.
+## See src/staging/bench_typeo.nim for the wall-clock benchmark.
 ##
 ## Issue #19: this is the experiment that decides whether
 ## relational+staging leaves experimental status.
@@ -26,7 +27,9 @@ import sets
 #   ∨ (fresh f, a, d, c. tm == app(f,a) ∧ typeo(f, arr(d,c), ctx)
 #                          ∧ typeo(a, d, ctx) ∧ ty == c)
 
-proc typeoData(): RelGoal =
+proc typeoData*(): RelGoal =
+  ## typeo as RelGoal data (hand-written mirror of rel_elab.typeo).
+  ## Exported for the issue #19/#20 staging benchmark (bench_typeo.nim).
   let tm = ratom("__var_tm")
   let ty = ratom("__var_ty")
   let ctx = ratom("__var_ctx")
