@@ -134,6 +134,10 @@ proc `==`*(u, v: RTerm): Goal =
     let (ok, s2) = unify(u, v, s)
     if ok: singleton(s2) else: emptyStream()
 
+proc eq*(u, v: RTerm): Goal {.inline.} =
+  ## Non-operator alias for `==`, for use in macros (avoids hygiene issues).
+  `==`(u, v)
+
 proc conj*(g1, g2: Goal): Goal =
   return proc(s: Subst): Stream =
     # g1(s) is a Stream tree; bind g2 over it
