@@ -76,8 +76,11 @@ when isMainModule:
     echo "  ", staged.goal
     echo ""
     echo "The static tm=suc(zero) pruned the zero and add branches."
-    echo "Remaining: v == suc(vn) where vn is evalo(zero)."
+    echo "The unifier learned n=zero and substituted it into the recursive"
+    echo "call; v=suc(vn) was solved at staging time (in the staging env)."
     echo "This is the 1st projection: structure fixed, v dynamic."
+    echo "Note: surfacing v=suc(vn) in the residual interface needs the"
+    echo "mode-directed layer (v is mOut) — currently in the staging env."
   echo ""
   echo "Compare to staged_eval.nim: hand-writes stageEval(suc(zero)) = suc(zero)."
   echo "Here, the RULES derive the residual via branch pruning."

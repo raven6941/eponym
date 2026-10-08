@@ -71,7 +71,7 @@ proc substTermAtom(t: RTerm, placeholder: RTerm, replacement: RTerm): RTerm =
   else:
     t
 
-proc substAtom(rg: RelGoal, placeholder: RTerm, replacement: RTerm): RelGoal =
+proc substAtom*(rg: RelGoal, placeholder: RTerm, replacement: RTerm): RelGoal =
   case rg.kind
   of rgFail, rgSucceed: rg
   of rgEq: rgEq(substTermAtom(rg.left, placeholder, replacement),

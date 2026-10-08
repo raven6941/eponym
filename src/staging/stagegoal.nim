@@ -2,7 +2,8 @@
 ##
 ## Symbolically executes a RelGoal with static/dynamic distinction.
 ## - Static RTerms (ground): unify now, prune impossible branches
-## - Dynamic RTerms (with vars): residualize as RelGoal data
+## - Dynamic RTerms (with __var_ placeholders): unify at staging time
+##   when possible (binding propagation, incl. nested), else residualize
 ##
 ## This is the relational analog of evalStaged: mix(relation, staticArgs).
 
@@ -11,6 +12,7 @@ import staging/modes
 import minikanren
 import tables
 import strutils
+import sequtils
 
 type
   StagedGoalKind* = enum
@@ -24,74 +26,119 @@ type
     of sgFail: discard
     of sgResidual: goal*: RelGoal
 
-proc isGround(t: RTerm): bool =
-  ## Check if RTerm is ground (no vars, no dynamic placeholders).
-  case t.kind
-  of rkVar: false
-  of rkAtom:
-    # __var_ placeholders represent dynamic variables, not ground values
-    not t.name.startsWith("__var_")
-  of rkPair: isGround(t.head) and isGround(t.tail)
-
-
-proc resolveStatic(t: RTerm, env: Table[string, RTerm]): RTerm =
-  ## Replace __var_<name> placeholders with static values from env.
-  case t.kind
-  of rkAtom:
-    if t.name.startsWith("__var_"):
-      let key = t.name
-      if key in env: env[key]
-      else: t
-    else: t
-  of rkPair:
-    rpair(resolveStatic(t.head, env), resolveStatic(t.tail, env))
-  else: t
-
-proc unifyGround(a, b: RTerm): bool =
-  ## Check if two ground terms unify (structural equality).
-  if a.kind != b.kind: return false
-  case a.kind
-  of rkAtom: a.name == b.name
-  of rkPair: unifyGround(a.head, b.head) and unifyGround(a.tail, b.tail)
-  of rkVar: false  # shouldn't happen for ground, but safe
-
 type
   UnifyResult = enum
-    urYes,      # definitely unifies
+    urYes,      # definitely unifies (bindings recorded in env)
     urNo,       # definitely doesn't unify (prune!)
     urMaybe     # can't decide statically (residualize)
 
-proc unifyHead(a, b: RTerm): UnifyResult =
-  ## Partial unification: prune when head constructors differ,
-  ## even if subterms are dynamic. Returns Maybe when undecidable.
-  ##
-  ## This improves on unifyGround by handling partial ground terms:
-  ##   suc(__var_n) vs zero → No (heads suc vs zero differ)
-  ##   suc(__var_n) vs add(__var_a, __var_b) → No
-  ##   suc(__var_n) vs suc(__var_m) → Maybe (heads match, subterms dynamic)
-  if a.kind == rkVar or b.kind == rkVar:
-    return urMaybe  # logic var: can't decide
-  if a.kind != b.kind:
-    return urNo  # var vs atom/pair, etc.
-  case a.kind
+proc isPlaceholder(t: RTerm): bool =
+  ## __var_<name> atoms stand for dynamic (runtime) variables.
+  t.kind == rkAtom and t.name.startsWith("__var_")
+
+proc deref(t: RTerm, env: Table[string, RTerm]): RTerm =
+  ## Chase __var_ bindings in env. Env is acyclic (occurs-check on
+  ## bind), so this terminates.
+  case t.kind
   of rkAtom:
-    # Atoms: __var_ placeholders are dynamic, others are ground
-    let aDyn = a.name.startsWith("__var_")
-    let bDyn = b.name.startsWith("__var_")
-    if aDyn or bDyn:
-      # If both are the same placeholder, they unify; else maybe
-      if a.name == b.name: urYes else: urMaybe
+    if t.name.startsWith("__var_") and t.name in env:
+      deref(env[t.name], env)
     else:
-      if a.name == b.name: urYes else: urNo
+      t
   of rkPair:
-    # Pairs: check heads first (constructor discrimination)
-    let h = unifyHead(a.head, b.head)
+    rpair(deref(t.head, env), deref(t.tail, env))
+  of rkVar:
+    t
+
+proc occursIn(name: string, t: RTerm, env: Table[string, RTerm]): bool =
+  ## Occurs check: does placeholder `name` occur in deref'd t?
+  let td = deref(t, env)
+  case td.kind
+  of rkAtom: td.name == name
+  of rkPair: occursIn(name, td.head, env) or occursIn(name, td.tail, env)
+  of rkVar: false
+
+proc unifyStage(a, b: RTerm, env: var Table[string, RTerm]): UnifyResult =
+  ## Staging-time unification with binding propagation.
+  ##
+  ## - Unbound placeholder vs t: bind (unless occurs-check fails) → Yes.
+  ##   This generalizes the old placeholder-vs-ground special case:
+  ##   suc(__var_n) vs suc(zero) now learns n=zero through the
+  ##   constructors; __var_v vs suc(__var_vn) learns v=suc(vn).
+  ## - Head-constructor mismatch, even under dynamic subterms → No (prune).
+  ## - Cyclic equation (n vs suc(n)) → Maybe (residualize).
+  ##
+  ## Bindings are recorded in env; applyEnv substitutes them into
+  ## residual goals, which is what makes dropping solved equations sound.
+  let a2 = deref(a, env)
+  let b2 = deref(b, env)
+  if a2.kind == rkVar or b2.kind == rkVar:
+    return urMaybe  # engine logic var: can't decide at staging time
+  if isPlaceholder(a2):
+    if isPlaceholder(b2) and a2.name == b2.name:
+      return urYes
+    if occursIn(a2.name, b2, env):
+      return urMaybe
+    env[a2.name] = b2
+    return urYes
+  if isPlaceholder(b2):
+    if occursIn(b2.name, a2, env):
+      return urMaybe
+    env[b2.name] = a2
+    return urYes
+  if a2.kind != b2.kind:
+    return urNo
+  case a2.kind
+  of rkAtom:
+    # Ground atoms here (placeholders handled above)
+    if a2.name == b2.name: urYes else: urNo
+  of rkPair:
+    let h = unifyStage(a2.head, b2.head, env)
     if h == urNo: return urNo
-    # Heads maybe/yes: need to check tails
-    let t = unifyHead(a.tail, b.tail)
+    let t = unifyStage(a2.tail, b2.tail, env)
     if t == urNo: return urNo
     if h == urYes and t == urYes: urYes else: urMaybe
-  of rkVar: urMaybe  # unreachable, but safe
+  of rkVar:
+    urMaybe  # unreachable (handled above), but safe
+
+proc applyEnv(rg: RelGoal, env: Table[string, RTerm]): RelGoal =
+  ## Substitute staging-time bindings into a residual goal.
+  ## Partial evaluation proper: the residual carries the learned values,
+  ## e.g. a recursive call's static arg is specialized in the residual.
+  ## Note: assumes no shadowing of __var_ names by nested rgFresh.
+  result = rg
+  for name, val in env:
+    result = substAtom(result, ratom(name), deref(val, env))
+
+proc finishResidual(s: StagedGoal, env: Table[string, RTerm]): StagedGoal =
+  ## Apply the final env to a residual built under env.
+  if s.kind == sgResidual:
+    StagedGoal(kind: sgResidual, goal: applyEnv(s.goal, env))
+  else:
+    s
+
+proc termMentions(t: RTerm, name: string): bool =
+  case t.kind
+  of rkAtom: t.name == name
+  of rkPair: termMentions(t.head, name) or termMentions(t.tail, name)
+  of rkVar: false
+
+proc mentionsVar(rg: RelGoal, varName: string): bool =
+  ## Does placeholder __var_<varName> occur free in rg?
+  let ph = "__var_" & varName
+  case rg.kind
+  of rgFail, rgSucceed: false
+  of rgEq, rgNeq: termMentions(rg.left, ph) or termMentions(rg.right, ph)
+  of rgConj, rgDisj:
+    mentionsVar(rg.leftG, varName) or mentionsVar(rg.rightG, varName)
+  of rgFresh:
+    if rg.varName == varName: false  # shadowed by inner binder
+    else: mentionsVar(rg.body, varName)
+  of rgCall: rg.args.anyIt(termMentions(it, ph))
+  of rgSetEq:
+    rg.cells.anyIt(termMentions(it, ph)) or
+      rg.values.anyIt(termMentions(it, ph))
+  of rgBranch: rg.vars.anyIt(termMentions(it, ph))
 
 proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm]): StagedGoal =
   ## Stage a RelGoal given static bindings (mutated with learned bindings).
@@ -102,23 +149,13 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm]): StagedGoal =
   of rgSucceed:
     StagedGoal(kind: sgDone)
   of rgEq:
-    let a = resolveStatic(rg.left, staticEnv)
-    let b = resolveStatic(rg.right, staticEnv)
-    case unifyHead(a, b)
+    case unifyStage(rg.left, rg.right, staticEnv)
     of urYes:
-      StagedGoal(kind: sgDone)
+      StagedGoal(kind: sgDone)  # solved at staging time (bindings in env)
     of urNo:
       StagedGoal(kind: sgFail)  # statically impossible, prune
     of urMaybe:
-      # Try to learn a binding: placeholder == ground → bind it
-      if a.kind == rkAtom and a.name.startsWith("__var_") and isGround(b):
-        staticEnv[a.name] = b
-        StagedGoal(kind: sgDone)  # solved by binding
-      elif b.kind == rkAtom and b.name.startsWith("__var_") and isGround(a):
-        staticEnv[b.name] = a
-        StagedGoal(kind: sgDone)
-      else:
-        StagedGoal(kind: sgResidual, goal: rg)
+      StagedGoal(kind: sgResidual, goal: rg)
   of rgNeq:
     # For prototype: always residualize (conservative)
     StagedGoal(kind: sgResidual, goal: rg)
@@ -126,29 +163,42 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm]): StagedGoal =
     let sa = stageGoal(rg.leftG, staticEnv)
     if sa.kind == sgFail:
       return StagedGoal(kind: sgFail)
-    # TODO: thread bindings from sa into staticEnv for rightG
-    # For prototype: stage right with same env
+    # Bindings learned staging left are in staticEnv for right (conjunction)
     let sb = stageGoal(rg.rightG, staticEnv)
     if sb.kind == sgFail:
       return StagedGoal(kind: sgFail)
     if sa.kind == sgDone and sb.kind == sgDone:
       return StagedGoal(kind: sgDone)
-    # At least one residual: combine
+    # At least one residual: combine, substituting learned bindings
     let ra = if sa.kind == sgResidual: sa.goal else: rgSucceed()
     let rb = if sb.kind == sgResidual: sb.goal else: rgSucceed()
-    StagedGoal(kind: sgResidual, goal: rgConj(ra, rb))
+    StagedGoal(kind: sgResidual, goal: applyEnv(rgConj(ra, rb), staticEnv))
   of rgDisj:
-    let sa = stageGoal(rg.leftG, staticEnv)
-    let sb = stageGoal(rg.rightG, staticEnv)
+    # Branch-local envs: a binding learned in one disjunct does not hold
+    # in the other. (A shared env wrongly pruned satisfiable branches,
+    # e.g. (x==5 ∧ f(x)) ∨ (x==6): right must not see x=5 from the left.)
+    var envL = staticEnv
+    var envR = staticEnv
+    let sa = stageGoal(rg.leftG, envL)
+    let sb = stageGoal(rg.rightG, envR)
     if sa.kind == sgFail:
-      return sb  # left impossible, take right
+      staticEnv = envR
+      return finishResidual(sb, envR)  # left impossible, take right
     if sb.kind == sgFail:
-      return sa  # right impossible, take left
+      staticEnv = envL
+      return finishResidual(sa, envL)  # right impossible, take left
     if sa.kind == sgDone:
-      return sa  # left succeeds, prune right (deterministic)
-    # Both residual or one done: residualize disjunction
-    let ra = if sa.kind == sgResidual: sa.goal else: rgSucceed()
-    let rb = if sb.kind == sgResidual: sb.goal else: rgSucceed()
+      staticEnv = envL
+      return sa  # true ∨ P ≡ true; left's bindings hold
+    if sb.kind == sgDone:
+      staticEnv = envR
+      return sb  # P ∨ true ≡ true
+    # Note: Done-shortcircuit commits to one branch (deterministic-mode
+    # staging). Answer-complete search staging would keep both branches;
+    # see the "stage the Stream?" open question in the design doc.
+    # Both residual: branch bindings stay local, outer env unchanged
+    let ra = applyEnv(sa.goal, envL)
+    let rb = applyEnv(sb.goal, envR)
     StagedGoal(kind: sgResidual, goal: rgDisj(ra, rb))
   of rgFresh:
     # Stage the body with the fresh var as dynamic (not in staticEnv).
@@ -161,7 +211,12 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm]): StagedGoal =
       # Body fully evaluated; fresh var was eliminated
       StagedGoal(kind: sgDone)
     of sgResidual:
-      StagedGoal(kind: sgResidual, goal: rgFresh(rg.varName, stagedBody.goal))
+      let res = applyEnv(stagedBody.goal, staticEnv)
+      if mentionsVar(res, rg.varName):
+        StagedGoal(kind: sgResidual, goal: rgFresh(rg.varName, res))
+      else:
+        # Binder vacuous after substitution (var solved away): drop it
+        StagedGoal(kind: sgResidual, goal: res)
   of rgCall:
     # For prototype: residualize (no inlining yet)
     StagedGoal(kind: sgResidual, goal: rg)
@@ -215,12 +270,93 @@ when isMainModule:
   else: echo "✗ Should have pruned"
   echo ""
 
-  # Test: suc(__var_n) vs suc(__var_m) → heads match, subterms dynamic → residual
+  # Test: suc(__var_n) vs suc(__var_m) → heads match, alias n:=m, solved
   let g6 = rgEq(rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())),
                 rpair(ratom("suc"), rpair(ratom("__var_m"), rnil())))
   var env6 = initTable[string, RTerm]()
   let s6 = stageGoal(g6, env6)
-  echo "(suc(n) == suc(m)): ", s6.kind, " (expected sgResidual)"
-  if s6.kind == sgResidual: echo "✓ Correctly residualized (can't decide)"
+  echo "(suc(n) == suc(m)): ", s6.kind, " (expected sgDone, n aliased to m)"
+  if s6.kind == sgDone and env6["__var_n"].name == "__var_m":
+    echo "✓ Aliased at staging time"
+  else: echo "✗ Expected aliasing"
+  echo ""
+
+  # Test: nested binding — suc(n) == suc(zero) learns n=zero through ctors
+  let g7 = rgEq(rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())),
+                rpair(ratom("suc"), rpair(ratom("zero"), rnil())))
+  var env7 = initTable[string, RTerm]()
+  let s7 = stageGoal(g7, env7)
+  echo "(suc(n) == suc(zero)): ", s7.kind, " (expected sgDone, n=zero)"
+  if s7.kind == sgDone and env7["__var_n"].name == "zero":
+    echo "✓ Nested binding propagated"
+  else: echo "✗ Expected n=zero, got: ", (if "__var_n" in env7: $env7["__var_n"] else: "<unbound>")
+  echo ""
+
+  # Test: deep prune — add(suc(n), zero) vs add(zero, zero), n dynamic
+  let g8 = rgEq(rpair(ratom("add"), rpair(rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())), rpair(ratom("zero"), rnil()))),
+                rpair(ratom("add"), rpair(ratom("zero"), rpair(ratom("zero"), rnil()))))
+  var env8 = initTable[string, RTerm]()
+  let s8 = stageGoal(g8, env8)
+  echo "(add(suc(n),zero) == add(zero,zero)): ", s8.kind, " (expected sgFail)"
+  if s8.kind == sgFail: echo "✓ Deep constructor mismatch pruned"
+  else: echo "✗ Should have pruned"
+  echo ""
+
+  # Test: occurs check — n == suc(n) is cyclic, must residualize not bind
+  let g9 = rgEq(ratom("__var_n"),
+                rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())))
+  var env9 = initTable[string, RTerm]()
+  let s9 = stageGoal(g9, env9)
+  echo "(n == suc(n)): ", s9.kind, " (expected sgResidual, occurs check)"
+  if s9.kind == sgResidual and "__var_n" notin env9:
+    echo "✓ Cyclic equation residualized, no bogus binding"
+  else: echo "✗ Occurs check failed"
+  echo ""
+
+  # Test: conjunction threads bindings — (n==zero) ∧ (suc(n)==suc(zero))
+  let g10 = rgConj(rgEq(ratom("__var_n"), ratom("zero")),
+                   rgEq(rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())),
+                        rpair(ratom("suc"), rpair(ratom("zero"), rnil()))))
+  var env10 = initTable[string, RTerm]()
+  let s10 = stageGoal(g10, env10)
+  echo "((n==zero) ∧ (suc(n)==suc(zero))): ", s10.kind, " (expected sgDone)"
+  if s10.kind == sgDone: echo "✓ Bindings threaded through conjunction"
+  else: echo "✗ Threading failed"
+  echo ""
+
+  # Test: disjunction branch-locality —
+  # ((x==5) ∧ f(x)) ∨ ((x==6) ∧ g(x)): right branch must NOT see x=5
+  # from the left (old shared-env code wrongly pruned it as x==6 → Fail).
+  let g11 = rgDisj(
+    rgConj(rgEq(ratom("__var_x"), rint(5)), rgCall("f", @[ratom("__var_x")])),
+    rgConj(rgEq(ratom("__var_x"), rint(6)), rgCall("g", @[ratom("__var_x")])))
+  var env11 = initTable[string, RTerm]()
+  let s11 = stageGoal(g11, env11)
+  echo "(((x==5) ∧ f(x)) ∨ ((x==6) ∧ g(x))): ", s11.kind, " (expected sgResidual, both kept)"
+  if s11.kind == sgResidual and "6" in $s11.goal and "(g " in $s11.goal:
+    echo "✓ Right branch not wrongly pruned: ", s11.goal
+  else: echo "✗ Branch leaked bindings: ", (if s11.kind == sgResidual: $s11.goal else: $s11.kind)
+  echo ""
+
+  # Test: disjunction with a statically-true branch —
+  # (x==5) ∨ (x==6): right is satisfiable on its own → whole disj true
+  let g11b = rgDisj(rgEq(ratom("__var_x"), rint(5)), rgEq(ratom("__var_x"), rint(6)))
+  var env11b = initTable[string, RTerm]()
+  let s11b = stageGoal(g11b, env11b)
+  echo "((x==5) ∨ (x==6)): ", s11b.kind, " (expected sgDone, deterministic commit)"
+  if s11b.kind == sgDone: echo "✓ True-branch short-circuit"
+  else: echo "✗ Expected sgDone"
+  echo ""
+
+  # Test: residual substitution — (v==suc(vn)) ∧ f(v): residual shows suc(vn)
+  let g12 = rgConj(
+    rgEq(ratom("__var_v"), rpair(ratom("suc"), rpair(ratom("__var_vn"), rnil()))),
+    rgCall("f", @[ratom("__var_v")]))
+  var env12 = initTable[string, RTerm]()
+  let s12 = stageGoal(g12, env12)
+  echo "((v==suc(vn)) ∧ f(v)): ", s12.kind, " (expected sgResidual with substitution)"
+  if s12.kind == sgResidual and "(suc __var_vn)" in $s12.goal:
+    echo "✓ Learned binding substituted into residual: ", s12.goal
+  else: echo "✗ Substitution missing: ", (if s12.kind == sgResidual: $s12.goal else: $s12.kind)
   echo ""
   echo "stageGoal rules work. Next: apply to evalo."
