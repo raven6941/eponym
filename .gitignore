@@ -19,6 +19,9 @@ src/mac_surf
 tests/run_examples
 src/lsp
 src/egraph
+src/specialized_engine
+src/staged_eval
+src/unified_driver
 examples/*
 !examples/*.nim
 !examples/*.ep
