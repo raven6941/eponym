@@ -367,10 +367,49 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkBy:
     raise elabErr(pre.loc, "'by' tactic requires an expected type (use in checking mode)")
 
+proc mkNatLit(n: int, globals: Globals, loc: Loc): Term =
+  ## Build unary Nat term suc^n(zero) for integer literal n.
+  ## Used for literal overloading: `3` in a Nat position becomes
+  ## `suc (suc (suc zero))`. Requires 'zero'/'suc' from `data Nat`.
+  if n < 0:
+    raise elabErr(loc, "negative integer literal in Nat position")
+  if "zero" notin globals or "suc" notin globals:
+    raise elabErr(loc, "integer literal in Nat position requires 'data Nat' with zero/suc constructors")
+  var res = globals["zero"].tm
+  let sucTm = globals["suc"].tm
+  for i in 1..n:
+    res = tmApp(sucTm, res)
+  res
+
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
              ms: var MetaStore, supply: var Supply, expTy: Term): Term =
   ## Checking mode against an expected type.
   case pre.kind
+  of pkInt:
+    # Literal overloading: integer literal adapts to expected type.
+    # Try Nat (inductive) first, then primitive Int.
+    # The mkNatLit helper builds suc^n(zero); no manual reification needed.
+    block:
+      # Debug
+      # echo "pkInt in checkTm, intVal=", pre.intVal
+      var done = false
+      var resTm: Term = nil
+      if "zero" in globals and "suc" in globals and "Nat" in globals:
+        try:
+          let natTm = mkNatLit(pre.intVal, globals, pre.loc)
+          let natTy = globals["Nat"].tm
+          convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals)
+          resTm = natTm
+          done = true
+        except ElabError:
+          discard  # Not Nat; try Int
+      if not done:
+        if "Int" notin globals:
+          raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?' or 'data Nat'")
+        let intTy = globals["Int"].tm
+        convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals)
+        resTm = tmInt(pre.intVal)
+      resTm
   of pkLam:
     let (dom, codBdy, _, _) = ensurePi(ms, pre.loc, expTy, ctx.len)
     let d =

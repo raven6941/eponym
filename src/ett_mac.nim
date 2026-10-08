@@ -86,18 +86,32 @@ proc nimTypeToEponym(n: NimNode): string =
   of nnkIdent:
     let s = $n
     if s == "Univ": "?" else: s
+  of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
+    # Integer literal in type position: assume Nat, generate suc chain.
+    # (In term position, nimExprToEponym handles it via elaborator overloading.)
+    # Do NOT wrap in parens here; the caller (nnkCall) will paren if needed.
+    let v = n.intVal
+    if v < 0: error("negative Nat literal in type", n)
+    var res = "zero"
+    for i in 1..v:
+      res = "suc (" & res & ")"
+    res
   of nnkCall:
     # Vec(Int, three) -> Vec Int three (paren nested calls)
+    # For zero-arg calls like zero(), just return head (no parens needed)
     let head = nimTypeToEponym(n[0])
-    var args: seq[string] = @[]
-    for i in 1 ..< n.len:
-      let a = n[i]
-      if a.kind == nnkCall:
-        args.add("(" & nimTypeToEponym(a) & ")")
-      else:
-        args.add(nimTypeToEponym(a))
-    if args.len == 0: head
-    else: head & " " & args.join(" ")
+    if n.len == 1:
+      head
+    else:
+      var args: seq[string] = @[]
+      for i in 1 ..< n.len:
+        let a = n[i]
+        # Paren if arg is a call with args, or an int literal (suc chain needs grouping)
+        if (a.kind == nnkCall and a.len > 1) or a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit}:
+          args.add("(" & nimTypeToEponym(a) & ")")
+        else:
+          args.add(nimTypeToEponym(a))
+      head & " " & args.join(" ")
   of nnkInfix:
     # A -> B -> A -> B (right associative, as in Eponym)
     if $n[0] == "->" and n.len == 3:
