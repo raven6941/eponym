@@ -44,7 +44,7 @@ proc mulVals(a, b: RTerm): RTerm =
   else:
     raise newException(ValueError, "mulVals: not a ground Nat, got " & $a)
 
-proc stageEval(tm: RTerm): RTerm =
+proc stageEval*(tm: RTerm): RTerm =
   ## Staged evalo: evalo(tm, v) with tm ground becomes v = stageEval(tm).
   ## No disj, no unify, no Stream — just structural recursion.
   case tm.kind
