@@ -152,10 +152,14 @@ proc mentionsVar(rg: RelGoal, varName: string): bool =
   of rgBranch: rg.vars.anyIt(termMentions(it, ph))
 
 proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
-               dynamicVars: HashSet[string] = initHashSet[string]()): StagedGoal =
+               dynamicVars: HashSet[string] = initHashSet[string](),
+               relEnv: Table[string, RelDef] = initTable[string, RelDef](),
+               fuel: int = 0): StagedGoal =
   ## Stage a RelGoal given static bindings (mutated with learned bindings).
   ## staticEnv: maps __var_<name> to ground RTerm (static values)
   ## dynamicVars: placeholders that must NOT be bound (e.g., mOut vars)
+  ## relEnv: relation definitions for call inlining (issue #20)
+  ## fuel: inlining budget; 0 means no inlining (residualize calls)
   case rg.kind
   of rgFail:
     StagedGoal(kind: sgFail)
@@ -173,11 +177,11 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
     # For prototype: always residualize (conservative)
     StagedGoal(kind: sgResidual, goal: rg)
   of rgConj:
-    let sa = stageGoal(rg.leftG, staticEnv, dynamicVars)
+    let sa = stageGoal(rg.leftG, staticEnv, dynamicVars, relEnv, fuel)
     if sa.kind == sgFail:
       return StagedGoal(kind: sgFail)
     # Bindings learned staging left are in staticEnv for right (conjunction)
-    let sb = stageGoal(rg.rightG, staticEnv, dynamicVars)
+    let sb = stageGoal(rg.rightG, staticEnv, dynamicVars, relEnv, fuel)
     if sb.kind == sgFail:
       return StagedGoal(kind: sgFail)
     if sa.kind == sgDone and sb.kind == sgDone:
@@ -192,8 +196,8 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
     # e.g. (x==5 ∧ f(x)) ∨ (x==6): right must not see x=5 from the left.)
     var envL = staticEnv
     var envR = staticEnv
-    let sa = stageGoal(rg.leftG, envL, dynamicVars)
-    let sb = stageGoal(rg.rightG, envR, dynamicVars)
+    let sa = stageGoal(rg.leftG, envL, dynamicVars, relEnv, fuel)
+    let sb = stageGoal(rg.rightG, envR, dynamicVars, relEnv, fuel)
     if sa.kind == sgFail:
       staticEnv = envR
       return finishResidual(sb, envR)  # left impossible, take right
@@ -216,7 +220,7 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
   of rgFresh:
     # Stage the body with the fresh var as dynamic (not in staticEnv).
     # The var remains a placeholder; if the body prunes to Fail, so do we.
-    let stagedBody = stageGoal(rg.body, staticEnv, dynamicVars)
+    let stagedBody = stageGoal(rg.body, staticEnv, dynamicVars, relEnv, fuel)
     case stagedBody.kind
     of sgFail:
       StagedGoal(kind: sgFail)
@@ -231,7 +235,18 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
         # Binder vacuous after substitution (var solved away): drop it
         StagedGoal(kind: sgResidual, goal: res)
   of rgCall:
-    # For prototype: residualize (no inlining yet)
+    # Inline relation calls when fuel remains (issue #20).
+    # Looks up the RelDef, substitutes args for params, stages the body
+    # with fuel-1. Residualizes when fuel is exhausted or rel not found.
+    if fuel > 0 and rg.relName in relEnv:
+      let rd = relEnv[rg.relName]
+      if rd.params.len == rg.args.len:
+        var inlined = rd.body
+        for i, param in rd.params:
+          let placeholder = ratom("__var_" & param)
+          inlined = substAtom(inlined, placeholder, rg.args[i])
+        return stageGoal(inlined, staticEnv, dynamicVars, relEnv, fuel - 1)
+    # No inlining: residualize
     StagedGoal(kind: sgResidual, goal: rg)
   of rgSetEq, rgBranch:
     StagedGoal(kind: sgResidual, goal: rg)
@@ -371,5 +386,32 @@ when isMainModule:
   if s12.kind == sgResidual and "(suc __var_vn)" in $s12.goal:
     echo "✓ Learned binding substituted into residual: ", s12.goal
   else: echo "✗ Substitution missing: ", (if s12.kind == sgResidual: $s12.goal else: $s12.kind)
+  echo ""
+
+  # Test: call inlining with fuel (issue #20)
+  # Define isZero(x) := (x == zero). Call isZero(suc(zero)) with fuel=1:
+  # should inline, then prune (suc(zero) vs zero → Fail).
+  var relEnv13 = initTable[string, RelDef]()
+  relEnv13["isZero"] = RelDef(name: "isZero", params: @["x"], modes: @[mIn],
+    body: rgEq(ratom("__var_x"), ratom("zero")))
+  let g13 = rgCall("isZero", @[rpair(ratom("suc"), rpair(ratom("zero"), rnil()))])
+  var env13 = initTable[string, RTerm]()
+  let s13 = stageGoal(g13, env13,
+    dynamicVars = initHashSet[string](),
+    relEnv = relEnv13, fuel = 1)
+  echo "isZero(suc(zero)) with fuel=1: ", s13.kind, " (expected sgFail, inlined then pruned)"
+  if s13.kind == sgFail: echo "✓ Call inlined and pruned"
+  else: echo "✗ Expected sgFail, got: ", (if s13.kind == sgResidual: $s13.goal else: $s13.kind)
+  echo ""
+
+  # Test: fuel exhaustion residualizes
+  let g13b = rgCall("isZero", @[ratom("__var_y")])
+  var env13b = initTable[string, RTerm]()
+  let s13b = stageGoal(g13b, env13b,
+    dynamicVars = initHashSet[string](),
+    relEnv = relEnv13, fuel = 0)
+  echo "isZero(y) with fuel=0: ", s13b.kind, " (expected sgResidual, no inlining)"
+  if s13b.kind == sgResidual: echo "✓ Fuel exhaustion residualizes"
+  else: echo "✗ Expected sgResidual"
   echo ""
   echo "stageGoal rules work. Next: apply to evalo."
