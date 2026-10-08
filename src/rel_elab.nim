@@ -18,14 +18,14 @@ type
 proc svar(id: int): STerm = STerm(kind: skVar, id: id)
 proc satom(name: string): STerm = STerm(kind: skAtom, name: name)
 proc spair(h, t: STerm): STerm = STerm(kind: skPair, head: h, tail: t)
-proc snil(): STerm = satom("nil")
+proc snil*(): STerm = satom("nil")
 
 proc slist(elems: seq[STerm]): STerm =
   result = snil()
   for i in countdown(elems.high, 0):
     result = spair(elems[i], result)
 
-proc `$`(t: STerm): string =
+proc `$`*(t: STerm): string =
   case t.kind
   of skVar: "?v" & $t.id
   of skAtom: t.name
@@ -108,7 +108,7 @@ proc disj(g1, g2: Goal): Goal =
       if result.len >= MaxRes: return
 
 var freshId = 0
-proc freshVar(): STerm =
+proc freshVar*(): STerm =
   inc freshId; svar(freshId)
 proc fresh(body: proc(x: STerm): Goal {.closure.}): Goal =
   ## Lazy: body is called when the goal runs, not when constructed.
@@ -136,7 +136,7 @@ proc reify(t: STerm, s: Subst): STerm =
   of skPair: spair(reify(wt.head, s), reify(wt.tail, s))
   else: wt
 
-proc run(q: STerm, g: Goal, n = 10): seq[STerm] =
+proc run*(q: STerm, g: Goal, n = 10): seq[STerm] =
   freshId = 0
   let substs = g(@[])
   result = @[]
@@ -147,17 +147,17 @@ proc run(q: STerm, g: Goal, n = 10): seq[STerm] =
 
 proc natTy(): STerm = satom("nat")
 proc arrTy(d, c: STerm): STerm = spair(satom("arr"), spair(d, spair(c, snil())))
-proc varTm(i: int): STerm =
+proc varTm*(i: int): STerm =
   # var(i) as (var i) where i is an atom like "0", "1"
   spair(satom("var"), spair(satom($i), snil()))
-proc lamTm(body: STerm): STerm = spair(satom("lam"), spair(body, snil()))
+proc lamTm*(body: STerm): STerm = spair(satom("lam"), spair(body, snil()))
 proc appTm(f, a: STerm): STerm = spair(satom("app"), spair(f, spair(a, snil())))
-proc zeroTm(): STerm = satom("zero")
-proc sucTm(n: STerm): STerm = spair(satom("suc"), spair(n, snil()))
+proc zeroTm*(): STerm = satom("zero")
+proc sucTm*(n: STerm): STerm = spair(satom("suc"), spair(n, snil()))
 
 # --- The typeo relation ---------------------------------------------
 
-proc typeo(tm, ty, ctx: STerm): Goal =
+proc typeo*(tm, ty, ctx: STerm): Goal =
   ## typeo(tm, ty, ctx): tm has type ty in context ctx.
   ## ctx is a list of types, innermost first: (ty0 ty1 ...)
   disj(
@@ -192,36 +192,3 @@ proc typeo(tm, ty, ctx: STerm): Goal =
     )
   )
 
-when isMainModule:
-  echo "=== Relational type inference (typeo) ==="
-  echo ""
-  
-  # Forward: infer type of zero
-  echo "Forward: type of zero?"
-  let q1 = freshVar()
-  let r1 = run(q1, typeo(zeroTm(), q1, snil()), 3)
-  for t in r1: echo "  ", t
-  assert r1.len == 1 and $r1[0] == "nat"
-  echo "ok"
-  echo ""
-  
-  # Forward: infer type of (suc zero)
-  echo "Forward: type of (suc zero)?"
-  let q2 = freshVar()
-  let r2 = run(q2, typeo(sucTm(zeroTm()), q2, snil()), 3)
-  for t in r2: echo "  ", t
-  assert r2.len == 1 and $r2[0] == "nat"
-  echo "ok"
-  echo ""
-  
-  # Forward: infer type of (lam (var 0)) — the identity function
-  echo "Forward: type of (lam (var 0))?"
-  let q3 = freshVar()
-  let idTm = lamTm(varTm(0))
-  let r3 = run(q3, typeo(idTm, q3, snil()), 3)
-  for t in r3: echo "  ", t
-  echo "ok (polymorphic identity: (arr ?v ?v))"
-  echo ""
-  echo "Note: backward synthesis (typeo(?tm, nat)) requires fair"
-  echo "search (interleaving) to avoid infinite recursion. The engine"
-  echo "currently uses depth-first search; synthesis is future work."
