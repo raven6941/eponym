@@ -16,6 +16,7 @@ import minikanren
 import rel_elab   # natTy, arrTy, varTm, lamTm, appTm, zeroTm, sucTm
 import tables
 import sets
+import strutils
 
 # --- typeo as RelGoal data (STLC + Nat, no Vec) ---
 #
@@ -79,30 +80,32 @@ when isMainModule:
   echo "=== Staging typeo via RelGoal (Issue #19) ==="
   echo ""
 
-  # Stage typeo(tm, nat, ctx) with ty=nat static, tm/ctx dynamic.
-  # Expected: lam branch pruned (nat vs arr mismatch).
-  var staticEnv = initTable[string, RTerm]()
-  staticEnv["__var_ty"] = natTy()  # ty = nat, static
+  # Partially deduce typeo(tm, nat, ctx): ty=nat static, tm/ctx dynamic.
+  # Expected: lam branch pruned (nat vs arr mismatch); recursive calls
+  # with the same signature become calls to the specialized relation,
+  # calls with a dynamic ty get their own (generic) specialization.
+  var relEnv = initTable[string, RelDef]()
+  relEnv["typeo"] = RelDef(name: "typeo", params: @["tm", "ty", "ctx"],
+                           modes: @[mIn, mIn, mIn], body: typeoData())
+  var ctx = newSpecCtx(relEnv, fuel = 8)
+  var staticParams = initTable[string, RTerm]()
+  staticParams["ty"] = natTy()  # ty = nat, static
 
-  # tm and ctx are dynamic (mOut / runtime inputs)
+  # tm and ctx are dynamic (runtime inputs)
   var dynamicVars = initHashSet[string]()
   dynamicVars.incl("__var_tm")
   dynamicVars.incl("__var_ctx")
 
-  let rg = typeoData()
-  let staged = stageGoal(rg, staticEnv, dynamicVars)
+  let top = specializeRelation(ctx, "typeo", staticParams, dynamicVars)
 
-  echo "Staged with ty=nat static, tm/ctx dynamic:"
-  echo "  Result kind: ", staged.kind
+  echo "Specialized relation: ", top
   echo ""
-  case staged.kind
-  of sgDone:
-    echo "Fully evaluated at staging time (unexpected for dynamic tm)"
-  of sgFail:
-    echo "Statically impossible (shouldn't happen)"
-  of sgResidual:
-    echo "Residual goal:"
-    echo "  ", staged.goal
+  for name, e in ctx.specs:
+    echo "--- ", name, "(", e.params.join(", "), ") ---"
+    echo "  ", e.body
     echo ""
-    echo "Expected: lam branch pruned (nat vs arr(d,c) mismatch)."
-    echo "Remaining: zero, suc, var, app branches specialized to ty=nat."
+  echo "Expected: ", top, " has lam branch pruned (nat vs arr(d,c) mismatch);"
+  echo "zero, suc, var, app branches specialized to ty=nat, with recursive"
+  echo "calls to the specialized relations (not inlined — recursion is on"
+  echo "the dynamic tm). A second, fully-dynamic specialization covers the"
+  echo "app branch's dynamically-typed subterms."

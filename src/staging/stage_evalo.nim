@@ -13,6 +13,7 @@ import rel_elab   # zeroTm, sucTm
 import rel_interp # addTm, mulTm
 import tables
 import sets
+import strutils
 
 # --- evalo as RelGoal data (simplified: zero/suc/add cases) ---
 #
@@ -49,40 +50,33 @@ proc evaloData(): RelGoal =
   rgDisj(zeroCase, rgDisj(sucCase, addCase))
 
 when isMainModule:
-  echo "=== Staging evalo via RelGoal ==="
+  echo "=== Staging evalo via RelGoal (partial deduction) ==="
   echo ""
 
-  # Stage evalo(suc(zero), v) with tm static, v dynamic
-  var staticEnv = initTable[string, RTerm]()
-  staticEnv["__var_tm"] = sucTm(zeroTm())  # tm = suc(zero), ground/static
+  # Specialize evalo(tm, v) with tm=suc(zero) static, v dynamic (mOut).
+  var relEnv = initTable[string, RelDef]()
+  relEnv["evalo"] = RelDef(name: "evalo", params: @["tm", "v"],
+                           modes: @[mIn, mOut], body: evaloData())
+  var ctx = newSpecCtx(relEnv, fuel = 8)
+  var staticParams = initTable[string, RTerm]()
+  staticParams["tm"] = sucTm(zeroTm())  # tm = suc(zero), ground/static
   # v (__var_v) is mOut: dynamic, must NOT be bound at staging time.
-  # It stays as a residual equation v=suc(vn).
   var dynamicVars = initHashSet[string]()
   dynamicVars.incl("__var_v")
 
-  let rg = evaloData()
-  echo "evalo RelGoal (tm=__var_tm, v=__var_v):"
-  echo "  ", rg
-  echo ""
+  let top = specializeRelation(ctx, "evalo", staticParams, dynamicVars)
 
-  let staged = stageGoal(rg, staticEnv, dynamicVars)
-  echo "Staged with tm=suc(zero) static, v dynamic (mOut):"
-  echo "  Result kind: ", staged.kind
+  echo "Specialized relation: ", top
   echo ""
-
-  case staged.kind
-  of sgDone:
-    echo "Fully evaluated at staging time (v is ground — shouldn't happen for v dynamic)"
-  of sgFail:
-    echo "Statically impossible (tm doesn't match — shouldn't happen)"
-  of sgResidual:
-    echo "Residual goal:"
-    echo "  ", staged.goal
+  for name, e in ctx.specs:
+    echo "--- ", name, "(", e.params.join(", "), ") ---"
+    echo "  ", e.body
     echo ""
-    echo "The static tm=suc(zero) pruned the zero and add branches."
-    echo "The unifier learned n=zero and substituted it into the recursive"
-    echo "call. v is mOut (dynamic), so v=suc(vn) stays as a residual equation."
-    echo "This is the 1st projection: structure fixed, v dynamic."
+  echo "The static tm=suc(zero) pruned the zero and add branches."
+  echo "The recursive call evalo(n, vn) has n=zero statically known, so it"
+  echo "became its own specialization (evalo with tm=zero static)."
+  echo "v is mOut (dynamic), so v=suc(vn) stays as a residual equation."
+  echo "This is the 1st projection: structure fixed, v dynamic."
   echo ""
   echo "Compare to staged_eval.nim: hand-writes stageEval(suc(zero)) = suc(zero)."
-  echo "Here, the RULES derive the residual via branch pruning."
+  echo "Here, the RULES derive the residual via branch pruning + specialization."

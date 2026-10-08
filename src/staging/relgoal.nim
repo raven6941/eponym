@@ -162,7 +162,14 @@ proc substAtom*(rg: RelGoal, placeholder: RTerm, replacement: RTerm): RelGoal =
 
 # --- toGoal: interpret via existing engine ---
 
-proc toGoal*(rg: RelGoal, relEnv: Table[string, RelGoal] = initTable[string, RelGoal]()): Goal =
+type
+  RelEntry* = object
+    ## A (possibly specialized) relation definition for the data-driven
+    ## interpreter: param names + body using __var_<param> placeholders.
+    params*: seq[string]
+    body*: RelGoal
+
+proc toGoal*(rg: RelGoal, relEnv: Table[string, RelEntry] = initTable[string, RelEntry]()): Goal =
   case rg.kind
   of rgFail:
     proc(s: State): Stream = Stream(kind: skEmpty)
@@ -183,7 +190,27 @@ proc toGoal*(rg: RelGoal, relEnv: Table[string, RelGoal] = initTable[string, Rel
     toGoal(bodySubst, relEnv)
   of rgCall:
     if rg.relName in relEnv:
-      toGoal(relEnv[rg.relName], relEnv)
+      let e = relEnv[rg.relName]
+      if e.params.len == rg.args.len:
+        # LAZY expansion: substitute args and interpret one level when
+        # the goal *runs*, not when it is built. Eager expansion would
+        # diverge on recursive relations (interpreting the body requires
+        # interpreting the recursive call inside it, ad infinitum).
+        # Capture-avoiding: substAtom freshens binders the args would
+        # otherwise be captured by (e.g. a recursive call's rgFresh("n")
+        # vs the caller's __var_n).
+        let args = rg.args
+        let entry = e
+        let renv = relEnv
+        return proc(s: State): Stream =
+          var inst = entry.body
+          for i, p in entry.params:
+            inst = substAtom(inst, ratom("__var_" & p), args[i])
+          toGoal(inst, renv)(s)
+      else:
+        raise newException(ValueError,
+          "arity mismatch for relation " & rg.relName & ": expected " &
+          $e.params.len & " args, got " & $rg.args.len)
     else:
       raise newException(ValueError, "Unknown relation: " & rg.relName)
   of rgSetEq:

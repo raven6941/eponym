@@ -27,6 +27,55 @@ type
     of sgFail: discard
     of sgResidual: goal*: RelGoal
 
+# --- Memoized specialization (partial deduction, issue #19) ---
+#
+# Inlining recursive calls with fuel (#20) cannot terminate when the
+# recursion is on a *dynamic* argument: the specialized type checker must
+# still recurse on subterms. Instead, calls are partially deduced:
+# a call whose static signature (which params are bound to ground terms)
+# matches an in-progress or completed specialization residualizes as a
+# call to the *specialized* relation; a new signature triggers a new
+# specialization (fuel bounds how many). This is Lloyd & Shepherdson's
+# partial deduction, monovariant per static signature.
+#
+# Soundness condition: a specialization's dynamic params are added to
+# dynamicVars while its body is staged, so staging never binds them —
+# a dynamic param can only appear in residual equations. Two calls share
+# a specialization iff they agree on the ground values of the static
+# params; dynamic params are never observed at staging time.
+
+type
+  SpecCtx* = ref object
+    relEnv*: Table[string, RelDef]  # original relation definitions
+    memo*: Table[string, string]   # static-signature key -> specialized name
+                                   # (also the recursion guard: inserted
+                                   # before the body is staged)
+    specs*: Table[string, RelEntry] # specialized name -> params + staged body
+    counter*: int
+    fuel*: int                      # budget for *new* specializations
+
+proc newSpecCtx*(relEnv: Table[string, RelDef] = initTable[string, RelDef](),
+                 fuel: int = 8): SpecCtx =
+  SpecCtx(relEnv: relEnv, memo: initTable[string, string](),
+          specs: initTable[string, RelEntry](), counter: 0, fuel: fuel)
+
+proc isGroundStatic(t: RTerm): bool =
+  ## True iff t has no placeholders and no engine logic vars —
+  ## i.e. it is a fully static value the specializer may observe.
+  case t.kind
+  of rkVar: false
+  of rkAtom: not t.name.startsWith("__var_")
+  of rkPair: isGroundStatic(t.head) and isGroundStatic(t.tail)
+
+proc specKey(relName: string, staticOf: seq[RTerm]): string =
+  ## Static-signature key: per param, the ground static value or `d`.
+  ## nil marks a dynamic param. $ on ground RTerms is canonical.
+  result = relName & "("
+  for t in staticOf:
+    if t.isNil: result &= "d,"
+    else: result &= "s:" & $t & ","
+  result &= ")"
+
 type
   UnifyResult = enum
     urYes,      # definitely unifies (bindings recorded in env)
@@ -189,13 +238,14 @@ proc mentionsVar(rg: RelGoal, varName: string): bool =
 
 proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
                dynamicVars: HashSet[string] = initHashSet[string](),
-               relEnv: Table[string, RelDef] = initTable[string, RelDef](),
-               fuel: int = 0): StagedGoal =
+               ctx: var SpecCtx): StagedGoal =
   ## Stage a RelGoal given static bindings (mutated with learned bindings).
   ## staticEnv: maps __var_<name> to ground RTerm (static values)
   ## dynamicVars: placeholders that must NOT be bound (e.g., mOut vars)
-  ## relEnv: relation definitions for call inlining (issue #20)
-  ## fuel: inlining budget; 0 means no inlining (residualize calls)
+  ## ctx: relation definitions + memo tables for call specialization
+  ##   (partial deduction, issue #19; subsumes fuel-based inlining #20:
+  ##   a fully-static call specializes to Done/Fail, i.e. inlining).
+  ##   Defaults to a fresh context (fuel=8, no relations).
   case rg.kind
   of rgFail:
     StagedGoal(kind: sgFail)
@@ -213,11 +263,11 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
     # For prototype: always residualize (conservative)
     StagedGoal(kind: sgResidual, goal: rg)
   of rgConj:
-    let sa = stageGoal(rg.leftG, staticEnv, dynamicVars, relEnv, fuel)
+    let sa = stageGoal(rg.leftG, staticEnv, dynamicVars, ctx)
     if sa.kind == sgFail:
       return StagedGoal(kind: sgFail)
     # Bindings learned staging left are in staticEnv for right (conjunction)
-    let sb = stageGoal(rg.rightG, staticEnv, dynamicVars, relEnv, fuel)
+    let sb = stageGoal(rg.rightG, staticEnv, dynamicVars, ctx)
     if sb.kind == sgFail:
       return StagedGoal(kind: sgFail)
     if sa.kind == sgDone and sb.kind == sgDone:
@@ -232,8 +282,8 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
     # e.g. (x==5 ∧ f(x)) ∨ (x==6): right must not see x=5 from the left.)
     var envL = staticEnv
     var envR = staticEnv
-    let sa = stageGoal(rg.leftG, envL, dynamicVars, relEnv, fuel)
-    let sb = stageGoal(rg.rightG, envR, dynamicVars, relEnv, fuel)
+    let sa = stageGoal(rg.leftG, envL, dynamicVars, ctx)
+    let sb = stageGoal(rg.rightG, envR, dynamicVars, ctx)
     if sa.kind == sgFail:
       staticEnv = envR
       return finishResidual(sb, envR)  # left impossible, take right
@@ -263,7 +313,7 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
   of rgFresh:
     # Stage the body with the fresh var as dynamic (not in staticEnv).
     # The var remains a placeholder; if the body prunes to Fail, so do we.
-    let stagedBody = stageGoal(rg.body, staticEnv, dynamicVars, relEnv, fuel)
+    let stagedBody = stageGoal(rg.body, staticEnv, dynamicVars, ctx)
     case stagedBody.kind
     of sgFail:
       StagedGoal(kind: sgFail)
@@ -278,30 +328,94 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
         # Binder vacuous after substitution (var solved away): drop it
         StagedGoal(kind: sgResidual, goal: res)
   of rgCall:
-    # Inline relation calls when fuel remains (issue #20).
-    # Looks up the RelDef, substitutes args for params, stages the body
-    # with fuel-1. Residualizes when fuel is exhausted or rel not found.
-    if fuel > 0 and rg.relName in relEnv:
-      let rd = relEnv[rg.relName]
+    # Memoized specialization (partial deduction), issue #19.
+    # Static signature: per param, the ground static value (nil = dynamic).
+    # Memo hit — including recursive calls into an in-progress
+    # specialization, since the memo entry is inserted before the body
+    # is staged — residualizes as a call to the specialized relation.
+    # New signature with fuel remaining: stage the body as a new
+    # specialization (dynamic params join dynamicVars, so staging can
+    # never bind them — the soundness condition). Fuel exhausted or
+    # unknown relation: residualize the original call.
+    if rg.relName in ctx.relEnv:
+      let rd = ctx.relEnv[rg.relName]
       if rd.params.len == rg.args.len:
-        var inlined = rd.body
-        for i, param in rd.params:
-          let placeholder = ratom("__var_" & param)
-          inlined = substAtom(inlined, placeholder, rg.args[i])
-        return stageGoal(inlined, staticEnv, dynamicVars, relEnv, fuel - 1)
-    # No inlining: residualize
+        var staticOf = newSeq[RTerm](rd.params.len)
+        for i in 0 ..< rd.params.len:
+          let t = deref(rg.args[i], staticEnv)
+          if isGroundStatic(t): staticOf[i] = t
+        let key = specKey(rg.relName, staticOf)
+        var rargs = newSeq[RTerm](rg.args.len)
+        for i, a in rg.args: rargs[i] = deref(a, staticEnv)
+        if key in ctx.memo:
+          return StagedGoal(kind: sgResidual, goal: rgCall(ctx.memo[key], rargs))
+        if ctx.fuel > 0:
+          dec ctx.fuel
+          let specName = rg.relName & "_s" & $ctx.counter
+          inc ctx.counter
+          ctx.memo[key] = specName  # recursion guard: visible while body stages
+          var bodyEnv = initTable[string, RTerm]()
+          var bodyDyn = dynamicVars
+          for i, p in rd.params:
+            if not staticOf[i].isNil: bodyEnv["__var_" & p] = staticOf[i]
+            else: bodyDyn.incl("__var_" & p)
+          let staged = stageGoal(rd.body, bodyEnv, bodyDyn, ctx)
+          case staged.kind
+          of sgFail:
+            # Call statically impossible under this signature.
+            ctx.specs[specName] = RelEntry(params: rd.params, body: rgFail())
+            return StagedGoal(kind: sgFail)
+          of sgDone:
+            ctx.specs[specName] = RelEntry(params: rd.params, body: rgSucceed())
+            return StagedGoal(kind: sgDone)
+          of sgResidual:
+            ctx.specs[specName] =
+              RelEntry(params: rd.params, body: applyEnv(staged.goal, bodyEnv))
+            return StagedGoal(kind: sgResidual, goal: rgCall(specName, rargs))
+        # Fuel exhausted: residualize the original call.
+        return StagedGoal(kind: sgResidual, goal: rgCall(rg.relName, rargs))
+    # Unknown relation or arity mismatch: residualize unchanged.
     StagedGoal(kind: sgResidual, goal: rg)
   of rgSetEq, rgBranch:
     StagedGoal(kind: sgResidual, goal: rg)
+
+proc specializeRelation*(ctx: var SpecCtx, relName: string,
+                         staticParams: Table[string, RTerm] =
+                           initTable[string, RTerm](),
+                         dynamicVars: HashSet[string] =
+                           initHashSet[string]()): string =
+  ## Top-level partial-deduction driver: specialize relName for the given
+  ## static params (param name -> ground static term; all other params
+  ## are dynamic). Returns the specialized relation's name; specialized
+  ## bodies accumulate in ctx.specs (keyed by name, as RelEntry for toGoal).
+  ##
+  ## Routes through the rgCall case so all memoization logic lives in one
+  ## place: the synthetic top call gets a fresh specialization, and any
+  ## recursive calls with the same static signature hit the memo.
+  let rd = ctx.relEnv[relName]
+  var args = newSeq[RTerm](rd.params.len)
+  for i, p in rd.params:
+    if p in staticParams: args[i] = staticParams[p]
+    else: args[i] = ratom("__var_" & p)
+  var env = initTable[string, RTerm]()
+  let staged = stageGoal(rgCall(relName, args), env, dynamicVars, ctx)
+  if staged.kind == sgResidual and staged.goal.kind == rgCall and
+     staged.goal.relName in ctx.specs:
+    return staged.goal.relName
+  raise newException(ValueError, "specializeRelation(" & relName &
+    "): could not specialize (statically impossible or fuel exhausted)")
 
 when isMainModule:
   echo "=== stageGoal: relational staging rules ==="
   echo ""
 
+  # Shared context for the call-free tests (no relations needed).
+  var tctx = newSpecCtx()
+
   # Test: (5 == 5) should evaluate to Done at staging time
   let g1 = rgEq(rint(5), rint(5))
   var env1 = initTable[string, RTerm]()
-  let s1 = stageGoal(g1, env1)
+  let s1 = stageGoal(g1, env1, ctx = tctx)
   echo "(5 == 5): ", s1.kind, " (expected sgDone)"
   if s1.kind == sgDone: echo "✓"
   echo ""
@@ -309,7 +423,7 @@ when isMainModule:
   # Test: (5 == 6) should be Fail (pruned)
   let g2 = rgEq(rint(5), rint(6))
   var env2 = initTable[string, RTerm]()
-  let s2 = stageGoal(g2, env2)
+  let s2 = stageGoal(g2, env2, ctx = tctx)
   echo "(5 == 6): ", s2.kind, " (expected sgFail)"
   if s2.kind == sgFail: echo "✓ Statically pruned"
   echo ""
@@ -317,7 +431,7 @@ when isMainModule:
   # Test: (x == 5) with x dynamic should residualize
   let g3 = rgEq(ratom("__var_x"), rint(5))
   var env3 = initTable[string, RTerm]()
-  let s3 = stageGoal(g3, env3)
+  let s3 = stageGoal(g3, env3, ctx = tctx)
   echo "(x == 5) with x staging var: ", s3.kind, " (expected sgDone, x bound)"
   if s3.kind == sgDone:
     echo "✓ Bound x=5 at staging time"
@@ -326,7 +440,7 @@ when isMainModule:
   # Test: disjunction pruning
   let g4 = rgDisj(rgEq(rint(5), rint(6)), rgEq(rint(5), rint(5)))
   var env4 = initTable[string, RTerm]()
-  let s4 = stageGoal(g4, env4)
+  let s4 = stageGoal(g4, env4, ctx = tctx)
   echo "((5==6) ∨ (5==5)): ", s4.kind, " (expected sgDone, left pruned)"
   if s4.kind == sgDone: echo "✓ Branch pruned at staging time"
   echo ""
@@ -335,7 +449,7 @@ when isMainModule:
   # suc(__var_n) vs zero → heads differ → prune, even though n is dynamic
   let g5 = rgEq(rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())), ratom("zero"))
   var env5 = initTable[string, RTerm]()
-  let s5 = stageGoal(g5, env5)
+  let s5 = stageGoal(g5, env5, ctx = tctx)
   echo "(suc(n) == zero) with n dynamic: ", s5.kind, " (expected sgFail)"
   if s5.kind == sgFail: echo "✓ Head-constructor mismatch pruned"
   else: echo "✗ Should have pruned"
@@ -345,7 +459,7 @@ when isMainModule:
   let g6 = rgEq(rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())),
                 rpair(ratom("suc"), rpair(ratom("__var_m"), rnil())))
   var env6 = initTable[string, RTerm]()
-  let s6 = stageGoal(g6, env6)
+  let s6 = stageGoal(g6, env6, ctx = tctx)
   echo "(suc(n) == suc(m)): ", s6.kind, " (expected sgDone, n aliased to m)"
   if s6.kind == sgDone and env6["__var_n"].name == "__var_m":
     echo "✓ Aliased at staging time"
@@ -356,7 +470,7 @@ when isMainModule:
   let g7 = rgEq(rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())),
                 rpair(ratom("suc"), rpair(ratom("zero"), rnil())))
   var env7 = initTable[string, RTerm]()
-  let s7 = stageGoal(g7, env7)
+  let s7 = stageGoal(g7, env7, ctx = tctx)
   echo "(suc(n) == suc(zero)): ", s7.kind, " (expected sgDone, n=zero)"
   if s7.kind == sgDone and env7["__var_n"].name == "zero":
     echo "✓ Nested binding propagated"
@@ -367,7 +481,7 @@ when isMainModule:
   let g8 = rgEq(rpair(ratom("add"), rpair(rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())), rpair(ratom("zero"), rnil()))),
                 rpair(ratom("add"), rpair(ratom("zero"), rpair(ratom("zero"), rnil()))))
   var env8 = initTable[string, RTerm]()
-  let s8 = stageGoal(g8, env8)
+  let s8 = stageGoal(g8, env8, ctx = tctx)
   echo "(add(suc(n),zero) == add(zero,zero)): ", s8.kind, " (expected sgFail)"
   if s8.kind == sgFail: echo "✓ Deep constructor mismatch pruned"
   else: echo "✗ Should have pruned"
@@ -377,7 +491,7 @@ when isMainModule:
   let g9 = rgEq(ratom("__var_n"),
                 rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())))
   var env9 = initTable[string, RTerm]()
-  let s9 = stageGoal(g9, env9)
+  let s9 = stageGoal(g9, env9, ctx = tctx)
   echo "(n == suc(n)): ", s9.kind, " (expected sgResidual, occurs check)"
   if s9.kind == sgResidual and "__var_n" notin env9:
     echo "✓ Cyclic equation residualized, no bogus binding"
@@ -389,7 +503,7 @@ when isMainModule:
                    rgEq(rpair(ratom("suc"), rpair(ratom("__var_n"), rnil())),
                         rpair(ratom("suc"), rpair(ratom("zero"), rnil()))))
   var env10 = initTable[string, RTerm]()
-  let s10 = stageGoal(g10, env10)
+  let s10 = stageGoal(g10, env10, ctx = tctx)
   echo "((n==zero) ∧ (suc(n)==suc(zero))): ", s10.kind, " (expected sgDone)"
   if s10.kind == sgDone: echo "✓ Bindings threaded through conjunction"
   else: echo "✗ Threading failed"
@@ -402,7 +516,7 @@ when isMainModule:
     rgConj(rgEq(ratom("__var_x"), rint(5)), rgCall("f", @[ratom("__var_x")])),
     rgConj(rgEq(ratom("__var_x"), rint(6)), rgCall("g", @[ratom("__var_x")])))
   var env11 = initTable[string, RTerm]()
-  let s11 = stageGoal(g11, env11)
+  let s11 = stageGoal(g11, env11, ctx = tctx)
   echo "(((x==5) ∧ f(x)) ∨ ((x==6) ∧ g(x))): ", s11.kind, " (expected sgResidual, both kept)"
   if s11.kind == sgResidual and "6" in $s11.goal and "(g " in $s11.goal:
     echo "✓ Right branch not wrongly pruned: ", s11.goal
@@ -415,7 +529,7 @@ when isMainModule:
   # branch is kept as a disjunct with its learned binding reified.
   let g11b = rgDisj(rgEq(ratom("__var_x"), rint(5)), rgEq(ratom("__var_x"), rint(6)))
   var env11b = initTable[string, RTerm]()
-  let s11b = stageGoal(g11b, env11b)
+  let s11b = stageGoal(g11b, env11b, ctx = tctx)
   echo "((x==5) ∨ (x==6)): ", s11b.kind, " (expected sgResidual, both answers kept)"
   if s11b.kind == sgResidual and "5" in $s11b.goal and "6" in $s11b.goal:
     echo "✓ No deterministic commit: ", s11b.goal
@@ -427,36 +541,34 @@ when isMainModule:
     rgEq(ratom("__var_v"), rpair(ratom("suc"), rpair(ratom("__var_vn"), rnil()))),
     rgCall("f", @[ratom("__var_v")]))
   var env12 = initTable[string, RTerm]()
-  let s12 = stageGoal(g12, env12)
+  let s12 = stageGoal(g12, env12, ctx = tctx)
   echo "((v==suc(vn)) ∧ f(v)): ", s12.kind, " (expected sgResidual with substitution)"
   if s12.kind == sgResidual and "(suc __var_vn)" in $s12.goal:
     echo "✓ Learned binding substituted into residual: ", s12.goal
   else: echo "✗ Substitution missing: ", (if s12.kind == sgResidual: $s12.goal else: $s12.kind)
   echo ""
 
-  # Test: call inlining with fuel (issue #20)
+  # Test: call specialization with fuel (issue #20, now partial deduction)
   # Define isZero(x) := (x == zero). Call isZero(suc(zero)) with fuel=1:
-  # should inline, then prune (suc(zero) vs zero → Fail).
+  # should specialize (x static), then prune (suc(zero) vs zero → Fail).
   var relEnv13 = initTable[string, RelDef]()
   relEnv13["isZero"] = RelDef(name: "isZero", params: @["x"], modes: @[mIn],
     body: rgEq(ratom("__var_x"), ratom("zero")))
   let g13 = rgCall("isZero", @[rpair(ratom("suc"), rpair(ratom("zero"), rnil()))])
   var env13 = initTable[string, RTerm]()
-  let s13 = stageGoal(g13, env13,
-    dynamicVars = initHashSet[string](),
-    relEnv = relEnv13, fuel = 1)
-  echo "isZero(suc(zero)) with fuel=1: ", s13.kind, " (expected sgFail, inlined then pruned)"
-  if s13.kind == sgFail: echo "✓ Call inlined and pruned"
+  var ctx13 = newSpecCtx(relEnv13, fuel = 1)
+  let s13 = stageGoal(g13, env13, initHashSet[string](), ctx13)
+  echo "isZero(suc(zero)) with fuel=1: ", s13.kind, " (expected sgFail, specialized then pruned)"
+  if s13.kind == sgFail: echo "✓ Call specialized and pruned"
   else: echo "✗ Expected sgFail, got: ", (if s13.kind == sgResidual: $s13.goal else: $s13.kind)
   echo ""
 
   # Test: fuel exhaustion residualizes
   let g13b = rgCall("isZero", @[ratom("__var_y")])
   var env13b = initTable[string, RTerm]()
-  let s13b = stageGoal(g13b, env13b,
-    dynamicVars = initHashSet[string](),
-    relEnv = relEnv13, fuel = 0)
-  echo "isZero(y) with fuel=0: ", s13b.kind, " (expected sgResidual, no inlining)"
+  var ctx13b = newSpecCtx(relEnv13, fuel = 0)
+  let s13b = stageGoal(g13b, env13b, initHashSet[string](), ctx13b)
+  echo "isZero(y) with fuel=0: ", s13b.kind, " (expected sgResidual, no specialization)"
   if s13b.kind == sgResidual: echo "✓ Fuel exhaustion residualizes"
   else: echo "✗ Expected sgResidual"
   echo ""
