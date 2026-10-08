@@ -34,8 +34,41 @@ Surface text → `PreTerm` (named) → de Bruijn core terms → elaborated
    postulate/elim/red. `Vec` with length indices works.
 5b. **Conversion** — `checkTm` uses full conversion (not just
    unification), so `Vec append` with `add` in indices elaborates.
-11. *(proposed)* **Primitive types** — machine integers via `wRed`,
-   avoiding unary `s(s(z))` at the surface.
+6. **Tactics** — basic `refl`/`assumption`; custom tactic API (in progress).
+7. **LSP** — diagnostics via Language Server Protocol; holes/goals/actions (in progress).
+8. **Staging** — tagless string generation for residual code (basic; full pipeline in progress).
+9. **Erasure** — QTT-lite 0-quantity erased binders (metadata; full checking in progress).
+10. **Conversion cache** — exact equality-query memoization (not yet a true e-graph).
+11. **Primitive types** — machine `Int` via `wRed`; Nat literal overloading (`3` instead of `suc` chains).
+12. **Propositional equality** — `Eq`/`refl`/`J`; `plusReducesZ` proof works.
+13. *(future)* **Polynomial functors** — functorial datatypes (Topos PolyTT).
+
+## Embedding in Nim
+
+The `ettBlock` macro lets you write Eponym directly in Nim:
+```nim
+import ett_mac
+ettBlock:
+  postulate(Int, Univ)
+  data(Nat, Univ):
+    proc zero(): Nat
+    proc suc(n: Nat): Nat
+  proc add(a, b: Nat): Nat = ...
+```
+- `Univ` is `?` (universe); `vecnil` for `nil` (Nim keyword).
+- Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).
+- See `examples/sensor_fusion.nim` for a complete example.
+
+## Track C: Relational programming
+
+`src/minikanren.nim` — independent relational engine (no elaborator deps):
+- S-expr terms, unification with occurs check
+- Explicit `Stream` tree (no call-stack recursion)
+- `typeo` relation for STLC+Nat (`src/rel_elab.nim`)
+- Staged `synthNat`: 17,500x speedup via branch pruning (issue #14)
+- Leftist heap for best-first search (`src/heap.nim`, issue #13)
+
+See `docs/staging-design.md` for the staging architecture.
 
 ## Building
 
