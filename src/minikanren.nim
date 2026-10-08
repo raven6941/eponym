@@ -49,8 +49,17 @@ proc `$`*(t: RTerm): string =
 
 type
   Subst* = seq[(int, RTerm)]
+  
+  # State extends Subst with a disequality constraint store.
+  # diseqs: list of (u, v) pairs that must NOT become equal.
+  # This enables constraint propagation: when == binds a variable,
+  # we check if any disequality is violated.
+  State* = object
+    subst*: Subst
+    diseqs*: seq[(RTerm, RTerm)]
 
 proc emptySubst*(): Subst = @[]
+proc emptyState*(): State = State(subst: @[], diseqs: @[])
 
 proc walk*(t: RTerm, s: Subst): RTerm =
   var cur = t
@@ -100,24 +109,24 @@ type
     case kind*: StreamKind
     of skEmpty: discard
     of skCons:
-      head*: Subst
+      head*: State
       tail*: Stream
     of skMPlus:
       left*, right*: Stream  # interleave these
     of skBind:
       src*: Stream
-      fn*: proc(s: Subst): Stream {.closure.}  # applied to each
+      fn*: proc(s: State): Stream {.closure.}  # applied to each
     of skThunk:
       thunk*: proc(): Stream {.closure.}  # forced on demand
 
 proc emptyStream*(): Stream = Stream(kind: skEmpty)
-proc singleton*(s: Subst): Stream =
+proc singleton*(s: State): Stream =
   Stream(kind: skCons, head: s, tail: emptyStream())
 proc mplus*(a, b: Stream): Stream =
   if a.kind == skEmpty: b
   elif b.kind == skEmpty: a
   else: Stream(kind: skMPlus, left: a, right: b)
-proc bindStream*(s: Stream, fn: proc(s: Subst): Stream {.closure.}): Stream =
+proc bindStream*(s: Stream, fn: proc(s: State): Stream {.closure.}): Stream =
   if s.kind == skEmpty: emptyStream()
   elif s.kind == skBind:
     # Flatten nested bind eagerly: bind(bind(src, f), g) = bind(src, x => bind(f(x), g))
@@ -126,7 +135,7 @@ proc bindStream*(s: Stream, fn: proc(s: Subst): Stream {.closure.}): Stream =
     let innerSrc = s.src
     let innerFn = s.fn
     let outerFn = fn
-    bindStream(innerSrc, proc(x: Subst): Stream {.closure.} =
+    bindStream(innerSrc, proc(x: State): Stream {.closure.} =
       bindStream(innerFn(x), outerFn))
   else: Stream(kind: skBind, src: s, fn: fn)
 proc delayStream*(thunk: proc(): Stream {.closure.}): Stream =
@@ -134,31 +143,68 @@ proc delayStream*(thunk: proc(): Stream {.closure.}): Stream =
 
 # --- Goals ------------------------------------------------------------
 # Goals build Stream trees (data). No execution happens during construction.
+# Goals now operate on State (subst + constraint store), not just Subst.
 
 type
-  Goal* = proc(s: Subst): Stream {.closure.}
+  Goal* = proc(s: State): Stream {.closure.}
+
+proc checkDiseqs(s: State): bool =
+  ## Check if any disequality constraint is violated in state s.
+  ## A disequality (u, v) is violated if u and v unify without new bindings
+  ## (i.e., they are already equal under the current subst).
+  for (u, v) in s.diseqs:
+    let (ok, s2) = unify(u, v, s.subst)
+    if ok and s2.len == s.subst.len:
+      # They unify with no new bindings → already equal → violation
+      return false
+  true
 
 proc `==`*(u, v: RTerm): Goal =
-  return proc(s: Subst): Stream =
-    let (ok, s2) = unify(u, v, s)
-    if ok: singleton(s2) else: emptyStream()
+  return proc(s: State): Stream =
+    let (ok, s2) = unify(u, v, s.subst)
+    if not ok:
+      return emptyStream()
+    let s2state = State(subst: s2, diseqs: s.diseqs)
+    # Constraint propagation: check if this binding violates any disequality
+    if checkDiseqs(s2state):
+      singleton(s2state)
+    else:
+      emptyStream()
+
+proc `=/=`*(u, v: RTerm): Goal =
+  ## Disequality: u and v must NOT become equal.
+  ## - If they are already equal (unify with no new bindings): fail.
+  ## - If they cannot unify: succeed (constraint satisfied).
+  ## - Otherwise: store the constraint and succeed (check later).
+  return proc(s: State): Stream =
+    let (ok, s2) = unify(u, v, s.subst)
+    if not ok:
+      # Cannot unify → disequality satisfied
+      return singleton(s)
+    if s2.len == s.subst.len:
+      # Already equal → disequality violated
+      return emptyStream()
+    # Could become equal later → store constraint
+    var diseqs2 = s.diseqs
+    diseqs2.add((u, v))
+    singleton(State(subst: s.subst, diseqs: diseqs2))
 
 proc eq*(u, v: RTerm): Goal {.inline.} =
   ## Non-operator alias for `==`, for use in macros (avoids hygiene issues).
   `==`(u, v)
 
 proc conj*(g1, g2: Goal): Goal =
-  return proc(s: Subst): Stream =
+  return proc(s: State): Stream =
     # g1(s) is a Stream tree; bind g2 over it
     bindStream(g1(s), g2)
 
 proc disj*(g1, g2: Goal): Goal =
-  return proc(s: Subst): Stream =
+  return proc(s: State): Stream =
     mplus(g1(s), g2(s))
 
 proc conde*(clauses: seq[Goal]): Goal =
   if clauses.len == 0:
-    return proc(s: Subst): Stream = emptyStream()
+    return proc(s: State): Stream = emptyStream()
   result = clauses[^1]
   for i in countdown(clauses.high - 1, 0):
     let g = clauses[i]
@@ -175,25 +221,25 @@ proc freshVar*(): RTerm =
 
 proc fresh*(body: proc(x: RTerm): Goal {.closure.}): Goal =
   # Use thunk to delay body until stream is forced
-  return proc(s: Subst): Stream =
+  return proc(s: State): Stream =
     delayStream(proc(): Stream =
       let v = freshVar()
       body(v)(s))
 
 proc fresh2*(body: proc(x, y: RTerm): Goal {.closure.}): Goal =
-  return proc(s: Subst): Stream =
+  return proc(s: State): Stream =
     delayStream(proc(): Stream =
       let a = freshVar(); let b = freshVar()
       body(a, b)(s))
 
 proc fresh3*(body: proc(x, y, z: RTerm): Goal {.closure.}): Goal =
-  return proc(s: Subst): Stream =
+  return proc(s: State): Stream =
     delayStream(proc(): Stream =
       let a = freshVar(); let b = freshVar(); let c = freshVar()
       body(a, b, c)(s))
 
 proc fresh4*(body: proc(a, b, c, d: RTerm): Goal {.closure.}): Goal =
-  return proc(s: Subst): Stream =
+  return proc(s: State): Stream =
     delayStream(proc(): Stream =
       let x1 = freshVar(); let x2 = freshVar()
       let x3 = freshVar(); let x4 = freshVar()
@@ -210,7 +256,7 @@ proc fresh4*(body: proc(a, b, c, d: RTerm): Goal {.closure.}): Goal =
 # round-robin through the queue. This is the standard miniKanren
 # interleaving, implemented iteratively.
 
-proc take*(n: int, s: Stream): seq[Subst] =
+proc take*(n: int, s: Stream): seq[State] =
   result = @[]
   var worklist: seq[Stream] = @[s]
   var head = 0  # FIFO index; avoids O(n) delete(0)
@@ -259,7 +305,7 @@ proc take*(n: int, s: Stream): seq[Subst] =
         # Nested bind: bind(bind(s, f), g) = bind(s, x => bind(f(x), g))
         let innerSrc = src.src
         let innerFn = src.fn
-        worklist.add(bindStream(innerSrc, proc(s: Subst): Stream =
+        worklist.add(bindStream(innerSrc, proc(s: State): Stream =
           bindStream(innerFn(s), fn)))
       of skThunk:
         let forced = src.thunk()
@@ -270,8 +316,8 @@ proc take*(n: int, s: Stream): seq[Subst] =
 
 # --- Reify and Run ----------------------------------------------------
 
-proc reify*(t: RTerm, s: Subst): RTerm =
-  let wt = walk(t, s)
+proc reify*(t: RTerm, s: State): RTerm =
+  let wt = walk(t, s.subst)
   case wt.kind
   of rkVar: wt
   of rkPair: rpair(reify(wt.head, s), reify(wt.tail, s))
@@ -296,9 +342,9 @@ proc run*(q: RTerm, g: Goal, n = 10, maxDepth = 10): seq[RTerm] =
   for d in 1..maxDepth:
     depthLimit = d
     currentDepth = 0
-    let stream = g(emptySubst())
-    let substs = take(n - result.len, stream)
-    for s in substs:
+    let stream = g(emptyState())
+    let states = take(n - result.len, stream)
+    for s in states:
       let t = reify(q, s)
       let key = $t
       if key notin seen:
