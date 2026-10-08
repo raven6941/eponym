@@ -1,13 +1,34 @@
 # eponym
 
-A dependently-typed language under construction: surface syntax
-elaborates to an Epigram-style ETT core (Chapman, Altenkirch &
-McBride, "Epigram Reloaded", TYPES 2006).
+A dependently-typed **embedded DSL for Nim**: surface syntax
+elaborates at compile time (via Nim macros) to an Epigram-style
+ETT core (Chapman, Altenkirch & McBride, "Epigram Reloaded",
+TYPES 2006).
 
 The interesting part is the **elaborator** — the pipeline from
 surface syntax to checked core terms. The two ETT encodings
 (`ett.nim`, `ett_init.nim`) were the starting point; the elaborator
 is where the research lives.
+
+## Why embedded
+
+Eponym is deliberately *not* a standalone language. There's no
+compiler, stdlib, package manager, or community to maintain and
+market — just an elaborator macro and a prelude, hosted in Nim's
+compile time. The maintenance gap is roughly an order of magnitude,
+and the adoption friction is far lower: the dependent reasoning
+lives in library methods, so users get the safety through a
+normal-looking API without writing dependent types themselves.
+
+That encapsulation is the design constraint. The dependent part
+belongs in the library; the user's code stays ordinary Nim. The
+target case is a session-type library — protocol violations
+rejected at compile time through plain `send`/`recv` calls
+(issue #28; more motivating cases welcome). Deliberate-embedding
+prior art: SynQ, Turnstile/Turnstile+ (the architectural ancestor —
+dependent type systems as macros), Liquid Haskell. The honest case
+survey lives in the shared notes:
+[dep-types-motivating-cases.org](https://github.com/raven6941/notes/blob/main/dep-types-motivating-cases.org).
 
 ## The elaborator pipeline
 
@@ -43,7 +64,7 @@ Surface text → `PreTerm` (named) → de Bruijn core terms → elaborated
 12. **Propositional equality** — `Eq`/`refl`/`J`; `plusReducesZ` proof works.
 13. *(future)* **Polynomial functors** — functorial datatypes (Topos PolyTT).
 
-## Embedding in Nim
+## Writing eponym in Nim code
 
 The `ettBlock` macro lets you write Eponym directly in Nim:
 ```nim
