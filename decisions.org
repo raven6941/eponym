@@ -287,3 +287,30 @@
   - Export facade added to =ett_init.nim= (=Const*=, =TermKind*=,
     =Term*=, =Value*=, constructors, =tmC*=, =check*=, =vStar*=,
     =newDefRef*=); elaborator lives in its own module.
+
+* Issue #27: mode inference for relational staging (2026-10-08)
+  - The old =checkModes= (modes.nim) was syntactic and conservative: it
+    rejected the real =typeo= =[mIn,mIn,mIn]= and =evalo= =[mIn,mOut]=
+    annotations because =tm == zero= counts as "binding" an input.
+    Replaced (for staging) by Mercury-style binding-pattern propagation
+    in =src/staging/modeinfer.nim=: conjunction threads a bound set
+    left-to-right, disjunction takes the intersection, =rgEq= binds the
+    other side when one side is ground under the current bound set.
+  - Inference reproduces both manual annotations; per-subgoal call-site
+    modes recorded (e.g. typeo's app branch: =typeo(a, d, ctx)= called
+    with =d= free).
+  - Deliberate divergence from Mercury: =amOut=/=amMixed= args in
+    callee-=mIn= positions are NOT errors — partial deduction
+    specializes per static signature, so they get their own (dynamic)
+    specialization. Recorded as notes instead.
+  - =specializeRelationAuto= derives =dynamicVars= (= params not
+    statically known) from inference, replacing the manual
+    =dynamicVars.incl(...)= at call sites. Residuals byte-identical to
+    the manual version for both typeo and evalo.
+  - User must still annotate: modes of primitive/engine relations called
+    from RelGoal bodies (=addo: [mIn,mIn,mOut]= in =primModes=);
+    unknown callees and unbound =mOut= params are hard errors; =setEq=
+    constraints not modeled (conservative).
+  - Design guidance: Mercury's mode system (in/out instantiation states,
+    left-to-right scheduling, disjunct agreement) + staged miniKanren's
+    binding-time-driven =generate= (per-argument static/dynamic split).

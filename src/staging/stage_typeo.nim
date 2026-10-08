@@ -12,10 +12,10 @@
 import staging/relgoal
 import staging/stagegoal
 import staging/modes
+import staging/modeinfer  # issue #27: derive dynamicVars by inference
 import minikanren
 import rel_elab   # natTy, arrTy, varTm, lamTm, appTm, zeroTm, sucTm
 import tables
-import sets
 import strutils
 
 # --- typeo as RelGoal data (STLC + Nat, no Vec) ---
@@ -91,12 +91,15 @@ when isMainModule:
   var staticParams = initTable[string, RTerm]()
   staticParams["ty"] = natTy()  # ty = nat, static
 
-  # tm and ctx are dynamic (runtime inputs)
-  var dynamicVars = initHashSet[string]()
-  dynamicVars.incl("__var_tm")
-  dynamicVars.incl("__var_ctx")
+  # Issue #27: dynamicVars derived by mode inference instead of the
+  # manual annotation (was: tm and ctx dynamic as runtime inputs).
+  var ictx = newInferCtx()
+  let infRes = inferModes(relEnv["typeo"], ictx)
+  echo "Mode inference: ", infRes.modes, " (declared: ", relEnv["typeo"].modes, ")"
+  assert infRes.errors.len == 0, "mode inference errors: " & infRes.errors.join("; ")
+  assert infRes.modes == relEnv["typeo"].modes, "inferred modes differ from declared"
 
-  let top = specializeRelation(ctx, "typeo", staticParams, dynamicVars)
+  let top = specializeRelationAuto(ctx, "typeo", staticParams, ictx)
 
   echo "Specialized relation: ", top
   echo ""

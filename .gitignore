@@ -18,6 +18,11 @@ src/parse_surf
 src/mac_surf
 tests/run_examples
 src/lsp
+# Compiled binaries in src/staging (built in place by `nim c`)
+src/staging/bench_typeo
+src/staging/modeinfer
+src/staging/stage_typeo
+src/staging/stage_evalo
 src/egraph
 src/specialized_engine
 src/staged_eval

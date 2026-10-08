@@ -113,6 +113,41 @@ Before staging, verify the mode annotation is consistent:
 
 If mode check fails, refuse to stage (don't generate wrong code).
 
+### Mode inference (issue #27)
+
+`src/staging/modeinfer.nim` replaces the syntactic checker with
+Mercury-style binding-pattern propagation over `RelGoal` data, and
+derives the staging-time `dynamicVars` automatically
+(`specializeRelationAuto`), removing the manual annotation at
+specialization call sites.
+
+What it does:
+- Threads a bound set through the body: conjunction left-to-right,
+  disjunction = intersection (bound on all success paths), `rgFresh`
+  introduces a free var, `rgEq(a, b)` binds the other side's vars when
+  one side is ground under the current bound set, `rgCall` records
+  per-arg modes (`amIn`/`amOut`/`amMixed`) and binds the free vars of
+  `mOut`-position args.
+- Verifies the declared `RelDef` modes: inference reproduces
+  `[mIn, mIn, mIn]` for `typeo` and `[mIn, mOut]` for `evalo`; staged
+  residuals with inferred modes are byte-identical to the manual ones.
+- Deliberate divergence from Mercury: an `amOut`/`amMixed` argument in a
+  callee-`mIn` position is *not* an error — partial deduction handles
+  any binding pattern via a per-signature specialization (this is what
+  typeo's app branch needs: `typeo(a, d, ctx)` called with `d` free
+  gets its own fully-dynamic specialization). It is recorded as a note.
+
+What the user must still annotate:
+- Primitive/engine relations called from `RelGoal` bodies (e.g. `addo`)
+  need declared modes in `InferCtx.primModes` — inference cannot see
+  through closures. An unknown callee is a hard error naming it.
+- A param declared `mOut` but not bound on all success paths is a hard
+  error (fix the body or weaken to `mGround`).
+- `setEq`/`branch` constraints are not modeled (conservative: bind
+  nothing); naked-single propagation through `setEqo` is future work.
+- A "bound by body" lint notes when an `mIn` param would be bound even
+  when free at call (the relation supports the output direction too).
+
 ## Framework integration (Layer 1)
 
 ### How RelGoal plugs into staging/framework.nim

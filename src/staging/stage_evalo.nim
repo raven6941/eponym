@@ -8,11 +8,11 @@
 import staging/relgoal
 import staging/stagegoal
 import staging/modes
+import staging/modeinfer  # issue #27: derive dynamicVars by inference
 import minikanren
 import rel_elab   # zeroTm, sucTm
 import rel_interp # addTm, mulTm
 import tables
-import sets
 import strutils
 
 # --- evalo as RelGoal data (simplified: zero/suc/add cases) ---
@@ -24,7 +24,7 @@ import strutils
 #
 # For prototype, we inline the structure with tm=__var_tm, v=__var_v.
 
-proc evaloData(): RelGoal =
+proc evaloData*(): RelGoal =
   let tm = ratom("__var_tm")
   let v = ratom("__var_v")
   let n = ratom("__var_n")
@@ -60,11 +60,18 @@ when isMainModule:
   var ctx = newSpecCtx(relEnv, fuel = 8)
   var staticParams = initTable[string, RTerm]()
   staticParams["tm"] = sucTm(zeroTm())  # tm = suc(zero), ground/static
-  # v (__var_v) is mOut: dynamic, must NOT be bound at staging time.
-  var dynamicVars = initHashSet[string]()
-  dynamicVars.incl("__var_v")
 
-  let top = specializeRelation(ctx, "evalo", staticParams, dynamicVars)
+  # Issue #27: dynamicVars derived by mode inference instead of the
+  # manual annotation (was: v dynamic as mOut). addo's modes must be
+  # declared: it is an engine-level relation, not RelGoal data.
+  var ictx = newInferCtx()
+  ictx.primModes = defaultPrimModes()
+  let infRes = inferModes(relEnv["evalo"], ictx)
+  echo "Mode inference: ", infRes.modes, " (declared: ", relEnv["evalo"].modes, ")"
+  assert infRes.errors.len == 0, "mode inference errors: " & infRes.errors.join("; ")
+  assert infRes.modes == relEnv["evalo"].modes, "inferred modes differ from declared"
+
+  let top = specializeRelationAuto(ctx, "evalo", staticParams, ictx)
 
   echo "Specialized relation: ", top
   echo ""
