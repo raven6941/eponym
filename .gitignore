@@ -30,3 +30,16 @@ src/sudoku_cp
 src/sudoku_rel
 src/sudoku_seteq
 src/synth_staged
+# Staging experiments + engine test binaries (2026-10-08)
+src/staging/ett_staged
+src/staging/framework_test
+src/staging/modes
+src/staging/relgoal
+src/staging/stage_evalo
+src/staging/stagegoal
+src/sudoku_staged
+src/ett_embed
+src/minikanren
+src/rel_elab
+tests/test_minikanren
+tests/test_rel_elab
