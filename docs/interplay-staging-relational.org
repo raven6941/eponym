@@ -1,0 +1,115 @@
+## Interplay: Staging, Relational Search, Interpretation
+
+### The modes of a relation
+
+A relation like `typeo(tm, ty, ctx)` can run in multiple directions.
+Each direction has a different "known/unknown" profile, which determines
+the right technique:
+
+| tm     | ty     | Direction | Technique                          |
+|--------|--------|-----------|------------------------------------|
+| Ground | Ground | Check     | Direct: no search, just verify     |
+| Ground | Var    | Infer     | Direct: compute ty from tm         |
+| Var    | Ground | Synth     | Relational + staging: prune by ty  |
+| Var    | Var    | —         | Fully relational: search both      |
+
+The same holds for `evalo(tm, v)`:
+| tm     | v      | Direction | Technique                          |
+|--------|--------|-----------|------------------------------------|
+| Ground | Ground | Check     | Direct: verify by computation      |
+| Ground | Var    | Eval      | Direct: compute v from tm          |
+| Var    | Ground | Synth     | Relational: search for program     |
+
+### What we have
+
+**Relational (search):**
+- `typeo` in `rel_elab.nim`: works forward (infer/check), struggles backward (synth)
+- `evalo` in `rel_interp.nim`: now works after conj-associativity fix
+- `addo`, `mulo`: work relationally
+
+**Staged (specialized):**
+- `synthNat`, `stagedWithVar`, `synthArr`: synthesis direction, type is static
+  - 17,000x speedup over interpretive
+  - Compose: `synthArr` calls `stagedWithVar`
+- `inferType`, `checkType` in `staged_fwd.nim`: inference direction, term is static
+  - 0.007ms, no search at all
+- `stageEval`: evaluation direction, term is static (in progress)
+
+**Direct (interpretation):**
+- When everything is ground, staging *is* interpretation.
+- `stageEval` for `(add 1 2)` just computes `3` — no relation needed.
+
+### The interplay
+
+The key insight: **these are not three separate things. They are points
+on a spectrum, parameterized by what's known.**
+
+```
+Relational <——— Staged ———> Direct
+ (nothing     (some things    (everything
+  known)       known)          known)
+```
+
+- **Relational**: All args are vars. Full search. Most general, slowest.
+- **Staged**: Some args are ground. Prune/generate based on what's known.
+  This is where dependent types help: the *type* is often the ground arg
+  that drives specialization (see `dependent-types-specialization-fuel.org`).
+- **Direct**: All relevant args are ground. Just compute. No search.
+
+**Moving along the spectrum:**
+- *Specialization* (staging) moves left-to-right: fix an arg, simplify.
+- *Generalization* moves right-to-left: replace a ground arg with a var,
+  fall back to search (Ballantyne's `fallback`).
+
+### Composition
+
+Staged pieces compose:
+- `synthArr` (for `arr(nat,nat)`) calls `stagedWithVar` (for `nat` with var in ctx)
+- `synthVec2` calls `synthVec1` calls `synthVec0`, each driven by the length index
+- `stageEval` for `add` calls `addVals` (direct, non-relational)
+
+The pattern: **a staged relation for a compound type calls staged
+relations for its components.** The type structure guides the call graph.
+
+This is the same as how a compiler works: the frontend (relational spec)
+is staged into backend passes (direct code), with each pass handling
+one language fragment.
+
+### What's missing
+
+1. **Automatic staging.** Right now, each staged version is hand-written.
+   The macro (`stagedCodegen`) generates code, but only for specific patterns.
+   A real staging framework would take the relation + static/dynamic
+   annotations and generate all versions.
+
+2. **Mode inference.** Given a query like `typeo(q, nat, nil)`, automatically
+   determine: term is var, type is ground → use synthesis staging.
+   Currently the programmer picks the staged version manually.
+
+3. **Elaborator staging.** We've staged `typeo` (the toy), but not the real
+   Eponym elaborator (`elab.nim`). The elaborator has metavariables,
+   implicit insertion, conversion checking — much richer. Staging it
+   for ground surface terms would give efficient elaboration.
+
+4. **The `fallback` boundary.** When staging can't handle something (e.g.
+   `app` in `synthNat`), we fall back to interpretive. But the boundary
+   is hand-drawn. A principled stager would *compute* the boundary.
+
+### The real goal
+
+Not "make the toy fast." The goal is:
+
+**A relational spec of the language (checker, elaborator, interpreter),
+where each direction can be staged into an efficient tool, and the
+staging is guided by what the dependent types tell us is static.**
+
+Concretely:
+- Write `elabo` (relational elaborator) once.
+- Stage it for checking (term+type ground) → fast checker.
+- Stage it for inference (term ground) → fast inferrer.
+- Stage it for synthesis (type ground) → program synthesizer.
+- The *type* (a dependent-type-level object) is the static info that
+  drives all three specializations.
+
+This is Track C's vision. We're partway there: the toy `typeo` demonstrates
+the pattern, but the real elaborator is the target.

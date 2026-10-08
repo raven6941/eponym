@@ -119,6 +119,15 @@ proc mplus*(a, b: Stream): Stream =
   else: Stream(kind: skMPlus, left: a, right: b)
 proc bindStream*(s: Stream, fn: proc(s: Subst): Stream {.closure.}): Stream =
   if s.kind == skEmpty: emptyStream()
+  elif s.kind == skBind:
+    # Flatten nested bind eagerly: bind(bind(src, f), g) = bind(src, x => bind(f(x), g))
+    # This ensures conj associativity. Doing it here (construction time)
+    # rather than in take (execution time) avoids worklist ordering issues.
+    let innerSrc = s.src
+    let innerFn = s.fn
+    let outerFn = fn
+    bindStream(innerSrc, proc(x: Subst): Stream {.closure.} =
+      bindStream(innerFn(x), outerFn))
   else: Stream(kind: skBind, src: s, fn: fn)
 proc delayStream*(thunk: proc(): Stream {.closure.}): Stream =
   Stream(kind: skThunk, thunk: thunk)
