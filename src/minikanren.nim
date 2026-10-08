@@ -285,6 +285,61 @@ proc setEqo*(cells: seq[RTerm], values: seq[RTerm]): Goal =
     let (ok, pstate) = propagateSetEqs(s2)
     if ok: singleton(pstate) else: emptyStream()
 
+proc computeDomain*(v: RTerm, s: State): seq[RTerm] =
+  ## Compute the current domain of variable v from the constraint store.
+  ## The domain is implied by the conjunction of constraints:
+  ## - Start with values from setEq constraints containing v
+  ## - Remove values taken by bound peers in those constraints
+  ## - Remove values that would violate disequalities
+  ## This is the "finite domain modeled by conj" — the domain isn't
+  ## a static disjunction, but derived from the current constraints.
+  let wv = walk(v, s.subst)
+  if wv.kind != rkVar:
+    return @[wv]  # already bound: singleton domain
+  
+  var possible: seq[string] = @[]  # use string keys for dedup
+  var possibleTerms: seq[RTerm] = @[]
+  
+  # Collect from setEq constraints
+  for ce in s.seteqs:
+    var containsV = false
+    for c in ce.cells:
+      let wc = walk(c, s.subst)
+      if wc.kind == rkVar and wc.id == wv.id:
+        containsV = true
+        break
+    if containsV:
+      for val in ce.values:
+        # Check if val is taken by a bound peer
+        var taken = false
+        for c in ce.cells:
+          let wc = walk(c, s.subst)
+          if wc.kind != rkVar and $wc == $val:
+            taken = true
+            break
+        if not taken:
+          let key = $val
+          if key notin possible:
+            possible.add(key)
+            possibleTerms.add(val)
+  
+  # Filter by disequalities: if v =/= x and x is bound to val, remove val
+  result = @[]
+  for i, val in possibleTerms:
+    var violates = false
+    for (a, b) in s.diseqs:
+      let wa = walk(a, s.subst)
+      let wb = walk(b, s.subst)
+      # Case: v =/= wb where wb is ground and equals val
+      if wa.kind == rkVar and wa.id == wv.id and wb.kind != rkVar and $wb == $val:
+        violates = true
+        break
+      if wb.kind == rkVar and wb.id == wv.id and wa.kind != rkVar and $wa == $val:
+        violates = true
+        break
+    if not violates:
+      result.add(val)
+
 proc eq*(u, v: RTerm): Goal {.inline.} =
   ## Non-operator alias for `==`, for use in macros (avoids hygiene issues).
   `==`(u, v)
@@ -297,6 +352,49 @@ proc conj*(g1, g2: Goal): Goal =
 proc disj*(g1, g2: Goal): Goal =
   return proc(s: State): Stream =
     mplus(g1(s), g2(s))
+
+proc branchMostConstrained*(vars: seq[RTerm]): Goal =
+  ## Fail-first search: branch on the most constrained variable.
+  ## - Compute current domain for each unbound var (from constraints)
+  ## - Pick the var with smallest domain > 1 (most constrained)
+  ## - Disjoin over its domain values, recurse
+  ## - If all bound: succeed. If any domain empty: fail.
+  ## The order is controlled dynamically — this is the "conj whose
+  ## order we can control": we choose which var to branch on based
+  ## on the current constraint store, not a fixed order.
+  return proc(s: State): Stream =
+    # Find unbound vars and their domains
+    var bestVar: RTerm = nil
+    var bestDomain: seq[RTerm] = @[]
+    var allBound = true
+    
+    for v in vars:
+      let wv = walk(v, s.subst)
+      if wv.kind == rkVar:
+        allBound = false
+        let dom = computeDomain(v, s)
+        if dom.len == 0:
+          return emptyStream()  # empty domain → fail fast
+        if bestVar.isNil or dom.len < bestDomain.len:
+          bestVar = v
+          bestDomain = dom
+    
+    if allBound:
+      return singleton(s)
+    
+    # Branch on bestVar's domain
+    # Build disjunction: (bestVar == d1 AND recurse) OR (bestVar == d2 AND recurse) ...
+    var g: Goal = nil
+    for d in bestDomain:
+      let val = d
+      let bv = bestVar
+      let branch = conj(`==`(bv, val), branchMostConstrained(vars))
+      if g.isNil:
+        g = branch
+      else:
+        g = disj(g, branch)
+    
+    g(s)
 
 proc conde*(clauses: seq[Goal]): Goal =
   if clauses.len == 0:

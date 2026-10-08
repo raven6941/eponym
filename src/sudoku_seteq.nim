@@ -26,13 +26,11 @@ proc sudoku4set(q: RTerm, givens: seq[(int, int)]): Goal =
           let cells = @[c0,c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14,c15]
           let digits = @[rint(1), rint(2), rint(3), rint(4)]
           
-          # Each cell in {1,2,3,4}
+          # Post all setEq constraints FIRST (no enumeration yet).
+          # The domains are implied by these constraints.
           var g: Goal = proc(s: State): Stream = singleton(s)
-          for c in cells:
-            let prev = g
-            g = conj(prev, in1234(c))
           
-          # Givens
+          # Givens (bind specific cells)
           for (idx, val) in givens:
             let prev = g
             let cell = cells[idx]
@@ -55,6 +53,11 @@ proc sudoku4set(q: RTerm, givens: seq[(int, int)]): Goal =
           g = conj(g, setEqo(@[c2,c3,c6,c7], digits))
           g = conj(g, setEqo(@[c8,c9,c12,c13], digits))
           g = conj(g, setEqo(@[c10,c11,c14,c15], digits))
+          
+          # THEN branch with fail-first: pick most constrained var,
+          # compute its domain from constraints, branch on it.
+          # No static in1234 disjunctions needed — domains are dynamic.
+          g = conj(g, branchMostConstrained(cells))
           
           conj(g, `==`(q, rlist(cells)))
         ))))
