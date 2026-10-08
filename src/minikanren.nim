@@ -202,16 +202,29 @@ proc fresh4*(body: proc(a, b, c, d: RTerm): Goal {.closure.}): Goal =
 # --- Take with explicit worklist --------------------------------------
 # Processes the Stream tree iteratively using a worklist.
 # No call-stack recursion for the search itself.
+#
+# FAIRNESS: The worklist is FIFO (queue), not LIFO (stack).
+# This gives interleaved search: when skMPlus pushes left and right,
+# they are processed in order, and each branch's children go to the
+# back. Infinite branches cannot starve finite ones because we
+# round-robin through the queue. This is the standard miniKanren
+# interleaving, implemented iteratively.
 
 proc take*(n: int, s: Stream): seq[Subst] =
   result = @[]
   var worklist: seq[Stream] = @[s]
+  var head = 0  # FIFO index; avoids O(n) delete(0)
   var iterations = 0
   const MaxIterations = 100000
   
-  while worklist.len > 0 and result.len < n and iterations < MaxIterations:
+  while head < worklist.len and result.len < n and iterations < MaxIterations:
     inc iterations
-    let cur = worklist.pop()
+    let cur = worklist[head]
+    inc head
+    # Periodically compact to avoid unbounded growth of the seq
+    if head > 1000 and head * 2 > worklist.len:
+      worklist = worklist[head..^1]
+      head = 0
     
     case cur.kind
     of skEmpty:
@@ -221,11 +234,11 @@ proc take*(n: int, s: Stream): seq[Subst] =
       if cur.tail.kind != skEmpty:
         worklist.add(cur.tail)
     of skMPlus:
-      # Push both branches; worklist order gives DFS-like behavior.
-      # For fairness, the iterative nature prevents deep starvation
-      # because we don't recurse — we interleave via the worklist.
-      worklist.add(cur.right)
+      # Push both branches; FIFO worklist gives interleaved (fair) search.
+      # Left is processed before right, and their children go to the back,
+      # so infinite branches round-robin with finite ones instead of starving them.
       worklist.add(cur.left)
+      worklist.add(cur.right)
     of skBind:
       # Distribute bind over the source stream structure.
       let src = cur.src
