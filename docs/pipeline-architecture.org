@@ -1,0 +1,105 @@
+## Putting It Together: The Track C Pipeline
+##
+## We have built the pieces. Here's how they fit into a coherent system.
+##
+## ### The layers
+##
+## ```
+## ┌─────────────────────────────────────────────────────────┐
+## │  Relational spec (typeo, evalo)                         │
+## │  - One definition, multiple directions                  │
+## │  - Most general, slowest                                │
+## │  - src/rel_elab.nim, src/rel_interp.nim                 │
+## └──────────────────────┬──────────────────────────────────┘
+##                        │ Stage by mode (what's known?)
+##                        ▼
+## ┌─────────────────────────────────────────────────────────┐
+## │  Staged versions (per direction)                       │
+## │  - synthNat, synthArr: synthesis (ty static)            │
+## │  - inferType, checkType: inference/checking (tm static) │
+## │  - stageEval: evaluation (tm static)                    │
+## │  - 17,000x, 61x speedups; no search where not needed   │
+## └──────────────────────┬──────────────────────────────────┘
+##                        │ Specialize engine to language
+##                        ▼
+## ┌─────────────────────────────────────────────────────────┐
+## │  Specialized engine (dedicated reps)                    │
+## │  - Tm ADT instead of generic RTerm S-exprs              │
+## │  - Direct generation instead of Stream/worklist         │
+## │  - 546x over staged; ~9Mx over naive                   │
+## │  - src/specialized_engine.nim                           │
+## └─────────────────────────────────────────────────────────┘
+## ```
+##
+## ### The unified driver (src/unified_driver.nim)
+##
+## The driver puts the staged pieces behind one interface:
+## - `check(tm, ty)`: mode mCheck → staged checkType
+## - `infer(tm)`: mode mInfer → staged inferType  
+## - `synth(ty, n)`: mode mSynth → dispatch by ty structure
+## - `eval(tm)`: mode mEval → staged stageEval
+##
+## The caller declares what's known (the mode); the driver picks the
+## optimal implementation. This is manual mode inference — the automatic
+## version would analyze the query pattern.
+##
+## ### The pipeline demo
+##
+## `pipelineDemo()` exercises all four modes in sequence:
+## 1. Synth a Nat (ty static) → `zero`, `(suc zero)`, ...
+## 2. Check it (both ground) → `true`, no search
+## 3. Infer type of `suc(zero)` (tm ground) → `nat`, no search
+## 4. Eval `(mul (add 1 2) 3)` (tm ground) → `9`, no search
+##
+## Each step uses the optimal staged version. The general relational
+## search is never invoked.
+##
+## ### What this demonstrates
+##
+## 1. **Modes are the organizing principle.** A relation isn't one thing;
+##    it's a family of procedures indexed by what's known. Staging makes
+##    the modes explicit and efficient.
+##
+## 2. **Dependent types drive staging.** The *type* is often the static
+##    info: `nat` prunes branches, `vec` length dictates code shape,
+##    `arr` selects the lam branch. See `dependent-types-specialization-fuel.org`.
+##
+## 3. **Composition works.** Staged pieces call each other: `synthArr`
+##    uses `stagedWithVar`, `synthVec2` → `synthVec1` → `synthVec0`.
+##    The type structure guides the call graph.
+##
+## 4. **The engine matters.** Specializing the *engine* (546x) composes
+##    with specializing the *relation* (17,000x). Two Futamura projections
+##    stacked.
+##
+## ### Gaps (future work)
+##
+## 1. **Automatic staging.** Each staged version is hand-written. A real
+##    framework would take the relation + mode annotations and generate them.
+##
+## 2. **Automatic mode inference.** The driver dispatches manually on `ty`
+##    structure. The query pattern (`typeo(q, natTy(), rnil())`) should
+##    *imply* the mode.
+##
+## 3. **The real elaborator.** This is all for the toy STLC+Nat. Eponym's
+##    `elab.nim` has metavariables, implicits, conversion — staging *that*
+##    is the real target (Track C's vision).
+##
+## 4. **The fallback boundary.** When staging can't handle something, we
+##    fall back to interpretive (Ballantyne's `fallback`). The boundary is
+##    hand-drawn; a principled stager would compute it.
+##
+## ### The big picture
+##
+## Track C's vision: *write the language spec once, relationally; get
+## efficient tools for each direction via staging.*
+##
+## We've demonstrated the pattern on a toy:
+## - Relational spec: `typeo`, `evalo`
+## - Staged tools: `synthNat`, `inferType`, `stageEval`, ...
+## - Unified driver: mode-based dispatch
+## - Specialized engine: dedicated reps, 546x
+##
+## The next step is scaling this to Eponym's real elaborator. The toy
+## shows the pattern works; the engineering is in applying it to the
+## full language with metavariables and dependent types.
