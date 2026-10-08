@@ -123,3 +123,31 @@ If the win is significant, generalize to a `staged` macro framework.
 - notes/ballantyne-multi-stage-relational-2025.org
 - notes/compile-time-relational-synthesis.org
 - Aaron's `research[T]` idea: compile-time search + spec-hash cache
+
+### Update: Composition of staged relations (2026-10-07)
+
+**Key insight:** Staged relations *compose*. 
+
+`synthArr(q)` for `q : arr(nat,nat)`:
+- Only `lam` branch viable (others pruned by ty=arr)
+- Body `b : nat` in `(nat.nil)` uses `stagedWithVar(b)` 
+- Result: `(lam zero)`, `(lam (suc zero))`, ... in 0.14ms
+
+This means we don't need to stage the *entire* `typeo` at once.
+We can stage *fragments* (Nat synthesis, Nat-with-var synthesis,
+Arr synthesis) and compose them.
+
+**Implications:**
+- Staging scales via composition, not monolithic specialization
+- Each staged fragment is small and understandable
+- The macro can dispatch to pre-staged fragments based on pattern
+- Full codegen (macro emits proc) works for leaf fragments;
+  composition handles the recursion
+
+**Files:**
+- `src/staged_synth.nim`: synthNat (Nat, empty ctx)
+- `src/staged_var.nim`: stagedWithVar (Nat, ctx=(nat.nil))
+- `src/staged_arr.nim`: synthArr (arr(nat,nat), empty ctx) — composes stagedWithVar
+- `src/staged_codegen.nim`: macro that *generates* (not dispatches)
+- `src/staged_macro.nim`: macro with branch pruning (dispatches)
+- `src/staged_rec.nim`: macro dispatching to synthNat
