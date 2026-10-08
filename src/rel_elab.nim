@@ -32,10 +32,11 @@ proc sucTm*(n: RTerm): RTerm =
   rpair(ratom("suc"), rpair(n, rnil()))
 
 # --- The typeo relation -----------------------------------------------
+# With explicit Stream tree and worklist-based take, recursion is safe
+# (no call-stack overflow). No depth guard needed.
 
 proc typeo*(tm, ty, ctx: RTerm): Goal =
   ## typeo(tm, ty, ctx): tm has type ty in context ctx.
-  ## ctx is a list of types, innermost first.
   disj(
     # zero : nat
     conj(`==`(tm, zeroTm()), `==`(ty, natTy())),
