@@ -31,6 +31,32 @@ proc zeroTm*(): RTerm = ratom("zero")
 proc sucTm*(n: RTerm): RTerm =
   rpair(ratom("suc"), rpair(n, rnil()))
 
+# --- Vec (dependent type with length index) -----------------------------
+# Terms: vecnil (atom), (veccons h t)
+# Types: (vec a n) where n is zero/suc S-expr
+
+proc vecTy*(a, n: RTerm): RTerm =
+  rpair(ratom("vec"), rpair(a, rpair(n, rnil())))
+proc vecnilTm*(): RTerm = ratom("vecnil")
+proc vecconsTm*(h, t: RTerm): RTerm =
+  rpair(ratom("veccons"), rpair(h, rpair(t, rnil())))
+
+proc typeoVec*(tm, ty, ctx: RTerm, typeoRec: proc(tm, ty, ctx: RTerm): Goal {.closure.}): Goal =
+  ## Vec branches of typeo. Takes typeoRec for the recursive calls
+  ## (to avoid circular dependency in the proc definition).
+  disj(
+    # vecnil : (vec a zero)
+    fresh(proc(a: RTerm): Goal =
+      conj(`==`(tm, vecnilTm()),
+        `==`(ty, vecTy(a, zeroTm())))),
+    # veccons(h, t) : (vec a (suc n)) if h : a, t : (vec a n)
+    fresh4(proc(h, t, a, n: RTerm): Goal =
+      conj(`==`(tm, vecconsTm(h, t)),
+        conj(`==`(ty, vecTy(a, sucTm(n))),
+          conj(typeoRec(h, a, ctx),
+            typeoRec(t, vecTy(a, n), ctx)))))
+  )
+
 # --- The typeo relation -----------------------------------------------
 # With explicit Stream tree and worklist-based take, recursion is safe
 # (no call-stack overflow). No depth guard needed.
@@ -68,3 +94,8 @@ proc typeo*(tm, ty, ctx: RTerm): Goal =
       )
     )
   )
+
+proc typeoWithVec*(tm, ty, ctx: RTerm): Goal =
+  ## typeo extended with Vec branches.
+  ## Disjoins the base typeo (STLC+Nat) with the Vec branches.
+  disj(typeo(tm, ty, ctx), typeoVec(tm, ty, ctx, typeoWithVec))
