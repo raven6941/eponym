@@ -43,3 +43,5 @@ src/minikanren
 src/rel_elab
 tests/test_minikanren
 tests/test_rel_elab
+src/staging/stage_typeo
+src/staging/defun_demo
