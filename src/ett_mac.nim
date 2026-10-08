@@ -30,7 +30,17 @@ proc nimExprToEponym(n: NimNode): string =
     if s == "vecnil": s = "nil"
     if s == "Univ": "?" else: s
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
-    $n.intVal
+    # In ettBlock, integer literals in term position are assumed to be Nat.
+    # Generate suc chain directly; the elaborator's mkNatLit would do the same,
+    # but this avoids issues with nested positions in the current implementation.
+    # For primitive Int literals, use string syntax (ett"""...""") instead.
+    let v = n.intVal
+    if v < 0: error("negative Nat literal", n)
+    var res = "zero"
+    for i in 1..v:
+      res = "suc (" & res & ")"
+    # Paren if nested, to ensure correct grouping
+    "(" & res & ")"
   of nnkStmtList:
     # Proc body: convert let-statements to nested let...in, final expr is body
     if n.len == 0: error("ettBlock: empty proc body", n)
