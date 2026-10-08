@@ -4,7 +4,11 @@
 ## search. Interleaving (mplus) is data, processed by an explicit
 ## worklist in `take`. Avoids call-stack overflow.
 ##
-## Optional: best-first search via cost-ordered worklist (leftist heap).
+## Issue #24: the search continuations are defunctionalized. `skBind`
+## used to carry `fn: proc(s: State): Stream`; it now carries a `Cont`
+## (first-order data) interpreted by `applyCont`. The old `skThunk`
+## (a laziness closure) is now `skFresh` data. The only remaining
+## closures are user-supplied goals — the defunctionalization boundary.
 
 import sequtils
 import strutils
@@ -113,9 +117,26 @@ proc unify*(u, v: RTerm, s: Subst): tuple[ok: bool, s2: Subst] =
 # --- Explicit stream tree ---------------------------------------------
 # Stream is DATA, not closures. The `take` proc processes it with an
 # explicit worklist (no call-stack recursion for interleaving).
+#
+# Defunctionalized continuations (issue #24): the bind continuation is
+# a `Cont` value, not a `proc`. Nested binds flatten by appending
+# continuations (pure data); `applyCont` interprets them. Fresh-var
+# introduction is an `skFresh` data node, not a thunk closure.
 
 type
-  StreamKind* = enum skEmpty, skCons, skMPlus, skBind, skThunk
+  StreamKind* = enum skEmpty, skCons, skMPlus, skBind, skFresh
+  ContKind* = enum ckOne, ckSeq
+  Goal* = proc(s: State): Stream {.closure.}
+  FreshBody* = proc(vars: seq[RTerm]): Goal {.closure.}
+  Cont* = ref object
+    ## Defunctionalized bind continuation (replaces `proc(s: State): Stream`).
+    ## ckOne: a single user goal — the defunctionalization boundary
+    ##   (user goals are the program, not engine control flow).
+    ## ckSeq: goals applied left-to-right with bind between them; this is
+    ##   what nested-bind flattening produces (data append, no closures).
+    case kind*: ContKind
+    of ckOne: goal*: Goal
+    of ckSeq: goals*: seq[Goal]
   Stream* = ref object
     case kind*: StreamKind
     of skEmpty: discard
@@ -126,9 +147,11 @@ type
       left*, right*: Stream  # interleave these
     of skBind:
       src*: Stream
-      fn*: proc(s: State): Stream {.closure.}  # applied to each
-    of skThunk:
-      thunk*: proc(): Stream {.closure.}  # forced on demand
+      cont*: Cont  # defunctionalized: data, applied via applyCont
+    of skFresh:
+      nvars*: int
+      body*: FreshBody
+      fstate*: State
 
 proc emptyStream*(): Stream = Stream(kind: skEmpty)
 proc singleton*(s: State): Stream =
@@ -137,27 +160,45 @@ proc mplus*(a, b: Stream): Stream =
   if a.kind == skEmpty: b
   elif b.kind == skEmpty: a
   else: Stream(kind: skMPlus, left: a, right: b)
-proc bindStream*(s: Stream, fn: proc(s: State): Stream {.closure.}): Stream =
+
+proc toSeq*(c: Cont): seq[Goal] =
+  case c.kind
+  of ckOne: @[c.goal]
+  of ckSeq: c.goals
+
+proc concatCont*(a, b: Cont): Cont =
+  ## Append two defunctionalized continuations. This replaces the old
+  ## flattening closures: bind(bind(src, f), g) = bind(src, f ++ g).
+  let gs = toSeq(a) & toSeq(b)
+  if gs.len == 1: Cont(kind: ckOne, goal: gs[0])
+  else: Cont(kind: ckSeq, goals: gs)
+
+proc bindStreamC*(s: Stream, c: Cont): Stream =
+  ## Bind with a defunctionalized continuation. Nested binds flatten by
+  ## continuation append (data), never by composing closures.
   if s.kind == skEmpty: emptyStream()
-  elif s.kind == skBind:
-    # Flatten nested bind eagerly: bind(bind(src, f), g) = bind(src, x => bind(f(x), g))
-    # This ensures conj associativity. Doing it here (construction time)
-    # rather than in take (execution time) avoids worklist ordering issues.
-    let innerSrc = s.src
-    let innerFn = s.fn
-    let outerFn = fn
-    bindStream(innerSrc, proc(x: State): Stream {.closure.} =
-      bindStream(innerFn(x), outerFn))
-  else: Stream(kind: skBind, src: s, fn: fn)
-proc delayStream*(thunk: proc(): Stream {.closure.}): Stream =
-  Stream(kind: skThunk, thunk: thunk)
+  elif s.kind == skBind: bindStreamC(s.src, concatCont(s.cont, c))
+  else: Stream(kind: skBind, src: s, cont: c)
+
+proc bindStream*(s: Stream, fn: proc(s: State): Stream {.closure.}): Stream =
+  ## Bind with a closure goal: the ckOne boundary case. Kept so the
+  ## public `conj` (and any external callers) keep working.
+  bindStreamC(s, Cont(kind: ckOne, goal: fn))
+
+proc applyCont*(c: Cont, s: State): Stream =
+  ## Interpret a defunctionalized continuation (replaces applying `fn`).
+  case c.kind
+  of ckOne: c.goal(s)
+  of ckSeq:
+    if c.goals.len == 0: singleton(s)
+    elif c.goals.len == 1: c.goals[0](s)
+    else: bindStreamC(c.goals[0](s), Cont(kind: ckSeq, goals: c.goals[1..^1]))
 
 # --- Goals ------------------------------------------------------------
 # Goals build Stream trees (data). No execution happens during construction.
 # Goals now operate on State (subst + constraint store), not just Subst.
-
-type
-  Goal* = proc(s: State): Stream {.closure.}
+# (Goal itself is still a proc — the user-side defunctionalization
+# boundary. Relations-as-data (staging/relgoal.nim) is the data form.)
 
 proc checkDiseqs(s: State): bool =
   ## Check if any disequality constraint is violated in state s.
@@ -414,30 +455,31 @@ proc freshVar*(): RTerm =
   rvar(freshCounter)
 
 proc fresh*(body: proc(x: RTerm): Goal {.closure.}): Goal =
-  # Use thunk to delay body until stream is forced
+  # Defunctionalized (issue #24): build an skFresh data node instead of a
+  # thunk closure. The small adapter closure is the user boundary — it is
+  # the caller's goal constructor, not engine control flow.
   return proc(s: State): Stream =
-    delayStream(proc(): Stream =
-      let v = freshVar()
-      body(v)(s))
+    Stream(kind: skFresh, nvars: 1,
+           body: proc(vars: seq[RTerm]): Goal {.closure.} = body(vars[0]),
+           fstate: s)
 
 proc fresh2*(body: proc(x, y: RTerm): Goal {.closure.}): Goal =
   return proc(s: State): Stream =
-    delayStream(proc(): Stream =
-      let a = freshVar(); let b = freshVar()
-      body(a, b)(s))
+    Stream(kind: skFresh, nvars: 2,
+           body: proc(vars: seq[RTerm]): Goal {.closure.} = body(vars[0], vars[1]),
+           fstate: s)
 
 proc fresh3*(body: proc(x, y, z: RTerm): Goal {.closure.}): Goal =
   return proc(s: State): Stream =
-    delayStream(proc(): Stream =
-      let a = freshVar(); let b = freshVar(); let c = freshVar()
-      body(a, b, c)(s))
+    Stream(kind: skFresh, nvars: 3,
+           body: proc(vars: seq[RTerm]): Goal {.closure.} = body(vars[0], vars[1], vars[2]),
+           fstate: s)
 
 proc fresh4*(body: proc(a, b, c, d: RTerm): Goal {.closure.}): Goal =
   return proc(s: State): Stream =
-    delayStream(proc(): Stream =
-      let x1 = freshVar(); let x2 = freshVar()
-      let x3 = freshVar(); let x4 = freshVar()
-      body(x1, x2, x3, x4)(s))
+    Stream(kind: skFresh, nvars: 4,
+           body: proc(vars: seq[RTerm]): Goal {.closure.} = body(vars[0], vars[1], vars[2], vars[3]),
+           fstate: s)
 
 # --- Take with explicit worklist --------------------------------------
 # Processes the Stream tree iteratively using a worklist.
@@ -449,6 +491,17 @@ proc fresh4*(body: proc(a, b, c, d: RTerm): Goal {.closure.}): Goal =
 # back. Infinite branches cannot starve finite ones because we
 # round-robin through the queue. This is the standard miniKanren
 # interleaving, implemented iteratively.
+#
+# DEFUNCTIONALIZED (issue #24): continuations are Cont data applied by
+# applyCont; fresh nodes are skFresh data forced by forceFresh. No
+# closures are created or applied by the search itself.
+
+proc forceFresh*(fs: Stream): Stream =
+  ## Force a defunctionalized fresh node: mint the vars, apply the body.
+  doAssert fs.kind == skFresh
+  var vars: seq[RTerm] = @[]
+  for i in 0..<fs.nvars: vars.add(freshVar())
+  fs.body(vars)(fs.fstate)
 
 proc take*(n: int, s: Stream): seq[State] =
   result = @[]
@@ -481,32 +534,29 @@ proc take*(n: int, s: Stream): seq[State] =
       worklist.add(cur.right)
     of skBind:
       # Distribute bind over the source stream structure.
+      # The continuation is data (Cont); nested binds flatten by append.
       let src = cur.src
-      let fn = cur.fn
+      let cont = cur.cont
       case src.kind
       of skEmpty:
         discard
       of skCons:
-        # Apply fn to head, push mplus(fn(head), bind(tail, fn))
-        let r = fn(src.head)
-        let rest = bindStream(src.tail, fn)
+        # Apply cont to head, push mplus(cont(head), bind(tail, cont))
+        let r = applyCont(cont, src.head)
+        let rest = bindStreamC(src.tail, cont)
         worklist.add(mplus(r, rest))
       of skMPlus:
-        # Distribute: bind(l, fn) + bind(r, fn)
-        worklist.add(bindStream(src.right, fn))
-        worklist.add(bindStream(src.left, fn))
+        # Distribute: bind(l, c) + bind(r, c)
+        worklist.add(bindStreamC(src.right, cont))
+        worklist.add(bindStreamC(src.left, cont))
       of skBind:
-        # Nested bind: bind(bind(s, f), g) = bind(s, x => bind(f(x), g))
-        let innerSrc = src.src
-        let innerFn = src.fn
-        worklist.add(bindStream(innerSrc, proc(s: State): Stream =
-          bindStream(innerFn(s), fn)))
-      of skThunk:
-        let forced = src.thunk()
-        worklist.add(bindStream(forced, fn))
-    of skThunk:
-      let forced = cur.thunk()
-      worklist.add(forced)
+        # Nested bind: bind(bind(s, c1), c2) = bind(s, c1 ++ c2).
+        # Pure data append — this is where a closure used to be composed.
+        worklist.add(bindStreamC(src.src, concatCont(src.cont, cont)))
+      of skFresh:
+        worklist.add(bindStreamC(forceFresh(src), cont))
+    of skFresh:
+      worklist.add(forceFresh(cur))
 
 # --- Reify and Run ----------------------------------------------------
 

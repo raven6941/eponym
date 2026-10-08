@@ -26,7 +26,9 @@ import sets
 #   ∨ (fresh f, a, d, c. tm == app(f,a) ∧ typeo(f, arr(d,c), ctx)
 #                          ∧ typeo(a, d, ctx) ∧ ty == c)
 
-proc typeoData(): RelGoal =
+proc typeoData*(): RelGoal =
+  ## typeo as RelGoal data (hand-written mirror of rel_elab.typeo).
+  ## Exported for the issue #24 staging comparison demo.
   let tm = ratom("__var_tm")
   let ty = ratom("__var_ty")
   let ctx = ratom("__var_ctx")

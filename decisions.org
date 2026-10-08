@@ -39,6 +39,60 @@
   (shared zettelkasten). Cross-links via GitHub URLs.
   Consequences: =plan.org=, =research.org=, this log live here.
 
+* 2026-10-08 — Issue #24: defunctionalize stream continuations (Track C)
+
+  Context: the relational engine's search control flow used closures:
+  =skBind.fn: proc(s: State): Stream= (bind continuation),
+  =skThunk.thunk: proc(): Stream= (laziness), and =bindStream=/=take=
+  composed flattening closures at construction and execution time.
+  Goal-level defunctionalization already existed as =RelGoal=
+  (=src/staging/relgoal.nim=, Phase 3) — the data form =stageGoal=
+  consumes; the closure =typeo= (rel_elab) and the RelGoal =typeo=
+  (=stage_typeo.typeoData=, now exported) are maintained in parallel
+  by hand. No mechanical closure->RelGoal translator exists.
+  Decision: defunctionalize the *engine-generated* continuations,
+  keep user goals as the boundary:
+  - New =Cont= ADT: =ckOne(goal)= (single user goal — the boundary)
+    | =ckSeq(goals)= (sequence applied left-to-right with bind between).
+  - =skBind= now carries =cont: Cont=, applied by =applyCont=;
+    nested binds flatten by =concatCont= (data append), never by
+    composing closures. =bindStream(s, fn)= kept as a compat wrapper
+    (=ckOne= case); no callers outside minikanren.nim existed.
+  - =skThunk= replaced by =skFresh{nvars, body, fstate}= data;
+    =forceFresh= mints the vars and applies the body. =delayStream=
+    removed (had no users). The small =freshN= adapter closures remain:
+    they are the caller's goal constructors (user boundary), not
+    engine control flow.
+  - =Goal = proc(s: State): Stream= itself is NOT defunctionalized:
+    that is exactly what RelGoal already is.
+  Verification: =tests/test_minikanren.nim= fully green;
+  =tests/test_rel_elab.nim= green except one *pre-existing* stale
+  assertion (=r3.len == 1= for the polymorphic-identity query — the
+  iterative-deepening =run= returns the same answer at 3 depths with
+  distinct var ids; fails identically on the pre-change code, verified
+  by stash + rerun, byte-identical answers). Sudoku 4x4 still 20ms;
+  all staging demos (=stagegoal=, =relgoal=, =stage_typeo=,
+  =stage_evalo=) pass unchanged on the defunctionalized engine.
+  New demo: =src/staging/defun_demo.nim= — (a) nested =conj= flattens
+  to one =skBind= with =ckSeq= of 3 goals (was nested closure
+  composition); stream node census shows every control node
+  traversable; (b) agreement checks; (c) staging head-to-head:
+  closure =typeo= is type-opaque to =stageGoal= (no inspection path),
+  RelGoal =typeo= stages with =ty=nat= static and the lam branch
+  pruned, and a pruned call-free residual executes correctly via
+  =toGoal= on the defunctionalized engine.
+  Honest finding on the acceptance criterion "better residuals": the
+  comparison is degenerate in the strong sense — closures cannot be
+  staged at all, so there is no higher-order residual to beat; the
+  relation-level win (RelGoal staging, #19/#20) predates this issue.
+  What this issue's defunctionalization buys is making the *search*
+  control flow first-order: a prerequisite for a stream-level
+  specializer (the "stage the Stream?" open question in stagegoal.nim),
+  not a residual improvement with the current relation-level
+  specializer. No win manufactured. Issue left open pending that.
+  Gap noted: =toGoal='s =rgCall= ignores call args, so recursive
+  RelGoal residuals cannot execute through it yet.
+
 * 2026-10-07 — Experiment 1: surface syntax front end
 
   Context: two front ends built for the same preterm AST
