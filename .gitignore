@@ -25,3 +25,8 @@ src/unified_driver
 examples/*
 !examples/*.nim
 !examples/*.ep
+src/lms_staging
+src/sudoku_cp
+src/sudoku_rel
+src/sudoku_seteq
+src/synth_staged

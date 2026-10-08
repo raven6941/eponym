@@ -59,15 +59,35 @@ ettBlock:
 - Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).
 - See `examples/sensor_fusion.nim` for a complete example.
 
-## Track C: Relational programming
+## Track C: Relational × staged interpreters
 
-`src/minikanren.nim` — independent relational engine (no elaborator deps):
-- S-expr terms, unification with occurs check
-- Explicit `Stream` tree (no call-stack recursion)
-- `typeo` relation for STLC+Nat (`src/rel_elab.nim`)
-- Staged `synthNat`: 17,500x speedup via branch pruning (issue #14)
-- Leftist heap for best-first search (`src/heap.nim`, issue #13)
+One relational spec of a small language, many tools
+(inference, checking, synthesis) via staging.
 
+- **`src/minikanren.nim`** — independent µKanren-style engine
+  (no elaborator deps): S-expr terms, unification with occurs
+  check, explicit `Stream` tree (no call-stack recursion),
+  FIFO worklist (fair search — backward `typeo` now enumerates
+  all results), `=/=` disequality with a constraint store,
+  `setEqo` global set-equality constraint, and
+  most-constrained-first branching over constraint-derived
+  domains (4×4 Sudoku in ~20ms; was a 30s timeout).
+- **`src/rel_elab.nim`** — `typeo` relation for STLC+Nat, plus
+  a `Vec` length-indexed branch.
+- **Staged tools** — each direction of the relation staged to
+  direct code: inference with zero search; synthesis pruned
+  by expected type (~17000x); evaluation as direct recursion
+  (61x); a language-specialized engine on top (546x over the
+  generic staged version).
+- **`src/lms_staging.nim`** — LMS-style: one `prog` polymorphic
+  over `R`; `R = int` executes, `R = Rep` builds IR which
+  constant-folds at staging time. No hand-written staged duplicate.
+- **`src/synth_staged.nim`** — `evalo` run backwards (static
+  language rules, dynamic target value), staged to a direct
+  recursive search (6860x), witnesses verified.
+
+Status: the relational path stays experimental until it can be
+compared head-to-head against `elab.nim` (the real elaborator).
 See `docs/staging-design.md` for the staging architecture.
 
 ## Building
