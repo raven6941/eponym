@@ -50,16 +50,27 @@ proc `$`*(t: RTerm): string =
 type
   Subst* = seq[(int, RTerm)]
   
-  # State extends Subst with a disequality constraint store.
+  # SetEqConstraint: set(cells) must equal set(values).
+  # cells: the logic variables (or ground terms)
+  # values: the required values (ground terms)
+  # This is a global constraint — stronger than pairwise =/=.
+  # Propagation: when a cell binds to v, remove v from values and the
+  # cell from cells. If one cell and one value remain, bind them
+  # (the "naked single" — the last cell is determined).
+  SetEqConstraint* = object
+    cells*: seq[RTerm]
+    values*: seq[RTerm]
+  
+  # State extends Subst with constraint stores.
   # diseqs: list of (u, v) pairs that must NOT become equal.
-  # This enables constraint propagation: when == binds a variable,
-  # we check if any disequality is violated.
+  # seteqs: list of set-equality constraints for global propagation.
   State* = object
     subst*: Subst
     diseqs*: seq[(RTerm, RTerm)]
+    seteqs*: seq[SetEqConstraint]
 
 proc emptySubst*(): Subst = @[]
-proc emptyState*(): State = State(subst: @[], diseqs: @[])
+proc emptyState*(): State = State(subst: @[], diseqs: @[], seteqs: @[])
 
 proc walk*(t: RTerm, s: Subst): RTerm =
   var cur = t
@@ -159,17 +170,89 @@ proc checkDiseqs(s: State): bool =
       return false
   true
 
+proc propagateSetEqs(s: State): tuple[ok: bool, s2: State] =
+  ## Propagate set-equality constraints to fixpoint.
+  ## For each setEq(cells, values):
+  ## - Walk cells; partition into bound and unbound
+  ## - Bound cells must have values in the values set; remove them
+  ## - If one unbound cell and one value remain: bind them (naked single)
+  ## - If counts mismatch: fail
+  ## Returns (false, s) on failure, (true, s2) with updated state.
+  var subst = s.subst
+  var seteqs = s.seteqs
+  var changed = true
+  
+  while changed:
+    changed = false
+    var newSeteqs: seq[SetEqConstraint] = @[]
+    
+    for ce in seteqs:
+      var unboundCells: seq[RTerm] = @[]
+      var remainingValues = ce.values
+      
+      # Partition cells into bound/unbound, checking bound values
+      for c in ce.cells:
+        let wc = walk(c, subst)
+        if wc.kind == rkVar:
+          unboundCells.add(c)  # keep original (may be var)
+        else:
+          # Bound: check wc is in remainingValues, remove it
+          var foundIdx = -1
+          for i, v in remainingValues:
+            let (ok, _) = unify(wc, v, subst)
+            # unify with no new bindings means equal
+            if ok:
+              # Check if they're already equal (no new bindings needed)
+              let wv = walk(v, subst)
+              if $wc == $wv:  # structural equality via string (ground terms)
+                foundIdx = i
+                break
+          if foundIdx < 0:
+            return (false, s)  # bound to value not in set → fail
+          remainingValues.delete(foundIdx)
+      
+      # Check counts
+      if unboundCells.len != remainingValues.len:
+        return (false, s)  # mismatch → fail
+      
+      if unboundCells.len == 0:
+        # All bound, all values used → constraint satisfied, drop it
+        changed = true  # (removing a constraint counts as change)
+      elif unboundCells.len == 1:
+        # Naked single: the last cell must be the last value
+        let (ok, subst2) = unify(unboundCells[0], remainingValues[0], subst)
+        if not ok:
+          return (false, s)
+        subst = subst2
+        changed = true
+        # Constraint satisfied, don't add to newSeteqs
+      else:
+        # Still have multiple unbound: keep the reduced constraint
+        if unboundCells.len < ce.cells.len or remainingValues.len < ce.values.len:
+          changed = true
+        newSeteqs.add(SetEqConstraint(cells: unboundCells, values: remainingValues))
+    
+    seteqs = newSeteqs
+  
+  (true, State(subst: subst, diseqs: s.diseqs, seteqs: seteqs))
+
 proc `==`*(u, v: RTerm): Goal =
   return proc(s: State): Stream =
     let (ok, s2) = unify(u, v, s.subst)
     if not ok:
       return emptyStream()
-    let s2state = State(subst: s2, diseqs: s.diseqs)
-    # Constraint propagation: check if this binding violates any disequality
-    if checkDiseqs(s2state):
-      singleton(s2state)
-    else:
-      emptyStream()
+    var s2state = State(subst: s2, diseqs: s.diseqs, seteqs: s.seteqs)
+    # Constraint propagation: check disequalities
+    if not checkDiseqs(s2state):
+      return emptyStream()
+    # Propagate set-equality constraints (may bind more vars)
+    let (pok, pstate) = propagateSetEqs(s2state)
+    if not pok:
+      return emptyStream()
+    # Re-check disequalities after setEq propagation (new bindings)
+    if not checkDiseqs(pstate):
+      return emptyStream()
+    singleton(pstate)
 
 proc `=/=`*(u, v: RTerm): Goal =
   ## Disequality: u and v must NOT become equal.
@@ -187,7 +270,20 @@ proc `=/=`*(u, v: RTerm): Goal =
     # Could become equal later → store constraint
     var diseqs2 = s.diseqs
     diseqs2.add((u, v))
-    singleton(State(subst: s.subst, diseqs: diseqs2))
+    singleton(State(subst: s.subst, diseqs: diseqs2, seteqs: s.seteqs))
+
+proc setEqo*(cells: seq[RTerm], values: seq[RTerm]): Goal =
+  ## Global set-equality constraint: set(cells) == set(values).
+  ## cells: logic variables (or ground terms)
+  ## values: the required values (ground terms, e.g. [1..9])
+  ## Propagation happens in == via propagateSetEqs.
+  return proc(s: State): Stream =
+    var seteqs2 = s.seteqs
+    seteqs2.add(SetEqConstraint(cells: cells, values: values))
+    let s2 = State(subst: s.subst, diseqs: s.diseqs, seteqs: seteqs2)
+    # Run initial propagation (may fail immediately if inconsistent)
+    let (ok, pstate) = propagateSetEqs(s2)
+    if ok: singleton(pstate) else: emptyStream()
 
 proc eq*(u, v: RTerm): Goal {.inline.} =
   ## Non-operator alias for `==`, for use in macros (avoids hygiene issues).
