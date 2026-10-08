@@ -20,18 +20,31 @@
 ## - Generic disj over 5 branches (now 2)
 
 import minikanren
-import rel_elab  # for zeroTm, sucTm
+import rel_elab  # for zeroTm, sucTm, typeo, etc.
 
 proc synthNat*(q: RTerm): Goal =
   ## Staged: synthesize terms q of type nat in empty context.
   ## Equivalent to typeo(q, natTy(), rnil()), but specialized.
+  ##
+  ## Branches:
+  ## - zero, suc: staged (fast path)
+  ## - app: FALLBACK to interpretive typeo (Ballantyne's `fallback`).
+  ##   The app branch CAN produce nat (e.g. app(lam(var 0), zero)),
+  ##   so pruning it is unsound. We emit dynamic code instead.
+  ## - var, lam: pruned (sound: var needs non-empty ctx, lam produces arr)
   disj(
-    # zero: q = zero (ty=nat is static, no need to unify)
     `==`(q, zeroTm()),
-    # suc: q = suc(n), n : nat (recursive, specialized)
-    fresh(proc(n: RTerm): Goal =
-      conj(`==`(q, sucTm(n)),
-        synthNat(n)))
+    disj(
+      fresh(proc(n: RTerm): Goal =
+        conj(`==`(q, sucTm(n)),
+          synthNat(n))),
+      fresh4(proc(f, a, d, c: RTerm): Goal =
+        conj(`==`(q, appTm(f, a)),
+          conj(typeo(f, arrTy(d, natTy()), rnil()),
+            conj(typeo(a, d, rnil()),
+              `==`(c, natTy()))))
+      )
+    )
   )
 
 when isMainModule:
