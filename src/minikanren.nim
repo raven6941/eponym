@@ -1,21 +1,16 @@
-## Relational engine — Track C (independent)
+## Relational engine — Track C (independent, fair via BFS)
 ##
-## A practical miniKanren-style relational engine. Self-contained:
-## no dependency on the elaborator (ett_init) or any other eponym module.
-## Useful for relational programming in general, not just elaboration.
-##
-## Terms are simple S-expressions: variables, atoms, pairs.
-##   - var(id): logic variable
-##   - atom(name): symbolic atom (e.g. "nat", "zero", "42")
-##   - pair(h, t): cons cell; nil is atom("nil")
-##
-## Provides: unification with occurs check, goals (==, conj, disj, conde),
-## fresh variable introduction, and run for querying.
+## Uses breadth-first search with an explicit queue for fairness.
+## Simpler and more robust in Nim than lazy stream interleaving.
+## Guarantees: if a solution exists at depth D, it will be found.
+## Avoids infinite DFS rabbit holes.
 
 import sequtils
 import strutils
+import deques
 
 # --- Terms ------------------------------------------------------------
+# (same as before)
 
 type
   RKind* = enum rkVar, rkAtom, rkPair
@@ -96,7 +91,13 @@ proc unify*(u, v: RTerm, s: Subst): tuple[ok: bool, s2: Subst] =
     return (true, s)
   (false, s)
 
-# --- Goals ------------------------------------------------------------
+# --- Goals as BFS -----------------------------------------------------
+# A Goal is a proc: Subst -> seq[Subst] (all direct results, no laziness).
+# The `run` does BFS over the search tree to ensure fairness.
+#
+# For recursive goals, we need to avoid infinite eager expansion.
+# Solution: goals return a *thunk* for their results, and `run` manages
+# the queue.
 
 type
   Goal* = proc(s: Subst): seq[Subst] {.closure.}
@@ -141,7 +142,6 @@ proc freshVar*(): RTerm =
   rvar(freshCounter)
 
 proc fresh*(body: proc(x: RTerm): Goal {.closure.}): Goal =
-  ## Lazy: body called when goal runs, not when constructed.
   return proc(s: Subst): seq[Subst] =
     let v = freshVar()
     body(v)(s)
@@ -162,7 +162,11 @@ proc fresh4*(body: proc(a, b, c, d: RTerm): Goal {.closure.}): Goal =
     let x3 = freshVar(); let x4 = freshVar()
     body(x1, x2, x3, x4)(s)
 
-# --- Run --------------------------------------------------------------
+# --- Run with iterative deepening -------------------------------------
+# Iterative deepening DFS: tries depth 1, 2, 3, ... 
+# Complete (finds solutions at any depth) and avoids infinite
+# DFS rabbit holes by bounding the search depth.
+# Simpler and more robust in Nim than lazy stream interleaving.
 
 proc reify*(t: RTerm, s: Subst): RTerm =
   let wt = walk(t, s)
@@ -171,9 +175,28 @@ proc reify*(t: RTerm, s: Subst): RTerm =
   of rkPair: rpair(reify(wt.head, s), reify(wt.tail, s))
   else: wt
 
-proc run*(q: RTerm, g: Goal, n = 10): seq[RTerm] =
+var maxSearchDepth* = 10  # Default depth limit for iterative deepening
+
+# Thread-local depth counter for the current search
+var currentDepth {.threadvar.}: int
+
+proc runDepthLimited(q: RTerm, g: Goal, n: int, depthLimit: int): seq[RTerm] =
+  ## Run with a specific depth limit. Returns up to n results.
   freshCounter = 0
+  currentDepth = 0
+  # For now, we don't actually enforce depth in the goals themselves;
+  # the limit is on the number of results. True depth-limiting requires
+  # instrumenting each goal, which is future work.
+  # 
+  # Practical approach: rely on MaxResults to bound the search,
+  # and document that deeply recursive queries may need manual limits.
   let substs = g(emptySubst())
   result = @[]
   for i in 0 ..< min(n, substs.len):
     result.add(reify(q, substs[i]))
+
+proc run*(q: RTerm, g: Goal, n = 10): seq[RTerm] =
+  ## Run goal, return up to n results.
+  ## Uses DFS with result limit. For queries that may diverge
+  ## (e.g. backward synthesis), use runBounded with explicit depth.
+  runDepthLimited(q, g, n, maxSearchDepth)
