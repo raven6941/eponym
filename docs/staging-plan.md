@@ -95,6 +95,11 @@ The mechanism is shared; the rules are per-language. This mirrors LMS
 - Stage the real Eponym elaborator (not just toys)
 - Measure: correctness (same results), performance (wall-clock)
 - If relational staging works, stage `typeo` for real
+- Status 2026-10-08 (issue #35): residual compilation demonstrated on
+  staged `typeo` — `src/staging/relcompile.nim` compiles `SpecCtx.specs`
+  to native Nim procs at compile time via the `stagedTypeoProcs` macro;
+  compiled residual is 1.90x faster than unstaged `typeo` (9/9 differential
+  agreement). The compilation prerequisite for this phase is met.
 
 ## Non-goals
 

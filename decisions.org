@@ -312,3 +312,47 @@
   =staged_codegen.nim='s hand-written macro to arbitrary =RelGoal=.
   This is now the concrete form of #19's "leaves experimental status"
   question.
+
+* 2026-10-08 — Issue #35: residual compilation flips #19's negative result (1.90x)
+
+  Follow-up to #19's decision ("the payoff requires compiling
+  residuals"). =src/staging/relcompile.nim= compiles each
+  =SpecCtx.specs= entry to a native Nim proc
+  =name(p1..pn: RTerm): Goal=: =rgEq/rgNeq= -> ===/=/=,
+  =rgConj/rgDisj= -> =conj/disj=, =rgFresh= ->
+  =fresh(proc(rc_fK: RTerm): Goal = ...)=, =rgCall= -> direct proc call
+  wrapped in a run-time thunk
+  =proc(rc_s: State): Stream = name(args)(rc_s)=. The thunk preserves
+  =toGoal='s lazy-expansion semantics (callee goal-tree construction
+  happens at goal-run time, so recursive calls can't infinitely recurse
+  at goal-build time) while eliminating the per-call =substAtom= walk
+  and =relEnv= lookup. The specializer runs at compile time inside the
+  =stagedTypeoProcs= macro (staging-plan.md: "Generator = Nim macro"),
+  so specialization + compilation is one =nim c -r= step; a
+  =stagedTypeo(tm, ctx)= template names the top checker. Residual calls
+  to *unspecialized* relations are a compile-time error, not silent
+  wrong code.
+
+  Results (=src/staging/test_compiled_typeo.nim=, same 9-term corpus as
+  #19): differential correctness PASSES (9/9 agree, all match
+  expectations); wall-clock *compiled vs unstaged = 1.90x speedup*
+  (9.12ms -> 4.79ms per-iter total), and *compiled vs interpreted
+  residual = 3.88x*. #19's 0.49x was interpretation overhead, exactly
+  as diagnosed — compilation removes it and the branch-pruning savings
+  show through. Biggest wins on failing cases (2.18x on =lam(0) : nat=):
+  pruning pays most where search explores dead branches.
+
+  Lesson for the record: staging's value was invisible until the
+  residual was compiled. An interpreted residual is a pessimization;
+  the 1st projection only counts once it's native code. This unblocks
+  the "leaves experimental status" question for relational staging and
+  is the prerequisite for Phase 4 (stage the elaborator and measure).
+
+  Nim gotchas hit: (a) mixing =result =-assignment in one =case= branch
+  with implicit returns in others silently turns the implicit ones into
+  statements ("has to be used (or discarded)") — use explicit =result =
+  in every branch; (b) hand-built =nnkProcDef= forward declarations
+  need 7 children (name, genericParams, pattern, formalParams, pragmas,
+  extra, body), not 6 — =treeRepr= on a parsed forward decl is the
+  ground truth; (c) =quote= gensyms template/proc *names*, so the entry
+  template is built with manual AST.
