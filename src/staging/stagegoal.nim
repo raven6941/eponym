@@ -13,16 +13,16 @@ import tables
 import strutils
 
 type
-  StagedGoalKind = enum
+  StagedGoalKind* = enum
     sgDone,       # fully evaluated at staging time (success)
     sgFail,       # statically impossible (pruned)
     sgResidual    # residual RelGoal for runtime
 
-  StagedGoal = ref object
-    case kind: StagedGoalKind
+  StagedGoal* = ref object
+    case kind*: StagedGoalKind
     of sgDone: discard
     of sgFail: discard
-    of sgResidual: goal: RelGoal
+    of sgResidual: goal*: RelGoal
 
 proc isGround(t: RTerm): bool =
   ## Check if RTerm is ground (no vars, no dynamic placeholders).
@@ -55,7 +55,7 @@ proc unifyGround(a, b: RTerm): bool =
   of rkPair: unifyGround(a.head, b.head) and unifyGround(a.tail, b.tail)
   of rkVar: false  # shouldn't happen for ground, but safe
 
-proc stageGoal(rg: RelGoal, staticEnv: Table[string, RTerm]): StagedGoal =
+proc stageGoal*(rg: RelGoal, staticEnv: Table[string, RTerm]): StagedGoal =
   ## Stage a RelGoal given static bindings.
   ## staticEnv: maps __var_<name> to ground RTerm (static values)
   case rg.kind
