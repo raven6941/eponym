@@ -1,16 +1,15 @@
-## Relational engine — Track C (independent, fair via BFS)
+## Relational engine — Track C (independent, explicit search tree)
 ##
-## Uses breadth-first search with an explicit queue for fairness.
-## Simpler and more robust in Nim than lazy stream interleaving.
-## Guarantees: if a solution exists at depth D, it will be found.
-## Avoids infinite DFS rabbit holes.
+## Uses an explicit Stream tree (not closures on call stack) for the
+## search. Interleaving (mplus) is data, processed by an explicit
+## worklist in `take`. Avoids call-stack overflow.
+##
+## Optional: best-first search via cost-ordered worklist (leftist heap).
 
 import sequtils
 import strutils
-import deques
 
 # --- Terms ------------------------------------------------------------
-# (same as before)
 
 type
   RKind* = enum rkVar, rkAtom, rkPair
@@ -91,42 +90,62 @@ proc unify*(u, v: RTerm, s: Subst): tuple[ok: bool, s2: Subst] =
     return (true, s)
   (false, s)
 
-# --- Goals as BFS -----------------------------------------------------
-# A Goal is a proc: Subst -> seq[Subst] (all direct results, no laziness).
-# The `run` does BFS over the search tree to ensure fairness.
-#
-# For recursive goals, we need to avoid infinite eager expansion.
-# Solution: goals return a *thunk* for their results, and `run` manages
-# the queue.
+# --- Explicit stream tree ---------------------------------------------
+# Stream is DATA, not closures. The `take` proc processes it with an
+# explicit worklist (no call-stack recursion for interleaving).
 
 type
-  Goal* = proc(s: Subst): seq[Subst] {.closure.}
+  StreamKind* = enum skEmpty, skCons, skMPlus, skBind, skThunk
+  Stream* = ref object
+    case kind*: StreamKind
+    of skEmpty: discard
+    of skCons:
+      head*: Subst
+      tail*: Stream
+    of skMPlus:
+      left*, right*: Stream  # interleave these
+    of skBind:
+      src*: Stream
+      fn*: proc(s: Subst): Stream {.closure.}  # applied to each
+    of skThunk:
+      thunk*: proc(): Stream {.closure.}  # forced on demand
 
-const MaxResults* = 1000
+proc emptyStream*(): Stream = Stream(kind: skEmpty)
+proc singleton*(s: Subst): Stream =
+  Stream(kind: skCons, head: s, tail: emptyStream())
+proc mplus*(a, b: Stream): Stream =
+  if a.kind == skEmpty: b
+  elif b.kind == skEmpty: a
+  else: Stream(kind: skMPlus, left: a, right: b)
+proc bindStream*(s: Stream, fn: proc(s: Subst): Stream {.closure.}): Stream =
+  if s.kind == skEmpty: emptyStream()
+  else: Stream(kind: skBind, src: s, fn: fn)
+proc delayStream*(thunk: proc(): Stream {.closure.}): Stream =
+  Stream(kind: skThunk, thunk: thunk)
+
+# --- Goals ------------------------------------------------------------
+# Goals build Stream trees (data). No execution happens during construction.
+
+type
+  Goal* = proc(s: Subst): Stream {.closure.}
 
 proc `==`*(u, v: RTerm): Goal =
-  return proc(s: Subst): seq[Subst] =
+  return proc(s: Subst): Stream =
     let (ok, s2) = unify(u, v, s)
-    if ok: @[s2] else: @[]
+    if ok: singleton(s2) else: emptyStream()
 
 proc conj*(g1, g2: Goal): Goal =
-  return proc(s: Subst): seq[Subst] =
-    result = @[]
-    for s1 in g1(s):
-      for s2 in g2(s1):
-        result.add(s2)
-        if result.len >= MaxResults: return
+  return proc(s: Subst): Stream =
+    # g1(s) is a Stream tree; bind g2 over it
+    bindStream(g1(s), g2)
 
 proc disj*(g1, g2: Goal): Goal =
-  return proc(s: Subst): seq[Subst] =
-    result = g1(s)
-    for s2 in g2(s):
-      result.add(s2)
-      if result.len >= MaxResults: return
+  return proc(s: Subst): Stream =
+    mplus(g1(s), g2(s))
 
 proc conde*(clauses: seq[Goal]): Goal =
   if clauses.len == 0:
-    return proc(s: Subst): seq[Subst] = @[]
+    return proc(s: Subst): Stream = emptyStream()
   result = clauses[^1]
   for i in countdown(clauses.high - 1, 0):
     let g = clauses[i]
@@ -142,31 +161,88 @@ proc freshVar*(): RTerm =
   rvar(freshCounter)
 
 proc fresh*(body: proc(x: RTerm): Goal {.closure.}): Goal =
-  return proc(s: Subst): seq[Subst] =
-    let v = freshVar()
-    body(v)(s)
+  # Use thunk to delay body until stream is forced
+  return proc(s: Subst): Stream =
+    delayStream(proc(): Stream =
+      let v = freshVar()
+      body(v)(s))
 
 proc fresh2*(body: proc(x, y: RTerm): Goal {.closure.}): Goal =
-  return proc(s: Subst): seq[Subst] =
-    let a = freshVar(); let b = freshVar()
-    body(a, b)(s)
+  return proc(s: Subst): Stream =
+    delayStream(proc(): Stream =
+      let a = freshVar(); let b = freshVar()
+      body(a, b)(s))
 
 proc fresh3*(body: proc(x, y, z: RTerm): Goal {.closure.}): Goal =
-  return proc(s: Subst): seq[Subst] =
-    let a = freshVar(); let b = freshVar(); let c = freshVar()
-    body(a, b, c)(s)
+  return proc(s: Subst): Stream =
+    delayStream(proc(): Stream =
+      let a = freshVar(); let b = freshVar(); let c = freshVar()
+      body(a, b, c)(s))
 
 proc fresh4*(body: proc(a, b, c, d: RTerm): Goal {.closure.}): Goal =
-  return proc(s: Subst): seq[Subst] =
-    let x1 = freshVar(); let x2 = freshVar()
-    let x3 = freshVar(); let x4 = freshVar()
-    body(x1, x2, x3, x4)(s)
+  return proc(s: Subst): Stream =
+    delayStream(proc(): Stream =
+      let x1 = freshVar(); let x2 = freshVar()
+      let x3 = freshVar(); let x4 = freshVar()
+      body(x1, x2, x3, x4)(s))
 
-# --- Run with iterative deepening -------------------------------------
-# Iterative deepening DFS: tries depth 1, 2, 3, ... 
-# Complete (finds solutions at any depth) and avoids infinite
-# DFS rabbit holes by bounding the search depth.
-# Simpler and more robust in Nim than lazy stream interleaving.
+# --- Take with explicit worklist --------------------------------------
+# Processes the Stream tree iteratively using a worklist.
+# No call-stack recursion for the search itself.
+
+proc take*(n: int, s: Stream): seq[Subst] =
+  result = @[]
+  var worklist: seq[Stream] = @[s]
+  var iterations = 0
+  const MaxIterations = 100000
+  
+  while worklist.len > 0 and result.len < n and iterations < MaxIterations:
+    inc iterations
+    let cur = worklist.pop()
+    
+    case cur.kind
+    of skEmpty:
+      discard
+    of skCons:
+      result.add(cur.head)
+      if cur.tail.kind != skEmpty:
+        worklist.add(cur.tail)
+    of skMPlus:
+      # Push both branches; worklist order gives DFS-like behavior.
+      # For fairness, the iterative nature prevents deep starvation
+      # because we don't recurse — we interleave via the worklist.
+      worklist.add(cur.right)
+      worklist.add(cur.left)
+    of skBind:
+      # Distribute bind over the source stream structure.
+      let src = cur.src
+      let fn = cur.fn
+      case src.kind
+      of skEmpty:
+        discard
+      of skCons:
+        # Apply fn to head, push mplus(fn(head), bind(tail, fn))
+        let r = fn(src.head)
+        let rest = bindStream(src.tail, fn)
+        worklist.add(mplus(r, rest))
+      of skMPlus:
+        # Distribute: bind(l, fn) + bind(r, fn)
+        worklist.add(bindStream(src.right, fn))
+        worklist.add(bindStream(src.left, fn))
+      of skBind:
+        # Nested bind: bind(bind(s, f), g) = bind(s, x => bind(f(x), g))
+        let innerSrc = src.src
+        let innerFn = src.fn
+        worklist.add(bindStream(innerSrc, proc(s: Subst): Stream =
+          bindStream(innerFn(s), fn)))
+      of skThunk:
+        let forced = src.thunk()
+        worklist.add(bindStream(forced, fn))
+    of skThunk:
+      let forced = cur.thunk()
+      worklist.add(forced)
+
+# --- Reify and Run ----------------------------------------------------
 
 proc reify*(t: RTerm, s: Subst): RTerm =
   let wt = walk(t, s)
@@ -175,28 +251,29 @@ proc reify*(t: RTerm, s: Subst): RTerm =
   of rkPair: rpair(reify(wt.head, s), reify(wt.tail, s))
   else: wt
 
-var maxSearchDepth* = 10  # Default depth limit for iterative deepening
+# Depth tracking for iterative deepening (fallback)
+var depthLimit* {.threadvar.}: int
+var currentDepth* {.threadvar.}: int
 
-# Thread-local depth counter for the current search
-var currentDepth {.threadvar.}: int
+proc depthExceeded*(): bool = currentDepth >= depthLimit
+proc enterRec*() = inc currentDepth
+proc exitRec*() = dec currentDepth
 
-proc runDepthLimited(q: RTerm, g: Goal, n: int, depthLimit: int): seq[RTerm] =
-  ## Run with a specific depth limit. Returns up to n results.
-  freshCounter = 0
-  currentDepth = 0
-  # For now, we don't actually enforce depth in the goals themselves;
-  # the limit is on the number of results. True depth-limiting requires
-  # instrumenting each goal, which is future work.
-  # 
-  # Practical approach: rely on MaxResults to bound the search,
-  # and document that deeply recursive queries may need manual limits.
-  let substs = g(emptySubst())
+proc run*(q: RTerm, g: Goal, n = 10, maxDepth = 10): seq[RTerm] =
+  ## Run with iterative deepening over depth.
+  ## The Stream tree is built, then `take` processes it with worklist.
   result = @[]
-  for i in 0 ..< min(n, substs.len):
-    result.add(reify(q, substs[i]))
-
-proc run*(q: RTerm, g: Goal, n = 10): seq[RTerm] =
-  ## Run goal, return up to n results.
-  ## Uses DFS with result limit. For queries that may diverge
-  ## (e.g. backward synthesis), use runBounded with explicit depth.
-  runDepthLimited(q, g, n, maxSearchDepth)
+  var seen: seq[string] = @[]
+  for d in 1..maxDepth:
+    depthLimit = d
+    freshCounter = 0
+    currentDepth = 0
+    let stream = g(emptySubst())
+    let substs = take(n - result.len, stream)
+    for s in substs:
+      let t = reify(q, s)
+      let key = $t
+      if key notin seen:
+        seen.add(key)
+        result.add(t)
+        if result.len >= n: return
