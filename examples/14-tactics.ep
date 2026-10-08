@@ -1,5 +1,7 @@
 # Tactics: `by` blocks run Nim tactics against the expected type.
 # Experiment: 6
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
+# `by tac` runs a tactic (e.g. `by refl`); built-ins: `refl`, `assumption`
 # `by refl` proves equalities by reflexivity (up to conversion).
 # `by assumption` finds a matching hypothesis.
 

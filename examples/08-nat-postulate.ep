@@ -1,5 +1,6 @@
 # Naturals via postulate. Tests postulate with eliminator.
 # Experiment: 08
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
 
 postulate Nat : ?
 postulate zero : Nat

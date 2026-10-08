@@ -1,5 +1,6 @@
 # Universe-polymorphic identity. Tests Pi over ?.
 # Experiment: 05
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
 
 proc idU : Pi (A : ?). A -> A =
   lam A. lam x. x
