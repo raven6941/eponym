@@ -167,24 +167,3 @@ proc run*(q: Term, g: Goal, n = 10): seq[Term] =
   for i in 0 ..< min(n, substs.len):
     result.add(reify(q, substs[i]))
 
-when isMainModule:
-  echo "minikanren.nim: relational engine (Track C)"
-  echo ""
-  echo "Demo: unification"
-  let v1 = freshVar()
-  let v2 = freshVar()
-  # Query: v1 = 42, v2 = v1  =>  v1=42, v2=42
-  let g = conj(`==`(v1, Term(kind: tInt, intVal: 42)),
-            `==`(v2, v1))
-  let res = run(v2, g, 5)
-  echo "  v1=42, v2=v1  =>  v2 = ", res[0].intVal
-  assert res[0].intVal == 42
-  echo "ok: unification works"
-  echo ""
-  echo "The engine supports:"
-  echo "  - Logic variables (tMeta terms)"
-  echo "  - Unification (==) with occurs check"
-  echo "  - Conjunction (conj), disjunction (disj), conde"
-  echo "  - Fresh variable introduction"
-  echo ""
-  echo "Next: relational definitions of elaboration (typeo relation)."
