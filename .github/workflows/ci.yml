@@ -20,9 +20,11 @@ jobs:
           done
       - name: Test
         run: |
-          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac lsp egraph ett_embed; do
+          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac egraph ett_embed; do
             echo "=== test $f ==="
             nim c -r --hints:off --path:src "src/$f.nim" || exit 1
           done
           echo "=== examples ==="
           nim c -r --hints:off --path:src "tests/run_examples.nim" || exit 1
+          # Note: lsp is built but not run — it's a server that blocks on stdin,
+          # not a test suite. (Was hanging CI since Experiment 7.)
