@@ -61,6 +61,28 @@ proc `$`*(rg: RelGoal): string =
   of rgBranch: "(branch " & $rg.vars & ")"
 
 # --- Substitution (before toGoal) ---
+#
+# Capture-avoiding: rgFresh binders are respected.
+# - If the binder shadows the placeholder (__var_<name> matches), the
+#   substitution stops at the binder (occurrences inside belong to it).
+# - If the replacement mentions the binder's placeholder, the binder is
+#   freshened first. Without this, inlining a recursive call (issue #20)
+#   merges the caller's argument variables with the callee's fresh
+#   variables of the same name, e.g. typeo's outer `n` with the inlined
+#   body's inner `n`, producing bogus self-referential residuals like
+#   (n == suc(n)) that reject valid programs.
+
+var substFreshCounter = 0
+
+proc freshBinderName(base: string): string =
+  inc substFreshCounter
+  base & "$" & $substFreshCounter
+
+proc termMentionsPH(t: RTerm, name: string): bool =
+  case t.kind
+  of rkAtom: t.name == name
+  of rkPair: termMentionsPH(t.head, name) or termMentionsPH(t.tail, name)
+  of rkVar: false
 
 proc substTermAtom(t: RTerm, placeholder: RTerm, replacement: RTerm): RTerm =
   if t.kind == rkAtom and t.name == placeholder.name:
@@ -70,6 +92,41 @@ proc substTermAtom(t: RTerm, placeholder: RTerm, replacement: RTerm): RTerm =
           substTermAtom(t.tail, placeholder, replacement))
   else:
     t
+
+proc renameBoundTerm(t: RTerm, oldName, newName: string): RTerm =
+  if t.kind == rkAtom and t.name == "__var_" & oldName:
+    ratom("__var_" & newName)
+  elif t.kind == rkPair:
+    rpair(renameBoundTerm(t.head, oldName, newName),
+          renameBoundTerm(t.tail, oldName, newName))
+  else:
+    t
+
+proc renameBound(rg: RelGoal, oldName, newName: string): RelGoal =
+  ## Rename __var_<oldName> occurrences bound by the current binder.
+  ## Stops at a shadowing inner binder of the same name.
+  case rg.kind
+  of rgFail, rgSucceed: rg
+  of rgEq: rgEq(renameBoundTerm(rg.left, oldName, newName),
+                renameBoundTerm(rg.right, oldName, newName))
+  of rgNeq: rgNeq(renameBoundTerm(rg.left, oldName, newName),
+                  renameBoundTerm(rg.right, oldName, newName))
+  of rgConj: rgConj(renameBound(rg.leftG, oldName, newName),
+                    renameBound(rg.rightG, oldName, newName))
+  of rgDisj: rgDisj(renameBound(rg.leftG, oldName, newName),
+                    renameBound(rg.rightG, oldName, newName))
+  of rgFresh:
+    if rg.varName == oldName: rg  # shadowed: inner binder owns these
+    else: rgFresh(rg.varName, renameBound(rg.body, oldName, newName))
+  of rgCall:
+    rgCall(rg.relName, rg.args.mapIt(renameBoundTerm(it, oldName, newName)))
+  of rgSetEq:
+    RelGoal(kind: rgSetEq,
+            cells: rg.cells.mapIt(renameBoundTerm(it, oldName, newName)),
+            values: rg.values.mapIt(renameBoundTerm(it, oldName, newName)))
+  of rgBranch:
+    RelGoal(kind: rgBranch,
+            vars: rg.vars.mapIt(renameBoundTerm(it, oldName, newName)))
 
 proc substAtom*(rg: RelGoal, placeholder: RTerm, replacement: RTerm): RelGoal =
   case rg.kind
@@ -83,7 +140,16 @@ proc substAtom*(rg: RelGoal, placeholder: RTerm, replacement: RTerm): RelGoal =
   of rgDisj: rgDisj(substAtom(rg.leftG, placeholder, replacement),
                     substAtom(rg.rightG, placeholder, replacement))
   of rgFresh:
-    rgFresh(rg.varName, substAtom(rg.body, placeholder, replacement))
+    let boundPH = "__var_" & rg.varName
+    if boundPH == placeholder.name:
+      rg  # binder shadows the placeholder: substitution stops here
+    elif termMentionsPH(replacement, boundPH):
+      # Replacement would be captured by this binder: freshen it first.
+      let newName = freshBinderName(rg.varName)
+      rgFresh(newName, substAtom(renameBound(rg.body, rg.varName, newName),
+                                 placeholder, replacement))
+    else:
+      rgFresh(rg.varName, substAtom(rg.body, placeholder, replacement))
   of rgCall:
     rgCall(rg.relName, rg.args.mapIt(substTermAtom(it, placeholder, replacement)))
   of rgSetEq:

@@ -112,6 +112,42 @@ proc unifyStage(a, b: RTerm, env: var Table[string, RTerm],
   of rkVar:
     urMaybe  # unreachable (handled above), but safe
 
+proc freshPlaceholders(rg: RelGoal): HashSet[string] =
+  ## All __var_<name> placeholders bound by rgFresh binders in rg.
+  result = initHashSet[string]()
+  case rg.kind
+  of rgFail, rgSucceed: discard
+  of rgEq, rgNeq:
+    discard  # binders only occur in goals, not terms
+  of rgConj, rgDisj:
+    result = result + freshPlaceholders(rg.leftG) + freshPlaceholders(rg.rightG)
+  of rgFresh:
+    result.incl("__var_" & rg.varName)
+    result = result + freshPlaceholders(rg.body)
+  of rgCall, rgSetEq, rgBranch:
+    discard
+
+proc hasObservableBindings(branchEnv, entryEnv: Table[string, RTerm],
+                            branchGoal: RelGoal): bool =
+  ## Did staging the branch learn bindings for placeholders that stay
+  ## meaningful outside the branch? Bindings for variables the branch
+  ## itself introduced (rgFresh binders) are internal; anything else is
+  ## an assumption about dynamic input.
+  let fresh = freshPlaceholders(branchGoal)
+  for k in branchEnv.keys:
+    if k notin entryEnv and k notin fresh:
+      return true
+  false
+
+proc reifyNewBindings(branchEnv, entryEnv: Table[string, RTerm]): RelGoal =
+  ## Turn bindings learned in a branch (branchEnv minus entryEnv) into a
+  ## residual conjunction of equalities, so a fully-evaluated branch can
+  ## be kept as a disjunct without losing its answers.
+  result = rgSucceed()
+  for k, v in branchEnv:
+    if k notin entryEnv:
+      result = rgConj(result, rgEq(ratom(k), deref(v, branchEnv)))
+
 proc applyEnv(rg: RelGoal, env: Table[string, RTerm]): RelGoal =
   ## Substitute staging-time bindings into a residual goal.
   ## Partial evaluation proper: the residual carries the learned values,
@@ -204,18 +240,25 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
     if sb.kind == sgFail:
       staticEnv = envL
       return finishResidual(sa, envL)  # right impossible, take left
-    if sa.kind == sgDone:
+    if sa.kind == sgDone and not hasObservableBindings(envL, staticEnv, rg.leftG):
       staticEnv = envL
-      return sa  # true ∨ P ≡ true; left's bindings hold
-    if sb.kind == sgDone:
+      return sa  # left unconditionally true; left's bindings hold
+    if sb.kind == sgDone and not hasObservableBindings(envR, staticEnv, rg.rightG):
       staticEnv = envR
-      return sb  # P ∨ true ≡ true
-    # Note: Done-shortcircuit commits to one branch (deterministic-mode
-    # staging). Answer-complete search staging would keep both branches;
-    # see the "stage the Stream?" open question in the design doc.
-    # Both residual: branch bindings stay local, outer env unchanged
-    let ra = applyEnv(sa.goal, envL)
-    let rb = applyEnv(sb.goal, envR)
+      return sb  # right unconditionally true; right's bindings hold
+    # A Done branch is NOT a license to commit (true ∨ P ≡ true): its
+    # success may have assumed values for placeholders that are dynamic
+    # outside this disjunct. Committing then is unsound for dynamic
+    # inputs (e.g. it collapsed the staged typeo checker to "tm is zero
+    # or suc(zero)"). Instead reify the learned bindings as residual
+    # equalities and keep the disjunction, per the design doc ("if one
+    # branch is statically impossible, take the other; else residualize
+    # the disjunction").
+    let ra = if sa.kind == sgDone: reifyNewBindings(envL, staticEnv)
+             else: applyEnv(sa.goal, envL)
+    let rb = if sb.kind == sgDone: reifyNewBindings(envR, staticEnv)
+             else: applyEnv(sb.goal, envR)
+    # Branch bindings stay local, outer env unchanged
     StagedGoal(kind: sgResidual, goal: rgDisj(ra, rb))
   of rgFresh:
     # Stage the body with the fresh var as dynamic (not in staticEnv).
@@ -367,13 +410,16 @@ when isMainModule:
   echo ""
 
   # Test: disjunction with a statically-true branch —
-  # (x==5) ∨ (x==6): right is satisfiable on its own → whole disj true
+  # (x==5) ∨ (x==6): committing to the left (deterministic cut) would
+  # drop the x=6 answer, which is unsound for dynamic x. The Done
+  # branch is kept as a disjunct with its learned binding reified.
   let g11b = rgDisj(rgEq(ratom("__var_x"), rint(5)), rgEq(ratom("__var_x"), rint(6)))
   var env11b = initTable[string, RTerm]()
   let s11b = stageGoal(g11b, env11b)
-  echo "((x==5) ∨ (x==6)): ", s11b.kind, " (expected sgDone, deterministic commit)"
-  if s11b.kind == sgDone: echo "✓ True-branch short-circuit"
-  else: echo "✗ Expected sgDone"
+  echo "((x==5) ∨ (x==6)): ", s11b.kind, " (expected sgResidual, both answers kept)"
+  if s11b.kind == sgResidual and "5" in $s11b.goal and "6" in $s11b.goal:
+    echo "✓ No deterministic commit: ", s11b.goal
+  else: echo "✗ Expected sgResidual keeping both disjuncts"
   echo ""
 
   # Test: residual substitution — (v==suc(vn)) ∧ f(v): residual shows suc(vn)
