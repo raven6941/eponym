@@ -1,117 +1,111 @@
-## Relational engine in Nim — Track C
+## Relational engine — Track C (independent)
 ##
-## A practical miniKanren-style relational engine. Not dogmatic about
-## miniKanren specifics; optimized for the elaboration use case:
-##   - Terms are eponym Terms (with logic vars as metavariables)
-##   - Depth-first search with backtracking (not fair interleaving)
-##   - Simple, debuggable, fast enough for elaboration
+## A practical miniKanren-style relational engine. Self-contained:
+## no dependency on the elaborator (ett_init) or any other eponym module.
+## Useful for relational programming in general, not just elaboration.
 ##
-## The goal: write relational definitions of elaboration, e.g.
-##   typeo(term, type)  — relates a term to its type
-## Run forward for inference, backward for synthesis.
+## Terms are simple S-expressions: variables, atoms, pairs.
+##   - var(id): logic variable
+##   - atom(name): symbolic atom (e.g. "nat", "zero", "42")
+##   - pair(h, t): cons cell; nil is atom("nil")
+##
+## Provides: unification with occurs check, goals (==, conj, disj, conde),
+## fresh variable introduction, and run for querying.
 
-import ett_init
-import tables
+import sequtils
+import strutils
 
-# --- Logic variables ------------------------------------------------
-# We reuse the elaborator's metavariable infrastructure.
-# A logic var is a Term of kind tMeta (metavariable).
-
-# --- Substitutions --------------------------------------------------
-# A Subst maps metavar IDs to Terms. We use the MetaStore from elab.
-
-# For a standalone relational engine (not tied to elab's MetaStore),
-# we define a simple subst here. The elaboration relation will bridge.
+# --- Terms ------------------------------------------------------------
 
 type
-  RVar = int  # relational variable ID
+  RKind* = enum rkVar, rkAtom, rkPair
+  RTerm* = ref object
+    case kind*: RKind
+    of rkVar: id*: int
+    of rkAtom: name*: string
+    of rkPair: head*, tail*: RTerm
 
-  RTermKind = enum
-    rkVar     # logic variable
-    rkTerm    # embedded eponym Term (ground or with vars)
+proc rvar*(id: int): RTerm = RTerm(kind: rkVar, id: id)
+proc ratom*(name: string): RTerm = RTerm(kind: rkAtom, name: name)
+proc rpair*(h, t: RTerm): RTerm = RTerm(kind: rkPair, head: h, tail: t)
+proc rnil*(): RTerm = ratom("nil")
+proc rint*(n: int): RTerm = ratom($n)
 
-  RTerm = ref object
-    case kind: RTermKind
-    of rkVar: id: RVar
-    of rkTerm: tm: Term  # eponym term; may contain rkVar via tMeta?
+proc rlist*(elems: seq[RTerm]): RTerm =
+  result = rnil()
+  for i in countdown(elems.high, 0):
+    result = rpair(elems[i], result)
 
-# Actually — simpler: use eponym Terms directly, with tMeta as logic vars.
-# The relational engine works over Term, Subst is seq[(varId, Term)].
+proc `$`*(t: RTerm): string =
+  case t.kind
+  of rkVar: "?v" & $t.id
+  of rkAtom: t.name
+  of rkPair:
+    var parts: seq[string] = @[]
+    var cur = t
+    while cur.kind == rkPair:
+      parts.add($cur.head)
+      cur = cur.tail
+    if cur.kind == rkAtom and cur.name == "nil":
+      "(" & parts.join(" ") & ")"
+    else:
+      "(" & parts.join(" ") & " . " & $cur & ")"
+
+# --- Substitutions ----------------------------------------------------
 
 type
-  Subst* = seq[(int, Term)]
+  Subst* = seq[(int, RTerm)]
 
 proc emptySubst*(): Subst = @[]
 
-proc walk*(t: Term, s: Subst): Term =
-  ## Follow metavar bindings.
+proc walk*(t: RTerm, s: Subst): RTerm =
   var cur = t
-  while cur.kind == tMeta:
+  while cur.kind == rkVar:
     var found = false
     for (id, val) in s:
-      if id == cur.metaId:
+      if id == cur.id:
         cur = val
         found = true
         break
     if not found: break
   cur
 
-proc occurs*(varId: int, t: Term, s: Subst): bool =
+proc occurs*(id: int, t: RTerm, s: Subst): bool =
   let wt = walk(t, s)
   case wt.kind
-  of tMeta: wt.metaId == varId
-  of tApp: occurs(varId, wt.fn, s) or occurs(varId, wt.arg, s)
-  of tLam, tPi, tSi: occurs(varId, wt.dom, s) or occurs(varId, wt.scope.bdy, s)
-  of tPair: occurs(varId, wt.pFst, s) or occurs(varId, wt.pSnd, s)
+  of rkVar: wt.id == id
+  of rkPair: occurs(id, wt.head, s) or occurs(id, wt.tail, s)
   else: false
 
-proc unifyRel*(u, v: Term, s: Subst): tuple[ok: bool, s2: Subst] =
-  ## Unify two Terms under subst. Returns (false, s) on failure.
-  ## This is a simplified version; the full elaborator uses unify.nim.
+proc unify*(u, v: RTerm, s: Subst): tuple[ok: bool, s2: Subst] =
   let u2 = walk(u, s)
   let v2 = walk(v, s)
-  if u2.kind == tMeta and v2.kind == tMeta and u2.metaId == v2.metaId:
+  if u2.kind == rkVar and v2.kind == rkVar and u2.id == v2.id:
     return (true, s)
-  if u2.kind == tMeta:
-    if occurs(u2.metaId, v2, s): return (false, s)
-    var ns = s
-    ns.add((u2.metaId, v2))
-    return (true, ns)
-  if v2.kind == tMeta:
-    if occurs(v2.metaId, u2, s): return (false, s)
-    var ns = s
-    ns.add((v2.metaId, u2))
-    return (true, ns)
-  # Structural (simplified; full version in unify.nim handles more)
-  if u2.kind != v2.kind: return (false, s)
-  case u2.kind
-  of tApp:
-    let (ok1, s1) = unifyRel(u2.fn, v2.fn, s)
+  if u2.kind == rkVar:
+    if occurs(u2.id, v2, s): return (false, s)
+    var ns = s; ns.add((u2.id, v2)); return (true, ns)
+  if v2.kind == rkVar:
+    if occurs(v2.id, u2, s): return (false, s)
+    var ns = s; ns.add((v2.id, u2)); return (true, ns)
+  if u2.kind == rkPair and v2.kind == rkPair:
+    let (ok1, s1) = unify(u2.head, v2.head, s)
     if not ok1: return (false, s)
-    return unifyRel(u2.arg, v2.arg, s1)
-  of tC:
-    # Constants: compare by equality (simplified)
-    if u2.c == v2.c: (true, s) else: (false, s)
-  of tR:
-    if u2.refId == v2.refId: (true, s) else: (false, s)
-  of tInt:
-    if u2.intVal == v2.intVal: (true, s) else: (false, s)
-  else:
-    # For simplicity, use structural equality for other kinds
-    if u2 == v2: (true, s) else: (false, s)
+    return unify(u2.tail, v2.tail, s1)
+  if u2.kind == rkAtom and v2.kind == rkAtom and u2.name == v2.name:
+    return (true, s)
+  (false, s)
 
-# --- Goals ----------------------------------------------------------
-# A Goal is a proc taking a Subst and returning a seq of Substs.
-# Depth-first, with a global result limit for practicality.
+# --- Goals ------------------------------------------------------------
 
 type
   Goal* = proc(s: Subst): seq[Subst] {.closure.}
 
-var maxResults* = 1000  # safety cap
+const MaxResults* = 1000
 
-proc `==`*(u, v: Term): Goal =
+proc `==`*(u, v: RTerm): Goal =
   return proc(s: Subst): seq[Subst] =
-    let (ok, s2) = unifyRel(u, v, s)
+    let (ok, s2) = unify(u, v, s)
     if ok: @[s2] else: @[]
 
 proc conj*(g1, g2: Goal): Goal =
@@ -120,14 +114,14 @@ proc conj*(g1, g2: Goal): Goal =
     for s1 in g1(s):
       for s2 in g2(s1):
         result.add(s2)
-        if result.len >= maxResults: return
+        if result.len >= MaxResults: return
 
 proc disj*(g1, g2: Goal): Goal =
   return proc(s: Subst): seq[Subst] =
     result = g1(s)
     for s2 in g2(s):
       result.add(s2)
-      if result.len >= maxResults: return
+      if result.len >= MaxResults: return
 
 proc conde*(clauses: seq[Goal]): Goal =
   if clauses.len == 0:
@@ -138,32 +132,48 @@ proc conde*(clauses: seq[Goal]): Goal =
     let rest = result
     result = disj(g, rest)
 
-# --- Fresh ----------------------------------------------------------
+# --- Fresh ------------------------------------------------------------
 
-var freshId = 0
+var freshCounter* = 0
 
-proc freshVar*(): Term =
-  inc freshId
-  Term(kind: tMeta, metaId: freshId, metaSpine: @[])
+proc freshVar*(): RTerm =
+  inc freshCounter
+  rvar(freshCounter)
 
-proc fresh*(body: proc(x: Term): Goal {.closure.}): Goal =
-  let v = freshVar()
-  body(v)
+proc fresh*(body: proc(x: RTerm): Goal {.closure.}): Goal =
+  ## Lazy: body called when goal runs, not when constructed.
+  return proc(s: Subst): seq[Subst] =
+    let v = freshVar()
+    body(v)(s)
 
-# --- Run ------------------------------------------------------------
+proc fresh2*(body: proc(x, y: RTerm): Goal {.closure.}): Goal =
+  return proc(s: Subst): seq[Subst] =
+    let a = freshVar(); let b = freshVar()
+    body(a, b)(s)
 
-proc reify*(t: Term, s: Subst): Term =
+proc fresh3*(body: proc(x, y, z: RTerm): Goal {.closure.}): Goal =
+  return proc(s: Subst): seq[Subst] =
+    let a = freshVar(); let b = freshVar(); let c = freshVar()
+    body(a, b, c)(s)
+
+proc fresh4*(body: proc(a, b, c, d: RTerm): Goal {.closure.}): Goal =
+  return proc(s: Subst): seq[Subst] =
+    let x1 = freshVar(); let x2 = freshVar()
+    let x3 = freshVar(); let x4 = freshVar()
+    body(x1, x2, x3, x4)(s)
+
+# --- Run --------------------------------------------------------------
+
+proc reify*(t: RTerm, s: Subst): RTerm =
   let wt = walk(t, s)
   case wt.kind
-  of tMeta: wt  # unbound; keep as-is
-  of tApp: tmApp(reify(wt.fn, s), reify(wt.arg, s))
+  of rkVar: wt
+  of rkPair: rpair(reify(wt.head, s), reify(wt.tail, s))
   else: wt
 
-proc run*(q: Term, g: Goal, n = 10): seq[Term] =
-  ## Run goal, return up to n reified results for query var q.
-  freshId = 0
+proc run*(q: RTerm, g: Goal, n = 10): seq[RTerm] =
+  freshCounter = 0
   let substs = g(emptySubst())
   result = @[]
   for i in 0 ..< min(n, substs.len):
     result.add(reify(q, substs[i]))
-
