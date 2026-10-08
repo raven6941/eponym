@@ -287,3 +287,28 @@
   - Export facade added to =ett_init.nim= (=Const*=, =TermKind*=,
     =Term*=, =Value*=, constructors, =tmC*=, =check*=, =vStar*=,
     =newDefRef*=); elaborator lives in its own module.
+
+* 2026-10-08 — Issue #19 benchmark: staged typeo is correct but slower (0.49x)
+
+  Context: #19's acceptance criteria demanded (a) the staged typeo
+  residual agree with the unstaged relation, and (b) a wall-clock
+  comparison. =src/staging/bench_typeo.nim= does both on 9 terms
+  (Nat literals, app(lam(0),zero), var lookups, ill-typed terms).
+  Options for the residual executor: (a) substitution-based
+  interpretation (=toGoal= re-interpreting =rgCall= instantiations);
+  (b) compiling residuals to Nim closures.
+  Decision: report the honest negative result for (a) rather than
+  chase it; open the residual-compilation question as follow-up work.
+  Consequences: differential correctness PASSES (9/9 agree, all match
+  hand-written expectations) — the stageGoal rules derive a valid
+  1st projection. But wall-clock is 0.49x: the interpreted residual
+  is ~2x slower than the original relation. Diagnosis: per-call
+  =substAtom= instantiation + =toGoal= closure-tree rebuild at every
+  recursive call dominate the branch-pruning savings (a small win was
+  had skipping substitution for non-occurring params —
+  =rgMentionsPH= in =relgoal.nim= — but it only moved 0.44x → 0.49x).
+  Branch pruning alone does not pay for interpretation overhead; the
+  payoff requires compiling residuals (option b), e.g. generalizing
+  =staged_codegen.nim='s hand-written macro to arbitrary =RelGoal=.
+  This is now the concrete form of #19's "leaves experimental status"
+  question.

@@ -84,6 +84,23 @@ proc termMentionsPH(t: RTerm, name: string): bool =
   of rkPair: termMentionsPH(t.head, name) or termMentionsPH(t.tail, name)
   of rkVar: false
 
+proc rgMentionsPH*(rg: RelGoal, name: string): bool =
+  ## Does the placeholder atom `name` (e.g. "__var_tm") occur free in rg?
+  ## Used to skip no-op substitutions when instantiating specialized calls.
+  case rg.kind
+  of rgFail, rgSucceed: false
+  of rgEq, rgNeq: termMentionsPH(rg.left, name) or termMentionsPH(rg.right, name)
+  of rgConj, rgDisj:
+    rgMentionsPH(rg.leftG, name) or rgMentionsPH(rg.rightG, name)
+  of rgFresh:
+    if "__var_" & rg.varName == name: false  # shadowed by inner binder
+    else: rgMentionsPH(rg.body, name)
+  of rgCall: rg.args.anyIt(termMentionsPH(it, name))
+  of rgSetEq:
+    rg.cells.anyIt(termMentionsPH(it, name)) or
+      rg.values.anyIt(termMentionsPH(it, name))
+  of rgBranch: rg.vars.anyIt(termMentionsPH(it, name))
+
 proc substTermAtom(t: RTerm, placeholder: RTerm, replacement: RTerm): RTerm =
   if t.kind == rkAtom and t.name == placeholder.name:
     replacement
@@ -205,7 +222,12 @@ proc toGoal*(rg: RelGoal, relEnv: Table[string, RelEntry] = initTable[string, Re
         return proc(s: State): Stream =
           var inst = entry.body
           for i, p in entry.params:
-            inst = substAtom(inst, ratom("__var_" & p), args[i])
+            # Skip params that don't occur: substAtom walks the whole
+            # body, so a no-op substitution is pure overhead at every
+            # recursive call (e.g. __var_ty never occurs in typeo_s0).
+            let ph = ratom("__var_" & p)
+            if rgMentionsPH(inst, ph.name):
+              inst = substAtom(inst, ph, args[i])
           toGoal(inst, renv)(s)
       else:
         raise newException(ValueError,
