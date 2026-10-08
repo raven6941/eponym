@@ -49,16 +49,15 @@ ettBlock:
     proc cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, suc(n))
 
   # `proc` not `def`; `=` not `:=` — matches Nim.
-  # `suc(suc(suc(zero())))` is call syntax; Eponym elaborates to unary Nat.
-  proc three(): Nat = suc(suc(suc(zero())))
-  proc two(): Nat = suc(suc(zero()))
-  proc one(): Nat = suc(zero())
+  # Integer literals for Nat: write `3`, not `suc(suc(suc(zero())))`.
+  # The ettBlock macro converts them to unary; the elaborator never
+  # needs to manually reify — mkNatLit handles it in one place.
+  # (In ettBlock, int literals are Nat; for primitive Int, use string syntax.)
 
-  # Build a 3-element vector. Return type `Vec(Int, three())` is checked:
-  # the body must construct exactly 3 `cons` cells ending in `vecnil`.
-  # `cons(Int, two(), a, ...)` — first arg is the type parameter (Eponym: `cons Int ...`).
-  proc mkVec3(a: Int, b: Int, c: Int): Vec(Int, three()) =
-    cons(Int, two(), a, cons(Int, one(), b, cons(Int, zero(), c, vecnil(Int))))
+  # Build a 3-element vector. Return type `Vec(Int, 3)` uses Nat literal.
+  # The body constructs 3 `cons` cells with Nat literal indices.
+  proc mkVec3(a: Int, b: Int, c: Int): Vec(Int, 3) =
+    cons(Int, 2, a, cons(Int, 1, b, cons(Int, 0, c, vecnil(Int))))
 
   # 3-element dot product. The `let` bindings build `Vec Int 3` values,
   # proving at the type level that arity matches (3 weights, 3 inputs).
