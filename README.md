@@ -2,8 +2,9 @@
 
 A dependently-typed **embedded DSL for Nim**: surface syntax
 elaborates at compile time (via Nim macros) to an Epigram-style
-ETT core (Chapman, Altenkirch & McBride, "Epigram Reloaded",
-TYPES 2006).
+QTT core (Chapman, Altenkirch & McBride, "Epigram Reloaded",
+TYPES 2006, plus 0/1/ω quantities in the judgments — see
+issues #64, #66).
 
 The interesting part is the **elaborator** — the pipeline from
 surface syntax to checked core terms. The two ETT encodings
@@ -33,7 +34,7 @@ survey lives in the shared notes:
 ## The elaborator pipeline
 
 Surface text → `PreTerm` (named) → de Bruijn core terms → elaborated
-`Term` with metavariables solved → checked against the ETT core.
+`Term` with metavariables solved → checked against the QTT core.
 
 - **`parse_surf.nim`** — hand-written surface parser.
 - **`mac_surf.nim`** — Nim-AST front end (alternative surface).
@@ -58,11 +59,18 @@ Surface text → `PreTerm` (named) → de Bruijn core terms → elaborated
 6. **Tactics** — basic `refl`/`assumption`; custom tactic API (in progress).
 7. **LSP** — diagnostics via Language Server Protocol; holes/goals/actions (in progress).
 8. **Staging** — tagless string generation for residual code (basic; full pipeline in progress).
-9. **Erasure** — QTT-lite 0-quantity erased binders (metadata; full checking in progress).
+9. **Erasure** — QTT-lite 0-quantity erased binders (superseded by #66:
+   QTT is now the core type theory, not a post-pass).
 10. **Conversion cache** — exact equality-query memoization (not yet a true e-graph).
 11. **Primitive types** — machine `Int` via `wRed`; Nat literal overloading (`3` instead of `suc` chains).
 12. **Propositional equality** — `Eq`/`refl`/`J`; `plusReducesZ` proof works.
 13. *(future)* **Polynomial functors** — functorial datatypes (Topos PolyTT).
+14. **QTT core** — quantities 0/1/ω in the judgments: quantity-aware
+    conversion, in-judgment enforcement at lambda/application sites,
+    quantity polymorphism (#66; builds on the #64 prototype).
+15. **Constructor disjointness** — `noConfusion`/`noCycle` as named
+    disequality facts in unification; impossible clauses rejected
+    early (#80).
 
 ## Writing eponym in Nim code
 

@@ -64,10 +64,11 @@ back. The dependent types evaporate — zero runtime cost.
 │    · equality as overridable effect: handler stack,          │
 │      coreValid vs extending handlers (issue #41)             │
 │    · positivity checking (issue #33, planned)                │
+│    · constructor disjointness: noConfusion, noCycle (#80)    │
 └──────────────────────────┬───────────────────────────────────┘
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  ETT core — small trusted kernel, Epigram Reloaded theory    │
+│  QTT core — small trusted kernel, quantities in judgments    │
 │  ett.nim (finally-tagless)  ·  ett_init.nim (initial enc.)    │
 │  postulate / elim / red declarations; wRed values            │
 └──────────────────────────┬───────────────────────────────────┘
@@ -172,13 +173,17 @@ Completed experiments (see `plan.org`, `decisions.org`):
 | 7 | LSP tooling | Diagnostics; holes/goals in progress |
 | 8 | Staged ETT evaluator | Tagless-final staging works |
 | 17 | ETT staging rules (Phase 2 validation) | Sym[SVal] with staging-time beta-reduction; twice/const/pairSwap staged == unstaged; 15.8x hoisting speedup, 0.67x on pure dispatch (negative) |
-| 9 | Erasure (QTT-lite) | Metadata; full checking in progress |
+| 9 | Erasure (QTT-lite) | Superseded by #66: QTT is the core now, not a post-pass |
 | 10 | Conversion cache | Exact memoization; e-graph future |
 | 11 | Primitive Int | Machine int via wRed; literal overloading |
 | 12 | Propositional equality | `Eq`/`refl`/`J`; `plusReducesZ` proven |
 | 19/35 | Staged typeo benchmark + residual compiler | 1.90x vs compiled unstaged; 9/9 correct |
 | 27 | Mode inference for relational staging | Inferred modes reproduce manual ones |
 | 26 | Staged relational elaborator vs direct | REOPENED 2026-10-09: checker parity + negative staging result closed it early; finishing requires #59 (elabo with output terms) + #57 (direct-style codegen) |
+| 60 | Compiled defunctionalized code pointers (compileD) | 1.9x→~1.4–1.7x gap vs baseline; closure-call indirection left to #72 |
+| 64 | QTT prototype (ETT + linear binders) | Post-elaboration usage checker; feasibility step for #66 |
+| 66 | QTT as the core type theory | Quantities in the judgments: in-judgment enforcement, quantity-aware conversion, quantity polymorphism, subject-side checking-mode tracking |
+| 80 | Constructor disjointness | noConfusion/noCycle as named disequality facts; fail-fast unification, early impossible-clause rejection |
 
 In flight (ordered):
 
@@ -198,7 +203,16 @@ merged d4c4ceb: `convElab` effect site, `ConvHandler={decide,coreValid}`,
 **#36 — termination checking** (structural recursion for
 `red` rules and clause definitions; 10-accepted/8-rejected corpus);
 **#32 — clause-style definitions** (MVP + indexed families; `vappend`
-elaborates and computes).
+elaborates and computes);
+**#60 — compiled defunctionalized code pointers** (`compileD`: dfLam compiles
+DForm bodies to host closures once; gap 1.9x→~1.4–1.7x, remainder to #72);
+**#64 — QTT prototype** (ETT + linear binders, post-elaboration usage checker;
+feasibility step for #66);
+**#66 — QTT as the core type theory** (quantities in the judgments:
+quantity-aware conversion, application-site enforcement, quantity
+polymorphism, subject-side checking-mode tracking);
+**#80 — constructor disjointness** (`noConfusion`/`noCycle` as named
+disequality facts in unification; impossible clauses rejected early).
 
 Then: #33 positivity, #34 error snapshots, #37 records, #38 elaboration
 adequacy tests, #28 session-type library demo (the motivating case),
