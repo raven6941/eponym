@@ -509,3 +509,68 @@
     needs cheaper keys (hash-consed term identity instead of string
     rendering) or targeting only expensive goals. Both are future work;
     the benchmark stays as the regression harness.
+
+* 2026-10-09 — Issue #26: staging the elaborator is a negative result; gap analysis vs #19/#35
+
+  Context: Phase 4 acceptance criteria were (a) staged elaborator built
+  for a sample workload, (b) same accept/reject as the direct
+  elaborator, (c) wall-clock numbers, (d) this gap analysis for Track C
+  priority (3). The branch (=exp26-rel-elab=) encodes =infero=/=checko=
+  for the dependent fragment (Pi non-dep, lam, app, Nat, Vec, vars 0-2)
+  as =RelGoal=, specializes =checko(tm, Vec(Nat,N), ctx)= via
+  =specializeRelation=, and compiles with =relcompile= to native procs
+  (=src/staging/stage_rel_elab_dep.nim=,
+  =src/staging/bench_rel_elab.nim=). (a) and (b) are met: 5/5
+  agreement across unstaged-relational / staged-relational / direct on
+  2 valid + 3 invalid Vec terms; the earlier relational elaborator
+  (=src/rel_elab_dep.nim=) already had 8/8 accept/reject parity with
+  the direct elaborator.
+
+  Results (c): the staged version is *slower* at every scale tested.
+  N=2: staged/unstaged = 12–72x, staged/direct = 1.9–35x. Scale check
+  (=src/staging/bench_rel_elab_scale.nim=, new
+  =stagedCheckoVecNProcs(n: static int)= macro, N=8): staged/unstaged
+  = 14.8–43x, staged/direct = 1.7–41x. The ratio does not improve with
+  term size — the open question from the earlier comment is answered:
+  larger terms (deeper Vec indices) do not rescue staging here.
+
+  Gap analysis vs #19/#35 (d): the *same* pipeline (partial deduction
+  + =relcompile=) gave 1.90x on staged typeo but 11–87x slowdown on
+  staged checko. The difference is in the baseline, not the
+  specializer. Typeo's unstaged baseline does real *search* (branching
+  on term shape with dead ends), so static branch pruning has
+  something to remove, and compilation removed the interpretation
+  overhead that hid it. Checko on this fragment is already
+  near-deterministic: the unstaged relation is mostly unification
+  with little search, and it is *faster than the direct elaborator*
+  on valid terms (0.029ms vs 0.31ms at N=2; 0.53ms vs 1.68ms at N=8).
+  There is almost no search to prune, while the residual still pays
+  the =relcompile= per-call interface cost: every residual call goes
+  through a run-time thunk (=proc(rc_s: State): Stream=) plus
+  =conj=/=disj= Goal construction and closure allocation. That
+  engine-interface overhead dominates the pruned work at every scale.
+
+  Decision: close #26 as a negative result for staging-via-partial-
+  deduction *of the relation*. The comparison Track C priority (3)
+  asked for is now answered: the relationally-defined elaborator is
+  correct (accept/reject parity) and already competitive with the
+  direct elaborator on valid terms *unstaged*; staging it with the
+  current pipeline is a pessimization. Do not pursue more
+  partial-deduction staging of the elaborator — the remaining
+  performance question is one level down: the current pipeline
+  specializes the relation but still runs the miniKanren engine
+  (Goals, Streams, States) at residual run time. Beating the direct
+  elaborator would need staging *through* the engine — residual
+  direct-style code with no Goal/Stream layer (the 2nd-Futamura
+  direction: specialize the engine itself, cf. the 546x toy result in
+  PLAN.md). That is a new experiment, not more of this one.
+
+  Consequences: (1) the =stagedCheckoVecNProcs= macro and both bench
+  files stay on =main= as the regression harness and as the worked
+  example of why relation-level staging can lose; (2) Track C step 3
+  keeps the relational elaborator experimental for its *spec* value
+  (one relational definition, many directions), with the unstaged
+  version as the performance baseline to beat; (3) any future staging
+  work on the elaborator must target the engine interface overhead
+  first — measure residual Goal-allocation cost before adding more
+  specialization.

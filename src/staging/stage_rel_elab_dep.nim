@@ -122,6 +122,35 @@ proc buildRelEnv*(): Table[string, RelDef] =
 
 import macros
 
+macro stagedCheckoVecNProcs*(n: static int): untyped =
+  ## Like stagedCheckoVec2Procs but for ty = Vec(Nat, n) with arbitrary
+  ## (compile-time) n. Emits template `stagedCheckoVecN(tm, ctx)`.
+  ## One invocation per module: spec proc names come from a fresh
+  ## counter, so two invocations would collide.
+  var relEnv = buildRelEnv()
+  var spCtx = newSpecCtx(relEnv, fuel = 4 * n + 8)
+  var staticParams = initTable[string, RTerm]()
+  var idx: RTerm = zeroTm()
+  for i in 0 ..< n: idx = sucTm(idx)
+  staticParams["ty"] = vecTy(natTy(), idx)
+  var dynamicVars = initHashSet[string]()
+  dynamicVars.incl("__var_tm")
+  dynamicVars.incl("__var_ctx")
+  let top = specializeRelation(spCtx, "checko", staticParams, dynamicVars)
+  result = compileSpecCtx(spCtx)
+  let topIdent = ident(top)
+  var idxNode = newCall(ident("zeroTm"))
+  for i in 0 ..< n: idxNode = newCall(ident("sucTm"), idxNode)
+  let vecNode = newCall(ident("vecTy"),
+    newCall(ident("natTy")), idxNode)
+  result.add(nnkTemplateDef.newTree(
+    ident("stagedCheckoVecN"), newEmptyNode(), newEmptyNode(),
+    nnkFormalParams.newTree(ident("Goal"),
+      newIdentDefs(ident("tm"), ident("RTerm")),
+      newIdentDefs(ident("ctx"), ident("RTerm"))),
+    newEmptyNode(), newEmptyNode(),
+    newStmtList(newCall(topIdent, ident("tm"), vecNode, ident("ctx")))))
+
 macro stagedCheckoVec2Procs*(): untyped =
   ## Specialize checko(tm, Vec(Nat, 2), ctx) at compile time and emit one
   ## Nim proc per specialized relation, plus a `stagedCheckoVec2(tm, ctx)`
