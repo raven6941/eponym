@@ -1133,3 +1133,37 @@
   named errors; injectivity still decomposes; unregistered refs keep
   generic errors; existing unify/elab tests all pass; full CI matrix
   green.
+** #57: Complete staging flips #26's negative (2026-10-09)
+  Status: POSITIVE. Generated direct-style code from the elabo relation is
+  9.4x (N=2) to 22.6x (N=8) faster than the unstaged relational elabo,
+  with byte-identical outputs and full accept/reject agreement.
+
+  The generator (src/staging/gen_direct_elabo.nim) runs at build time and
+  emits specialized Nim procs for Vec(Nat, N). The generated code has:
+  - No Goal/Stream machinery
+  - No unification (logic variables eliminated by partial evaluation)
+  - No miniKanren closure construction
+  - Just direct pattern matching, recursion, and Option[RTerm]
+
+  Benchmark (microseconds, best of 100):
+    N=2: generated 25.1us vs relational 236.7us (9.4x)
+    N=8: generated 124.5us vs relational 2811.6us (22.6x)
+
+  Differential correctness:
+  - Valid terms: outputs match relational elabo exactly ($-equality)
+  - Invalid terms (bad var, nil vs Vec1, cons vs Vec0): both reject
+
+  Lesson: #26's negative was about *incomplete* staging (specialization
+  without codegen, retaining the Goal interpreter). When the relational
+  spec is compiled through to direct code, the speedup is substantial
+  and grows with term size (the relational overhead is per-node).
+  This validates the Track C step 3 direction: stage *through* the engine,
+  not just the relation.
+
+  Note: #61 (genlet) is NOT a prerequisite. The generated code for this
+  fragment has no duplication — each subterm elaborated once. Genlet becomes
+  relevant at larger scales or with inlining.
+
+  Decision: #57's approach (build-time codegen from relational spec) is the
+  correct completion of #26. The remaining work is generalizing the generator
+  beyond Vec/Nat to the full fragment (Pi/lam/app/vars).
