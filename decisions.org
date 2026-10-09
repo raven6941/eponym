@@ -979,3 +979,33 @@
 
   Verification: all CI matrix suites green locally (incl. all 16 .ep
   examples + the negative session-types test).
+
+* 2026-10-09 — Issue #66: application-site quantity enforcement (erased parameter)
+
+  Context: in-judgment quantity enforcement existed at lambdas
+  (enforceBinderQty) and in conversion (structuralEq on wPi/wSi), but the
+  application site ignored the Pi binder's quantity. Hole: a linear
+  variable passed to a q0 (erased) parameter passed the use-once count
+  (exactly one mention) yet was silently discarded — the 0-binder cannot
+  consume it.
+
+  What was built: =ensurePi= now returns the binder quantity; at pkApp in
+  inferTm, a q0 binder triggers =checkErasedArg=, which walks the
+  elaborated argument in term positions (domains/type annotations skipped,
+  per the all-0-context discipline) and rejects free mentions of
+  q1-bound variables ("silently discarded"). q1 binders need no app-site
+  check: the argument context scales by 1 (identity), and the binder-side
+  count already enforces exact-once use.
+
+  Design call: the check lives in the judgment (elab), not the post-pass —
+  consistent with #66's "quantities in the judgments, not a post-pass".
+  Metas in the argument skip the check (a hole may solve to anything);
+  the post-pass re-checks at end of declaration.
+
+  Verification: 3 new elab tests (accept unrestricted-into-erased; reject
+  linear-into-erased for both postulated and local-lambda 0-functions);
+  full CI matrix green, warning-clean.
+
+  Remaining for #66: quantity polymorphism (qty variables, the acceptance
+  criterion "(q x : A) -> B"); subject-side quantity tracking
+  (=Gamma |- t :^q A=).
