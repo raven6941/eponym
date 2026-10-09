@@ -2,9 +2,9 @@
 ##
 ## Stages a SHARED corpus through both pipelines and compares residual
 ## size (node count) and staging wall-clock:
-##   - baseline: higher-order Sym[SVal] stager (staging/ett_staged.nim),
+##   - baseline: higher-order Sym[SVal] stager (tests/ett_staged.nim),
 ##     closures as host procs (svStaticLam), binders as host closures.
-##   - defun:    first-order defunctionalized stager (staging/staged_defun.nim),
+##   - defun:    first-order defunctionalized stager (tests/staged_defun.nim),
 ##     closures as data (dvLam = code pointer + env), explicit applyD dispatch,
 ##     residual binders as de Bruijn levels.
 ##
@@ -16,8 +16,8 @@
 
 import std/[tables, times]
 import ett
-import staging/ett_staged
-import staging/staged_defun
+import ett_staged
+import staged_defun
 
 # --- agreement on values (neutrals by id) ---
 
@@ -51,7 +51,7 @@ proc stageMin(reps: int, body: proc(): void): float =
 # ================= Program 1: twice f x (f static, x dynamic) =============
 
 let twiceProg = dLam(dLam(dLam(dApp(dVar 1, dApp(dVar 1, dVar 0)))))
-let fD1 = DVal(kind: dvLam, body: dPair(dVar 0, dTt()), env: @[])
+let fD1 = dLamVal(dPair(dVar 0, dTt()))
 let fV1 = ev.cLam(Xv, proc(p: Value): Value = ev.cPair(p, ev.cTt()))
 let fS1 = st.cLam(Xs, proc(p: SVal): SVal = st.cPair(p, st.cTt()))
 let xV1 = neutralB(7)
@@ -135,7 +135,7 @@ proc compose[R](s: Sym[R]): R =
 let composeProg = dLam(dLam(dLam(dApp(dVar 2, dApp(dVar 1, dVar 0)))))
 let UU = ev.cArr(ev.cUnit(), ev.cUnit())
 let idV = ev.cLam(UU, proc(y: Value): Value = y)
-let idD = DVal(kind: dvLam, body: dVar 0, env: @[])
+let idD = dLamVal(dVar 0)
 let idS = st.cLam(st.cArr(st.cUnit(), st.cUnit()),
   proc(y: SVal): SVal = y)
 let xV4 = neutralB(10)
@@ -168,7 +168,7 @@ echo "p4 compose id id x:  defun  nodes=", countDNodes(dRes4),
 
 var dRes5: DVal
 let tDef5 = stageMin(5, proc() =
-  dRes5 = reifyD(DVal(kind: dvLam, body: dVar 0, env: @[]), 0))
+  dRes5 = reifyD(dLamVal(dVar 0), 0))
 let wN5 = neutralB(11)
 assert agree(ev.cApp(evalD(dRes5, initTable[int, Value](), 1), wN5), wN5),
   "p5 defun: reified identity misbehaves"
@@ -192,7 +192,7 @@ echo "                     baseline nodes=", countNodes(bRes5),
 # than host-closure invocation at scale.
 
 const L = 300
-let fiD = DVal(kind: dvLam, body: dPair(dVar 0, dTt()), env: @[])
+let fiD = dLamVal(dPair(dVar 0, dTt()))
 let fiS = st.cLam(Xs, proc(p: SVal): SVal = st.cPair(p, st.cTt()))
 let fiV = ev.cLam(Xv, proc(p: Value): Value = ev.cPair(p, ev.cTt()))
 

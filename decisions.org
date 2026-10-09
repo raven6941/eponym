@@ -844,3 +844,52 @@
   Session types example uses linear channels; badClient3 correctly rejected.
   This is ETT + linear binders (not full QTT as core). The full QTT
   integration (quantities in typing judgments) is future work.
+
+* 2026-10-09 — Issue #60: compile the defunctionalized code pointers (MIXED — gap narrowed, mechanism isolated)
+
+  Context: #53's negative verdict was measured against a defunctionalized
+  stager that re-interpreted `DForm` syntax via `stageD` on every beta —
+  defunctionalization without the downstream compile step. #60 builds that
+  step: `compileD(d: DForm): DCompiled` in =tests/staged_defun.nim=, a
+  one-time compiler from first-order syntax to a host closure
+  `proc(arg, env, lvl: DVal...): DVal`, paid once at `dfLam`. `applyD` on
+  the `dvLam` path now invokes `f.code(a, f.env, lvl)` — no syntax re-walk,
+  and no `@[a] & env` seq cons (the argument travels separately from the
+  captured env). The `DForm` is retained alongside for `reifyD`, which
+  keeps working (uses compiled code when present, `stageD` fallback for
+  hand-built values with nil code). New `dLamVal` constructor; corpus and
+  =bench/bench_defun_vs_baseline.nim= ported to it. Also fixed two
+  reorg breakages in the same files: the bench's `staging/ett_staged` /
+  `staging/staged_defun` imports no longer resolved (now plain module
+  imports), and the staged_defun main-module corpus referenced
+  `stagedSym()` whose import had been removed as "dead" (re-added under
+  `when isMainModule`, warning-clean both standalone and as an import).
+  Benchmark (=bench/bench_defun_vs_baseline.nim=, min of 5/3 reps):
+  all agreement checks pass, residual node counts identical
+  (twice 3/3, const 0/0, pairSwap 2/2, compose 1/1, scale 301/301).
+  Scale test (300 unrolled betas): before 0.75ms vs 0.40ms baseline
+  (~1.9x); after 0.57-0.67ms vs 0.40ms baseline (~1.4-1.7x across runs).
+  The hypothesis (~parity) did NOT fully hold, so per the
+  benchmarking-discipline rule the remainder was isolated with
+  micro-benchmarks (min of 30 reps, per-300-betas): compositional
+  compiled code 0.370ms; flattened single-closure variant 0.201ms;
+  flattened direct call 0.199ms; baseline 0.405ms. Findings:
+  - The #53-measured components are gone from the hot path: no per-beta
+    syntax re-walk (was 1.47x dispatch) and no per-beta seq cons (was
+    1.90x). applyD dispatch itself is negligible (0.003ms/300 betas).
+  - What remains is call indirection from compositional codegen: each
+    beta invokes the body closure plus one child closure per subterm
+    (0.169ms/300 betas for the 2-call chain in the scale test).
+  - The flattened variant reaches parity and slightly beats the baseline
+    (0.199ms vs 0.405ms in micro units) — no interpreter remains on the
+    path; the residual cost is code shape, not interpretation.
+  Decision: the #53 verdict is refined rather than reversed.
+  Defunctionalization alone was not the precondition; defunctionalize +
+  compile is at parity with host closures, with reification (residual
+  lambdas) as the qualitative gain. The compile step is now the default
+  path (`dLamVal`); the interpreting fallback stays only for hand-built
+  values. Flattening the codegen (inlining child computations instead of
+  child-closure calls) is the identified next step if the last ~1.5x
+  matters — filed as follow-up, not done here.
+  Consequences: issue #60 closed; =compileD=, =dLamVal= exported for
+  drivers; bench imports fixed so the harness builds on main again.
