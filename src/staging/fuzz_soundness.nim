@@ -515,10 +515,12 @@ when isMainModule:
   var i = 1
   while i <= paramCount():
     let a = paramStr(i)
-    if a == "--seed" and i < paramCount():
+    if a == "--":
+      discard  # separator leaked through by `nim c -r --`; skip
+    elif a == "--seed" and i < paramCount():
       inc i
       seedStr = paramStr(i)
-    elif a == "--n" and i < paramCount():
+    elif (a == "--n" or a == "-n") and i < paramCount():
       inc i
       n = parseInt(paramStr(i))
     elif a == "--help" or a == "-h":
