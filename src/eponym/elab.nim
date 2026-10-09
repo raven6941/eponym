@@ -186,6 +186,21 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   ## existed, so behavior with an empty stack is bit-for-bit unchanged.
   ## Successes are recorded in ms.convCache, which the scoped
   ## cacheConvHandler below probes.
+  ##
+  ## Issue #80: rigid noConfusion pre-check — a forced constructor
+  ## conflict fails fast with a named reason instead of running NbE
+  ## only to report a generic mismatch. Sound: the check fires only on
+  ## positive rigid evidence (distinct constructors of one datatype at
+  ## some position, reached through non-unfolding heads), which no
+  ## conversion could equate.
+  let nc = noConfusionConflict(ms, a, b)
+  if nc.bad:
+    var refNames = initTable[int, string]()
+    for name, g in globals:
+      if g.tm.kind == tR: refNames[g.tm.refId] = name
+    raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames) &
+      " does not match expected type " & prettyTerm(b, ctx, refNames) &
+      ": " & noConfusionMsg(ms, nc.c1, nc.c2))
   var env = newSeq[Value](ctx.len)
   for i in 0 ..< ctx.len:
     env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
@@ -1336,6 +1351,17 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
     elabRedDecl(rd.lhs, rd.rhs, rd.rloc, globals, supply, ms)
   # record for coverage checking (issue #32)
   dataInfos[d.dname] = d
+  # Issue #80: register the constructor disjointness facts (noConfusion /
+  # noCycle) for unification. The constructors were just postulated above,
+  # so each name resolves to a tR global.
+  var ctorIds: seq[(int, string)] = @[]
+  for ctor in d.ctors:
+    let ctm = globals[ctor.name].tm
+    if ctm.kind != tR:
+      raise elabErr(ctor.cloc, "internal: constructor '" & ctor.name &
+        "' did not elaborate to a global reference")
+    ctorIds.add((ctm.refId, ctor.name))
+  ms.registerDataCtors(globals[d.dname].tm.refId, d.dname, ctorIds)
 
 # --- Capture-avoiding PreTerm substitution ----------------------------------
 # Needed by issue #32 (indexed clause defs): instantiating the motive and
@@ -1614,6 +1640,51 @@ proc checkClauseTermination(rhs: PreTerm, fname: string, loc: Loc) =
       discard
   walk(rhs)
 
+proc ctorHeadNamePre(t: PreTerm, ctorToData: Table[string, string],
+                     bound: HashSet[string]): string =
+  ## Head constructor name of a PreTerm application spine, or "" when the
+  ## head is not a known data constructor. `bound` holds the in-scope
+  ## variable names (telescope binders, pattern variables): a variable
+  ## shadowing a constructor name is not a constructor.
+  var cur = t
+  while cur.kind == pkApp: cur = cur.c1
+  if cur.kind == pkVar and cur.name notin bound and
+     ctorToData.hasKey(cur.name):
+    cur.name
+  else: ""
+
+proc noConfusionConflictPre(t1, t2: PreTerm,
+                            ctorToData: Table[string, string],
+                            bound: HashSet[string]): tuple[bad: bool,
+    reason: string] =
+  ## Issue #80: rigid noConfusion check on surface preterms. Returns
+  ## bad=true with a named reason when t1/t2 are constructor-headed
+  ## (possibly under applications) with distinct heads from the same
+  ## datatype — or, when the heads agree, when some argument pair
+  ## recursively conflicts (injectivity). Anything else (variables,
+  ## defined functions, non-constructor heads) counts as compatible:
+  ## the check fires only on positive rigid evidence, so it can never
+  ## reject a well-typed clause.
+  let h1 = ctorHeadNamePre(t1, ctorToData, bound)
+  let h2 = ctorHeadNamePre(t2, ctorToData, bound)
+  if h1.len > 0 and h2.len > 0:
+    if h1 != h2:
+      if ctorToData[h1] == ctorToData[h2]:
+        return (true, "noConfusion: '" & h1 & "' and '" & h2 &
+          "' are distinct constructors of '" & ctorToData[h1] & "'")
+    else:
+      var a1: seq[PreTerm] = @[]
+      var c1 = t1
+      while c1.kind == pkApp: a1.add(c1.c2); c1 = c1.c1
+      var a2: seq[PreTerm] = @[]
+      var c2 = t2
+      while c2.kind == pkApp: a2.add(c2.c2); c2 = c2.c1
+      if a1.len == a2.len:
+        for i in 0 ..< a1.len:
+          let r = noConfusionConflictPre(a1[i], a2[i], ctorToData, bound)
+          if r.bad: return r
+  (false, "")
+
 proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
                      ms: var MetaStore,
                      dataInfos: var Table[string, SurfDecl]): ElabDef =
@@ -1625,6 +1696,10 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
     raise elabErr(loc, "'def' clauses require the first explicit argument " &
       "to have a data type; none found in the type signature")
   let dataDecl = dataInfos[dataName]
+  # Issue #80: constructor -> datatype map for the impossible-clause check.
+  var ctorToData = initTable[string, string]()
+  for dn, dd in dataInfos:
+    for ctor in dd.ctors: ctorToData[ctor.name] = dn
   let elimName = elimNameFor(dataName)
   if not globals.hasKey(elimName):
     raise elabErr(loc, "eliminator '" & elimName & "' not found for data '" &
@@ -1675,6 +1750,11 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
     tele.add((tcur.name, tcur.c1, tcur.impl))
     tcur = tcur.c2
   let retTy = tcur
+  # Issue #80: telescope binder names for the impossible-clause check's
+  # shadowing guard (a binder named like a constructor is not one).
+  var teleNames = initHashSet[string]()
+  for b in tele:
+    if b.name.len > 0: teleNames.incl(b.name)
   # Binder hygiene: the compiler generates references to telescope binders
   # (scrutinee, rest args) by name, so duplicate names would misresolve.
   # "_" binders (from `->`) are unreferenceable — `_` parses as a hole —
@@ -1824,6 +1904,22 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
     var retIdx = substPreSeq(extractIndices(ctor.retTy, dataName, nParams,
                                             ctor.cloc), paramSubst, fresh)
     retIdx = substPreSeq(retIdx, nameSubst, fresh)
+    # Issue #80: impossible-clause check — the constructor's return indices
+    # must be compatible with the scrutinee's indices. A rigid noConfusion
+    # conflict (e.g. clause `nil` against a scrutinee of type `Vec A (suc
+    # n)`) is rejected here with a named error instead of failing later
+    # with a confusing unification/conversion error. (Currently the
+    # scrutinee indices are always variables, so this fires once rigid
+    # scrutinee indices are allowed; the check itself is tested directly.)
+    # Pattern variables shadowing constructor names are excluded via bound.
+    var bound80 = teleNames
+    for an in argNames: bound80.incl(an)
+    for j in 0 ..< min(scrIdxTerms.len, retIdx.len):
+      let nc = noConfusionConflictPre(retIdx[j], scrIdxTerms[j], ctorToData,
+                                      bound80)
+      if nc.bad:
+        raise elabErr(cl.cloc, "impossible clause for constructor '" &
+          ctor.name & "': " & nc.reason)
     # Index refinement for this method: scrutinee idx vars := ret indices
     var idxSubst: seq[(string, PreTerm)] = @[]
     for j, v in scrIdxVars:
@@ -2280,7 +2376,8 @@ proc plusReducesZ (n : Nat) : Eq Nat n (add n zero) =
 """)
   assert eqDefs.len == 7
   echo "ok: Eq/refl/J/cong/plusReducesZ (Experiment 12)"
-  # refl rejects genuinely unequal terms
+  # refl rejects genuinely unequal terms — with a named noConfusion
+  # reason (issue #80) instead of the old generic "not convertible".
   expectElabErr("""
 data Nat : ? where
 | zero : Nat
@@ -2288,7 +2385,7 @@ data Nat : ? where
 data Eq (A : ?) (x : A) : A -> ? where
 | refl : Eq A x x
 proc bad : Eq Nat zero (suc zero) = refl Nat zero
-""", "not convertible")
+""", "noConfusion")
 
   # --- Experiment 11: primitive efficient types ----------------------
   # postulate Int with integer literals and primitive ops (+, -, *)
@@ -2719,6 +2816,85 @@ def bad : Nat -> Nat
   except ElabError as e:
     assert "overlapping clauses" in e.msg
     echo "ok: overlapping clauses are a located error"
+
+  # --- Issue #80: impossible clauses ----------------------------------
+  # noConfusionConflictPre unit checks (surface-level rigid conflicts).
+  var ctd80 = initTable[string, string]()
+  ctd80["zero"] = "Nat"; ctd80["suc"] = "Nat"
+  ctd80["nil"] = "Vec"; ctd80["cons"] = "Vec"
+  let pz80 = mkVar("zero")
+  let psn80 = mkApp(mkVar("suc"), mkVar("n"))
+  let pssz80 = mkApp(mkVar("suc"), mkApp(mkVar("suc"), mkVar("zero")))
+  let noBound80 = initHashSet[string]()
+  let nc1 = noConfusionConflictPre(pz80, psn80, ctd80, noBound80)
+  assert nc1.bad and "noConfusion" in nc1.reason, nc1.reason
+  assert "'zero' and 'suc'" in nc1.reason, nc1.reason
+  assert noConfusionConflictPre(psn80, pz80, ctd80, noBound80).bad  # symmetric
+  # injectivity descent: suc (suc zero) vs suc n is fine (n opaque),
+  # but suc (suc zero) vs suc zero finds zero-vs-suc under the spine
+  assert not noConfusionConflictPre(pssz80, psn80, ctd80, noBound80).bad
+  assert noConfusionConflictPre(pssz80,
+    mkApp(mkVar("suc"), mkVar("zero")), ctd80, noBound80).bad
+  # non-constructor heads and cross-datatype pairs never fire
+  assert not noConfusionConflictPre(mkVar("n"), psn80, ctd80, noBound80).bad
+  assert not noConfusionConflictPre(mkApp(mkVar("add"), mkVar("n")),
+                                   pz80, ctd80, noBound80).bad
+  assert not noConfusionConflictPre(pz80, mkVar("nil"), ctd80, noBound80).bad
+  # shadowing: a bound variable named like a constructor is not one
+  var shadow80 = initHashSet[string]()
+  shadow80.incl("suc")
+  assert not noConfusionConflictPre(pz80, mkVar("suc"), ctd80, shadow80).bad
+  echo "ok: noConfusionConflictPre unit checks"
+  # An impossible clause through method checking: the nil branch must
+  # produce Vec Nat (suc zero) but `nil Nat : Vec Nat zero` — the
+  # downstream unification failure is now a named noConfusion.
+  try:
+    discard elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+def badHead : Pi {n : Nat}. Vec Nat n -> Vec Nat (suc n)
+| nil = nil Nat
+| (cons k x xs) = cons Nat (suc (suc k)) x (badHead xs)
+""")
+    assert false, "should have raised noConfusion error"
+  except ElabError as e:
+    assert "noConfusion" in e.msg, e.msg
+    echo "ok: impossible clause fails with named noConfusion"
+  # A unification-time noConfusion: the implicit {m} is still a
+  # metavariable when `Vec Nat zero` meets `Vec Nat (suc ?m)`, so the
+  # conflict goes through unify's rigid-rigid case with the named reason.
+  try:
+    discard elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+proc k {m : Nat} (x : Vec Nat (suc m)) : Nat = zero
+proc bad : Nat = k (nil Nat)
+""")
+    assert false, "should have raised noConfusion error"
+  except ElabError as e:
+    assert "noConfusion" in e.msg, e.msg
+    echo "ok: unify surfaces named noConfusion through elaboration"
+  # ...while a solvable implicit still solves (?m := zero).
+  let impDefs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+proc k {m : Nat} (x : Vec Nat (suc m)) : Nat = zero
+proc good : Nat = k (cons Nat zero zero (nil Nat))
+""")
+  assert impDefs.len == 2
+  echo "ok: solvable implicit index still solves"
 
   # --- Issue #32: indexed patterns ------------------------------------
   # vappend over Vec: the scrutinee's index is refined per constructor
