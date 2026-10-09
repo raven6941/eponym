@@ -742,3 +742,35 @@
   Consequences: issue #47 closed via the documented-negative disjunct;
   benchmark stays as the regression harness; accept/reject identity
   asserted on declaration names in the bench (green).
+
+* 2026-10-09 — Issue #59: relational elaborator with output (elabo/4)
+
+  Context: #26 delivered a relational *checker*. #59 builds the elaborator
+  with output terms, the first half of finishing #26.
+  Course correction: the main agent first implemented elabo as structural
+  identity (branch exp59-elabo, closed #59 prematurely) on the theory that
+  the RTerm representation is already explicit. A background worker
+  independently built =src/rel_elab_out.nim= with real reification — and was
+  right. Even on this fragment there is genuine elaboration work:
+  - lam: surface =("lam", b)= elaborates to =("lam", d, b)= with the domain
+    reified from the expected Pi type.
+  - nil: surface =("nil")= elaborates to =("app", "nil", a)= with the
+    element type reified from =Vec(A, n)=.
+  - cons: surface =("cons", h, t)= elaborates to the full application spine
+    =((((app cons) a) n) h) t= with A and the index reified.
+  - suc: =("suc", n)= becomes =("app", "suc", n)=, matching the direct
+    elaborator's tApp-nesting around tR globals.
+  The core RTerm mirrors =checkTermElab='s output shape, making the
+  differential test mechanical rather than "modulo representation."
+  Findings: =tests/test_rel_elab_out.nim= passes all cases — elaborated
+  outputs match =checkTermElab= structurally, negative cases rejected by
+  both, and the staged pipeline (stage_rel_elab_dep) agrees on the Vec
+  fragment. Also added =vec= type formation to =infero= and =nat=/=univ=
+  to =checko= (needed for the =Pi Nat Nat : ?= case).
+  Lesson (AGENTS.md benchmarking discipline): the main agent closed #59 on
+  the first implementation without verifying the "identity" claim. The
+  worker's version survived because it was tested against the direct
+  elaborator's actual output shape. Don't close on the first version.
+  Decision: =rel_elab_out.nim= (=elabo=, =inferoOut=) is the relational
+  elaborator interface. #57 stages this, not the identity version.
+  Consequences: #59 closed; exp59-elabo branch deleted unmerged.
