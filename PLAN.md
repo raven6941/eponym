@@ -61,6 +61,8 @@ back. The dependent types evaporate — zero runtime cost.
 │    · data desugaring → postulate/elim/red                    │
 │    · clause compilation → eliminators (issue #32)            │
 │    · termination checking (issue #36)                        │
+│    · equality as overridable effect: handler stack,          │
+│      coreValid vs extending handlers (issue #41)             │
 │    · positivity checking (issue #33, planned)                │
 └──────────────────────────┬───────────────────────────────────┘
                            ▼

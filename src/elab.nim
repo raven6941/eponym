@@ -2132,8 +2132,11 @@ proc addZeroRight (n : Nat) : Eq Nat (add n zero) n =
   by arith
 proc addComm (n : Nat) (m : Nat) : Eq Nat (add n m) (add m n) =
   by arith
+proc addAssoc (a : Nat) (b : Nat) (c : Nat)
+    : Eq Nat (add a (add b c)) (add (add a b) c) =
+  by arith
 """)
-  assert arithDefs.len == 4
+  assert arithDefs.len == 5
   echo "ok: arith handler discharges open Nat goals"
   # The same open goal fails with the default `refl` tactic — the gap is
   # real — and a false goal still fails under `by arith` (no overreach).
