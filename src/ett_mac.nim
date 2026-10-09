@@ -8,7 +8,6 @@
 import macros
 import elab
 import parse_surf
-import ett_init
 import strutils
 import sequtils
 
@@ -254,21 +253,14 @@ macro ett*(src: string): untyped =
     error("ett parse error: " & e.msg, src)
   result = newStmtList()
 
-proc isIntType(t: Term): bool =
-  ## Check if a Term is the primitive Int type.
-  # The Int type is represented as... let me check
-  # Actually, `Int` in surface syntax elaborates to something.
-  # For now, check if it's a tR referencing the Int type.
-  # This is a simplification — full check needs globals.
-  false  # TODO: implement properly
-
 macro ettEmbed*(src: string): untyped =
   ## Elaborate a surface program at compile time and generate Nim
-  ## wrapper procs for each `def` of type `Int -> ... -> Int`.
+  ## wrapper procs for each `def`, so Nim code can call elaborated
+  ## definitions (each wrapper takes varargs[int] and returns int).
   ##
   ## Each wrapper has the form:
-  ##   proc name(arg1: int, arg2: int, ...): int =
-  ##     callIntFunc("<source>", "name", @[arg1, arg2, ...])
+  ##   proc name*(args: varargs[int]): int =
+  ##     callIntFunc("<source>", "name", @args)
   ##
   ## The elaborated terms are re-obtained at runtime via the
   ## definition cache (compile-time elaboration ensures well-typedness).
