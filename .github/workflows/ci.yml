@@ -14,19 +14,22 @@ jobs:
       - name: Build
         run: |
           nim --version
+          P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
           for f in ett ett_init preterm parse_surf mac_surf elab ett_mac lsp egraph ett_embed; do
             echo "=== build $f ==="
-            nim c --hints:off --path:src "src/$f.nim" || exit 1
+            nim c --hints:off $P "src/eponym/$f.nim" || exit 1
           done
       - name: Test
         run: |
+          P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
           for f in ett ett_init preterm parse_surf mac_surf elab ett_mac egraph ett_embed; do
             echo "=== test $f ==="
-            nim c -r --hints:off --path:src "src/$f.nim" || exit 1
+            nim c -r --hints:off $P "src/eponym/$f.nim" || exit 1
           done
           echo "=== examples ==="
-          nim c -r --hints:off --path:src "tests/run_examples.nim" || exit 1
+          nim c -r --hints:off $P "tests/run_examples.nim" || exit 1
           echo "=== staging soundness fuzz (issue #29, fixed seed) ==="
-          nim c -r --hints:off --path:src "src/staging/fuzz_soundness.nim" -- --seed 424242 -n 1000 || exit 1
+          nim c -r --hints:off $P "tests/fuzz_soundness.nim" -- --seed 424242 -n 1000 || exit 1
           # Note: lsp is built but not run — it's a server that blocks on stdin,
           # not a test suite. (Was hanging CI since Experiment 7.)
+          # Note: bench/ contains expensive benchmarks, not run in CI.
