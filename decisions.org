@@ -636,3 +636,51 @@
   Status after fixes: 3200+ goals over 5 seeds, 0 divergences, 0
   inconclusive (capped). This suite is now the acceptance harness for
   #31's remaining item (BTA soundness).
+
+* 2026-10-09 — Issue #53: defunctionalize-before-staging verdict (NEGATIVE)
+
+  Context: per =notes/defunctionalize-before-specializing.org=, the Danvy
+  discipline says specializers work better on first-order code — so stage
+  the ETT evaluator only AFTER defunctionalizing it. #26's negative result
+  (staged relational elaborator 11-87x SLOWER than unstaged) refocused
+  Track C step 3 on "staging through the engine"; #53 tested whether
+  defunctionalization is the missing precondition for the ETT stager.
+  Branch =exp53-defunctionalize=: =src/staging/staged_defun.nim= stages
+  first-order de Bruijn terms (=DForm=) with closures as data
+  (=dvLam(body, env)=, code pointer + captured env), explicit =applyD=
+  dispatch, residual binders as de Bruijn levels (=dnLvl=). Baseline
+  (=staging/ett_staged.nim=) untouched.
+  Benchmark (=src/staging/bench_defun_vs_baseline.nim=): shared 5-program
+  corpus (twice/const/pairSwap/compose + residual-lambda) staged through
+  both pipelines, staged==unstaged agreement checked on every program,
+  residual node counts + staging wall-clock (min of 5 reps), plus a
+  300-application unroll scale test. All agreement checks pass.
+  Findings:
+  - Residual node counts IDENTICAL on the whole shared corpus
+    (twice 3/3, const 0/0, pairSwap 2/2, compose 1/1, scale 301/301).
+    Defunctionalization changes nothing about what the stager can see:
+    the static/dynamic classification was already exact in the
+    higher-order baseline.
+  - Staging wall-clock: tiny programs in the noise (~5-9us both); at
+    scale the defun stager is ~1.9x SLOWER (0.77ms vs 0.42ms for 300
+    unrolled apps) — =applyD='s =@[a] & f.env= seq concat per beta costs
+    more than a host-closure call. First-order dispatch is not free.
+  - Genuine gain, qualitative not quantitative: =reifyD= residualizes a
+    staging-time lambda into a real residual =(lam [v0] v0)= node. The
+    baseline CANNOT express residual lambdas (=cLam= always yields a
+    staging-time =svStaticLam=); its closest analogue eliminates the
+    binder by staging-time application. New capability, not a speedup.
+  Decision: defunctionalization-first is NOT the missing precondition —
+  the host closures were never the staging bottleneck (consistent with
+  #26: compilation overhead dominated branch-pruning there; here the
+  residual was already optimal and the dispatch got slower). Keep
+  =staged_defun.nim= as the reification-capable stager (residual lambdas
+  are needed for any program that returns a function to dynamic code),
+  but do NOT pursue defunctionalization as a staging-performance
+  strategy. Track C step 3's next lever stays "staging through the
+  engine" (#18), not representation changes to this stager.
+  Consequences: issue #53 closed; benchmark committed as the
+  before/after harness; =applyD= exported for benchmark/drivers.
+  Cleanup in the same branch: removed dead =ett_staged= import from
+  =staged_defun.nim=, moved =times= import under =when isMainModule=
+  (warning-clean both standalone and as an import).

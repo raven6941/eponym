@@ -34,9 +34,8 @@
 ## staged == unstaged agreement via `evalD`/`evalSVal` against `evalSym`,
 ## and reports residual node counts + staging wall-clock before/after.
 
-import std/[tables, times]
+import std/tables
 import ett
-import staging/ett_staged
 
 # --- First-order term language (de Bruijn indices, innermost-first) ---
 
@@ -101,7 +100,7 @@ proc dynLvl*(lvl: int): DVal =
 
 # --- The stager: first-order recursion + explicit apply dispatch ---
 
-proc applyD(f, a: DVal, lvl: int): DVal
+proc applyD*(f, a: DVal, lvl: int): DVal
 proc stageD*(f: DForm, env: seq[DVal], lvl: int): DVal =
   ## Stage a first-order term. `env` is innermost-first; `lvl` is the
   ## current binder depth for fresh residual variables.
@@ -148,7 +147,7 @@ proc stageD*(f: DForm, env: seq[DVal], lvl: int): DVal =
     of dvLam:
       raise newException(ValueError, "stageD: snd of a staging-time lambda")
 
-proc applyD(f, a: DVal, lvl: int): DVal =
+proc applyD*(f, a: DVal, lvl: int): DVal =
   ## The defunctionalized apply: staging-time beta-reduction is
   ## first-order environment extension, not host closure invocation.
   case f.kind
@@ -272,6 +271,7 @@ proc neutralD(id: int): Value =
   Value(kind: vkNeutral, neutId: id, spine: @[])
 
 when isMainModule:
+  import std/times
   let ev = evalSym
   let st = stagedSym()
 
