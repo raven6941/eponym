@@ -1173,8 +1173,8 @@ proc substPre(t: PreTerm, name: string, repl: PreTerm,
     if t.name == name or t.name.len == 0:
       # shadowed (or anonymous): the body cannot mention `name`
       case t.kind
-      of pkPi: mkPi(t.name, d, t.c2, t.loc, t.impl, t.erased)
-      of pkLam: mkLam(t.name, d, t.c2, t.loc, t.impl, t.erased)
+      of pkPi: mkPi(t.name, d, t.c2, t.loc, t.impl, t.erased, t.qty)
+      of pkLam: mkLam(t.name, d, t.c2, t.loc, t.impl, t.erased, t.qty)
       else: mkSigma(t.name, d, t.c2, t.loc, t.erased)
     else:
       var bname = t.name
@@ -1185,8 +1185,8 @@ proc substPre(t: PreTerm, name: string, repl: PreTerm,
         body = substPre(t.c2, t.name, mkVar(bname, t.loc), fresh)
       body = substPre(body, name, repl, fresh)
       case t.kind
-      of pkPi: mkPi(bname, d, body, t.loc, t.impl, t.erased)
-      of pkLam: mkLam(bname, d, body, t.loc, t.impl, t.erased)
+      of pkPi: mkPi(bname, d, body, t.loc, t.impl, t.erased, t.qty)
+      of pkLam: mkLam(bname, d, body, t.loc, t.impl, t.erased, t.qty)
       else: mkSigma(bname, d, body, t.loc, t.erased)
   of pkPair:
     mkPair(substPre(t.c1, name, repl, fresh),
@@ -2141,6 +2141,30 @@ proc useBClient (b : B) : B = useB b
 """)
   assert qttPiDefs.len == 1
   echo "ok: linear Pi binders not enforced at declaration (#66)"
+
+  # --- Issue #66: conversion respects binder quantities ----------------
+  # (1 x : A) -> B is not convertible with (ω x : A) -> B (or (0 x : A)
+  # -> B): the quantity is part of the Pi/Sigma type, checked in
+  # structuralEq on wPi/wSi.
+  let qttQtyConvOk = elabCheck("""
+postulate N : ?
+postulate idN0 : Pi (0 x : N). N
+proc sameQty : Pi (1 x : N). N = lam (1 x : N). x
+proc sameQty0 : Pi (0 x : N). N = idN0
+""")
+  assert qttQtyConvOk.len == 2
+  echo "ok: Pi conversion accepts matching quantities (#66)"
+  expectElabErr("""
+postulate N : ?
+proc idN (x : N) : N = x
+proc qtyMismatch : Pi (1 x : N). N = idN
+""", "quantity mismatch")
+  expectElabErr("""
+postulate N : ?
+postulate idN0 : Pi (0 x : N). N
+proc qtyMismatch0 : Pi (x : N). N = idN0
+""", "quantity mismatch")
+  echo "ok: Pi conversion rejects mismatched quantities (#66)"
 
   # --- Experiment 41: conversion cache as a scoped handler ---------
   # The Experiment 10 cache is no longer a global switch: it is probed
