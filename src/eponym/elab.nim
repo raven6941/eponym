@@ -417,6 +417,46 @@ proc qtyIsLinear(ms: MetaStore, qty: Qty): bool =
       ms.qvarSols[vid].q == q1
   else: qty.q == q1
 
+proc flushQvarPending(ms: var MetaStore, vname: string) =
+  ## Flush pending erased-arg obligations for a quantity variable
+  ## (Issue #66): checkErasedArg records app sites mentioning the variable
+  ## while it was unsolved. A q1 solution means the argument would be
+  ## silently discarded by the 0-parameter — reject at the app site.
+  ## q0/qOmega solutions (or a conflicting-solution error) drop them.
+  if vname in ms.qvarPending:
+    let pend = ms.qvarPending[vname]
+    ms.qvarPending.del(vname)
+    let vid = qvarId(ms, vname)
+    if pend.len > 0 and ms.qvarSols[vid].kind == qsSolved and
+       ms.qvarSols[vid].q == q1:
+      raise elabErr(pend[0].loc, "linear variable '" & pend[0].varName &
+        "' passed to an erased (quantity-0) parameter" &
+        " — it would be silently discarded")
+
+proc enforceQtyCount(q: Quantity, body: Term, loc: Loc, name: string,
+                     ms: var MetaStore) =
+  ## Enforce a concrete binder quantity against the elaborated `body`
+  ## (index 0 = the binder). `body` is zonked first; a body that still
+  ## mentions unsolved metas can't be counted reliably (a hole may later
+  ## solve to a use) — the post-pass re-checks at the end of the
+  ## declaration, when metas are solved or reported.
+  if q == qOmega: return
+  let zb = zonk(ms, body)
+  if hasUnresolvedMetas(zb): return
+  let n = countVarUses(zb)
+  case q
+  of q0:
+    if n > 0:
+      raise elabErr(loc, "erased variable '" & name & "' used " & $n &
+        " time(s) in term position")
+  of q1:
+    if n == 0:
+      raise elabErr(loc, "linear variable '" & name & "' not used")
+    elif n > 1:
+      raise elabErr(loc, "linear variable '" & name & "' used " & $n &
+        " times (expected exactly once)")
+  of qOmega: discard
+
 proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
                       ms: var MetaStore) =
   ## Issue #66: quantity-aware typing judgment for lambdas. Enforce the
@@ -431,7 +471,11 @@ proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
   ## Quantity variables (surface `(q x : A)`) are *solved* here instead of
   ## enforced: the use count determines the quantity (0 -> q0, 1 -> q1,
   ## 2+ -> qOmega). A variable occurring at several binders must agree;
-  ## conflicting counts are an error.
+  ## conflicting counts are an error. (Checking mode unifies the variable
+  ## with the expected Pi's quantity *before* elaborating the body and
+  ## continues with the concrete quantity, so a variable reaching this
+  ## branch is either unsolved or was solved from a use count — never
+  ## silently from an expected type.)
   if qty.isVar:
     let zb = zonk(ms, body)
     # A body that still mentions unsolved metas can't be counted reliably
@@ -441,40 +485,9 @@ proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
     if hasUnresolvedMetas(zb): return
     let n = countVarUses(zb)
     solveQVar(ms, qty.vname, (if n == 0: q0 elif n == 1: q1 else: qOmega), loc)
-    # Flush pending erased-arg obligations (Issue #66): checkErasedArg
-    # records app sites mentioning this variable while it was unsolved.
-    # A q1 solution means the argument would be silently discarded by the
-    # 0-parameter — reject at the app site. q0/qOmega solutions (or a
-    # conflicting-solution error above) drop the obligations.
-    if qty.vname in ms.qvarPending:
-      let pend = ms.qvarPending[qty.vname]
-      ms.qvarPending.del(qty.vname)
-      let vid = qvarId(ms, qty.vname)
-      if pend.len > 0 and ms.qvarSols[vid].kind == qsSolved and
-         ms.qvarSols[vid].q == q1:
-        raise elabErr(pend[0].loc, "linear variable '" & pend[0].varName &
-          "' passed to an erased (quantity-0) parameter" &
-          " — it would be silently discarded")
+    flushQvarPending(ms, qty.vname)
     return
-  if qty.q == qOmega: return
-  let zb = zonk(ms, body)
-  # A body that still mentions unsolved metas can't be counted reliably
-  # (a hole may later solve to a use); the post-pass re-checks at the end
-  # of the declaration, when metas are solved or reported.
-  if hasUnresolvedMetas(zb): return
-  let n = countVarUses(zb)
-  case qty.q
-  of q0:
-    if n > 0:
-      raise elabErr(loc, "erased variable '" & name & "' used " & $n &
-        " time(s) in term position")
-  of q1:
-    if n == 0:
-      raise elabErr(loc, "linear variable '" & name & "' not used")
-    elif n > 1:
-      raise elabErr(loc, "linear variable '" & name & "' used " & $n &
-        " times (expected exactly once)")
-  of qOmega: discard
+  enforceQtyCount(qty.q, body, loc, name, ms)
 
 proc checkErasedArgWalk(t: Term, depth: int, ctx: Ctx, loc: Loc,
                         ms: var MetaStore,
@@ -755,18 +768,39 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         resTm = tmInt(pre.intVal)
       resTm
   of pkLam:
-    let (dom, codBdy, _, _, _) = ensurePi(ms, pre.loc, expTy, ctx.len)
+    let (dom, codBdy, _, _, piQty) = ensurePi(ms, pre.loc, expTy, ctx.len)
     let d =
       if pre.c1.isNil: dom
       else:
         let ad = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
         unifyElab(ms, ad, dom, pre.loc)
         ad
-    let b = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, codBdy)
-    enforceBinderQty(pre.qty, b, pre.loc, pre.name, ms)  # Issue #66
+    # Issue #66: subject-side quantity tracking (Γ ⊢ t :^q A). Reconcile
+    # the lambda's binder quantity with the expected Pi's before
+    # elaborating the body:
+    # - quantity variable: solve from the expected type (conflicting
+    #   solutions are an error); the body is then checked under it.
+    # - concrete and equal: fine.
+    # - concrete qOmega: the surface has no explicit-omega annotation, so
+    #   this means "unannotated" — inherit the expected quantity (the
+    #   Idris 2 behaviour for unannotated binders in checking mode).
+    # - concrete and different: an elaboration error.
+    var bQty: Qty
+    if pre.qty.isVar:
+      solveQVar(ms, pre.qty.vname, piQty, pre.loc)
+      flushQvarPending(ms, pre.qty.vname)
+      bQty = toQty(piQty)
+    elif pre.qty.q == piQty or pre.qty.q == qOmega:
+      bQty = toQty(if pre.qty.q == piQty: pre.qty.q else: piQty)
+    else:
+      raise elabErr(pre.loc, "lambda binder quantity " & $pre.qty.q &
+        " does not match the expected quantity " & $piQty &
+        " from the function type")
+    let b = checkTm(pre.c2, ctx.ext(pre.name, d, bQty), globals, ms, supply, codBdy)
+    enforceBinderQty(bQty, b, pre.loc, pre.name, ms)  # Issue #66
     # DEBUG
     # echo "DEBUG checkTm pkLam: pre.qty=", pre.qty, " name=", pre.name
-    tmLam(d, pre.name, b, pre.impl, pre.erased, zonkQty(ms, pre.qty))
+    tmLam(d, pre.name, b, pre.impl, pre.erased, zonkQty(ms, bQty))
   of pkPair:
     let h = headTy(ms, expTy)
     if h.kind == tSi:
@@ -2434,6 +2468,60 @@ proc okQDrop (q y : N) : N = snd (z0 y, y)
 """)
   assert qttQVarOmegaDrop.len == 1
   echo "ok: qty-var solved unrestricted into erased parameter accepted (#66)"
+
+  # --- Issue #66: subject-side quantity tracking (Gamma |- t :^q A) ------
+  # In checking mode the lambda's binder quantity is reconciled with the
+  # expected Pi's *before* the body elaborates: a quantity variable is
+  # solved from the expected type, an unannotated binder inherits it, and
+  # an explicit mismatch is an error.
+  let qttSubjDefs = elabCheck("""
+postulate N : ?
+postulate n0 : N
+proc linId : Pi (1 x : N). N = lam (1 x : N). x
+proc inheritLin : Pi (1 x : N). N = lam (x : N). x
+proc qidLin : Pi (1 x : N). N = lam (q x : N). x
+proc inheritErased : Pi (0 x : N). N = lam (x : N). n0
+""")
+  assert qttSubjDefs.len == 4
+  echo "ok: checking-mode quantity reconciliation (#66)"
+  # The documented gap: an explicitly linear lambda against an
+  # unrestricted Pi is now rejected (was silently accepted).
+  expectElabErr("""
+postulate N : ?
+proc badQtyLam : Pi (x : N). N = lam (1 x : N). x
+""", "does not match the expected quantity")
+  # An inherited linear binder is still use-once: dropping it is an error.
+  expectElabErr("""
+postulate N : ?
+postulate n0 : N
+proc badInheritDrop : Pi (1 x : N). N = lam (x : N). n0
+""", "not used")
+  expectElabErr("""
+postulate N : ?
+proc badInheritDup : Pi (1 x : N). Sig (u : N). N = lam (x : N). (x, x)
+""", "used 2 times")
+  # A quantity variable solved from the expected type is enforced, not
+  # re-solved: double use under a linear Pi is an error.
+  expectElabErr("""
+postulate N : ?
+proc qbadLinDup : Pi (1 x : N). Sig (u : N). N = lam (q x : N). (x, x)
+""", "used 2 times")
+  # An inherited erased binder must not be used in term position.
+  expectElabErr("""
+postulate N : ?
+proc badInheritErased : Pi (0 x : N). N = lam (x : N). x
+""", "erased variable 'x' used")
+  # A variable shared by two binders must also agree with the expected
+  # types it is checked against.
+  expectElabErr("""
+postulate N : ?
+postulate n0 : N
+proc qconfTy : N =
+  let f : Pi (1 x : N). N = lam (q x : N). x in
+  let g : Pi (x : N). N = lam (q x : N). x in
+  f (g n0)
+""", "requires quantity")
+  echo "ok: checking-mode quantity mismatches rejected (#66)"
 
   # --- Experiment 41: conversion cache as a scoped handler ---------
   # The Experiment 10 cache is no longer a global switch: it is probed

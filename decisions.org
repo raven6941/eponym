@@ -1052,3 +1052,58 @@
   Remaining for #66: subject-side quantity tracking (=Gamma |- t :^q A=)
   — comparing the checked term's binder quantities against the expected
   type's, including quantity-variable solutions.
+
+* 2026-10-09 — Issue #66: subject-side quantity tracking (Γ ⊢ t :^q A)
+
+  Context: the last #66 acceptance criterion. In checking mode the
+  lambda's binder quantity was never reconciled with the expected Pi's:
+  =lam (1 x : A). x= against =Pi (w x : A). A= was silently accepted with
+  the binder staying q1 — the use-once property of the Pi was lost.
+
+  What was built: =checkTm= pkLam now reconciles before elaborating the
+  body, capturing the Pi binder quantity from =ensurePi= (previously
+  discarded):
+  - quantity variable: solved from the expected type (=solveQVar=;
+    conflicts are an error), pending erased-arg obligations flushed,
+    then the body is elaborated under the *concrete* quantity — never
+    re-solved from the use count (re-solving would reject valid
+    instantiations like =(q x : A) => x= against =Pi (w x : A). A=, where
+    q := ω and a single use is fine).
+  - concrete, equal: unchanged.
+  - concrete qOmega: the surface has no explicit-omega annotation, so this
+    means "unannotated" — inherit the expected quantity (Idris 2
+    behaviour for unannotated binders in checking mode). An inherited
+    q1/q0 binder is then enforced by the usual use-count check, so
+    =lam (x : N). n0= against =Pi (1 x : N). N= is still rejected
+    ("not used") — inheritance doesn't weaken anything.
+  - concrete, different: elaboration error ("lambda binder quantity q1
+    does not match the expected quantity qOmega from the function
+    type").
+  Supporting refactor: =enforceBinderQty= split into =enforceQtyCount=
+  (concrete enforcement) and =flushQvarPending= (deferred erased-arg
+  obligations); the variable-agreement semantics (shared qvar must agree
+  across binders, conflict = error) is preserved — the reconciliation
+  happens *before* the body elaborates, so inference-mode solving is
+  untouched. (An earlier draft enforced an already-solved variable
+  instead of re-solving and broke the shared-binder conflict test; the
+  fix is to continue with the concrete quantity once the expected type
+  has determined it.)
+
+  Design note: this is not full =Γ ⊢ t :^q A= (no usage-annotated
+  judgments threading through every rule) — it is the checking-mode
+  half, which is where the hole was: the lambda is the only
+  quantity-introducing term form, and Pi binders are deliberately
+  unenforced at declaration (linearity declared, enforced at use sites).
+
+  Verification: 10 new elab tests (4 accept: matching annotation,
+  unannotated-inherits-linear, qvar-solved-linear, unannotated-inherits-
+  erased; 6 reject: explicit mismatch, inherited-linear drop/dup,
+  qvar-solved-linear dup, inherited-erased use, qvar conflicting with an
+  expected type); full CI matrix green, warning-clean.
+
+  Remaining for #66: none of the acceptance criteria are open — quantity-
+  aware judgments, semiring, backward compatibility, session-types under
+  full QTT, and this decisions entry are all landed. Suggest closing
+  after review; follow-ups (if wanted) would be new issues: usage-
+  annotated judgments through every rule, quantity polymorphism over
+  kinds, interaction with the e-graph conversion cache.
