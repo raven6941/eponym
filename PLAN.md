@@ -178,17 +178,19 @@ Completed experiments (see `plan.org`, `decisions.org`):
 | 12 | Propositional equality | `Eq`/`refl`/`J`; `plusReducesZ` proven |
 | 19/35 | Staged typeo benchmark + residual compiler | 1.90x vs compiled unstaged; 9/9 correct |
 | 27 | Mode inference for relational staging | Inferred modes reproduce manual ones |
-| 26 | Staged relational elaborator vs direct | Negative: staged checko 11–87x slower than unstaged (N=2), 14–43x at N=8; relation-level staging loses where baseline is near-deterministic |
+| 26 | Staged relational elaborator vs direct | REOPENED 2026-10-09: checker parity + negative staging result closed it early; finishing requires #59 (elabo with output terms) + #57 (direct-style codegen) |
 
 In flight (ordered):
 
-1. **Track C step 3 (follow-up to #26) — stage *through* the engine**:
-   #26 closed as a negative result for staging-via-partial-deduction of
-   the relation (staged checko 11–87x slower than unstaged at N=2,
-   14–43x at N=8; scale doesn't help — decisions.org 2026-10-09). The
-   relational elaborator is correct (accept/reject parity) and already
-   competitive unstaged. Next: residual direct-style code with no
-   Goal/Stream layer (2nd-Futamura direction) — a new experiment.
+1. **#26 — finish the staged relational elaborator** (reopened 2026-10-09):
+   what shipped was a relational *checker* plus incomplete staging
+   (specialized interpreter, 11–87x slower). Per Aaron these are not
+   follow-ups but the remainder of #26 itself:
+   - #59: `elabo(tm, ty, ctx, etm)` — relational elaboration producing
+     elaborated terms, differential-tested against `checkTermElab` output
+   - #57: residual direct-style codegen (no Goal/Stream layer),
+     head-to-head wall-clock verdict vs the direct elaborator
+   #26 stays open until both land and the comparison is end-to-end.
 
 Completed: **#41 — equality as overridable effect** (Andromeda-style;
 merged d4c4ceb: `convElab` effect site, `ConvHandler={decide,coreValid}`,
