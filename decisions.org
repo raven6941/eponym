@@ -1167,3 +1167,39 @@
   Decision: #57's approach (build-time codegen from relational spec) is the
   correct completion of #26. The remaining work is generalizing the generator
   beyond Vec/Nat to the full fragment (Pi/lam/app/vars).
+
+** #57 three-way comparison (2026-10-09) — staged vs generated vs direct
+  Aaron asked for the missing comparison: how did #26's staged-relational
+  compare to the direct elaborator? The #26 benchmark (bench_rel_elab.nim)
+  already had the three-way setup; re-ran it for N=2 and N=8.
+
+  N=2 valid (cons(0,cons(0,nil)), microseconds):
+    unstaged relational:   29.7
+    staged relational:     576.8  (19.4x vs unstaged, 2.0x vs direct)
+    direct checkTermElab:  288.7
+    generated direct (#57): 25.1
+
+  N=8 valid (cons-chain len 8, microseconds):
+    unstaged relational:   515.9
+    staged relational:    7590.6  (14.7x vs unstaged, 4.9x vs direct)
+    direct checkTermElab: 1561.1
+    generated direct (#57): 124.5
+
+  Ratios for generated-direct (#57):
+    vs staged-relational: 23x (N=2), 61x (N=8) faster
+    vs direct elaborator: 11.5x (N=2), 12.5x (N=8) faster
+    vs unstaged relational: 1.2x (N=2), 4.1x (N=8) faster
+
+  The generated code beats even the direct elaborator because it is fully
+  specialized: the type Vec(Nat,N) is static, so all type-level dispatch
+  disappears. The direct elaborator still does unification and metavariable
+  handling per node.
+
+  #26's staged-relational was 2-5x slower than direct on valid cases
+  (20-44x on invalid cases, where the Goal machinery explores dead branches).
+  This confirms the diagnosis: retaining Goal/Stream is strictly worse than
+  direct elaboration. Complete staging (#57) is strictly better.
+
+  Lesson: the three-way was always available in bench_rel_elab.nim; #26's
+  writeup emphasized staged-vs-unstaged and underreported staged-vs-direct.
+  When a benchmark has multiple baselines, report all the ratios.
