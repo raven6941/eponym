@@ -17,13 +17,21 @@
 ##   defunctionalized inside the instance; the change has to happen at the
 ##   term-representation level.
 ## - Staging-time lambdas are DATA: `dvLam(body: DForm, env: seq[DVal])`
-##   (code pointer + captured environment), never `proc` values.
+##   (code pointer + captured environment), never `proc` values — with
+##   one addition from issue #60: each `dvLam` also carries an OPTIONAL
+##   compiled host closure (`code: DCompiled`), built once by `compileD`
+##   when the `dfLam` is staged. `applyD` invokes the compiled closure
+##   instead of re-walking the `DForm` syntax per beta (the #53 pipeline
+##   called `stageD` on every beta). The `DForm` itself is retained
+##   alongside for `reifyD`, which needs the syntax.
 ## - Staging-time application is an explicit first-order dispatch,
 ##   `applyD` — the defunctionalized `apply` function.
 ## - Residual binders use de Bruijn LEVELS (`dnLvl`), not host closures:
 ##   going under a binder just increments the level counter.
 ##
-## There is no `proc(x: DVal): DVal` anywhere in the staging pipeline.
+## The pipeline is first-order at the term level: `stageD` still walks
+## `DForm` syntax, and the compiled closures only ever appear as the
+## `code` field of `dvLam` values (never as user-facing staging input).
 ## The one boundary exception is `evalD`'s reification of `dvLam` to
 ## `ett.Value`'s `vkLam` (a host closure) — the baseline does exactly the
 ## same in `evalSVal`, since `ett.Value` itself is higher-order. That
@@ -66,6 +74,13 @@ proc dSnd*(p: DForm): DForm = DForm(kind: dfSnd, sub: p)
 # --- First-order staged values and residual IR ---
 
 type
+  DCompiled* = proc(arg: DVal, env: seq[DVal], lvl: int): DVal
+    ## Compiled form of a `dfLam` body (issue #60). The closure computes
+    ## exactly `stageD(body, @[arg] & env, lvl)` without re-walking
+    ## syntax: `arg` is the staging-time argument (de Bruijn 0), `env`
+    ## the captured environment WITHOUT the argument prepended, so
+    ## applying a compiled closure performs no seq allocation.
+
   DValKind* = enum
     dvStatic, dvLam, dvDyn
 
@@ -90,13 +105,19 @@ type
     case kind*: DValKind
     of dvStatic: val*: Value
     of dvLam:
-      body*: DForm      # code pointer
+      body*: DForm      # code pointer (kept for reifyD, which needs syntax)
       env*: seq[DVal]   # captured environment (innermost-first)
+      code*: DCompiled  # one-time compiled body (#60); nil for hand-built values
     of dvDyn: node*: DNode
+
+proc compileD*(d: DForm): DCompiled  # forward: defined after applyD
 
 proc staticD*(v: Value): DVal = DVal(kind: dvStatic, val: v)
 proc dynLvl*(lvl: int): DVal =
   DVal(kind: dvDyn, node: DNode(kind: dnLvl, lvl: lvl))
+proc dLamVal*(body: DForm, env: seq[DVal] = @[]): DVal =
+  ## Build a staging-time lambda with its body compiled once (#60).
+  DVal(kind: dvLam, body: body, env: env, code: compileD(body))
 
 # --- The stager: first-order recursion + explicit apply dispatch ---
 
@@ -112,8 +133,9 @@ proc stageD*(f: DForm, env: seq[DVal], lvl: int): DVal =
   of dfUnit:
     staticD(Value(kind: vkUnit))
   of dfLam:
-    # Defunctionalized closure: data, not a host proc.
-    DVal(kind: dvLam, body: f.body, env: env)
+    # Defunctionalized closure: data, not a host proc — but the body is
+    # compiled ONCE here (#60), so applyD never re-walks the syntax.
+    DVal(kind: dvLam, body: f.body, env: env, code: compileD(f.body))
   of dfApp:
     applyD(stageD(f.fn, env, lvl), stageD(f.arg, env, lvl), lvl)
   of dfPair:
@@ -148,11 +170,17 @@ proc stageD*(f: DForm, env: seq[DVal], lvl: int): DVal =
       raise newException(ValueError, "stageD: snd of a staging-time lambda")
 
 proc applyD*(f, a: DVal, lvl: int): DVal =
-  ## The defunctionalized apply: staging-time beta-reduction is
-  ## first-order environment extension, not host closure invocation.
+  ## The defunctionalized apply: staging-time beta-reduction is a
+  ## compiled-closure call (#60), not host closure invocation and not a
+  ## re-walk of the body syntax.
   case f.kind
   of dvLam:
-    stageD(f.body, @[a] & f.env, lvl)
+    if f.code.isNil:
+      # Hand-built dvLam without compiled code: fall back to the
+      # pre-#60 interpreter path (same result, slower).
+      stageD(f.body, @[a] & f.env, lvl)
+    else:
+      f.code(a, f.env, lvl)
   of dvStatic:
     if a.kind == dvStatic and f.val.kind == vkLam:
       # Static-static: delegate to the real interpreter (baseline parity:
@@ -163,16 +191,84 @@ proc applyD*(f, a: DVal, lvl: int): DVal =
   of dvDyn:
     DVal(kind: dvDyn, node: DNode(kind: dnApp, fn: f, arg: a))
 
+proc compileD*(d: DForm): DCompiled =
+  ## One-time compiler from first-order syntax to a host closure (#60).
+  ## The closure computes exactly `stageD(d, @[arg] & env, lvl)` — same
+  ## cases `stageD` handles for bodies (var lookup, pair/fst/snd
+  ## construction, nested app) — but as direct code, paying the
+  ## syntax-walk cost once at `dfLam` instead of on every beta.
+  case d.kind
+  of dfVar:
+    let i = d.idx
+    result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
+      if i == 0: arg else: env[i - 1]
+  of dfTt:
+    result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
+      staticD(Value(kind: vkTt))
+  of dfUnit:
+    result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
+      staticD(Value(kind: vkUnit))
+  of dfLam:
+    let c = compileD(d.body)
+    let b = d.body
+    result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
+      DVal(kind: dvLam, body: b, env: @[arg] & env, code: c)
+  of dfApp:
+    let cf = compileD(d.fn)
+    let ca = compileD(d.arg)
+    result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
+      applyD(cf(arg, env, lvl), ca(arg, env, lvl), lvl)
+  of dfPair:
+    let ca = compileD(d.a)
+    let cb = compileD(d.b)
+    result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
+      let a = ca(arg, env, lvl)
+      let b = cb(arg, env, lvl)
+      if a.kind == dvStatic and b.kind == dvStatic:
+        staticD(Value(kind: vkPair, fstV: a.val, sndV: b.val))
+      else:
+        DVal(kind: dvDyn, node: DNode(kind: dnPair, a: a, b: b))
+  of dfFst:
+    let cs = compileD(d.sub)
+    result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
+      let p = cs(arg, env, lvl)
+      case p.kind
+      of dvStatic:
+        if p.val.kind == vkPair: staticD(p.val.fstV)
+        else: DVal(kind: dvDyn, node: DNode(kind: dnFst, sub: p))
+      of dvDyn:
+        if p.node.kind == dnPair: p.node.a
+        else: DVal(kind: dvDyn, node: DNode(kind: dnFst, sub: p))
+      of dvLam:
+        raise newException(ValueError, "compileD: fst of a staging-time lambda")
+  of dfSnd:
+    let cs = compileD(d.sub)
+    result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
+      let p = cs(arg, env, lvl)
+      case p.kind
+      of dvStatic:
+        if p.val.kind == vkPair: staticD(p.val.sndV)
+        else: DVal(kind: dvDyn, node: DNode(kind: dnSnd, sub: p))
+      of dvDyn:
+        if p.node.kind == dnPair: p.node.b
+        else: DVal(kind: dvDyn, node: DNode(kind: dnSnd, sub: p))
+      of dvLam:
+        raise newException(ValueError, "compileD: snd of a staging-time lambda")
+
 proc reifyD*(v: DVal, lvl: int): DVal =
   ## Residualize a staging-time lambda: stage its body against a fresh
   ## dynamic variable. The baseline has no counterpart (its `cLam` never
   ## produces residual lambdas); this is new capability from going
   ## first-order — reification is just another first-order operation.
+  ## Uses the compiled body when present (#60); the `DForm` is retained
+  ## for hand-built values without compiled code.
   case v.kind
   of dvLam:
     let x = dynLvl(lvl)
-    DVal(kind: dvDyn, node: DNode(kind: dnLam, bindLvl: lvl,
-      body: stageD(v.body, @[x] & v.env, lvl + 1)))
+    let bod =
+      if v.code.isNil: stageD(v.body, @[x] & v.env, lvl + 1)
+      else: v.code(x, v.env, lvl + 1)
+    DVal(kind: dvDyn, node: DNode(kind: dnLam, bindLvl: lvl, body: bod))
   else:
     v
 
@@ -272,6 +368,7 @@ proc neutralD(id: int): Value =
 
 when isMainModule:
   import std/times
+  import ett_staged  # stagedSym for the corpus baseline
   let ev = evalSym
   let st = stagedSym()
 
@@ -293,7 +390,7 @@ when isMainModule:
   let twiceD = dLam(dLam(dLam(dApp(dVar 1, dApp(dVar 1, dVar 0)))))
   let fV = ev.cLam(Xv, proc(p: Value): Value = ev.cPair(p, ev.cTt()))
   # f as defunctionalized static closure: lam p. pair p <>
-  let fD = DVal(kind: dvLam, body: dPair(dVar 0, dTt()), env: @[])
+  let fD = dLamVal(dPair(dVar 0, dTt()))
   let xN = neutralD(7)
   let u1 = ev.cApp(ev.cApp(ev.cApp(twice(ev), Xv), fV), xN)
   let t1 = cpuTime()
@@ -346,7 +443,7 @@ when isMainModule:
   let composeD = dLam(dLam(dLam(dApp(dVar 2, dApp(dVar 1, dVar 0)))))
   let UU = ev.cArr(ev.cUnit(), ev.cUnit())
   let idV = ev.cLam(UU, proc(y: Value): Value = y)
-  let idD = DVal(kind: dvLam, body: dVar 0, env: @[])
+  let idD = dLamVal(dVar 0)
   let xN4 = neutralD(10)
   let u4 = ev.cApp(ev.cApp(ev.cApp(compose(ev), idV), idV), xN4)
   let t4 = cpuTime()
