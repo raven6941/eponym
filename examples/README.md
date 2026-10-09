@@ -1,10 +1,13 @@
 # Eponym examples
 
-Each `.ep` file is a self-contained Eponym program. They're also the
-regression suite — `run_examples.nim` elaborates each and checks it
-succeeds.
+Two kinds of examples, reflecting Eponym's dual nature as both a
+standalone elaborator and an embedded Nim library.
 
-## The examples
+## `ep/` — Elaborator regression tests
+
+Each `.ep` file is a self-contained Eponym program in the surface syntax.
+They're the regression suite — `run_examples.nim` elaborates each and
+checks it succeeds. These test the elaborator in isolation.
 
 - **01-twice-const.ep** — Basic definitions (`twice`, `const`, `pairSwap`).
   Pi types, application.
@@ -32,10 +35,54 @@ succeeds.
   No unary `s(s(z))`.
 - **14-tactics.ep** — Tactics: `by refl` proves equalities by reflexivity,
   `by assumption` finds a matching hypothesis (Experiment 6).
+- **15-session-types.ep** — Session types with linear channels (Issue #28,
+  #64). The `(1 ch : Chan ...)` binders ensure channels are used exactly
+  once; the affinity hole is closed.
+
+## `embedded/` — Embedded Nim library use
+
+These are ordinary Nim programs that embed dependently-typed code via
+the `ettBlock` macro. This is the *primary* use case: Eponym as a library
+for verified components inside a larger Nim application.
+
+- **sensor_fusion.nim** — Verified 3-element vector dot product for sensor
+  fusion. The `ettBlock` elaborates at compile time; the surrounding Nim
+  handles IO and orchestration.
+
+### The embedded pattern
+
+```nim
+import ett_mac
+import ett_embed
+
+ettBlock:
+  postulate(Int, Univ)
+  data(Nat, Univ):
+    proc zero(): Nat
+    proc suc(n: Nat): Nat
+  proc add(a: Nat, b: Nat): Nat = ...
+
+# Ordinary Nim code; calls the verified `add` like any proc.
+let x = add(2, 3)
+```
+
+The `ettBlock` macro takes Nim AST (not a string), converts it to Eponym
+surface syntax at compile time, elaborates it (type-checking), and
+generates callable Nim wrappers. If elaboration fails, compilation stops
+with the type error.
+
+Nim-friendly syntax (vs `.ep` surface syntax):
+- `postulate(Int, Univ)` — call syntax; `Univ` is `?` (`?` isn't valid Nim)
+- `data(Nat, Univ):` — block with indented `proc` constructors
+- `Vec(A, n)` — call syntax for type application
+- `proc` / `=` — Nim keywords (Eponym `.ep` also uses these now)
 
 ## Running
 
 ```sh
 export PATH=$HOME/.nimble/bin:$PATH
+# Elaborator regression tests:
 nim c -r --path:src tests/run_examples.nim
+# Embedded examples (each is a standalone Nim program):
+nim c -r --path:src examples/embedded/sensor_fusion.nim
 ```

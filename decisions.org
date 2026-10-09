@@ -791,3 +791,56 @@
   Companion reading: Toninho/Caires/Pfenning 2011 gives the logical
   foundation (session types as linear logic, proof irrelevance to avoid
   communicating proofs) — notes/toninho-caires-pfenning-dependent-session-types-2011.org.
+
+** #64: QTT prototype — feasible path for affine checking (2026-10-09)
+  Status: PROTOTYPE WORKS. A minimal QTT checker (src/qtt_proto.nim) with
+  quantities 0/1/ω successfully rejects double-use of linear variables and
+  accepts the correct session flow.
+
+  What was built:
+  - Quantity-annotated binders: lam (x :1 A), lam (x :ω A), lam (x :0 A)
+  - Usage tracking in the checker context: lookup marks q1 vars as used;
+    second lookup raises CheckError
+  - Scope-end verification: lam/let check that q1 vars were used exactly once
+
+  Tests (all pass):
+  - doubleSend rejected: using a linear channel twice raises CheckError
+  - single use ok: using once succeeds
+  - session flow ok: send → recv → close with each channel used once passes
+  - doubleSend full rejected: full simulation of the violation caught
+
+  Key finding: Aaron was right to push. This took ~30 minutes, not a thesis.
+  The mechanism is simple: quantities on binders + usage flags in the
+  context + verification at scope end. The hard part is NOT the checking —
+  it's integration.
+
+  Integration challenges (for the real Eponym core):
+  1. Eponym uses de Bruijn indices, not named vars. The context would need
+     (qty, used) per index, threaded through substitution.
+  2. Dependent types: quantities interact with type-level computation.
+     If a type mentions a linear variable, does that count as "use"?
+     (In QTT: yes for 1, no for 0 — the 0 quantity exists for this.)
+  3. Higher-order: if f : (x :1 A) -> B, then applying f consumes the
+     argument. The function type must carry the quantity. This requires
+     quantity annotations in Pi types throughout the core.
+  4. Inference: when the user doesn't annotate, what quantity is inferred?
+     (Idris 2 defaults to ω; linear must be explicit.)
+
+  Decision: The mechanism is feasible and simple. The path is:
+  (a) prototype proves the checking logic (done here),
+  (b) next step would be adding quantities to Eponym's Pi/Lam binders and
+      threading usage through the elaborator's context.
+  This is real work but not research — it's engineering with a known design
+  (McBride 2016, Atkey 2018, Idris 2 implementation as reference).
+
+  Lesson: "Thesis-sized" was the wrong frame. The prototype took 30 minutes
+  because we scoped it to the question ("can we check affinity?") rather
+  than the full integration ("redesign the core"). Experiment first, then
+  decide how far to take it.
+
+  Update 2026-10-09: Integration complete on exp-qtt-affine branch and
+  merged to main. Quantities in PreTerm/Term binders, parser syntax
+  (1 x : T), elaborator propagation, zonk preservation, usage checker.
+  Session types example uses linear channels; badClient3 correctly rejected.
+  This is ETT + linear binders (not full QTT as core). The full QTT
+  integration (quantities in typing judgments) is future work.

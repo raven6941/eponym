@@ -13,6 +13,11 @@ type
     line*: int
     col*: int
 
+  Quantity* = enum
+    q0      # erased (Experiment 9; must not be used)
+    q1      # linear (Issue #64; must be used exactly once)
+    qOmega  # unrestricted (default)
+
   PreKind* = enum
     pkVar, pkUniv,                 # x, ?
     pkUnitTy, pkUnitV, pkEmptyTy,  # 1, <>, O
@@ -29,6 +34,7 @@ type
     name*: string     # pkVar name; binder name for pkPi/pkSigma/pkLam/pkLet
     impl*: bool       # pkPi/pkLam: implicit binder (Experiment 3)
     erased*: bool     # pkPi/pkLam/pkSigma: erased binder (Experiment 9)
+    qty*: Quantity   # pkPi/pkLam: binder quantity (Issue #64; default qOmega)
     intVal*: int      # pkInt: the literal value (Experiment 11)
     c1*: PreTerm      # Pi/Sig: dom; Lam: binder type (may be nil); App: fn
                       # Pair: first; Fst/Snd: target; Let: annotation (may be nil)
@@ -52,14 +58,16 @@ proc mkUnitV*(loc = noLoc): PreTerm =
 proc mkEmptyTy*(loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkEmptyTy)
 proc mkPi*(binder: string, dom, cod: PreTerm, loc = noLoc,
-           impl = false, erased = false): PreTerm =
-  PreTerm(loc: loc, kind: pkPi, name: binder, impl: impl, erased: erased, c1: dom, c2: cod)
+           impl = false, erased = false, qty = qOmega): PreTerm =
+  PreTerm(loc: loc, kind: pkPi, name: binder, impl: impl, erased: erased,
+          qty: qty, c1: dom, c2: cod)
 proc mkArrow*(dom, cod: PreTerm, loc = noLoc): PreTerm =
   ## Non-dependent function type; renders as `dom -> cod`.
   mkPi("_", dom, cod, loc)
 proc mkLam*(binder: string, ty, body: PreTerm, loc = noLoc,
-            impl = false, erased = false): PreTerm =
-  PreTerm(loc: loc, kind: pkLam, name: binder, impl: impl, erased: erased, c1: ty, c2: body)
+            impl = false, erased = false, qty = qOmega): PreTerm =
+  PreTerm(loc: loc, kind: pkLam, name: binder, impl: impl, erased: erased,
+          qty: qty, c1: ty, c2: body)
 proc mkApp*(fn, arg: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkApp, c1: fn, c2: arg)
 proc mkSigma*(binder: string, dom, cod: PreTerm, loc = noLoc,
@@ -146,7 +154,7 @@ type
     ## A surface definition: `def name (x1 : T1) ... : Ret = body`.
     ## Telescope entries may be implicit (`{x : T}`) or erased (`(0 x : T)`).
     name*: string
-    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]]
+    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]]
     retTy*: PreTerm
     body*: PreTerm
     loc*: Loc
@@ -155,7 +163,7 @@ type
   DataCtor* = object
     ## One constructor in a `data` declaration.
     name*: string
-    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]]
+    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]]
     retTy*: PreTerm   # F params indices
     cloc*: Loc
   Clause* = object
@@ -187,7 +195,7 @@ type
       rloc*: Loc
     of dkData:
       dname*: string
-      params*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]]
+      params*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]]
       indexTy*: PreTerm  # indices -> ?  (e.g. Nat -> ?)
       ctors*: seq[DataCtor]
       daloc*: Loc
@@ -198,13 +206,15 @@ proc desugarTy*(d: SurfDef): PreTerm =
   ## Telescope to nested Pis (implicit entries to implicit Pis).
   result = d.retTy
   for i in countdown(d.tele.high, 0):
-    result = mkPi(d.tele[i].name, d.tele[i].ty, result, d.loc, d.tele[i].impl)
+    result = mkPi(d.tele[i].name, d.tele[i].ty, result, d.loc, d.tele[i].impl,
+                  d.tele[i].erased, d.tele[i].qty)
 
 proc desugarTm*(d: SurfDef): PreTerm =
   ## Telescope to nested lambdas (implicit entries to implicit lambdas).
   result = d.body
   for i in countdown(d.tele.high, 0):
-    result = mkLam(d.tele[i].name, d.tele[i].ty, result, d.loc, d.tele[i].impl)
+    result = mkLam(d.tele[i].name, d.tele[i].ty, result, d.loc, d.tele[i].impl,
+                   d.tele[i].erased, d.tele[i].qty)
 
 proc `$`*(d: SurfDef): string =
   result = "def " & d.name
@@ -226,8 +236,8 @@ when isMainModule:
   assert mkPi("A", mkUniv(), mkVar("A")) != mkPi("B", mkUniv(), mkVar("A"))
   assert $(mkLet("z", nil, mkVar("x"), mkVar("z"))) == "let z = x in z"
   assert $(mkPair(mkVar("a"), mkVar("b"))) == "(a, b)"
-  let d = SurfDef(name: "const", tele: @[(name: "A", ty: mkUniv(), impl: false, erased: false),
-                                         (name: "x", ty: mkVar("A"), impl: false, erased: false)],
+  let d = SurfDef(name: "const", tele: @[(name: "A", ty: mkUniv(), impl: false, erased: false, qty: qOmega),
+                                         (name: "x", ty: mkVar("A"), impl: false, erased: false, qty: qOmega)],
                   retTy: mkVar("A"), body: mkVar("x"))
   assert $d.desugarTy() == "Pi (A : ?). Pi (x : A). A"
   assert $d.desugarTm() == "lam (A : ?). lam (x : A). x"
