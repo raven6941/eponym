@@ -23,6 +23,7 @@
 
 import sequtils
 import tables
+import hashes
 
 type
   Const* = enum cStar, cOne, cVoid, cZero   # ?  1  hi  O
@@ -198,6 +199,50 @@ proc `$`*(t: Term): string =
   of tSnd: "(" & $t.sub & " :$ P1)"
   of tAbsurd: "(" & $t.sub & " :$ OE)"
   of tLet: "Let(" & $t.letVal & " : " & $t.letTy & ", " & $t.letScope & ")"
+
+proc hashTerm*(t: Term): Hash =
+  ## Experiment 47: structural hash of a Term, for O(1)-int memo keys in
+  ## the conversion cache. Mirrors the `$` rendering's notion of identity
+  ## (refId for tR, idx for tV) but with integer arithmetic instead of
+  ## string building — the key render on every conversion goal was
+  ## costing nearly as much as the NbE it skipped (#41 benchmark).
+  ## `impl`/`erased` are folded in even though `$` omits `erased`:
+  ## distinguishing more is sound (it can only turn hits into misses).
+  if t == nil: return hash(0x9E3779B9)
+  result = hash(t.kind.ord)
+  case t.kind
+  of tR: result = result !& hash(t.refId)
+  of tV: result = result !& hash(t.idx)
+  of tC: result = result !& hash(t.c.ord)
+  of tInt: result = result !& hash(t.intVal)
+  of tPrim:
+    result = result !& hash(t.primOp.ord)
+    result = result !& hashTerm(t.primTy)
+  of tPi, tSi, tLam:
+    result = result !& hash(if t.impl: 1 else: 0)
+    result = result !& hash(if t.erased: 1 else: 0)
+    result = result !& hash(t.scope.adv)
+    result = result !& hashTerm(t.dom)
+    result = result !& hashTerm(t.scope.bdy)
+  of tMeta:
+    result = result !& hash(t.metaId)
+    for s in t.metaSpine: result = result !& hashTerm(s)
+  of tPair:
+    result = result !& hashTerm(t.pFst)
+    result = result !& hashTerm(t.pSnd)
+    result = result !& hash(t.pScope.adv)
+    result = result !& hashTerm(t.pScope.bdy)
+  of tApp:
+    result = result !& hashTerm(t.fn)
+    result = result !& hashTerm(t.arg)
+  of tFst, tSnd, tAbsurd:
+    result = result !& hashTerm(t.sub)
+  of tLet:
+    result = result !& hashTerm(t.letVal)
+    result = result !& hashTerm(t.letTy)
+    result = result !& hash(t.letScope.adv)
+    result = result !& hashTerm(t.letScope.bdy)
+  result = !$result
 
 ## --- fresh parameters / definitions ------------------------------------------
 ## The supply is threaded explicitly (the paper's Checking-monad threading)

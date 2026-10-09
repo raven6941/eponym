@@ -10,12 +10,23 @@
 # a replacement for the conversion checker.
 
 import tables
+import hashes
 import ett_init
 
 type
+  ConvKey* = tuple[ctxLen: int, ha: Hash, hb: Hash]
+    ## Experiment 47: conversion-cache memo key as O(1) ints —
+    ## (ctxLen, hashTerm(a), hashTerm(b)) — instead of the rendered
+    ## `$ctxLen & ":" & $a & " === " & $b` string, whose rendering on
+    ## every goal cost nearly as much as the NbE it skipped (#41).
+    ## 64-bit structural hashes: at the goal counts we see (~10^4 keys)
+    ## the collision probability is ~10^-11; the table still only ever
+    ## stores goals NbE proved, and the choice is recorded in
+    ## decisions.org.
+
   EGraph* = object
-    # Hash-cons table: term string -> e-class ID
-    ids: Table[string, int]
+    # Hash-cons table: conversion key -> e-class ID
+    ids: Table[ConvKey, int]
     # Union-find parent pointers
     parent: seq[int]
     # Stats
@@ -24,7 +35,7 @@ type
     merges*: int
 
 proc initEGraph*(): EGraph =
-  EGraph(ids: initTable[string, int](), parent: @[], hits: 0, misses: 0, merges: 0)
+  EGraph(ids: initTable[ConvKey, int](), parent: @[], hits: 0, misses: 0, merges: 0)
 
 proc find(eg: var EGraph, x: int): int =
   ## Union-find with path compression
@@ -39,30 +50,21 @@ proc find(eg: var EGraph, x: int): int =
     cur = nxt
   root
 
-proc termId(eg: var EGraph, t: Term): int =
-  ## Get or create the e-class ID for a term (hash-consed by $).
-  let key = $t
-  if key in eg.ids:
-    return eg.ids[key]
-  let id = eg.parent.len
-  eg.ids[key] = id
-  eg.parent.add(id)  # parent[i] = i (own root)
-  id
+proc convKey*(ctxLen: int, a, b: Term): ConvKey =
+  ## Experiment 47: build the O(1)-int memo key for a conversion goal.
+  (ctxLen, hashTerm(a), hashTerm(b))
 
-proc areEqualCached*(eg: var EGraph, key: string): tuple[hit: bool, equal: bool] =
+proc areEqualCached*(eg: var EGraph, key: ConvKey): tuple[hit: bool, equal: bool] =
   ## Probe the cache with a precomputed key. If hit, return (true, true).
   ## If miss, return (false, false) — caller must run NbE and call merge.
   if key in eg.ids:
-    let id = eg.ids[key]
-    # Key maps to a canonical representative; if it's in the table,
-    # it was merged before, so it's a hit
     inc eg.hits
     (true, true)
   else:
     inc eg.misses
     (false, false)
 
-proc merge*(eg: var EGraph, key: string) =
+proc merge*(eg: var EGraph, key: ConvKey) =
   ## Record that the key (representing an equality) holds.
   ## We store the key mapping to itself; future probes with the same
   ## key will hit. (Full e-class merging across different keys is
@@ -75,4 +77,4 @@ proc merge*(eg: var EGraph, key: string) =
 
 proc stats*(eg: EGraph): string =
   "e-graph: " & $eg.hits & " hits, " & $eg.misses & " misses, " &
-    $eg.merges & " merges, " & $eg.ids.len & " terms"
+    $eg.merges & " merges, " & $eg.ids.len & " keys"

@@ -684,3 +684,49 @@
   Cleanup in the same branch: removed dead =ett_staged= import from
   =staged_defun.nim=, moved =times= import under =when isMainModule=
   (warning-clean both standalone and as an import).
+
+* 2026-10-09 — Issue #47: conversion-cache hash keys (NEGATIVE on 1.5x; Amdahl diagnosis)
+
+  Context: #41's benchmark (=src/bench_conv_cache.nim=: 62 declarations,
+  17,205 conversion goals, 99.6% hit rate) showed only 1.07x end-to-end
+  speedup with the cache, and the #41 entry blamed the memo key: the
+  rendered =$ctxLen & ":" & $a & " === " & $b= string was built on every
+  goal and "cost nearly as much as the NbE it skips". #47 asked for (a)
+  cheaper keys via hash-consed term identity, then (b) gating on a cheap
+  goal-cost estimate if (a) alone did not win.
+  What was built (branch =exp47-conv-cache=):
+  - =hashTerm= in =ett_init.nim=: structural 64-bit hash over all 15
+    =TermKind= variants (refId for =tR=, idx for =tV=; =impl=/=erased=
+    folded in even though =$= omits =erased= — distinguishing more is
+    sound). Microbenchmark: 2.7x cheaper than =$= rendering (60us vs
+    165us on a 401-node term; 7.8us vs 20us on 51 nodes).
+  - =egraph.nim= re-keyed from =Table[string, int]= to
+    =ConvKey = tuple[ctxLen: int, ha: Hash, hb: Hash]= via
+    =convKey(ctxLen, a, b)=; the two call sites (=defaultConv= record,
+    =cacheConvHandler= probe) now hash instead of render. Dead =termId=
+    removed. Collision analysis: at ~10^4 keys the 64-bit collision
+    probability is ~10^-11; the table still only stores goals NbE proved.
+  Measured result: 1.08x / 1.00x on the repeated/distinct corpora
+  (was 1.07x / 1.01x) — (a) alone does NOT reach 1.5x.
+  The honest breakdown (temporary MetaStore timing accumulators,
+  reverted afterwards) falsifies #41's diagnosis:
+  - cache run: probe+key+merge = 0.025s over 17,205 goals (1.5us/goal);
+    NbE on 76 misses = 0.026s.
+  - default run: NbE on all 17,205 goals = 0.45s (26us/goal).
+  So the cache already wins ~9x ON CONVERSION ITSELF (0.05s vs 0.45s)
+  — but conversion is only ~6% of elaboration time (0.45s of 7.5s
+  wall; the rest is parsing + non-conversion elaboration). The 1.07x
+  was Amdahl-limited, not key-cost-limited: key rendering was never
+  "nearly as much as the NbE it skips" (1.5us vs 26us per goal even
+  before this change, ~4us with the old string keys).
+  Decision: (b) (size-gated caching) NOT implemented — with the probe
+  at 1.5us vs 26us NbE, eliminating all probe overhead could gain at
+  most ~0.4% end-to-end; not worth the complexity. Keep the hash keys
+  (strictly cheaper, identical accept/reject on the 62-decl corpus).
+  The real follow-up is profiling elaboration itself (parsing +
+  checkTm/inferTm dominate), or a conversion-heavier corpus where the
+  9x conversion win can move the end-to-end number — filed as a
+  follow-up, not done here.
+  Consequences: issue #47 closed via the documented-negative disjunct;
+  benchmark stays as the regression harness; accept/reject identity
+  asserted on declaration names in the bench (green).
