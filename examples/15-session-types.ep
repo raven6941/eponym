@@ -26,11 +26,12 @@ data Chan : Session -> ? where
 # - sendNat takes Chan (sendS Nat S), returns Chan S
 # - recvNat takes Chan (recvS Nat S), returns (Nat, Chan S)
 # - closeOp takes Chan endS (nothing else type-checks)
-proc sendNat (S : Session) (x : Nat) (ch : Chan (sendS Nat S)) : Chan S =
+# Linear (1) binders ensure channels are used exactly once (Issue #64).
+proc sendNat (S : Session) (x : Nat) (1 ch : Chan (sendS Nat S)) : Chan S =
   mkChan S
-proc recvNat (S : Session) (ch : Chan (recvS Nat S)) : Sig (x : Nat). Chan S =
+proc recvNat (S : Session) (1 ch : Chan (recvS Nat S)) : Sig (x : Nat). Chan S =
   (zero, mkChan S)
-proc closeOp (ch : Chan endS) : Nat =
+proc closeOp (1 ch : Chan endS) : Nat =
   zero
 
 # Protocol: send a Nat, receive a Nat, then done
@@ -42,7 +43,8 @@ proc proto : Session =
 #  -> sendNat gives Chan (recvS Nat endS)
 #  -> recvNat gives (Nat, Chan endS)
 #  -> closeOp consumes Chan endS
-proc client (ch : Chan proto) : Nat =
+# The (1 ch) binder ensures the channel is used exactly once (Issue #64).
+proc client (1 ch : Chan proto) : Nat =
   let ch1 = sendNat (recvS Nat endS) zero ch in
   let p = recvNat endS ch1 in
   closeOp (snd p)
@@ -62,13 +64,10 @@ proc client (ch : Chan proto) : Nat =
 # Error: inferred type (Chan endS) does not match expected type
 #        (Chan (sendS Nat endS))
 #
-# Violation 3: use after close (double close)
-# proc badClient3 (ch : Chan proto) : Nat =
-#   let ch1 = sendNat (recvS Nat endS) zero ch in
-#   let p = recvNat endS ch1 in
-#   let c = closeOp (snd p) in
-#   closeOp (snd p)
-# Error: (snd p) : Chan endS, but closeOp already consumed it;
-#        the second closeOp gets Chan endS which is fine, but the
-#        linearity violation (using p twice) is not yet caught —
-#        see issue #28 notes on the affinity hole.
+# Violation 3: double-send (affinity hole, Issue #64)
+# With linear binders, this is now rejected by the usage checker.
+proc badClient3 (1 ch : Chan (sendS Nat endS)) : Chan endS =
+  let ch1 = sendNat endS zero ch in
+  let ch2 = sendNat endS zero ch in
+  ch1
+# Error: linear variable used more than once (ch)

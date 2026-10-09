@@ -893,7 +893,7 @@ proc mkPis(tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, 
            body: PreTerm, loc: Loc): PreTerm =
   result = body
   for i in countdown(tele.high, 0):
-    result = mkPi(tele[i].name, tele[i].ty, result, loc, tele[i].impl, tele[i].erased)
+    result = mkPi(tele[i].name, tele[i].ty, result, loc, tele[i].impl, tele[i].erased, tele[i].qty)
 
 proc flattenPiPre(pre: PreTerm):
     tuple[tele: seq[tuple[name: string, ty: PreTerm]], body: PreTerm] =

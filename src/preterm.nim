@@ -206,13 +206,15 @@ proc desugarTy*(d: SurfDef): PreTerm =
   ## Telescope to nested Pis (implicit entries to implicit Pis).
   result = d.retTy
   for i in countdown(d.tele.high, 0):
-    result = mkPi(d.tele[i].name, d.tele[i].ty, result, d.loc, d.tele[i].impl)
+    result = mkPi(d.tele[i].name, d.tele[i].ty, result, d.loc, d.tele[i].impl,
+                  d.tele[i].erased, d.tele[i].qty)
 
 proc desugarTm*(d: SurfDef): PreTerm =
   ## Telescope to nested lambdas (implicit entries to implicit lambdas).
   result = d.body
   for i in countdown(d.tele.high, 0):
-    result = mkLam(d.tele[i].name, d.tele[i].ty, result, d.loc, d.tele[i].impl)
+    result = mkLam(d.tele[i].name, d.tele[i].ty, result, d.loc, d.tele[i].impl,
+                   d.tele[i].erased, d.tele[i].qty)
 
 proc `$`*(d: SurfDef): string =
   result = "def " & d.name
