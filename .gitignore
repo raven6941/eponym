@@ -6,6 +6,7 @@ nimcache/
 src/**
 !src/**/
 !src/**/*.nim
+!src/**/*.md
 tests/**
 !tests/**/
 !tests/**/*.nim
