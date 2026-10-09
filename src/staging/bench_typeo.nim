@@ -27,7 +27,7 @@ const ItersPerTerm = 15    # timing iterations per term
 
 # --- Specialization (the "compile" step) --------------------------------
 
-proc buildSpecialized(): (string, Table[string, RelEntry]) =
+proc buildSpecialized*(): (string, Table[string, RelEntry]) =
   var relEnv = initTable[string, RelDef]()
   relEnv["typeo"] = RelDef(name: "typeo", params: @["tm", "ty", "ctx"],
                            modes: @[mIn, mIn, mIn], body: typeoData())
@@ -42,13 +42,13 @@ proc buildSpecialized(): (string, Table[string, RelEntry]) =
 
 # --- Checkers ------------------------------------------------------------
 
-proc checkUnstaged(tm, ctxTm: RTerm, depth: int): bool =
+proc checkUnstaged*(tm, ctxTm: RTerm, depth: int): bool =
   ## Run the original typeo(tm, nat, ctx); true iff it succeeds.
   let q = freshVar()
   let g = conj(typeo(tm, natTy(), ctxTm), `==`(q, ratom("yes")))
   run(q, g, 1, depth).len > 0
 
-proc checkStaged(top: string, specs: Table[string, RelEntry],
+proc checkStaged*(top: string, specs: Table[string, RelEntry],
                  tm, ctxTm: RTerm, depth: int): bool =
   ## Run the specialized residual via toGoal (lazy rgCall expansion).
   let q = freshVar()
@@ -64,7 +64,7 @@ proc sucN(n: int): RTerm =
 
 type TestCase = tuple[name: string, tm: RTerm, ctxTm: RTerm, expect: bool]
 
-proc testCases(): seq[TestCase] =
+proc testCases*(): seq[TestCase] =
   let nilCtx = rnil()
   let natCtx = rpair(natTy(), nilCtx)
   let arrCtx = rpair(arrTy(natTy(), natTy()), nilCtx)
