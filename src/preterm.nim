@@ -151,16 +151,30 @@ type
     body*: PreTerm
     loc*: Loc
 
-  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData
+  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData, dkClauses
   DataCtor* = object
     ## One constructor in a `data` declaration.
     name*: string
     tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]]
     retTy*: PreTerm   # F params indices
     cloc*: Loc
+  Clause* = object
+    ## One pattern-matching clause: patterns for the explicit arguments
+    ## (constructor patterns or variables) and the right-hand side.
+    ## For now: patterns are PreTerms (variable or constructor application).
+    pats*: seq[PreTerm]
+    rhs*: PreTerm
+    cloc*: Loc
+  ClausesDef* = object
+    ## `def name : Ty` followed by `| pat1 .. patn = rhs` clauses.
+    ## Elaborated to an eliminator application (issue #32).
+    name*: string
+    ty*: PreTerm
+    clauses*: seq[Clause]
+    loc*: Loc
   SurfDecl* = object
     ## A top-level declaration (Experiment 4 adds postulate/elim/red;
-    ## Experiment 5 adds data).
+    ## Experiment 5 adds data; issue #32 adds clauses).
     case kind*: DeclKind
     of dkDef: def*: SurfDef
     of dkPostulate, dkElim:
@@ -177,6 +191,8 @@ type
       indexTy*: PreTerm  # indices -> ?  (e.g. Nat -> ?)
       ctors*: seq[DataCtor]
       daloc*: Loc
+    of dkClauses:
+      clausesDef*: ClausesDef
 
 proc desugarTy*(d: SurfDef): PreTerm =
   ## Telescope to nested Pis (implicit entries to implicit Pis).

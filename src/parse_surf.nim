@@ -23,7 +23,7 @@ import preterm, strutils
 type
   TokKind = enum
     tkEof, tkIdent, tkInt,
-    tkDef, tkPostulate, tkElim, tkRed, tkData, tkWhere, tkBy,
+    tkDef, tkClauses, tkPostulate, tkElim, tkRed, tkData, tkWhere, tkBy,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
     tkLParen, tkRParen, tkLBrace, tkRBrace,
@@ -46,7 +46,8 @@ proc fail(loc: Loc, msg: string): ref ParseError =
 # --- lexer -----------------------------------------------------------
 
 const keywords = [
-  ("proc", tkDef), ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
+  ("proc", tkDef), ("def", tkClauses),
+  ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
   ("data", tkData), ("where", tkWhere), ("by", tkBy),
   ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
@@ -314,14 +315,41 @@ proc parseData(p: var Parser): SurfDecl =
   SurfDecl(kind: dkData, dname: nm.lexeme, params: params, indexTy: indexTy,
            ctors: ctors, daloc: t.loc)
 
+proc parseClauses(p: var Parser): SurfDecl =
+  ## `def name : Ty` followed by `| pat1 .. patn = rhs` clauses.
+  ## Each pattern is an atom; constructor applications need parens: `(suc m)`.
+  let t = p.expect(tkClauses, "'def'")
+  let nm = p.expect(tkIdent, "definition name")
+  discard p.expect(tkColon, "':'")
+  let ty = p.parseTerm()
+  var clauses: seq[Clause] = @[]
+  while p.peek().kind == tkPipe:
+    let ploc = p.next().loc
+    var pats: seq[PreTerm] = @[]
+    while p.peek().kind != tkEq:
+      if p.peek().kind == tkEof:
+        raise fail(ploc, "unterminated clause: expected '='")
+      pats.add p.parseAtom()
+    discard p.expect(tkEq, "'='")
+    let rhs = p.parseTerm()
+    if pats.len == 0:
+      raise fail(ploc, "clause needs at least one pattern")
+    clauses.add Clause(pats: pats, rhs: rhs, cloc: ploc)
+  if clauses.len == 0:
+    raise fail(t.loc, "'def' needs at least one '|'-clause")
+  SurfDecl(kind: dkClauses,
+           clausesDef: ClausesDef(name: nm.lexeme, ty: ty, clauses: clauses,
+                                  loc: t.loc))
+
 proc parseDecl(p: var Parser): SurfDecl =
   case p.peek().kind
   of tkDef: SurfDecl(kind: dkDef, def: p.parseDef())
+  of tkClauses: p.parseClauses()
   of tkPostulate: p.parsePostulate()
   of tkElim: p.parseElim()
   of tkRed: p.parseRed()
   of tkData: p.parseData()
-  else: raise fail(p.peek().loc, "expected 'proc', 'postulate', 'elim', 'red' or 'data'")
+  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red' or 'data'")
 
 proc parseProgram*(src: string): seq[SurfDecl] =
   ## Parse a whole program; raises ParseError with source location.

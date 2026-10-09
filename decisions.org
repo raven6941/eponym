@@ -356,3 +356,27 @@
   extra, body), not 6 — =treeRepr= on a parsed forward decl is the
   ground truth; (c) =quote= gensyms template/proc *names*, so the entry
   template is built with manual AST.
+
+  * 2026-10-08: Issue #32 — clause-style definitions compile to
+  eliminators (MVP). =def add : Nat -> Nat -> Nat= with =| zero n = n=
+  and =| (suc m) n = suc (add m n)= elaborates to a =natElim=
+  application; =add two two= evaluates to 4. Coverage (missing
+  constructor) and overlap (duplicate constructor) are located
+  compile-time errors.
+
+  Design choices: (a) patterns are surface atoms — constructor
+  applications need parens, =(suc m)=, so =zero n= parses as two
+  patterns; (b) recursive calls =f ... y ...= on a pattern variable
+  become IH applications syntactically at the PreTerm level, before
+  elaboration; (c) whole thing done at PreTerm level then fed through
+  the existing =elabDefDecl= — no duplication of elaboration logic.
+
+  MVP limits (documented, not silently): non-indexed data only
+  (=append= on Vec needs indexed motives), scrutinee must be first
+  explicit arg, no nested patterns, no catch-all variable clause,
+  no =ettDefs= macro-front-end support (string parser is primary).
+
+  Lesson: compiling clauses to eliminators (rather than adding a
+  native case-splitter to the core) keeps the trusted core small —
+  the same argument as the embedding thesis. The elaborator does
+  the work once; the core never learns pattern matching.
