@@ -552,6 +552,56 @@ proc flattenAppSpine(pre: PreTerm): seq[PreTerm] =
   for i in countdown(rev.high, 0):
     result.add(rev[i])
 
+proc checkStructuralRec(rhs: PreTerm, elimName: string, nargs: int,
+                        smallerVars: seq[string], loc: Loc) =
+  ## Issue #36: syntactic structural recursion check for `red` rules.
+  ## Any application of `elimName` in the RHS must take a direct subterm
+  ## of the LHS pattern (a variable from `smallerVars`) in the scrutinee
+  ## position (last argument). Otherwise the rule may not terminate.
+  case rhs.kind
+  of pkApp:
+    var spine: seq[PreTerm] = @[]
+    var h = rhs
+    while h.kind == pkApp:
+      spine.add(h.c2)
+      h = h.c1
+    var rspine: seq[PreTerm] = @[]
+    for i in countdown(spine.high, 0): rspine.add(spine[i])
+    if h.kind == pkVar and h.name == elimName:
+      if rspine.len == nargs:
+        let scrutArg = rspine[^1]
+        if scrutArg.kind != pkVar or scrutArg.name notin smallerVars:
+          raise elabErr(rhs.loc,
+            "non-structurally-recursive call in `red` rule: '" & elimName &
+            "' applied to '" & $scrutArg &
+            "', which is not a direct subterm of the LHS pattern")
+      # Recurse into the spine args (they may contain nested calls)
+      for a in rspine:
+        checkStructuralRec(a, elimName, nargs, smallerVars, loc)
+    else:
+      checkStructuralRec(h, elimName, nargs, smallerVars, loc)
+      for a in rspine:
+        checkStructuralRec(a, elimName, nargs, smallerVars, loc)
+  of pkLam:
+    if rhs.c1 != nil:
+      checkStructuralRec(rhs.c1, elimName, nargs, smallerVars, loc)
+    checkStructuralRec(rhs.c2, elimName, nargs, smallerVars, loc)
+  of pkPi:
+    checkStructuralRec(rhs.c1, elimName, nargs, smallerVars, loc)
+    checkStructuralRec(rhs.c2, elimName, nargs, smallerVars, loc)
+  of pkPair:
+    checkStructuralRec(rhs.c1, elimName, nargs, smallerVars, loc)
+    checkStructuralRec(rhs.c2, elimName, nargs, smallerVars, loc)
+  of pkLet:
+    checkStructuralRec(rhs.c1, elimName, nargs, smallerVars, loc)
+    checkStructuralRec(rhs.c2, elimName, nargs, smallerVars, loc)
+    checkStructuralRec(rhs.c3, elimName, nargs, smallerVars, loc)
+  of pkAnn:
+    checkStructuralRec(rhs.c1, elimName, nargs, smallerVars, loc)
+    checkStructuralRec(rhs.c2, elimName, nargs, smallerVars, loc)
+  else:
+    discard
+
 proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
                  globals: var Globals, supply: var Supply,
                  ms: var MetaStore) =
@@ -640,6 +690,10 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
         $(nParams + ctorVars.len) & " arguments")
     ctx = ext(ctx, nm, h.dom)
     ctorTy = h.scope.bdy
+  # Issue #36: structural recursion check — recursive calls must take
+  # direct subterms of the LHS pattern. The ctorVars are exactly the
+  # direct subterms of the scrutinee pattern.
+  checkStructuralRec(rhs, elimName, nargs, ctorVars, loc)
   # elaborate the contractum (inference mode — the rule is trusted, like
   # an axiom; a production system would check it against the motive)
   let (rhsTm0, _) = inferTm(rhs, ctx, globals, ms, supply)
@@ -1605,5 +1659,145 @@ def bad : Nat -> Nat
   except ElabError as e:
     assert "overlapping clauses" in e.msg
     echo "ok: overlapping clauses are a located error"
+
+  # --- Issue #36: termination checking (structural recursion) --------
+  # Corpus: terminating definitions accepted, non-terminating rejected.
+  var termAccepted = 0
+  var termRejected = 0
+  template acc36(name, src: string) =
+    try:
+      discard elabCheck(src)
+      inc termAccepted
+    except ElabError as e:
+      assert false, "termination corpus: " & name & " should be accepted: " & e.msg
+  template rej36(name, src: string) =
+    try:
+      discard elabCheck(src)
+      assert false, "termination corpus: " & name & " should be rejected"
+    except ElabError:
+      inc termRejected
+  acc36("data Nat", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+""")
+  acc36("clause add", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+""")
+  acc36("clause double", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def double : Nat -> Nat
+| zero = zero
+| (suc n) = suc (suc (double n))
+""")
+  acc36("clause pred", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def pred : Nat -> Nat
+| zero = zero
+| (suc n) = n
+""")
+  acc36("clause mult", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+def mult : Nat -> Nat -> Nat
+| zero n = zero
+| (suc m) n = add n (mult m n)
+""")
+  acc36("clause isEven", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Bool : ? where
+| true : Bool
+| false : Bool
+def not : Bool -> Bool
+| true = false
+| false = true
+def isEven : Nat -> Bool
+| zero = true
+| (suc n) = not (isEven n)
+""")
+  acc36("data Bool", """
+data Bool : ? where
+| true : Bool
+| false : Bool
+""")
+  acc36("manual structural red", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+elim dblElim : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+red dblElim C z s zero = z
+red dblElim C z s (suc n) = s n (dblElim C z s n)
+""")
+  acc36("clause idNat", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def idNat : Nat -> Nat
+| zero = zero
+| (suc n) = suc (idNat n)
+""")
+  acc36("data List", """
+data List (A : ?) : ? where
+| nil : List A
+| cons (x : A) (xs : List A) : List A
+""")
+  rej36("growing red rule", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+elim bad1 : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+red bad1 C z s (suc n) = bad1 C z s (suc (suc n))
+""")
+  rej36("self-loop red rule", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+elim bad2 : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+red bad2 C z s (suc n) = bad2 C z s (suc n)
+""")
+  rej36("base-case loop", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+elim bad3 : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+red bad3 C z s zero = bad3 C z s zero
+""")
+  rej36("non-subterm var", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+elim bad4 : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+red bad4 C z s (suc n) = bad4 C z s zero
+""")
+  # Note: bad4's RHS applies bad4 to `zero`, which is not a variable at all,
+  # let alone a subterm. The check requires a variable from smallerVars.
+  rej36("growing call under step arg", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+elim bad5 : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+red bad5 C z s (suc n) = s n (bad5 C z s (suc (suc n)))
+""")
+  # bad5 exercises the nested-spine traversal: the recursive call sits
+  # inside the step argument and the scrutinee grows, so it is rejected.
+  assert termAccepted >= 10, "need >= 10 accepted, got " & $termAccepted
+  assert termRejected >= 5, "need >= 5 rejected, got " & $termRejected
+  echo "ok: termination corpus (", termAccepted, " accepted, ",
+    termRejected, " rejected)"
 
   echo "--- all elaborator tests passed ---"
