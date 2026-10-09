@@ -19,8 +19,8 @@
 
 import staging/relgoal
 import staging/stagegoal
-import staging/stage_typeo   # typeoData
-import staging/stage_evalo   # evaloData, addoData
+import stage_typeo   # typeoData (moved from staging/ to tests/)
+import stage_evalo   # evaloData, addoData (moved from staging/ to tests/)
 import staging/modes
 import minikanren
 import rel_elab
