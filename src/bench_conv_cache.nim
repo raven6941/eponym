@@ -14,8 +14,12 @@
 ##     large unary numerals — the same goal shape recurs per size class;
 ##   - `by refl` proofs of large ground add equations (add A B ≡ suc^C),
 ##     identical goals repeated.
-## A second "distinct" corpus varies every numeral, so no goal repeats:
-## it measures the cache's probe overhead in the worst case.
+## A second "distinct" corpus varies every numeral. In practice it is not
+## the worst case the name suggests: even with all-distinct numerals,
+## ~99% of conversion goals still repeat (clause-elaboration motives,
+## implicit insertion, and ascription checks recur structurally), so the
+## measured delta mostly reflects probe overhead on hits rather than
+## misses. Observed: 98.8% hit rate, 1.01x.
 ##
 ## Fairness: both sides elaborate the same generated string (parsing is
 ## identical and inside the timed region on both sides, so it dilutes

@@ -495,3 +495,17 @@
     across cache/no-cache runs, because a cache hit skips =freshPara=
     calls and renumbers later fresh IDs. Accept/reject is identical;
     the test asserts names/length, not term strings.
+  - Cache benchmark at scale (=src/bench_conv_cache.nim=, 2026-10-09):
+    62-decl corpus (vappend of literal vectors + =by refl= on large add
+    equations), 17,205 conversion goals, 99.6% hit rate — speedup only
+    1.07x (9.94s -> 9.26s); all-distinct-numeral corpus still 98.8% hit
+    rate (goals recur structurally: clause motives, implicit insertion),
+    1.01x. Reading: the memo key is =$ctxLen & ":" & $a & " === " & $b=,
+    rendered on *every* goal, and that rendering costs nearly as much as
+    the NbE it skips for small goals — the cache only pays when
+    per-goal conversion dominates key rendering. Two consequences:
+    (a) the current cache is a correctness-preserving opt-in with
+    ~free worst case, not a performance feature yet; (b) making it win
+    needs cheaper keys (hash-consed term identity instead of string
+    rendering) or targeting only expensive goals. Both are future work;
+    the benchmark stays as the regression harness.
