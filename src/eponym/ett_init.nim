@@ -152,11 +152,11 @@ proc tmLam*(dom: Term, adv: string, bdy: Term, impl = false, erased = false,
 proc tmMeta*(id: int, spine: seq[Term]): Term =
   Term(kind: tMeta, metaId: id, metaSpine: spine)
 
-proc mkBinder*(k: TermKind, dom: Term, sc: Scope, impl: bool): Term =
+proc mkBinder*(k: TermKind, dom: Term, sc: Scope, impl: bool, qty = qOmega): Term =
   case k
-  of tPi: tmPi(dom, sc.adv, sc.bdy, impl)
-  of tSi: tmSi(dom, sc.adv, sc.bdy, impl)
-  of tLam: tmLam(dom, sc.adv, sc.bdy, impl)
+  of tPi: tmPi(dom, sc.adv, sc.bdy, impl, false, qty)
+  of tSi: tmSi(dom, sc.adv, sc.bdy, impl, false, qty)
+  of tLam: tmLam(dom, sc.adv, sc.bdy, impl, false, qty)
   else: raise newException(ValueError, "mkBinder: not a binder")
 
 proc tmPair*(fstT, sndT: Term, adv: string, ranBdy: Term): Term =

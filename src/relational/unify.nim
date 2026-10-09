@@ -132,7 +132,7 @@ proc zonk*(ms: MetaStore, t: Term): Term =
   of tV, tR, tC, tInt, tPrim: t
   of tPi, tSi, tLam:
     mkBinder(t.kind, zonk(ms, t.dom),
-              Scope(adv: t.scope.adv, bdy: zonk(ms, t.scope.bdy)), t.impl)
+              Scope(adv: t.scope.adv, bdy: zonk(ms, t.scope.bdy)), t.impl, t.qty)
   of tPair:
     tmPair(zonk(ms, t.pFst), zonk(ms, t.pSnd),
            t.pScope.adv, zonk(ms, t.pScope.bdy))
@@ -225,7 +225,7 @@ proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
     mkBinder(t.kind, renameAt(t.dom, inv, depth, n, loc),
               Scope(adv: t.scope.adv,
                     bdy: renameAt(t.scope.bdy, inv, depth + 1, n, loc)),
-              t.impl)
+              t.impl, t.qty)
   of tPair:
     tmPair(renameAt(t.pFst, inv, depth, n, loc),
            renameAt(t.pSnd, inv, depth, n, loc), t.pScope.adv,

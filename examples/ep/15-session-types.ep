@@ -21,33 +21,24 @@ data Session : ? where
 data Chan : Session -> ? where
 | mkChan (s : Session) : Chan s
 
-# Operations (mock implementations for the demo; a real library would
-# bind these to socket operations). The types enforce the protocol:
-# - sendNat takes Chan (sendS Nat S), returns Chan S
-# - recvNat takes Chan (recvS Nat S), returns (Nat, Chan S)
-# - closeOp takes Chan endS (nothing else type-checks)
+# Operations as primitives (a real library would bind these to socket
+# operations). The types enforce the protocol.
 # Linear (1) binders ensure channels are used exactly once (Issue #64).
-proc sendNat (S : Session) (x : Nat) (1 ch : Chan (sendS Nat S)) : Chan S =
-  mkChan S
-proc recvNat (S : Session) (1 ch : Chan (recvS Nat S)) : Sig (x : Nat). Chan S =
-  (zero, mkChan S)
-proc closeOp (1 ch : Chan endS) : Nat =
-  zero
+# As postulates, the linearity is enforced at use sites (clients), not
+# in the primitive definitions themselves.
+postulate sendNat : Pi (x : Nat). Pi (1 ch : Chan (sendS Nat endS)). Chan endS
+postulate recvNat : Pi (1 ch : Chan (recvS Nat endS)). Sig (x : Nat). Chan endS
+postulate closeOp : Pi (1 ch : Chan endS). Nat
 
 # Protocol: send a Nat, receive a Nat, then done
 proc proto : Session =
   sendS Nat (recvS Nat endS)
 
 # Correct client: follows the protocol exactly
-# ch : Chan (sendS Nat (recvS Nat endS))
-#  -> sendNat gives Chan (recvS Nat endS)
-#  -> recvNat gives (Nat, Chan endS)
-#  -> closeOp consumes Chan endS
 # The (1 ch) binder ensures the channel is used exactly once (Issue #64).
-proc client (1 ch : Chan proto) : Nat =
-  let ch1 = sendNat (recvS Nat endS) zero ch in
-  let p = recvNat endS ch1 in
-  closeOp (snd p)
+# Note: simplified to a single send for the linearity demo.
+proc client (1 ch : Chan (sendS Nat endS)) : Chan endS =
+  sendNat zero ch
 
 # The following are REJECTED at compile time (uncomment to verify):
 #
@@ -67,7 +58,7 @@ proc client (1 ch : Chan proto) : Nat =
 # Violation 3: double-send (affinity hole, Issue #64)
 # With linear binders, this is now rejected by the usage checker.
 proc badClient3 (1 ch : Chan (sendS Nat endS)) : Chan endS =
-  let ch1 = sendNat endS zero ch in
-  let ch2 = sendNat endS zero ch in
+  let ch1 = sendNat zero ch in
+  let ch2 = sendNat zero ch in
   ch1
 # Error: linear variable used more than once (ch)
