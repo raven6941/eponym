@@ -1,142 +1,290 @@
-## Phase 2: ETT-specific staging rules (Sym[Staged])
+## Phase 2: ETT-specific staging rules (Sym[SVal])
 ##
 ## Builds on Layer 1 framework (staging/framework.nim).
 ## Provides Sym[SVal] instance: staging rules for ETT term formers.
 ##
 ## Key design:
-## - SVal: staged ETT value. Either static (known Value from ett.nim)
-##   or dynamic (residual ETTNode IR).
-## - For binders (cPi, cLam): the bound variable is introduced as dynamic
-##   UNLESS the body is applied to a static argument at staging time.
-## - cApp: if function is static lambda and arg is static, beta-reduce now.
-##   Otherwise build residual application node.
+## - SVal: staged ETT value. Three kinds:
+##   - svStatic:    a Value known at staging time (closed, fully reduced).
+##   - svStaticLam: a staging-time function SVal -> SVal. This is the
+##     workhorse: applying it beta-reduces *at staging time*, which is
+##     what makes specialization happen. cLam always produces these;
+##     the host closure is staging-time code, not residual code.
+##   - svDynamic:   residual ETTNode IR (only ETT formers appear here --
+##     no staging machinery leaks into the residual).
+## - cApp: svStaticLam applied to anything (static or dynamic) runs the
+##   body now. Static vkLam applied to static arg reduces via the real
+##   interpreter. Otherwise a residual enkApp node.
+## - Residual evaluation: evalSVal interprets the ETTNode tree with the
+##   real evalSym interpreter, so residual results are definitionally the
+##   same values the unstaged interpreter produces.
 ##
-## Hard questions (documented, not fully solved):
-## - Metavariables: reject staging if term contains unsolved metas. A meta
-##   is dynamic by nature, but staging a term with holes is dubious — the
-##   residual would have holes too. For now: error.
-## - Conversion: when to normalize during staging? We beta-reduce when both
-##   static (like the interpreter). Full normalization is overkill; we want
-##   just enough to enable specialization.
-## - Dependency: if a type mentions a dynamic value, the type is dynamic.
-##   This propagates: cPi with dynamic dom → dynamic Pi. The framework's
-##   Rep handles this via isStatic flags.
+## Hard questions (positions, cf. GH #17):
+## - Metavariables: the ETT core has no metas (they live in elab.nim), so
+##   there is nothing to reject at this layer. If a future staged
+##   elaborator lifts open terms, the policy is: reject (error), since a
+##   residual with holes is not a program.
+## - Conversion: we beta-reduce when the function position is staging-time
+##   known (svStaticLam, or static vkLam on a static arg). No full
+##   normalization -- just enough reduction to enable specialization.
+##   Residual neutrals stay stuck, exactly as in the interpreter.
+## - Dependency: a type mentioning a dynamic value becomes a dynamic node
+##   (enkPi/enkSigma keep the staged domain; the codomain family is staged
+##   against a fresh dynamic variable). Types are residualized, not
+##   computed -- specialization targets terms, and types follow.
 
-import staging/framework
+import std/tables
 import ett
 
-# --- Residual IR nodes for ETT ---
+# --- Residual IR nodes for ETT (the residual *code*; ETT formers only) ---
 
 type
-  ETTNodeKind = enum
-    enkVar,     # dynamic variable (runtime input)
-    enkApp,     # residual application
-    enkLam,     # residual lambda (dynamic body)
-    enkPi,      # residual Pi type
+  ETTNodeKind* = enum
+    enkVar,                       # dynamic variable (runtime input)
+    enkTt, enkUnit, enkStar, enkEmpty,  # constants
+    enkApp,                       # residual application
+    enkLam, enkPi, enkSigma,       # binders (body staged against enkVar)
+    enkPair,                      # pairing
+    enkFst, enkSnd,               # projections
+    enkAbsurd                     # ex falso
 
-  ETTNode = ref object of IRNode
+  SValKind* = enum svStatic, svStaticLam, svDynamic
+
+  ETTNode* = ref object
     case kind: ETTNodeKind
     of enkVar:
       varName: string
     of enkApp:
       fn, arg: SVal
-    of enkLam, enkPi:
+    of enkLam, enkPi, enkSigma:
       domNode: SVal
-      bodyNode: proc(x: SVal): SVal  # residual binder (host fn over SVal)
+      bindName: string
+      bodyNode: proc(x: SVal): SVal
+    of enkPair:
+      fstN, sndN: SVal
+    of enkFst, enkSnd, enkAbsurd:
+      subN: SVal
+    of enkTt, enkUnit, enkStar, enkEmpty:
+      discard
 
-  SValKind = enum svStatic, svDynamic
-
-  SVal = ref object
+  SVal* = ref object
     ## Staged ETT value.
     case kind: SValKind
     of svStatic:
-      val: Value  # known at staging time
+      val: Value                  # known at staging time
+    of svStaticLam:
+      body: proc(x: SVal): SVal   # staging-time function
     of svDynamic:
-      node: ETTNode      # residual IR
+      node: ETTNode                # residual IR (ETT formers only)
 
-proc staticVal(v: Value): SVal =
+var betaCount* = 0
+  ## Staging-time beta-reductions performed. A measure of static work
+  ## moved out of the residual.
+
+var nameCounter = 0
+
+proc freshVar*(hint: string): string =
+  inc nameCounter
+  hint & $nameCounter
+
+proc staticVal*(v: Value): SVal =
   SVal(kind: svStatic, val: v)
 
-proc dynamicVal(n: ETTNode): SVal =
-  SVal(kind: svDynamic, node: n)
+proc dynamicVar*(name: string): SVal =
+  ## A dynamic (runtime-known) variable: the residual input.
+  SVal(kind: svDynamic, node: ETTNode(kind: enkVar, varName: name))
 
-proc `$`(s: SVal): string =
-  case s.kind
-  of svStatic: "static(" & $s.val.kind & ")"
-  of svDynamic: "dynamic(" & $s.node.kind & ")"
+proc staticLam*(b: proc(x: SVal): SVal): SVal =
+  SVal(kind: svStaticLam, body: b)
+
+proc resetBetaCount*() =
+  betaCount = 0
 
 # --- Sym[SVal] instance: staging rules ---
 
-proc stagedSym(): Sym[SVal] =
+proc stagedSym*(): Sym[SVal] =
   Sym[SVal](
-    cStar: proc(): SVal = staticVal(Value(kind: ett.vkStar)),
-    cUnit: proc(): SVal = staticVal(Value(kind: ett.vkUnit)),
-    cTt: proc(): SVal = staticVal(Value(kind: ett.vkTt)),
-    cEmpty: proc(): SVal = staticVal(Value(kind: ett.vkEmpty)),
+    cStar: proc(): SVal = staticVal(Value(kind: vkStar)),
+    cUnit: proc(): SVal = staticVal(Value(kind: vkUnit)),
+    cTt: proc(): SVal = staticVal(Value(kind: vkTt)),
+    cEmpty: proc(): SVal = staticVal(Value(kind: vkEmpty)),
 
     cPi: proc(dom: SVal, cod: proc(x: SVal): SVal): SVal =
-      # If dom is static, we can try to stage the codomain family.
-      # For now: if dom static, build static Pi with staged cod;
-      # else residualize.
-      if dom.kind == svStatic:
-        # cod is a host function SVal->SVal. To stage it, we'd need to
-        # apply it to a representative. For now, residualize the Pi
-        # but keep dom static info.
-        dynamicVal(ETTNode(kind: enkPi, domNode: dom,
-          bodyNode: cod))
-      else:
-        dynamicVal(ETTNode(kind: enkPi, domNode: dom, bodyNode: cod)),
+      # Types are residualized: stage the family against a fresh dynamic
+      # variable. The domain keeps its staging info (may stay static).
+      let x = dynamicVar(freshVar("pi"))
+      SVal(kind: svDynamic, node: ETTNode(kind: enkPi, domNode: dom,
+        bindName: x.node.varName, bodyNode: cod)),
 
     cLam: proc(dom: SVal, body: proc(x: SVal): SVal): SVal =
-      # Lambda: the body is a function. If dom is static, we keep the
-      # lambda static (as a host closure over SVal). Application will
-      # beta-reduce if arg is also static.
-      if dom.kind == svStatic:
-        # Build a static Value vkLam whose body works over SVal.
-        # We need to wrap: the Value's body expects Value, but we have SVal.
-        # For the prototype, keep it as a dynamic node with static dom info.
-        # Full solution requires SVal-aware Value — future work.
-        dynamicVal(ETTNode(kind: enkLam, domNode: dom, bodyNode: body))
-      else:
-        dynamicVal(ETTNode(kind: enkLam, domNode: dom, bodyNode: body)),
+      # Always a staging-time function: application beta-reduces now.
+      # (The domain annotation is irrelevant for staging; it matters for
+      # checking, which happens before staging.)
+      staticLam(body),
 
     cApp: proc(f, a: SVal): SVal =
-      # The key rule: beta-reduce if both static and f is a lambda.
-      if f.kind == svStatic and a.kind == svStatic:
-        let fv = f.val
-        let av = a.val
-        if fv.kind == ett.vkLam:
-          # Beta: apply the closure. fv.body expects Value, av is Value.
-          staticVal(fv.body(av))
+      # The key rule: staging-time beta-reduction.
+      case f.kind
+      of svStaticLam:
+        inc betaCount
+        f.body(a)
+      of svStatic:
+        if a.kind == svStatic and f.val.kind == vkLam:
+          inc betaCount
+          staticVal(f.val.body(a.val))
         else:
-          # Static neutral or stuck — residualize
-          dynamicVal(ETTNode(kind: enkApp, fn: f, arg: a))
-      else:
-        # Dynamic involved → residual application
-        dynamicVal(ETTNode(kind: enkApp, fn: f, arg: a)),
+          SVal(kind: svDynamic,
+            node: ETTNode(kind: enkApp, fn: f, arg: a))
+      of svDynamic:
+        SVal(kind: svDynamic, node: ETTNode(kind: enkApp, fn: f, arg: a)),
 
-    # Sigma, Pair, Fst, Snd, Absurd: residualize for now (prototype)
     cSigma: proc(dom: SVal, cod: proc(x: SVal): SVal): SVal =
-      dynamicVal(ETTNode(kind: enkPi, domNode: dom, bodyNode: cod)),
+      let x = dynamicVar(freshVar("sig"))
+      SVal(kind: svDynamic, node: ETTNode(kind: enkSigma, domNode: dom,
+        bindName: x.node.varName, bodyNode: cod)),
+
     cPair: proc(a, b: SVal): SVal =
-      dynamicVal(ETTNode(kind: enkApp, fn: a, arg: b)),
+      if a.kind == svStatic and b.kind == svStatic:
+        staticVal(Value(kind: vkPair, fstV: a.val, sndV: b.val))
+      else:
+        SVal(kind: svDynamic, node: ETTNode(kind: enkPair, fstN: a, sndN: b)),
+
     cFst: proc(p: SVal): SVal =
-      dynamicVal(ETTNode(kind: enkApp, fn: p, arg: staticVal(Value(kind: ett.vkTt)))),
+      case p.kind
+      of svStatic:
+        if p.val.kind == vkPair: staticVal(p.val.fstV)
+        else: SVal(kind: svDynamic, node: ETTNode(kind: enkFst, subN: p))
+      of svDynamic:
+        if p.node.kind == enkPair: p.node.fstN  # staging-time projection
+        else: SVal(kind: svDynamic, node: ETTNode(kind: enkFst, subN: p))
+      of svStaticLam:
+        SVal(kind: svDynamic, node: ETTNode(kind: enkFst, subN: p)),
+
     cSnd: proc(p: SVal): SVal =
-      dynamicVal(ETTNode(kind: enkApp, fn: p, arg: staticVal(Value(kind: ett.vkTt)))),
+      case p.kind
+      of svStatic:
+        if p.val.kind == vkPair: staticVal(p.val.sndV)
+        else: SVal(kind: svDynamic, node: ETTNode(kind: enkSnd, subN: p))
+      of svDynamic:
+        if p.node.kind == enkPair: p.node.sndN  # staging-time projection
+        else: SVal(kind: svDynamic, node: ETTNode(kind: enkSnd, subN: p))
+      of svStaticLam:
+        SVal(kind: svDynamic, node: ETTNode(kind: enkSnd, subN: p)),
+
     cAbsurd: proc(z: SVal): SVal =
-      dynamicVal(ETTNode(kind: enkApp, fn: z, arg: staticVal(Value(kind: ett.vkEmpty)))),
+      SVal(kind: svDynamic, node: ETTNode(kind: enkAbsurd, subN: z)),
   )
+
+# --- Residual evaluation: run the residual with the real interpreter ---
+
+proc evalSVal*(s: SVal, env: Table[string, Value]): Value =
+  ## Evaluate a staged value to a real Value. Static parts are already
+  ## values; residual nodes are interpreted with evalSym, so the result
+  ## is definitionally what the unstaged interpreter would produce.
+  case s.kind
+  of svStatic:
+    s.val
+  of svStaticLam:
+    # Reify the staging-time function as a host closure over Values.
+    let b = s.body
+    let e = env
+    Value(kind: vkLam, body: proc(x: Value): Value =
+      evalSVal(b(staticVal(x)), e))
+  of svDynamic:
+    let n = s.node
+    case n.kind
+    of enkVar:
+      env[n.varName]
+    of enkTt: Value(kind: vkTt)
+    of enkUnit: Value(kind: vkUnit)
+    of enkStar: Value(kind: vkStar)
+    of enkEmpty: Value(kind: vkEmpty)
+    of enkApp:
+      evalSym.cApp(evalSVal(n.fn, env), evalSVal(n.arg, env))
+    of enkLam:
+      let e = env
+      let bn = n.bindName
+      let bb = n.bodyNode
+      Value(kind: vkLam, body: proc(x: Value): Value =
+        var e2 = e
+        e2[bn] = x
+        evalSVal(bb(staticVal(x)), e2))
+    of enkPi:
+      let d = evalSVal(n.domNode, env)
+      let e = env
+      let bn = n.bindName
+      let bb = n.bodyNode
+      Value(kind: vkPi, dom: d, cod: proc(x: Value): Value =
+        var e2 = e
+        e2[bn] = x
+        evalSVal(bb(staticVal(x)), e2))
+    of enkSigma:
+      let d = evalSVal(n.domNode, env)
+      let e = env
+      let bn = n.bindName
+      let bb = n.bodyNode
+      Value(kind: vkSigma, dom: d, cod: proc(x: Value): Value =
+        var e2 = e
+        e2[bn] = x
+        evalSVal(bb(staticVal(x)), e2))
+    of enkPair:
+      evalSym.cPair(evalSVal(n.fstN, env), evalSVal(n.sndN, env))
+    of enkFst:
+      evalSym.cFst(evalSVal(n.subN, env))
+    of enkSnd:
+      evalSym.cSnd(evalSVal(n.subN, env))
+    of enkAbsurd:
+      evalSym.cAbsurd(evalSVal(n.subN, env))
+
+# --- Residual inspection: single recursive printer (distinct helper names
+# avoid overload/tuple-`$` ambiguity) ---
+
+proc ppSVal(s: SVal, depth: int): string
+proc ppNode(n: ETTNode, depth: int): string =
+  if depth > 8: return "..."
+  case n.kind
+  of enkVar: n.varName
+  of enkTt: "<>"
+  of enkUnit: "1"
+  of enkStar: "*"
+  of enkEmpty: "0"
+  of enkApp: "(" & ppSVal(n.fn, depth+1) & " " & ppSVal(n.arg, depth+1) & ")"
+  of enkLam: "(lam [" & n.bindName & "] " & ppSVal(n.bodyNode(dynamicVar(n.bindName)), depth+1) & ")"
+  of enkPi: "(Pi [" & n.bindName & "] " & ppSVal(n.bodyNode(dynamicVar(n.bindName)), depth+1) & ")"
+  of enkSigma: "(Sig [" & n.bindName & "] " & ppSVal(n.bodyNode(dynamicVar(n.bindName)), depth+1) & ")"
+  of enkPair: "(pair " & ppSVal(n.fstN, depth+1) & " " & ppSVal(n.sndN, depth+1) & ")"
+  of enkFst: "(fst " & ppSVal(n.subN, depth+1) & ")"
+  of enkSnd: "(snd " & ppSVal(n.subN, depth+1) & ")"
+  of enkAbsurd: "(absurd " & ppSVal(n.subN, depth+1) & ")"
+
+proc ppSVal(s: SVal, depth: int): string =
+  if depth > 8: return "..."
+  case s.kind
+  of svStatic: "static(" & $s.val.kind & ")"
+  of svStaticLam: "<slam>"
+  of svDynamic: ppNode(s.node, depth)
+
+proc `$`*(s: SVal): string = ppSVal(s, 0)
+
+proc countNodes*(s: SVal): int =
+  ## Count residual ETTNode nodes. Static parts contribute 0: they left
+  ## no trace in the residual.
+  case s.kind
+  of svStatic: 0
+  of svStaticLam: 0
+  of svDynamic:
+    let n = s.node
+    case n.kind
+    of enkVar, enkTt, enkUnit, enkStar, enkEmpty: 1
+    of enkApp: 1 + countNodes(n.fn) + countNodes(n.arg)
+    of enkLam, enkPi, enkSigma:
+      1 + countNodes(n.domNode) + countNodes(n.bodyNode(dynamicVar(n.bindName)))
+    of enkPair: 1 + countNodes(n.fstN) + countNodes(n.sndN)
+    of enkFst, enkSnd, enkAbsurd: 1 + countNodes(n.subN)
 
 when isMainModule:
   echo "=== Phase 2: Sym[SVal] staging rules ==="
-  echo ""
-  echo "Staging rules defined for ETT formers."
-  echo "Key rule: cApp beta-reduces when f is static lambda and a static."
-  echo ""
-  echo "Hard questions documented in source:"
-  echo "- Metavars: reject (staging with holes is dubious)"
-  echo "- Conversion: beta-reduce when static; no full normalization"
-  echo "- Dependency: dynamic in type → dynamic type (via isStatic)"
-  echo ""
-  echo "Prototype instance built. Full validation needs ETT term construction."
+  echo "cApp beta-reduces staging-time functions (svStaticLam)."
+  echo "cPair/cFst/cSnd fold when static; project through residual pairs."
+  echo "evalSVal runs residuals with the real interpreter (evalSym)."
+  echo "See stage_ett_demo.nim for the end-to-end validation."

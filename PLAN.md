@@ -171,6 +171,7 @@ Completed experiments (see `plan.org`, `decisions.org`):
 | 6 | Tactics and reflection | `refl`/`assumption`; API in progress |
 | 7 | LSP tooling | Diagnostics; holes/goals in progress |
 | 8 | Staged ETT evaluator | Tagless-final staging works |
+| 17 | ETT staging rules (Phase 2 validation) | Sym[SVal] with staging-time beta-reduction; twice/const/pairSwap staged == unstaged; 15.8x hoisting speedup, 0.67x on pure dispatch (negative) |
 | 9 | Erasure (QTT-lite) | Metadata; full checking in progress |
 | 10 | Conversion cache | Exact memoization; e-graph future |
 | 11 | Primitive Int | Machine int via wRed; literal overloading |
