@@ -45,6 +45,27 @@ type
 
 const noLoc* = Loc(line: 0, col: 0)
 
+# --- quantity semiring (Issue #66) --------------------------------------
+# Quantities form a semiring: 0 (erased), 1 (linear), ω (unrestricted).
+# Addition: how quantities combine when contexts merge.
+# Multiplication: how quantities scale under substitution.
+
+proc qadd*(a, b: Quantity): Quantity =
+  ## 0 is identity; 1+1=ω (using linear twice makes it unrestricted).
+  if a == q0: b
+  elif a == qOmega: qOmega
+  else: # a == q1
+    if b == q0: q1
+    else: qOmega
+
+proc qmul*(a, b: Quantity): Quantity =
+  ## 0 annihilates; 1 is identity; ω*0=0, ω*q=ω for q≠0.
+  if a == q0: q0
+  elif a == q1: b
+  else: # a == qOmega
+    if b == q0: q0
+    else: qOmega
+
 # --- constructors ----------------------------------------------------
 
 proc mkVar*(name: string, loc = noLoc): PreTerm =
