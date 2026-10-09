@@ -46,3 +46,5 @@ tests/test_rel_elab
 src/staging/bench_typeo
 src/staging/modeinfer
 src/staging/stage_typeo
+src/staging/relcompile
+src/staging/test_compiled_typeo
