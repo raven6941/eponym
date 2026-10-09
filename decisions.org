@@ -774,3 +774,20 @@
   Decision: =rel_elab_out.nim= (=elabo=, =inferoOut=) is the relational
   elaborator interface. #57 stages this, not the identity version.
   Consequences: #59 closed; exp59-elabo branch deleted unmerged.
+
+** #28 architecture: typed API over untrusted backend (2026-10-09)
+  Source: Wu & Xi 2017 ("Dependent Session Types", CONCUR) — curated to
+  notes/wu-xi-dependent-session-types-2017.org, with the reusable idea at
+  notes/typed-api-untyped-backend.org.
+  Their ATS-to-Erlang pipeline splits the implementation in two: a typed
+  session API (linear/dependent types checked) plus an untyped runtime
+  backend (does the message passing, not verified). The guarantee lives
+  at the boundary — well-typed API use cannot violate the protocol.
+  For #28 this is the target architecture: the Eponym session API
+  (protocol types checked at elaboration time) over plain Nim runtime
+  functions (unchecked). Protocol violations are compile errors; the
+  runtime is ordinary host code with zero type-system overhead. The
+  backend is trusted for liveness, not safety.
+  Companion reading: Toninho/Caires/Pfenning 2011 gives the logical
+  foundation (session types as linear logic, proof irrelevance to avoid
+  communicating proofs) — notes/toninho-caires-pfenning-dependent-session-types-2011.org.
