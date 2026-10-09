@@ -77,6 +77,11 @@ proc infero*(tm, ty, ctx: RTerm): Goal =
     let d = tm.tail.head; let c = tm.tail.tail.head
     return conj(checko(d, univTy(), ctx),
       conj(checko(c, univTy(), rpair(d, ctx)), `==`(ty, univTy())))
+  if tag == "vec":
+    # Vec(A,n) : univ if A:univ, n:Nat
+    let a = tm.tail.head; let n = tm.tail.tail.head
+    return conj(checko(a, univTy(), ctx),
+      conj(checko(n, natTy(), ctx), `==`(ty, univTy())))
   # lam, cons: need expected type
   return fail()
 
@@ -89,6 +94,10 @@ proc checko*(tm, ty, ctx: RTerm): Goal =
       if tagOf(ty) == "vec":
         return `==`(ty.tail.tail.head, zeroTm())
       return fail()
+    # Type formation (issue #59): nat, univ : univ. (The fragment keeps
+    # `? : ?`; universe hierarchy is issue #52.)
+    if tm.name == "nat": return `==`(ty, univTy())
+    if tm.name == "univ": return `==`(ty, univTy())
     return fail()
   let tag = tagOf(tm)
   if tag == "lam":
