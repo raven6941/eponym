@@ -24,6 +24,7 @@
 import tables
 import sequtils
 import strutils
+import sets
 import preterm
 import parse_surf
 import ett_init
@@ -896,11 +897,143 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
   # record for coverage checking (issue #32)
   dataInfos[d.dname] = d
 
+# --- Capture-avoiding PreTerm substitution ----------------------------------
+# Needed by issue #32 (indexed clause defs): instantiating the motive and
+# refining scrutinee index variables per constructor must not capture
+# user-written binders.
+
+proc freeVarsPreAux(t: PreTerm, bound: var HashSet[string],
+                    acc: var HashSet[string]) =
+  case t.kind
+  of pkVar:
+    if t.name notin bound: acc.incl(t.name)
+  of pkApp, pkPair, pkAnn:
+    freeVarsPreAux(t.c1, bound, acc)
+    freeVarsPreAux(t.c2, bound, acc)
+  of pkPi, pkLam, pkSigma:
+    if not t.c1.isNil: freeVarsPreAux(t.c1, bound, acc)
+    let shadowed = t.name in bound
+    bound.incl(t.name)
+    freeVarsPreAux(t.c2, bound, acc)
+    if not shadowed: bound.excl(t.name)
+  of pkFst, pkSnd:
+    freeVarsPreAux(t.c1, bound, acc)
+  of pkLet:
+    if not t.c1.isNil: freeVarsPreAux(t.c1, bound, acc)
+    freeVarsPreAux(t.c2, bound, acc)
+    let shadowed = t.name in bound
+    bound.incl(t.name)
+    freeVarsPreAux(t.c3, bound, acc)
+    if not shadowed: bound.excl(t.name)
+  else: discard
+
+proc freeVarsPre(t: PreTerm): HashSet[string] =
+  result = initHashSet[string]()
+  var bound = initHashSet[string]()
+  freeVarsPreAux(t, bound, result)
+
+proc allNamesPreAux(t: PreTerm, acc: var HashSet[string]) =
+  ## Every variable and binder name in the term (over-approximation,
+  ## for picking fresh names).
+  case t.kind
+  of pkVar:
+    acc.incl(t.name)
+  of pkPi, pkLam, pkSigma, pkLet:
+    if t.name.len > 0: acc.incl(t.name)
+    if not t.c1.isNil: allNamesPreAux(t.c1, acc)
+    allNamesPreAux(t.c2, acc)
+    if t.kind == pkLet and not t.c3.isNil: allNamesPreAux(t.c3, acc)
+  of pkApp, pkPair, pkAnn:
+    allNamesPreAux(t.c1, acc)
+    allNamesPreAux(t.c2, acc)
+  of pkFst, pkSnd:
+    allNamesPreAux(t.c1, acc)
+  else: discard
+
+proc allNamesPre(t: PreTerm): HashSet[string] =
+  result = initHashSet[string]()
+  allNamesPreAux(t, result)
+
+proc substPre(t: PreTerm, name: string, repl: PreTerm,
+              fresh: var int): PreTerm =
+  ## Capture-avoiding substitution of free variable `name` by `repl`.
+  ## `fresh` supplies suffixes when a binder must be renamed to avoid
+  ## capturing free variables of `repl`.
+  case t.kind
+  of pkVar:
+    if t.name == name: repl else: t
+  of pkApp:
+    mkApp(substPre(t.c1, name, repl, fresh),
+          substPre(t.c2, name, repl, fresh), t.loc)
+  of pkPi, pkLam, pkSigma:
+    let d = if t.c1.isNil: nil else: substPre(t.c1, name, repl, fresh)
+    if t.name == name or t.name.len == 0:
+      # shadowed (or anonymous): the body cannot mention `name`
+      case t.kind
+      of pkPi: mkPi(t.name, d, t.c2, t.loc, t.impl, t.erased)
+      of pkLam: mkLam(t.name, d, t.c2, t.loc, t.impl, t.erased)
+      else: mkSigma(t.name, d, t.c2, t.loc, t.erased)
+    else:
+      var bname = t.name
+      var body = t.c2
+      if bname in freeVarsPre(repl):
+        bname = bname & "'" & $fresh
+        inc fresh
+        body = substPre(t.c2, t.name, mkVar(bname, t.loc), fresh)
+      body = substPre(body, name, repl, fresh)
+      case t.kind
+      of pkPi: mkPi(bname, d, body, t.loc, t.impl, t.erased)
+      of pkLam: mkLam(bname, d, body, t.loc, t.impl, t.erased)
+      else: mkSigma(bname, d, body, t.loc, t.erased)
+  of pkPair:
+    mkPair(substPre(t.c1, name, repl, fresh),
+           substPre(t.c2, name, repl, fresh), t.loc)
+  of pkFst:
+    mkFst(substPre(t.c1, name, repl, fresh), t.loc)
+  of pkSnd:
+    mkSnd(substPre(t.c1, name, repl, fresh), t.loc)
+  of pkLet:
+    let ann = if t.c1.isNil: nil else: substPre(t.c1, name, repl, fresh)
+    let v = substPre(t.c2, name, repl, fresh)
+    if t.name == name or t.name.len == 0:
+      mkLet(t.name, ann, v, t.c3, t.loc)
+    else:
+      var bname = t.name
+      var body = t.c3
+      if bname in freeVarsPre(repl):
+        bname = bname & "'" & $fresh
+        inc fresh
+        body = substPre(t.c3, t.name, mkVar(bname, t.loc), fresh)
+      body = substPre(body, name, repl, fresh)
+      mkLet(bname, ann, v, body, t.loc)
+  of pkAnn:
+    mkAnn(substPre(t.c1, name, repl, fresh),
+          substPre(t.c2, name, repl, fresh), t.loc)
+  else:
+    t
+
+proc substPreN(t: PreTerm, subs: seq[(string, PreTerm)],
+               fresh: var int): PreTerm =
+  ## Apply a list of substitutions in order.
+  result = t
+  for (n, r) in subs:
+    result = substPre(result, n, r, fresh)
+
+proc substPreSeq(ts: seq[PreTerm], subs: seq[(string, PreTerm)],
+                 fresh: var int): seq[PreTerm] =
+  result = @[]
+  for t in ts:
+    result.add(substPreN(t, subs, fresh))
+
 # --- Issue #32: clause-style definitions --------------------------------------
 # `def name : Ty` with `| pat1 .. patn = rhs` clauses, compiled to an
-# eliminator application. MVP: scrutinee is the first explicit argument
+# eliminator application. The scrutinee is the first explicit argument
 # whose type is a data type; patterns are variables or constructor
-# applications (no nesting); recursive calls become IH applications.
+# applications (no nesting, no catch-all yet); recursive calls become IH
+# applications. Indexed families are supported: the scrutinee's type may
+# be `D params idxs...` with variable indices; the motive abstracts over
+# the indices and each method refines them to the constructor's return
+# indices.
 
 proc scrutineeDataName(ty: PreTerm,
                        dataInfos: Table[string, SurfDecl]): string =
@@ -1072,7 +1205,7 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
     let (isCtor, headName, _) = patHeadName(cl.pats[0], ctorNames)
     if not isCtor:
       raise elabErr(cl.cloc, "first pattern must be a constructor pattern " &
-        "(MVP: no variable/catch-all patterns)")
+        "(no variable/catch-all patterns yet)")
     if headName notin ctorNames:
       raise elabErr(cl.cloc, "'" & headName & "' is not a constructor of '" &
         dataName & "'")
@@ -1087,37 +1220,118 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
       raise elabErr(loc, "missing case for constructor '" & ctor.name &
         "' of '" & dataName & "'")
   # 4. Build the eliminator application as a PreTerm, then elaborate as a def.
-  #    MVP: non-indexed data type, scrutinee is the first explicit argument.
-  #    Type: Pi (x0:D) (x1:T1)...(xn:Tn). Ret
-  #    Def:  proc name (x0:D) (x1:T1)...(xn:Tn) : Ret =
-  #            elimD C m_0 ... m_(k-1) x0 x1 ... xn
+  #    Supports indexed families: the scrutinee's type may be
+  #    `D params idxs...` with variable indices.
+  #    Motive C := lam (i0:Idx0)... . lam (_:D params i0..). Pi (rest...). Ret[i:=idx]
+  #    Def:  proc name ... =
+  #            elimD params C m_0 ... m_(k-1) idxs... x_s rest...
+  #    The motive's trailing Pi and the methods' rest lambdas are all
+  #    explicit (the elaborator rejects explicit application to an implicit
+  #    Pi); the user-facing proc type keeps the declared implicit flags.
   var tele: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
   var tcur = cd.ty
   while tcur.kind == pkPi:
     tele.add((tcur.name, tcur.c1, tcur.impl))
     tcur = tcur.c2
   let retTy = tcur
-  # Find scrutinee position (first explicit)
+  # Binder hygiene: the compiler generates references to telescope binders
+  # (scrutinee, rest args) by name, so duplicate names would misresolve.
+  # "_" binders (from `->`) are unreferenceable — `_` parses as a hole —
+  # so freshening them is semantics-preserving and needs no substitution.
+  # Any other duplicate is rejected with a clear error.
+  var seenTele = initHashSet[string]()
+  var freshTele = 0
+  for i in 0 ..< tele.len:
+    let bn = tele[i].name
+    if bn.len == 0 or bn == "_":
+      if bn in seenTele:
+        var nn = "_'c" & $freshTele
+        inc freshTele
+        while nn in seenTele:
+          nn = "_'c" & $freshTele
+          inc freshTele
+        tele[i].name = nn
+      seenTele.incl(tele[i].name)
+    else:
+      if bn in seenTele:
+        raise elabErr(loc, "'def' clauses: duplicate binder name '" & bn &
+          "' in the type; rename one of them")
+      seenTele.incl(bn)
+  # Find scrutinee position (first explicit argument)
   var sPos = -1
   for i, b in tele:
     if not b.impl:
       sPos = i
       break
-  if sPos != 0:
-    raise elabErr(loc, "'def' clauses MVP: scrutinee must be the first " &
-      "explicit argument (found at position " & $sPos & ")")
-  # Check non-indexed: domain must be exactly `D` (a variable)
-  let dom0 = tele[0].ty
-  if dom0.kind != pkVar or dom0.name != dataName:
-    raise elabErr(loc, "'def' clauses MVP: only non-indexed data types " &
-      "supported")
-  let x0name = if tele[0].name.len > 0: tele[0].name else: "x0"
-  # Build motive C := lam (_:D). Pi (x1:T1)...(xn:Tn). Ret
-  var cBody = retTy
-  for i in countdown(tele.high, 1):
-    let bn = if tele[i].name.len > 0: tele[i].name else: "x" & $i
-    cBody = mkPi(bn, tele[i].ty, cBody, loc, tele[i].impl)
-  let motive = mkLam("_motive", dom0, cBody, loc)
+  if sPos < 0:
+    raise elabErr(loc, "'def' clauses need at least one explicit argument " &
+      "(the scrutinee)")
+  # Scrutinee domain analysis: `D params... idxs...`
+  let domS = tele[sPos].ty
+  let domSpine = flattenAppSpine(domS)
+  if domSpine.len == 0 or domSpine[0].kind != pkVar or
+     domSpine[0].name != dataName:
+    raise elabErr(loc, "scrutinee type must be '" & dataName &
+      "' applied to parameters and indices")
+  let (indexTele, _) = flattenPiPre(dataDecl.indexTy)
+  let nParams = dataDecl.params.len
+  if domSpine.len - 1 != nParams + indexTele.len:
+    raise elabErr(loc, "scrutinee type must apply '" & dataName & "' to " &
+      $nParams & " parameter(s) and " & $indexTele.len & " index/indices")
+  var paramTerms: seq[PreTerm] = @[]
+  for i in 1 .. nParams:
+    paramTerms.add(domSpine[i])
+  var scrIdxTerms: seq[PreTerm] = @[]
+  var scrIdxVars: seq[string] = @[]
+  for i in 1 + nParams ..< domSpine.len:
+    let t = domSpine[i]
+    if t.kind != pkVar:
+      raise elabErr(loc, "'def' clauses: scrutinee index must be a " &
+        "variable (found '" & $t & "')")
+    if t.name in scrIdxVars:
+      raise elabErr(loc, "'def' clauses: duplicate scrutinee index " &
+        "variable '" & t.name & "'")
+    scrIdxTerms.add(t)
+    scrIdxVars.add(t.name)
+  # Parameter substitution: data-decl param names := actual param terms
+  # (from the scrutinee's type; identity in the common case where the
+  # def type binds the same names).
+  var paramSubst: seq[(string, PreTerm)] = @[]
+  for i, p in dataDecl.params:
+    paramSubst.add((p.name, paramTerms[i]))
+  var fresh = 0
+  # Fresh motive index binder names, avoiding every name in sight.
+  var usedNames = allNamesPre(cd.ty)
+  for cl0 in cd.clauses:
+    for p in cl0.pats: usedNames = usedNames + allNamesPre(p)
+    usedNames = usedNames + allNamesPre(cl0.rhs)
+  for ctor0 in dataDecl.ctors:
+    for t in ctor0.tele: usedNames = usedNames + allNamesPre(t.ty)
+    usedNames = usedNames + allNamesPre(ctor0.retTy)
+  var motiveIdxNames: seq[string] = @[]
+  for i in 0 ..< indexTele.len:
+    var nm = "midx" & $i
+    while nm in usedNames:
+      nm = "midx" & $i & "_" & $fresh
+      inc fresh
+    usedNames.incl(nm)
+    motiveIdxNames.add(nm)
+  # Build motive C := lam (i0:Idx0)... . lam (_:D params i0..). cBody
+  # where cBody = Pi (rest...). Ret with scrutinee index vars := i0...
+  var midxSubst: seq[(string, PreTerm)] = @[]
+  for j, v in scrIdxVars:
+    midxSubst.add((v, mkVar(motiveIdxNames[j], loc)))
+  var cBody = substPreN(retTy, midxSubst, fresh)
+  for ti in countdown(tele.high, sPos + 1):
+    let bn = if tele[ti].name.len > 0: tele[ti].name else: "x" & $ti
+    cBody = mkPi(bn, substPreN(tele[ti].ty, midxSubst, fresh), cBody, loc)
+  var scrTyMotive = mkVar(dataName, loc)
+  for pt in paramTerms: scrTyMotive = mkApp(scrTyMotive, pt, loc)
+  for mn in motiveIdxNames: scrTyMotive = mkApp(scrTyMotive, mkVar(mn, loc), loc)
+  var motive = mkLam("_motive", scrTyMotive, cBody, loc)
+  for j in countdown(motiveIdxNames.high, 0):
+    motive = mkLam(motiveIdxNames[j],
+                   substPreN(indexTele[j].ty, paramSubst, fresh), motive, loc)
   # Build methods, one per constructor (in dataDecl order)
   var methods: seq[PreTerm] = @[]
   for ctor in dataDecl.ctors:
@@ -1127,93 +1341,132 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
     if patArgs.len != ctor.tele.len:
       raise elabErr(cl.cloc, "constructor '" & ctor.name & "' takes " &
         $ctor.tele.len & " arguments but pattern has " & $patArgs.len)
-    # Pattern arg names (must be variables for MVP)
+    # Pattern arg names (must be variables; no nested patterns yet)
     var argNames: seq[string] = @[]
     for pa in patArgs:
       if pa.kind != pkVar:
-        raise elabErr(cl.cloc, "'def' clauses MVP: constructor arguments " &
+        raise elabErr(cl.cloc, "'def' clauses: constructor arguments " &
           "must be variables (no nested patterns)")
       argNames.add(pa.name)
-    # Remaining patterns must be variables
-    var restNames: seq[string] = @[]
-    for i in 1 ..< cl.pats.len:
-      if cl.pats[i].kind != pkVar:
-        raise elabErr(cl.cloc, "'def' clauses MVP: non-scrutinee patterns " &
-          "must be variables")
-      restNames.add(cl.pats[i].name)
+    # Remaining patterns must be variables; collect explicit rest names
+    var restPatNames: seq[string] = @[]
+    var seenPats = initHashSet[string]()
+    for pn in argNames:
+      if pn in seenPats:
+        raise elabErr(cl.cloc, "duplicate pattern variable '" & pn & "'")
+      seenPats.incl(pn)
+    var pi = 1
+    for ti in sPos + 1 .. tele.high:
+      if not tele[ti].impl:
+        if cl.pats[pi].kind != pkVar:
+          raise elabErr(cl.cloc, "'def' clauses: non-scrutinee patterns " &
+            "must be variables")
+        if cl.pats[pi].name in seenPats:
+          raise elabErr(cl.cloc, "duplicate pattern variable '" &
+            cl.pats[pi].name & "'")
+        seenPats.incl(cl.pats[pi].name)
+        restPatNames.add(cl.pats[pi].name)
+        inc pi
+    # Pattern variables must not shadow other telescope binders (the
+    # method body rebinds rest implicits by their tele names, so a
+    # colliding pattern variable would be silently misread).
+    for ti, b in tele:
+      if ti != sPos and b.name.len > 0 and b.name in seenPats and
+         b.name notin restPatNames:
+        raise elabErr(cl.cloc, "pattern variable '" & b.name &
+          "' shadows argument '" & b.name & "'; rename the pattern variable")
+    # Name substitution: constructor tele names := pattern names
+    var nameSubst: seq[(string, PreTerm)] = @[]
+    for i, tn in ctor.tele:
+      nameSubst.add((tn.name, mkVar(argNames[i], loc)))
+    # Constructor return indices, with params and tele names substituted
+    var retIdx = substPreSeq(extractIndices(ctor.retTy, dataName, nParams,
+                                            ctor.cloc), paramSubst, fresh)
+    retIdx = substPreSeq(retIdx, nameSubst, fresh)
+    # Index refinement for this method: scrutinee idx vars := ret indices
+    var idxSubst: seq[(string, PreTerm)] = @[]
+    for j, v in scrIdxVars:
+      idxSubst.add((v, retIdx[j]))
+    # Constructor argument types with params/names substituted
+    var argTys: seq[PreTerm] = @[]
+    for te in ctor.tele:
+      argTys.add(substPreN(substPreN(te.ty, paramSubst, fresh),
+                           nameSubst, fresh))
     # Build method body: lam (args...). lam (ihs...). lam (rest...). rhs'
-    var rhs = cl.rhs
-    # Identify recursive args and their IH names
-    var ihNames: Table[string, string] = initTable[string, string]()
+    var rhs = substPreN(cl.rhs, idxSubst, fresh)
+    # Identify recursive args and their IH names/types
+    var ihTys: seq[PreTerm] = @[]
     var ihCount = 0
     for ti, te in ctor.tele:
       if mentionsFam(te.ty, dataName):
         let ihN = "ih" & $ihCount
-        ihNames[argNames[ti]] = ihN
+        if ihN in seenPats:
+          raise elabErr(cl.cloc, "pattern variable '" & ihN &
+            "' clashes with a generated induction hypothesis name; " &
+            "rename the pattern variable")
+        var argIdx = substPreSeq(extractIndices(te.ty, dataName, nParams,
+                                                ctor.cloc), paramSubst, fresh)
+        argIdx = substPreSeq(argIdx, nameSubst, fresh)
+        # IH type: the motive tail with index binders := this arg's indices
+        var ihTy = cBody
+        for j, mn in motiveIdxNames:
+          ihTy = substPre(ihTy, mn, argIdx[j], fresh)
+        ihTys.add(ihTy)
         inc ihCount
         # Replace recursive calls on this variable
         rhs = replaceRecCalls(rhs, cd.name, argNames[ti], ihN)
     # Issue #36: any self-reference surviving IH-rewriting is a
     # non-structural recursive call — reject with a termination error.
     checkClauseTermination(rhs, cd.name, cl.cloc)
-    # Build the lambda nest: args, then IHs (in tele order, IH after its var),
-    # then rest args
+    # Build the lambda nest: args, then IHs (in tele order, IH after its
+    # var), then rest args. Rest lambdas are explicit to match the
+    # all-explicit motive tail.
     var body = rhs
-    # rest args (reverse order for nesting)
-    for i in countdown(restNames.high, 0):
-      let ri = i + 1  # tele index (0 is scrutinee)
-      body = mkLam(restNames[i], tele[ri].ty, body, loc)
-    # constructor args and IHs (reverse order)
-    # We need to interleave: for each tele var in reverse, add IH then var
-    # But IHs were numbered in forward order. Let's rebuild carefully.
-    var ihIdx = ihCount - 1
+    var rpi = 0
+    for ti in countdown(tele.high, sPos + 1):
+      var bn: string
+      if tele[ti].impl:
+        bn = if tele[ti].name.len > 0: tele[ti].name else: "x" & $ti
+      else:
+        bn = restPatNames[rpi]
+        inc rpi
+      let bty = substPreN(substPreN(tele[ti].ty, paramSubst, fresh),
+                          idxSubst, fresh)
+      body = mkLam(bn, bty, body, loc)
+    # constructor args and IHs (reverse order, IH after its var)
     for ti in countdown(ctor.tele.high, 0):
       if mentionsFam(ctor.tele[ti].ty, dataName):
-        # IH for this var; find its name (numbered in forward order)
-        # Forward order index: count of recursive vars before ti
+        # IH for this var; IHs were numbered in forward order
         var fwdIdx = 0
         for tj in 0 ..< ti:
           if mentionsFam(ctor.tele[tj].ty, dataName): inc fwdIdx
-        let ihN = "ih" & $fwdIdx
-        # IH type: C arg = Pi(rest...). Ret with arg substituted
-        # For MVP non-indexed: C = lam _. Pi(rest...).Ret, so C arg = Pi(rest...).Ret
-        # We need the type for the lambda binder; use cBody with arg substituted?
-        # Simpler: use `mkApp(motive, mkVar(argNames[ti], loc), loc)` and let
-        # elaboration infer. Actually for a lam binder we need a type annotation.
-        # Use the instantiated motive.
-        var ihTy = mkApp(mkVar("_motive", loc), mkVar(argNames[ti], loc), loc)
-        # But _motive isn't in scope. Instead, inline cBody with substitution.
-        # For MVP: cBody doesn't mention the scrutinee (non-dependent motive),
-        # so ihTy = cBody.
-        ihTy = cBody
-        body = mkLam(ihN, ihTy, body, loc)
-      body = mkLam(argNames[ti], ctor.tele[ti].ty, body, loc)
+        body = mkLam("ih" & $fwdIdx, ihTys[fwdIdx], body, loc)
+      body = mkLam(argNames[ti], argTys[ti], body, loc)
     methods.add(body)
-  # Build the full application: elimD C m_0 ... m_(k-1) x0 x1 ... xn
+  # Build the full application:
+  #   elimD params... C m_0 ... m_(k-1) idxs... x_s rest...
   var app = mkVar(elimName, loc)
-  # Data params: for non-indexed, from dataDecl.params — but they're implicit
-  # in the eliminator type? Check genElimTy: Pi (params...) explicitly.
-  # We need to supply them. For Nat (no params), nothing. For Vec (has params),
-  # we'd need them, but we're MVP non-indexed... Vec IS indexed. So for now,
-  # if there are params, we have a problem. Let's require no params for MVP.
-  if dataDecl.params.len > 0:
-    raise elabErr(loc, "'def' clauses MVP: data types with parameters not " &
-      "yet supported")
+  for i, p in dataDecl.params:
+    if not p.impl:
+      app = mkApp(app, paramTerms[i], loc)
+    # implicit params: the elaborator inserts metas, solved by unification
+    # against the motive/method types below
   app = mkApp(app, motive, loc)
   for m in methods: app = mkApp(app, m, loc)
-  # Apply to all explicit args: x0, x1, ..., xn
-  # x0 is the scrutinee variable; x1..xn are the rest
-  # We need fresh names for the proc telescope
+  for it in scrIdxTerms: app = mkApp(app, it, loc)
   var procTele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]] = @[]
-  var argVars: seq[string] = @[]
+  var restVars: seq[string] = @[]
   for i, b in tele:
     let bn = if b.name.len > 0: b.name else: "x" & $i
-    # Skip implicits? The proc syntax supports them. Keep them.
+    # The proc syntax supports implicits; keep them.
     procTele.add((bn, b.ty, b.impl, false))
-    if not b.impl:
-      argVars.add(bn)
-  for av in argVars:
-    app = mkApp(app, mkVar(av, loc), loc)
+    if i > sPos:
+      restVars.add(bn)
+  # scrutinee first, then the remaining telescope in order
+  # (implicit rest args applied explicitly: the motive tail is all-explicit)
+  app = mkApp(app, mkVar(procTele[sPos].name, loc), loc)
+  for rv in restVars:
+    app = mkApp(app, mkVar(rv, loc), loc)
   # Build the SurfDef and elaborate
   let sdef = SurfDef(name: cd.name, tele: procTele, retTy: retTy, body: app,
                      loc: loc)
@@ -1686,6 +1939,31 @@ proc four : Nat = add two two
     else: -1000
   assert sucDepth2(fourV) == 4, "clause-defined add should compute 2+2=4"
   echo "ok: clause-defined add computes (add two two = 4)"
+  # Regression: `->` types give every binder the name `_`; the clause
+  # compiler must not resolve all of them to the innermost one
+  # (add two three was silently computing add three three = 6).
+  let add23Defs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+proc two : Nat = suc (suc zero)
+proc three : Nat = suc (suc (suc zero))
+proc five : Nat = add two three
+""")
+  let fiveV = eval(add23Defs[3].tmTm, @[])
+  let twoTm3 = add23Defs[1].tmTm
+  let sucId3 = twoTm3.fn.refId
+  proc sucDepth3(v: Value): int =
+    if v.whnfKind == wRef and v.whnfRefId == sucId3 and v.whnfSpineLen == 1:
+      1 + sucDepth3(v.whnfSpineArg(0))
+    elif v.whnfKind == wRef and v.whnfSpineLen == 0:
+      0
+    else: -1000
+  assert sucDepth3(fiveV) == 5, "add two three should be 5"
+  echo "ok: clause-defined add distinguishes its arguments (add 2 3 = 5)"
 
   # Coverage error
   try:
@@ -1716,6 +1994,79 @@ def bad : Nat -> Nat
   except ElabError as e:
     assert "overlapping clauses" in e.msg
     echo "ok: overlapping clauses are a located error"
+
+  # --- Issue #32: indexed patterns ------------------------------------
+  # vappend over Vec: the scrutinee's index is refined per constructor
+  # (nil: m := zero, cons: m := suc k); the motive abstracts over the index.
+  let vappendDefs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+def vappend : Pi {A : ?}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n
+  -> Vec A (add m n)
+| nil ys = ys
+| (cons k x xs) ys = cons A (add k n) x (vappend xs ys)
+proc v123 : Vec Nat (suc (suc (suc zero))) =
+  vappend (cons Nat zero zero (nil Nat))
+          (cons Nat (suc zero) (suc zero) (cons Nat zero zero (nil Nat)))
+""")
+  assert vappendDefs.len == 3
+  echo "ok: indexed clause defs (vappend) elaborate"
+  # vappend [0] [1,0] : Vec Nat 3 — must compute to [0,1,0].
+  # cons spine: [A, n, x, xs]; nil spine: [A].
+  let v123V = eval(vappendDefs[2].tmTm, @[])
+  proc vecElems(v: Value): seq[int] =
+    if v.whnfKind == wRef and v.whnfSpineLen == 4:
+      let x = v.whnfSpineArg(2)
+      var d = 0
+      var xv = x
+      while xv.whnfKind == wRef and xv.whnfSpineLen == 1:
+        inc d
+        xv = xv.whnfSpineArg(0)
+      assert xv.whnfKind == wRef and xv.whnfSpineLen == 0, "vec elem not a Nat lit"
+      @[d] & vecElems(v.whnfSpineArg(3))
+    elif v.whnfKind == wRef and v.whnfSpineLen == 1:
+      @[]
+    else:
+      assert false, "vappend result not a Vec value"
+      @[]
+  assert vecElems(v123V) == @[0, 1, 0], "vappend [0] [1,0] should be [0,1,0]"
+  echo "ok: clause-defined vappend computes ([0] ++ [1,0] = [0,1,0])"
+  # Index refinement is real: a RHS with the wrong index is rejected
+  # (here over Vec Nat so the element typechecks and only the index is wrong)
+  expectElabErr("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+def badAppend : Pi {m : Nat}. Pi {n : Nat}. Vec Nat m -> Vec Nat n
+  -> Vec Nat (add m n)
+| nil ys = cons Nat n zero ys
+| (cons k x xs) ys = cons Nat (add k n) x (badAppend xs ys)
+""", "not convertible")
+  # Pattern variable shadowing a telescope binder is a located error
+  expectElabErr("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+def badShadow : Pi {A : ?}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n -> Vec A n
+| nil ys = ys
+| (cons n x xs) ys = ys
+""", "shadows argument")
 
   # --- Issue #36: termination checking (structural recursion) --------
   # Corpus: terminating definitions accepted, non-terminating rejected.
