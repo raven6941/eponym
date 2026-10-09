@@ -1203,3 +1203,51 @@
   Lesson: the three-way was always available in bench_rel_elab.nim; #26's
   writeup emphasized staged-vs-unstaged and underreported staged-vs-direct.
   When a benchmark has multiple baselines, report all the ratios.
+
+** #57 generalization: full-fragment direct residual (2026-10-09)
+  Status: POSITIVE. The build-time generator now emits a direct-style
+  residual of elabo/4 + inferoOut/4 over the FULL surface fragment
+  (atoms zero/nil/nat/univ, var, suc, app, pi, vec, lam, cons), not just
+  Vec(Nat,N). New files: src/staging/gen_direct_elabo_full.nim (generator),
+  src/staging/gen_elabo_full.nim (emitted residual), tests/test_elabo_full_direct.nim
+  (32 differential checks), src/staging/bench_direct_elabo_full.nim.
+
+  Derivation rules (each emitted clause cites its source in rel_elab_out.nim):
+  - fresh vars bound by later premises become let-bindings in dependency order;
+  - `==` on ground terms becomes tag checks + rTermEq structural equality;
+  - `==` against a manifest skeleton becomes destructuring of the ground
+    expected type (elaboD keeps the host-side tag-dispatch restriction);
+  - app(lam(b),a): the relation checks lam against pi(d,c) with d,c free.
+    On the ground-answer fragment this is equivalent to inferring a's type
+    da then inferring b under da (elabo(b,c) with c free degrades to infer —
+    the lam/cons/nil clauses cannot fire without a manifest type head).
+  - Where the relation would return a non-ground answer (e.g. app(lam,nil)),
+    the residual returns none: direct-style code can only represent the
+    ground-answer fragment. This is a stated restriction, not a bug.
+
+  Differential correctness: 32/32 agree with the relations on verdict AND
+  elaborated term ($-equality), including the redex app(lam x. x, 0) in both
+  modes, var lookup, pi/vec formation, and 10 negative cases.
+
+  Benchmark (microseconds, best of 200; direct residual vs unstaged relational):
+    zero : Nat                              0.90 vs 10.82   (12.0x)
+    suc^8 : Nat                            26.63 vs 241.42   (9.1x)
+    lam x. x : Pi Nat Nat                   4.02 vs 51.99   (12.9x)
+    lam x. lam y. x                         6.88 vs 85.48   (12.4x)
+    cons^4 : Vec Nat 4                     76.20 vs 601.59    (7.9x)
+    app(lam x. x, 0) : Nat                  6.97 vs 125.33  (18.0x)
+    infer app(var 0, zero)                  4.33 vs 90.14   (20.8x)
+    infer Pi Nat Nat                        5.42 vs 114.34  (21.1x)
+    infer Vec Nat 2                        11.41 vs 175.55  (15.4x)
+    geometric mean: 13.7x
+
+  The speedup is uniform across the fragment (7.9x–21.1x), not an artifact
+  of Vec specialization: the relational overhead is per-node Goal/Stream
+  machinery, and removing it helps every clause equally. The infer-mode
+  cases show the largest ratios — inferoOut's fresh-variable plumbing is
+  pure overhead once the fragment is ground.
+
+  Remaining for #57/#26 closure: the end-to-end benchmark of the staged
+  elabo against checkTermElab on realistic programs (per the sequencing
+  note, the verdict that closes #26 must stage elabo, not just the checker).
+  The residual is now general enough to attempt that comparison.
