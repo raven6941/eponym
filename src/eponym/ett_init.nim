@@ -110,6 +110,7 @@ type
     of wPi, wSi:
       dom: Value
       tscope: ScoVal
+      qty: Quantity  # Issue #66: binder quantity, compared by conversion
     of wLam:
       lscope: ScoVal
     of wPair:
@@ -348,7 +349,7 @@ proc subst*(t: Term, depth: int, s: Term): Term =
     mkBinder(t.kind, subst(t.dom, depth, s),
              Scope(adv: t.scope.adv,
                    bdy: subst(t.scope.bdy, depth + 1, weaken(s))),
-             t.impl)
+             t.impl, t.qty)
   of tPair:
     tmPair(subst(t.pFst, depth, s), subst(t.pSnd, depth, s),
            t.pScope.adv, subst(t.pScope.bdy, depth + 1, weaken(s)))
@@ -376,7 +377,7 @@ proc absGo(t: Term, id: int, depth: int): Term =
   of tPi, tSi, tLam:
     mkBinder(t.kind, absGo(t.dom, id, depth),
              Scope(adv: t.scope.adv, bdy: absGo(t.scope.bdy, id, depth + 1)),
-             t.impl)
+             t.impl, t.qty)
   of tPair:
     tmPair(absGo(t.pFst, id, depth), absGo(t.pSnd, id, depth),
            t.pScope.adv, absGo(t.pScope.bdy, id, depth + 1))
@@ -405,7 +406,7 @@ proc substEnv(t: Term, env: seq[Value], depth: int): Term =
   of tPi, tSi, tLam:
     mkBinder(t.kind, substEnv(t.dom, env, depth),
              Scope(adv: t.scope.adv, bdy: substEnv(t.scope.bdy, env, depth + 1)),
-             t.impl)
+             t.impl, t.qty)
   of tPair:
     tmPair(substEnv(t.pFst, env, depth), substEnv(t.pSnd, env, depth),
            t.pScope.adv, substEnv(t.pScope.bdy, env, depth + 1))
@@ -432,7 +433,7 @@ proc weakenAt(t: Term, depth: int): Term =
   of tPi, tSi, tLam:
     mkBinder(t.kind, weakenAt(t.dom, depth),
              Scope(adv: t.scope.adv, bdy: weakenAt(t.scope.bdy, depth + 1)),
-             t.impl)
+             t.impl, t.qty)
   of tPair:
     tmPair(weakenAt(t.pFst, depth), weakenAt(t.pSnd, depth),
            t.pScope.adv, weakenAt(t.pScope.bdy, depth + 1))
@@ -463,7 +464,7 @@ proc substSpine*(t: Term, spine: seq[Term]): Term =
     let sp = @[vv(0)] & spine.mapIt(weaken(it))
     mkBinder(t.kind, substSpine(t.dom, spine),
              Scope(adv: t.scope.adv, bdy: substSpine(t.scope.bdy, sp)),
-             t.impl)
+             t.impl, t.qty)
   of tPair:
     let sp = @[vv(0)] & spine.mapIt(weaken(it))
     tmPair(substSpine(t.pFst, spine), substSpine(t.pSnd, spine),
@@ -580,8 +581,8 @@ proc evalWhnf(t: Term, env: seq[Value]): Whnf =
   of tC: Whnf(kind: wConst, c: t.c)
   of tInt: Whnf(kind: wInt, intVal: t.intVal)
   of tPrim: Whnf(kind: wPrim, op: t.primOp, pargs: @[])
-  of tPi: Whnf(kind: wPi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env))
-  of tSi: Whnf(kind: wSi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env))
+  of tPi: Whnf(kind: wPi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env), qty: t.qty)
+  of tSi: Whnf(kind: wSi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env), qty: t.qty)
   of tLam: Whnf(kind: wLam, lscope: evalScope(t.scope, env))
   of tPair: Whnf(kind: wPair, fstV: eval(t.pFst, env), sndV: eval(t.pSnd, env))
   of tApp: applyWhnf(eval(t.fn, env), eval(t.arg, env))
@@ -613,12 +614,12 @@ proc vPrim*(op: PrimOp, ty: Term): Value =
   ## A primitive Int operation, accumulating args (Experiment 11).
   Value(syn: tmPrim(op, ty), whnf: Whnf(kind: wPrim, op: op, pargs: @[]))
 
-proc vPi(dom: Value, sc: ScoVal): Value =
-  Value(syn: tmPi(dom.syn, sc.syn.adv, sc.syn.bdy),
-        whnf: Whnf(kind: wPi, dom: dom, tscope: sc))
-proc vSi(dom: Value, sc: ScoVal): Value =
-  Value(syn: tmSi(dom.syn, sc.syn.adv, sc.syn.bdy),
-        whnf: Whnf(kind: wSi, dom: dom, tscope: sc))
+proc vPi(dom: Value, sc: ScoVal, qty = qOmega): Value =
+  Value(syn: tmPi(dom.syn, sc.syn.adv, sc.syn.bdy, false, false, qty),
+        whnf: Whnf(kind: wPi, dom: dom, tscope: sc, qty: qty))
+proc vSi(dom: Value, sc: ScoVal, qty = qOmega): Value =
+  Value(syn: tmSi(dom.syn, sc.syn.adv, sc.syn.bdy, false, false, qty),
+        whnf: Whnf(kind: wSi, dom: dom, tscope: sc, qty: qty))
 
 proc vAbsurd(): Value =
   eval(tmPi(tStar(), "T", vv(0)), @[])   # Pi(T:? ). T, as in the paper
@@ -676,6 +677,11 @@ proc structuralEq(s: var Supply, a, b: Value) =
     if a.whnf.c != b.whnf.c:
       raise newException(ValueError, "constant mismatch")
   of wPi, wSi:
+    if a.whnf.qty != b.whnf.qty:
+      raise newException(ValueError, "quantity mismatch: " & $a.whnf.qty &
+        " vs " & $b.whnf.qty)  # Issue #66: Pi/Sigma binder quantities are
+                               # part of the type; (1 x : A) -> B is not
+                               # convertible with (ω x : A) -> B
     structuralEq(s, a.whnf.dom, b.whnf.dom)
     let x = freshPara(s, a.whnf.dom)
     structuralEq(s, a.whnf.tscope.fn(x), b.whnf.tscope.fn(x))
@@ -760,7 +766,7 @@ proc infer(s: var Supply, t: Term): Value =
     let ranV = infer(s, instantiate(t.scope, x))
     let asc = abstractR(x.syn.refId, t.scope.adv, ranV.syn)
     vPi(domV, ScoVal(syn: asc,
-                     fn: proc(v: Value): Value = eval(asc.bdy, @[v])))
+                     fn: proc(v: Value): Value = eval(asc.bdy, @[v])), t.qty)
   of tApp:
     let fty = infer(s, t.fn)
     let (dom, sc) = isPi(fty)

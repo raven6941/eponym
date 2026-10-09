@@ -18,6 +18,24 @@ type
     q1      # linear (Issue #64; must be used exactly once)
     qOmega  # unrestricted (default)
 
+  Qty* = object
+    ## Surface binder quantity (Issue #66): a concrete quantity or a
+    ## quantity variable. A variable is solved by elaboration from the
+    ## bound variable's uses (0 -> q0, 1 -> q1, 2+ -> qOmega); the core
+    ## language (ett_init) only ever sees concrete quantities.
+    case isVar*: bool
+    of true: vname*: string
+    of false: q*: Quantity
+
+converter toQty*(q: Quantity): Qty =
+  ## Lets existing `qOmega`/`q0`/`q1` literals flow into Qty positions.
+  Qty(isVar: false, q: q)
+
+proc qtyVar*(name: string): Qty =
+  ## A quantity variable (surface syntax `(q x : A)`).
+  Qty(isVar: true, vname: name)
+
+type
   PreKind* = enum
     pkVar, pkUniv,                 # x, ?
     pkUnitTy, pkUnitV, pkEmptyTy,  # 1, <>, O
@@ -34,7 +52,7 @@ type
     name*: string     # pkVar name; binder name for pkPi/pkSigma/pkLam/pkLet
     impl*: bool       # pkPi/pkLam: implicit binder (Experiment 3)
     erased*: bool     # pkPi/pkLam/pkSigma: erased binder (Experiment 9)
-    qty*: Quantity   # pkPi/pkLam: binder quantity (Issue #64; default qOmega)
+    qty*: Qty         # pkPi/pkLam: binder quantity (Issue #64; default qOmega)
     intVal*: int      # pkInt: the literal value (Experiment 11)
     c1*: PreTerm      # Pi/Sig: dom; Lam: binder type (may be nil); App: fn
                       # Pair: first; Fst/Snd: target; Let: annotation (may be nil)
@@ -44,6 +62,27 @@ type
     c3*: PreTerm      # Let: body
 
 const noLoc* = Loc(line: 0, col: 0)
+
+# --- quantity semiring (Issue #66) --------------------------------------
+# Quantities form a semiring: 0 (erased), 1 (linear), ω (unrestricted).
+# Addition: how quantities combine when contexts merge.
+# Multiplication: how quantities scale under substitution.
+
+proc qadd*(a, b: Quantity): Quantity =
+  ## 0 is identity; 1+1=ω (using linear twice makes it unrestricted).
+  if a == q0: b
+  elif a == qOmega: qOmega
+  else: # a == q1
+    if b == q0: q1
+    else: qOmega
+
+proc qmul*(a, b: Quantity): Quantity =
+  ## 0 annihilates; 1 is identity; ω*0=0, ω*q=ω for q≠0.
+  if a == q0: q0
+  elif a == q1: b
+  else: # a == qOmega
+    if b == q0: q0
+    else: qOmega
 
 # --- constructors ----------------------------------------------------
 
@@ -58,14 +97,14 @@ proc mkUnitV*(loc = noLoc): PreTerm =
 proc mkEmptyTy*(loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkEmptyTy)
 proc mkPi*(binder: string, dom, cod: PreTerm, loc = noLoc,
-           impl = false, erased = false, qty = qOmega): PreTerm =
+           impl = false, erased = false, qty: Qty = qOmega): PreTerm =
   PreTerm(loc: loc, kind: pkPi, name: binder, impl: impl, erased: erased,
           qty: qty, c1: dom, c2: cod)
 proc mkArrow*(dom, cod: PreTerm, loc = noLoc): PreTerm =
   ## Non-dependent function type; renders as `dom -> cod`.
   mkPi("_", dom, cod, loc)
 proc mkLam*(binder: string, ty, body: PreTerm, loc = noLoc,
-            impl = false, erased = false, qty = qOmega): PreTerm =
+            impl = false, erased = false, qty: Qty = qOmega): PreTerm =
   PreTerm(loc: loc, kind: pkLam, name: binder, impl: impl, erased: erased,
           qty: qty, c1: ty, c2: body)
 proc mkApp*(fn, arg: PreTerm, loc = noLoc): PreTerm =
@@ -87,6 +126,16 @@ proc mkHole*(loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkHole)
 proc mkInt*(n: int, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkInt, intVal: n)
+
+# --- quantity variables (Issue #66) --------------------------------------
+
+proc pretermHasQtyVar*(p: PreTerm): bool =
+  ## True if any Pi/Lambda binder in the preterm carries a quantity variable.
+  ## Used to select the quantity-first elaboration order (infer the body to
+  ## solve the variables, then elaborate the type).
+  if p.isNil: return false
+  if p.kind in {pkPi, pkLam} and p.qty.isVar: return true
+  pretermHasQtyVar(p.c1) or pretermHasQtyVar(p.c2) or pretermHasQtyVar(p.c3)
 
 # --- structural equality (ignores source locations) ------------------
 
@@ -154,7 +203,7 @@ type
     ## A surface definition: `def name (x1 : T1) ... : Ret = body`.
     ## Telescope entries may be implicit (`{x : T}`) or erased (`(0 x : T)`).
     name*: string
-    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]]
+    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]]
     retTy*: PreTerm
     body*: PreTerm
     loc*: Loc
@@ -163,7 +212,7 @@ type
   DataCtor* = object
     ## One constructor in a `data` declaration.
     name*: string
-    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]]
+    tele*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]]
     retTy*: PreTerm   # F params indices
     cloc*: Loc
   Clause* = object
@@ -195,7 +244,7 @@ type
       rloc*: Loc
     of dkData:
       dname*: string
-      params*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]]
+      params*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]]
       indexTy*: PreTerm  # indices -> ?  (e.g. Nat -> ?)
       ctors*: seq[DataCtor]
       daloc*: Loc

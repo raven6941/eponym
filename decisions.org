@@ -893,3 +893,217 @@
   matters — filed as follow-up, not done here.
   Consequences: issue #60 closed; =compileD=, =dLamVal= exported for
   drivers; bench imports fixed so the harness builds on main again.
+
+* 2026-10-09 — Issue #66: quantity-aware typing judgments (first enforcement)
+
+  Context: #64 delivered ETT + linear binders with a *post-elaboration*
+  usage checker (quantities don't affect the judgments). #66 integrates
+  quantities into the judgments themselves. Steps so far on =qtt-core=:
+  semiring (qadd/qmul), quantity-aware Ctx, and now in-judgment enforcement.
+
+  What was built:
+  - =enforceBinderQty= in elab.nim, called at both pkLam sites (inferTm and
+    checkTm). Raises ElabError at the *binder's* source location, e.g.
+    "linear variable 'ch' used 2 times (expected exactly once)" — vs the
+    post-pass's declaration-level "used more than once (index 1)".
+  - =countVarUses= (usage_check.nim): counts free occurrences of de Bruijn
+    index 0 in *term positions*. Binder domains and type annotations are
+    not descended into — in QTT, types are checked in the all-0 context,
+    so a type-level mention neither consumes a linear variable nor
+    violates erasure. This preserves the Experiment 9 tests
+    (=proc const (0 A : ?) (x : A) : A = x=, where A appears in an
+    annotation).
+  - The old post-pass had an off-by-one: it pushed the binder *before*
+    walking the domain, attributing outer-variable occurrences in domains
+    to the inner binder (false "used more than once" on
+    =lam (1 y : ?). lam (x : y). x=). The post-pass is rewritten to share
+    =countVarUses=, so the two checks agree by construction; it stays as
+    a backstop.
+
+  Deliberate non-goals / design calls:
+  - Pi binders are NOT enforced in-judgment. A postulate like
+    =Pi (1 ch : Chan s). ...= declares linearity enforced at *use sites*
+    (per the session-types example's own design); its codomain need not
+    mention the binder. Enforcing at pkPi would reject the example's
+    primitives.
+  - Bodies still mentioning unsolved metas (after zonk) skip the
+    in-judgment check — a hole may later solve to a use. The post-pass
+    re-checks at end of declaration, when metas are solved or reported.
+  - q0 in term position is an error, but q0 in types is fine (the QTT
+    answer to "if a type mentions a linear variable, how is that
+    counted?"). Full quantity polymorphism and conversion-respecting
+    quantities remain open (acceptance criteria).
+
+  Verification: 5 new elab tests (use-once ok; twice/not-used/erased-use
+  rejected with binder locations; linear Pi not enforced); full CI matrix
+  green (fuzz_soundness failure is pre-existing on main — stale
+  staging/stage_typeo module path from the src reorg, unrelated).
+
+* 2026-10-09 — Issue #66: quantities are part of types (conversion respects binders)
+
+  Context: continuation of the #66 acceptance criterion
+  "(1 x : A) -> B is not convertible with (ω x : A) -> B". Previously
+  quantities were carried on syntax but erased before conversion, so a
+  linear function type was convertible with an unrestricted one.
+
+  What was built (initial encoding, =ett_init.nim=):
+  - =Whnf= gains =qty: Quantity= on =wPi=/=wSi=; every =Term= traversal
+    (=subst=, =absGo=, =substEnv=, =weakenAt=, =substSpine=) threads the
+    binder quantity through, and evaluation preserves it (=tPi=/=tSi=
+    whnf construction, =vPi=/=vSi= defaulting to =qOmega= for hand-built
+    values, =infer= passing the binder's qty).
+  - =structuralEq= on =wPi=/=wSi= now raises "quantity mismatch: qOmega
+    vs q1" (etc.) when binder quantities differ, before comparing domains
+    and scopes. Surface error: "inferred type ... does not match expected
+    type ...: not convertible (quantity mismatch: q0 vs qOmega)".
+  - Elaboration layer (=elab.nim=): =substPre= preserves =t.qty= on
+    =pkPi=/=pkLam= through substitution and renaming, so quantities
+    survive elaborator-internal transforms.
+
+  Design call: quantity mismatch is a conversion error at the *type*
+  level, raised inside =structuralEq= like any other head/form mismatch
+  — not a separate elaborator check. This keeps the judgment structure
+  untouched: convertibility just became finer-grained. The vPi/vSi
+  =qOmega= default keeps hand-built values (e.g. =vAbsurd=) on the
+  backward-compatible path.
+
+  Also fixed in this commit: =tests/run_examples.nim= was walking only
+  =examples/=, but the Oct 9 reorg moved all .ep files to =examples/ep/= —
+  the suite had been running zero files and passing vacuously. It now
+  walks both directories and supports negative tests (files named
+  =*-neg.ep= must raise =ElabError=). The session-types double-send case
+  (=badClient3=) moved from =15-session-types.ep= to the new
+  =15b-session-types-neg.ep=; it is rejected by the in-judgment #66
+  enforcement ("linear variable 'ch' used 2 times"), which is exactly the
+  acceptance criterion "session types example works with full QTT".
+
+  Verification: all CI matrix suites green locally (incl. all 16 .ep
+  examples + the negative session-types test).
+
+* 2026-10-09 — Issue #66: application-site quantity enforcement (erased parameter)
+
+  Context: in-judgment quantity enforcement existed at lambdas
+  (enforceBinderQty) and in conversion (structuralEq on wPi/wSi), but the
+  application site ignored the Pi binder's quantity. Hole: a linear
+  variable passed to a q0 (erased) parameter passed the use-once count
+  (exactly one mention) yet was silently discarded — the 0-binder cannot
+  consume it.
+
+  What was built: =ensurePi= now returns the binder quantity; at pkApp in
+  inferTm, a q0 binder triggers =checkErasedArg=, which walks the
+  elaborated argument in term positions (domains/type annotations skipped,
+  per the all-0-context discipline) and rejects free mentions of
+  q1-bound variables ("silently discarded"). q1 binders need no app-site
+  check: the argument context scales by 1 (identity), and the binder-side
+  count already enforces exact-once use.
+
+  Design call: the check lives in the judgment (elab), not the post-pass —
+  consistent with #66's "quantities in the judgments, not a post-pass".
+  Metas in the argument skip the check (a hole may solve to anything);
+  the post-pass re-checks at end of declaration.
+
+  Verification: 3 new elab tests (accept unrestricted-into-erased; reject
+  linear-into-erased for both postulated and local-lambda 0-functions);
+  full CI matrix green, warning-clean.
+
+  Remaining for #66: quantity polymorphism (qty variables, the acceptance
+  criterion "(q x : A) -> B"); subject-side quantity tracking
+  (=Gamma |- t :^q A=).
+
+* 2026-10-09 — Issue #66: quantity polymorphism (surface `(q x : A)`)
+
+  Context: the last acceptance criterion — library code polymorphic in the
+  quantity, e.g. =id : (q x : A) -> A= with =q= a variable.
+
+  What was built: a =Qty= variant type in preterm (concrete =Quantity= or
+  a quantity variable); surface syntax =(q x : A)= (an identifier in
+  quantity position followed by the binder name); declaration-scoped
+  solution state in the MetaStore (=qvarNames=, =qvarSols=, reset per
+  declaration). Elaboration solves each variable at its binding lambda
+  from the use count (0 -> q0, 1 -> q1, 2+ -> qOmega); a variable shared
+  by several binders must agree (conflict = error). When the ascribed
+  type mentions a variable, the body elaborates first (inference), then
+  the type with variables zonked (unsolved defaults to qOmega —
+  backward compatible). Core terms only ever carry concrete quantities.
+
+  Soundness fix found while testing: =checkErasedArg= ran while the
+  variable was still unsolved, so =(q y : N) -> z0 y= (q0 parameter)
+  escaped the "silently discarded" check and solved to q1 afterwards.
+  Fix: the app-site walk records pending obligations
+  (=ms.qvarPending=) for unsolved variables; =enforceBinderQty= flushes
+  them at solve time and rejects if the solution is q1 (q0/qOmega
+  solutions drop them — no leak possible). The walker was hoisted to
+  module level (=checkErasedArgWalk=) because a nested proc may not
+  capture the var MetaStore.
+
+  Design note (pre-existing, not introduced here): in checking mode the
+  lambda's binder quantity is never compared against the expected Pi's
+  binder quantity (e.g. =lam (1 x : A). x= against =Pi (w x : A). A= is
+  accepted). Same for qty vars solved to q1 against an expected qOmega.
+  This is the "subject-side quantity tracking" remaining piece, listed
+  below — it needs =Gamma |- t :^q A= or an explicit subquantity check,
+  not just binder-side counting.
+
+  Verification: 6 new elab tests (solve q0/q1/qOmega from use count;
+  conflicting solutions rejected; q1-into-erased rejected via the
+  deferred obligation; qOmega-into-erased accepted); full CI matrix
+  green, warning-clean.
+
+  Remaining for #66: subject-side quantity tracking (=Gamma |- t :^q A=)
+  — comparing the checked term's binder quantities against the expected
+  type's, including quantity-variable solutions.
+
+* 2026-10-09 — Issue #66: subject-side quantity tracking (Γ ⊢ t :^q A)
+
+  Context: the last #66 acceptance criterion. In checking mode the
+  lambda's binder quantity was never reconciled with the expected Pi's:
+  =lam (1 x : A). x= against =Pi (w x : A). A= was silently accepted with
+  the binder staying q1 — the use-once property of the Pi was lost.
+
+  What was built: =checkTm= pkLam now reconciles before elaborating the
+  body, capturing the Pi binder quantity from =ensurePi= (previously
+  discarded):
+  - quantity variable: solved from the expected type (=solveQVar=;
+    conflicts are an error), pending erased-arg obligations flushed,
+    then the body is elaborated under the *concrete* quantity — never
+    re-solved from the use count (re-solving would reject valid
+    instantiations like =(q x : A) => x= against =Pi (w x : A). A=, where
+    q := ω and a single use is fine).
+  - concrete, equal: unchanged.
+  - concrete qOmega: the surface has no explicit-omega annotation, so this
+    means "unannotated" — inherit the expected quantity (Idris 2
+    behaviour for unannotated binders in checking mode). An inherited
+    q1/q0 binder is then enforced by the usual use-count check, so
+    =lam (x : N). n0= against =Pi (1 x : N). N= is still rejected
+    ("not used") — inheritance doesn't weaken anything.
+  - concrete, different: elaboration error ("lambda binder quantity q1
+    does not match the expected quantity qOmega from the function
+    type").
+  Supporting refactor: =enforceBinderQty= split into =enforceQtyCount=
+  (concrete enforcement) and =flushQvarPending= (deferred erased-arg
+  obligations); the variable-agreement semantics (shared qvar must agree
+  across binders, conflict = error) is preserved — the reconciliation
+  happens *before* the body elaborates, so inference-mode solving is
+  untouched. (An earlier draft enforced an already-solved variable
+  instead of re-solving and broke the shared-binder conflict test; the
+  fix is to continue with the concrete quantity once the expected type
+  has determined it.)
+
+  Design note: this is not full =Γ ⊢ t :^q A= (no usage-annotated
+  judgments threading through every rule) — it is the checking-mode
+  half, which is where the hole was: the lambda is the only
+  quantity-introducing term form, and Pi binders are deliberately
+  unenforced at declaration (linearity declared, enforced at use sites).
+
+  Verification: 10 new elab tests (4 accept: matching annotation,
+  unannotated-inherits-linear, qvar-solved-linear, unannotated-inherits-
+  erased; 6 reject: explicit mismatch, inherited-linear drop/dup,
+  qvar-solved-linear dup, inherited-erased use, qvar conflicting with an
+  expected type); full CI matrix green, warning-clean.
+
+  Remaining for #66: none of the acceptance criteria are open — quantity-
+  aware judgments, semiring, backward compatibility, session-types under
+  full QTT, and this decisions entry are all landed. Suggest closing
+  after review; follow-ups (if wanted) would be new issues: usage-
+  annotated judgments through every rule, quantity polymorphism over
+  kinds, interaction with the e-graph conversion cache.

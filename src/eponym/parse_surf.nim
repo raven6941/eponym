@@ -156,16 +156,17 @@ proc isAtomStart(k: TokKind): bool =
 
 proc parseTerm(p: var Parser): PreTerm  # forward
 
-proc parseBinder(p: var Parser): tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity] =
+proc parseBinder(p: var Parser): tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty] =
   ## "(" name ":" term ")" | "{" name ":" term "}"  (braces = implicit)
   ## "(0" name ":" term ")"  (0 = erased, Experiment 9)
   ## "(1" name ":" term ")"  (1 = linear, Issue #64)
+  ## "(q" name ":" term ")"  (q = quantity variable, Issue #66)
   let t = p.next()
   let impl = t.kind == tkLBrace
   if not impl and t.kind != tkLParen:
     raise fail(t.loc, "expected '(' or '{', got '" & t.lexeme & "'")
   var erased = false
-  var qty = qOmega
+  var qty: Qty = qOmega
   # Note: "1" lexes as tkUnitTy (unit type), not tkInt; "0" lexes as tkInt.
   # Accept both for quantity annotations.
   let pk = p.peek()
@@ -179,6 +180,12 @@ proc parseBinder(p: var Parser): tuple[name: string, ty: PreTerm, impl: bool, er
       discard p.next()  # consume the 1
       qty = q1
     # else: not a quantity, leave it (will fail as binder name)
+  elif not impl and pk.kind == tkIdent and p.pos + 1 <= p.toks.high and
+       p.toks[p.pos + 1].kind == tkIdent:
+    # Quantity variable: an identifier followed by another identifier (the
+    # binder name), e.g. `(q x : A)`. `(q : A)` still parses `q` as the name.
+    qty = qtyVar(pk.lexeme)
+    discard p.next()  # consume the quantity variable name
   let xn = p.expect(tkIdent, "binder name")
   discard p.expect(tkColon, "':'")
   let ty = p.parseTerm()
@@ -268,7 +275,7 @@ proc parseTerm(p: var Parser): PreTerm =
 proc parseDef(p: var Parser): SurfDef =
   let t = p.expect(tkDef, "'proc'")
   let nm = p.expect(tkIdent, "definition name")
-  var tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]] = @[]
+  var tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]] = @[]
   while p.peek().kind in {tkLParen, tkLBrace}:
     let b = p.parseBinder()
     tele.add b
@@ -305,7 +312,7 @@ proc parseData(p: var Parser): SurfDecl =
   ## | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
   let t = p.expect(tkData, "'data'")
   let nm = p.expect(tkIdent, "datatype name")
-  var params: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]] = @[]
+  var params: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]] = @[]
   while p.peek().kind in {tkLParen, tkLBrace}:
     params.add p.parseBinder()
   discard p.expect(tkColon, "':'")
@@ -315,7 +322,7 @@ proc parseData(p: var Parser): SurfDecl =
   while p.peek().kind == tkPipe:
     discard p.next()
     let cnm = p.expect(tkIdent, "constructor name")
-    var tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]] = @[]
+    var tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]] = @[]
     while p.peek().kind in {tkLParen, tkLBrace}:
       tele.add p.parseBinder()
     discard p.expect(tkColon, "':'")

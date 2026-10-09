@@ -41,6 +41,8 @@ proc client (1 ch : Chan (sendS Nat endS)) : Chan endS =
   sendNat zero ch
 
 # The following are REJECTED at compile time (uncomment to verify):
+# (These violations are exercised as a negative test in
+# 15b-session-types-neg.ep, run by tests/run_examples.nim.)
 #
 # Violation 1: recv before send (wrong order)
 # proc badClient1 (ch : Chan proto) : Nat =
@@ -56,9 +58,6 @@ proc client (1 ch : Chan (sendS Nat endS)) : Chan endS =
 #        (Chan (sendS Nat endS))
 #
 # Violation 3: double-send (affinity hole, Issue #64)
-# With linear binders, this is now rejected by the usage checker.
-proc badClient3 (1 ch : Chan (sendS Nat endS)) : Chan endS =
-  let ch1 = sendNat zero ch in
-  let ch2 = sendNat zero ch in
-  ch1
+# With linear binders, this is now rejected by the in-judgment quantity
+# enforcement (Issue #66) — see 15b-session-types-neg.ep.
 # Error: linear variable used more than once (ch)
