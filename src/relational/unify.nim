@@ -78,6 +78,7 @@ type
     # whose quantity variable is still unsolved; enforceBinderQty flushes
     # the entry when the variable is solved (a q1 solution rejects).
     qvarPending*: Table[string, seq[tuple[varName: string, loc: Loc]]]
+    ctorTable*: CtorTable  # Issue #80: constructor disjointness facts
 
   QtySolKind* = enum qsUnknown, qsSolved
   QtySol* = object
@@ -86,11 +87,83 @@ type
     of qsUnknown: discard
     of qsSolved: q*: Quantity
 
+  # Issue #80: constructor disjointness facts (noConfusion/noCycle).
+  #
+  # For every `data` declaration, elabDataDecl registers the datatype's
+  # constructors here: constructor refId -> datatype refId, datatype
+  # refId -> constructor refIds (declaration order), plus surface names
+  # for error messages. Unification consults the table in its
+  # rigid-rigid cases: distinct constructors of the same datatype fail
+  # fast with a *named* noConfusion reason instead of a generic
+  # "neutral mismatch" / "cannot unify tR with tApp"; the occurs check
+  # names noCycle when the offending term is constructor-headed.
+  # `constructorForbidEdges` exposes the same facts as forbid-edges for
+  # disequality-graph consumers (issue #68, Experiment 10 die-graph).
+  CtorTable* = object
+    ctorData*: Table[int, int]       # constructor refId -> datatype refId
+    dataCtors*: Table[int, seq[int]] # datatype refId -> constructor refIds
+    ctorNames*: Table[int, string]   # constructor refId -> surface name
+    dataNames*: Table[int, string]   # datatype refId -> surface name
+
+proc initCtorTable*(): CtorTable =
+  CtorTable(ctorData: initTable[int, int](),
+            dataCtors: initTable[int, seq[int]](),
+            ctorNames: initTable[int, string](),
+            dataNames: initTable[int, string]())
+
+proc registerDataCtors*(ms: var MetaStore, dataRefId: int, dataName: string,
+                        ctors: seq[(int, string)]) =
+  ## Issue #80: record one `data` declaration's constructor set.
+  ms.ctorTable.dataNames[dataRefId] = dataName
+  var ids: seq[int] = @[]
+  for (cid, cname) in ctors:
+    ms.ctorTable.ctorData[cid] = dataRefId
+    ms.ctorTable.ctorNames[cid] = cname
+    ids.add(cid)
+  ms.ctorTable.dataCtors[dataRefId] = ids
+
+proc ctorHeadOf*(ms: MetaStore, t: Term): int =
+  ## The constructor refId at the head of t's application spine, or -1
+  ## when the head is not a registered data constructor.
+  var cur = t
+  while cur.kind == tApp: cur = cur.fn
+  if cur.kind == tR and cur.refId in ms.ctorTable.ctorData: cur.refId
+  else: -1
+
+proc isConstructor*(ms: MetaStore, refId: int): bool =
+  refId in ms.ctorTable.ctorData
+
+proc sameDatatypeCtors*(ms: MetaStore, c1, c2: int): bool =
+  ## Both are registered constructors of one datatype.
+  c1 in ms.ctorTable.ctorData and c2 in ms.ctorTable.ctorData and
+    ms.ctorTable.ctorData[c1] == ms.ctorTable.ctorData[c2]
+
+proc noConfusionMsg*(ms: MetaStore, c1, c2: int): string =
+  let n1 = ms.ctorTable.ctorNames[c1]
+  let n2 = ms.ctorTable.ctorNames[c2]
+  let dn = ms.ctorTable.dataNames[ms.ctorTable.ctorData[c1]]
+  "noConfusion: distinct constructors '" & n1 & "' and '" & n2 &
+    "' of datatype '" & dn & "' cannot be equal"
+
+proc constructorForbidEdges*(ms: MetaStore): seq[(int, int)] =
+  ## Issue #80: the disjointness facts as forbid-edges between
+  ## constructor refIds — one unordered pair per two distinct
+  ## constructors of the same datatype. For disequality-graph
+  ## consumers (issue #68): these pairs can never become equal, so a
+  ## conversion cache / e-graph can treat an attempt to equate them as
+  ## an immediate contradiction (the `conflict` transition), without
+  ## unfolding.
+  for dataId, cids in ms.ctorTable.dataCtors:
+    for i in 0 ..< cids.len:
+      for j in i+1 ..< cids.len:
+        result.add((cids[i], cids[j]))
+
 proc initMetaStore*(): MetaStore =
   MetaStore(nextId: 0, entries: initTable[int, MetaEntry](),
             convCache: initEGraph(), convHandlers: @[], extDischarges: 0,
             qvarNames: initTable[string, int](), qvarSols: @[],
-            qvarPending: initTable[string, seq[tuple[varName: string, loc: Loc]]]())
+            qvarPending: initTable[string, seq[tuple[varName: string, loc: Loc]]](),
+            ctorTable: initCtorTable())
 
 proc uerr(loc: Loc, msg: string): ref UnifyError =
   # No location prefix here: the elaborator catches UnifyError and re-raises
@@ -122,7 +195,7 @@ proc zonkHead*(ms: MetaStore, t: Term): Term =
     cur = substSpine(e.solution, cur.metaSpine)
   cur
 
-proc unifyHead(ms: MetaStore, t: Term): Term =
+proc unifyHead*(ms: MetaStore, t: Term): Term =
   ## Head-normalize for unification: unfold solved metas (at the head
   ## and in function position) and beta-reduce. No delta-unfolding of
   ## definitions — rigid heads stay rigid. (Experiment 4: eliminator
@@ -136,6 +209,71 @@ proc unifyHead(ms: MetaStore, t: Term): Term =
       cur = zonkHead(ms, subst(f.scope.bdy, 0, cur.arg))
     else:
       return tmApp(f, cur.arg)
+
+# --- Issue #80: rigid noConfusion conflict ------------------------------------
+# Placed after unifyHead (used for head-normalization below).
+
+proc noConfusionConflict*(ms: MetaStore, a, b: Term): tuple[bad: bool,
+    c1, c2: int]
+
+proc rigidHead(t: Term): bool =
+  ## A head that never unfolds under the core evaluator (ett_init.nim:
+  ## only tR with refIsDefn unfolds): constructor / type-former / axiom
+  ## postulates, bound variables, and core constants. Descent through
+  ## such heads is sound; descent through definitions is not (e.g. a
+  ## defined `f` could map distinct arguments to equal values).
+  case t.kind
+  of tR: not t.refIsDefn
+  of tV, tC, tInt: true
+  else: false
+
+proc sameRigidHead(a, b: Term): bool =
+  ## Same head after spine-stripping, where both heads are rigid.
+  var fa = a
+  while fa.kind == tApp: fa = fa.fn
+  var fb = b
+  while fb.kind == tApp: fb = fb.fn
+  if not rigidHead(fa) or not rigidHead(fb): return false
+  if fa.kind != fb.kind: return false
+  case fa.kind
+  of tR: fa.refId == fb.refId
+  of tV: fa.idx == fb.idx
+  of tC: fa.c == fb.c
+  of tInt: fa.intVal == fb.intVal
+  else: false
+
+proc argsConflict(ms: MetaStore, a, b: Term): tuple[bad: bool, c1, c2: int] =
+  var aa: seq[Term] = @[]
+  var ca = a
+  while ca.kind == tApp: aa.add(ca.arg); ca = ca.fn
+  var bb: seq[Term] = @[]
+  var cb = b
+  while cb.kind == tApp: bb.add(cb.arg); cb = cb.fn
+  if aa.len != bb.len: return (false, -1, -1)
+  for i in 0 ..< aa.len:
+    let r = noConfusionConflict(ms, aa[i], bb[i])
+    if r.bad: return r
+  (false, -1, -1)
+
+proc noConfusionConflict*(ms: MetaStore, a, b: Term): tuple[bad: bool,
+    c1, c2: int] =
+  ## Issue #80: rigid noConfusion conflict between two terms. Both sides
+  ## are head-normalized here (beta + zonk; no delta-unfolding). Returns
+  ## the offending constructor pair when rigid-rigid comparison forces
+  ## distinct constructors of one datatype at some position, descending
+  ## through matching rigid heads (injectivity). Conservative: any
+  ## flexible, reducible, or mismatched position counts as compatible —
+  ## a `bad` result is positive evidence of inequality.
+  let a1 = unifyHead(ms, a)
+  let b1 = unifyHead(ms, b)
+  let ha = ctorHeadOf(ms, a1)
+  let hb = ctorHeadOf(ms, b1)
+  if ha >= 0 and hb >= 0:
+    if ha == hb: return argsConflict(ms, a1, b1)
+    if sameDatatypeCtors(ms, ha, hb): return (true, ha, hb)
+    return (false, -1, -1)
+  if sameRigidHead(a1, b1): return argsConflict(ms, a1, b1)
+  (false, -1, -1)
 
 proc zonk*(ms: MetaStore, t: Term): Term =
   ## Substitute every solved metavariable, recursively.
@@ -271,6 +409,13 @@ proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) 
   let zsp = spine.mapIt(zonk(ms, it))
   let zt = zonk(ms, t)
   if occursSyn(id, zt):
+    # Issue #80: name the noCycle case — a constructor applied to a term
+    # containing the meta can never equal the meta itself.
+    let hid = ctorHeadOf(ms, zt)
+    if hid >= 0:
+      raise uerr(loc, "occurs check failed for ?m" & $id & " (noCycle): " &
+        "constructor '" & ms.ctorTable.ctorNames[hid] &
+        "' is applied to a term containing ?m" & $id)
     raise uerr(loc, "occurs check failed for ?m" & $id)
   let perm = invertSpine(zsp, loc)
   var maxV = -1
@@ -308,6 +453,13 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
     if b1.kind == tLam and a1.kind in {tR, tV, tApp, tFst, tSnd}:
       unify(ms, tmApp(weaken(a1), vv(0)), b1.scope.bdy, loc)
       return
+    # Issue #80: named noConfusion — distinct constructors of one datatype
+    # (e.g. `zero =?= suc n`, which used to report "cannot unify tR with
+    # tApp") fail fast with the constructors named.
+    let ha = ctorHeadOf(ms, a1)
+    let hb = ctorHeadOf(ms, b1)
+    if ha >= 0 and hb >= 0 and ha != hb and sameDatatypeCtors(ms, ha, hb):
+      raise uerr(loc, noConfusionMsg(ms, ha, hb))
     raise uerr(loc, "cannot unify " & $a1.kind & " with " & $b1.kind)
   case a1.kind
   of tC:
@@ -317,7 +469,12 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
   of tPrim:
     if a1.primOp != b1.primOp: raise uerr(loc, "primitive op mismatch")
   of tR:
-    if a1.refId != b1.refId: raise uerr(loc, "neutral mismatch")
+    if a1.refId != b1.refId:
+      # Issue #80: name the noConfusion case for bare constructors
+      # (used to report the generic "neutral mismatch").
+      if sameDatatypeCtors(ms, a1.refId, b1.refId):
+        raise uerr(loc, noConfusionMsg(ms, a1.refId, b1.refId))
+      raise uerr(loc, "neutral mismatch")
   of tV:
     if a1.idx != b1.idx: raise uerr(loc, "variable mismatch")
   of tPi, tSi, tLam:
@@ -342,6 +499,7 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
     discard  # handled above
 
 when isMainModule:
+  import strutils
   var ms = initMetaStore()
   let loc = noLoc
 
@@ -412,5 +570,87 @@ when isMainModule:
   unify(ms5, m4, tmC(cOne), loc)
   assert $zonk(ms5, m4alias) == "1"
   echo "ok: flex-flex same meta"
+
+  # Issue #80: constructor disjointness (noConfusion / noCycle).
+  # Fake a Nat datatype: datatype refId 100, ctors zero=101, suc=102.
+  var ms6 = initMetaStore()
+  ms6.registerDataCtors(100, "Nat", @[(101, "zero"), (102, "suc")])
+  let zero6 = Term(kind: tR, refId: 101, refTyp: nil, refIsDefn: false, refVal: nil)
+  let suc6 = Term(kind: tR, refId: 102, refTyp: nil, refIsDefn: false, refVal: nil)
+  # zero =?= suc n: named noConfusion (was "cannot unify tR with tApp")
+  try:
+    unify(ms6, zero6, tmApp(suc6, vv(0)), loc)
+    assert false, "zero =?= suc n should fail"
+  except UnifyError as e:
+    assert "noConfusion" in e.msg and "zero" in e.msg and "suc" in e.msg,
+      e.msg
+    echo "ok: noConfusion named conflict (zero vs suc n)"
+  # bare constructors: named instead of "neutral mismatch"
+  try:
+    unify(ms6, zero6, suc6, loc)
+    assert false, "zero =?= suc should fail"
+  except UnifyError as e:
+    assert "noConfusion" in e.msg and "Nat" in e.msg, e.msg
+    echo "ok: noConfusion named conflict (bare constructors)"
+  # injectivity still decomposes: suc ?m =?= suc V0 solves ?m := V0
+  var ms7 = initMetaStore()
+  ms7.registerDataCtors(100, "Nat", @[(101, "zero"), (102, "suc")])
+  let mA = freshMeta(ms7, tmC(cStar), 1, 0, loc)
+  unify(ms7, tmApp(suc6, mA), tmApp(suc6, vv(0)), loc)
+  assert $zonk(ms7, mA) == "V0", $zonk(ms7, mA)
+  echo "ok: injectivity decomposes (suc ?m =?= suc V0)"
+  # noCycle: ?m =?= suc ?m names the constructor
+  var ms8 = initMetaStore()
+  ms8.registerDataCtors(100, "Nat", @[(101, "zero"), (102, "suc")])
+  let mB = freshMeta(ms8, tmC(cStar), 0, 0, loc)
+  try:
+    unify(ms8, mB, tmApp(suc6, mB), loc)
+    assert false, "occurs check should fire"
+  except UnifyError as e:
+    assert "noCycle" in e.msg and "suc" in e.msg and "occurs check" in e.msg,
+      e.msg
+    echo "ok: noCycle named cycle error"
+  # unregistered refIds keep the old generic errors
+  var ms9 = initMetaStore()
+  let r1 = Term(kind: tR, refId: 201, refTyp: nil, refIsDefn: false, refVal: nil)
+  let r2 = Term(kind: tR, refId: 202, refTyp: nil, refIsDefn: false, refVal: nil)
+  try:
+    unify(ms9, r1, r2, loc)
+    assert false
+  except UnifyError as e:
+    assert e.msg == "neutral mismatch", e.msg
+    echo "ok: unregistered refs keep generic errors"
+  # forbid-edges: one unordered pair for Nat's two constructors
+  let edges = ms8.constructorForbidEdges()
+  assert edges.len == 1 and edges[0] == (101, 102), $edges
+  echo "ok: constructor forbid-edges"
+
+  # noConfusionConflict: recursive rigid check used by conversion.
+  var ms10 = initMetaStore()
+  ms10.registerDataCtors(100, "Nat", @[(101, "zero"), (102, "suc")])
+  let z10 = Term(kind: tR, refId: 101, refTyp: nil, refIsDefn: false, refVal: nil)
+  let s10 = Term(kind: tR, refId: 102, refTyp: nil, refIsDefn: false, refVal: nil)
+  # Vec Nat zero vs Vec Nat (suc zero): Vec is a rigid postulate head,
+  # so injectivity descent finds zero vs suc.
+  let vec10 = Term(kind: tR, refId: 103, refTyp: nil, refIsDefn: false, refVal: nil)
+  let v1 = tmApp(tmApp(vec10, tmC(cStar)), z10)
+  let v2 = tmApp(tmApp(vec10, tmC(cStar)), tmApp(s10, z10))
+  let nc10 = noConfusionConflict(ms10, v1, v2)
+  assert nc10.bad and nc10.c1 == 101 and nc10.c2 == 102, $nc10
+  echo "ok: noConfusionConflict descends through rigid heads"
+  # defined head: no descent (would be unsound — a definition could map
+  # distinct arguments to equal values)
+  let add10 = Term(kind: tR, refId: 104, refTyp: nil, refIsDefn: true, refVal: nil)
+  let d1 = tmApp(tmApp(add10, z10), vv(0))
+  let d2 = tmApp(tmApp(add10, tmApp(s10, z10)), z10)
+  assert not noConfusionConflict(ms10, d1, d2).bad
+  echo "ok: noConfusionConflict does not descend through definitions"
+  # flexible positions are compatible
+  var ms11 = initMetaStore()
+  ms11.registerDataCtors(100, "Nat", @[(101, "zero"), (102, "suc")])
+  let mC = freshMeta(ms11, tmC(cStar), 1, 0, loc)
+  assert not noConfusionConflict(ms11, tmApp(s10, mC), tmApp(s10, z10)).bad
+  assert not noConfusionConflict(ms11, tmApp(s10, z10), tmApp(s10, mC)).bad
+  echo "ok: noConfusionConflict treats metas as compatible"
 
   echo "--- unify tests done ---"

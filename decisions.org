@@ -1107,3 +1107,29 @@
   after review; follow-ups (if wanted) would be new issues: usage-
   annotated judgments through every rule, quantity polymorphism over
   kinds, interaction with the e-graph conversion cache.
+
+* 2026-10-09 — Constructor disjointness as named disequality facts (issue #80)
+
+  Context: =unify= reported generic errors when distinct constructors met
+  ("cannot unify tR with tApp", "neutral mismatch") and clause checking
+  had no notion of impossible cases.
+  Options: (a) special-case constructor pairs inline in unify;
+  (b) derive a per-datatype disjointness table from =data= declarations
+  and consume it in unify, clause checking, and the disequality graph.
+  Decision: (b). CtorTable lives on MetaStore (constructor -> datatype,
+  per-datatype constructor sets, surface names); elabDataDecl registers
+  each =data=. unify's rigid-rigid cases fail fast with named
+  noConfusion reasons; occurs check names noCycle for constructor-headed
+  terms; defaultConv runs a rigid-evidence-only noConfusionConflict
+  pre-check that descends through non-unfolding heads (never through
+  definitions — a defined function could map distinct arguments to equal
+  values — and treats flexible positions as compatible); the same facts
+  are exposed as constructorForbidEdges for the Experiment 10 die-graph
+  (#68). Impossible-clause check also implemented on surface preterms
+  (with binder shadowing guard) for when rigid scrutinee indices become
+  available — currently they are always variables, so that path is
+  tested directly while the defaultConv path fires through real code.
+  Consequences: =zero =?= suc n= and bare-constructor mismatches get
+  named errors; injectivity still decomposes; unregistered refs keep
+  generic errors; existing unify/elab tests all pass; full CI matrix
+  green.
