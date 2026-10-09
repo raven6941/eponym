@@ -48,16 +48,16 @@ proc unifyElab(ms: var MetaStore, a, b: Term, loc: Loc) =
     raise elabErr(loc, e.msg)
 
 type
-  CtxEntry = object
-    name: string
-    ty: Term
-  Ctx = seq[CtxEntry]            # innermost-first
-  GEntry = object
-    tm: Term                     # the R node, for building terms
-    ty: Term                     # elaborated + zonked type, for implicits
-    isElim: bool                 # Experiment 4: declared with 'elim'
-    elimNargs: int               # Experiment 4: eliminator arity (incl. scrutinee)
-  Globals = Table[string, GEntry]
+  CtxEntry* = object
+    name*: string
+    ty*: Term
+  Ctx* = seq[CtxEntry]            # innermost-first
+  GEntry* = object
+    tm*: Term                     # the R node, for building terms
+    ty*: Term                     # elaborated + zonked type, for implicits
+    isElim*: bool                 # Experiment 4: declared with 'elim'
+    elimNargs*: int               # Experiment 4: eliminator arity (incl. scrutinee)
+  Globals* = Table[string, GEntry]
 
 # Forward declaration for use in tactics
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
@@ -811,8 +811,9 @@ proc genRedDecls(d: SurfDecl, elimName: string, methodNames: seq[string],
     result.add(SurfDecl(kind: dkRed, lhs: lhs, rhs: rhs, rloc: ctor.cloc))
 
 proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
-                  ms: var MetaStore) =
+                  ms: var MetaStore, dataInfos: var Table[string, SurfDecl]) =
   ## Experiment 5: desugar `data` to postulate/elim/red.
+  ## Records the SurfDecl in dataInfos for coverage checking (issue #32).
   let loc = d.daloc
   # name clash check for the generated binders
   for p in d.params:
@@ -838,9 +839,278 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
   # reduction rules
   for rd in genRedDecls(d, elimName, methodNames, loc):
     elabRedDecl(rd.lhs, rd.rhs, rd.rloc, globals, supply, ms)
+  # record for coverage checking (issue #32)
+  dataInfos[d.dname] = d
+
+# --- Issue #32: clause-style definitions --------------------------------------
+# `def name : Ty` with `| pat1 .. patn = rhs` clauses, compiled to an
+# eliminator application. MVP: scrutinee is the first explicit argument
+# whose type is a data type; patterns are variables or constructor
+# applications (no nesting); recursive calls become IH applications.
+
+proc scrutineeDataName(ty: PreTerm,
+                       dataInfos: Table[string, SurfDecl]): string =
+  ## Find the first explicit Pi domain in `ty` that names a data type.
+  ## Returns the data type name, or "" if none.
+  var cur = ty
+  while cur.kind == pkPi:
+    if not cur.impl:
+      let dom = cur.c1
+      if dom.kind == pkVar and dataInfos.hasKey(dom.name):
+        return dom.name
+      # also handle `D params` applications
+      var h = dom
+      while h.kind == pkApp: h = h.c1
+      if h.kind == pkVar and dataInfos.hasKey(h.name):
+        return h.name
+    cur = cur.c2
+  ""
+
+proc patHeadName(pat: PreTerm, ctorNames: seq[string]): tuple[isCtor: bool,
+    name: string, args: seq[PreTerm]] =
+  ## Decompose a pattern: either a variable or a constructor application.
+  ## A bare variable naming a constructor is a nullary constructor pattern.
+  if pat.kind == pkVar:
+    if pat.name in ctorNames:
+      return (true, pat.name, @[])
+    return (false, pat.name, @[])
+  var h = pat
+  var args: seq[PreTerm] = @[]
+  while h.kind == pkApp:
+    args.add(h.c2)
+    h = h.c1
+  if h.kind == pkVar:
+    var rargs: seq[PreTerm] = @[]
+    for i in countdown(args.high, 0): rargs.add(args[i])
+    return (true, h.name, rargs)
+  (false, "", @[])
+
+proc replaceRecCalls(rhs: PreTerm, fname: string, recVar: string,
+                    ihName: string): PreTerm =
+  ## Replace `fname ... recVar ...` (recursive call on recVar) with
+  ## `ihName ...` (IH application, dropping the scrutinee-position arg).
+  ## MVP: only handles the case where recVar appears as a direct argument.
+  case rhs.kind
+  of pkApp:
+    # Check if this is `f ... recVar ...` — flatten the spine
+    var spine: seq[PreTerm] = @[]
+    var h = rhs
+    while h.kind == pkApp:
+      spine.add(h.c2)
+      h = h.c1
+    var rspine: seq[PreTerm] = @[]
+    for i in countdown(spine.high, 0): rspine.add(spine[i])
+    spine = rspine
+    if h.kind == pkVar and h.name == fname:
+      # Find recVar in the spine; replace the whole application
+      for i, a in spine:
+        if a.kind == pkVar and a.name == recVar:
+          # Build `ihName` applied to args after position i
+          var res = mkVar(ihName, rhs.loc)
+          for j in i+1 ..< spine.len:
+            res = mkApp(res, replaceRecCalls(spine[j], fname, recVar, ihName),
+                        rhs.loc)
+          # Also transform args before i (they shouldn't contain rec calls,
+          # but be safe)
+          return res
+    # Not a recursive call; recurse into children
+    result = rhs
+    result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName)
+    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName)
+  of pkLam:
+    result = rhs
+    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName)
+    if rhs.c1 != nil:
+      result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName)
+  of pkPi:
+    result = rhs
+    result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName)
+    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName)
+  of pkPair:
+    result = rhs
+    result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName)
+    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName)
+  else:
+    result = rhs
+
+proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
+                     ms: var MetaStore,
+                     dataInfos: var Table[string, SurfDecl]): ElabDef =
+  let loc = cd.loc
+  # 1. Find the scrutinee's data type from the type signature.
+  let dataName = scrutineeDataName(cd.ty, dataInfos)
+  if dataName == "":
+    raise elabErr(loc, "'def' clauses require the first explicit argument " &
+      "to have a data type; none found in the type signature")
+  let dataDecl = dataInfos[dataName]
+  let elimName = elimNameFor(dataName)
+  if not globals.hasKey(elimName):
+    raise elabErr(loc, "eliminator '" & elimName & "' not found for data '" &
+      dataName & "'")
+  # 2. Count explicit Pis in the type to validate clause arity.
+  var nExplicit = 0
+  var cur = cd.ty
+  while cur.kind == pkPi:
+    if not cur.impl: inc nExplicit
+    cur = cur.c2
+  # 3. Process clauses: coverage + overlap.
+  var covered: Table[string, int] = initTable[string, int]()  # ctor -> clause idx
+  var ctorNames: seq[string] = @[]
+  for ctor in dataDecl.ctors: ctorNames.add(ctor.name)
+  for ci, cl in cd.clauses:
+    if cl.pats.len != nExplicit:
+      raise elabErr(cl.cloc, "clause has " & $cl.pats.len & " patterns but " &
+        "the type has " & $nExplicit & " explicit arguments")
+    let (isCtor, headName, _) = patHeadName(cl.pats[0], ctorNames)
+    if not isCtor:
+      raise elabErr(cl.cloc, "first pattern must be a constructor pattern " &
+        "(MVP: no variable/catch-all patterns)")
+    if headName notin ctorNames:
+      raise elabErr(cl.cloc, "'" & headName & "' is not a constructor of '" &
+        dataName & "'")
+    if covered.hasKey(headName):
+      raise elabErr(cl.cloc, "overlapping clauses: '" & headName &
+        "' already covered by the clause at " &
+        $cd.clauses[covered[headName]].cloc.line & ":" &
+        $cd.clauses[covered[headName]].cloc.col)
+    covered[headName] = ci
+  for ctor in dataDecl.ctors:
+    if not covered.hasKey(ctor.name):
+      raise elabErr(loc, "missing case for constructor '" & ctor.name &
+        "' of '" & dataName & "'")
+  # 4. Build the eliminator application as a PreTerm, then elaborate as a def.
+  #    MVP: non-indexed data type, scrutinee is the first explicit argument.
+  #    Type: Pi (x0:D) (x1:T1)...(xn:Tn). Ret
+  #    Def:  proc name (x0:D) (x1:T1)...(xn:Tn) : Ret =
+  #            elimD C m_0 ... m_(k-1) x0 x1 ... xn
+  var tele: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
+  var tcur = cd.ty
+  while tcur.kind == pkPi:
+    tele.add((tcur.name, tcur.c1, tcur.impl))
+    tcur = tcur.c2
+  let retTy = tcur
+  # Find scrutinee position (first explicit)
+  var sPos = -1
+  for i, b in tele:
+    if not b.impl:
+      sPos = i
+      break
+  if sPos != 0:
+    raise elabErr(loc, "'def' clauses MVP: scrutinee must be the first " &
+      "explicit argument (found at position " & $sPos & ")")
+  # Check non-indexed: domain must be exactly `D` (a variable)
+  let dom0 = tele[0].ty
+  if dom0.kind != pkVar or dom0.name != dataName:
+    raise elabErr(loc, "'def' clauses MVP: only non-indexed data types " &
+      "supported")
+  let x0name = if tele[0].name.len > 0: tele[0].name else: "x0"
+  # Build motive C := lam (_:D). Pi (x1:T1)...(xn:Tn). Ret
+  var cBody = retTy
+  for i in countdown(tele.high, 1):
+    let bn = if tele[i].name.len > 0: tele[i].name else: "x" & $i
+    cBody = mkPi(bn, tele[i].ty, cBody, loc, tele[i].impl)
+  let motive = mkLam("_motive", dom0, cBody, loc)
+  # Build methods, one per constructor (in dataDecl order)
+  var methods: seq[PreTerm] = @[]
+  for ctor in dataDecl.ctors:
+    let ci = covered[ctor.name]
+    let cl = cd.clauses[ci]
+    let (_, _, patArgs) = patHeadName(cl.pats[0], ctorNames)
+    if patArgs.len != ctor.tele.len:
+      raise elabErr(cl.cloc, "constructor '" & ctor.name & "' takes " &
+        $ctor.tele.len & " arguments but pattern has " & $patArgs.len)
+    # Pattern arg names (must be variables for MVP)
+    var argNames: seq[string] = @[]
+    for pa in patArgs:
+      if pa.kind != pkVar:
+        raise elabErr(cl.cloc, "'def' clauses MVP: constructor arguments " &
+          "must be variables (no nested patterns)")
+      argNames.add(pa.name)
+    # Remaining patterns must be variables
+    var restNames: seq[string] = @[]
+    for i in 1 ..< cl.pats.len:
+      if cl.pats[i].kind != pkVar:
+        raise elabErr(cl.cloc, "'def' clauses MVP: non-scrutinee patterns " &
+          "must be variables")
+      restNames.add(cl.pats[i].name)
+    # Build method body: lam (args...). lam (ihs...). lam (rest...). rhs'
+    var rhs = cl.rhs
+    # Identify recursive args and their IH names
+    var ihNames: Table[string, string] = initTable[string, string]()
+    var ihCount = 0
+    for ti, te in ctor.tele:
+      if mentionsFam(te.ty, dataName):
+        let ihN = "ih" & $ihCount
+        ihNames[argNames[ti]] = ihN
+        inc ihCount
+        # Replace recursive calls on this variable
+        rhs = replaceRecCalls(rhs, cd.name, argNames[ti], ihN)
+    # Build the lambda nest: args, then IHs (in tele order, IH after its var),
+    # then rest args
+    var body = rhs
+    # rest args (reverse order for nesting)
+    for i in countdown(restNames.high, 0):
+      let ri = i + 1  # tele index (0 is scrutinee)
+      body = mkLam(restNames[i], tele[ri].ty, body, loc)
+    # constructor args and IHs (reverse order)
+    # We need to interleave: for each tele var in reverse, add IH then var
+    # But IHs were numbered in forward order. Let's rebuild carefully.
+    var ihIdx = ihCount - 1
+    for ti in countdown(ctor.tele.high, 0):
+      if mentionsFam(ctor.tele[ti].ty, dataName):
+        # IH for this var; find its name (numbered in forward order)
+        # Forward order index: count of recursive vars before ti
+        var fwdIdx = 0
+        for tj in 0 ..< ti:
+          if mentionsFam(ctor.tele[tj].ty, dataName): inc fwdIdx
+        let ihN = "ih" & $fwdIdx
+        # IH type: C arg = Pi(rest...). Ret with arg substituted
+        # For MVP non-indexed: C = lam _. Pi(rest...).Ret, so C arg = Pi(rest...).Ret
+        # We need the type for the lambda binder; use cBody with arg substituted?
+        # Simpler: use `mkApp(motive, mkVar(argNames[ti], loc), loc)` and let
+        # elaboration infer. Actually for a lam binder we need a type annotation.
+        # Use the instantiated motive.
+        var ihTy = mkApp(mkVar("_motive", loc), mkVar(argNames[ti], loc), loc)
+        # But _motive isn't in scope. Instead, inline cBody with substitution.
+        # For MVP: cBody doesn't mention the scrutinee (non-dependent motive),
+        # so ihTy = cBody.
+        ihTy = cBody
+        body = mkLam(ihN, ihTy, body, loc)
+      body = mkLam(argNames[ti], ctor.tele[ti].ty, body, loc)
+    methods.add(body)
+  # Build the full application: elimD C m_0 ... m_(k-1) x0 x1 ... xn
+  var app = mkVar(elimName, loc)
+  # Data params: for non-indexed, from dataDecl.params — but they're implicit
+  # in the eliminator type? Check genElimTy: Pi (params...) explicitly.
+  # We need to supply them. For Nat (no params), nothing. For Vec (has params),
+  # we'd need them, but we're MVP non-indexed... Vec IS indexed. So for now,
+  # if there are params, we have a problem. Let's require no params for MVP.
+  if dataDecl.params.len > 0:
+    raise elabErr(loc, "'def' clauses MVP: data types with parameters not " &
+      "yet supported")
+  app = mkApp(app, motive, loc)
+  for m in methods: app = mkApp(app, m, loc)
+  # Apply to all explicit args: x0, x1, ..., xn
+  # x0 is the scrutinee variable; x1..xn are the rest
+  # We need fresh names for the proc telescope
+  var procTele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]] = @[]
+  var argVars: seq[string] = @[]
+  for i, b in tele:
+    let bn = if b.name.len > 0: b.name else: "x" & $i
+    # Skip implicits? The proc syntax supports them. Keep them.
+    procTele.add((bn, b.ty, b.impl, false))
+    if not b.impl:
+      argVars.add(bn)
+  for av in argVars:
+    app = mkApp(app, mkVar(av, loc), loc)
+  # Build the SurfDef and elaborate
+  let sdef = SurfDef(name: cd.name, tele: procTele, retTy: retTy, body: app,
+                     loc: loc)
+  elabDefDecl(sdef, globals, supply, ms)
 
 proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
-              ms: var MetaStore): seq[ElabDef] =
+              ms: var MetaStore,
+              dataInfos: var Table[string, SurfDecl]): seq[ElabDef] =
   ## Elaborate one top-level declaration (Experiment 5: data desugars
   ## to postulate/elim/red and goes through the same path).
   ## Returns the defs it produced (only dkDef yields one directly).
@@ -854,7 +1124,9 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
   of dkRed:
     elabRedDecl(d.lhs, d.rhs, d.rloc, globals, supply, ms)
   of dkData:
-    elabDataDecl(d, globals, supply, ms)
+    elabDataDecl(d, globals, supply, ms, dataInfos)
+  of dkClauses:
+    result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
 
 proc elabCheck*(src: string): seq[ElabDef] =
   ## Parse, elaborate, and typecheck a surface program, decl by decl.
@@ -864,8 +1136,29 @@ proc elabCheck*(src: string): seq[ElabDef] =
   var globals: Globals = initTable[string, GEntry]()
   var supply = Supply()
   var ms = initMetaStore()  # includes fresh convCache (Experiment 10)
+  var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
   for d in decls:
-    result.add(elabDecl(d, globals, supply, ms))
+    result.add(elabDecl(d, globals, supply, ms, dataInfos))
+
+proc elabPrelude*(src: string): tuple[globals: Globals, ms: MetaStore,
+                                      supply: Supply] =
+  ## Elaborate a prelude program once; returns reusable state so per-term
+  ## benchmarks (issue #19) don't re-elaborate the prelude every iteration.
+  let decls = parseProgram(src)
+  var globals: Globals = initTable[string, GEntry]()
+  var supply = Supply()
+  var ms = initMetaStore()  # includes fresh convCache (Experiment 10)
+  var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
+  for d in decls:
+    discard elabDecl(d, globals, supply, ms, dataInfos)
+  (globals, ms, supply)
+
+proc checkTermElab*(pre: PreTerm, ctx: Ctx, globals: Globals,
+                    ms: var MetaStore, supply: var Supply,
+                    expTy: Term): Term =
+  ## Check a single pre-term against an expected type (benchmark hook for
+  ## issue #19). Returns the elaborated term; raises ElabError if ill-typed.
+  checkTm(pre, ctx, globals, ms, supply, expTy)
 
 when isMainModule:
   # --- Experiment 2's programs still elaborate --------------------------------
@@ -1241,5 +1534,76 @@ proc id2 (0 A : ?) : A -> A = lam (x : A). x
   # The cache is exercised by all conversion checks above (now stored
   # in MetaStore.convCache, fresh per elabCheck).
   echo "ok: conversion cache exercised (Experiment 10)"
+
+  # --- Issue #32: clause-style definitions ---------------------------
+  let clauseDefs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+
+data Bool : ? where
+| true : Bool
+| false : Bool
+
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+
+def not : Bool -> Bool
+| true = false
+| false = true
+
+def isEven : Nat -> Bool
+| zero = true
+| (suc n) = not (isEven n)
+
+proc two : Nat = suc (suc zero)
+proc four : Nat = add two two
+""")
+  assert clauseDefs.len == 5
+  echo "ok: clause-style defs (add, not, isEven) elaborate"
+  # Verify add computes: add two two = 4
+  let fourTm = clauseDefs[4].tmTm
+  let fourV = eval(fourTm, @[])
+  let twoTm2 = clauseDefs[3].tmTm
+  let sucId2 = twoTm2.fn.refId
+  proc sucDepth2(v: Value): int =
+    if v.whnfKind == wRef and v.whnfRefId == sucId2 and v.whnfSpineLen == 1:
+      1 + sucDepth2(v.whnfSpineArg(0))
+    elif v.whnfKind == wRef and v.whnfSpineLen == 0:
+      0
+    else: -1000
+  assert sucDepth2(fourV) == 4, "clause-defined add should compute 2+2=4"
+  echo "ok: clause-defined add computes (add two two = 4)"
+
+  # Coverage error
+  try:
+    discard elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def bad : Nat -> Nat
+| zero = zero
+""")
+    assert false, "should have raised coverage error"
+  except ElabError as e:
+    assert "missing case for constructor 'suc'" in e.msg
+    echo "ok: missing coverage is a located error"
+
+  # Overlap error
+  try:
+    discard elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def bad : Nat -> Nat
+| zero = zero
+| zero = zero
+| (suc n) = n
+""")
+    assert false, "should have raised overlap error"
+  except ElabError as e:
+    assert "overlapping clauses" in e.msg
+    echo "ok: overlapping clauses are a located error"
 
   echo "--- all elaborator tests passed ---"
