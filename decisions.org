@@ -665,6 +665,18 @@
     scale the defun stager is ~1.9x SLOWER (0.77ms vs 0.42ms for 300
     unrolled apps) — =applyD='s =@[a] & f.env= seq concat per beta costs
     more than a host-closure call. First-order dispatch is not free.
+  Profiling postscript (2026-10-09, Aaron's probe): #53 never profiled
+  the mechanism — the seq-concat attribution above was code-reading
+  inference. Isolated micro-benchmarks (300-iter loops, min of 100 reps):
+  closure+allocs baseline 124us; +4 nested case dispatches 181us (1.47x);
+  +1-elem seq concat `@[x] & @[]` 235us (1.90x). The seq concat ALONE
+  reproduces the observed 1.76x gap; dispatch is secondary. Note the scale
+  test's envs are empty, so this is pure `@[a] & @[]` allocation cost, not
+  copying. Deeper mechanism: defunctionalization replaced a COMPILED
+  closure (`svStaticLam.body`, host code built once at `cLam`) with a code
+  pointer + interpreter (`dvLam.body: DForm`, re-walked by `stageD` on every
+  beta). Even with a zero-cost env representation the dispatch/re-walk
+  alone costs ~1.47x. Verdict stands, now measured rather than inferred.
   - Genuine gain, qualitative not quantitative: =reifyD= residualizes a
     staging-time lambda into a real residual =(lam [v0] v0)= node. The
     baseline CANNOT express residual lambdas (=cLam= always yields a
