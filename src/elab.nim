@@ -30,6 +30,7 @@ import parse_surf
 import ett_init
 import unify
 import egraph
+import usage_check  # Issue #64: linear usage verification
 
 type
   ElabError* = object of CatchableError
@@ -467,7 +468,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkPi:
     let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar))
-    (tmPi(d, pre.name, c, pre.impl, pre.erased), tmC(cStar))
+    (tmPi(d, pre.name, c, pre.impl, pre.erased, pre.qty), tmC(cStar))
   of pkSigma:
     let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar))
@@ -477,7 +478,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       if pre.c1.isNil: freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
       else: checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply)
-    (tmLam(d, pre.name, b, pre.impl, pre.erased), tmPi(d, pre.name, bty, pre.impl, pre.erased))
+    (tmLam(d, pre.name, b, pre.impl, pre.erased, pre.qty), tmPi(d, pre.name, bty, pre.impl, pre.erased, pre.qty))
   of pkApp:
     var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply)
     (f, fty) = insertImplicits(pre, f, fty, ctx.len, ms)
@@ -568,7 +569,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         unifyElab(ms, ad, dom, pre.loc)
         ad
     let b = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, codBdy)
-    tmLam(d, pre.name, b, pre.impl, pre.erased)
+    tmLam(d, pre.name, b, pre.impl, pre.erased, pre.qty)
   of pkPair:
     let h = headTy(ms, expTy)
     if h.kind == tSi:
@@ -886,7 +887,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
 # Index positions in red patterns are dummy variables (unused in the
 # contractum); fireRed's spine convention already accounts for them.
 
-proc mkPis(tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]],
+proc mkPis(tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]],
            body: PreTerm, loc: Loc): PreTerm =
   result = body
   for i in countdown(tele.high, 0):
@@ -932,7 +933,7 @@ proc elimNameFor(dname: string): string =
     result[0] = result[0].toLowerAscii()
   result &= "Elim"
 
-proc famAppPre(famName: string, params: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]],
+proc famAppPre(famName: string, params: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]],
                idxTerms: seq[PreTerm], loc: Loc): PreTerm =
   result = mkVar(famName, loc)
   for p in params: result = mkApp(result, mkVar(p.name, loc), loc)
@@ -1621,12 +1622,13 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
   app = mkApp(app, motive, loc)
   for m in methods: app = mkApp(app, m, loc)
   for it in scrIdxTerms: app = mkApp(app, it, loc)
-  var procTele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool]] = @[]
+  var procTele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]] = @[]
   var restVars: seq[string] = @[]
   for i, b in tele:
     let bn = if b.name.len > 0: b.name else: "x" & $i
     # The proc syntax supports implicits; keep them.
-    procTele.add((bn, b.ty, b.impl, false))
+    # Note: data tele doesn't carry qty yet; default to qOmega
+    procTele.add((bn, b.ty, b.impl, false, qOmega))
     if i > sPos:
       restVars.add(bn)
   # scrutinee first, then the remaining telescope in order
@@ -1672,7 +1674,14 @@ proc elabCheck*(src: string, handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
   for h in handlers: ms.convHandlers.add(h)
   var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
   for d in decls:
-    result.add(elabDecl(d, globals, supply, ms, dataInfos))
+    let eds = elabDecl(d, globals, supply, ms, dataInfos)
+    for ed in eds:
+      # Issue #64: verify linear/erased usage in the elaborated term
+      try:
+        checkUsage(ed.tmTm)
+      except UsageError as e:
+        raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
+      result.add(ed)
 
 proc elabPrelude*(src: string): tuple[globals: Globals, ms: MetaStore,
                                       supply: Supply] =

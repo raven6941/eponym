@@ -24,6 +24,7 @@
 import sequtils
 import tables
 import hashes
+import preterm  # for Quantity (Issue #64)
 
 type
   Const* = enum cStar, cOne, cVoid, cZero   # ?  1  hi  O
@@ -71,6 +72,7 @@ type
       scope*: Scope
       impl*: bool
       erased*: bool  # Experiment 9: QTT-lite 0-quantity (erased at runtime)
+      qty*: Quantity # Issue #64: binder quantity (q0/q1/qOmega)
     of tMeta:
       metaId*: int
       metaSpine*: seq[Term]  # innermost-first; one entry per creation-var
@@ -135,12 +137,18 @@ proc mkR(id: int, typ: Value, isDefn: bool, dval: Value): Term =
 
 proc vv*(i: int): Term = Term(kind: tV, idx: i)
 
-proc tmPi*(dom: Term, adv: string, bdy: Term, impl = false, erased = false): Term =
-  Term(kind: tPi, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl, erased: erased)
-proc tmSi*(dom: Term, adv: string, bdy: Term, impl = false, erased = false): Term =
-  Term(kind: tSi, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl, erased: erased)
-proc tmLam*(dom: Term, adv: string, bdy: Term, impl = false, erased = false): Term =
-  Term(kind: tLam, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl, erased: erased)
+proc tmPi*(dom: Term, adv: string, bdy: Term, impl = false, erased = false,
+           qty = qOmega): Term =
+  Term(kind: tPi, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl,
+       erased: erased, qty: qty)
+proc tmSi*(dom: Term, adv: string, bdy: Term, impl = false, erased = false,
+           qty = qOmega): Term =
+  Term(kind: tSi, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl,
+       erased: erased, qty: qty)
+proc tmLam*(dom: Term, adv: string, bdy: Term, impl = false, erased = false,
+            qty = qOmega): Term =
+  Term(kind: tLam, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl,
+       erased: erased, qty: qty)
 proc tmMeta*(id: int, spine: seq[Term]): Term =
   Term(kind: tMeta, metaId: id, metaSpine: spine)
 
