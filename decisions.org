@@ -380,3 +380,34 @@
   native case-splitter to the core) keeps the trusted core small —
   the same argument as the embedding thesis. The elaborator does
   the work once; the core never learns pattern matching.
+
+* 2026-10-09 — Issue #36: structural recursion as the termination criterion
+
+  Criterion chosen: syntactic structural recursion. A recursive call is
+  accepted iff its scrutinee-position argument is a bare variable bound
+  by the LHS pattern — a direct subterm. Implemented twice: =checkStructuralRec=
+  over =PreTerm= for =red= rules (before the rule is registered), and
+  =checkClauseTermination= for #32 clause definitions (after IH-rewriting;
+  any surviving self-reference is non-structural).
+
+  Alternative considered and deferred: BelowD / course-of-values, where
+  termination holds by construction because recursive data is
+  internalized as its own course-of-values. More general (accepts
+  e.g. course-of-values recursion that isn't syntactically structural)
+  but requires reworking the data representation; the syntactic check
+  covers the cases that matter now (=add=, =append=, =map=) and is far
+  cheaper to implement.
+
+  Two bugs found while building the clause checker: (1) non-structural
+  self-calls in clause bodies previously fell through IH-rewriting and
+  failed later as confusing "unbound variable" — now a located,
+  name-aware termination error; (2) =replaceRecCalls= rewrote =f= on a
+  pattern variable at *any* spine position, silently miscompiling
+  e.g. =badm m n= into an ill-typed IH application — now only the
+  scrutinee (first) position triggers rewriting, and anything else is
+  rejected by the termination check.
+
+  Corpus: 10 terminating definitions accepted, 8 non-terminating
+  rejected (5 =red=-rule shapes + 3 clause shapes), all under the test
+  timeout — no hangs. Rejection messages name the definition and the
+  offending argument; no de Bruijn or rule-number leaks.

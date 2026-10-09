@@ -21,7 +21,6 @@
 import tables
 import sets
 import sequtils
-import strutils
 import preterm   # Loc
 import ett_init
 import egraph

@@ -941,12 +941,14 @@ proc patHeadName(pat: PreTerm, ctorNames: seq[string]): tuple[isCtor: bool,
 
 proc replaceRecCalls(rhs: PreTerm, fname: string, recVar: string,
                     ihName: string): PreTerm =
-  ## Replace `fname ... recVar ...` (recursive call on recVar) with
-  ## `ihName ...` (IH application, dropping the scrutinee-position arg).
-  ## MVP: only handles the case where recVar appears as a direct argument.
+  ## Replace `fname recVar rest...` (recursive call on recVar in the
+  ## scrutinee position) with `ihName rest...` (IH application).
+  ## MVP: only handles the case where recVar is the first (scrutinee)
+  ## argument. Calls with recVar elsewhere are left alone for the
+  ## termination checker (issue #36) to reject.
   case rhs.kind
   of pkApp:
-    # Check if this is `f ... recVar ...` — flatten the spine
+    # Check if this is `f recVar ...` — flatten the spine
     var spine: seq[PreTerm] = @[]
     var h = rhs
     while h.kind == pkApp:
@@ -955,19 +957,16 @@ proc replaceRecCalls(rhs: PreTerm, fname: string, recVar: string,
     var rspine: seq[PreTerm] = @[]
     for i in countdown(spine.high, 0): rspine.add(spine[i])
     spine = rspine
-    if h.kind == pkVar and h.name == fname:
-      # Find recVar in the spine; replace the whole application
-      for i, a in spine:
-        if a.kind == pkVar and a.name == recVar:
-          # Build `ihName` applied to args after position i
-          var res = mkVar(ihName, rhs.loc)
-          for j in i+1 ..< spine.len:
-            res = mkApp(res, replaceRecCalls(spine[j], fname, recVar, ihName),
-                        rhs.loc)
-          # Also transform args before i (they shouldn't contain rec calls,
-          # but be safe)
-          return res
-    # Not a recursive call; recurse into children
+    if h.kind == pkVar and h.name == fname and spine.len > 0:
+      let a0 = spine[0]
+      if a0.kind == pkVar and a0.name == recVar:
+        # Build `ihName` applied to args after the scrutinee
+        var res = mkVar(ihName, rhs.loc)
+        for j in 1 ..< spine.len:
+          res = mkApp(res, replaceRecCalls(spine[j], fname, recVar, ihName),
+                      rhs.loc)
+        return res
+    # Not a structural recursive call; recurse into children
     result = rhs
     result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName)
     result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName)
@@ -986,6 +985,61 @@ proc replaceRecCalls(rhs: PreTerm, fname: string, recVar: string,
     result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName)
   else:
     result = rhs
+
+proc checkClauseTermination(rhs: PreTerm, fname: string, loc: Loc) =
+  ## Issue #36: clause-level structural recursion check.
+  ## After `replaceRecCalls` has rewritten structural self-calls on direct
+  ## pattern subterms into IH applications, any remaining reference to
+  ## `fname` is a non-structurally-recursive self-call (on the original
+  ## scrutinee, a constructed/growing value, or an unrelated argument).
+  ## Reject it here with a located, name-aware error instead of letting
+  ## elaboration fail later with a confusing "unbound variable".
+  var bound: seq[string] = @[]
+  proc walk(t: PreTerm) =
+    case t.kind
+    of pkVar:
+      if t.name == fname and t.name notin bound:
+        raise elabErr(t.loc,
+          "non-structurally-recursive call in 'def " & fname & "': '" &
+          fname & "' referenced outside a structural recursive call; " &
+          "recursive calls must be on direct subterms of the clause pattern")
+    of pkApp:
+      let spine = flattenAppSpine(t)
+      if spine[0].kind == pkVar and spine[0].name == fname and
+         spine[0].name notin bound:
+        let badArg = if spine.len > 1: $spine[1] else: $t
+        raise elabErr(t.loc,
+          "non-structurally-recursive call in 'def " & fname & "': '" &
+          fname & "' applied to '" & badArg &
+          "', which is not a direct subterm of the clause pattern")
+      for s in spine: walk(s)
+    of pkLam, pkPi:
+      if t.c1 != nil: walk(t.c1)
+      bound.add(t.name)
+      walk(t.c2)
+      discard bound.pop()
+    of pkLet:
+      if t.c1 != nil: walk(t.c1)
+      walk(t.c2)
+      bound.add(t.name)
+      walk(t.c3)
+      discard bound.pop()
+    of pkSigma:
+      if t.c1 != nil: walk(t.c1)
+      bound.add(t.name)
+      walk(t.c2)
+      discard bound.pop()
+    of pkPair:
+      walk(t.c1)
+      walk(t.c2)
+    of pkFst, pkSnd:
+      walk(t.c1)
+    of pkAnn:
+      walk(t.c1)
+      walk(t.c2)
+    else:
+      discard
+  walk(rhs)
 
 proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
                      ms: var MetaStore,
@@ -1099,6 +1153,9 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
         inc ihCount
         # Replace recursive calls on this variable
         rhs = replaceRecCalls(rhs, cd.name, argNames[ti], ihN)
+    # Issue #36: any self-reference surviving IH-rewriting is a
+    # non-structural recursive call — reject with a termination error.
+    checkClauseTermination(rhs, cd.name, cl.cloc)
     # Build the lambda nest: args, then IHs (in tele order, IH after its var),
     # then rest args
     var body = rhs
@@ -1795,6 +1852,34 @@ red bad5 C z s (suc n) = s n (bad5 C z s (suc (suc n)))
 """)
   # bad5 exercises the nested-spine traversal: the recursive call sits
   # inside the step argument and the scrutinee grows, so it is rejected.
+  rej36("clause-level growing scrutinee", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def badc : Nat -> Nat
+| zero = zero
+| (suc n) = badc (suc (suc n))
+""")
+  # Clause-level: self-call on a constructed value, not a pattern subterm.
+  rej36("clause-level self-loop", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def loopc : Nat -> Nat
+| zero = zero
+| (suc n) = loopc (suc n)
+""")
+  # Clause-level: self-call on the original scrutinee pattern.
+  rej36("clause-level call on unrelated arg", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def badm : Nat -> Nat -> Nat
+| zero m = m
+| (suc n) m = badm m n
+""")
+  # Clause-level: recursive call with the scrutinee in a non-scrutinee
+  # position (m, not n). Must be rejected, not silently mis-rewritten.
   assert termAccepted >= 10, "need >= 10 accepted, got " & $termAccepted
   assert termRejected >= 5, "need >= 5 rejected, got " & $termRejected
   echo "ok: termination corpus (", termAccepted, " accepted, ",
