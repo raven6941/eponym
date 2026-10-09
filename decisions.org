@@ -844,3 +844,48 @@
   Session types example uses linear channels; badClient3 correctly rejected.
   This is ETT + linear binders (not full QTT as core). The full QTT
   integration (quantities in typing judgments) is future work.
+
+* 2026-10-09 — Issue #66: quantity-aware typing judgments (first enforcement)
+
+  Context: #64 delivered ETT + linear binders with a *post-elaboration*
+  usage checker (quantities don't affect the judgments). #66 integrates
+  quantities into the judgments themselves. Steps so far on =qtt-core=:
+  semiring (qadd/qmul), quantity-aware Ctx, and now in-judgment enforcement.
+
+  What was built:
+  - =enforceBinderQty= in elab.nim, called at both pkLam sites (inferTm and
+    checkTm). Raises ElabError at the *binder's* source location, e.g.
+    "linear variable 'ch' used 2 times (expected exactly once)" — vs the
+    post-pass's declaration-level "used more than once (index 1)".
+  - =countVarUses= (usage_check.nim): counts free occurrences of de Bruijn
+    index 0 in *term positions*. Binder domains and type annotations are
+    not descended into — in QTT, types are checked in the all-0 context,
+    so a type-level mention neither consumes a linear variable nor
+    violates erasure. This preserves the Experiment 9 tests
+    (=proc const (0 A : ?) (x : A) : A = x=, where A appears in an
+    annotation).
+  - The old post-pass had an off-by-one: it pushed the binder *before*
+    walking the domain, attributing outer-variable occurrences in domains
+    to the inner binder (false "used more than once" on
+    =lam (1 y : ?). lam (x : y). x=). The post-pass is rewritten to share
+    =countVarUses=, so the two checks agree by construction; it stays as
+    a backstop.
+
+  Deliberate non-goals / design calls:
+  - Pi binders are NOT enforced in-judgment. A postulate like
+    =Pi (1 ch : Chan s). ...= declares linearity enforced at *use sites*
+    (per the session-types example's own design); its codomain need not
+    mention the binder. Enforcing at pkPi would reject the example's
+    primitives.
+  - Bodies still mentioning unsolved metas (after zonk) skip the
+    in-judgment check — a hole may later solve to a use. The post-pass
+    re-checks at end of declaration, when metas are solved or reported.
+  - q0 in term position is an error, but q0 in types is fine (the QTT
+    answer to "if a type mentions a linear variable, how is that
+    counted?"). Full quantity polymorphism and conversion-respecting
+    quantities remain open (acceptance criteria).
+
+  Verification: 5 new elab tests (use-once ok; twice/not-used/erased-use
+  rejected with binder locations; linear Pi not enforced); full CI matrix
+  green (fuzz_soundness failure is pre-existing on main — stale
+  staging/stage_typeo module path from the src reorg, unrelated).

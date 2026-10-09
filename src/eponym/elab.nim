@@ -361,6 +361,36 @@ proc ext(ctx: Ctx, name: string, ty: Term, qty = qOmega): Ctx =
   let w = ctx.mapIt(CtxEntry(name: it.name, ty: weaken(it.ty), qty: it.qty))
   @[CtxEntry(name: name, ty: weaken(ty), qty: qty)] & w
 
+proc enforceBinderQty(qty: Quantity, body: Term, loc: Loc, name: string,
+                      ms: MetaStore) =
+  ## Issue #66: quantity-aware typing judgment for lambdas. Enforce the
+  ## binder's quantity against the elaborated body *during* elaboration,
+  ## with the binder's source location (rather than only in the post-pass
+  ## checkUsage, which reports at the declaration). `body` is the
+  ## elaborated lambda body in the extended frame (index 0 = the binder).
+  ## Only lambdas: Pi binders are deliberately not enforced here — a
+  ## postulate like `Pi (1 ch : Chan s). ...` declares linearity to be
+  ## enforced at use sites, and its codomain need not mention the binder.
+  if qty == qOmega: return
+  let zb = zonk(ms, body)
+  # A body that still mentions unsolved metas can't be counted reliably
+  # (a hole may later solve to a use); the post-pass re-checks at the end
+  # of the declaration, when metas are solved or reported.
+  if hasUnresolvedMetas(zb): return
+  let n = countVarUses(zb)
+  case qty
+  of q0:
+    if n > 0:
+      raise elabErr(loc, "erased variable '" & name & "' used " & $n &
+        " time(s) in term position")
+  of q1:
+    if n == 0:
+      raise elabErr(loc, "linear variable '" & name & "' not used")
+    elif n > 1:
+      raise elabErr(loc, "linear variable '" & name & "' used " & $n &
+        " times (expected exactly once)")
+  of qOmega: discard
+
 proc resolveVar(ctx: Ctx, globals: Globals, name: string,
                 loc: Loc): tuple[tm, ty: Term] =
   for i, e in ctx:
@@ -479,6 +509,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       if pre.c1.isNil: freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
       else: checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply)
+    enforceBinderQty(pre.qty, b, pre.loc, pre.name, ms)  # Issue #66
     (tmLam(d, pre.name, b, pre.impl, pre.erased, pre.qty), tmPi(d, pre.name, bty, pre.impl, pre.erased, pre.qty))
   of pkApp:
     var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply)
@@ -570,6 +601,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         unifyElab(ms, ad, dom, pre.loc)
         ad
     let b = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, codBdy)
+    enforceBinderQty(pre.qty, b, pre.loc, pre.name, ms)  # Issue #66
     # DEBUG
     # echo "DEBUG checkTm pkLam: pre.qty=", pre.qty, " name=", pre.name
     tmLam(d, pre.name, b, pre.impl, pre.erased, pre.qty)
@@ -2076,6 +2108,39 @@ proc id2 (0 A : ?) : A -> A = lam (x : A). x
 """)
   assert erasedDefs.len == 2
   echo "ok: erased binders (0 x : T) elaborate (Experiment 9)"
+
+  # --- Issue #66: quantity-aware judgments (in-elaboration enforcement) ----
+  # Binder quantities are enforced at each lambda during elaboration, with
+  # the binder's source location — not just in the #64 post-pass, which
+  # reports at the declaration. Type annotations don't count as uses
+  # (QTT: types are checked in the all-0 context).
+  let qttDefs = elabCheck("""
+proc linId (A : ?) : Pi (1 x : A). A =
+  lam (1 x : A). x
+""")
+  assert qttDefs.len == 1
+  echo "ok: linear binder used exactly once elaborates (#66)"
+  expectElabErr("""
+proc linDup (A : ?) (f : A -> A -> A) : Pi (1 x : A). A =
+  lam (1 x : A). f x x
+""", "used 2 times (expected exactly once)")
+  expectElabErr("""
+proc linUnused (A : ?) (y : A) : Pi (1 x : A). A =
+  lam (1 x : A). y
+""", "linear variable 'x' not used")
+  expectElabErr("""
+proc erasedUse (A : ?) : Pi (0 x : A). A =
+  lam (0 x : A). x
+""", "erased variable 'x' used")
+  # Pi binders are NOT enforced in-judgment (#66 design): a postulate's
+  # linear Pi declares use-site linearity; its codomain need not mention it
+  let qttPiDefs = elabCheck("""
+postulate B : ?
+postulate useB : Pi (1 b : B). B
+proc useBClient (b : B) : B = useB b
+""")
+  assert qttPiDefs.len == 1
+  echo "ok: linear Pi binders not enforced at declaration (#66)"
 
   # --- Experiment 41: conversion cache as a scoped handler ---------
   # The Experiment 10 cache is no longer a global switch: it is probed
