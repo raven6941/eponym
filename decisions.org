@@ -411,3 +411,29 @@
   rejected (5 =red=-rule shapes + 3 clause shapes), all under the test
   timeout — no hangs. Rejection messages name the definition and the
   offending argument; no de Bruijn or rule-number leaks.
+
+* 2026-10-09 — Issue #32: indexed clause definitions
+
+  The MVP's "non-indexed only" limit is lifted. The motive now abstracts
+  over the data family's indices: =C := lam (i0:Idx0)... . lam (_:D params
+  i0..). Pi (rest...). Ret[i:=idx]=. Each method refines the scrutinee's
+  index variables to the constructor's return indices (=nil: m:=zero=,
+  =cons: m:=suc k=) via capture-avoiding =substPre= (new: =freeVarsPre=,
+  =allNamesPre=, =substPre= — capture-avoiding PreTerm substitution).
+
+  Design points: (a) scrutinee can be at any explicit position (not just
+  first); the eliminator is applied to params, motive, methods, indices,
+  scrutinee, then rest args in order. (b) Data parameters supported
+  (=Vec A=); implicit params get metas solved by unification. (c) IH
+  types are the motive tail with index binders substituted by the
+  recursive arg's indices. (d) Pattern variables must not shadow
+  telescope binders — a located error, since the method rebinds rest
+  implicits by tele names.
+
+  =vappend : Pi {A}. Pi {m n}. Vec A m -> Vec A n -> Vec A (add m n)=
+  elaborates and computes; a RHS that confuses indices is rejected by
+  conversion (=add zero n= must reduce to =n=, which it does via the
+  clause-compiled =add='s eliminator).
+
+  Remaining #32 limits: no nested patterns, no catch-all variable clause,
+  no =ettDefs= macro-front-end support.
