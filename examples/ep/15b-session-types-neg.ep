@@ -1,0 +1,25 @@
+# Negative test for session types: linear channel used twice.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+# The double-send must be rejected by the in-judgment quantity enforcement
+# (Issue #66), not merely by the old post-pass checker.
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+
+data Session : ? where
+| sendS (A : ?) (s : Session) : Session
+| recvS (A : ?) (s : Session) : Session
+| endS : Session
+
+data Chan : Session -> ? where
+| mkChan (s : Session) : Chan s
+
+postulate sendNat : Pi (x : Nat). Pi (1 ch : Chan (sendS Nat endS)). Chan endS
+
+# Violation 3: double-send on a linear channel (affinity hole, Issue #64)
+# Expected error: linear variable 'ch' used 2 times (expected exactly once)
+proc badClient3 (1 ch : Chan (sendS Nat endS)) : Chan endS =
+  let ch1 = sendNat zero ch in
+  let ch2 = sendNat zero ch in
+  ch1

@@ -938,3 +938,44 @@
   rejected with binder locations; linear Pi not enforced); full CI matrix
   green (fuzz_soundness failure is pre-existing on main — stale
   staging/stage_typeo module path from the src reorg, unrelated).
+
+* 2026-10-09 — Issue #66: quantities are part of types (conversion respects binders)
+
+  Context: continuation of the #66 acceptance criterion
+  "(1 x : A) -> B is not convertible with (ω x : A) -> B". Previously
+  quantities were carried on syntax but erased before conversion, so a
+  linear function type was convertible with an unrestricted one.
+
+  What was built (initial encoding, =ett_init.nim=):
+  - =Whnf= gains =qty: Quantity= on =wPi=/=wSi=; every =Term= traversal
+    (=subst=, =absGo=, =substEnv=, =weakenAt=, =substSpine=) threads the
+    binder quantity through, and evaluation preserves it (=tPi=/=tSi=
+    whnf construction, =vPi=/=vSi= defaulting to =qOmega= for hand-built
+    values, =infer= passing the binder's qty).
+  - =structuralEq= on =wPi=/=wSi= now raises "quantity mismatch: qOmega
+    vs q1" (etc.) when binder quantities differ, before comparing domains
+    and scopes. Surface error: "inferred type ... does not match expected
+    type ...: not convertible (quantity mismatch: q0 vs qOmega)".
+  - Elaboration layer (=elab.nim=): =substPre= preserves =t.qty= on
+    =pkPi=/=pkLam= through substitution and renaming, so quantities
+    survive elaborator-internal transforms.
+
+  Design call: quantity mismatch is a conversion error at the *type*
+  level, raised inside =structuralEq= like any other head/form mismatch
+  — not a separate elaborator check. This keeps the judgment structure
+  untouched: convertibility just became finer-grained. The vPi/vSi
+  =qOmega= default keeps hand-built values (e.g. =vAbsurd=) on the
+  backward-compatible path.
+
+  Also fixed in this commit: =tests/run_examples.nim= was walking only
+  =examples/=, but the Oct 9 reorg moved all .ep files to =examples/ep/= —
+  the suite had been running zero files and passing vacuously. It now
+  walks both directories and supports negative tests (files named
+  =*-neg.ep= must raise =ElabError=). The session-types double-send case
+  (=badClient3=) moved from =15-session-types.ep= to the new
+  =15b-session-types-neg.ep=; it is rejected by the in-judgment #66
+  enforcement ("linear variable 'ch' used 2 times"), which is exactly the
+  acceptance criterion "session types example works with full QTT".
+
+  Verification: all CI matrix suites green locally (incl. all 16 .ep
+  examples + the negative session-types test).

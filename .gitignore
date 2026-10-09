@@ -12,5 +12,7 @@ tests/**
 !tests/**/*.nim
 # Examples dir: keep sources, ignore built outputs
 examples/*
+!examples/ep/
+!examples/ep/*.ep
 !examples/*.nim
 !examples/*.ep
