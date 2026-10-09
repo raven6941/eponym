@@ -178,13 +178,15 @@ Completed experiments (see `plan.org`, `decisions.org`):
 
 In flight (ordered):
 
-1. **#36 — termination checking** (branch `exp36-termination`):
-   structural recursion for `red` rules and clause definitions.
-2. **#32 — clause-style definitions**: integrate and finish — indexed
-   patterns (`Vec` append) remain.
-3. **#26 / Track C step 3 — relational + staged elaborator vs direct
+1. **#32 — clause-style definitions**: MVP merged (clauses compile to
+   eliminators; coverage/overlap checking; termination checking via
+   #36). Remaining: indexed patterns (`Vec` append).
+2. **#26 / Track C step 3 — relational + staged elaborator vs direct
    elaborator**: build the relational elaborator, stage it, compare
    against `elab.nim` on performance and error quality.
+
+Completed: **#36 — termination checking** (structural recursion for
+`red` rules and clause definitions; 10-accepted/8-rejected corpus).
 
 Then: #33 positivity, #34 error snapshots, #37 records, #38 elaboration
 adequacy tests, #28 session-type library demo (the motivating case),
