@@ -182,12 +182,14 @@ In flight (ordered):
 
 1. **#26 / Track C step 3 — relational + staged elaborator vs direct
    elaborator**: build the relational elaborator, stage it, compare
-   against `elab.nim` on performance and error quality.
-2. **#41 — equality as overridable effect** (Andromeda-style): factor the
-   elaborator so conversion failures raise a scoped, handler-overridable
-   effect instead of failing hard.
+   against `elab.nim` on performance and error quality. (Relational side
+   has accept/reject parity 8/8 on the fragment; staging via partial
+   deduction is the remaining work.)
 
-Completed: **#36 — termination checking** (structural recursion for
+Completed: **#41 — equality as overridable effect** (Andromeda-style;
+merged d4c4ceb: `convElab` effect site, `ConvHandler={decide,coreValid}`,
+`cacheConvHandler` at 1.04–1.08x, `natArithHandler` as `by arith` tactic);
+**#36 — termination checking** (structural recursion for
 `red` rules and clause definitions; 10-accepted/8-rejected corpus);
 **#32 — clause-style definitions** (MVP + indexed families; `vappend`
 elaborates and computes).
