@@ -28,6 +28,35 @@ import egraph
 type
   UnifyError* = object of CatchableError
 
+  # Experiment 41: equality-as-effect handler interface.
+  #
+  # A conversion handler discharges one conversion goal `a === b` (both
+  # already zonked by convElab). It returns cvDischarged if it proves the
+  # goal, or cvDeclined if it cannot decide it — the driver then tries the
+  # next handler down the stack; the bottom of the stack is the default
+  # handler (full conversion via the core evaluator + areEqual), which
+  # raises ElabError on failure exactly as before. Handlers never raise
+  # for goals they merely cannot decide; they decline.
+  #
+  # Handlers are dynamically scoped: they apply only within the dynamic
+  # extent of their installation (see withConvHandler in elab.nim).
+  # Because Nim closures cannot capture `var` parameters, ms/s travel as
+  # explicit arguments rather than through a `next` closure.
+  # `coreValid`: true when the handler's discharges are always validated
+  # by the core's own conversion (e.g. the cache, which only replays
+  # goals the default handler already proved). A handler with
+  # coreValid=false (e.g. a domain decision procedure) extends what
+  # counts as convertible for its dynamic extent — installing it is an
+  # explicit, scoped trust extension, à la Andromeda.
+  ConvVerdict* = enum
+    cvDischarged
+    cvDeclined
+  ConvDecide* = proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
+                     ctxLen: int): ConvVerdict {.closure.}
+  ConvHandler* = object
+    decide*: ConvDecide
+    coreValid*: bool
+
   MetaEntry* = object
     metaTy*: Term     # type of the meta, in creation context
     metaCtxLen*: int  # length of the creation context
@@ -38,10 +67,12 @@ type
     nextId*: int
     entries*: Table[int, MetaEntry]
     convCache*: EGraph  # Experiment 10: conversion cache (per elabCheck)
+    convHandlers*: seq[ConvHandler]  # Experiment 41: handler stack (top = last)
+    extDischarges*: int  # Experiment 41: discharges by coreValid=false handlers
 
 proc initMetaStore*(): MetaStore =
   MetaStore(nextId: 0, entries: initTable[int, MetaEntry](),
-            convCache: initEGraph())
+            convCache: initEGraph(), convHandlers: @[], extDischarges: 0)
 
 proc uerr(loc: Loc, msg: string): ref UnifyError =
   # No location prefix here: the elaborator catches UnifyError and re-raises

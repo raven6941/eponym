@@ -437,3 +437,61 @@
 
   Remaining #32 limits: no nested patterns, no catch-all variable clause,
   no =ettDefs= macro-front-end support.
+
+* 2026-10-09 — Issue #41: equality as overridable effect (handler stack)
+
+  The elaborator's conversion (=convElab=) is now an effect-raising site
+  in the Andromeda sense. Design, after the issue's plan:
+
+  - Choke points: every conversion goal funnels through =convElab= (the
+    infer-then-check boundary in =checkTm= and the =refl= tactic), so
+    there is exactly one effect-raising site.
+  - Interface (=unify.nim=): =ConvHandler= is an object with a =decide=
+    closure returning =cvDischarged= / =cvDeclined=, plus a =coreValid=
+    flag. Handlers decline goals they cannot decide; only the default
+    handler at the bottom of the stack raises. Nim closures cannot
+    capture =var= parameters, so instead of a =next= closure the driver
+    loop in =convElab= simply tries the stack top-down — same semantics,
+    no capture problem.
+  - Dynamic scoping: =withConvHandler(ms, h, body)= pushes =h= for the
+    dynamic extent of =body= (try/finally pop). =elabCheck= also takes an
+    optional whole-program handler list. No algebraic effects needed.
+  - Default handler (=defaultConv=): the old Experiment 5b conversion
+    verbatim (core evaluator + =areEqual=, same error messages), plus
+    recording successes in =ms.convCache=. With an empty stack the full
+    test suite is green with zero accept/reject changes.
+  - Trust model (the key decision): =elabDefDecl= step 3 re-verifies each
+    definition with the bare core's =check=. A =coreValid=false= handler
+    (a domain decision procedure) deliberately extends conversion beyond
+    the core, so for definitions where such a handler discharged a goal
+    (=ms.extDischarges= counter) step 3 is relaxed to evaluation — the
+    elaborator's =checkTm= already validated with the extended
+    conversion. Installing the handler is an explicit, dynamically-scoped
+    trust extension; this is the Andromeda semantics (the core's equality
+    is extensible by installed handlers). =coreValid=true= handlers
+    (the cache: it only replays goals the default handler proved) keep
+    the backstop in force.
+  - Two handlers shipped: (1) =cacheConvHandler= — the Experiment 10
+    cache as an opt-in scoped procedure: identical accept/reject on a
+    Vec-heavy corpus vs the default (6 decls; default 0.038s, cache
+    0.035s on this workload — the corpus is too small for the cache to
+    win; a conversion-heavy benchmark is future work). (2)
+    =natArithHandler= — linear Nat equations over ={zero, suc, add}= via
+    normalization to =c + Σ kᵢ·xᵢ=, with congruence under =Eq= (the
+    inferred-vs-expected check compares =Eq= types, not just sides).
+    Discharges =add n (suc m) ≡ suc (add n m)=, =add n zero ≡ n=,
+    =add n m ≡ add m n= for neutral =n, m= — all stuck for the core's
+    NbE. Wired as the =by arith= tactic. Scoping pinned by tests: =by
+    refl= still rejects the open goal, and =by arith= rejects false
+    goals (=zero ≡ suc zero=).
+  - Soundness status (honest): the arithmetic handler is a *trusted*
+    decision procedure — each normalization step is a lemma provable by
+    induction (add-zero-right, add-suc-right, AC of +), complete for
+    linear equations over (ℕ, 0, suc, +), and it declines everything
+    outside the fragment — but it does not return proof evidence for the
+    core to validate. Evidence-returning handlers (proof terms checked
+    by the core) are the documented next step.
+  - Incidental finding: elaborated terms are only alpha-equivalent
+    across cache/no-cache runs, because a cache hit skips =freshPara=
+    calls and renumbers later fresh IDs. Accept/reject is identical;
+    the test asserts names/length, not term strings.

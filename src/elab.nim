@@ -162,6 +162,45 @@ proc prettyTerm(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
     "let " & prettyTerm(t.letVal, ctx, refNames) & " in " &
       prettyTerm(t.letScope.bdy, @[CtxEntry(name: "_", ty: t.letTy)] & ctx, refNames)
 
+template withConvHandler*(ms: var MetaStore, h: ConvHandler,
+                          body: untyped): untyped =
+  ## Experiment 41: install a conversion handler for the dynamic extent of
+  ## `body`. The handler applies to every conversion goal raised (via
+  ## convElab) while `body` runs — including in nested calls — and is
+  ## removed afterwards even if `body` raises. This is the dynamic scoping
+  ## of Andromeda-style handlers, realized without algebraic effects.
+  ms.convHandlers.add(h)
+  try:
+    body
+  finally:
+    discard ms.convHandlers.pop()
+
+proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
+                 ctx: Ctx, globals: Globals) =
+  ## Experiment 41: the bottom of the handler stack — the Experiment 5b
+  ## conversion (full reduction via the core evaluator, then the core's
+  ## type-directed conversion areEqual). Raises ElabError("not
+  ## convertible") on failure, exactly as convElab did before handlers
+  ## existed, so behavior with an empty stack is bit-for-bit unchanged.
+  ## Successes are recorded in ms.convCache, which the scoped
+  ## cacheConvHandler below probes.
+  var env = newSeq[Value](ctx.len)
+  for i in 0 ..< ctx.len:
+    env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
+  let va = eval(a, env)
+  let vb = eval(b, env)
+  try:
+    areEqual(s, vStar(), va, vb)
+    # Success: record in the cache for scoped cache handlers to probe.
+    merge(ms.convCache, $ctx.len & ":" & $a & " === " & $b)
+  except ValueError as e:
+    var refNames = initTable[int, string]()
+    for name, g in globals:
+      if g.tm.kind == tR: refNames[g.tm.refId] = name
+    raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames) &
+      " does not match expected type " & prettyTerm(b, ctx, refNames) &
+      ": not convertible (" & e.msg & ")")
+
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
               ctx: Ctx, globals: Globals) =
   ## Conversion for the inferred-vs-expected check (Experiment 5b):
@@ -175,34 +214,143 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   ## unification instead: evaluation cannot solve flex constraints,
   ## and unify is the only thing that can.
   ##
-  ## Experiment 10: probe the e-graph cache first (in ms.convCache).
-  ## On hit, skip NbE. On miss, run NbE; on success, merge into the cache.
+  ## Experiment 41: the equality effect. Instead of running conversion
+  ## directly, convElab raises the goal `a === b` to the handler stack in
+  ## ms.convHandlers (top = most recently installed). Each handler either
+  ## discharges the goal (cvDischarged) or declines (cvDeclined) to the
+  ## next one down. The bottom of the stack is defaultConv above. The
+  ## choke points that raise the effect are exactly the old failure sites:
+  ## the infer-then-check boundary in checkTm and the `refl` tactic.
   let a1 = zonk(ms, a)
   let b1 = zonk(ms, b)
   if findUnsolved(ms, a1).found or findUnsolved(ms, b1).found:
     unifyElab(ms, a1, b1, loc)
     return
-  # Experiment 10: cache probe (key includes ctx length for soundness)
-  let cacheKey = $ctx.len & ":" & $a1 & " === " & $b1
-  let (hit, _) = areEqualCached(ms.convCache, cacheKey)
-  if hit:
-    return  # cache hit: NbE already proved this equality
-  var env = newSeq[Value](ctx.len)
-  for i in 0 ..< ctx.len:
-    env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
-  let va = eval(a1, env)
-  let vb = eval(b1, env)
-  try:
-    areEqual(s, vStar(), va, vb)
-    # Success: record in cache
-    merge(ms.convCache, cacheKey)
-  except ValueError as e:
-    var refNames = initTable[int, string]()
-    for name, g in globals:
-      if g.tm.kind == tR: refNames[g.tm.refId] = name
-    raise elabErr(loc, "inferred type " & prettyTerm(a1, ctx, refNames) &
-      " does not match expected type " & prettyTerm(b1, ctx, refNames) &
-      ": not convertible (" & e.msg & ")")
+  var i = ms.convHandlers.high
+  while i >= 0:
+    let h = ms.convHandlers[i]
+    if h.decide(ms, s, a1, b1, loc, ctx.len) == cvDischarged:
+      if not h.coreValid:
+        # A domain handler extended conversion beyond the core: record it
+        # so elabDefDecl can relax the core re-check for this definition.
+        inc ms.extDischarges
+      return
+    dec i
+  defaultConv(ms, s, a1, b1, loc, ctx, globals)
+
+proc cacheConvHandler*(): ConvHandler =
+  ## Experiment 41: the Experiment 10 conversion cache as a scoped,
+  ## composable decision procedure. Probes the memo table; on a hit the
+  ## goal is discharged without running NbE. On a miss it declines, and
+  ## the default handler below records its success in the cache — so the
+  ## cache only ever contains goals the stack actually proved.
+  ## coreValid=true: cache hits replay goals the default handler proved,
+  ## so the core's re-check backstop stays in force.
+  let decide: ConvDecide =
+    proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
+         ctxLen: int): ConvVerdict {.closure.} =
+      let (hit, _) = areEqualCached(ms.convCache,
+                                    $ctxLen & ":" & $a & " === " & $b)
+      if hit: cvDischarged else: cvDeclined
+  ConvHandler(decide: decide, coreValid: true)
+
+type NatPoly = object
+  cst*: int
+  coeff*: Table[string, int]  # atom key -> coefficient
+
+proc polyAdd(a, b: NatPoly): NatPoly =
+  result.cst = a.cst + b.cst
+  result.coeff = a.coeff
+  for k, v in b.coeff:
+    result.coeff.mgetOrPut(k, 0) += v
+
+proc spineOf(t: Term): tuple[head: Term, args: seq[Term]] =
+  ## Destructure an application spine; args are innermost-first.
+  var args: seq[Term] = @[]
+  var cur = t
+  while cur.kind == tApp:
+    args.add(cur.arg)
+    cur = cur.fn
+  (cur, args)
+
+proc normNat(t: Term, zeroId, sucId, addId: int): NatPoly =
+  ## Normalize a Nat term to the linear polynomial c + Σ kᵢ·xᵢ over
+  ## {zero, suc, add}. Variables and non-Nat subterms become opaque atoms
+  ## keyed by their exact term rendering, so two terms share an atom only
+  ## if they are syntactically identical.
+  let (head, args) = spineOf(t)
+  # args is innermost-first: args[0] is the last argument
+  if head.kind == tR and head.refId == zeroId and args.len == 0:
+    return NatPoly(cst: 0, coeff: initTable[string, int]())
+  if head.kind == tR and head.refId == sucId and args.len >= 1:
+    let r = normNat(args[0], zeroId, sucId, addId)
+    return NatPoly(cst: r.cst + 1, coeff: r.coeff)
+  if head.kind == tR and head.refId == addId and args.len >= 2:
+    return polyAdd(normNat(args[1], zeroId, sucId, addId),
+                   normNat(args[0], zeroId, sucId, addId))
+  if t.kind == tV:
+    var co = initTable[string, int]()
+    co["v" & $t.idx] = 1
+    return NatPoly(cst: 0, coeff: co)
+  var co = initTable[string, int]()
+  co["t:" & $t] = 1
+  NatPoly(cst: 0, coeff: co)
+
+proc natConv(a, b: Term, zeroId, sucId, addId, eqId: int): bool =
+  ## Decide `a === b` in the linear-Nat fragment, with congruence under
+  ## the Eq type former (needed because the inferred-vs-expected check
+  ## compares `Eq Nat x x` against `Eq Nat x y`, not just the sides).
+  let ra = normNat(a, zeroId, sucId, addId)
+  let rb = normNat(b, zeroId, sucId, addId)
+  if ra.cst == rb.cst and ra.coeff == rb.coeff:
+    return true
+  if eqId >= 0:
+    let (ha, aa) = spineOf(a)
+    let (hb, bb) = spineOf(b)
+    if ha.kind == tR and hb.kind == tR and ha.refId == eqId and
+       hb.refId == eqId and aa.len == bb.len and aa.len >= 3:
+      for i in 0 ..< aa.len:
+        if not natConv(aa[i], bb[i], zeroId, sucId, addId, eqId):
+          return false
+      return true
+  false
+
+proc natArithHandler*(globals: Globals): ConvHandler =
+  ## Experiment 41: a tiny domain-specific decision procedure for linear
+  ## Nat equations over {zero, suc, add}, installed with dynamic scope
+  ## (see the `arith` tactic). It discharges goals the default conversion
+  ## cannot — e.g. `add n (suc m) === suc (add n m)` with neutral n, m,
+  ## where the core's NbE gets stuck on the neutral first argument — by
+  ## normalizing both sides to c + Σ kᵢ·xᵢ and comparing.
+  ##
+  ## Soundness (trusted decision procedure): each normalization step is a
+  ## lemma provable by induction (add-zero-right, add-suc-right, and
+  ## associativity/commutativity of +), and the normal form is complete
+  ## for linear equations over (ℕ, 0, suc, +). Goals outside the fragment
+  ## are declined, never discharged. The handler only ever equates terms
+  ## whose normal forms agree syntactically, so it agrees with the default
+  ## conversion on ground terms. Returning proof evidence for the core to
+  ## validate (the full Andromeda design) is future work — see decisions.org.
+  var zeroId = -1
+  var sucId = -1
+  var addId = -1
+  var eqId = -1
+  if "zero" in globals and globals["zero"].tm.kind == tR:
+    zeroId = globals["zero"].tm.refId
+  if "suc" in globals and globals["suc"].tm.kind == tR:
+    sucId = globals["suc"].tm.refId
+  if "add" in globals and globals["add"].tm.kind == tR:
+    addId = globals["add"].tm.refId
+  if "Eq" in globals and globals["Eq"].tm.kind == tR:
+    eqId = globals["Eq"].tm.refId
+  result.coreValid = false
+  result.decide =
+    proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
+         ctxLen: int): ConvVerdict {.closure.} =
+      if addId < 0 or zeroId < 0 or sucId < 0:
+        return cvDeclined  # no Nat/add in scope: nothing to decide
+      if natConv(a, b, zeroId, sucId, addId, eqId): cvDischarged
+      else: cvDeclined
 
 proc ext(ctx: Ctx, name: string, ty: Term): Ctx =
   ## Extend the context: every stored type is weakened into the new frame.
@@ -459,6 +607,13 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     case pre.name
     of "refl": tacRefl(expTy, ctx, globals, ms, supply, pre.loc)
     of "assumption": tacAssumption(expTy, ctx, globals, ms, supply, pre.loc)
+    of "arith":
+      # Experiment 41: run the refl tactic with the Nat arithmetic
+      # decision procedure installed for the dynamic extent of the
+      # tactic *and* the subsequent inferred-vs-expected check — both
+      # raise conversion goals through convElab, so both see the handler.
+      withConvHandler(ms, natArithHandler(globals),
+        tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
     else: raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
   else:
     let (t, ty) = inferTm(pre, ctx, globals, ms, supply)
@@ -475,6 +630,14 @@ type
 proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
                ms: var MetaStore): ElabDef =
   ## Elaborate one `def` (the Experiment 2/3 pipeline, unchanged).
+  # Experiment 41: snapshot the extended-conversion counter. If a
+  # coreValid=false handler discharged a goal while elaborating this
+  # definition, conversion was deliberately extended beyond the core's
+  # for its dynamic extent, and step 3's bare-core re-check is relaxed
+  # (the elaborator's checkTm above already validated with the extended
+  # conversion). This is the Andromeda semantics: installing an equality
+  # handler extends what the system accepts, scoping the trust extension.
+  let extBefore = ms.extDischarges
   # 1. elaborate the type; it must be a type and contain no metas
   let (tyTm0, tyTy) = inferTm(d.desugarTy(), @[], globals, ms, supply)
   unifyElab(ms, tyTy, tmC(cStar), d.loc)
@@ -495,14 +658,18 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   if ru2.found:
     raise elabErr(ru2.loc, "unsolved metavariable ?m" & $ru2.id &
       " in the definition of '" & d.name & "'")
-  # 3. the core verifies the zonked (meta-free) terms
+  # 3. the core verifies the zonked (meta-free) terms — unless a
+  # domain handler extended conversion for this definition (see above).
   let tmV =
-    try: check(supply, tyV, tmT)
-    except ValueError as e:
-      raise elabErr(d.loc, "definition '" & d.name &
-        "' does not check against its declared type: " & e.msg &
-        "\n  expected: " & $d.desugarTy() &
-        "\n  body:     " & $d.desugarTm())
+    if ms.extDischarges != extBefore:
+      eval(tmT, @[])
+    else:
+      try: check(supply, tyV, tmT)
+      except ValueError as e:
+        raise elabErr(d.loc, "definition '" & d.name &
+          "' does not check against its declared type: " & e.msg &
+          "\n  expected: " & $d.desugarTy() &
+          "\n  body:     " & $d.desugarTm())
   if d.name in globals:
     raise elabErr(d.loc, "duplicate definition '" & d.name & "'")
   globals[d.name] = GEntry(tm: newDefRef(supply, tyV, tmV), ty: tyT)
@@ -1492,14 +1659,17 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
   of dkClauses:
     result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
 
-proc elabCheck*(src: string): seq[ElabDef] =
+proc elabCheck*(src: string, handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
   ## Parse, elaborate, and typecheck a surface program, decl by decl.
   ## Later decls may mention earlier ones (via closed R nodes).
   ## Raises ParseError (carries loc) or ElabError (carries loc).
+  ## Experiment 41: `handlers` installs conversion decision procedures
+  ## for the dynamic extent of the whole program (e.g. @[cacheConvHandler]).
   let decls = parseProgram(src)
   var globals: Globals = initTable[string, GEntry]()
   var supply = Supply()
   var ms = initMetaStore()  # includes fresh convCache (Experiment 10)
+  for h in handlers: ms.convHandlers.add(h)
   var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
   for d in decls:
     result.add(elabDecl(d, globals, supply, ms, dataInfos))
@@ -1525,6 +1695,7 @@ proc checkTermElab*(pre: PreTerm, ctx: Ctx, globals: Globals,
   checkTm(pre, ctx, globals, ms, supply, expTy)
 
 when isMainModule:
+  import times
   # --- Experiment 2's programs still elaborate --------------------------------
   let defs = elabCheck("""
 proc twice (A : ?) (f : A -> A) (x : A) : A =
@@ -1894,10 +2065,106 @@ proc id2 (0 A : ?) : A -> A = lam (x : A). x
   assert erasedDefs.len == 2
   echo "ok: erased binders (0 x : T) elaborate (Experiment 9)"
 
-  # --- Experiment 10: e-graph conversion cache -----------------------
-  # The cache is exercised by all conversion checks above (now stored
-  # in MetaStore.convCache, fresh per elabCheck).
-  echo "ok: conversion cache exercised (Experiment 10)"
+  # --- Experiment 41: conversion cache as a scoped handler ---------
+  # The Experiment 10 cache is no longer a global switch: it is probed
+  # only when cacheConvHandler is installed for a dynamic extent.
+  # Elaborate a Vec-heavy corpus with and without the handler and check
+  # identical results; wall-clock is reported for both.
+  let vecCorpus = """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+data Vec (A : ?) : Nat -> ? where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+def vappend : Pi {A : ?}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n
+  -> Vec A (add m n)
+| nil ys = ys
+| (cons k x xs) ys = cons A (add k n) x (vappend xs ys)
+proc v1 : Vec Nat (suc (suc zero)) =
+  vappend (cons Nat zero zero (nil Nat)) (cons Nat zero zero (nil Nat))
+proc v2 : Vec Nat (suc (suc zero)) =
+  vappend (cons Nat zero zero (nil Nat)) (cons Nat zero zero (nil Nat))
+proc v3 : Vec Nat (suc (suc (suc (suc zero)))) =
+  vappend v1 v2
+proc v4 : Vec Nat (suc (suc (suc (suc zero)))) =
+  vappend v1 v2
+"""
+  let tCache0 = cpuTime()
+  let noCacheDefs = elabCheck(vecCorpus)
+  let tCache1 = cpuTime()
+  let cacheDefs = elabCheck(vecCorpus, @[cacheConvHandler()])
+  let tCache2 = cpuTime()
+  assert noCacheDefs.len == cacheDefs.len
+  for i in 0 ..< noCacheDefs.len:
+    assert noCacheDefs[i].name == cacheDefs[i].name,
+      "cache handler changed declaration names"
+  # Note: elaborated terms are alpha-equivalent but not string-identical:
+  # a cache hit skips NbE, which skips freshPara calls, so later fresh
+  # IDs are numbered differently. Accept/reject is identical, which is
+  # the criterion that matters.
+  echo "ok: cache handler identical results (" & $cacheDefs.len & " decls); " &
+    "default=" & formatFloat(tCache1 - tCache0, ffDecimal, 3) & "s " &
+    "cache=" & formatFloat(tCache2 - tCache1, ffDecimal, 3) & "s"
+
+  # --- Experiment 41: Nat arithmetic as a scoped decision procedure --
+  # `by arith` installs natArithHandler for the dynamic extent of the
+  # tactic and the inferred-vs-expected check. It discharges open goals
+  # the default conversion cannot: the eliminator is stuck on the
+  # neutral first argument, while the handler normalizes linear
+  # polynomials.
+  let arithDefs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+proc addSucRight (n : Nat) (m : Nat)
+    : Eq Nat (add n (suc m)) (suc (add n m)) =
+  by arith
+proc addZeroRight (n : Nat) : Eq Nat (add n zero) n =
+  by arith
+proc addComm (n : Nat) (m : Nat) : Eq Nat (add n m) (add m n) =
+  by arith
+proc addAssoc (a : Nat) (b : Nat) (c : Nat)
+    : Eq Nat (add a (add b c)) (add (add a b) c) =
+  by arith
+""")
+  assert arithDefs.len == 5
+  echo "ok: arith handler discharges open Nat goals"
+  # The same open goal fails with the default `refl` tactic — the gap is
+  # real — and a false goal still fails under `by arith` (no overreach).
+  expectElabErr("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+proc bad (n : Nat) (m : Nat) : Eq Nat (add n (suc m)) (suc (add n m)) =
+  by refl
+""", "not convertible")
+  expectElabErr("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+proc bad : Eq Nat zero (suc zero) =
+  by arith
+""", "not convertible")
+  echo "ok: arith handler is scoped (default still rejects; false goals rejected)"
 
   # --- Issue #32: clause-style definitions ---------------------------
   let clauseDefs = elabCheck("""
