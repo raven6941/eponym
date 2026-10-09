@@ -1,50 +1,15 @@
-ett
-ett_init
-elab
-ett_mac
-preterm
-parse_surf
-mac_surf
-run_examples
 nimcache/
 *.o
-# Compiled binaries (in src/ or tests/ when built)
-src/ett
-src/ett_init
-src/elab
-src/ett_mac
-src/preterm
-src/parse_surf
-src/mac_surf
-tests/run_examples
-src/lsp
-src/egraph
-src/specialized_engine
-src/staged_eval
-src/unified_driver
+# Compiled Nim binaries: `nim c` drops extensionless binaries next to
+# sources. Ignore all extensionless files under src/ and tests/, keeping
+# directories and .nim sources.
+src/**
+!src/**/
+!src/**/*.nim
+tests/**
+!tests/**/
+!tests/**/*.nim
+# Examples dir: keep sources, ignore built outputs
 examples/*
 !examples/*.nim
 !examples/*.ep
-src/lms_staging
-src/sudoku_cp
-src/sudoku_rel
-src/sudoku_seteq
-src/synth_staged
-# Staging experiments + engine test binaries (2026-10-08)
-src/staging/ett_staged
-src/staging/framework_test
-src/staging/modes
-src/staging/relgoal
-src/staging/stage_evalo
-src/staging/stagegoal
-src/sudoku_staged
-src/ett_embed
-src/minikanren
-src/rel_elab
-tests/test_minikanren
-tests/test_rel_elab
-src/staging/bench_typeo
-src/staging/modeinfer
-src/staging/stage_typeo
-src/staging/relcompile
-src/staging/test_compiled_typeo
