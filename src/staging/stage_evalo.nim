@@ -24,7 +24,8 @@ import strutils
 #
 # For prototype, we inline the structure with tm=__var_tm, v=__var_v.
 
-proc evaloData(): RelGoal =
+proc evaloData*(): RelGoal =
+  ## Exported for the issue #29 differential suite (fuzz_soundness.nim).
   let tm = ratom("__var_tm")
   let v = ratom("__var_v")
   let n = ratom("__var_n")
@@ -48,6 +49,21 @@ proc evaloData(): RelGoal =
           rgCall("addo", @[va, vb, v]))))))))
 
   rgDisj(zeroCase, rgDisj(sucCase, addCase))
+
+proc addoData*(): RelGoal =
+  ## addo as RelGoal data (hand-written mirror of rel_interp.addo).
+  ## Exported for the issue #29 differential suite: staged evalo needs
+  ## addo in its relEnv — an unknown relation would residualize as a
+  ## call to a relation that doesn't exist at toGoal time.
+  let a = ratom("__var_a")
+  let b = ratom("__var_b")
+  let c = ratom("__var_c")
+  let zeroCase = rgConj(rgEq(a, zeroTm()), rgEq(c, b))
+  let sucCase = rgFresh("ap", rgFresh("cp",
+    rgConj(rgEq(a, sucTm(ratom("__var_ap"))),
+      rgConj(rgEq(c, sucTm(ratom("__var_cp"))),
+        rgCall("addo", @[ratom("__var_ap"), b, ratom("__var_cp")])))))
+  rgDisj(zeroCase, sucCase)
 
 when isMainModule:
   echo "=== Staging evalo via RelGoal (partial deduction) ==="

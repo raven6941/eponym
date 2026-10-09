@@ -292,10 +292,21 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
       return finishResidual(sa, envL)  # right impossible, take left
     if sa.kind == sgDone and not hasObservableBindings(envL, staticEnv, rg.leftG):
       staticEnv = envL
-      return sa  # left unconditionally true; left's bindings hold
+      if sb.kind == sgDone:
+        return sa  # both unconditionally true
+      # Left always succeeds, but committing to it (returning Done) would
+      # drop the right branch's *runtime* answers: disj(isZero(y), true)
+      # must still yield y=zero (issue #29 differential found this).
+      # Keep disj(succeed, right-residual): {empty} ∪ answers(right).
+      let rb = finishResidual(sb, envR)
+      return StagedGoal(kind: sgResidual, goal: rgDisj(rgSucceed(), rb.goal))
     if sb.kind == sgDone and not hasObservableBindings(envR, staticEnv, rg.rightG):
       staticEnv = envR
-      return sb  # right unconditionally true; right's bindings hold
+      if sa.kind == sgDone:
+        return sa  # both unconditionally true
+      # Symmetric: disj(true, P) keeps P's runtime answers.
+      let ra = finishResidual(sa, envL)
+      return StagedGoal(kind: sgResidual, goal: rgDisj(ra.goal, rgSucceed()))
     # A Done branch is NOT a license to commit (true ∨ P ≡ true): its
     # success may have assumed values for placeholders that are dynamic
     # outside this disjunct. Committing then is unsound for dynamic
@@ -313,7 +324,22 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
   of rgFresh:
     # Stage the body with the fresh var as dynamic (not in staticEnv).
     # The var remains a placeholder; if the body prunes to Fail, so do we.
+    #
+    # Scope discipline (issue #29): the binder's placeholder is
+    # staging-local. Any outer binding for the same name is hidden while
+    # the body is staged, and the body's binding for it is dropped
+    # afterwards — otherwise the inner binding leaks into the shared env
+    # and corrupts siblings, e.g. (fresh u. u==zero) ∧ (fresh u. u==suc(zero))
+    # wrongly staged to Fail (differential found this: satisfiable goal
+    # pruned). Bindings the body learns for *other* placeholders are
+    # outer-meaningful and still propagate.
+    let ph = "__var_" & rg.varName
+    let hadOuter = ph in staticEnv
+    let saved: RTerm = if hadOuter: staticEnv[ph] else: nil
+    staticEnv.del(ph)
     let stagedBody = stageGoal(rg.body, staticEnv, dynamicVars, ctx)
+    staticEnv.del(ph)  # the inner binding dies with the binder
+    if hadOuter: staticEnv[ph] = saved
     case stagedBody.kind
     of sgFail:
       StagedGoal(kind: sgFail)

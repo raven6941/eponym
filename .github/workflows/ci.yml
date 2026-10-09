@@ -26,5 +26,7 @@ jobs:
           done
           echo "=== examples ==="
           nim c -r --hints:off --path:src "tests/run_examples.nim" || exit 1
+          echo "=== staging soundness fuzz (issue #29, fixed seed) ==="
+          nim c -r --hints:off --path:src "src/staging/fuzz_soundness.nim" -- --seed 424242 -n 1000 || exit 1
           # Note: lsp is built but not run — it's a server that blocks on stdin,
           # not a test suite. (Was hanging CI since Experiment 7.)

@@ -602,3 +602,37 @@
   (=n^m=), not multiplication — the demo's first tower silently built
   a 4-billion-redex witness and hung; =churchMult= (=λf. m (n f)=)
   is the correct combinator.
+
+* 2026-10-09 — Differential soundness suite for staged relations (GH #29)
+
+  Context: staging is the transformation that silently changes semantics —
+  a wrong pruning rule is a wrong-code bug, not a crash. Recent work fixed
+  real soundness bugs ad hoc ("no unsound disjunction commit";
+  capture-avoiding substitution in the exp-bench-typeo merge).
+  Options: (a) keep fixing soundness bugs as found; (b) a standing
+  differential net: seeded generator over typeo/evalo + rule-level RelGoals,
+  staged vs unstaged answer-set agreement, shrink-on-divergence.
+  Decision: (b). =src/staging/fuzz_soundness.nim=: 5 goal shapes
+  (typeo check/synth/partial-hole, evalo, rule-level over =/=, setEqo,
+  branch, disjunction reification, fresh-binder scoping); fixed-seed suite
+  (=--seed 424242 -n 1000=) wired into CI; =--seed random= fuzz mode for
+  local runs; docs in =docs/staging-soundness-fuzz.md=.
+  Consequences: the suite found two previously-unknown soundness bugs on
+  its first fresh-seed runs, both fixed the same day:
+  (1) =rgFresh= env pollution — the binder's placeholder is staging-local,
+  but =stageGoal= staged the body in the shared env, so
+  =(fresh u. u==zero) ∧ (fresh u. u==suc(zero))= staged to =Fail= although
+  satisfiable; fixed by hiding/dropping the binder's name around the body
+  (outer bindings learned inside still propagate);
+  (2) disjunction commit dropped runtime answers — a =Done= branch with no
+  observable bindings committed the whole disjunction, losing the other
+  branch's answers (=disj(isZero(y), true)= must still yield =y=zero=);
+  fixed by keeping =disj(succeed, other-residual)=. Both are the same bug
+  class as d248c91 ("no unsound disjunction commit"), one step further.
+  Lesson: the stager's flat =staticEnv= (name -> term, no scope) is the
+  recurring source — every construct that introduces scope (=rgFresh=,
+  disjunction branches) needs explicit save/restore or branch-local envs.
+  The =rgDisj= case already had branch-local envs; =rgFresh= did not.
+  Status after fixes: 3200+ goals over 5 seeds, 0 divergences, 0
+  inconclusive (capped). This suite is now the acceptance harness for
+  #31's remaining item (BTA soundness).
