@@ -53,6 +53,7 @@ type
   CtxEntry* = object
     name*: string
     ty*: Term
+    qty*: Quantity  # Issue #66: binder quantity for QTT-aware judgments
   Ctx* = seq[CtxEntry]            # innermost-first
   GEntry* = object
     tm*: Term                     # the R node, for building terms
@@ -146,7 +147,7 @@ proc prettyTerm(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
         if t.erased: "L(0 "
         elif t.impl: "L{"
         else: "L("
-    let ctx2 = @[CtxEntry(name: adv, ty: t.dom)] & ctx
+    let ctx2 = @[CtxEntry(name: adv, ty: t.dom, qty: t.qty)] & ctx
     kindStr & prettyTerm(t.dom, ctx, refNames) & ", " & adv & ". " &
       prettyTerm(t.scope.bdy, ctx2, refNames) & ")"
   of tMeta: "?_"
@@ -161,7 +162,7 @@ proc prettyTerm(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
   of tAbsurd: "(absurd " & prettyTerm(t.sub, ctx, refNames) & ")"
   of tLet:
     "let " & prettyTerm(t.letVal, ctx, refNames) & " in " &
-      prettyTerm(t.letScope.bdy, @[CtxEntry(name: "_", ty: t.letTy)] & ctx, refNames)
+      prettyTerm(t.letScope.bdy, @[CtxEntry(name: "_", ty: t.letTy, qty: qOmega)] & ctx, refNames)
 
 template withConvHandler*(ms: var MetaStore, h: ConvHandler,
                           body: untyped): untyped =
@@ -353,12 +354,12 @@ proc natArithHandler*(globals: Globals): ConvHandler =
       if natConv(a, b, zeroId, sucId, addId, eqId): cvDischarged
       else: cvDeclined
 
-proc ext(ctx: Ctx, name: string, ty: Term): Ctx =
+proc ext(ctx: Ctx, name: string, ty: Term, qty = qOmega): Ctx =
   ## Extend the context: every stored type is weakened into the new frame.
   ## (Types are Terms in the frame of the context that stores them; going
   ## under a binder shifts all of them, including the new entry.)
-  let w = ctx.mapIt(CtxEntry(name: it.name, ty: weaken(it.ty)))
-  @[CtxEntry(name: name, ty: weaken(ty))] & w
+  let w = ctx.mapIt(CtxEntry(name: it.name, ty: weaken(it.ty), qty: it.qty))
+  @[CtxEntry(name: name, ty: weaken(ty), qty: qty)] & w
 
 proc resolveVar(ctx: Ctx, globals: Globals, name: string,
                 loc: Loc): tuple[tm, ty: Term] =
@@ -467,7 +468,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     (tmInt(pre.intVal), intTy)
   of pkPi:
     let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-    let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar))
+    let c = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, tmC(cStar))
     (tmPi(d, pre.name, c, pre.impl, pre.erased, pre.qty), tmC(cStar))
   of pkSigma:
     let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
@@ -477,7 +478,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     let d =
       if pre.c1.isNil: freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
       else: checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-    let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply)
+    let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply)
     (tmLam(d, pre.name, b, pre.impl, pre.erased, pre.qty), tmPi(d, pre.name, bty, pre.impl, pre.erased, pre.qty))
   of pkApp:
     var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply)
@@ -568,7 +569,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         let ad = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
         unifyElab(ms, ad, dom, pre.loc)
         ad
-    let b = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, codBdy)
+    let b = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, codBdy)
     # DEBUG
     # echo "DEBUG checkTm pkLam: pre.qty=", pre.qty, " name=", pre.name
     tmLam(d, pre.name, b, pre.impl, pre.erased, pre.qty)
