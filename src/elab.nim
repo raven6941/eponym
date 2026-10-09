@@ -192,7 +192,7 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   try:
     areEqual(s, vStar(), va, vb)
     # Success: record in the cache for scoped cache handlers to probe.
-    merge(ms.convCache, $ctx.len & ":" & $a & " === " & $b)
+    merge(ms.convCache, convKey(ctx.len, a, b))
   except ValueError as e:
     var refNames = initTable[int, string]()
     for name, g in globals:
@@ -250,7 +250,7 @@ proc cacheConvHandler*(): ConvHandler =
     proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
          ctxLen: int): ConvVerdict {.closure.} =
       let (hit, _) = areEqualCached(ms.convCache,
-                                    $ctxLen & ":" & $a & " === " & $b)
+                                    convKey(ctxLen, a, b))
       if hit: cvDischarged else: cvDeclined
   ConvHandler(decide: decide, coreValid: true)
 
