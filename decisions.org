@@ -1009,3 +1009,46 @@
   Remaining for #66: quantity polymorphism (qty variables, the acceptance
   criterion "(q x : A) -> B"); subject-side quantity tracking
   (=Gamma |- t :^q A=).
+
+* 2026-10-09 — Issue #66: quantity polymorphism (surface `(q x : A)`)
+
+  Context: the last acceptance criterion — library code polymorphic in the
+  quantity, e.g. =id : (q x : A) -> A= with =q= a variable.
+
+  What was built: a =Qty= variant type in preterm (concrete =Quantity= or
+  a quantity variable); surface syntax =(q x : A)= (an identifier in
+  quantity position followed by the binder name); declaration-scoped
+  solution state in the MetaStore (=qvarNames=, =qvarSols=, reset per
+  declaration). Elaboration solves each variable at its binding lambda
+  from the use count (0 -> q0, 1 -> q1, 2+ -> qOmega); a variable shared
+  by several binders must agree (conflict = error). When the ascribed
+  type mentions a variable, the body elaborates first (inference), then
+  the type with variables zonked (unsolved defaults to qOmega —
+  backward compatible). Core terms only ever carry concrete quantities.
+
+  Soundness fix found while testing: =checkErasedArg= ran while the
+  variable was still unsolved, so =(q y : N) -> z0 y= (q0 parameter)
+  escaped the "silently discarded" check and solved to q1 afterwards.
+  Fix: the app-site walk records pending obligations
+  (=ms.qvarPending=) for unsolved variables; =enforceBinderQty= flushes
+  them at solve time and rejects if the solution is q1 (q0/qOmega
+  solutions drop them — no leak possible). The walker was hoisted to
+  module level (=checkErasedArgWalk=) because a nested proc may not
+  capture the var MetaStore.
+
+  Design note (pre-existing, not introduced here): in checking mode the
+  lambda's binder quantity is never compared against the expected Pi's
+  binder quantity (e.g. =lam (1 x : A). x= against =Pi (w x : A). A= is
+  accepted). Same for qty vars solved to q1 against an expected qOmega.
+  This is the "subject-side quantity tracking" remaining piece, listed
+  below — it needs =Gamma |- t :^q A= or an explicit subquantity check,
+  not just binder-side counting.
+
+  Verification: 6 new elab tests (solve q0/q1/qOmega from use count;
+  conflicting solutions rejected; q1-into-erased rejected via the
+  deferred obligation; qOmega-into-erased accepted); full CI matrix
+  green, warning-clean.
+
+  Remaining for #66: subject-side quantity tracking (=Gamma |- t :^q A=)
+  — comparing the checked term's binder quantities against the expected
+  type's, including quantity-variable solutions.

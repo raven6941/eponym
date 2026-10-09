@@ -53,7 +53,7 @@ type
   CtxEntry* = object
     name*: string
     ty*: Term
-    qty*: Quantity  # Issue #66: binder quantity for QTT-aware judgments
+    qty*: Qty  # Issue #66: binder quantity (concrete or variable)
   Ctx* = seq[CtxEntry]            # innermost-first
   GEntry* = object
     tm*: Term                     # the R node, for building terms
@@ -354,15 +354,71 @@ proc natArithHandler*(globals: Globals): ConvHandler =
       if natConv(a, b, zeroId, sucId, addId, eqId): cvDischarged
       else: cvDeclined
 
-proc ext(ctx: Ctx, name: string, ty: Term, qty = qOmega): Ctx =
+proc ext(ctx: Ctx, name: string, ty: Term, qty: Qty = qOmega): Ctx =
   ## Extend the context: every stored type is weakened into the new frame.
   ## (Types are Terms in the frame of the context that stores them; going
   ## under a binder shifts all of them, including the new entry.)
   let w = ctx.mapIt(CtxEntry(name: it.name, ty: weaken(it.ty), qty: it.qty))
   @[CtxEntry(name: name, ty: weaken(ty), qty: qty)] & w
 
-proc enforceBinderQty(qty: Quantity, body: Term, loc: Loc, name: string,
-                      ms: MetaStore) =
+# --- quantity variables (Issue #66) --------------------------------------
+#
+# Surface `(q x : A)` binds a quantity variable `q`, declaration-scoped
+# (first occurrence binds; later occurrences in the same declaration share
+# it). Elaboration solves each variable from the use count at its binding
+# lambda (see enforceBinderQty); zonkQty substitutes the solution when
+# building core terms. A variable never solved (e.g. occurring only in a
+# postulate's type) defaults to qOmega.
+
+proc resetQVars(ms: var MetaStore) =
+  ## Fresh quantity-variable scope for a top-level declaration.
+  ms.qvarNames.clear()
+  ms.qvarSols = @[]
+  ms.qvarPending.clear()
+
+proc qvarId(ms: var MetaStore, vname: string): int =
+  ## Get-or-create the solution index for a quantity variable name.
+  if vname in ms.qvarNames: return ms.qvarNames[vname]
+  result = ms.qvarSols.len
+  ms.qvarNames[vname] = result
+  ms.qvarSols.add(QtySol(kind: qsUnknown))
+
+proc qvarIdOpt(ms: MetaStore, vname: string): int =
+  ## Solution index, or -1 if the name was never bound (no creation).
+  if vname in ms.qvarNames: ms.qvarNames[vname] else: -1
+
+proc solveQVar(ms: var MetaStore, vname: string, q: Quantity, loc: Loc) =
+  ## Solve a quantity variable; conflicting solutions are an error.
+  let vid = qvarId(ms, vname)
+  case ms.qvarSols[vid].kind
+  of qsUnknown:
+    ms.qvarSols[vid] = QtySol(kind: qsSolved, q: q)
+  of qsSolved:
+    if ms.qvarSols[vid].q != q:
+      raise elabErr(loc, "quantity variable '" & vname &
+        "' requires quantity " & $ms.qvarSols[vid].q &
+        " here but quantity " & $q & " elsewhere")
+
+proc zonkQty(ms: MetaStore, qty: Qty): Quantity =
+  ## Substitute the solution of a quantity variable; unsolved defaults to
+  ## qOmega (backward compatible: today's code is all-omega).
+  if not qty.isVar: return qty.q
+  let vid = qvarIdOpt(ms, qty.vname)
+  if vid >= 0 and ms.qvarSols[vid].kind == qsSolved:
+    ms.qvarSols[vid].q
+  else: qOmega
+
+proc qtyIsLinear(ms: MetaStore, qty: Qty): bool =
+  ## Is this binder quantity linear (concrete q1, or a variable solved to q1)?
+  ## An unsolved variable defaults to qOmega (see zonkQty), so it is not linear.
+  if qty.isVar:
+    let vid = qvarIdOpt(ms, qty.vname)
+    vid >= 0 and ms.qvarSols[vid].kind == qsSolved and
+      ms.qvarSols[vid].q == q1
+  else: qty.q == q1
+
+proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
+                      ms: var MetaStore) =
   ## Issue #66: quantity-aware typing judgment for lambdas. Enforce the
   ## binder's quantity against the elaborated body *during* elaboration,
   ## with the binder's source location (rather than only in the post-pass
@@ -371,14 +427,43 @@ proc enforceBinderQty(qty: Quantity, body: Term, loc: Loc, name: string,
   ## Only lambdas: Pi binders are deliberately not enforced here — a
   ## postulate like `Pi (1 ch : Chan s). ...` declares linearity to be
   ## enforced at use sites, and its codomain need not mention the binder.
-  if qty == qOmega: return
+  ##
+  ## Quantity variables (surface `(q x : A)`) are *solved* here instead of
+  ## enforced: the use count determines the quantity (0 -> q0, 1 -> q1,
+  ## 2+ -> qOmega). A variable occurring at several binders must agree;
+  ## conflicting counts are an error.
+  if qty.isVar:
+    let zb = zonk(ms, body)
+    # A body that still mentions unsolved metas can't be counted reliably
+    # (a hole may later solve to a use); the post-pass re-checks at the end
+    # of the declaration, when metas are solved or reported. The variable
+    # then keeps its default (qOmega, see zonkQty).
+    if hasUnresolvedMetas(zb): return
+    let n = countVarUses(zb)
+    solveQVar(ms, qty.vname, (if n == 0: q0 elif n == 1: q1 else: qOmega), loc)
+    # Flush pending erased-arg obligations (Issue #66): checkErasedArg
+    # records app sites mentioning this variable while it was unsolved.
+    # A q1 solution means the argument would be silently discarded by the
+    # 0-parameter — reject at the app site. q0/qOmega solutions (or a
+    # conflicting-solution error above) drop the obligations.
+    if qty.vname in ms.qvarPending:
+      let pend = ms.qvarPending[qty.vname]
+      ms.qvarPending.del(qty.vname)
+      let vid = qvarId(ms, qty.vname)
+      if pend.len > 0 and ms.qvarSols[vid].kind == qsSolved and
+         ms.qvarSols[vid].q == q1:
+        raise elabErr(pend[0].loc, "linear variable '" & pend[0].varName &
+          "' passed to an erased (quantity-0) parameter" &
+          " — it would be silently discarded")
+    return
+  if qty.q == qOmega: return
   let zb = zonk(ms, body)
   # A body that still mentions unsolved metas can't be counted reliably
   # (a hole may later solve to a use); the post-pass re-checks at the end
   # of the declaration, when metas are solved or reported.
   if hasUnresolvedMetas(zb): return
   let n = countVarUses(zb)
-  case qty
+  case qty.q
   of q0:
     if n > 0:
       raise elabErr(loc, "erased variable '" & name & "' used " & $n &
@@ -391,39 +476,61 @@ proc enforceBinderQty(qty: Quantity, body: Term, loc: Loc, name: string,
         " times (expected exactly once)")
   of qOmega: discard
 
-proc checkErasedArg(arg: Term, ctx: Ctx, loc: Loc, ms: MetaStore) =
+proc checkErasedArgWalk(t: Term, depth: int, ctx: Ctx, loc: Loc,
+                        ms: var MetaStore,
+                        pending: var seq[tuple[vname, varName: string, loc: Loc]]) =
+  ## Walker for checkErasedArg (Issue #66). Module-level so it can take ms
+  ## as a var parameter — a nested proc may not capture it.
+  case t.kind
+  of tV:
+    if t.idx >= depth:
+      let e = ctx[t.idx - depth]
+      # A variable solved to q1 is linear; an unsolved one defaults to
+      # qOmega (see zonkQty) and is not.
+      if qtyIsLinear(ms, e.qty):
+        raise elabErr(loc, "linear variable '" & e.name &
+          "' passed to an erased (quantity-0) parameter" &
+          " — it would be silently discarded")
+      elif e.qty.isVar:
+        let vid = qvarIdOpt(ms, e.qty.vname)
+        if vid < 0 or ms.qvarSols[vid].kind == qsUnknown:
+          pending.add((e.qty.vname, e.name, loc))
+  of tLam, tPi, tSi:
+    checkErasedArgWalk(t.scope.bdy, depth + 1, ctx, loc, ms, pending)
+  of tApp:
+    checkErasedArgWalk(t.fn, depth, ctx, loc, ms, pending)
+    checkErasedArgWalk(t.arg, depth, ctx, loc, ms, pending)
+  of tPair:
+    checkErasedArgWalk(t.pFst, depth, ctx, loc, ms, pending)
+    checkErasedArgWalk(t.pSnd, depth, ctx, loc, ms, pending)
+    checkErasedArgWalk(t.pScope.bdy, depth + 1, ctx, loc, ms, pending)
+  of tFst, tSnd, tAbsurd:
+    checkErasedArgWalk(t.sub, depth, ctx, loc, ms, pending)
+  of tLet:
+    checkErasedArgWalk(t.letVal, depth, ctx, loc, ms, pending)
+    checkErasedArgWalk(t.letScope.bdy, depth + 1, ctx, loc, ms, pending)
+  of tPrim:
+    discard
+  of tR, tC, tMeta, tInt:
+    discard
+
+proc checkErasedArg(arg: Term, ctx: Ctx, loc: Loc, ms: var MetaStore) =
   ## Issue #66: application-site quantity enforcement. When the Pi binder
   ## being applied has quantity q0, the argument is checked for free uses
   ## of q1-bound (linear) variables: a 0-parameter cannot consume them, so
   ## passing one would silently discard it. Mirrors countVarUses's
   ## discipline — binder domains and type annotations are types (checked
   ## in the all-0 context), so mentions there are 0-uses, not violations.
+  ##
+  ## A variable whose quantity variable is still unsolved can't be decided
+  ## here: the obligation is recorded in ms.qvarPending and re-checked by
+  ## enforceBinderQty when the variable is solved (a q1 solution rejects).
   let za = zonk(ms, arg)
   if hasUnresolvedMetas(za): return  # a hole may later solve to anything
-  proc go(t: Term, depth: int) =
-    case t.kind
-    of tV:
-      if t.idx >= depth:
-        let e = ctx[t.idx - depth]
-        if e.qty == q1:
-          raise elabErr(loc, "linear variable '" & e.name &
-            "' passed to an erased (quantity-0) parameter" &
-            " — it would be silently discarded")
-    of tLam, tPi, tSi:
-      go(t.scope.bdy, depth + 1)
-    of tApp:
-      go(t.fn, depth); go(t.arg, depth)
-    of tPair:
-      go(t.pFst, depth); go(t.pSnd, depth); go(t.pScope.bdy, depth + 1)
-    of tFst, tSnd, tAbsurd:
-      go(t.sub, depth)
-    of tLet:
-      go(t.letVal, depth); go(t.letScope.bdy, depth + 1)
-    of tPrim:
-      discard
-    of tR, tC, tMeta, tInt:
-      discard
-  go(za, 0)
+  var pending: seq[tuple[vname, varName: string, loc: Loc]] = @[]
+  checkErasedArgWalk(za, 0, ctx, loc, ms, pending)
+  for p in pending:
+    ms.qvarPending.mgetOrPut(p.vname, @[]).add((p.varName, p.loc))
 
 proc resolveVar(ctx: Ctx, globals: Globals, name: string,
                 loc: Loc): tuple[tm, ty: Term] =
@@ -535,7 +642,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkPi:
     let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let c = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, tmC(cStar))
-    (tmPi(d, pre.name, c, pre.impl, pre.erased, pre.qty), tmC(cStar))
+    (tmPi(d, pre.name, c, pre.impl, pre.erased, zonkQty(ms, pre.qty)), tmC(cStar))
   of pkSigma:
     let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar))
@@ -546,7 +653,9 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       else: checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
     let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply)
     enforceBinderQty(pre.qty, b, pre.loc, pre.name, ms)  # Issue #66
-    (tmLam(d, pre.name, b, pre.impl, pre.erased, pre.qty), tmPi(d, pre.name, bty, pre.impl, pre.erased, pre.qty))
+    # zonkQty after enforcement: a variable is solved by now (or defaults).
+    let bq = zonkQty(ms, pre.qty)
+    (tmLam(d, pre.name, b, pre.impl, pre.erased, bq), tmPi(d, pre.name, bty, pre.impl, pre.erased, bq))
   of pkApp:
     var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply)
     (f, fty) = insertImplicits(pre, f, fty, ctx.len, ms)
@@ -576,14 +685,29 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkLet:
     let (v, vty) =
       if pre.c1.isNil: inferTm(pre.c2, ctx, globals, ms, supply)
+      elif pretermHasQtyVar(pre.c1):
+        # Issue #66: quantity variables in the annotation are solved from
+        # the value; infer the value first, then elaborate the annotation.
+        let (vi, vtyi) = inferTm(pre.c2, ctx, globals, ms, supply)
+        let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
+        convElab(ms, supply, vtyi, aty, pre.loc, ctx, globals)
+        (vi, aty)
       else:
         let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
         (checkTm(pre.c2, ctx, globals, ms, supply, aty), aty)
     let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply)
     (tmLet(v, vty, pre.name, b), subst(bty, 0, v))
   of pkAnn:
-    let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
-    (checkTm(pre.c1, ctx, globals, ms, supply, ty), ty)
+    if pretermHasQtyVar(pre.c2):
+      # Issue #66: as for pkLet above — infer the term first so quantity
+      # variables in the ascribed type are solved before it elaborates.
+      let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply)
+      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
+      convElab(ms, supply, tty, ty, pre.loc, ctx, globals)
+      (t, ty)
+    else:
+      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
+      (checkTm(pre.c1, ctx, globals, ms, supply, ty), ty)
   of pkBy:
     raise elabErr(pre.loc, "'by' tactic requires an expected type (use in checking mode)")
 
@@ -642,7 +766,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     enforceBinderQty(pre.qty, b, pre.loc, pre.name, ms)  # Issue #66
     # DEBUG
     # echo "DEBUG checkTm pkLam: pre.qty=", pre.qty, " name=", pre.name
-    tmLam(d, pre.name, b, pre.impl, pre.erased, pre.qty)
+    tmLam(d, pre.name, b, pre.impl, pre.erased, zonkQty(ms, pre.qty))
   of pkPair:
     let h = headTy(ms, expTy)
     if h.kind == tSi:
@@ -663,6 +787,15 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply)
       unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
       tmLet(v, vty, pre.name, b)
+    elif pretermHasQtyVar(pre.c1):
+      # Issue #66: quantity variables in the annotation are solved from
+      # the value; infer the value first, then elaborate the annotation.
+      let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply)
+      let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
+      convElab(ms, supply, vty, aty, pre.loc, ctx, globals)
+      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply)
+      unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
+      tmLet(v, aty, pre.name, b)
     else:
       let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
       let v = checkTm(pre.c2, ctx, globals, ms, supply, aty)
@@ -670,10 +803,19 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
       tmLet(v, aty, pre.name, b)
   of pkAnn:
-    let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
-    let t = checkTm(pre.c1, ctx, globals, ms, supply, ty)
-    unifyElab(ms, ty, expTy, pre.loc)
-    t
+    if pretermHasQtyVar(pre.c2):
+      # Issue #66: as for pkLet above — infer the term first so quantity
+      # variables in the ascribed type are solved before it elaborates.
+      let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply)
+      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
+      convElab(ms, supply, tty, ty, pre.loc, ctx, globals)
+      unifyElab(ms, ty, expTy, pre.loc)
+      t
+    else:
+      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
+      let t = checkTm(pre.c1, ctx, globals, ms, supply, ty)
+      unifyElab(ms, ty, expTy, pre.loc)
+      t
   of pkBy:
     # Experiment 6: run a built-in tactic against the expected type.
     # (Custom tactic registration removed; built-ins are sufficient
@@ -712,8 +854,26 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   # conversion). This is the Andromeda semantics: installing an equality
   # handler extends what the system accepts, scoping the trust extension.
   let extBefore = ms.extDischarges
+  resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
   # 1. elaborate the type; it must be a type and contain no metas
-  let (tyTm0, tyTy) = inferTm(d.desugarTy(), @[], globals, ms, supply)
+  let tyPre = d.desugarTy()
+  let tmPre = d.desugarTm()
+  # Issue #66: quantity variables in the ascribed type are solved from the
+  # body's binders, so when the type mentions one, elaborate the body first
+  # (inference), then the type (variables solved by then), then check the
+  # inferred body type against the ascribed type. Otherwise the usual
+  # order: elaborate the type, then check the body against it.
+  # (The quantity-first order cannot use checking-only constructs: a `by`
+  # tactic body or an integer literal needing Nat from the expected type
+  # raises the usual "requires an expected type" error.)
+  let qtyFirst = pretermHasQtyVar(tyPre)
+  var tmT0: Term
+  var tmTy0: Term
+  if qtyFirst:
+    let inferred = inferTm(tmPre, @[], globals, ms, supply)
+    tmT0 = inferred.tm
+    tmTy0 = zonk(ms, inferred.ty)
+  let (tyTm0, tyTy) = inferTm(tyPre, @[], globals, ms, supply)
   unifyElab(ms, tyTy, tmC(cStar), d.loc)
   let tyT = zonk(ms, tyTm0)
   let ru = findUnsolved(ms, tyT)
@@ -726,7 +886,10 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
       raise elabErr(d.loc,
         "ill-formed type of '" & d.name & "': " & e.msg)
   # 2. elaborate the body against the type; zonk; reject leftovers
-  let tmT0 = checkTm(d.desugarTm(), @[], globals, ms, supply, tyT)
+  if qtyFirst:
+    convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals)
+  else:
+    tmT0 = checkTm(tmPre, @[], globals, ms, supply, tyT)
   let tmT = zonk(ms, tmT0)
   let ru2 = findUnsolved(ms, tmT)
   if ru2.found:
@@ -755,6 +918,7 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
   ## Experiment 4: `postulate name : Ty` / `elim name : Ty`.
   ## A parameter-like global; `elim` additionally installs an empty
   ## reduction rule table on the R node for later `red` declarations.
+  resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
   if name in globals:
     raise elabErr(loc, "duplicate declaration '" & name & "'")
   let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms, supply)
@@ -850,6 +1014,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
   ## Experiment 4: `red elim v1..v(k-1) scPat = contractum`,
   ## where scPat is `ctor` or `(ctor w1..wm)`, all bare variables.
   ## Elaborates the contractum in the pattern context and registers
+  resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
   ## the case on the eliminator's rule table.
   let spine = flattenAppSpine(lhs)
   if spine[0].kind != pkVar:
@@ -960,7 +1125,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
 # Index positions in red patterns are dummy variables (unused in the
 # contractum); fireRed's spine convention already accounts for them.
 
-proc mkPis(tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]],
+proc mkPis(tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]],
            body: PreTerm, loc: Loc): PreTerm =
   result = body
   for i in countdown(tele.high, 0):
@@ -1006,7 +1171,7 @@ proc elimNameFor(dname: string): string =
     result[0] = result[0].toLowerAscii()
   result &= "Elim"
 
-proc famAppPre(famName: string, params: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]],
+proc famAppPre(famName: string, params: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]],
                idxTerms: seq[PreTerm], loc: Loc): PreTerm =
   result = mkVar(famName, loc)
   for p in params: result = mkApp(result, mkVar(p.name, loc), loc)
@@ -1419,6 +1584,7 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
                      ms: var MetaStore,
                      dataInfos: var Table[string, SurfDecl]): ElabDef =
   let loc = cd.loc
+  resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
   # 1. Find the scrutinee's data type from the type signature.
   let dataName = scrutineeDataName(cd.ty, dataInfos)
   if dataName == "":
@@ -1695,13 +1861,13 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
   app = mkApp(app, motive, loc)
   for m in methods: app = mkApp(app, m, loc)
   for it in scrIdxTerms: app = mkApp(app, it, loc)
-  var procTele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Quantity]] = @[]
+  var procTele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]] = @[]
   var restVars: seq[string] = @[]
   for i, b in tele:
     let bn = if b.name.len > 0: b.name else: "x" & $i
     # The proc syntax supports implicits; keep them.
     # Note: data tele doesn't carry qty yet; default to qOmega
-    procTele.add((bn, b.ty, b.impl, false, qOmega))
+    procTele.add((bn, b.ty, b.impl, false, Qty(isVar: false, q: qOmega)))
     if i > sPos:
       restVars.add(bn)
   # scrutinee first, then the remaining telescope in order
@@ -2225,6 +2391,49 @@ postulate N : ?
 proc badDrop2 (1 y : N) (z : N) : N = (lam (0 w : N). z) y
 """, "silently discarded")
   echo "ok: linear var into erased parameter rejected (#66)"
+
+  # --- Issue #66: quantity polymorphism ----------------------------------
+  # Surface `(q x : A)` binds a quantity variable, solved at the binding
+  # lambda from the bound variable's use count: 0 -> q0, 1 -> q1, 2+ ->
+  # qOmega. The core language only ever sees concrete quantities.
+  let qttQVarDefs = elabCheck("""
+postulate N : ?
+proc qid {A : ?} (q x : A) : A =
+  x
+proc qconst {A : ?} {B : ?} (q x : A) (y : B) : A =
+  x
+proc qdup {A : ?} (q x : A) : Sig (u : A). A =
+  (x, x)
+proc qunused {A : ?} (q x : A) : 1 =
+  <>
+""")
+  assert qttQVarDefs.len == 4
+  echo "ok: quantity variables solve from use count (#66)"
+  # One variable shared by two binders must agree on the solution.
+  expectElabErr("""
+postulate N : ?
+proc qconf (q x : N) (q y : N) : Sig (u : N). N =
+  (x, (y, y))
+""", "requires quantity")
+  echo "ok: conflicting quantity-variable solutions rejected (#66)"
+  # A variable solved linear after being passed to a q0 parameter is the
+  # same leak as a concrete linear variable: the app-site check runs while
+  # the variable is unsolved, so the obligation is deferred to solve time.
+  expectElabErr("""
+postulate N : ?
+postulate z0 : Pi (0 x : N). N
+proc badQDrop (q y : N) : N = z0 y
+""", "silently discarded")
+  echo "ok: qty-var solved linear into erased parameter rejected (#66)"
+  # But the same shape with 2+ uses solves to qOmega: discarding an
+  # unrestricted variable is fine.
+  let qttQVarOmegaDrop = elabCheck("""
+postulate N : ?
+postulate z0 : Pi (0 x : N). N
+proc okQDrop (q y : N) : N = snd (z0 y, y)
+""")
+  assert qttQVarOmegaDrop.len == 1
+  echo "ok: qty-var solved unrestricted into erased parameter accepted (#66)"
 
   # --- Experiment 41: conversion cache as a scoped handler ---------
   # The Experiment 10 cache is no longer a global switch: it is probed

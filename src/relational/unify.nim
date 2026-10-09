@@ -69,10 +69,28 @@ type
     convCache*: EGraph  # Experiment 10: conversion cache (per elabCheck)
     convHandlers*: seq[ConvHandler]  # Experiment 41: handler stack (top = last)
     extDischarges*: int  # Experiment 41: discharges by coreValid=false handlers
+    # Issue #66: quantity variables. Declaration-scoped: the elaborator
+    # resets all three at the start of each top-level declaration.
+    qvarNames*: Table[string, int]  # variable name -> solution index
+    qvarSols*: seq[QtySol]          # per-variable solution
+    # Issue #66: pending erased-arg obligations. checkErasedArg records
+    # (qty-var name -> app sites) when the argument mentions a variable
+    # whose quantity variable is still unsolved; enforceBinderQty flushes
+    # the entry when the variable is solved (a q1 solution rejects).
+    qvarPending*: Table[string, seq[tuple[varName: string, loc: Loc]]]
+
+  QtySolKind* = enum qsUnknown, qsSolved
+  QtySol* = object
+    ## Solution state of one quantity variable.
+    case kind*: QtySolKind
+    of qsUnknown: discard
+    of qsSolved: q*: Quantity
 
 proc initMetaStore*(): MetaStore =
   MetaStore(nextId: 0, entries: initTable[int, MetaEntry](),
-            convCache: initEGraph(), convHandlers: @[], extDischarges: 0)
+            convCache: initEGraph(), convHandlers: @[], extDischarges: 0,
+            qvarNames: initTable[string, int](), qvarSols: @[],
+            qvarPending: initTable[string, seq[tuple[varName: string, loc: Loc]]]())
 
 proc uerr(loc: Loc, msg: string): ref UnifyError =
   # No location prefix here: the elaborator catches UnifyError and re-raises
