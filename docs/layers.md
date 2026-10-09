@@ -49,12 +49,12 @@ in 19.7ms. No CLP(FD) domain stores; search heuristics are basic.
 
 ## Layer 3: Eponym (dependently typed language)
 
-**Purpose**: The actual dependently typed language — ETT core, elaborator,
-surface syntax. This is the end goal; Layers 1 and 2 are infrastructure
-to make it better.
+**Purpose**: The actual dependently typed language — QTT core (quantities in
+the judgments, #66), elaborator, surface syntax. This is the end goal;
+Layers 1 and 2 are infrastructure to make it better.
 
 **Files**:
-- `src/ett.nim`, `src/ett_init.nim` — ETT core (finally-tagless and initial).
+- `src/ett.nim`, `src/ett_init.nim` — QTT core (finally-tagless and initial).
 - `src/elab.nim` — the real elaborator (bidirectional, metavariables,
   implicits, conversion).
 - `src/unify.nim` — Miller pattern unification for the elaborator.

@@ -46,8 +46,8 @@ The mechanism is shared; the rules are per-language. This mirrors LMS
 
 ## Key design decisions
 
-1. **ETT core is the shared IR.** Staging operates on ETT terms via
-   binding-time annotations, producing specialized ETT terms. No separate
+1. **QTT core is the shared IR.** Staging operates on QTT terms via
+   binding-time annotations, producing specialized QTT terms. No separate
    staging IR (avoids the `IrViewData` leakage problem).
 
 2. **Generator = Nim macro.** Runs at compile time, emits specialized Nim
@@ -78,10 +78,10 @@ The mechanism is shared; the rules are per-language. This mirrors LMS
 - Tagless-final integration: works with existing `Sym[R]`
 - Must not depend on ETT or relations
 
-### Phase 2: ETT staging rules
-- `Sym[Staged]` instance for ETT core
+### Phase 2: QTT staging rules
+- `Sym[Staged]` instance for QTT core
 - Rules for each former (Pi, lam, app, eliminators, etc.)
-- ETT-to-ETT passes: partial eval, let-insertion, DCE
+- QTT-to-QTT passes: partial eval, let-insertion, DCE
 - Handle: metavariables (defer or reject?), conversion during staging
 - Status 2026-10-09 (issue #17): validated end-to-end in
   `src/staging/ett_staged.nim` + `src/staging/stage_ett_demo.nim`.
