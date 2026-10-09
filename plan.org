@@ -379,6 +379,12 @@
      correctness hazard). Canonical witness ordering required so
      the cache is a function of the spec.
 
+  Sequencing (Aaron, 2026-10-08): after #36 lands, integrate and
+  finish #32 (indexed patterns), then build out the relational +
+  staged elaborator and compare it against the direct elaborator —
+  this is the step-3 comparison above (=staged-check= vs
+  hand-written =infer= from Experiment 2) and issue #26.
+
   Success: one spec change propagates to all tools; staged tools
   within a small constant of hand-written ones; a synthesis demo
   (e.g. synthesize =pairSwap= from its type).
