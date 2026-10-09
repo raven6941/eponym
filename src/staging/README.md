@@ -1,9 +1,10 @@
 # Staging framework (`src/staging/`)
 
-Multi-stage programming for the relational engine. Potentially an independent
-library. Implements the "towers collapse" idea: a relationally-defined
-interpreter, specialized to a given direction and mode, collapses into
-direct-style code without the miniKanren overhead.
+Multi-stage programming for Nim, in the style of BER MetaOCaml and LMS.
+Potentially an independent library. The aspiration is a general staging
+capability — binding-time annotations, `Rep[T]` for staged values,
+`genlet` for let-insertion — of which staged relational programming is
+one application (and the staged relational elaborator is one case of that).
 
 ## Files
 
@@ -11,14 +12,23 @@ direct-style code without the miniKanren overhead.
   `Rep[T]` for staged values, `genlet` (let-insertion via delimited
   continuations, Issue #61).
 - `relcompile.nim` — compiles relations to staged code: takes a `RelGoal`
-  and produces a specialized procedure.
-- `relgoal.nim`, `stagegoal.nim` — goal representations: `RelGoal` for
-  the unstaged relation, `StageGoal` for the staged residual.
-- `modes.nim` — mode analysis: determines which arguments are ground vs.
-  logic variables at staging time, guiding specialization.
+  and produces a specialized procedure. (Relational staging as a client
+  of the general framework.)
+- `relgoal.nim`, `stagegoal.nim` — goal representations for the relational
+  client: `RelGoal` for the unstaged relation, `StageGoal` for the staged
+  residual.
+- `modes.nim` — mode analysis for the relational client: determines which
+  arguments are ground vs. logic variables at staging time, guiding
+  specialization.
 
 ## Design notes
 
+- **General first, relational second**: like MetaOCaml and LMS, the
+  framework should stand on its own as a staging system. Staging a
+  relational interpreter is the motivating application (Track C), not the
+  definition of the framework. New clients (e.g., staging the ETT
+  evaluator directly, Issue #8) should be expressible without touching
+  the core.
 - **Why staging, not hand-optimization** (Issue #26 lesson): the first
   attempt at staging the relational elaborator via partial deduction was
   11–87x *slower* — it specialized without generating code, producing a
@@ -32,5 +42,7 @@ direct-style code without the miniKanren overhead.
 - **Demos live in `tests/`**: `stage_evalo`, `stage_typeo`, `staged_defun`,
   etc. are demonstrations of the framework, not the framework itself.
 - **Eponym dependency**: the framework is generic, but the primary client
-  is the relational elaborator in `src/relational/`. If split into an
-  independent library, the interface would be `RelGoal` + modes.
+  today is the relational elaborator in `src/relational/`. If split into an
+  independent library, the interface would be the staging core (`Rep`,
+  `genlet`, binding-time machinery), with relational support as an
+  extension.
