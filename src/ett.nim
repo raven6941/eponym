@@ -78,7 +78,7 @@ type
 ## 2. Derived combinators, valid for every instance
 ## ---------------------------------------------------------------------------
 
-proc cArr[R](s: Sym[R], dom, cod: R): R =
+proc cArr*[R](s: Sym[R], dom, cod: R): R =
   ## Non-dependent arrow `dom -> cod`, derived from Pi.
   s.cPi(dom, proc(x: R): R = cod)
 
@@ -154,7 +154,7 @@ proc vSnd(p: Value): Value =
   else:
     raise newException(ValueError, "snd of non-pair")
 
-let evalSym = Sym[Value](
+let evalSym* = Sym[Value](
   cStar: proc(): Value = Value(kind: vkStar),
   cUnit: proc(): Value = Value(kind: vkUnit),
   cTt: proc(): Value = Value(kind: vkTt),
@@ -438,7 +438,7 @@ proc polyId[R](s: Sym[R]): R =
   s.cLam(s.cStar(), proc(X: R): R =
     s.cLam(X, proc(x: R): R = x))
 
-proc twice[R](s: Sym[R]): R =
+proc twice*[R](s: Sym[R]): R =
   ## Twice: Pi(X:?). (X -> X) -> X -> X
   ## (the paper's §6.4 example, in HOAS instead of de Bruijn)
   s.cLam(s.cStar(), proc(X: R): R =
@@ -446,14 +446,14 @@ proc twice[R](s: Sym[R]): R =
       s.cLam(X, proc(x: R): R =
         s.cApp(f, s.cApp(f, x)))))
 
-proc constFn[R](s: Sym[R]): R =
+proc constFn*[R](s: Sym[R]): R =
   ## const: Pi(A:?). Pi(B:?). A -> B -> A
   s.cLam(s.cStar(), proc(A: R): R =
     s.cLam(s.cStar(), proc(B: R): R =
       s.cLam(A, proc(x: R): R =
         s.cLam(B, proc(y: R): R = x))))
 
-proc pairSwap[R](s: Sym[R]): R =
+proc pairSwap*[R](s: Sym[R]): R =
   ## Swap the components of a pair over the unit type.
   s.cLam(s.cSigma(s.cUnit(), proc(x: R): R = s.cUnit()), proc(p: R): R =
     s.cPair(s.cSnd(p), s.cFst(p)))

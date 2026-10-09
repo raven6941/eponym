@@ -574,3 +574,31 @@
   work on the elaborator must target the engine interface overhead
   first — measure residual Goal-allocation cost before adding more
   specialization.
+
+* 2026-10-09 — Phase 2 staging validation: what staging actually buys
+
+  Context: GH #17 acceptance required staging a real ETT term with
+  verified same-result and a non-trivial speedup. The pre-existing
+  =ett_staged.nim= prototype residualized every lambda, so no
+  specialization ever happened; =stage_ett_demo.nim= now drives it
+  end-to-end.
+  Options: (a) keep lambdas residual (status quo — no specialization);
+  (b) =svStaticLam=: lambdas as staging-time =SVal -> SVal= functions,
+  =cApp= beta-reduces at staging time; residual =ETTNode= trees run by
+  =evalSVal= through the real =evalSym= interpreter.
+  Decision: (b). =twice=/=const=/=pairSwap= staged == unstaged
+  (structural equality on open terms); residuals contain only ETT
+  former nodes; =const <> y= collapses fully to static =tt=.
+  Consequences: two benchmarks, both honest. Hoisting a static
+  64-redex subcomputation out of a 32-function loop: 15.8x per-input
+  speedup (4448 staging-time betas moved out of the hot loop). But
+  unrolling 300 static applications with no static work inside: 0.67x
+  — tree-walking the residual (=evalSVal=) dispatches *more* per node
+  than the direct interpreter's =vApp=. Lesson: staging pays when it
+  *removes* work (hoisting static subcomputations), not by
+  re-interpreting residual trees; general speedups need residual
+  *compilation* (Phase 4 direction, already 1.90x on typeo). Also
+  fixed along the way: =app= on Church numerals is exponentiation
+  (=n^m=), not multiplication — the demo's first tower silently built
+  a 4-billion-redex witness and hung; =churchMult= (=λf. m (n f)=)
+  is the correct combinator.

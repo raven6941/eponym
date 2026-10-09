@@ -83,6 +83,19 @@ The mechanism is shared; the rules are per-language. This mirrors LMS
 - Rules for each former (Pi, lam, app, eliminators, etc.)
 - ETT-to-ETT passes: partial eval, let-insertion, DCE
 - Handle: metavariables (defer or reject?), conversion during staging
+- Status 2026-10-09 (issue #17): validated end-to-end in
+  `src/staging/ett_staged.nim` + `src/staging/stage_ett_demo.nim`.
+  `Sym[SVal]` with `svStaticLam` (staging-time functions; `cApp`
+  beta-reduces at staging time), residual `ETTNode` trees evaluated by
+  `evalSVal` through the real interpreter. `twice`/`const`/`pairSwap`
+  staged == unstaged (structural value equality on open terms);
+  residuals contain only ETT former nodes. Benchmarks: hoisting a
+  static 64-redex subcomputation out of a 32-fn loop gives 15.8x
+  per-input speedup; unrolling 300 static applications gives 0.67x —
+  tree-walking the residual has *more* dispatch than the direct
+  interpreter, so staging pays only when it removes work (hoisting),
+  not by re-interpreting. Residual compilation (Phase 4) is the path
+  to general speedups.
 
 ### Phase 3: Relational staging design
 - **This is a design issue, not implementation.** See GH issue.
