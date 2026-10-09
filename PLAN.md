@@ -177,14 +177,17 @@ Completed experiments (see `plan.org`, `decisions.org`):
 | 12 | Propositional equality | `Eq`/`refl`/`J`; `plusReducesZ` proven |
 | 19/35 | Staged typeo benchmark + residual compiler | 1.90x vs compiled unstaged; 9/9 correct |
 | 27 | Mode inference for relational staging | Inferred modes reproduce manual ones |
+| 26 | Staged relational elaborator vs direct | Negative: staged checko 11–87x slower than unstaged (N=2), 14–43x at N=8; relation-level staging loses where baseline is near-deterministic |
 
 In flight (ordered):
 
-1. **#26 / Track C step 3 — relational + staged elaborator vs direct
-   elaborator**: build the relational elaborator, stage it, compare
-   against `elab.nim` on performance and error quality. (Relational side
-   has accept/reject parity 8/8 on the fragment; staging via partial
-   deduction is the remaining work.)
+1. **Track C step 3 (follow-up to #26) — stage *through* the engine**:
+   #26 closed as a negative result for staging-via-partial-deduction of
+   the relation (staged checko 11–87x slower than unstaged at N=2,
+   14–43x at N=8; scale doesn't help — decisions.org 2026-10-09). The
+   relational elaborator is correct (accept/reject parity) and already
+   competitive unstaged. Next: residual direct-style code with no
+   Goal/Stream layer (2nd-Futamura direction) — a new experiment.
 
 Completed: **#41 — equality as overridable effect** (Andromeda-style;
 merged d4c4ceb: `convElab` effect site, `ConvHandler={decide,coreValid}`,
