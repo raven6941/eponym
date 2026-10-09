@@ -641,8 +641,22 @@
   residualizes); ours is *static* (binding times computed before
   staging, then the specializer follows them) — same boundary shape,
   but ours is inspectable ahead of time and checkable against the
-  specializer's actual behavior. Still open for #31: applying BTA to a
-  relation with mOut params end-to-end, and the #29 differential suite
-  as the standing soundness harness. Legacy hand-staged prototypes
-  (=staged_synth=, =staged_codegen=, =staged_fwd=) are untouched; their
-  hand-drawn fallbacks are inventoried in =bta.nim='s header.
+  specializer's actual behavior.
+  Follow-up (same branch): BTA applied end-to-end to a relation with an
+  mOut param — =typeo= in synthesis mode =(tm:mIn, ty:mOut, ctx:mIn)=
+  with =known = {ctx: nil}= (closed terms; the term is the runtime
+  input). =inferEntry= puts the mOut param in =dynamicVars= even when a
+  value is supplied (the #41 soundness condition holds at the entry,
+  not just in the specializer). =stageWithBTA= needs zero manual
+  markers: 4 specializations, 1920-char residual; the var branch prunes
+  against the static nil context, 12 fallbacks blame =__var_tm= /
+  =__var_ty=. Differential synthesis harness (staged residual vs
+  unstaged engine, reified type answers): agreement on all 5 corpus
+  terms — =zero=, =suc(suc(zero))=, =app(lam(0), zero)= all synthesize
+  =nat=, two ill-typed terms synthesize nothing. So one relation now
+  stages in two directions (checking with static ty, synthesis with
+  mOut ty) from modes + known args alone. Still open for #31: the #29
+  differential suite as the standing soundness harness. Legacy
+  hand-staged prototypes (=staged_synth=, =staged_codegen=, =staged_fwd=)
+  are untouched; their hand-drawn fallbacks are inventoried in
+  =bta.nim='s header.

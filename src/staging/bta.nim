@@ -409,6 +409,7 @@ when isMainModule:
   import staging/bench_typeo   # testCases, checkUnstaged, checkStaged
   import rel_elab              # natTy, zeroTm, sucTm, ...
   import times
+  import algorithm             # sort for differential answer comparison
 
   var failures = 0
   proc check(cond: bool, msg: string) =
@@ -580,6 +581,105 @@ when isMainModule:
   ns = analyzeOne(rgNeq(ratom("__var_tm"), rint(5)), noKnown, @[Mode.mIn], @["tm"])
   check(ns.len == 1 and ns[0].verdict == bvFallback,
         "=/= residualizes (conservative)")
+  echo ""
+
+  # --- Test 6: BTA end-to-end on a relation with an mOut param ---
+  # typeo in *synthesis* mode: tm:mIn, ty:mOut, ctx:mIn. The term is the
+  # runtime input, the context is statically nil (closed terms), and the
+  # type is computed at runtime. Zero manual markers: inferEntry must put
+  # the mOut param in dynamicVars (the #41 soundness condition), and the
+  # var branch must prune against the static nil context.
+  echo "--- stageWithBTA: typeo synthesis (tm:mIn, ty:mOut, ctx:mIn) ---"
+  var relEnvSynth = initTable[string, RelDef]()
+  relEnvSynth["typeo"] = RelDef(name: "typeo", params: @["tm", "ty", "ctx"],
+                                modes: @[Mode.mIn, Mode.mOut, Mode.mIn],
+                                body: typeoData())
+  var knownS = initTable[string, RTerm]()
+  knownS["ctx"] = rnil()
+  let (spS, dvS) = inferEntry(relEnvSynth["typeo"], knownS)
+  check(spS.len == 1 and "ctx" in spS and $spS["ctx"] == $rnil(),
+        "synthesis entry: staticParams == {ctx: nil}")
+  check(dvS == toHashSet(["__var_tm", "__var_ty"]),
+        "synthesis entry: dynamicVars == {__var_tm, __var_ty} " &
+        "(mOut ty is dynamic: staging never binds an output)")
+  # supplying a "known" value for the mOut param must not make it static
+  var knownSOut = initTable[string, RTerm]()
+  knownSOut["ctx"] = rnil(); knownSOut["ty"] = natTy()
+  let (_, dvSOut) = inferEntry(relEnvSynth["typeo"], knownSOut)
+  check("__var_ty" in dvSOut,
+        "mOut param stays dynamic even with a supplied value")
+  echo ""
+
+  let (topS, specsS) = stageWithBTA(relEnvSynth, "typeo", knownS)
+  echo "  top specialization: ", topS, " (", specsS.len, " specializations)"
+  var sizeS = 0
+  for _, e in specsS: sizeS += ($e.body).len
+  echo "  residual size: ", sizeS, " chars"
+  check(specsS.len > 0, "non-empty residual for synthesis entry")
+  echo ""
+
+  # boundary: var branch pruned against static nil ctx
+  let notesS = analyzeBoundary(relEnvSynth["typeo"], knownS)
+  var sawVarPruned = false
+  var nFbS = 0
+  for n in notesS:
+    if n.verdict == bvPruned and "ctxTail" in n.goal: sawVarPruned = true
+    if n.verdict == bvFallback: inc nFbS
+  check(sawVarPruned,
+        "var branch pruned: static nil ctx can't match (ty0 . ctxTail)")
+  check(nFbS > 0, "non-trivial synthesis boundary: " & $nFbS & " fallbacks")
+  echo ""
+
+  # differential synthesis: staged residual vs unstaged engine, types as
+  # reified answers (ground types only, so reified var names can't drift)
+  echo "--- differential type synthesis: staged == unstaged ---"
+  proc synthUnstaged(tm: RTerm, depth: int): seq[string] =
+    let tv = freshVar()
+    let q = freshVar()
+    var body = typeoData()
+    body = substAtom(body, ratom("__var_tm"), tm)
+    body = substAtom(body, ratom("__var_ctx"), rnil())
+    body = substAtom(body, ratom("__var_ty"), tv)
+    # recursive rgCall("typeo", ...) needs the unstaged relation in the env
+    var envU = initTable[string, RelEntry]()
+    envU["typeo"] = RelEntry(params: @["tm", "ty", "ctx"], body: typeoData())
+    let g = conj(toGoal(body, envU), `==`(q, tv))
+    result = @[]
+    for t in run(q, g, 10, depth): result.add($t)
+    result.sort()
+  proc synthStaged(tm: RTerm, depth: int): seq[string] =
+    let tv = freshVar()
+    let q = freshVar()
+    let g = conj(toGoal(rgCall(topS, @[tm, tv, rnil()]), specsS),
+                 `==`(q, tv))
+    result = @[]
+    for t in run(q, g, 10, depth): result.add($t)
+    result.sort()
+  let synthCases = @[
+    ("zero", zeroTm()),
+    ("suc(suc(zero))", sucTm(sucTm(zeroTm()))),
+    ("app(lam(0), zero)", appTm(lamTm(varTm(0)), zeroTm())),
+    ("suc(lam(0)) [ill-typed]", sucTm(lamTm(varTm(0)))),
+    ("app(zero, zero) [ill-typed]", appTm(zeroTm(), zeroTm())),
+  ]
+  var synthAgree = true
+  for (cname, ctm) in synthCases:
+    let u = synthUnstaged(ctm, 20)
+    let s = synthStaged(ctm, 20)
+    if u != s:
+      synthAgree = false
+      echo "  MISMATCH: ", cname, " unstaged=", u, " staged=", s
+    else:
+      echo "  agree: ", cname, " -> ", u
+  check(synthAgree,
+        "BTA-staged synthesis agrees with unstaged on all " &
+        $synthCases.len & " corpus terms")
+  check(synthStaged(zeroTm(), 20) == @[$natTy()],
+        "zero synthesizes nat through the staged residual")
+  check(synthStaged(appTm(lamTm(varTm(0)), zeroTm()), 20) == @[$natTy()],
+        "app(lam(0), zero) synthesizes nat through the staged residual")
+  check(synthStaged(sucTm(lamTm(varTm(0))), 20).len == 0,
+        "ill-typed term synthesizes nothing (staged)")
   echo ""
 
   if failures == 0:
