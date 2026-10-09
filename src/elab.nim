@@ -25,7 +25,6 @@ import tables
 import sequtils
 import strutils
 import sets
-import times
 import preterm
 import parse_surf
 import ett_init
@@ -1696,6 +1695,7 @@ proc checkTermElab*(pre: PreTerm, ctx: Ctx, globals: Globals,
   checkTm(pre, ctx, globals, ms, supply, expTy)
 
 when isMainModule:
+  import times
   # --- Experiment 2's programs still elaborate --------------------------------
   let defs = elabCheck("""
 proc twice (A : ?) (f : A -> A) (x : A) : A =
