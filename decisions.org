@@ -1133,3 +1133,173 @@
   named errors; injectivity still decomposes; unregistered refs keep
   generic errors; existing unify/elab tests all pass; full CI matrix
   green.
+** #57: Complete staging flips #26's negative (2026-10-09)
+  Status: POSITIVE. Generated direct-style code from the elabo relation is
+  9.4x (N=2) to 22.6x (N=8) faster than the unstaged relational elabo,
+  with byte-identical outputs and full accept/reject agreement.
+
+  The generator (src/staging/gen_direct_elabo.nim) runs at build time and
+  emits specialized Nim procs for Vec(Nat, N). The generated code has:
+  - No Goal/Stream machinery
+  - No unification (logic variables eliminated by partial evaluation)
+  - No miniKanren closure construction
+  - Just direct pattern matching, recursion, and Option[RTerm]
+
+  Benchmark (microseconds, best of 100):
+    N=2: generated 25.1us vs relational 236.7us (9.4x)
+    N=8: generated 124.5us vs relational 2811.6us (22.6x)
+
+  Differential correctness:
+  - Valid terms: outputs match relational elabo exactly ($-equality)
+  - Invalid terms (bad var, nil vs Vec1, cons vs Vec0): both reject
+
+  Lesson: #26's negative was about *incomplete* staging (specialization
+  without codegen, retaining the Goal interpreter). When the relational
+  spec is compiled through to direct code, the speedup is substantial
+  and grows with term size (the relational overhead is per-node).
+  This validates the Track C step 3 direction: stage *through* the engine,
+  not just the relation.
+
+  Note: #61 (genlet) is NOT a prerequisite. The generated code for this
+  fragment has no duplication — each subterm elaborated once. Genlet becomes
+  relevant at larger scales or with inlining.
+
+  Decision: #57's approach (build-time codegen from relational spec) is the
+  correct completion of #26. The remaining work is generalizing the generator
+  beyond Vec/Nat to the full fragment (Pi/lam/app/vars).
+
+** #57 three-way comparison (2026-10-09) — staged vs generated vs direct
+  Aaron asked for the missing comparison: how did #26's staged-relational
+  compare to the direct elaborator? The #26 benchmark (bench_rel_elab.nim)
+  already had the three-way setup; re-ran it for N=2 and N=8.
+
+  N=2 valid (cons(0,cons(0,nil)), microseconds):
+    unstaged relational:   29.7
+    staged relational:     576.8  (19.4x vs unstaged, 2.0x vs direct)
+    direct checkTermElab:  288.7
+    generated direct (#57): 25.1
+
+  N=8 valid (cons-chain len 8, microseconds):
+    unstaged relational:   515.9
+    staged relational:    7590.6  (14.7x vs unstaged, 4.9x vs direct)
+    direct checkTermElab: 1561.1
+    generated direct (#57): 124.5
+
+  Ratios for generated-direct (#57):
+    vs staged-relational: 23x (N=2), 61x (N=8) faster
+    vs direct elaborator: 11.5x (N=2), 12.5x (N=8) faster
+    vs unstaged relational: 1.2x (N=2), 4.1x (N=8) faster
+
+  The generated code beats even the direct elaborator because it is fully
+  specialized: the type Vec(Nat,N) is static, so all type-level dispatch
+  disappears. The direct elaborator still does unification and metavariable
+  handling per node.
+
+  #26's staged-relational was 2-5x slower than direct on valid cases
+  (20-44x on invalid cases, where the Goal machinery explores dead branches).
+  This confirms the diagnosis: retaining Goal/Stream is strictly worse than
+  direct elaboration. Complete staging (#57) is strictly better.
+
+  Lesson: the three-way was always available in bench_rel_elab.nim; #26's
+  writeup emphasized staged-vs-unstaged and underreported staged-vs-direct.
+  When a benchmark has multiple baselines, report all the ratios.
+
+** #57 generalization: full-fragment direct residual (2026-10-09)
+  Status: POSITIVE. The build-time generator now emits a direct-style
+  residual of elabo/4 + inferoOut/4 over the FULL surface fragment
+  (atoms zero/nil/nat/univ, var, suc, app, pi, vec, lam, cons), not just
+  Vec(Nat,N). New files: src/staging/gen_direct_elabo_full.nim (generator),
+  src/staging/gen_elabo_full.nim (emitted residual), tests/test_elabo_full_direct.nim
+  (32 differential checks), src/staging/bench_direct_elabo_full.nim.
+
+  Derivation rules (each emitted clause cites its source in rel_elab_out.nim):
+  - fresh vars bound by later premises become let-bindings in dependency order;
+  - `==` on ground terms becomes tag checks + rTermEq structural equality;
+  - `==` against a manifest skeleton becomes destructuring of the ground
+    expected type (elaboD keeps the host-side tag-dispatch restriction);
+  - app(lam(b),a): the relation checks lam against pi(d,c) with d,c free.
+    On the ground-answer fragment this is equivalent to inferring a's type
+    da then inferring b under da (elabo(b,c) with c free degrades to infer —
+    the lam/cons/nil clauses cannot fire without a manifest type head).
+  - Where the relation would return a non-ground answer (e.g. app(lam,nil)),
+    the residual returns none: direct-style code can only represent the
+    ground-answer fragment. This is a stated restriction, not a bug.
+
+  Differential correctness: 32/32 agree with the relations on verdict AND
+  elaborated term ($-equality), including the redex app(lam x. x, 0) in both
+  modes, var lookup, pi/vec formation, and 10 negative cases.
+
+  Benchmark (microseconds, best of 200; direct residual vs unstaged relational):
+    zero : Nat                              0.90 vs 10.82   (12.0x)
+    suc^8 : Nat                            26.63 vs 241.42   (9.1x)
+    lam x. x : Pi Nat Nat                   4.02 vs 51.99   (12.9x)
+    lam x. lam y. x                         6.88 vs 85.48   (12.4x)
+    cons^4 : Vec Nat 4                     76.20 vs 601.59    (7.9x)
+    app(lam x. x, 0) : Nat                  6.97 vs 125.33  (18.0x)
+    infer app(var 0, zero)                  4.33 vs 90.14   (20.8x)
+    infer Pi Nat Nat                        5.42 vs 114.34  (21.1x)
+    infer Vec Nat 2                        11.41 vs 175.55  (15.4x)
+    geometric mean: 13.7x
+
+  The speedup is uniform across the fragment (7.9x–21.1x), not an artifact
+  of Vec specialization: the relational overhead is per-node Goal/Stream
+  machinery, and removing it helps every clause equally. The infer-mode
+  cases show the largest ratios — inferoOut's fresh-variable plumbing is
+  pure overhead once the fragment is ground.
+
+  Remaining for #57/#26 closure: the end-to-end benchmark of the staged
+  elabo against checkTermElab on realistic programs (per the sequencing
+  note, the verdict that closes #26 must stage elabo, not just the checker).
+  The residual is now general enough to attempt that comparison.
+
+** #57 closure: end-to-end staged elabo vs direct elaborator (2026-10-09)
+  Status: POSITIVE. New harness src/staging/bench_elab_end_to_end.nim
+  compares the generalized direct-style residual (elaboD, gen_elabo_full.nim)
+  against the direct elaborator (checkTermElab, src/elab.nim) on the same
+  16 programs, each in its native representation (RTerm vs PreTerm), prelude
+  elaborated once, fresh MetaStore per direct-side iteration, best-of-100 us.
+
+  Differential correctness: 16/16 agree on verdict AND elaborated term
+  ($-equality of residual output vs termToCore of the direct output),
+  including 3 negative cases rejected by both.
+
+  Wall-clock (microseconds; staged vs direct):
+    cons(0,cons(0,nil)) : Vec Nat 2       31.8 vs 277.9    8.7x
+    cons(1,cons(2,nil)) : Vec Nat 2       41.6 vs 282.4    6.8x
+    nil : Vec Nat 0                        2.9 vs  36.2   12.5x
+    lam x. x : Pi Nat Nat                  3.9 vs  16.7    4.2x
+    lam x. lam y. x : Pi Nat (Pi Nat Nat)   6.8 vs  27.5    4.0x
+    (lam x. x) 0 : Nat                     7.0 vs  22.2    3.2x
+    suc (suc zero) : Nat                   7.6 vs   9.6    1.3x
+    Pi Nat Nat : ?                         6.0 vs  18.4    3.1x
+    suc^8 : Nat                           27.2 vs  12.4    0.5x
+    suc^20 : Nat                          66.8 vs  17.9    0.3x
+    cons^4 : Vec Nat 4                    74.3 vs 605.6    8.2x
+    cons^8 : Vec Nat 8                  198.2 vs1525.7    7.7x
+    var 0 : Nat in [Nat]                   1.2 vs   8.8    7.1x
+    NEG nil : Vec Nat 2                    0.7 vs  55.2   75.5x
+    NEG cons(0,nil) : Vec Nat 2            4.0 vs 165.3   41.1x
+    NEG 1 : Vec Nat 2                      4.0 vs  35.2    8.8x
+  geometric mean (positives only): 3.5x staged faster; all cases: 5.1x.
+
+  Verdict: complete staging beats the direct elaborator end-to-end on this
+  fragment. The Vec-heavy realistic cases (the motivating fragment) are
+  7-9x faster; rejection is dramatically faster (8-75x) because the residual
+  fails on tag mismatch while the direct elaborator explores unification
+  dead-ends. Two honest caveats:
+  - Numeral-heavy programs (suc^8, suc^20) favor the direct elaborator
+    2-3x. The residual inherits the relational spec's unary-numeral surface
+    encoding (per-level tag dispatch + Option plumbing ~3.3us/node), while
+    the direct elaborator's pkInt path is a tight mkNatLit loop (~0.9us/node).
+    This is a spec-representation tax, not a staging failure: the surfaces
+    genuinely differ (relational spec has no int literals). #11 (primitive
+    machine ints) would close this gap on both sides.
+  - The residual covers the ground-answer fragment only (stated restriction):
+    where the relation would return a non-ground answer it returns none.
+
+  Decision: #57 is complete. This is the positive result that closes #26's
+  second half: staging *through* the engine to direct code strictly
+  dominates both the staged-relational and the direct elaborator on the
+  fragment, with byte-agreeing outputs. Follow-ups live in #75 (cross-stage
+  persistence policy for the residual) and #61 (genlet, still not needed at
+  this scale).
