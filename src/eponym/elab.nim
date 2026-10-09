@@ -391,6 +391,40 @@ proc enforceBinderQty(qty: Quantity, body: Term, loc: Loc, name: string,
         " times (expected exactly once)")
   of qOmega: discard
 
+proc checkErasedArg(arg: Term, ctx: Ctx, loc: Loc, ms: MetaStore) =
+  ## Issue #66: application-site quantity enforcement. When the Pi binder
+  ## being applied has quantity q0, the argument is checked for free uses
+  ## of q1-bound (linear) variables: a 0-parameter cannot consume them, so
+  ## passing one would silently discard it. Mirrors countVarUses's
+  ## discipline — binder domains and type annotations are types (checked
+  ## in the all-0 context), so mentions there are 0-uses, not violations.
+  let za = zonk(ms, arg)
+  if hasUnresolvedMetas(za): return  # a hole may later solve to anything
+  proc go(t: Term, depth: int) =
+    case t.kind
+    of tV:
+      if t.idx >= depth:
+        let e = ctx[t.idx - depth]
+        if e.qty == q1:
+          raise elabErr(loc, "linear variable '" & e.name &
+            "' passed to an erased (quantity-0) parameter" &
+            " — it would be silently discarded")
+    of tLam, tPi, tSi:
+      go(t.scope.bdy, depth + 1)
+    of tApp:
+      go(t.fn, depth); go(t.arg, depth)
+    of tPair:
+      go(t.pFst, depth); go(t.pSnd, depth); go(t.pScope.bdy, depth + 1)
+    of tFst, tSnd, tAbsurd:
+      go(t.sub, depth)
+    of tLet:
+      go(t.letVal, depth); go(t.letScope.bdy, depth + 1)
+    of tPrim:
+      discard
+    of tR, tC, tMeta, tInt:
+      discard
+  go(za, 0)
+
 proc resolveVar(ctx: Ctx, globals: Globals, name: string,
                 loc: Loc): tuple[tm, ty: Term] =
   for i, e in ctx:
@@ -430,17 +464,19 @@ proc headTy(ms: MetaStore, t: Term): Term =
       return cur
 
 proc ensurePi(ms: var MetaStore, loc: Loc, t: Term,
-              ctxLen: int): tuple[dom, codBdy: Term, impl: bool, adv: string] =
+              ctxLen: int): tuple[dom, codBdy: Term, impl: bool, adv: string,
+                                  qty: Quantity] =
   ## t's head must be a Pi; a metavariable head is unified with a fresh
-  ## (explicit) Pi. Returns dom and the codomain body (in the extended frame).
+  ## (explicit) Pi. Returns dom, the codomain body (in the extended frame),
+  ## and the binder's quantity (Issue #66: part of the Pi type).
   let h = headTy(ms, t)
   if h.kind == tPi:
-    return (h.dom, h.scope.bdy, h.impl, h.scope.adv)
+    return (h.dom, h.scope.bdy, h.impl, h.scope.adv, h.qty)
   if h.kind == tMeta:
     let dom = freshMeta(ms, tmC(cStar), ctxLen, 0, loc)
     let cod = freshMeta(ms, tmC(cStar), ctxLen, 1, loc)
     unifyElab(ms, h, tmPi(dom, "x", cod), loc)
-    return (dom, cod, false, "x")
+    return (dom, cod, false, "x", qOmega)
   raise elabErr(loc, "expected a function type")
 
 proc ensureSi(ms: var MetaStore, loc: Loc, t: Term,
@@ -514,11 +550,13 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkApp:
     var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply)
     (f, fty) = insertImplicits(pre, f, fty, ctx.len, ms)
-    let (dom, codBdy, impl, _) = ensurePi(ms, pre.loc, fty, ctx.len)
+    let (dom, codBdy, impl, _, qty) = ensurePi(ms, pre.loc, fty, ctx.len)
     if impl:
       raise elabErr(pre.loc,
         "cannot apply explicitly to an implicit argument")
     let a = checkTm(pre.c2, ctx, globals, ms, supply, dom)
+    if qty == q0:
+      checkErasedArg(a, ctx, pre.loc, ms)  # Issue #66: no linear var into 0-param
     (tmApp(f, a), subst(codBdy, 0, a))
   of pkPair:
     # Non-dependent Sigma with metavariable components (as the core's cPair).
@@ -593,7 +631,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         resTm = tmInt(pre.intVal)
       resTm
   of pkLam:
-    let (dom, codBdy, _, _) = ensurePi(ms, pre.loc, expTy, ctx.len)
+    let (dom, codBdy, _, _, _) = ensurePi(ms, pre.loc, expTy, ctx.len)
     let d =
       if pre.c1.isNil: dom
       else:
@@ -2165,6 +2203,28 @@ postulate idN0 : Pi (0 x : N). N
 proc qtyMismatch0 : Pi (x : N). N = idN0
 """, "quantity mismatch")
   echo "ok: Pi conversion rejects mismatched quantities (#66)"
+
+  # --- Issue #66: application-site quantity enforcement ------------------
+  # A linear variable must not be passed to an erased (q0) parameter: the
+  # 0-binder cannot consume it, so it would be silently discarded. The
+  # binder-side check (countVarUses = 1) cannot catch this.
+  let qttErasedAppOk = elabCheck("""
+postulate N : ?
+postulate z0 : Pi (0 x : N). N
+proc useErased (y : N) : N = z0 y
+""")
+  assert qttErasedAppOk.len == 1
+  echo "ok: unrestricted var into erased parameter accepted (#66)"
+  expectElabErr("""
+postulate N : ?
+postulate z0 : Pi (0 x : N). N
+proc badDrop (1 y : N) : N = z0 y
+""", "silently discarded")
+  expectElabErr("""
+postulate N : ?
+proc badDrop2 (1 y : N) (z : N) : N = (lam (0 w : N). z) y
+""", "silently discarded")
+  echo "ok: linear var into erased parameter rejected (#66)"
 
   # --- Experiment 41: conversion cache as a scoped handler ---------
   # The Experiment 10 cache is no longer a global switch: it is probed
