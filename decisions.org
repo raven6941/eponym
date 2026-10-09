@@ -602,3 +602,47 @@
   (=n^m=), not multiplication — the demo's first tower silently built
   a 4-billion-redex witness and hung; =churchMult= (=λf. m (n f)=)
   is the correct combinator.
+
+* 2026-10-09 — Binding-time analysis computes the staging entry (GH #31, branch exp31-bta)
+
+  Context: staging's static/dynamic boundary was hand-drawn at the entry
+  point: =bench_typeo.nim= / =stage_typeo.nim= wrote
+  =staticParams["ty"] = natTy()= and =dynamicVars = {__var_tm, __var_ctx}=
+  by hand. Per-subgoal fallback inside =stageGoal= was already automatic
+  (=unifyStage= verdicts), but nothing computed or reported *where* the
+  boundary falls. Issue #31 asks to infer the boundary, not draw it,
+  following Ballantyne's gather/fallback as the model.
+  Options: (a) full Jones-style BTA with a binding-time lattice over all
+  program points; (b) entry inference from modes + known args, plus an
+  abstract interpreter over =RelGoal= that reports per-subgoal verdicts
+  mirroring =stageGoal='s rules.
+  Decision: (b). The only hand-drawn input to the pipeline was the entry
+  annotation, so that is what gets computed: =inferEntry= derives
+  =(staticParams, dynamicVars)= from the relation's modes and the
+  caller-supplied ground args (mOut -> dynamic, the #41 soundness
+  condition; mIn/mGround -> static iff ground value supplied, else
+  dynamic; non-ground "known" values raise rather than silently
+  degrading). =analyzeBoundary= abstract-interprets the body with the
+  same bound/dynamic/free env threading as =stageGoal= (branch-local
+  disjunction envs, constructor decomposition, occurs check) and emits a
+  verdict per subgoal — discharged / pruned / fallback / specialize —
+  with the dynamic placeholders whose unknown value forces each
+  fallback. =stageWithBTA= pipes entry inference into
+  =specializeRelation=: staged typeo with zero manual markers.
+  Consequences: on typeo/ty=nat the BTA residual is syntactically
+  identical to the hand-drawn residual (1102 chars, 2 specializations);
+  BTA staging time 0.90ms vs 0.65ms hand-drawn (1.38x, within the 2x
+  acceptance bound); staged/unstaged agree on all 9 bench corpus terms.
+  The computed boundary for typeo: 7 discharged, 1 pruned (lam branch,
+  =ty == arr(d,c)= vs static nat), 9 fallbacks (6 blame =__var_tm=, 1
+  blames =__var_ctx=, 3 are surviving disjunctions), 3 specialized calls
+  with signatures =typeo(d,s,d)= etc. Comparison to Ballantyne: his
+  gather/fallback is *dynamic* (staging-time values decide what
+  residualizes); ours is *static* (binding times computed before
+  staging, then the specializer follows them) — same boundary shape,
+  but ours is inspectable ahead of time and checkable against the
+  specializer's actual behavior. Still open for #31: applying BTA to a
+  relation with mOut params end-to-end, and the #29 differential suite
+  as the standing soundness harness. Legacy hand-staged prototypes
+  (=staged_synth=, =staged_codegen=, =staged_fwd=) are untouched; their
+  hand-drawn fallbacks are inventoried in =bta.nim='s header.
