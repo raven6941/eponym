@@ -569,6 +569,8 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         unifyElab(ms, ad, dom, pre.loc)
         ad
     let b = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, codBdy)
+    # DEBUG
+    # echo "DEBUG checkTm pkLam: pre.qty=", pre.qty, " name=", pre.name
     tmLam(d, pre.name, b, pre.impl, pre.erased, pre.qty)
   of pkPair:
     let h = headTy(ms, expTy)

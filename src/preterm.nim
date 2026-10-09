@@ -234,8 +234,8 @@ when isMainModule:
   assert mkPi("A", mkUniv(), mkVar("A")) != mkPi("B", mkUniv(), mkVar("A"))
   assert $(mkLet("z", nil, mkVar("x"), mkVar("z"))) == "let z = x in z"
   assert $(mkPair(mkVar("a"), mkVar("b"))) == "(a, b)"
-  let d = SurfDef(name: "const", tele: @[(name: "A", ty: mkUniv(), impl: false, erased: false),
-                                         (name: "x", ty: mkVar("A"), impl: false, erased: false)],
+  let d = SurfDef(name: "const", tele: @[(name: "A", ty: mkUniv(), impl: false, erased: false, qty: qOmega),
+                                         (name: "x", ty: mkVar("A"), impl: false, erased: false, qty: qOmega)],
                   retTy: mkVar("A"), body: mkVar("x"))
   assert $d.desugarTy() == "Pi (A : ?). Pi (x : A). A"
   assert $d.desugarTm() == "lam (A : ?). lam (x : A). x"

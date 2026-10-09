@@ -103,7 +103,8 @@ proc procToDef(p: NimNode): NimNode =
         newTree(nnkExprColonExpr, ident"name", newLit($id[j])),
         newTree(nnkExprColonExpr, ident"ty", ty),
         newTree(nnkExprColonExpr, ident"impl", newLit(false)),
-        newTree(nnkExprColonExpr, ident"erased", newLit(false)))
+        newTree(nnkExprColonExpr, ident"erased", newLit(false)),
+        newTree(nnkExprColonExpr, ident"qty", newIdentNode("qOmega")))
   let bodyNode = surfToPre(p[6])
   newTree(nnkObjConstr, newIdentNode("SurfDef"),
     newTree(nnkExprColonExpr, ident"name", newLit(fname)),
