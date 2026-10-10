@@ -1303,3 +1303,61 @@
   fragment, with byte-agreeing outputs. Follow-ups live in #75 (cross-stage
   persistence policy for the residual) and #61 (genlet, still not needed at
   this scale).
+
+** #89 branching-resolution policy: gather vs fallback vs later (2026-10-09)
+  Status: POSITIVE (with an honest negative inside). The residual generator
+  (gen_direct_elabo_full.nim) now carries a named branching policy per site
+  (Ballantyne et al. vocabulary), emitted as policy comments in
+  gen_elabo_full.nim:
+  - appRedex (inferD app/lam; elaboD fallthrough): gather = one specialized
+    residual branch per staging-time branch; fallback = dynElabo, a dynamic
+    `run(elabo/4)` escape hatch at residual runtime where the specialized
+    branches fail.
+  - consIndex: later — the index elaboration stays an opaque recursive
+    elaboD call, never inlined.
+  - inferD keeps the ground-answer restriction BY DESIGN: without an
+    expected type the relation's answers may be non-ground, unrepresentable
+    in Option[InferOut]. fallback there would be unsound, not just slow.
+
+  The empirical probe that shaped the policy: staging-time `run` on the
+  redex with free expected type returns the issue's example app(lam,nil)
+  with 5 answers — all alpha-variants of ONE non-ground answer
+  (vec ?v zero), i.e. stream duplicates, not branching. On ground inputs
+  the fragment's elaboration is type-unique: exactly one ground branch per
+  site. So gather's explosion factor measured 1x (residual 142 -> 172
+  lines, the delta being the fallback shim + policy comments, zero
+  per-branch duplication).
+
+  Fallback relaxes the ground-answer restriction at the redex site:
+  app(lam x.x, nil) : Vec Nat 0 and the nested
+  app(lam x.x, app(lam y.y, nil)) : Vec Nat 0 now elaborate (previously
+  none), agreeing with the relation on verdict AND elaborated term;
+  app(lam x.x, nil) : Vec Nat 1 is still rejected by both. Differential
+  suite: 35/35 (32 old + 3 new).
+
+  Measurements (microseconds, best of 200; residual-with-fallback vs
+  unstaged relational on the branching corpus):
+    app(lam,nil) : Vec Nat 0              164.9 vs 144.9  (0.88x)
+    nested fallback                       341.7 vs 304.4  (0.89x)
+    NEG app(lam,nil) : Vec Nat 1         1265.4 vs 1262.7 (1.00x)
+  Fallback does not speed up these cases — it enables them (previously:
+  residual returned none). It *is* the dynamic search plus dispatch
+  overhead, so parity is the expected ceiling. Where gather wins: every
+  case the specialized branches cover (the #57 corpus keeps its 13.7x
+  geomean — fallback only fires where the old residual returned none, so
+  no regression). Where fallback wins: the only way to handle
+  search-needed cases at all.
+
+  Composition notes (per the issue's request):
+  - #31 (boundary inference): fallback sites are exactly where the
+    static/dynamic boundary cannot be decided at staging time — the
+    boundary inferrer should mark appRedex-like sites as
+    "specialize-with-dynamic-escape" rather than forcing a cut.
+  - #61 (genlet): gathered branches may duplicate code that genlet then
+    shares. Measured duplication here is zero (1 branch), so genlet stays
+    unneeded; the policy comment records the interaction for fragments
+    where gather fires multiply.
+  - The negative inside: gather's payoff needs genuine multi-branch.
+    This fragment has none — the value of the named policy is that the
+    *next* fragment (overloading, coercions, #74 literal subtyping) gets
+    the vocabulary instead of another ad-hoc restriction.

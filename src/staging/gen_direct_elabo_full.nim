@@ -21,13 +21,34 @@
 ##   - The host-side tag-dispatch restriction is kept: elaboD requires a
 ##     ground expected type, inferD a ground term. Where the relation would
 ##     return a non-ground answer (e.g. app(lam(b),a) with a needing an
-##     expected type), the residual returns none — the ground-answer
-##     fragment is exactly what direct-style code can represent.
+##     expected type), the residual used to return none (#89: elaboD now
+##     falls back to dynamic search via dynElabo, so ground answers found
+##     by search are returned; inferD keeps the restriction).
 ##   - app(lam(b),a): the relation checks lam against pi(d,c) with d,c
 ##     free, which for ground answers is equivalent to inferring a's type
 ##     da and then inferring b under da (elabo(b,c) with c free degrades to
 ##     infer on the ground fragment — the lam/cons/nil clauses can't fire
 ##     without a manifest type head). So: infer a, infer b, rebuild.
+##
+## Branching policy (#89; Ballantyne et al. gather/fallback/later).
+## Staging-time search can branch (or return non-ground answers) where the
+## residual must emit a single direct-style program. Policy per site:
+##   - appRedex (inferD app/lam; elaboD fallthrough): gather the
+##     staging-time branches into per-branch specialized residuals; where
+##     the ground reading fails (argument needs check mode, e.g.
+##     app(lam,nil)), fallback to dynamic search (dynElabo) at residual
+##     runtime. Staging-time enumeration of the redex's relational answers
+##     shows exactly one ground branch on this fragment (elaboration of
+##     ground terms is type-unique), so gather's explosion factor is 1x
+##     here — the honest finding is that gather's payoff needs a fragment
+##     with genuine multi-branch (e.g. overloading/coercions); fallback is
+##     the policy that actually relaxes the ground-answer restriction.
+##   - consIndex (elaboD cons: elabo(n, natTy())): later — residualized
+##     opaquely as a recursive elaboD call, never inlined; the subgoal's
+##     termination depends on runtime types.
+##   - inferD (no expected type): the ground-answer restriction REMAINS —
+##     fallback is unsound there since non-ground answers are
+##     unrepresentable in Option[InferOut]. Documented, not implemented.
 
 proc emit(s: string) = echo s
 
@@ -53,6 +74,25 @@ emit "  case a.kind"
 emit "  of rkAtom: a.name == b.name"
 emit "  of rkVar: a.id == b.id"
 emit "  of rkPair: rTermEq(a.head, b.head) and rTermEq(a.tail, b.tail)"
+emit ""
+emit "proc rTermGround*(t: RTerm): bool ="
+emit "  ## Groundness check for fallback answers (#89)."
+emit "  case t.kind"
+emit "  of rkVar: false"
+emit "  of rkAtom: true"
+emit "  of rkPair: rTermGround(t.head) and rTermGround(t.tail)"
+emit ""
+emit "proc dynElabo*(tm: RTerm, ty: RTerm, ctx: RTerm): Option[RTerm] ="
+emit "  ## #89 fallback: give up specializing; run the unstaged elabo/4"
+emit "  ## relation at residual runtime. Fires only where the specialized"
+emit "  ## (gathered) branches fail — e.g. app(lam,nil), where the argument"
+emit "  ## needs check mode and the relation's answer is found by search."
+emit "  ## Answers must be ground: the residual cannot represent non-ground"
+emit "  ## results, so a non-ground first answer degrades to none."
+emit "  let q = freshVar()"
+emit "  let sols = run(q, elabo(tm, ty, ctx, q), 1)"
+emit "  if sols.len == 0 or not rTermGround(sols[0]): none(RTerm)"
+emit "  else: some(sols[0])"
 emit ""
 emit "proc ctxLookupD*(ctx: RTerm, i: int): Option[RTerm] ="
 emit "  ## Direct reading of lookupO/3."
@@ -92,6 +132,11 @@ emit "    let f = tm.tail.head"
 emit "    let a = tm.tail.tail.head"
 emit "    if tagOfD(f) == \"lam\":"
 emit "      # Redex: relation elaborates lam against pi(d,c), d/c free."
+emit "      # #89 policy[appRedex]: gather — one specialized branch per"
+emit "      # staging-time branch (exactly 1 on this fragment: infer a's"
+emit "      # type, then infer the body). No fallback in infer mode: without"
+emit "      # an expected type the relation's answers may be non-ground,"
+emit "      # unrepresentable in Option[InferOut] — restriction documented."
 emit "      # Ground-fragment reading: infer a's type, then infer the body."
 emit "      let b = f.tail.head"
 emit "      let ra = inferD(a, ctx)"
@@ -166,12 +211,18 @@ emit "          let eh = elaboD(h, a, ctx)"
 emit "          if eh.isNone: return none(RTerm)"
 emit "          let et = elaboD(t, vecTy(a, n), ctx)"
 emit "          if et.isNone: return none(RTerm)"
+emit "          # #89 policy[consIndex]: later — the index elaboration stays an"
+emit "          # opaque recursive elaboD call; never inlined, since its"
+emit "          # termination depends on runtime types."
 emit "          let en = elaboD(n, natTy(), ctx)"
 emit "          if en.isNone: return none(RTerm)"
 emit "          return some(consCore(a, en.get, eh.get, et.get))"
 emit "      return none(RTerm)"
 emit "    else: discard"
-emit "  # fallback: infer with output, then unify the inferred type with ty"
+emit "  # fallback: infer with output, then unify the inferred type with ty."
+emit "  # #89 policy[appRedex]: gather — the specialized branch above;"
+emit "  # fallback — where it fails (e.g. app(lam,nil): the argument needs"
+emit "  # check mode), run the unstaged relation at residual runtime."
 emit "  let r = inferD(tm, ctx)"
-emit "  if r.isNone: return none(RTerm)"
+emit "  if r.isNone: return dynElabo(tm, ty, ctx)"
 emit "  if rTermEq(ty, r.get.ty): some(r.get.etm) else: none(RTerm)"
