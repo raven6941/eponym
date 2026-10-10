@@ -360,6 +360,7 @@ proc eqValD(a, b: Value): bool =
   of vkStar, vkUnit, vkTt, vkEmpty: true
   of vkPi, vkSigma, vkLam: false
   of vkPair: eqValD(a.fstV, b.fstV) and eqValD(a.sndV, b.sndV)
+  of vkNat: a.natV == b.natV
   of vkNeutral:
     a.neutId == b.neutId and a.spine.len == b.spine.len
 

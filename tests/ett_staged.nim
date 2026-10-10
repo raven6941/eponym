@@ -46,36 +46,48 @@ type
     enkLam, enkPi, enkSigma,       # binders (body staged against enkVar)
     enkPair,                      # pairing
     enkFst, enkSnd,               # projections
-    enkAbsurd                     # ex falso
+    enkAbsurd,                   # ex falso
+    enkNat,                      # primitive nat literal (residual)
+    enkPrim,                     # primitive operator application (residual)
+    enkLet                       # let-inserted residual (effect escape hatch)
 
   SValKind* = enum svStatic, svStaticLam, svDynamic
 
   ETTNode* = ref object
-    case kind: ETTNodeKind
+    case kind*: ETTNodeKind
     of enkVar:
-      varName: string
+      varName*: string
     of enkApp:
-      fn, arg: SVal
+      fn*, arg*: SVal
     of enkLam, enkPi, enkSigma:
-      domNode: SVal
-      bindName: string
-      bodyNode: proc(x: SVal): SVal
+      domNode*: SVal
+      bindName*: string
+      bodyNode*: proc(x: SVal): SVal
     of enkPair:
-      fstN, sndN: SVal
+      fstN*, sndN*: SVal
     of enkFst, enkSnd, enkAbsurd:
-      subN: SVal
+      subN*: SVal
+    of enkNat:
+      natLitV*: int
+    of enkPrim:
+      opName*: string
+      primArgs*: seq[SVal]
+    of enkLet:
+      letName*: string
+      rhs*: SVal
+      letBody*: proc(x: SVal): SVal
     of enkTt, enkUnit, enkStar, enkEmpty:
       discard
 
   SVal* = ref object
     ## Staged ETT value.
-    case kind: SValKind
+    case kind*: SValKind
     of svStatic:
-      val: Value                  # known at staging time
+      val*: Value                  # known at staging time
     of svStaticLam:
-      body: proc(x: SVal): SVal   # staging-time function
+      body*: proc(x: SVal): SVal   # staging-time function
     of svDynamic:
-      node: ETTNode                # residual IR (ETT formers only)
+      node*: ETTNode                # residual IR (ETT formers only)
 
 var betaCount* = 0
   ## Staging-time beta-reductions performed. A measure of static work
@@ -175,6 +187,164 @@ proc stagedSym*(): Sym[SVal] =
       SVal(kind: svDynamic, node: ETTNode(kind: enkAbsurd, subN: z)),
   )
 
+# --- Online primitive operators (GH #79) ---
+##
+## Danvy's online extension of TDPE (BRICS RS-97-53; see
+## notes/online-primitive-operators.org): each primitive-operator (δ-rule)
+## call decides *at specialization time* whether to unfold or residualize,
+## and the user programs both sides of the decision:
+## - Default policy: all operands static → unfold via staticSem;
+##   any dynamic operand → residualize the call. Binding times are
+##   polyvariant for free — the same operator unfolds at one call site
+##   and residualizes at another.
+## - Unfold control (filters): a user predicate over the operands gating
+##   unfold, à la Consel's filters in Schism. Demo: `pow` unfolds only
+##   when the exponent is static (and small — a termination/size guard).
+## - Residualize control (dynamic versions): algebraic simplifications
+##   over residual syntax (`x + 0 → x`, `0 × y → 0`, `1 × y → y`).
+##   Discarding a residual computation (`0 × y → 0`) is sound only for
+##   pure operators — effectful ones take the escape hatch below.
+## - Effect escape hatch: an operator flagged `effectful` (in a full
+##   implementation this flag comes from an effect annotation on its
+##   type) is unconditionally residualized and let-inserted, so its
+##   call is named and ordered in the residual. Simplifications do not
+##   fire on effectful calls.
+
+type
+  PrimOp* = object
+    ## One primitive operator: its static semantics, its unfold gate,
+    ## its residual-side rewrite rules, and its effect flag.
+    name*: string
+    arity*: int
+    staticSem*: proc(args: seq[int]): int
+      ## Unfold semantics: staging-time evaluation on static operands.
+    filter*: proc(args: seq[SVal]): bool
+      ## Unfold gate. Default: all operands static nats.
+    simp*: proc(name: string, args: seq[SVal]): SVal
+      ## Algebraic simplification over residual args; nil = no rule fires.
+    effectful*: bool
+      ## Escape hatch: always residualize + let-insert; skip simp.
+
+var primUnfolds* = 0    ## unfold decisions taken
+var primResiduals* = 0  ## residualize decisions taken
+var primSimps* = 0      ## algebraic simplifications fired
+
+proc resetPrimStats*() =
+  primUnfolds = 0
+  primResiduals = 0
+  primSimps = 0
+
+proc isStaticNat*(s: SVal): bool =
+  s.kind == svStatic and s.val.kind == vkNat
+
+proc natLit*(n: int): SVal =
+  ## A static nat literal: known at staging time, no residual trace.
+  staticVal(Value(kind: vkNat, natV: n))
+
+proc defaultFilter*(args: seq[SVal]): bool =
+  for a in args:
+    if not isStaticNat(a): return false
+  true
+
+proc powFilter*(args: seq[SVal]): bool =
+  ## Consel-style filter for `pow`: unfold only when the exponent is a
+  ## static nat below the size guard (32). A static-but-huge exponent
+  ## would blow up the residual; the user programs the policy.
+  args.len == 2 and isStaticNat(args[1]) and args[1].val.natV < 32 and
+    isStaticNat(args[0])
+
+proc noSimp*(name: string, args: seq[SVal]): SVal = nil
+
+proc arithSimp*(name: string, args: seq[SVal]): SVal =
+  ## Algebraic simplifications over residual args (Danvy's dynamic
+  ## versions). Sound for pure operators only: `0 × y → 0` discards a
+  ## residual computation, which is safe iff y's computation is pure.
+  if name == "add" and args.len == 2:
+    if isStaticNat(args[1]) and args[1].val.natV == 0: return args[0]
+    if isStaticNat(args[0]) and args[0].val.natV == 0: return args[1]
+  elif name == "mul" and args.len == 2:
+    if isStaticNat(args[0]) and args[0].val.natV == 0: return natLit(0)
+    if isStaticNat(args[1]) and args[1].val.natV == 0: return natLit(0)
+    if isStaticNat(args[0]) and args[0].val.natV == 1: return args[1]
+    if isStaticNat(args[1]) and args[1].val.natV == 1: return args[0]
+  nil
+
+proc primNode(name: string, args: seq[SVal]): SVal =
+  SVal(kind: svDynamic,
+    node: ETTNode(kind: enkPrim, opName: name, primArgs: args))
+
+proc letInsert*(s: SVal): SVal =
+  ## Name a residual computation: `let x = s in x`. The residual keeps
+  ## the call ordered and shared (the local counterpart of #61 genlet).
+  if s.kind == svDynamic and s.node.kind == enkPrim:
+    let nm = freshVar("p")
+    SVal(kind: svDynamic,
+      node: ETTNode(kind: enkLet, letName: nm, rhs: s,
+        letBody: proc(v: SVal): SVal = v))
+  else:
+    s
+
+proc applyPrim*(op: PrimOp, args: seq[SVal]): SVal =
+  ## The online policy: decide unfold-vs-residualize per call, at
+  ## specialization time.
+  assert args.len == op.arity, "arity mismatch for primop " & op.name
+  if op.effectful:
+    # Escape hatch: name the call, keep it ordered; no simplification.
+    inc primResiduals
+    return letInsert(primNode(op.name, args))
+  if op.filter(args):
+    inc primUnfolds
+    var ints = newSeq[int](args.len)
+    for i, a in args: ints[i] = a.val.natV
+    return natLit(op.staticSem(ints))
+  inc primResiduals
+  let simplified = op.simp(op.name, args)
+  if simplified != nil:
+    inc primSimps
+    return simplified
+  primNode(op.name, args)
+
+proc applyPrimFixed*(op: PrimOp, args: seq[SVal]): SVal =
+  ## The fixed offline policy (baseline for #79's benchmark): unfold iff
+  ## all operands are static, else residualize — no filters, no
+  ## algebraic simplification, no effect escape hatch.
+  assert args.len == op.arity, "arity mismatch for primop " & op.name
+  var allStatic = true
+  for a in args:
+    if not isStaticNat(a): allStatic = false
+  if allStatic:
+    var ints = newSeq[int](args.len)
+    for i, a in args: ints[i] = a.val.natV
+    return natLit(op.staticSem(ints))
+  primNode(op.name, args)
+
+proc powInt(base, exp: int): int =
+  var r = 1
+  for _ in 0 ..< exp: r *= base
+  r
+
+proc defaultPrimTable*(): Table[string, PrimOp] =
+  result = initTable[string, PrimOp]()
+  result["add"] = PrimOp(name: "add", arity: 2,
+    staticSem: proc(a: seq[int]): int = a[0] + a[1],
+    filter: defaultFilter, simp: arithSimp, effectful: false)
+  result["mul"] = PrimOp(name: "mul", arity: 2,
+    staticSem: proc(a: seq[int]): int = a[0] * a[1],
+    filter: defaultFilter, simp: arithSimp, effectful: false)
+  result["pow"] = PrimOp(name: "pow", arity: 2,
+    staticSem: proc(a: seq[int]): int = powInt(a[0], a[1]),
+    filter: powFilter, simp: noSimp, effectful: false)
+  # Demo effectful operator: same value semantics as add, but the
+  # effect flag models an effect-annotated type — always residualized
+  # and let-inserted, never unfolded or simplified.
+  result["traceAdd"] = PrimOp(name: "traceAdd", arity: 2,
+    staticSem: proc(a: seq[int]): int = a[0] + a[1],
+    filter: defaultFilter, simp: noSimp, effectful: true)
+
+var primTable* = defaultPrimTable()
+  ## The staged evaluator's primitive-operator table (per-operator static
+  ## semantics + residual former + policy hooks).
+
 # --- Residual evaluation: run the residual with the real interpreter ---
 
 proc evalSVal*(s: SVal, env: Table[string, Value]): Value =
@@ -235,6 +405,23 @@ proc evalSVal*(s: SVal, env: Table[string, Value]): Value =
       evalSym.cSnd(evalSVal(n.subN, env))
     of enkAbsurd:
       evalSym.cAbsurd(evalSVal(n.subN, env))
+    of enkNat:
+      Value(kind: vkNat, natV: n.natLitV)
+    of enkPrim:
+      var ints = newSeq[int](n.primArgs.len)
+      for i, a in n.primArgs:
+        let v = evalSVal(a, env)
+        if v.kind != vkNat:
+          raise newException(ValueError,
+            "residual primop '" & n.opName & "' applied to non-nat")
+        ints[i] = v.natV
+      let op = primTable[n.opName]
+      Value(kind: vkNat, natV: op.staticSem(ints))
+    of enkLet:
+      let v = evalSVal(n.rhs, env)
+      var e2 = env
+      e2[n.letName] = v
+      evalSVal(n.letBody(staticVal(v)), e2)
 
 # --- Residual inspection: single recursive printer (distinct helper names
 # avoid overload/tuple-`$` ambiguity) ---
@@ -256,6 +443,14 @@ proc ppNode(n: ETTNode, depth: int): string =
   of enkFst: "(fst " & ppSVal(n.subN, depth+1) & ")"
   of enkSnd: "(snd " & ppSVal(n.subN, depth+1) & ")"
   of enkAbsurd: "(absurd " & ppSVal(n.subN, depth+1) & ")"
+  of enkNat: $n.natLitV
+  of enkPrim:
+    var s = "(" & n.opName
+    for a in n.primArgs: s &= " " & ppSVal(a, depth+1)
+    s & ")"
+  of enkLet:
+    "(let [" & n.letName & "] " & ppSVal(n.rhs, depth+1) & " " &
+      ppSVal(n.letBody(dynamicVar(n.letName)), depth+1) & ")"
 
 proc ppSVal(s: SVal, depth: int): string =
   if depth > 8: return "..."
@@ -281,6 +476,13 @@ proc countNodes*(s: SVal): int =
       1 + countNodes(n.domNode) + countNodes(n.bodyNode(dynamicVar(n.bindName)))
     of enkPair: 1 + countNodes(n.fstN) + countNodes(n.sndN)
     of enkFst, enkSnd, enkAbsurd: 1 + countNodes(n.subN)
+    of enkNat: 1
+    of enkPrim:
+      var c = 1
+      for a in n.primArgs: c += countNodes(a)
+      c
+    of enkLet:
+      1 + countNodes(n.rhs) + countNodes(n.letBody(dynamicVar(n.letName)))
 
 when isMainModule:
   echo "=== Phase 2: Sym[SVal] staging rules ==="
