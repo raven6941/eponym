@@ -1604,3 +1604,57 @@
     dropped at staging time — 106.4ms vs 0.22ms over 40 calls (477x);
     one-time stage 0.017ms.
   Status: CLOSED 2026-10-10 — all five acceptance criteria met.
+
+* 2026-10-10 — Issue #71: flatten compileD codegen (CLOSED — scale gap closed past parity)
+
+  Context: #60's micro-benchmarks isolated the remaining defun-vs-baseline
+  gap to sub-closure call indirection (compositional 0.370ms vs flattened
+  0.201ms per 300 betas) and filed the flattening as follow-up. This issue
+  implements it in the real `compileD` codegen (=tests/staged_defun.nim=).
+
+  What was built:
+  - `compileD` now emits ONE closure per `dfLam` body. The body is
+    evaluated by `evalFlat` — direct recursive code computing exactly
+    `stageD(d, @[arg] & env, lvl)`, no per-subterm child closures.
+  - The compositional #60 scheme is kept as `compileDCompositional`
+    (reference implementation for equivalence checks).
+  - `foldConsts`: a compile-time constant-folding pass run once per
+    `compileD`. Closed constant subterms (`dfTt`/`dfUnit`, pairs and
+    projections of constants) become `dfConst` nodes holding a shared
+    static `DVal` — no per-beta allocation. Each fold rule mirrors the
+    corresponding `stageD` static case exactly; `dfApp`/`dfLam` never
+    fold. `DForm`/`DVal` now share one `type` section (mutual recursion).
+
+  Surprising finding (benchmarking discipline): flattening the call shape
+  alone barely moved the full-bench number (1.46x -> 1.40x). A scratch
+  micro-benchmark (30 reps, min) showed compositional 0.502ms vs flattened
+  0.535ms — the #60 micro's attribution of the delta to call indirection
+  did NOT reproduce. What reproduced was allocation: a hand-specialized
+  closure with the beta-invariant `tt` constant hoisted ran at 0.261ms
+  (2x). The #60 micro's hand-inlined variant almost certainly also
+  eliminated the per-beta constant allocation and the whole 0.169ms delta
+  was misattributed to call shape. The real lever was beta-invariant
+  allocation, hence `foldConsts`.
+
+  Measurements (=bench/bench_defun_vs_baseline.nim=, min of 5/3 reps;
+  scale stable across 4 runs):
+  - Scale (300 unrolled betas): before 0.79-0.82ms vs baseline 0.54-0.59ms
+    (~1.4-1.5x); after 0.35-0.42ms vs baseline 0.92-0.94ms — defun ~2.4x
+    FASTER than baseline. Residual node counts identical (301/301).
+  - p1-p4 already at parity or better (twice 0.011 vs 0.013ms, pairSwap
+    0.007 vs 0.010ms, compose 0.009 vs 0.011ms, const 1.04x).
+  - New "scheme equivalence" section: flattened vs compositional closures
+    on the corpus bodies (full + partial application, chained betas) —
+    identical residuals (node counts and pretty-printed structure).
+  - All pre-existing agreement checks pass; residual node counts unchanged
+    everywhere. Also fixed a stale-bench compile break in passing: the
+    bench's `agree` didn't cover `vkNat` after #93.
+
+  Decision: the #60 verdict is now complete — defunctionalize + compile +
+  flatten + const-fold reaches past parity with host closures on the
+  measured workloads, with reification (residual lambdas) as the
+  qualitative gain. `compileD` (flattened) is the default path via
+  `dLamVal`; `compileDCompositional` stays as the documented reference.
+  Status: CLOSED 2026-10-10 — all four acceptance criteria met
+  (flattened codegen; agreement checks pass with identical node counts;
+  scale within 1.1x — 0.4x; decisions.org entry).
