@@ -82,6 +82,13 @@ type
     urNo,       # definitely doesn't unify (prune!)
     urMaybe     # can't decide statically (residualize)
 
+# Note (issue #104): nested structural decomposition is controlled by the
+# `decomposeNested` parameter on stageGoal/specializeRelation (default
+# true), not a global — the compile-time staging macro (stagedTypeoProcs)
+# runs stageGoal in the Nim VM, where a global toggle var is unreadable.
+# The #104 corpus benchmark passes decomposeNested=false to measure the
+# legacy pre-#104 head-only behavior (unifyStageLegacy).
+
 proc isPlaceholder(t: RTerm): bool =
   ## __var_<name> atoms stand for dynamic (runtime) variables.
   t.kind == rkAtom and t.name.startsWith("__var_")
@@ -107,6 +114,62 @@ proc occursIn(name: string, t: RTerm, env: Table[string, RTerm]): bool =
   of rkAtom: td.name == name
   of rkPair: occursIn(name, td.head, env) or occursIn(name, td.tail, env)
   of rkVar: false
+
+proc isGroundNoPh(t: RTerm): bool =
+  ## No placeholders and no engine logic vars — the old unifyGround-style
+  ## notion used by the legacy top-level binding path.
+  case t.kind
+  of rkVar: false
+  of rkAtom: not t.name.startsWith("__var_")
+  of rkPair: isGroundNoPh(t.head) and isGroundNoPh(t.tail)
+
+proc unifyHeadNoBind(a, b: RTerm): UnifyResult =
+  ## Head-constructor comparison without binding (pre-#104 unifyHead):
+  ## prune when head constructors differ, even if subterms are dynamic.
+  ## suc(__var_n) vs zero → No; suc(__var_n) vs suc(__var_m) → Maybe.
+  ## Same-placeholder atoms unify; otherwise dynamic atoms give Maybe.
+  if a.kind == rkVar or b.kind == rkVar:
+    return urMaybe
+  if a.kind != b.kind:
+    return urNo
+  case a.kind
+  of rkAtom:
+    let aDyn = a.name.startsWith("__var_")
+    let bDyn = b.name.startsWith("__var_")
+    if aDyn or bDyn:
+      if a.name == b.name: urYes else: urMaybe
+    else:
+      if a.name == b.name: urYes else: urNo
+  of rkPair:
+    let h = unifyHeadNoBind(a.head, b.head)
+    if h == urNo: return urNo
+    let t = unifyHeadNoBind(a.tail, b.tail)
+    if t == urNo: return urNo
+    if h == urYes and t == urYes: urYes else: urMaybe
+  of rkVar: urMaybe  # unreachable, but safe
+
+proc unifyStageLegacy(a, b: RTerm, env: var Table[string, RTerm],
+                      dynamicVars: HashSet[string]): UnifyResult =
+  ## Legacy pre-#104 staging-time unification: head-constructor pruning
+  ## via unifyHeadNoBind, then top-level placeholder==ground binding only.
+  ## No structural decomposition through constructors, no occurs check —
+  ## the behavior the #104 corpus benchmarks against.
+  let a2 = deref(a, env)
+  let b2 = deref(b, env)
+  case unifyHeadNoBind(a2, b2)
+  of urNo:
+    urNo
+  of urYes:
+    urYes
+  of urMaybe:
+    if isPlaceholder(a2) and a2.name notin dynamicVars and isGroundNoPh(b2):
+      env[a2.name] = b2
+      urYes
+    elif isPlaceholder(b2) and b2.name notin dynamicVars and isGroundNoPh(a2):
+      env[b2.name] = a2
+      urYes
+    else:
+      urMaybe
 
 proc unifyStage(a, b: RTerm, env: var Table[string, RTerm],
                dynamicVars: HashSet[string]): UnifyResult =
@@ -238,7 +301,8 @@ proc mentionsVar(rg: RelGoal, varName: string): bool =
 
 proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
                dynamicVars: HashSet[string] = initHashSet[string](),
-               ctx: var SpecCtx): StagedGoal =
+               ctx: var SpecCtx,
+               decomposeNested: bool = true): StagedGoal =
   ## Stage a RelGoal given static bindings (mutated with learned bindings).
   ## staticEnv: maps __var_<name> to ground RTerm (static values)
   ## dynamicVars: placeholders that must NOT be bound (e.g., mOut vars)
@@ -246,13 +310,24 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
   ##   (partial deduction, issue #19; subsumes fuel-based inlining #20:
   ##   a fully-static call specializes to Done/Fail, i.e. inlining).
   ##   Defaults to a fresh context (fuel=8, no relations).
+  ## decomposeNested (issue #104): when true, rgEq uses the full
+  ##   staging-time unifier (structural decomposition through matching
+  ##   head constructors, occurs check). When false, the legacy pre-#104
+  ##   head-only unifier runs (prune on constructor mismatch, top-level
+  ##   placeholder==ground binding only). A parameter rather than a
+  ##   global so the compile-time staging macro (stagedTypeoProcs, which
+  ##   runs stageGoal in the Nim VM) keeps working.
   case rg.kind
   of rgFail:
     StagedGoal(kind: sgFail)
   of rgSucceed:
     StagedGoal(kind: sgDone)
   of rgEq:
-    case unifyStage(rg.left, rg.right, staticEnv, dynamicVars)
+    let ur = if decomposeNested:
+               unifyStage(rg.left, rg.right, staticEnv, dynamicVars)
+             else:
+               unifyStageLegacy(rg.left, rg.right, staticEnv, dynamicVars)
+    case ur
     of urYes:
       StagedGoal(kind: sgDone)  # solved at staging time (bindings in env)
     of urNo:
@@ -263,11 +338,11 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
     # For prototype: always residualize (conservative)
     StagedGoal(kind: sgResidual, goal: rg)
   of rgConj:
-    let sa = stageGoal(rg.leftG, staticEnv, dynamicVars, ctx)
+    let sa = stageGoal(rg.leftG, staticEnv, dynamicVars, ctx, decomposeNested)
     if sa.kind == sgFail:
       return StagedGoal(kind: sgFail)
     # Bindings learned staging left are in staticEnv for right (conjunction)
-    let sb = stageGoal(rg.rightG, staticEnv, dynamicVars, ctx)
+    let sb = stageGoal(rg.rightG, staticEnv, dynamicVars, ctx, decomposeNested)
     if sb.kind == sgFail:
       return StagedGoal(kind: sgFail)
     if sa.kind == sgDone and sb.kind == sgDone:
@@ -282,8 +357,8 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
     # e.g. (x==5 ∧ f(x)) ∨ (x==6): right must not see x=5 from the left.)
     var envL = staticEnv
     var envR = staticEnv
-    let sa = stageGoal(rg.leftG, envL, dynamicVars, ctx)
-    let sb = stageGoal(rg.rightG, envR, dynamicVars, ctx)
+    let sa = stageGoal(rg.leftG, envL, dynamicVars, ctx, decomposeNested)
+    let sb = stageGoal(rg.rightG, envR, dynamicVars, ctx, decomposeNested)
     if sa.kind == sgFail:
       staticEnv = envR
       return finishResidual(sb, envR)  # left impossible, take right
@@ -337,7 +412,7 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
     let hadOuter = ph in staticEnv
     let saved: RTerm = if hadOuter: staticEnv[ph] else: nil
     staticEnv.del(ph)
-    let stagedBody = stageGoal(rg.body, staticEnv, dynamicVars, ctx)
+    let stagedBody = stageGoal(rg.body, staticEnv, dynamicVars, ctx, decomposeNested)
     staticEnv.del(ph)  # the inner binding dies with the binder
     if hadOuter: staticEnv[ph] = saved
     case stagedBody.kind
@@ -385,7 +460,7 @@ proc stageGoal*(rg: RelGoal, staticEnv: var Table[string, RTerm],
           for i, p in rd.params:
             if not staticOf[i].isNil: bodyEnv["__var_" & p] = staticOf[i]
             else: bodyDyn.incl("__var_" & p)
-          let staged = stageGoal(rd.body, bodyEnv, bodyDyn, ctx)
+          let staged = stageGoal(rd.body, bodyEnv, bodyDyn, ctx, decomposeNested)
           case staged.kind
           of sgFail:
             # Call statically impossible under this signature.
@@ -409,7 +484,8 @@ proc specializeRelation*(ctx: var SpecCtx, relName: string,
                          staticParams: Table[string, RTerm] =
                            initTable[string, RTerm](),
                          dynamicVars: HashSet[string] =
-                           initHashSet[string]()): string =
+                           initHashSet[string](),
+                         decomposeNested: bool = true): string =
   ## Top-level partial-deduction driver: specialize relName for the given
   ## static params (param name -> ground static term; all other params
   ## are dynamic). Returns the specialized relation's name; specialized
@@ -418,13 +494,16 @@ proc specializeRelation*(ctx: var SpecCtx, relName: string,
   ## Routes through the rgCall case so all memoization logic lives in one
   ## place: the synthetic top call gets a fresh specialization, and any
   ## recursive calls with the same static signature hit the memo.
+  ##
+  ## decomposeNested threads into stageGoal (issue #104 ablation).
   let rd = ctx.relEnv[relName]
   var args = newSeq[RTerm](rd.params.len)
   for i, p in rd.params:
     if p in staticParams: args[i] = staticParams[p]
     else: args[i] = ratom("__var_" & p)
   var env = initTable[string, RTerm]()
-  let staged = stageGoal(rgCall(relName, args), env, dynamicVars, ctx)
+  let staged = stageGoal(rgCall(relName, args), env, dynamicVars, ctx,
+                         decomposeNested)
   if staged.kind == sgResidual and staged.goal.kind == rgCall and
      staged.goal.relName in ctx.specs:
     return staged.goal.relName
