@@ -1,8 +1,8 @@
 nimcache/
 *.o
 # Compiled Nim binaries: `nim c` drops extensionless binaries next to
-# sources. Ignore all extensionless files under src/ and tests/, keeping
-# directories and .nim sources.
+# sources. Ignore all extensionless files under src/, tests/ and bench/,
+# keeping directories and .nim sources.
 src/**
 !src/**/
 !src/**/*.nim
@@ -10,6 +10,10 @@ src/**
 tests/**
 !tests/**/
 !tests/**/*.nim
+bench/**
+!bench/**/
+!bench/**/*.nim
+!bench/**/*.txt
 # Examples dir: keep sources, ignore built outputs
 examples/*
 !examples/ep/
