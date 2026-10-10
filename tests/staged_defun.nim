@@ -24,6 +24,10 @@
 ##   instead of re-walking the `DForm` syntax per beta (the #53 pipeline
 ##   called `stageD` on every beta). The `DForm` itself is retained
 ##   alongside for `reifyD`, which needs the syntax.
+##   Issue #71 flattened the codegen: `compileD` emits ONE closure per
+##   `dfLam` body whose work is done by `evalFlat` (direct recursive
+##   code, no per-subterm child closures). The compositional #60 scheme
+##   is kept as `compileDCompositional` for equivalence checks.
 ## - Staging-time application is an explicit first-order dispatch,
 ##   `applyD` — the defunctionalized `apply` function.
 ## - Residual binders use de Bruijn LEVELS (`dnLvl`), not host closures:
@@ -46,32 +50,9 @@ import std/tables
 import ett
 
 # --- First-order term language (de Bruijn indices, innermost-first) ---
-
-type
-  DFormKind* = enum
-    dfVar, dfTt, dfUnit, dfLam, dfApp, dfPair, dfFst, dfSnd
-
-  DForm* = ref object
-    ## A closed-under-binders staging source term. Type annotations are
-    ## absent: staging (like the baseline) does not typecheck.
-    case kind*: DFormKind
-    of dfVar: idx*: int
-    of dfLam: body*: DForm
-    of dfApp: fn*, arg*: DForm
-    of dfPair: a*, b*: DForm
-    of dfFst, dfSnd: sub*: DForm
-    of dfTt, dfUnit: discard
-
-proc dVar*(i: int): DForm = DForm(kind: dfVar, idx: i)
-proc dTt*(): DForm = DForm(kind: dfTt)
-proc dUnit*(): DForm = DForm(kind: dfUnit)
-proc dLam*(body: DForm): DForm = DForm(kind: dfLam, body: body)
-proc dApp*(fn, arg: DForm): DForm = DForm(kind: dfApp, fn: fn, arg: arg)
-proc dPair*(a, b: DForm): DForm = DForm(kind: dfPair, a: a, b: b)
-proc dFst*(p: DForm): DForm = DForm(kind: dfFst, sub: p)
-proc dSnd*(p: DForm): DForm = DForm(kind: dfSnd, sub: p)
-
-# --- First-order staged values and residual IR ---
+#
+# `DForm` and `DVal` are mutually recursive (`dfConst` holds a `DVal`,
+# `dvLam` holds a `DForm`), so they share one `type` section below.
 
 type
   DCompiled* = proc(arg: DVal, env: seq[DVal], lvl: int): DVal
@@ -80,6 +61,24 @@ type
     ## syntax: `arg` is the staging-time argument (de Bruijn 0), `env`
     ## the captured environment WITHOUT the argument prepended, so
     ## applying a compiled closure performs no seq allocation.
+
+  DFormKind* = enum
+    dfVar, dfTt, dfUnit, dfLam, dfApp, dfPair, dfFst, dfSnd, dfConst
+
+  DForm* = ref object
+    ## A closed-under-binders staging source term. Type annotations are
+    ## absent: staging (like the baseline) does not typecheck.
+    ## `dfConst` is produced only by `foldConsts` (issue #71): a closed
+    ## constant subterm evaluated once at `compileD` time, holding the
+    ## shared static `DVal` so no per-beta allocation happens.
+    case kind*: DFormKind
+    of dfVar: idx*: int
+    of dfLam: body*: DForm
+    of dfApp: fn*, arg*: DForm
+    of dfPair: a*, b*: DForm
+    of dfFst, dfSnd: sub*: DForm
+    of dfConst: cval*: DVal
+    of dfTt, dfUnit: discard
 
   DValKind* = enum
     dvStatic, dvLam, dvDyn
@@ -110,6 +109,16 @@ type
       code*: DCompiled  # one-time compiled body (#60); nil for hand-built values
     of dvDyn: node*: DNode
 
+proc dVar*(i: int): DForm = DForm(kind: dfVar, idx: i)
+proc dTt*(): DForm = DForm(kind: dfTt)
+proc dUnit*(): DForm = DForm(kind: dfUnit)
+proc constDForm*(v: DVal): DForm = DForm(kind: dfConst, cval: v)
+proc dLam*(body: DForm): DForm = DForm(kind: dfLam, body: body)
+proc dApp*(fn, arg: DForm): DForm = DForm(kind: dfApp, fn: fn, arg: arg)
+proc dPair*(a, b: DForm): DForm = DForm(kind: dfPair, a: a, b: b)
+proc dFst*(p: DForm): DForm = DForm(kind: dfFst, sub: p)
+proc dSnd*(p: DForm): DForm = DForm(kind: dfSnd, sub: p)
+
 proc compileD*(d: DForm): DCompiled  # forward: defined after applyD
 
 proc staticD*(v: Value): DVal = DVal(kind: dvStatic, val: v)
@@ -132,6 +141,8 @@ proc stageD*(f: DForm, env: seq[DVal], lvl: int): DVal =
     staticD(Value(kind: vkTt))
   of dfUnit:
     staticD(Value(kind: vkUnit))
+  of dfConst:
+    f.cval
   of dfLam:
     # Defunctionalized closure: data, not a host proc — but the body is
     # compiled ONCE here (#60), so applyD never re-walks the syntax.
@@ -191,12 +202,118 @@ proc applyD*(f, a: DVal, lvl: int): DVal =
   of dvDyn:
     DVal(kind: dvDyn, node: DNode(kind: dnApp, fn: f, arg: a))
 
+proc foldConsts(d: DForm): DForm =
+  ## Compile-time constant folding (issue #71): evaluate closed constant
+  ## subterms ONCE here, replacing them with `dfConst` nodes holding the
+  ## shared static `DVal`, so no per-beta allocation happens for them.
+  ## Only folds what `stageD` computes without host calls: `dfTt`/`dfUnit`
+  ## leaves and `dfPair`/`dfFst`/`dfSnd` over folded constants. `dfApp`
+  ## never folds (its static-static case invokes host code, which stays
+  ## at staging time) and `dfLam` never folds (closures build envs per
+  ## beta). Semantics-preserving by construction: each fold rule mirrors
+  ## the corresponding `stageD` static case exactly.
+  case d.kind
+  of dfVar, dfConst, dfLam:
+    d
+  of dfTt:
+    constDForm(staticD(Value(kind: vkTt)))
+  of dfUnit:
+    constDForm(staticD(Value(kind: vkUnit)))
+  of dfApp:
+    dApp(foldConsts(d.fn), foldConsts(d.arg))
+  of dfPair:
+    let a = foldConsts(d.a)
+    let b = foldConsts(d.b)
+    if a.kind == dfConst and b.kind == dfConst and
+       a.cval.kind == dvStatic and b.cval.kind == dvStatic:
+      constDForm(staticD(Value(kind: vkPair,
+        fstV: a.cval.val, sndV: b.cval.val)))
+    else:
+      dPair(a, b)
+  of dfFst:
+    let s = foldConsts(d.sub)
+    if s.kind == dfConst and s.cval.kind == dvStatic and
+       s.cval.val.kind == vkPair:
+      constDForm(staticD(s.cval.val.fstV))
+    else:
+      dFst(s)
+  of dfSnd:
+    let s = foldConsts(d.sub)
+    if s.kind == dfConst and s.cval.kind == dvStatic and
+       s.cval.val.kind == vkPair:
+      constDForm(staticD(s.cval.val.sndV))
+    else:
+      dSnd(s)
+
+proc evalFlat(d: DForm, arg: DVal, env: seq[DVal], lvl: int): DVal =
+  ## Flattened body evaluator (issue #71). Computes exactly
+  ## `stageD(d, @[arg] & env, lvl)` — same cases `stageD` handles — as
+  ## straight-line DIRECT recursive calls, with no per-node closures.
+  ## The compositional scheme (#60) compiled every subterm to its own
+  ## closure, so each beta paid one indirect closure call per syntax node;
+  ## here one beta is one `DCompiled` closure call plus static recursion.
+  ## `arg` travels separately from `env` (no seq cons on the hot path);
+  ## nested `dfLam` still conses the closure env, as in `stageD`.
+  case d.kind
+  of dfVar:
+    if d.idx == 0: arg else: env[d.idx - 1]
+  of dfTt:
+    staticD(Value(kind: vkTt))
+  of dfUnit:
+    staticD(Value(kind: vkUnit))
+  of dfConst:
+    d.cval
+  of dfLam:
+    DVal(kind: dvLam, body: d.body, env: @[arg] & env,
+         code: compileD(d.body))
+  of dfApp:
+    applyD(evalFlat(d.fn, arg, env, lvl),
+           evalFlat(d.arg, arg, env, lvl), lvl)
+  of dfPair:
+    let a = evalFlat(d.a, arg, env, lvl)
+    let b = evalFlat(d.b, arg, env, lvl)
+    if a.kind == dvStatic and b.kind == dvStatic:
+      staticD(Value(kind: vkPair, fstV: a.val, sndV: b.val))
+    else:
+      DVal(kind: dvDyn, node: DNode(kind: dnPair, a: a, b: b))
+  of dfFst:
+    let p = evalFlat(d.sub, arg, env, lvl)
+    case p.kind
+    of dvStatic:
+      if p.val.kind == vkPair: staticD(p.val.fstV)
+      else: DVal(kind: dvDyn, node: DNode(kind: dnFst, sub: p))
+    of dvDyn:
+      if p.node.kind == dnPair: p.node.a
+      else: DVal(kind: dvDyn, node: DNode(kind: dnFst, sub: p))
+    of dvLam:
+      raise newException(ValueError, "evalFlat: fst of a staging-time lambda")
+  of dfSnd:
+    let p = evalFlat(d.sub, arg, env, lvl)
+    case p.kind
+    of dvStatic:
+      if p.val.kind == vkPair: staticD(p.val.sndV)
+      else: DVal(kind: dvDyn, node: DNode(kind: dnSnd, sub: p))
+    of dvDyn:
+      if p.node.kind == dnPair: p.node.b
+      else: DVal(kind: dvDyn, node: DNode(kind: dnSnd, sub: p))
+    of dvLam:
+      raise newException(ValueError, "evalFlat: snd of a staging-time lambda")
+
 proc compileD*(d: DForm): DCompiled =
-  ## One-time compiler from first-order syntax to a host closure (#60).
-  ## The closure computes exactly `stageD(d, @[arg] & env, lvl)` — same
-  ## cases `stageD` handles for bodies (var lookup, pair/fst/snd
-  ## construction, nested app) — but as direct code, paying the
-  ## syntax-walk cost once at `dfLam` instead of on every beta.
+  ## One-time compiler from first-order syntax to a host closure (#60,
+  ## flattened #71). Constant-folds the body once, then emits ONE closure
+  ## per `dfLam`; the body is evaluated by `evalFlat` — direct recursive
+  ## code, no child-closure calls, beta-invariant constants shared.
+  ## Computes exactly `stageD(d, @[arg] & env, lvl)`.
+  let b = foldConsts(d)
+  result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
+    evalFlat(b, arg, env, lvl)
+
+proc compileDCompositional*(d: DForm): DCompiled =
+  ## The #60 compositional scheme, kept as the reference implementation
+  ## for equivalence checks (issue #71). Compiles every subterm to its
+  ## own closure; each beta then pays one indirect closure call per
+  ## syntax node. `compileD` (flattened) is the default path.
   case d.kind
   of dfVar:
     let i = d.idx
@@ -208,19 +325,22 @@ proc compileD*(d: DForm): DCompiled =
   of dfUnit:
     result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
       staticD(Value(kind: vkUnit))
+  of dfConst:
+    let v = d.cval
+    result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal = v
   of dfLam:
-    let c = compileD(d.body)
+    let c = compileDCompositional(d.body)
     let b = d.body
     result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
       DVal(kind: dvLam, body: b, env: @[arg] & env, code: c)
   of dfApp:
-    let cf = compileD(d.fn)
-    let ca = compileD(d.arg)
+    let cf = compileDCompositional(d.fn)
+    let ca = compileDCompositional(d.arg)
     result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
       applyD(cf(arg, env, lvl), ca(arg, env, lvl), lvl)
   of dfPair:
-    let ca = compileD(d.a)
-    let cb = compileD(d.b)
+    let ca = compileDCompositional(d.a)
+    let cb = compileDCompositional(d.b)
     result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
       let a = ca(arg, env, lvl)
       let b = cb(arg, env, lvl)
@@ -229,7 +349,7 @@ proc compileD*(d: DForm): DCompiled =
       else:
         DVal(kind: dvDyn, node: DNode(kind: dnPair, a: a, b: b))
   of dfFst:
-    let cs = compileD(d.sub)
+    let cs = compileDCompositional(d.sub)
     result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
       let p = cs(arg, env, lvl)
       case p.kind
@@ -240,9 +360,9 @@ proc compileD*(d: DForm): DCompiled =
         if p.node.kind == dnPair: p.node.a
         else: DVal(kind: dvDyn, node: DNode(kind: dnFst, sub: p))
       of dvLam:
-        raise newException(ValueError, "compileD: fst of a staging-time lambda")
+        raise newException(ValueError, "compileDCompositional: fst of a staging-time lambda")
   of dfSnd:
-    let cs = compileD(d.sub)
+    let cs = compileDCompositional(d.sub)
     result = proc(arg: DVal, env: seq[DVal], lvl: int): DVal =
       let p = cs(arg, env, lvl)
       case p.kind
@@ -253,7 +373,7 @@ proc compileD*(d: DForm): DCompiled =
         if p.node.kind == dnPair: p.node.b
         else: DVal(kind: dvDyn, node: DNode(kind: dnSnd, sub: p))
       of dvLam:
-        raise newException(ValueError, "compileD: snd of a staging-time lambda")
+        raise newException(ValueError, "compileDCompositional: snd of a staging-time lambda")
 
 proc reifyD*(v: DVal, lvl: int): DVal =
   ## Residualize a staging-time lambda: stage its body against a fresh

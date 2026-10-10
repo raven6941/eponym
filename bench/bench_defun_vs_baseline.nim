@@ -27,6 +27,7 @@ proc agree(a, b: Value): bool =
   of vkStar, vkUnit, vkTt, vkEmpty: true
   of vkPi, vkSigma, vkLam: false
   of vkPair: agree(a.fstV, b.fstV) and agree(a.sndV, b.sndV)
+  of vkNat: a.natV == b.natV
   of vkNeutral:
     a.neutId == b.neutId and a.spine.len == b.spine.len
 
@@ -220,5 +221,57 @@ assert agree(evalSVal(bScale, {"x": neutralB(4242)}.toTable), spotV),
 echo "scale 300x unroll:   defun  nodes=", countDNodes(dScale),
      " time=", tDefS, "ms   | baseline nodes=", countNodes(bScale),
      " time=", tBaseS, "ms"
+
+# ============ Scheme equivalence: flattened vs compositional ==============
+#
+# Issue #71 acceptance: the flattened closure must compute exactly what
+# stageD (and the compositional #60 scheme) computes. Head-to-head on
+# the corpus bodies: same args through applyD, then reifyD to a residual
+# tree and compare structure + node count.
+
+proc eqScheme(name: string, body: DForm, args: seq[DVal], lvl: int) =
+  var vF = DVal(kind: dvLam, body: body, env: @[], code: compileD(body))
+  var vC = DVal(kind: dvLam, body: body, env: @[],
+                code: compileDCompositional(body))
+  for a in args:
+    vF = applyD(vF, a, lvl)
+    vC = applyD(vC, a, lvl)
+  let rF = reifyD(vF, lvl)
+  let rC = reifyD(vC, lvl)
+  assert countDNodes(rF) == countDNodes(rC),
+    name & ": node count differs (" & $countDNodes(rF) & " vs " &
+    $countDNodes(rC) & ")"
+  assert $rF == $rC,
+    name & ": residual differs\n  flat=" & $rF & "\n  comp=" & $rC
+  echo "equiv ok: ", name, "  nodes=", countDNodes(rF)
+
+eqScheme("twice (full application)", twiceProg,
+         @[staticD(Xv), fD1, dynLvl(0)], 1)
+eqScheme("twice (partial: one arg, nested lam)", twiceProg,
+         @[staticD(Xv)], 0)
+eqScheme("compose", composeProg, @[idD, idD, dynLvl(0)], 1)
+eqScheme("pairSwap", swapProg,
+         @[DVal(kind: dvDyn, node: DNode(kind: dnPair,
+           a: staticD(ev.cTt()), b: dynLvl(0)))], 1)
+eqScheme("const (3 static, y dynamic)", constProg,
+         @[staticD(ev.cUnit()), staticD(ev.cUnit()), staticD(ev.cTt()),
+           dynLvl(0)], 1)
+block:
+  # scale fn through chained betas (the repeated-beta path)
+  let pairBody = dPair(dVar 0, dTt())
+  let lamF = DVal(kind: dvLam, body: pairBody, env: @[],
+                  code: compileD(pairBody))
+  let lamC = DVal(kind: dvLam, body: pairBody, env: @[],
+                  code: compileDCompositional(pairBody))
+  var accF: DVal = dynLvl(0)
+  var accC: DVal = dynLvl(0)
+  for _ in 1 .. 10:
+    accF = applyD(lamF, accF, 1)
+    accC = applyD(lamC, accC, 1)
+  assert countDNodes(accF) == countDNodes(accC),
+    "scale-fn loop: node count differs"
+  assert $accF == $accC, "scale-fn loop: residual differs"
+  echo "equiv ok: scale-fn x10 chained betas  nodes=", countDNodes(accF)
+
 echo ""
 echo "ALL BENCHMARK AGREEMENT CHECKS PASSED"
