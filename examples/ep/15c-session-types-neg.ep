@@ -1,0 +1,25 @@
+# Negative test for session types: recv before send (wrong order).
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+# A channel in send-state cannot be used where recv-state is expected:
+# the session indices `sendS Nat endS` and `recvS Nat endS` are distinct
+# constructors, so conversion fails (noConfusion).
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+
+data Session : ? where
+| sendS (A : ?) (s : Session) : Session
+| recvS (A : ?) (s : Session) : Session
+| endS : Session
+
+data Chan : Session -> ? where
+| mkChan (s : Session) : Chan s
+
+postulate recvNat : Pi (1 ch : Chan (recvS Nat endS)). Sig (x : Nat). Chan endS
+
+# Violation 1: recv on a channel whose protocol says send first.
+# Expected error: inferred type (Chan (sendS Nat endS)) does not match
+# expected type (Chan (recvS Nat endS)) — distinct constructors.
+proc badClient1 (1 ch : Chan (sendS Nat endS)) : Sig (x : Nat). Chan endS =
+  recvNat ch
