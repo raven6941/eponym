@@ -39,6 +39,19 @@ proc tagOf(t: RTerm): string =
 
 proc varIdx(t: RTerm): int = parseInt(t.tail.head.name)
 
+proc isNatLit*(t: RTerm): bool =
+  ## Issue #87: first-class primitive numerals in the relational spec.
+  ## An atom whose name is a canonical non-negative decimal integer
+  ## literal (no leading zeros, no sign) denotes that natural number.
+  ## The staged residual inherits this compact representation instead of
+  ## the spec's idiosyncratic unary suc-chain encoding.
+  if t.kind != rkAtom: return false
+  try:
+    let n = parseInt(t.name)
+    n >= 0 and $n == t.name
+  except ValueError:
+    false
+
 # --- Inference -----------------------------------------------------------
 
 proc lookupO(ctx: RTerm, i: int, ty: RTerm): Goal =
@@ -55,6 +68,7 @@ proc infero*(tm, ty, ctx: RTerm): Goal =
   # atoms
   if tm.kind == rkAtom:
     if tm.name == "zero": return `==`(ty, natTy())
+    if isNatLit(tm): return `==`(ty, natTy())  # #87: primitive numeral
     return fail()  # nil needs expected type
   let tag = tagOf(tm)
   if tag == "var": return lookupO(ctx, varIdx(tm), ty)
@@ -90,9 +104,11 @@ proc checko*(tm, ty, ctx: RTerm): Goal =
   if tm.kind == rkAtom:
     if tm.name == "zero": return `==`(ty, natTy())
     if tm.name == "nil":
-      # nil : Vec(A, zero). ty must be vec(A, zero).
+      # nil : Vec(A, zero). ty must be vec(A, zero) — the index may be the
+      # `zero` constructor or the primitive literal 0 (#87: same numeral).
       if tagOf(ty) == "vec":
-        return `==`(ty.tail.tail.head, zeroTm())
+        let idx = ty.tail.tail.head
+        return disj(`==`(idx, zeroTm()), `==`(idx, rint(0)))
       return fail()
     # Type formation (issue #59): nat, univ : univ. (The fragment keeps
     # `? : ?`; universe hierarchy is issue #52.)
@@ -107,16 +123,22 @@ proc checko*(tm, ty, ctx: RTerm): Goal =
                     rpair(ty.tail.head, ctx))
     return fail()
   if tag == "cons":
-    # cons(h,t) : Vec(A, suc(n)) if h:A, t:Vec(A,n)
+    # cons(h,t) : Vec(A, suc(n)) if h:A, t:Vec(A,n). The index may be a
+    # suc-chain or a primitive literal k>0, whose predecessor is
+    # computed on the host (#87) — no per-node relational walking.
     if tagOf(ty) == "vec":
       let a = ty.tail.head
       let nv = ty.tail.tail.head
+      var n: RTerm = nil
       if tagOf(nv) == "suc":
-        let n = nv.tail.head
-        let h = tm.tail.head; let t = tm.tail.tail.head
-        return conj(checko(h, a, ctx),
-                 checko(t, vecTy(a, n), ctx))
-      return fail()
+        n = nv.tail.head
+      elif isNatLit(nv):
+        let k = parseInt(nv.name)
+        if k > 0: n = rint(k - 1)
+      if n.isNil: return fail()
+      let h = tm.tail.head; let t = tm.tail.tail.head
+      return conj(checko(h, a, ctx),
+               checko(t, vecTy(a, n), ctx))
     return fail()
   # fallback: infer and unify
   fresh(proc(ty2: RTerm): Goal =

@@ -79,6 +79,10 @@ proc inferoOut*(tm, ty, ctx, etm: RTerm): Goal =
   if tm.kind == rkAtom:
     if tm.name == "zero":
       return conj(`==`(ty, natTy()), `==`(etm, zeroTm()))
+    if isNatLit(tm):
+      # #87: primitive numeral elaborates to itself in O(1) — no
+      # per-node walk of a unary suc-chain.
+      return conj(`==`(ty, natTy()), `==`(etm, tm))
     # Type formation: nat, univ : univ (mirrors checko; `? : ?` per #52)
     if tm.name == "nat":
       return conj(`==`(ty, univTy()), `==`(etm, natTy()))
@@ -130,9 +134,11 @@ proc elabo*(tm, ty, ctx, etm: RTerm): Goal =
     if tm.name == "zero":
       return conj(`==`(ty, natTy()), `==`(etm, zeroTm()))
     if tm.name == "nil":
-      # nil : Vec(A, zero). Reify A from the expected type.
+      # nil : Vec(A, zero). Reify A from the expected type. The index may
+      # be `zero` or the primitive literal 0 (#87: same numeral).
       return fresh(proc(a: RTerm): Goal =
-        conj(`==`(ty, vecTy(a, zeroTm())), `==`(etm, nilCore(a))))
+        disj(conj(`==`(ty, vecTy(a, zeroTm())), `==`(etm, nilCore(a))),
+             conj(`==`(ty, vecTy(a, rint(0))), `==`(etm, nilCore(a)))))
     # Other atoms (nat/univ type formation) fall through to infer-mode.
   let tag = tagOf(tm)
   if tag == "lam":
@@ -149,18 +155,24 @@ proc elabo*(tm, ty, ctx, etm: RTerm): Goal =
     # (suc-shorthand -> applied form); the element type A is already
     # in core form on this fragment (nat/vec/univ/pi elaborate to
     # themselves), so it is spliced as-is.
+    # The index may be a suc-chain or a primitive literal k>0 whose
+    # predecessor is computed on the host (#87) — no per-node walk.
     if tagOf(ty) == "vec":
       let a = ty.tail.head
       let nv = ty.tail.tail.head
+      var n: RTerm = nil
       if tagOf(nv) == "suc":
-        let n = nv.tail.head
-        let h = tm.tail.head; let t = tm.tail.tail.head
-        return fresh3(proc(eh, et, en: RTerm): Goal =
-          conj(elabo(h, a, ctx, eh),
-            conj(elabo(t, vecTy(a, n), ctx, et),
-              conj(elabo(n, natTy(), ctx, en),
-                `==`(etm, consCore(a, en, eh, et))))))
-      return failOut()
+        n = nv.tail.head
+      elif isNatLit(nv):
+        let k = parseInt(nv.name)
+        if k > 0: n = rint(k - 1)
+      if n.isNil: return failOut()
+      let h = tm.tail.head; let t = tm.tail.tail.head
+      return fresh3(proc(eh, et, en: RTerm): Goal =
+        conj(elabo(h, a, ctx, eh),
+          conj(elabo(t, vecTy(a, n), ctx, et),
+            conj(elabo(n, natTy(), ctx, en),
+              `==`(etm, consCore(a, en, eh, et))))))
     return failOut()
   # fallback: infer with output and unify
   fresh2(proc(ty2, et2: RTerm): Goal =

@@ -57,6 +57,15 @@ let checkCases = @[
     tm: piTy(natTy(), natTy()), ty: univTy(), ctx: nilCtx),
   Case(name: "Vec Nat 2 : univ (check)", mode: mCheck,
     tm: vec2ty, ty: univTy(), ctx: nilCtx),
+  # --- #87: primitive nat literals (first-class in the relational spec) ---
+  Case(name: "20 : Nat (primitive lit)", mode: mCheck,
+    tm: rint(20), ty: natTy(), ctx: nilCtx),
+  Case(name: "nil : Vec Nat 0 (primitive index)", mode: mCheck,
+    tm: nilTm(), ty: vecTy(natTy(), rint(0)), ctx: nilCtx),
+  Case(name: "cons(0,nil) : Vec Nat 1 (primitive index)", mode: mCheck,
+    tm: consTm(zeroTm(), nilTm()), ty: vecTy(natTy(), rint(1)), ctx: nilCtx),
+  Case(name: "Vec Nat 3 : univ (primitive index)", mode: mCheck,
+    tm: vecTy(natTy(), rint(3)), ty: univTy(), ctx: nilCtx),
 ]
 
 let inferCases = @[
@@ -75,6 +84,8 @@ let inferCases = @[
     tm: appTm(varTm(0), zeroTm()), ctx: piCtx),
   Case(name: "infer app(suc, zero) -- ill-typed head", mode: mInfer,
     tm: appTm(ratom("suc"), zeroTm()), ctx: nilCtx),
+  Case(name: "infer 42 (primitive lit)", mode: mInfer,
+    tm: rint(42), ctx: nilCtx),
 ]
 
 let negCheck = @[
@@ -88,6 +99,13 @@ let negCheck = @[
     tm: consTm(zeroTm(), nilTm()), ty: natTy(), ctx: nilCtx),
   Case(name: "suc nat : Nat", mode: mCheck,
     tm: sucTm(ratom("nat")), ty: natTy(), ctx: nilCtx),
+  # --- #87 negatives over primitive literals ---
+  Case(name: "20 : Vec Nat 1 (primitive lit, wrong type)", mode: mCheck,
+    tm: rint(20), ty: vecTy(natTy(), rint(1)), ctx: nilCtx),
+  Case(name: "nil : Vec Nat 1 (primitive index)", mode: mCheck,
+    tm: nilTm(), ty: vecTy(natTy(), rint(1)), ctx: nilCtx),
+  Case(name: "cons(0,nil) : Vec Nat 0 (primitive index)", mode: mCheck,
+    tm: consTm(zeroTm(), nilTm()), ty: vecTy(natTy(), rint(0)), ctx: nilCtx),
 ]
 
 let negInfer = @[

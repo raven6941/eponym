@@ -1401,3 +1401,49 @@
   relational baseline, agreement checks pass.
   Open: csp.nim currently serves only the gen_direct_elabo_full path; the
   stagegoal/relcompile staging clients still embed names implicitly.
+
+** #87: primitive nat literals in the relational spec — the residual no longer inherits unary numerals (2026-10-09)
+  The #57 caveat: numeral-heavy programs (suc^8, suc^20) favored the direct
+  elaborator 2-3x because the residual walked the relational spec's unary
+  numeral encoding node-by-node (~3.3us/node vs the direct pkInt/mkNatLit
+  loop at ~0.9us/node) — a spec-representation tax, not a staging failure.
+  Decision: option 1 from the issue — first-class primitive ints in the
+  relational spec system. Rationale: the issue's own preference ordering
+  rules out the staging-side replacement (unnecessary linking of the
+  staging and relational systems — information leaking); making the spec
+  speak natively about numbers keeps the dependency direction clean
+  (staging residualizes the spec; the spec owns its representations).
+  Mechanism:
+  - rel_elab_dep.isNatLit(t): atom whose name is a canonical non-negative
+    decimal literal (no leading zeros/sign). rint(n) already existed in
+    minikanren.nim as the constructor.
+  - inferoOut/checko/infero: a nat-lit atom elaborates against Nat to
+    itself in O(1) (etm = tm — identity, no per-node recursion).
+  - elabo's cons/nil clauses accept primitive indices: nil against
+    vec(A, rint(0)); cons against vec(A, rint(k)), k>0, with the
+    predecessor rint(k-1) computed on the host. Unstaged relations and
+    the residual agree (43 differential checks in
+    tests/test_elabo_full_direct.nim, incl. 8 new primitive-literal
+    cases; the #89 dynElabo fallback inherits the new clauses for free).
+  - Generator (gen_direct_elabo_full.nim): two new CSP declarations
+    (rel_elab_dep.isNatLit, minikanren.rint); test_csp_policy.nim still
+    green. One generator wart found and fixed: minikanren exports `==`
+    as the unification goal constructor, so `n == nil` in relational
+    code is a Goal, not a bool — use `n.isNil`.
+  Measurement (bench_elab_end_to_end, best-of-100 us):
+  - "8 : Nat": staged 1.40 vs direct 19.33 (13.8x); "20 : Nat": staged
+    1.42 vs direct 24.83 (17.5x). Staged numeral elaboration is now
+    CONSTANT in the numeral (1.40 vs 1.42us) — the per-node tax is gone.
+  - The direct side still builds unary suc^n chains via mkNatLit; its
+    cost grows with n. The differential comparison normalizes at the
+    test boundary only (expandNatLits rewrites staged rint(k) to unary
+    for comparison against the direct reference — definitionally equal
+    in ETT). Two normalization traps documented: (a) the core form is
+    ("app","suc",n), not the surface ("suc",n) shorthand; (b) de Bruijn
+    index atoms ("var",0) look numeric but are not Nat literals.
+  Boundary (not done): the ETT core Term language is unchanged — the
+  direct elaborator still emits unary suc^n terms. Full primitive nat
+  literals in the core (a tNatLit constructor + conversion) would close
+  the gap on the direct side too, but that overlaps #11 (primitive
+  machine ints) and changes conversion/proof obligations; recorded as
+  the explicit next step, not smuggled in here.

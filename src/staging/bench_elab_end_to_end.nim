@@ -12,6 +12,11 @@
 ## - Same programs on both sides, each in its native representation
 ##   (RTerm S-exprs for the residual, PreTerm for the elaborator), built
 ##   once from a shared spec -- no parsing or translation in the timed loop.
+## - Numerals (#87): the staged side uses primitive nat literals (rint),
+##   the direct side pkInt literals; both elaborate the same programs.
+##   Correctness compares elaborated terms modulo this representation
+##   (expandNatLits rewrites staged rint(k) to unary suc-chains — the two
+##   are definitionally equal; the direct side is the reference).
 ## - The prelude (Nat/Vec data decls) is elaborated once; per-iteration the
 ##   direct side gets a fresh MetaStore + Supply (each check independent,
 ##   as on the staged side).
@@ -80,8 +85,9 @@ let natTyT = globals["Nat"].tm
 let nilCtxR = rnil()
 
 proc mkIntR(n: int): RTerm =
-  result = zeroTm()
-  for _ in 1 .. n: result = sucTm(result)
+  ## #87: primitive nat literal — the relational spec's first-class
+  ## numeral representation. No unary suc-chain is built.
+  rint(n)
 
 proc mkCons(a, n, x, xs: PreTerm): PreTerm =
   mkApp(mkApp(mkApp(mkApp(mkVar("cons"), a), n), x), xs)
@@ -164,10 +170,10 @@ let cases = @[
   Case(name: "Pi Nat Nat : ?",
     rtm: piTy(natTy(), natTy()), rty: univTy(), rctx: nilCtxR,
     pre: mkPi("x", natV, natV), dty: tmC(cStar), ectx: @[], expect: true),
-  Case(name: "suc^8 : Nat",
+  Case(name: "8 : Nat (primitive lit)",
     rtm: mkIntR(8), rty: natTy(), rctx: nilCtxR,
     pre: mkInt(8), dty: natTyT, ectx: @[], expect: true),
-  Case(name: "suc^20 : Nat",
+  Case(name: "20 : Nat (primitive lit)",
     rtm: mkIntR(20), rty: natTy(), rctx: nilCtxR,
     pre: mkInt(20), dty: natTyT, ectx: @[], expect: true),
   Case(name: "cons^4 : Vec Nat 4",
@@ -194,6 +200,24 @@ let cases = @[
 
 # --- Correctness: staged residual must agree with direct on verdict + output --
 
+proc expandNatLits(t: RTerm): RTerm =
+  ## Test-only normalization (#87): rewrite primitive nat literals to
+  ## unary suc-chains so staged output compares against the direct
+  ## elaborator's canonical unary form. The two representations are
+  ## definitionally equal in ETT; the direct side is the reference.
+  case t.kind
+  of rkVar: t
+  of rkAtom:
+    if isNatLit(t):
+      var r = zeroTm()
+      for _ in 1 .. parseInt(t.name): r = sucCore(r)
+      r
+    else: t
+  of rkPair:
+    # De Bruijn indices ("var", i) are not Nat literals — leave them alone.
+    if t.head.kind == rkAtom and t.head.name == "var": t
+    else: rpair(expandNatLits(t.head), expandNatLits(t.tail))
+
 echo "== correctness =="
 for c in cases:
   let staged = elaboD(c.rtm, c.rty, c.rctx)
@@ -209,7 +233,7 @@ for c in cases:
     doAssert staged.isSome, c.name & ": staged residual rejected a valid term"
     doAssert directOk, c.name & ": direct elaborator rejected a valid term"
     let core = termToCore(directOut)
-    doAssert $staged.get == $core,
+    doAssert $expandNatLits(staged.get) == $core,
       c.name & ":\n  staged: " & $staged.get & "\n  direct: " & $core
     echo "ok: ", c.name
   else:
