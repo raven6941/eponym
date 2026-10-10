@@ -44,6 +44,12 @@ checks it succeeds. These test the elaborator in isolation.
   protocol order) is rejected.
 - **15d-session-types-neg.ep** — Negative test: send on a closed channel
   is rejected.
+- **16a-paxos-wrong-order-neg.ep** — Negative test for the Paxos protocol
+  (Issue #101): receiving the promise before sending prepare is rejected
+  (`Chan propS0` vs `Chan propS1`).
+- **16b-paxos-wrong-value-neg.ep** — Negative test for the Paxos protocol
+  (Issue #101): promising `zero` but waiting for an accept of `suc zero`
+  is rejected (`Chan (accS2 zero)` vs `Chan (accS2 (suc zero))`).
 
 ## `embedded/` — Embedded Nim library use
 
@@ -59,6 +65,14 @@ for verified components inside a larger Nim application.
   client/server are ordinary-looking Nim, and protocol violations
   (wrong order, send on closed channel, double use, dropped channel)
   are compile-time errors.
+- **paxos_session.nim** — Paxos prepare/promise/accept/accepted as session
+  types (Issue #101): two roles, four messages each, with the value
+  discipline enforced by *unforgeable promise tickets* (`AcceptMsg` is
+  postulated with no constructors, so the proposer can only accept the
+  value the acceptor promised). The normal-Nim driver binds the same
+  message sequence to an in-memory transport and runs a full round,
+  mirroring the checked roles step by step. Wrong-order and wrong-value
+  violations are compile-time errors (see 16a/16b negative tests above).
 
 ### The embedded pattern
 
@@ -95,6 +109,7 @@ export PATH=$HOME/.nimble/bin:$PATH
 # Elaborator regression tests:
 nim c -r --path:src tests/run_examples.nim
 # Embedded examples (each is a standalone Nim program):
-nim c -r --path:src examples/embedded/sensor_fusion.nim
-nim c -r --path:src examples/embedded/session_types.nim
+nim c -r --path:src --path:src/eponym --path:src/relational --path:src/staging examples/embedded/sensor_fusion.nim
+nim c -r --path:src --path:src/eponym --path:src/relational --path:src/staging examples/embedded/session_types.nim
+nim c -r --path:src --path:src/eponym --path:src/relational --path:src/staging examples/embedded/paxos_session.nim
 ```

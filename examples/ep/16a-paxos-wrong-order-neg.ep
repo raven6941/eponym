@@ -1,0 +1,37 @@
+# Negative test for the Paxos session protocol: receive before send.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+#
+# A proposer that tries to receive the promise before sending prepare is
+# rejected: the channel is in `propS0` (send-state) but `recvPromise`
+# demands `propS1` (recv-state). The session indices are distinct
+# constructors, so conversion fails.
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+
+data Session : ? where
+| sendS (A : ?) (s : Session) : Session
+| recvS (A : ?) (s : Session) : Session
+| endS : Session
+
+data Chan : Session -> ? where
+| mkChan (s : Session) : Chan s
+
+postulate AcceptMsg : Nat -> ?
+
+proc propS0 : Session =
+  sendS Nat (recvS Nat (sendS Nat (recvS Nat endS)))
+proc propS1 : Session =
+  recvS Nat (sendS Nat (recvS Nat endS))
+proc propS2 : Session =
+  sendS Nat (recvS Nat endS)
+
+postulate sendPrepare : Pi (1 ch : Chan propS0). Pi (n : Nat). Chan propS1
+postulate recvPromise : Pi (1 ch : Chan propS1). Sig (pr : Sig (v : Nat). AcceptMsg v). Chan propS2
+
+# Violation: promise received before prepare is sent.
+# Expected error: inferred type (Chan propS0) does not match expected
+# type (Chan propS1).
+proc badProposer (1 ch : Chan propS0) : Sig (pr : Sig (v : Nat). AcceptMsg v). Chan propS2 =
+  recvPromise ch
