@@ -1,0 +1,31 @@
+# Negative test: non-DCP vector objective (Issue #110). vMul, the
+# elementwise product of two variables, is in the AST but admits no
+# certificate rule -- the vector analog of 17a's x*x, the classic DCP
+# violation. The bogus proof (a certificate for vVar, offered for vMul)
+# is rejected: VAffine (suc zero) (vVar (suc zero)) does not convert
+# with VAffine (suc zero) (vMul (suc zero) (vVar (suc zero)) (vVar (suc zero))).
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+
+data VExpr : Nat -> ? where
+| vVar (n : Nat) : VExpr n
+| vMul (n : Nat) (e1 : VExpr n) (e2 : VExpr n) : VExpr n
+
+data CExpr : ? where
+| vLogSum (n : Nat) (e : VExpr n) : CExpr
+
+data VAffine (n : Nat) : VExpr n -> ? where
+| vafVar : VAffine n (vVar n)
+
+data Convex : CExpr -> ? where
+| cvLogSum (n : Nat) (e : VExpr n) (h : VAffine n e) : Convex (vLogSum n e)
+
+proc minimize (e : CExpr) (h : Convex e) : CExpr = e
+
+# Rejected: vMul admits no DCP rule, and the offered certificate is for
+# vVar, not for the product.
+proc bad : CExpr =
+  minimize (vLogSum (suc zero) (vMul (suc zero) (vVar (suc zero)) (vVar (suc zero))))
+    (cvLogSum (suc zero) (vMul (suc zero) (vVar (suc zero)) (vVar (suc zero)))
+      (vafVar (suc zero)))

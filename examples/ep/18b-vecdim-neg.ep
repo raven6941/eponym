@@ -1,0 +1,18 @@
+# Negative test: quadForm needs a square matrix whose dimension matches
+# the vector (Issue #110). P2 is 2x2 but x is a 1-vector: rejected.
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+
+postulate Mat : Nat -> Nat -> ?
+
+data VExpr : Nat -> ? where
+| vVar (n : Nat) : VExpr n
+
+data CExpr : ? where
+| quadForm (n : Nat) (P : Mat n n) (x : VExpr n) : CExpr
+
+postulate P2 : Mat (suc (suc zero)) (suc (suc zero))
+
+# Rejected: P2 : Mat 2 2 does not fit Mat (suc zero) (suc zero).
+proc bad : CExpr = quadForm (suc zero) P2 (vVar (suc zero))

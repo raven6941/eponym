@@ -54,6 +54,16 @@ checks it succeeds. These test the elaborator in isolation.
   (Issue #101): `minimize` of `x*x` with a bogus certificate is rejected
   (`Convex (eSq eVar)` vs `Convex (eMul eVar eVar)` — `eMul` admits no
   DCP rule, the classic CVXPY DCPError, here a compile-time error).
+- **18a-vecdim-neg.ep** — Negative test for the dimension-indexed DCP
+  library (Issue #110): `vDot` of a 1-vector with a 0-vector is rejected
+  (`VExpr zero` vs `VExpr (suc zero)` — a compile-time shape error).
+- **18b-vecdim-neg.ep** — Negative test (Issue #110): `quadForm` with a
+  2x2 matrix but a 1-vector is rejected (square matrix must match the
+  vector dimension).
+- **18c-vecdim-neg.ep** — Negative test (Issue #110): non-DCP vector
+  objective — `vMul` (elementwise product of variables) admits no
+  certificate rule, so a bogus `vLogSum`-of-`vMul` proof is rejected
+  (the vector analog of 17a's `x*x`).
 
 ## `embedded/` — Embedded Nim library use
 
@@ -86,6 +96,18 @@ for verified components inside a larger Nim application.
   licensed by the compile-time convexity proof. Non-DCP objectives
   (`x*x`) are compile-time errors (see 17a above), where CVXPY would
   raise DCPError at solve() time.
+- **convex_opt_vec.nim** — DCP with dimension-indexed vector variables
+  (Issue #110): the case that actually requires dependent types. `VExpr n`
+  tracks vector dimension in the type; `vDot` demands equal dimensions,
+  `quadForm` demands a square `Mat n n` matching the vector, and
+  `vMatVec` threads dimensions through linear maps. Headline demo is
+  logistic regression (`vLogSum` of an affine residual — convexity via
+  the softplus composition rule, non-obvious unlike least squares),
+  plus a two-variable objective with different dimensions and a
+  portfolio risk term (`quadForm` with a PSD side condition). The Nim
+  driver runs gradient descent on the certified objective. Dimension
+  mismatches and non-DCP vector products (`vMul`) are compile-time
+  errors (see 18a/18b/18c above).
 
 ### The embedded pattern
 
