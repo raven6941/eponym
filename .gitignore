@@ -14,5 +14,7 @@ tests/**
 examples/*
 !examples/ep/
 !examples/ep/*.ep
+!examples/embedded/
+!examples/embedded/*.nim
 !examples/*.nim
 !examples/*.ep
