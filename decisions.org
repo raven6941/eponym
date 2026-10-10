@@ -1658,3 +1658,75 @@
   Status: CLOSED 2026-10-10 — all four acceptance criteria met
   (flattened codegen; agreement checks pass with identical node counts;
   scale within 1.1x — 0.4x; decisions.org entry).
+
+* 2026-10-10 — Issue #104: staged unification completeness (nested binding inference)
+
+  Context: #104 asked to close the nested-binding gap recorded on #18
+  (2026-10-08): inferring n=zero from suc(n) == suc(zero) during staging.
+  Steps 1-2 (structural decomposition + occurs check) were already done
+  by d231d19 (2026-10-08, "stageGoal: full staging-time unifier with
+  nested binding propagation"). This work did steps 3-4: the corpus and
+  the before/after measurement, plus an ablation mechanism.
+
+  What was built:
+  - `decomposeNested: bool = true` parameter on `stageGoal` and
+    `specializeRelation` (src/staging/stagegoal.nim). A parameter, not a
+    global: the compile-time staging macro (stagedTypeoProcs) runs
+    stageGoal in the Nim VM, where a global toggle var is unreadable
+    ("cannot evaluate at compile time"); `when nimvm` branching was also
+    rejected ("illegal context for 'nimvm' magic"). Threaded through all
+    six recursive stageGoal call sites; default true preserves behavior
+    for every existing caller (macro, tests, benches).
+  - `unifyStageLegacy`: faithful pre-#104 unifier for the "before" arm —
+    head-constructor pruning only (unifyHeadNoBind), plus top-level
+    placeholder==ground binding; no structural decomposition, no occurs
+    check. Verified faithful against git show d231d19~1.
+  - `bench/bench_nested_decompose.nim`: 11 unit equation goals drawn from
+    real typeoData branches (suc/zero/var/lam/app cases) + 4 full-relation
+    specialization goals (ty=nat, tm=suc(suc(zero)), ty=arr(nat,nat),
+    ctx=(nat.nil) static). Each staged with decompose on/off; metrics:
+    kind, bindings learned, residual node/disjunct counts, wall-clock.
+
+  Surprising finding (benchmarking discipline): the corpus shows the
+  legacy unifier was not merely weaker — it was UNSOUND. Its
+  placeholder-vs-pair rule (atom vs pair kinds differ => static No)
+  pruned satisfiable goals. d231d19's commit message already documented
+  one instance (stage_evalo returning sgFail for evalo(suc(zero),v));
+  the corpus quantifies the damage:
+  - Unit goals: 7/11 unsoundly pruned by legacy (FIXED by the new
+    unifier), 1 improved (Residual -> Done: suc(n)==suc(zero) learns
+    n=zero, residual 7 nodes -> 0), 3 identical (genuine prunes:
+    suc(n)==zero, nat==arr(d,c), deep constructor mismatch).
+  - Relation goals: with tm=suc(suc(zero)) or ty=arr(nat,nat) static,
+    legacy collapses the WHOLE typeo relation to Fail (the suc/lam
+    branches die on placeholder-vs-pair); the new unifier specializes
+    correctly (3 specs each). With ty=nat static, legacy's residual is
+    just `(__var_tm == zero)` — it silently dropped the suc, var, and
+    app branches; the new residual keeps all four (176 nodes, 7
+    disjuncts) with only the genuinely-impossible lam branch pruned.
+  - The issue's acceptance criterion ("smaller residual") was
+    wrong-headed as stated: where the old residual was smaller, it was
+    smaller because it was WRONG. The honest metric is correctness
+    first; among correct residuals, pruning of genuinely-impossible
+    branches (head-constructor mismatch, both unifiers agree).
+
+  Measurements (bench/bench_nested_decompose.nim, medians):
+  - Per-equation staging: new 0.007-0.041ms vs legacy 0.005-0.015ms
+    (~1.5-3x slower per equation; absolute times negligible).
+  - Relation staging wall-clock is dominated by structure, not the
+    unifier: ty=nat projection 0.65ms (new, correct) vs 0.16ms (legacy,
+    wrong); tm-static 0.39ms; ctx-static 1.89ms.
+  - Regression: 15/15 stageGoal inline tests green; fuzz_soundness
+    1000/1000 staged-vs-unstaged agree, 0 divergences; compile-time
+    staged typeo (stagedTypeoProcs macro) still 1.91x over unstaged.
+
+  Verdict: nested decomposition is a SOUNDNESS requirement for staging,
+  not an optimization. It pays exactly where 1st-projection
+  specialization lives: destructuring static constructor-shaped terms
+  (static tm/ty/ctx against suc/var/app/lam patterns). Cost is a small
+  per-equation constant, irrelevant at measured scales. The ablation
+  parameter stays (default true) for future unifier experiments.
+  Status: CLOSED 2026-10-10 — all four acceptance criteria met
+  (suc(n)==suc(zero) infers n:=zero, conflicts prune — corpus passes;
+  no benchmark regression; measured delta on real residuals with
+  wall-clock; this entry).
