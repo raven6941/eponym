@@ -645,19 +645,36 @@ proc ensureSi(ms: var MetaStore, loc: Loc, t: Term,
     return (dom, cod, "_")
   raise elabErr(loc, "expected a Sigma type")
 
+when defined(insertTime):
+  import times
+  var insertNanos*: int64 = 0
+    ## Issue #63: cumulative nanoseconds inside insertImplicits
+    ## (enabled with -d:insertTime).
+  var insertCalls*: int = 0
+    ## Issue #63: number of insertImplicits calls.
+  var insertIters*: int = 0
+    ## Issue #63: loop iterations (implicit args actually inserted).
+
 proc insertImplicits(pre: PreTerm, tm, ty: Term, ctxLen: int,
                      ms: var MetaStore): tuple[tm, ty: Term] =
   ## While the type's head is an implicit Pi, apply a fresh metavariable.
+  when defined(insertTime):
+    let it0 = cpuTime()
+    inc insertCalls
   var f = tm
   var fty = ty
   while true:
     let h = headTy(ms, fty)
     if h.kind == tPi and h.impl:
+      when defined(insertTime):
+        inc insertIters
       let m = freshMeta(ms, h.dom, ctxLen, 0, pre.loc)
       f = tmApp(f, m)
       fty = subst(h.scope.bdy, 0, m)
     else:
       break
+  when defined(insertTime):
+    insertNanos += int64((cpuTime() - it0) * 1_000_000_000.0)
   (f, fty)
 
 proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,

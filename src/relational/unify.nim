@@ -396,7 +396,7 @@ proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
           renameAt(t.letTy, inv, depth, n, loc), t.letScope.adv,
           renameAt(t.letScope.bdy, inv, depth + 1, n, loc))
 
-proc unify*(ms: var MetaStore, a, b: Term, loc: Loc)  # forward (mutual with solveMeta)
+proc unifyImpl(ms: var MetaStore, a, b: Term, loc: Loc)  # forward (mutual with solveMeta)
 
 proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) =
   ## Solve ?m[spine] = t (Miller pattern fragment).
@@ -404,7 +404,7 @@ proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) 
     raise uerr(loc, "unknown metavariable ?m" & $id)
   let e = ms.entries[id]
   if not e.solution.isNil:
-    unify(ms, substSpine(e.solution, spine.mapIt(zonk(ms, it))), t, loc)
+    unifyImpl(ms, substSpine(e.solution, spine.mapIt(zonk(ms, it))), t, loc)
     return
   let zsp = spine.mapIt(zonk(ms, it))
   let zt = zonk(ms, t)
@@ -429,7 +429,7 @@ proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) 
 
 # --- unification ---------------------------------------------------------------
 
-proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
+proc unifyImpl(ms: var MetaStore, a, b: Term, loc: Loc) =
   let a1 = unifyHead(ms, a)
   let b1 = unifyHead(ms, b)
   if a1.kind == tMeta and b1.kind == tMeta and a1.metaId == b1.metaId:
@@ -437,7 +437,7 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
     if a1.metaSpine.len != b1.metaSpine.len:
       raise uerr(loc, "metavariable spine length mismatch")
     for i in 0 ..< a1.metaSpine.len:
-      unify(ms, a1.metaSpine[i], b1.metaSpine[i], loc)
+      unifyImpl(ms, a1.metaSpine[i], b1.metaSpine[i], loc)
     return
   if a1.kind == tMeta:
     solveMeta(ms, a1.metaId, a1.metaSpine, b1, loc)
@@ -448,10 +448,10 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
   if a1.kind != b1.kind:
     # eta: lambda against a neutral
     if a1.kind == tLam and b1.kind in {tR, tV, tApp, tFst, tSnd}:
-      unify(ms, a1.scope.bdy, tmApp(weaken(b1), vv(0)), loc)
+      unifyImpl(ms, a1.scope.bdy, tmApp(weaken(b1), vv(0)), loc)
       return
     if b1.kind == tLam and a1.kind in {tR, tV, tApp, tFst, tSnd}:
-      unify(ms, tmApp(weaken(a1), vv(0)), b1.scope.bdy, loc)
+      unifyImpl(ms, tmApp(weaken(a1), vv(0)), b1.scope.bdy, loc)
       return
     # Issue #80: named noConfusion — distinct constructors of one datatype
     # (e.g. `zero =?= suc n`, which used to report "cannot unify tR with
@@ -480,23 +480,112 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
   of tPi, tSi, tLam:
     if a1.impl != b1.impl:
       raise uerr(loc, "implicit/explicit binder mismatch")
-    unify(ms, a1.dom, b1.dom, loc)
-    unify(ms, a1.scope.bdy, b1.scope.bdy, loc)
+    unifyImpl(ms, a1.dom, b1.dom, loc)
+    unifyImpl(ms, a1.scope.bdy, b1.scope.bdy, loc)
   of tPair:
-    unify(ms, a1.pFst, b1.pFst, loc)
-    unify(ms, a1.pSnd, b1.pSnd, loc)
-    unify(ms, a1.pScope.bdy, b1.pScope.bdy, loc)
+    unifyImpl(ms, a1.pFst, b1.pFst, loc)
+    unifyImpl(ms, a1.pSnd, b1.pSnd, loc)
+    unifyImpl(ms, a1.pScope.bdy, b1.pScope.bdy, loc)
   of tApp:
-    unify(ms, a1.fn, b1.fn, loc)
-    unify(ms, a1.arg, b1.arg, loc)
+    unifyImpl(ms, a1.fn, b1.fn, loc)
+    unifyImpl(ms, a1.arg, b1.arg, loc)
   of tFst, tSnd, tAbsurd:
-    unify(ms, a1.sub, b1.sub, loc)
+    unifyImpl(ms, a1.sub, b1.sub, loc)
   of tLet:
-    unify(ms, a1.letVal, b1.letVal, loc)
-    unify(ms, a1.letTy, b1.letTy, loc)
-    unify(ms, a1.letScope.bdy, b1.letScope.bdy, loc)
+    unifyImpl(ms, a1.letVal, b1.letVal, loc)
+    unifyImpl(ms, a1.letTy, b1.letTy, loc)
+    unifyImpl(ms, a1.letScope.bdy, b1.letScope.bdy, loc)
   of tMeta:
     discard  # handled above
+
+# --- Issue #63: staged unifier (kind-pair specialization) ----------------------
+# Manual staging of L1's dispatch: the general `unifyImpl` pays, per node,
+# unifyHead x2 (zonkHead + beta loop), the flex checks, the eta checks, and
+# a 14-branch kind case. The staged version below compiles that dispatch by
+# hand into per-(kind,kind) fast paths over already-head-normalized terms.
+# Residual dynamic work, named explicitly (benchmarking-discipline rule):
+#   - `unifyHead` per side per node: zonkHead follows the store's solution
+#     pointers, so the follow itself is a store read and stays residual.
+#     The corpus says heads move in only 4% of problems, but the read
+#     cannot be compiled away.
+#   - kind guard + fallback to `unifyImpl` on kind mismatch (eta lives
+#     there) or any tMeta involvement (flex = store writes via solveMeta
+#     stay residual). The fallback re-runs unifyHead on already-normalized
+#     terms (~2 kind checks per side); it fires on <5% of corpus problems.
+# This is staging in the modest sense: the interpreter's dispatch is
+# specialized, the store is not. What it measures is how much of unify's
+# cost is dispatch at all — the upper bound an automatic specializer could
+# recover at this level without making the store static.
+
+when defined(unifyTime):
+  import times
+  var unifyNanos*: int64 = 0
+    ## Cumulative nanoseconds inside top-level `unify` calls (enabled with
+    ## -d:unifyTime; the e2e benchmark reads this after each suite run).
+
+proc unifyStagedImpl*(ms: var MetaStore, a, b: Term, loc: Loc) =
+  ## Issue #63: exported for bench/bench_staged_unify.nim's direct
+  ## comparison. Production callers use `unify`, which selects this
+  ## implementation at compile time with -d:stagedUnify.
+  let a1 = unifyHead(ms, a)
+  let b1 = unifyHead(ms, b)
+  if a1.kind != b1.kind:
+    unifyImpl(ms, a1, b1, loc)  # eta + mismatch errors live here
+    return
+  case a1.kind
+  of tC:
+    if a1.c != b1.c: raise uerr(loc, "constant mismatch")
+  of tInt:
+    if a1.intVal != b1.intVal: raise uerr(loc, "integer mismatch")
+  of tPrim:
+    if a1.primOp != b1.primOp: raise uerr(loc, "primitive op mismatch")
+  of tR:
+    if a1.refId != b1.refId:
+      # Issue #80 naming preserved: distinct constructors of one datatype.
+      if sameDatatypeCtors(ms, a1.refId, b1.refId):
+        raise uerr(loc, noConfusionMsg(ms, a1.refId, b1.refId))
+      raise uerr(loc, "neutral mismatch")
+  of tV:
+    if a1.idx != b1.idx: raise uerr(loc, "variable mismatch")
+  of tPi, tSi, tLam:
+    if a1.impl != b1.impl:
+      raise uerr(loc, "implicit/explicit binder mismatch")
+    unifyStagedImpl(ms, a1.dom, b1.dom, loc)
+    unifyStagedImpl(ms, a1.scope.bdy, b1.scope.bdy, loc)
+  of tPair:
+    unifyStagedImpl(ms, a1.pFst, b1.pFst, loc)
+    unifyStagedImpl(ms, a1.pSnd, b1.pSnd, loc)
+    unifyStagedImpl(ms, a1.pScope.bdy, b1.pScope.bdy, loc)
+  of tApp:
+    unifyStagedImpl(ms, a1.fn, b1.fn, loc)
+    unifyStagedImpl(ms, a1.arg, b1.arg, loc)
+  of tFst, tSnd, tAbsurd:
+    unifyStagedImpl(ms, a1.sub, b1.sub, loc)
+  of tLet:
+    unifyStagedImpl(ms, a1.letVal, b1.letVal, loc)
+    unifyStagedImpl(ms, a1.letTy, b1.letTy, loc)
+    unifyStagedImpl(ms, a1.letScope.bdy, b1.letScope.bdy, loc)
+  of tMeta:
+    # Any flex involvement: solveMeta's store writes (occurs check,
+    # spine inversion, renaming) stay residual; the general path
+    # handles them, including flex-flex spine unification.
+    unifyImpl(ms, a1, b1, loc)
+
+proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
+  ## Top-level entry. -d:stagedUnify selects the staged kind-pair
+  ## dispatcher at compile time (a runtime flag is not VM-safe: the
+  ## `ett` macro in ett_mac.nim runs the elaborator at compile time,
+  ## and the Nim VM cannot read the flag). With -d:unifyTime the wall
+  ## time of each top-level call (recursion is inside, so this covers
+  ## the whole problem) accumulates in unifyNanos.
+  when defined(unifyTime):
+    let t0 = cpuTime()
+  when defined(stagedUnify):
+    unifyStagedImpl(ms, a, b, loc)
+  else:
+    unifyImpl(ms, a, b, loc)
+  when defined(unifyTime):
+    unifyNanos += int64((cpuTime() - t0) * 1_000_000_000.0)
 
 # --- Issue #63: corpus logging ------------------------------------------------
 # Observational instrumentation for the towers-collapse experiment: records
