@@ -20,6 +20,26 @@ import sequtils
 #     proc zero(): Nat
 #     proc suc(n: Nat): Nat
 
+proc binderName(n: NimNode): string =
+  ## Param/binder name, unwrapping a quantity pragma: `ch {.linear.}` -> "ch".
+  if n.kind == nnkPragmaExpr: $n[0]
+  else: $n
+
+proc qtyPrefix(n: NimNode): string =
+  ## Eponym quantity prefix from a Nim param pragma:
+  ## `ch {.linear.}` -> "1 ", `ch {.erased.}` -> "0 ", otherwise "".
+  ## (Issue #28: linear binders in ettBlock; elaborator enforces usage.)
+  if n.kind == nnkPragmaExpr and n.len == 2 and n[1].kind == nnkPragma:
+    for pr in n[1]:
+      if pr.kind != nnkIdent:
+        error("ettBlock: unsupported param pragma", pr)
+      case $pr
+      of "linear": return "1 "
+      of "erased": return "0 "
+      else: error("ettBlock: unknown quantity pragma: " & $pr & " (want linear/erased)", pr)
+    return ""
+  return ""
+
 proc nimExprToEponym(n: NimNode): string =
   ## Convert a Nim expression AST to Eponym source string.
   case n.kind
@@ -92,6 +112,13 @@ proc nimExprToEponym(n: NimNode): string =
   else:
     error("ettBlock: unsupported expression: " & $n.kind, n)
 
+proc piSigToEponym(n: NimNode): string
+  ## Convert Pi(...)/Sig(...) (nnkCall or nnkObjConstr) to Eponym.
+  ## Pi(x: A, y {.linear.}: B, C) -> Pi (x : A). Pi (1 y : B). C
+  ## Sig(x: A, B) -> Sig (x : A). B ; Sig(A, B) -> Sig (_ : A). B
+  ## Note: Nim parses `Pi(x: A, ...)` with named binders as nnkObjConstr,
+  ## not nnkCall, so both shapes must be handled.
+
 proc nimTypeToEponym(n: NimNode): string =
   ## Convert a Nim type AST to Eponym type string.
   case n.kind
@@ -111,6 +138,8 @@ proc nimTypeToEponym(n: NimNode): string =
   of nnkCall:
     # Vec(Int, three) -> Vec Int three (paren nested calls)
     # For zero-arg calls like zero(), just return head (no parens needed)
+    if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
+      return piSigToEponym(n)
     let head = nimTypeToEponym(n[0])
     if n.len == 1:
       head
@@ -124,6 +153,12 @@ proc nimTypeToEponym(n: NimNode): string =
         else:
           args.add(nimTypeToEponym(a))
       head & " " & args.join(" ")
+  of nnkObjConstr:
+    # Nim parses `Pi(x: A, y {.linear.}: B, C)` (named binders) as an object
+    # constructor, not a call. Only Pi/Sig are meaningful here.
+    if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
+      return piSigToEponym(n)
+    error("ettBlock: unsupported object construction in type: " & $n[0], n)
   of nnkInfix:
     # A -> B -> A -> B (right associative, as in Eponym)
     if $n[0] == "->" and n.len == 3:
@@ -132,6 +167,28 @@ proc nimTypeToEponym(n: NimNode): string =
       error("ettBlock: unsupported infix in type: " & $n[0], n)
   else:
     nimExprToEponym(n)
+
+proc piSigToEponym(n: NimNode): string =
+  let isPi = $n[0] == "Pi"
+  if n.len < 3: error($n[0] & " expects binders and a body", n)
+  var parts: seq[string] = @[]
+  for i in 1 ..< n.len - 1:
+    let b = n[i]
+    var q, nm, dom: string
+    if b.kind == nnkExprColonExpr and b.len == 2:
+      q = qtyPrefix(b[0])
+      nm = binderName(b[0])
+      dom = nimTypeToEponym(b[1])
+    elif not isPi:
+      # Sig(A, B): anonymous binder -> Sig (_ : A). B
+      q = ""; nm = "_"; dom = nimTypeToEponym(b)
+    else:
+      error("Pi binder must have form name: type", b)
+    if isPi:
+      parts.add("Pi (" & q & nm & " : " & dom & "). ")
+    else:
+      parts.add("Sig (" & q & nm & " : " & dom & "). ")
+  parts.join("") & nimTypeToEponym(n[^1])
 
 proc procDefToEponym(n: NimNode): string =
   ## Convert nnkProcDef to "proc name (params) : ret = body".
@@ -147,7 +204,8 @@ proc procDefToEponym(n: NimNode): string =
     let p = params[i]  # nnkIdentDefs: [name1, name2, ..., type, default]
     let ty = nimTypeToEponym(p[^2])
     for j in 0 ..< p.len - 2:
-      paramStrs.add("(" & $p[j] & " : " & ty & ")")
+      let q = qtyPrefix(p[j])
+      paramStrs.add("(" & q & binderName(p[j]) & " : " & ty & ")")
   let body = nimExprToEponym(n[6])
   "proc " & name & " " & paramStrs.join(" ") & " : " & retTy & " = " & body & "\n"
 
@@ -212,7 +270,8 @@ proc blockToEponym*(body: NimNode): string =
             let p = cparams[i]
             let ty2 = nimTypeToEponym(p[^2])
             for j in 0 ..< p.len - 2:
-              cparamStrs.add("(" & $p[j] & " : " & ty2 & ")")
+              let q = qtyPrefix(p[j])
+              cparamStrs.add("(" & q & binderName(p[j]) & " : " & ty2 & ")")
           result.add("| " & cname & " " & cparamStrs.join(" ") & " : " & cretTy & "\n")
       else:
         error("ettBlock: unsupported call: " & head, st)
@@ -223,6 +282,10 @@ macro ettBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
   ## data(N, Univ): block.
+  ## Quantity binders (Issue #28/#64): `ch {.linear.}` / `ch {.erased.}`
+  ## in proc/data params emit `(1 ch : ...)` / `(0 ch : ...)` binders.
+  ## Dependent Pi/Sigma types: Pi(x: A, y {.linear.}: B, C),
+  ## Sig(x: A, B), Sig(A, B).
   ## Generates wrapper procs like ettEmbed.
   let src = blockToEponym(body)
   var defs: seq[ElabDef]

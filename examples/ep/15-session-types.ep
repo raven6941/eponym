@@ -40,22 +40,23 @@ proc proto : Session =
 proc client (1 ch : Chan (sendS Nat endS)) : Chan endS =
   sendNat zero ch
 
-# The following are REJECTED at compile time (uncomment to verify):
-# (These violations are exercised as a negative test in
-# 15b-session-types-neg.ep, run by tests/run_examples.nim.)
+# The following are REJECTED at compile time (each exercised as a negative
+# test, run by tests/run_examples.nim):
+#   15b-session-types-neg.ep — double-send (linearity)
+#   15c-session-types-neg.ep — recv before send (wrong order)
+#   15d-session-types-neg.ep — send on a closed channel
 #
 # Violation 1: recv before send (wrong order)
-# proc badClient1 (ch : Chan proto) : Nat =
-#   let p = recvNat (sendS Nat endS) ch in
-#   zero
-# Error: inferred type (Chan proto) does not match expected type
-#        (Chan (recvS Nat (sendS Nat endS)))
+# proc badClient1 (1 ch : Chan (sendS Nat endS)) : Sig (x : Nat). Chan endS =
+#   recvNat ch
+# Error: inferred type (Chan (sendS Nat endS)) does not match expected type
+#        (Chan (recvS Nat endS)): noConfusion, distinct constructors
 #
 # Violation 2: send on a closed channel
-# proc badClient2 (ch : Chan endS) : Chan endS =
-#   sendNat endS zero ch
+# proc badClient2 (1 ch : Chan endS) : Chan endS =
+#   sendNat zero ch
 # Error: inferred type (Chan endS) does not match expected type
-#        (Chan (sendS Nat endS))
+#        (Chan (sendS Nat endS)): noConfusion, distinct constructors
 #
 # Violation 3: double-send (affinity hole, Issue #64)
 # With linear binders, this is now rejected by the in-judgment quantity

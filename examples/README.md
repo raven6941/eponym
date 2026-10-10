@@ -38,6 +38,12 @@ checks it succeeds. These test the elaborator in isolation.
 - **15-session-types.ep** — Session types with linear channels (Issue #28,
   #64). The `(1 ch : Chan ...)` binders ensure channels are used exactly
   once; the affinity hole is closed.
+- **15b-session-types-neg.ep** — Negative test: double use of a linear
+  channel is rejected.
+- **15c-session-types-neg.ep** — Negative test: recv before send (wrong
+  protocol order) is rejected.
+- **15d-session-types-neg.ep** — Negative test: send on a closed channel
+  is rejected.
 
 ## `embedded/` — Embedded Nim library use
 
@@ -48,6 +54,11 @@ for verified components inside a larger Nim application.
 - **sensor_fusion.nim** — Verified 3-element vector dot product for sensor
   fusion. The `ettBlock` elaborates at compile time; the surrounding Nim
   handles IO and orchestration.
+- **session_types.nim** — Session-typed channels as an embedded DSL
+  (Issue #28): the protocol is stated once as indexed Eponym types, the
+  client/server are ordinary-looking Nim, and protocol violations
+  (wrong order, send on closed channel, double use, dropped channel)
+  are compile-time errors.
 
 ### The embedded pattern
 
@@ -85,4 +96,5 @@ export PATH=$HOME/.nimble/bin:$PATH
 nim c -r --path:src tests/run_examples.nim
 # Embedded examples (each is a standalone Nim program):
 nim c -r --path:src examples/embedded/sensor_fusion.nim
+nim c -r --path:src examples/embedded/session_types.nim
 ```
