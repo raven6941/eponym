@@ -159,4 +159,43 @@ for c in negInfer:
   inc npass
   echo "ok (rejected): ", c.name
 
+# --- #89 branching corpus: ground-answer restriction relaxed via fallback ---
+# These cases fail the specialized (gathered) branches — the argument needs
+# check mode — but the relation finds ground answers by search, which
+# dynElabo now returns. Verdict AND elaborated term must agree.
+let fallbackCheck = @[
+  Case(name: "app(lam x. x, nil) : Vec Nat 0 (fallback)", mode: mCheck,
+    tm: appTm(lamTm(varTm(0)), nilTm()), ty: vec0ty, ctx: nilCtx),
+  Case(name: "app(lam x. x, app(lam y. y, nil)) : Vec Nat 0 (nested fallback)",
+    mode: mCheck,
+    tm: appTm(lamTm(varTm(0)), appTm(lamTm(varTm(0)), nilTm())),
+    ty: vec0ty, ctx: nilCtx),
+]
+
+let fallbackNeg = @[
+  Case(name: "app(lam x. x, nil) : Vec Nat 1 (fallback rejects)", mode: mCheck,
+    tm: appTm(lamTm(varTm(0)), nilTm()), ty: vec1ty, ctx: nilCtx),
+]
+
+for c in fallbackCheck:
+  let q = freshVar()
+  let sols = run(q, elabo(c.tm, c.ty, c.ctx, q), 1)
+  doAssert sols.len == 1, c.name & ": elabo failed"
+  doAssert isGround(sols[0]), c.name & ": non-ground etm: " & $sols[0]
+  let d = elaboD(c.tm, c.ty, c.ctx)
+  doAssert d.isSome, c.name & ": elaboD (fallback) failed"
+  doAssert $d.get == $sols[0],
+    c.name & ":\n  rel:    " & $sols[0] & "\n  direct: " & $d.get
+  inc npass
+  echo "ok: ", c.name
+
+for c in fallbackNeg:
+  let q = freshVar()
+  let sols = run(q, elabo(c.tm, c.ty, c.ctx, q), 1)
+  doAssert sols.len == 0, c.name & ": elabo unexpectedly succeeded: " & $sols[0]
+  doAssert elaboD(c.tm, c.ty, c.ctx).isNone,
+    c.name & ": elaboD unexpectedly succeeded"
+  inc npass
+  echo "ok (rejected): ", c.name
+
 echo "--- ", npass, " differential checks passed ---"

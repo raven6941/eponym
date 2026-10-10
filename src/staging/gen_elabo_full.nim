@@ -21,6 +21,25 @@ proc rTermEq*(a, b: RTerm): bool =
   of rkVar: a.id == b.id
   of rkPair: rTermEq(a.head, b.head) and rTermEq(a.tail, b.tail)
 
+proc rTermGround*(t: RTerm): bool =
+  ## Groundness check for fallback answers (#89).
+  case t.kind
+  of rkVar: false
+  of rkAtom: true
+  of rkPair: rTermGround(t.head) and rTermGround(t.tail)
+
+proc dynElabo*(tm: RTerm, ty: RTerm, ctx: RTerm): Option[RTerm] =
+  ## #89 fallback: give up specializing; run the unstaged elabo/4
+  ## relation at residual runtime. Fires only where the specialized
+  ## (gathered) branches fail — e.g. app(lam,nil), where the argument
+  ## needs check mode and the relation's answer is found by search.
+  ## Answers must be ground: the residual cannot represent non-ground
+  ## results, so a non-ground first answer degrades to none.
+  let q = freshVar()
+  let sols = run(q, elabo(tm, ty, ctx, q), 1)
+  if sols.len == 0 or not rTermGround(sols[0]): none(RTerm)
+  else: some(sols[0])
+
 proc ctxLookupD*(ctx: RTerm, i: int): Option[RTerm] =
   ## Direct reading of lookupO/3.
   var cur = ctx
@@ -58,6 +77,11 @@ proc inferD*(tm: RTerm, ctx: RTerm): Option[InferOut] =
     let a = tm.tail.tail.head
     if tagOfD(f) == "lam":
       # Redex: relation elaborates lam against pi(d,c), d/c free.
+      # #89 policy[appRedex]: gather — one specialized branch per
+      # staging-time branch (exactly 1 on this fragment: infer a's
+      # type, then infer the body). No fallback in infer mode: without
+      # an expected type the relation's answers may be non-ground,
+      # unrepresentable in Option[InferOut] — restriction documented.
       # Ground-fragment reading: infer a's type, then infer the body.
       let b = f.tail.head
       let ra = inferD(a, ctx)
@@ -131,12 +155,18 @@ proc elaboD*(tm: RTerm, ty: RTerm, ctx: RTerm): Option[RTerm] =
           if eh.isNone: return none(RTerm)
           let et = elaboD(t, vecTy(a, n), ctx)
           if et.isNone: return none(RTerm)
+          # #89 policy[consIndex]: later — the index elaboration stays an
+          # opaque recursive elaboD call; never inlined, since its
+          # termination depends on runtime types.
           let en = elaboD(n, natTy(), ctx)
           if en.isNone: return none(RTerm)
           return some(consCore(a, en.get, eh.get, et.get))
       return none(RTerm)
     else: discard
-  # fallback: infer with output, then unify the inferred type with ty
+  # fallback: infer with output, then unify the inferred type with ty.
+  # #89 policy[appRedex]: gather — the specialized branch above;
+  # fallback — where it fails (e.g. app(lam,nil): the argument needs
+  # check mode), run the unstaged relation at residual runtime.
   let r = inferD(tm, ctx)
-  if r.isNone: return none(RTerm)
+  if r.isNone: return dynElabo(tm, ty, ctx)
   if rTermEq(ty, r.get.ty): some(r.get.etm) else: none(RTerm)
