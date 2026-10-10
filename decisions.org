@@ -1572,3 +1572,35 @@
     checks), =test_rel_elab.nim=, =run_examples=, =fuzz_soundness= all
     pass; =staged_primops= unaffected.
   Status: CLOSED 2026-10-10 — merged via PR #98.
+* 2026-10-10 — Issue #94: QTT erasure in staged residuals (Sym[SVal] layer)
+  Design: the shared =Sym[R]= interface stays quantity-free; erasure lives
+  behind explicit annotations in the staged layer (=tests/ett_staged.nim=),
+  per the issue's sequencing (quantity inference is #84).
+  - Quantities thread through the residual AST: =qty= on =enkLam/enkPi/
+    enkSigma=, =lamQty= on =svStaticLam= (from =preterm.Quantity=; no
+    import cycle — =preterm= has no imports).
+  - New staged-layer constructors =cLamQ/cPiQ/cSigmaQ=; =reifyLam= turns a
+    staging-time function into a residual =enkLam= (previously dead — never
+    produced — now real).
+  - Erasure, term-level: =cApp= on a q0 =svStaticLam= drops the argument at
+    staging time (body runs against the =svErased= marker, never staged);
+    =cApp= on a residual q0 =enkLam= drops the call-site argument
+    (residual redex beta-reduces via HOAS). Reified q0 lambdas print with
+    no binder: =(lam:q0 [] ...)=.
+  - Types keep q0 binders (=cPiQ= records qty, binder retained): the
+    codomain is a type and may mention the variable (dependency); types
+    are not runtime code.
+  - Boundary check: =checkNotErased= at every residual constructor
+    (=cApp/=cPair/=cFst/=cSnd/=cAbsurd/=primNode/=letInsert=, domains);
+    a marker reaching residual code raises =ValueError= loudly. Caveat
+    recorded in code: dropping is sound for the pure core; an effectful
+    #79 argument passed to a q0 binder would lose its effect.
+  Measurements (=tests/stage_ett_erasure.nim=; corpus: =(0 n:Nat)->Nat->Nat=
+  standing in for =length='s erased index — Vec is not in the tagless core):
+  - Applied erasure: residual =(add m 10)=, 2 nodes, staged == unstaged.
+  - Call-site drop: 50-node erased argument removed from residual.
+  - Boundary violations (cApp and reifyLam) raise as designed.
+  - Benchmark: erased =fib(24)= argument evaluated per call unstaged vs
+    dropped at staging time — 106.4ms vs 0.22ms over 40 calls (477x);
+    one-time stage 0.017ms.
+  Status: CLOSED 2026-10-10 — all five acceptance criteria met.
