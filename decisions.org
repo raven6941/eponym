@@ -1361,3 +1361,43 @@
     This fragment has none — the value of the named policy is that the
     *next* fragment (overloading, coercions, #74 literal subtyping) gets
     the vocabulary instead of another ad-hoc restriction.
+
+** #75 cross-stage persistence policy for the direct-style residual (2026-10-09)
+  Status: POSITIVE. The #57 residual referenced present-stage names by raw
+  string embedding — it worked by luck (the generator author kept the names
+  in sync by hand). Now the policy is explicit in src/staging/csp.nim:
+  - ccLiteral: constants serialized as literals ("nil", "zero", ...). Always
+    safe; the residual never names a present-stage constant.
+  - ccHelperProc: term constructors (natTy, zeroTm, ..., rpair) referenced
+    by QUALIFIED name (rel_elab_dep.natTy()), never inlined. Decision:
+    reference, not inline — the procs are trusted and total, and referencing
+    keeps a single source of truth for the surface encoding with the
+    relational spec.
+  - ccEngine: the #89 fallback needs the unstaged interpreter at residual
+    runtime (minikanren.run/freshVar, rel_elab_out.elabo). Referenced by
+    qualified name. The residual is deliberately NOT closed: dynamic search
+    persists as a declared runtime dependency, visible in the emitted import
+    block. This is the honest bit — fallback means the interpreter ships
+    with the residual.
+  - ccType: type/enum names (RTerm, Option, rkAtom/rkPair/rkVar, string/bool/
+    int) resolve via declared imports, emitted unqualified.
+  - ccStdlib: options.some/none, strutils.parseInt, system.dec — qualified
+    where the module is explicit, declared where ambient.
+  Mechanism: gen_direct_elabo_full.nim declares 26 refs up front and may
+  only emit them via lift() (138 splices); the residual's import block and
+  its CSP declaration comment block (name, class, use count) are derived
+  from the registry. tests/test_csp_policy.nim checks the invariants:
+  no dead declarations, import block == registry set, no bare leakage of
+  qualified names, freeVars(residual) ⊆ declared (771 tokens) — no scope
+  extrusion by construction, not by luck.
+  Measurement (naive re-emission baseline = inline helper definitions into
+  the residual): helpers total 727 bytes of definitions vs 573 bytes of
+  qualified references over 31 call sites — 1.3x smaller. The helpers are
+  one-liners, so the size win is modest; the real win is hygiene and
+  single-sourcing. The 26.5KB engine fallback persists by reference-only —
+  inlining it is infeasible, which is exactly why the ccEngine class exists
+  as a named, visible policy rather than a hidden dependency.
+  Behavior unchanged: bench_direct_elabo_full still 13.6x geomean over the
+  relational baseline, agreement checks pass.
+  Open: csp.nim currently serves only the gen_direct_elabo_full path; the
+  stagegoal/relcompile staging clients still embed names implicitly.
