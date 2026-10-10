@@ -1,0 +1,25 @@
+# Negative test for session types: use after close.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+# closeOp consumes its channel (Pi (1 ch : Chan endS). Nat), so a second
+# use of the same channel is a linearity violation, not merely a protocol
+# state mismatch: the protocol says close happens exactly once.
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+
+data Session : ? where
+| sendS (A : ?) (s : Session) : Session
+| recvS (A : ?) (s : Session) : Session
+| endS : Session
+
+data Chan : Session -> ? where
+| mkChan (s : Session) : Chan s
+
+postulate closeOp : Pi (1 ch : Chan endS). Nat
+
+# Violation 4: channel used after close (Issue #64 acceptance criterion).
+# Expected error: linear variable 'ch' used 2 times (expected exactly once)
+proc useAfterClose (1 ch : Chan endS) : Nat =
+  let r = closeOp ch in
+  closeOp ch

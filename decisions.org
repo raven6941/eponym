@@ -845,6 +845,22 @@
   This is ETT + linear binders (not full QTT as core). The full QTT
   integration (quantities in typing judgments) is future work.
 
+  Verification 2026-10-10 (issue close-out): all acceptance criteria hold
+  on main. (1) The issue's exact doubleSend shape (pair return) is
+  rejected: "linear variable 'ch' used 2 times (expected exactly once)".
+  (2) Use-after-close (closeOp ch; closeOp ch) is rejected by the same
+  linearity check — pinned as examples/ep/15e-session-types-neg.ep.
+  (3) Valid single-use programs elaborate (15-session-types.ep and the
+  full example suite green). (4) Design decision recorded: full
+  *linearity* (exactly once) rather than affinity, via QTT quantities on
+  binders; enforced in-judgment at lambdas (#66) with the post-pass as a
+  backstop. What is checked vs assumed: quantities are declared by
+  annotation (Pi (1 ch : ...)); postulate codomains are not
+  usage-checked (Pi binders unenforced — linearity of primitives is
+  enforced at client use sites); type-level mentions do not count as
+  uses (all-0 context discipline); bodies with unsolved metas skip the
+  in-judgment check and are re-checked by the post-pass.
+
 * 2026-10-09 — Issue #60: compile the defunctionalized code pointers (MIXED — gap narrowed, mechanism isolated)
 
   Context: #53's negative verdict was measured against a defunctionalized
