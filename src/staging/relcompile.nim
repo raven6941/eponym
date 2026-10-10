@@ -37,7 +37,7 @@ import macros
 import staging/relgoal
 import staging/stagegoal
 import staging/modes
-import staging/stage_typeo  # typeoData for the typeo driver macro
+import staging/typeo_relgoal  # typeoData for the typeo driver macro (issue #85: data lives in src/, not tests/)
 import rel_elab  # natTy for the static ty=nat specialization
 import minikanren
 import tables

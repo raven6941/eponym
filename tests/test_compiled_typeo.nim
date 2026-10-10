@@ -10,7 +10,7 @@
 import staging/relcompile   # stagedTypeoProcs macro + rgFailGoal helpers
 import staging/relgoal
 import staging/stagegoal
-import staging/stage_typeo
+import staging/typeo_relgoal
 import staging/modes
 import minikanren
 import rel_elab

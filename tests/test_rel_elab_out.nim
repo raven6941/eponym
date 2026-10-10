@@ -17,7 +17,7 @@ import ett_init
 import unify
 import tables
 import staging/relcompile
-import staging/stage_rel_elab_dep
+import stage_rel_elab_dep  # test-side driver (tests/ is the main module's dir)
 
 stagedCheckoVec2Procs()
 
