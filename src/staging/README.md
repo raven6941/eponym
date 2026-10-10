@@ -61,3 +61,26 @@ one application (and the staged relational elaborator is one case of that).
   fallback enables `app(lam,nil)`-style cases at parity with dynamic search.
   Composes with #31 (fallback sites = boundary undecidable statically) and
   #61 (genlet shares code across gathered branches when they multiply).
+- **Cross-stage persistence policy** (Issue #75): the #57 residual
+  references present-stage values; `csp.nim` makes the policy explicit.
+  Every name the residual uses but does not define is *declared* with a
+  persistence class, the generator may only emit it via `lift()`, and the
+  residual's import block is derived from the registry (`cspImports`).
+  Classes: `ccLiteral` (constants serialized as literals — `"nil"`,
+  `"zero"` — always safe); `ccHelperProc` (term constructors referenced by
+  *qualified* name, never inlined — single source of truth with the
+  relational spec); `ccEngine` (the #89 fallback keeps the unstaged
+  interpreter — `minikanren.run`/`freshVar`, `rel_elab_out.elabo` — as a
+  declared runtime dependency; the residual is deliberately not closed);
+  `ccType` (type/enum names resolve via declared imports);
+  `ccStdlib` (`options.some`/`none`, `strutils.parseInt`, `system.dec`).
+  Measured on the full-fragment residual: explicit qualified references
+  cost 573 bytes over 31 call sites vs 727 bytes to inline the helper
+  definitions (1.3x smaller — the helpers are one-liners, so the win is
+  hygiene and single-sourcing, not bytes); the 26.5KB engine fallback
+  persists by reference-only (inlining infeasible). Invariants are
+  property-tested in `tests/test_csp_policy.nim`: no dead declarations,
+  import block == registry set, no bare leakage of qualified names, and
+  `freeVars(residual)` ⊆ declared (771 tokens checked) — no scope
+  extrusion by construction. The generated residual carries its CSP
+  declarations as a comment block (name, class, use count).
