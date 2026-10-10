@@ -101,7 +101,8 @@ type
     vkStar, vkUnit, vkTt, vkEmpty,   # constants: ?  1  <>  O
     vkPi, vkLam,                     # Pi-type and lambda (closures)
     vkSigma, vkPair,                 # Sigma-type and pair
-    vkNeutral                        # stuck variable + elimination spine
+    vkNeutral,                       # stuck variable + elimination spine
+    vkNat                            # primitive natural number (staging experiments)
   Value* = ref object
     ## Run-time values. Binders are host closures, so evaluation is just
     ## host-language beta-reduction -- the "functional representation" half
@@ -120,6 +121,8 @@ type
     of vkNeutral:
       neutId*: int
       spine*: seq[Elim]
+    of vkNat:
+      natV*: int
     else:
       discard
 
@@ -294,6 +297,8 @@ proc convVal(a, b: Value): bool =
     convVal(a.body(x), b.body(x))
   of vkPair:
     convVal(a.fstV, b.fstV) and convVal(a.sndV, b.sndV)
+  of vkNat:
+    a.natV == b.natV
   of vkNeutral:
     if a.neutId != b.neutId or a.spine.len != b.spine.len:
       return false
@@ -336,6 +341,7 @@ proc showValue(v: Value): string =
     "Sigma(" & showValue(v.dom) & ", " & showValue(v.cod(x)) & ")"
   of vkLam: "<lam>"
   of vkPair: "<" & showValue(v.fstV) & "; " & showValue(v.sndV) & ">"
+  of vkNat: $v.natV
   of vkNeutral:
     var s = if v.neutId == -1: "_" else: "?" & $v.neutId
     for e in v.spine:

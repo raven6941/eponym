@@ -1447,3 +1447,38 @@
   the gap on the direct side too, but that overlaps #11 (primitive
   machine ints) and changes conversion/proof obligations; recorded as
   the explicit next step, not smuggled in here.
+
+* 2026-10-10 #79 online primitive operators in the staged evaluator (branch exp79-online-primops)
+  - The issue's premise was half-wrong: tests/ett_staged.nim fixed no
+    unfold/residualize policy — it had no primitive operators at all.
+    So step 1 became: add them. Nat values needed a home: added `vkNat`
+    (with `natV: int`) to the ETT core Value, with convVal/showValue
+    branches. Additive only; staged_defun/stage_ett_demo eqVal helpers
+    gained the branch. Fixed a stale import en route:
+    stage_ett_demo.nim's `import staging/ett_staged` resolved nowhere;
+    now `import ett_staged`.
+  - Design: PrimOp = {staticSem, filter, simp, effectful} in a module
+    table. applyPrim: effectful → residualize + let-insert (escape
+    hatch); filter(args) → unfold; else residualize then run algebraic
+    simp rules. applyPrimFixed = the offline baseline (unfold iff all
+    static, no filters/simp) for the benchmark.
+  - Filters demonstrated on `pow`: unfold only when the exponent is a
+    static nat < 32 (Consel-style gate + size guard — the default policy
+    would have unfolded pow(2,100)).
+  - Simp rules (pure ops only): x+0→x, 0+x→x, 0×y→static 0,
+    x×0→static 0, 1×y→y, x×1→x. mul(0,dynamic)→static 0 discards a
+    residual computation — sound because add/mul are pure; effectful
+    ops skip simp entirely (Danvy's "types save the day" point).
+  - Effect escape hatch models an effect annotation on the operator's
+    type (flag on PrimOp in this prototype): traceAdd(1,2) with fully
+    static args still residualizes as (let [p] (traceAdd 1 2) p) —
+    named and ordered in the residual.
+  - Measurement (tests/staged_primops.nim, arithmetic-heavy corpus):
+    online residual 5 nodes vs fixed 10; evalSVal 50k iters 0.357s vs
+    0.853s (2.4x). Staged/unstaged agreement holds on every case
+    (residuals evaluate via staticSem to the direct value).
+  - Honest limit: the effect flag is a prototype stand-in — a real
+    implementation reads it off the operator's type. Danvy's refinement
+    (impure op's dynamic version may still return a static value while
+    keeping the call residualized) is not implemented; noted for #61
+    genlet follow-up.

@@ -10,7 +10,7 @@
 
 import std/[tables, times]
 import ett
-import staging/ett_staged
+import ett_staged  # was staging/ett_staged (stale path); the module lives in tests/
 
 # --- structural equality on values (neutrals compared by id) ---
 
@@ -20,6 +20,7 @@ proc eqVal(a, b: Value): bool =
   of vkStar, vkUnit, vkTt, vkEmpty: true
   of vkPi, vkSigma, vkLam: false  # not produced by these demos
   of vkPair: eqVal(a.fstV, b.fstV) and eqVal(a.sndV, b.sndV)
+  of vkNat: a.natV == b.natV
   of vkNeutral:
     a.neutId == b.neutId and a.spine.len == b.spine.len
 
