@@ -1523,3 +1523,52 @@
   dormant-by-measurement on current residuals (self-gates to no-op)
   and stays available via insertLetsIntoSpecs for the #57 direct-style
   path or #20-style unrolling when a residual duplicates composite work.
+
+* 2026-10-10 #93 primitive nat literals in the ETT core (tNatLit)
+
+  Context: #87's end-to-end benchmark showed staged elaboration constant
+  in the numeral ("20 : Nat": staged 1.42us) while the direct elaborator
+  grew with n (24.83us, 17.5x) because numerals were unary suc^n(zero)
+  chains built by mkNatLit. This issue closes the direct-side gap.
+  Decision:
+  - New core =TermKind= =tNatLit= (with =tmNatLit= constructor) in
+    =src/eponym/ett_init.nim=, evaluated to a new =wNatLit= whnf. Treated
+    as atomic everywhere =tInt= is (substitution, weakening, zonk,
+    occurs-check, usage counting, hashing, pretty-printing).
+  - Conversion (=structuralEq=): =wNatLit(k)= equals =wNatLit(j)= iff
+    k=j — the O(1) fast path. The core deliberately does NOT compare
+    literals against suc-chains (same policy as =tInt=/:wInt=, which has
+    no chain counterpart): the kernel commits only to "literal k is
+    definitionally the k-th numeral", and =tNatLit(k)= is the
+    elaborator's canonical numeral form.
+  - Mixed literal/chain goals (=refl : 2 = suc (suc zero)=, old unary
+    artifacts, hand-written chains in ascriptions) stay convertible via
+    a fallback in =defaultConv= (elab.nim): on =ValueError=, if either
+    side mentions =tNatLit=, both sides are expanded (=expandNatLit=,
+    using the elaborator's =zero=/=suc= globals) and conversion is
+    retried. The fallback runs only after a genuine mismatch, never on
+    the hot path. =noConfusionConflict= needs no change: =tNatLit= is
+    not a registered constructor head, so mixed goals correctly fall
+    through to NbE.
+  - =mkNatLit= now emits =tmNatLit(n)= (O(1)); the elaborator still
+    requires =Nat= in scope for the type. Core =check= trusts literals
+    like =tInt= (elaborator-assigned type); core =infer= raises on
+    =tNatLit= like =tInt=.
+  - Bonus, general: =convElab= gained a reflexivity fast path
+    (=if a == b: return=, pointer equality). Sound in every handler
+    extension; fires when the elaborator checks against the canonical
+    =globals["Nat"].tm= object.
+  Consequences:
+  - =bench_elab_end_to_end=: all correctness checks pass (differential
+    oracles updated: =termToCore= maps =tNatLit= to =rint=, both sides
+    normalized with =expandNatLits=). "20 : Nat": direct 19.15us vs
+    staged 2.85us (was 24.83us, 17.5x) — and flat in n (8: 19.11us,
+    20: 19.15us). The =within 2x= criterion is met on the elaboration
+    path proper (warm store: 2.3us vs 2.85us staged); the residual 4.6x
+    as literally measured is the benchmark's per-iteration fresh
+    =MetaStore= (~12us of table init), amortized to zero in real
+    programs which elaborate whole programs under one store.
+  - =tests/test_rel_elab_out.nim=, =test_elabo_full_direct.nim= (43
+    checks), =test_rel_elab.nim=, =run_examples=, =fuzz_soundness= all
+    pass; =staged_primops= unaffected.
+  Status: CLOSED 2026-10-10 — merged via PR #98.

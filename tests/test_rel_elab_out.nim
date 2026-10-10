@@ -16,6 +16,7 @@ import preterm
 import ett_init
 import unify
 import tables
+import strutils
 import staging/relcompile
 import stage_rel_elab_dep  # test-side driver (tests/ is the main module's dir)
 
@@ -64,6 +65,7 @@ proc termToCore(t: Term): RTerm =
   of tC:
     doAssert t.c == cStar, "only cStar expected on this fragment"
     univTy()
+  of tNatLit: rint(t.natLitVal)  # Issue #93: direct side now emits literals
   else:
     raise newException(ValueError,
       "termToCore: unexpected kind " & $t.kind & " on fragment")
@@ -73,6 +75,26 @@ proc isGround(t: RTerm): bool =
   of rkVar: false
   of rkAtom: true
   of rkPair: isGround(t.head) and isGround(t.tail)
+
+proc expandNatLits(t: RTerm): RTerm =
+  ## Issue #93: rewrite primitive nat literals (rint) to unary suc-chains,
+  ## so the relational side's chain-form numerals compare against the
+  ## direct elaborator's literal form. The two are definitionally equal;
+  ## this is the same oracle as staging/bench_elab_end_to_end.nim.
+  ## Note: sucCore (the `(app suc …)` core encoding), not sucTm (the
+  ## relational spec's `(suc …)` encoding) — both sides are core terms.
+  case t.kind
+  of rkVar: t
+  of rkAtom:
+    if isNatLit(t):
+      var r = zeroTm()
+      for _ in 1 .. parseInt(t.name): r = sucCore(r)
+      r
+    else: t
+  of rkPair:
+    # De Bruijn indices ("var", i) are not Nat literals — leave them alone.
+    if t.head.kind == rkAtom and t.head.name == "var": t
+    else: rpair(expandNatLits(t.head), expandNatLits(t.tail))
 
 # --- Corpus ------------------------------------------------------------------
 
@@ -145,7 +167,7 @@ for c in cases:
     except ElabError as e:
       raise newException(AssertionDefect, c.name & ": direct failed: " & e.msg)
   let core = termToCore(directOut)
-  doAssert $etm == $core,
+  doAssert $expandNatLits(etm) == $expandNatLits(core),
     c.name & ":\n  elabo:  " & $etm & "\n  direct: " & $core
   echo "ok: ", c.name, "  ~~>  ", $etm
 

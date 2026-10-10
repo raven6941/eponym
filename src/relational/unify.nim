@@ -224,7 +224,7 @@ proc rigidHead(t: Term): bool =
   ## defined `f` could map distinct arguments to equal values).
   case t.kind
   of tR: not t.refIsDefn
-  of tV, tC, tInt: true
+  of tV, tC, tInt, tNatLit: true
   else: false
 
 proc sameRigidHead(a, b: Term): bool =
@@ -240,6 +240,7 @@ proc sameRigidHead(a, b: Term): bool =
   of tV: fa.idx == fb.idx
   of tC: fa.c == fb.c
   of tInt: fa.intVal == fb.intVal
+  of tNatLit: fa.natLitVal == fb.natLitVal
   else: false
 
 proc argsConflict(ms: MetaStore, a, b: Term): tuple[bad: bool, c1, c2: int] =
@@ -285,7 +286,7 @@ proc zonk*(ms: MetaStore, t: Term): Term =
     let sp = t.metaSpine.mapIt(zonk(ms, it))
     if e.solution.isNil: tmMeta(t.metaId, sp)
     else: zonk(ms, substSpine(e.solution, sp))
-  of tV, tR, tC, tInt, tPrim: t
+  of tV, tR, tC, tInt, tPrim, tNatLit: t
   of tPi, tSi, tLam:
     mkBinder(t.kind, zonk(ms, t.dom),
               Scope(adv: t.scope.adv, bdy: zonk(ms, t.scope.bdy)), t.impl, t.qty)
@@ -312,7 +313,7 @@ proc findUnsolved*(ms: MetaStore, t: Term): tuple[found: bool, id: int, loc: Loc
       let r = findUnsolved(ms, s)
       if r.found: return r
     (false, 0, noLoc)
-  of tV, tR, tC, tInt, tPrim: (false, 0, noLoc)
+  of tV, tR, tC, tInt, tPrim, tNatLit: (false, 0, noLoc)
   of tPi, tSi, tLam:
     let r = findUnsolved(ms, t.dom)
     if r.found: r else: findUnsolved(ms, t.scope.bdy)
@@ -341,7 +342,7 @@ proc occursSyn(id: int, t: Term): bool =
   of tMeta:
     if t.metaId == id: return true
     t.metaSpine.anyIt(occursSyn(id, it))
-  of tV, tR, tC, tInt, tPrim: false
+  of tV, tR, tC, tInt, tPrim, tNatLit: false
   of tPi, tSi, tLam:
     occursSyn(id, t.dom) or occursSyn(id, t.scope.bdy)
   of tPair:
@@ -375,7 +376,7 @@ proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
       if j < inv.len and inv[j] >= 0: vv(inv[j] + depth)
       else: raise uerr(loc,
         "cannot solve metavariable: variable V" & $t.idx & " escapes the spine")
-  of tR, tC, tInt, tPrim: t
+  of tR, tC, tInt, tPrim, tNatLit: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(renameAt(it, inv, depth, n, loc)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, renameAt(t.dom, inv, depth, n, loc),
@@ -466,6 +467,8 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
     if a1.c != b1.c: raise uerr(loc, "constant mismatch")
   of tInt:
     if a1.intVal != b1.intVal: raise uerr(loc, "integer mismatch")
+  of tNatLit:
+    if a1.natLitVal != b1.natLitVal: raise uerr(loc, "nat literal mismatch")
   of tPrim:
     if a1.primOp != b1.primOp: raise uerr(loc, "primitive op mismatch")
   of tR:
