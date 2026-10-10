@@ -74,6 +74,7 @@ proc termToCore(t: Term): RTerm =
   of tC:
     doAssert t.c == cStar, "only cStar expected on this fragment"
     univTy()
+  of tNatLit: rint(t.natLitVal)  # Issue #93: direct side now emits literals
   else:
     raise newException(ValueError,
       "termToCore: unexpected kind " & $t.kind & " on fragment")
@@ -233,7 +234,7 @@ for c in cases:
     doAssert staged.isSome, c.name & ": staged residual rejected a valid term"
     doAssert directOk, c.name & ": direct elaborator rejected a valid term"
     let core = termToCore(directOut)
-    doAssert $expandNatLits(staged.get) == $core,
+    doAssert $expandNatLits(staged.get) == $expandNatLits(core),
       c.name & ":\n  staged: " & $staged.get & "\n  direct: " & $core
     echo "ok: ", c.name
   else:

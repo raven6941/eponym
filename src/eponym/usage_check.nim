@@ -49,7 +49,7 @@ proc countVarUses*(tm: Term): int =
       go(t.letVal, depth) + go(t.letScope.bdy, depth + 1)
     of tPrim:
       0  # primTy is a type annotation; primOp carries no terms
-    of tR, tC, tMeta, tInt:
+    of tR, tC, tMeta, tInt, tNatLit:
       0
   go(tm, 0)
 
@@ -59,7 +59,7 @@ proc hasUnresolvedMetas*(tm: Term): bool =
   proc go(t: Term): bool =
     case t.kind
     of tMeta: true
-    of tV, tR, tC, tInt: false
+    of tV, tR, tC, tInt, tNatLit: false
     of tLam, tPi, tSi: go(t.dom) or go(t.scope.bdy)
     of tApp: go(t.fn) or go(t.arg)
     of tPair: go(t.pFst) or go(t.pSnd) or go(t.pScope.bdy)
@@ -99,7 +99,7 @@ proc checkUsage*(tm: Term): void =
 
   proc go(t: Term) =
     case t.kind
-    of tV, tR, tC, tMeta, tInt:
+    of tV, tR, tC, tMeta, tInt, tNatLit:
       discard # no binders
     of tLam, tPi:
       verifyBinder(t)

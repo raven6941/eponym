@@ -30,8 +30,11 @@ proc nimExprToEponym(n: NimNode): string =
     if s == "Univ": "?" else: s
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
     # In ettBlock, integer literals in term position are assumed to be Nat.
-    # Generate suc chain directly; the elaborator's mkNatLit would do the same,
-    # but this avoids issues with nested positions in the current implementation.
+    # Generate suc chain directly; the elaborator's mkNatLit now emits the
+    # O(1) primitive tNatLit instead (Issue #93), but surface chains still
+    # elaborate and stay definitionally equal to literals via defaultConv's
+    # expansion fallback. Generating the chain here avoids issues with
+    # nested positions in the current implementation.
     # For primitive Int literals, use string syntax (ett"""...""") instead.
     let v = n.intVal
     if v < 0: error("negative Nat literal", n)

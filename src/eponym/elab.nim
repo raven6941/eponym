@@ -131,6 +131,7 @@ proc prettyTerm(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
     else: "V" & $t.idx
   of tC: $t.c
   of tInt: $t.intVal
+  of tNatLit: $t.natLitVal
   of tPrim: $t.primOp
   of tPi, tSi, tLam:
     let adv = if t.scope.adv != "_": t.scope.adv else: "_"
@@ -177,6 +178,51 @@ template withConvHandler*(ms: var MetaStore, h: ConvHandler,
   finally:
     discard ms.convHandlers.pop()
 
+proc containsNatLit(t: Term): bool =
+  ## Issue #93: does t mention a primitive Nat literal anywhere?
+  if t.isNil: return false
+  case t.kind
+  of tNatLit: true
+  of tR, tV, tC, tInt, tPrim, tMeta: false
+  of tPi, tSi, tLam: containsNatLit(t.dom) or containsNatLit(t.scope.bdy)
+  of tPair: containsNatLit(t.pFst) or containsNatLit(t.pSnd) or
+              containsNatLit(t.pScope.bdy)
+  of tApp: containsNatLit(t.fn) or containsNatLit(t.arg)
+  of tFst, tSnd, tAbsurd: containsNatLit(t.sub)
+  of tLet: containsNatLit(t.letVal) or containsNatLit(t.letTy) or
+             containsNatLit(t.letScope.bdy)
+
+proc expandNatLit(t: Term, zeroTm, sucTm: Term): Term =
+  ## Issue #93: rewrite every tNatLit(k) to the suc^k(zero) chain.
+  ## Used only as a conversion fallback (see defaultConv): the elaborator's
+  ## canonical numeral form is the O(1) literal, but hand-written
+  ## suc-chains must stay definitionally equal to it.
+  if t.isNil: return nil
+  case t.kind
+  of tNatLit:
+    var res = zeroTm
+    for _ in 1 .. t.natLitVal: res = tmApp(sucTm, res)
+    res
+  of tR, tV, tC, tInt, tPrim, tMeta: t
+  of tPi, tSi, tLam:
+    mkBinder(t.kind, expandNatLit(t.dom, zeroTm, sucTm),
+             Scope(adv: t.scope.adv,
+                   bdy: expandNatLit(t.scope.bdy, zeroTm, sucTm)),
+             t.impl, t.qty)
+  of tPair:
+    tmPair(expandNatLit(t.pFst, zeroTm, sucTm),
+           expandNatLit(t.pSnd, zeroTm, sucTm), t.pScope.adv,
+           expandNatLit(t.pScope.bdy, zeroTm, sucTm))
+  of tApp:
+    tmApp(expandNatLit(t.fn, zeroTm, sucTm), expandNatLit(t.arg, zeroTm, sucTm))
+  of tFst: tmFst(expandNatLit(t.sub, zeroTm, sucTm))
+  of tSnd: tmSnd(expandNatLit(t.sub, zeroTm, sucTm))
+  of tAbsurd: tmAbsurd(expandNatLit(t.sub, zeroTm, sucTm))
+  of tLet:
+    tmLet(expandNatLit(t.letVal, zeroTm, sucTm),
+          expandNatLit(t.letTy, zeroTm, sucTm), t.letScope.adv,
+          expandNatLit(t.letScope.bdy, zeroTm, sucTm))
+
 proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
                  ctx: Ctx, globals: Globals) =
   ## Experiment 41: the bottom of the handler stack — the Experiment 5b
@@ -211,6 +257,23 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     # Success: record in the cache for scoped cache handlers to probe.
     merge(ms.convCache, convKey(ctx.len, a, b))
   except ValueError as e:
+    # Issue #93: tNatLit(k) is definitionally suc^k(zero). The core
+    # compares literals only to literals (O(1) fast path above), so a
+    # mixed goal — literal vs hand-written suc-chain — fails there.
+    # Retry with literals expanded on both sides: this keeps
+    # `refl : 2 = suc (suc zero)` and old unary artifacts convertible.
+    # The expansion runs only after a genuine mismatch, never on the
+    # hot path.
+    if "zero" in globals and "suc" in globals and
+        (containsNatLit(a) or containsNatLit(b)):
+      let a2 = expandNatLit(a, globals["zero"].tm, globals["suc"].tm)
+      let b2 = expandNatLit(b, globals["zero"].tm, globals["suc"].tm)
+      try:
+        areEqual(s, vStar(), eval(a2, env), eval(b2, env))
+        merge(ms.convCache, convKey(ctx.len, a2, b2))
+        return
+      except ValueError:
+        discard
     var refNames = initTable[int, string]()
     for name, g in globals:
       if g.tm.kind == tR: refNames[g.tm.refId] = name
@@ -238,6 +301,13 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   ## next one down. The bottom of the stack is defaultConv above. The
   ## choke points that raise the effect are exactly the old failure sites:
   ## the infer-then-check boundary in checkTm and the `refl` tactic.
+  ##
+  ## Issue #93: reflexivity fast path. Pointer-identical terms are
+  ## trivially convertible (reflexivity holds in every handler extension),
+  ## so skip zonking, unification, handlers, and cache bookkeeping.
+  ## This fires e.g. when the elaborator checks a literal against the
+  ## canonical globals["Nat"].tm object it also used to build the type.
+  if a == b: return
   let a1 = zonk(ms, a)
   let b1 = zonk(ms, b)
   if findUnsolved(ms, a1).found or findUnsolved(ms, b1).found:
@@ -539,7 +609,7 @@ proc checkErasedArgWalk(t: Term, depth: int, ctx: Ctx, loc: Loc,
     checkErasedArgWalk(t.letScope.bdy, depth + 1, ctx, loc, ms, pending)
   of tPrim:
     discard
-  of tR, tC, tMeta, tInt:
+  of tR, tC, tMeta, tInt, tNatLit:
     discard
 
 proc checkErasedArg(arg: Term, ctx: Ctx, loc: Loc, ms: var MetaStore) =
@@ -739,19 +809,15 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkBy:
     raise elabErr(pre.loc, "'by' tactic requires an expected type (use in checking mode)")
 
-proc mkNatLit(n: int, globals: Globals, loc: Loc): Term =
-  ## Build unary Nat term suc^n(zero) for integer literal n.
-  ## Used for literal overloading: `3` in a Nat position becomes
-  ## `suc (suc (suc zero))`. Requires 'zero'/'suc' from `data Nat`.
+proc mkNatLit(n: int, loc: Loc): Term =
+  ## Build a primitive Nat literal tNatLit(n) for integer literal n
+  ## (Issue #93). O(1): no suc^n(zero) chain is constructed. The literal
+  ## is definitionally equal to suc^n(zero); conversion against
+  ## hand-written suc-chains is handled by defaultConv's expansion
+  ## fallback below. Requires 'Nat' in scope (checked by the caller).
   if n < 0:
     raise elabErr(loc, "negative integer literal in Nat position")
-  if "zero" notin globals or "suc" notin globals:
-    raise elabErr(loc, "integer literal in Nat position requires 'data Nat' with zero/suc constructors")
-  var res = globals["zero"].tm
-  let sucTm = globals["suc"].tm
-  for i in 1..n:
-    res = tmApp(sucTm, res)
-  res
+  tmNatLit(n)
 
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
              ms: var MetaStore, supply: var Supply, expTy: Term): Term =
@@ -760,15 +826,15 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkInt:
     # Literal overloading: integer literal adapts to expected type.
     # Try Nat (inductive) first, then primitive Int.
-    # The mkNatLit helper builds suc^n(zero); no manual reification needed.
+    # mkNatLit builds the O(1) primitive tNatLit; no manual reification needed.
     block:
       # Debug
       # echo "pkInt in checkTm, intVal=", pre.intVal
       var done = false
       var resTm: Term = nil
-      if "zero" in globals and "suc" in globals and "Nat" in globals:
+      if "Nat" in globals:
         try:
-          let natTm = mkNatLit(pre.intVal, globals, pre.loc)
+          let natTm = mkNatLit(pre.intVal, pre.loc)
           let natTy = globals["Nat"].tm
           convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals)
           resTm = natTm
