@@ -44,10 +44,28 @@ proc elabErr(loc: Loc, msg: string): ref ElabError =
 
 proc unifyElab(ms: var MetaStore, a, b: Term, loc: Loc) =
   ## unify, translating UnifyError into ElabError (adds the source location).
-  try:
-    unify(ms, a, b, loc)
-  except UnifyError as e:
-    raise elabErr(loc, e.msg)
+  when defined(unifyCorpusLog):
+    # Issue #63: record raw and zonked shapes of each elaborator-level
+    # unification problem (raw =?= zonked tells us how much the store
+    # moves the dispatch away from the static term skeleton).
+    let ra = unifyShape(a)
+    let rb = unifyShape(b)
+    let za = unifyShape(unifyHead(ms, a))
+    let zb = unifyShape(unifyHead(ms, b))
+    let n = ms.nextId
+    try:
+      unify(ms, a, b, loc)
+    except UnifyError as e:
+      corpusLog.add(ra & " =?= " & rb & "  =>  " & za & " =?= " & zb &
+                    "  [fail] store=" & $n)
+      raise elabErr(loc, e.msg)
+    corpusLog.add(ra & " =?= " & rb & "  =>  " & za & " =?= " & zb &
+                  "  [ok] store=" & $n)
+  else:
+    try:
+      unify(ms, a, b, loc)
+    except UnifyError as e:
+      raise elabErr(loc, e.msg)
 
 type
   CtxEntry* = object
@@ -3138,3 +3156,9 @@ def badm : Nat -> Nat -> Nat
     termRejected, " rejected)"
 
   echo "--- all elaborator tests passed ---"
+
+  when defined(unifyCorpusLog):
+    # Issue #63: dump the elab self-test corpus separately (the bench
+    # driver writes its own examples corpus; both feed the verdict).
+    writeFile("bench/unify_corpus_elabtests.txt", corpusLog.join("\n") & "\n")
+    echo "elab self-test corpus entries: ", corpusLog.len

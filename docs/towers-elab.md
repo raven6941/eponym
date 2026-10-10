@@ -133,7 +133,45 @@ per program.
 ## Status
 
 - [x] Tower documented (this file): levels + static/dynamic split
-- [ ] Corpus of unification problems from the test suite
+- [x] Corpus of unification problems from the test suite (see below)
 - [ ] Staged pattern-fragment unifier + wall-clock comparison
 - [ ] Staged implicit-insertion pass + wall-clock comparison
 - [ ] decisions.org verdict
+
+## Corpus findings (2026-10-09)
+
+Instrumentation: `unifyShape` + `corpusLog` (`src/relational/unify.nim`,
+zero-cost unless compiled with `-d:unifyCorpusLog`); `unifyElab`
+(`src/eponym/elab.nim`) records raw and zonked kind-skeleton pairs,
+outcome, and store size per elaborator-level problem.
+Driver: `bench/corpus_unify.nim` (examples/) writes
+`bench/unify_corpus.txt`; elab self-tests (same flag) write
+`bench/unify_corpus_elabtests.txt`. Deterministic across runs.
+
+- **986 problems**: 214 from `examples/` + `examples/ep/`, 772 from the
+  elab self-tests. 985 ok, 1 fail (the fail is a negative test).
+- **Dispatch is overwhelmingly rigid-rigid.** Zonked head-kind pairs:
+  `C=C` 600, `R=R` 226, `A=A` 68, `V=V` 43, `P=P` 25 (P conflates tPrim
+  with Pi/Si in the one-char summary; full shapes show e.g. `Pi(V,V)`
+  and `A(A(R,V),V)` spines). Flex-rigid only **23/986 (2.3%)**
+  (`C=?` 12, `R=?` 5, `V=?` 4, `?=` 2); **no flex-flex, no top-level
+  eta cases** in elaboration-time problems.
+- **Heads are nearly static at L1 entry.** `zonkHead` changes a side's
+  shape in only **39/986 (4.0%)** — in 96% of problems the dispatch
+  heads are already determined before the store is consulted.
+- Store sizes 0–12 metas, median 0 (small test programs; scale-up is a
+  follow-up measurement).
+- **Limitation**: top-level `unifyElab` problems only; recursive
+  subproblems inside `unify` (where solved metas appear mid-traversal)
+  are not yet instrumented. The dynamic half of L1 lives there —
+  `solveMeta` writes, occurs-check traversals, spine inversions.
+
+Reading for the verdict: a unifier staged to the predicted (zonked)
+head-kind pair would hit its fast path ~96% of the time on this corpus,
+with the residual being the kind guard + general fallback. The L1
+dispatch table — the part the tower doc called dynamic — is empirically
+the *least* dynamic part of the search level; what stays genuinely
+dynamic is the meta lifecycle inside the recursion (solutions written
+by `solveMeta` mid-unification, then followed by later recursive
+calls). Next: build the staged pattern-fragment unifier for the top
+shape pairs and measure wall-clock vs interpretive `unify`.

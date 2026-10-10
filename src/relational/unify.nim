@@ -498,6 +498,39 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
   of tMeta:
     discard  # handled above
 
+# --- Issue #63: corpus logging ------------------------------------------------
+# Observational instrumentation for the towers-collapse experiment: records
+# the shape of each elaborator-level unification problem. Zero-cost unless
+# compiled with -d:unifyCorpusLog. Shapes are kind skeletons of the raw and
+# zonked sides (to depth 4); metavariables print as `?` (ids elided).
+
+proc unifyShape*(t: Term, depth: int = 4): string =
+  ## One-line kind skeleton of t. Metas print as `?` regardless of id.
+  if depth <= 0: return ".."
+  if t.isNil: return "nil"
+  case t.kind
+  of tMeta: "?"
+  of tV: "V"
+  of tR: "R"
+  of tC: "C"
+  of tInt: "I"
+  of tPrim: "P"
+  of tPi, tSi:
+    "Pi(" & unifyShape(t.dom, depth-1) & "," &
+      unifyShape(t.scope.bdy, depth-1) & ")"
+  of tLam: "L(" & unifyShape(t.scope.bdy, depth-1) & ")"
+  of tPair:
+    "2(" & unifyShape(t.pFst, depth-1) & "," & unifyShape(t.pSnd, depth-1) &
+      "," & unifyShape(t.pScope.bdy, depth-1) & ")"
+  of tApp:
+    "A(" & unifyShape(t.fn, depth-1) & "," & unifyShape(t.arg, depth-1) & ")"
+  of tFst: "F(" & unifyShape(t.sub, depth-1) & ")"
+  of tSnd: "S(" & unifyShape(t.sub, depth-1) & ")"
+  of tAbsurd: "0(" & unifyShape(t.sub, depth-1) & ")"
+  of tLet: "let(..)"
+
+var corpusLog*: seq[string] = @[]
+
 when isMainModule:
   import strutils
   var ms = initMetaStore()
