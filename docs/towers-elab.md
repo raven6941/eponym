@@ -134,9 +134,40 @@ per program.
 
 - [x] Tower documented (this file): levels + static/dynamic split
 - [x] Corpus of unification problems from the test suite (see below)
-- [ ] Staged pattern-fragment unifier + wall-clock comparison
-- [ ] Staged implicit-insertion pass + wall-clock comparison
-- [ ] decisions.org verdict
+- [x] Staged pattern-fragment unifier + wall-clock comparison (see below)
+- [x] Implicit-insertion pass: measured, not built — see below
+- [x] decisions.org verdict (2026-10-09): **vacuity**, neither collapse nor resistance
+
+## Verdict measurements (2026-10-09)
+
+**L1 — staged unifier** (`unifyStagedImpl` in `src/relational/unify.nim`,
+`useStagedUnify` flag, default off; `bench/bench_staged_unify.nim`).
+Micro (-d:release, synthetic pairs for the top corpus shapes, agreement
+checked incl. error messages): rigid fast paths 1.00–1.03x (noise);
+fallback paths slower — kind mismatch 0.77x, eta 0.89x — the kind guard +
+re-normalization costs more than the dispatch it replaces. End-to-end (16
+example programs, outcomes IDENTICAL incl. the negative test):
+instrumented cumulative unify 378us general vs 433us staged (0.87x);
+suite wall 0.01s in both modes. True unify share of elaboration ≈ 0.5%
+(the -d:unifyTime instrumentation itself costs ~1.3us/call vs ~64ns of
+real work — 40x overhead; see decisions.org metrology note).
+
+**L2 — implicit insertion** (`bench/bench_insert_time.nim`, -d:insertTime):
+1454 calls, **5 loop iterations total** across the suite — 99.7% of calls
+exit on the first `headTy` guard. The loop body (the only stageable part)
+runs 5×/suite; per-call true work is one zonk walk. Building the unrolled
+variant would be theater, so it was measured instead of built, per the
+benchmarking-discipline rule.
+
+**Verdict: vacuity.** Neither collapse (no interpretive overhead between
+levels to remove — L1's dispatch is ~60ns/problem, L2 is a single guard)
+nor resistance (the store doesn't force separation; it is simply *all
+there is* — every level's cost is already residual: store-following
+walks, structural recursion, subst traversals, store writes). A
+Jones-optimal collapse would need the store static, i.e. the whole
+elaboration — exactly #31's BTA boundary. Consequences: don't stage L1/L2
+dispatch; wall-clock work belongs at L3 or whole-program staging (#57);
+`useStagedUnify` stays as a behavior-verified artifact, default off.
 
 ## Corpus findings (2026-10-09)
 

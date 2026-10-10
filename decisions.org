@@ -1447,3 +1447,42 @@
   the gap on the direct side too, but that overlaps #11 (primitive
   machine ints) and changes conversion/proof obligations; recorded as
   the explicit next step, not smuggled in here.
+
+** #63: towers-collapse at L1/L2 — the verdict is vacuity, not collapse or resistance (2026-10-09)
+  Staged L1's dispatch by hand (kind-pair-specialized `unifyStagedImpl`,
+  `useStagedUnify` flag, default off) and measured it against the general
+  `unify` two ways. Micro (-d:release, no instrumentation, synthetic pairs
+  for the corpus's top shapes, agreement-checked incl. error messages):
+  rigid fast paths 1.00-1.03x (noise), fallback paths slower — kind
+  mismatch 0.77x, eta 0.89x, flex-rigid 1.02x — because the kind guard +
+  re-normalization on fallback costs more than the dispatch it replaces.
+  End-to-end (16 example programs, outcomes IDENTICAL incl. the negative
+  test): instrumented cumulative unify 378us general vs 433us staged
+  (0.87x); suite wall 0.01s both modes — unmeasurable.
+  L2 was measured, not built: -d:insertTime over the suite gives 1454
+  insertImplicits calls with 5 loop iterations total — 99.7% of calls exit
+  on the first headTy guard. The loop body (the only thing unrolling could
+  stage) runs 5 times per suite; per-call true work is one zonk walk.
+  The issue asked collapse vs resistance; the measured answer is a third
+  option: vacuity. There is no interpretive overhead *between* the levels
+  to remove — L1's dispatch is a kind case over already-head-normalized
+  terms (~60ns/problem), L2 is a single guard. Both levels' entire cost is
+  already residual: store-following walks (unifyHead/zonkHead/headTy),
+  structural recursion, subst traversals, store writes. Staging the dispatch
+  removes a few comparisons both sides share the cost of — the #53 lesson
+  replayed: name the work each side does, and both sides do the same
+  residual work. A Jones-optimal collapse would require making the *store*
+  static (meta solutions known at staging time), which is the whole
+  elaboration, not a level within it — exactly the boundary #31's BTA
+  computes, as the tower doc predicted.
+  Consequences: (1) do not stage L1/L2 dispatch — measured 1.00x, slight
+  losses on real problems; (2) L1 is ~0.5% and L2 ~0.5% of elaboration
+  wall-clock — even perfect staging is invisible; wall-clock work belongs
+  at L3 or whole-program staging (#57's direction); (3) `useStagedUnify`
+  stays as a behavior-verified experiment artifact, default off.
+  Metrology note: -d:unifyTime's per-call cpuTime() costs ~1.3us in this VM
+  vs ~64ns of actual unify work — 40x instrumentation overhead. Future
+  per-call timing should accumulate coarsely, not per call.
+  No follow-up issue: vacuity means no constraint-store redesign is needed
+  for a second attempt at these levels; the remaining staging direction is
+  L3/whole-program, already tracked.
