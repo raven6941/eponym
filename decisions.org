@@ -1482,3 +1482,44 @@
     (impure op's dynamic version may still return a static value while
     keeping the call residualized) is not implemented; noted for #61
     genlet follow-up.
+* 2026-10-10 — #61 genlet let-insertion: implemented, self-gating, dormant by measurement
+
+  Context: issue #61 asked for genlet-style let-insertion in the
+  relational specializer, ahead of #57's direct-style codegen making
+  residual duplication a bottleneck. Step 1 (measurement) found
+  1.85x/2.26x tree/DAG blowup on staged-typeo residuals, but mostly
+  placeholder atoms — little composite-term duplication.
+  Decision:
+  - Implemented =src/staging/genlet.nim=: a residual post-pass over
+    RelGoal (direct-style on data, not delimited control — same sharing
+    semantics as TDPE/MetaOCaml genlet: P[t]∧Q[t] → fresh g.(g==t)∧P[g]∧Q[g]).
+    Insertion never crosses an rgFresh binder or a disjunction, so no
+    variable is ever lifted out of its scope.
+  - When to insert: a pure savings test, (n-1)*(s-1) - s - 3 > 0, where
+    n = occurrence count and s = term node count. The pass self-gates:
+    on residuals with no real composite duplication it is a no-op.
+  - Effect policy: the ETT fragment staged so far is pure, so
+    let-insertion is always *safe* and purely an optimization. When
+    effectful primitives appear, insertion must be restricted to
+    computations the effect annotation marks duplicable (per the
+    let-insertion concept note's cost section).
+  - Opt-in via =insertLetsIntoSpecs=, not wired into =specializeRelation=
+    by default — no behavior change for existing staged pipelines until
+    a residual shows positive savings.
+  Consequences:
+  - Synthetic benchmark: shared 8-node composite x3 hoisted under one
+    residual let; before/after answer agreement (1 vs 1) confirms
+    α-semantics-preservation; atom-only duplication correctly ignored.
+  - Re-measurement on staged typeo (ty=nat and ty=arr(arr(nat,nat),nat)):
+    0 binders inserted, 176→176 and 271→271 tree nodes — the savings
+    test agrees with step 1's finding. Genlet stays dormant until a
+    residual actually duplicates composite work (the #57 direct-style
+    path on larger fragments, or #20-style unrolling).
+  - Harness =src/staging/measure_duplication.nim= now runs the pass,
+    re-measures, and runs a before/after agreement check on typeo
+    queries — the acceptance-criteria machinery is in place for when
+    duplication appears.
+  Status: CLOSED 2026-10-10 — all acceptance criteria met; the pass is
+  dormant-by-measurement on current residuals (self-gates to no-op)
+  and stays available via insertLetsIntoSpecs for the #57 direct-style
+  path or #20-style unrolling when a residual duplicates composite work.
