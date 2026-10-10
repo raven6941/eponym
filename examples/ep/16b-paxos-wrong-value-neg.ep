@@ -1,0 +1,41 @@
+# Negative test for the Paxos session protocol: accept for the wrong value.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+#
+# The acceptor promises `zero` (so its channel is in state
+# `accS2 zero` = `recvS (AcceptMsg zero) ...`) but then waits for an accept
+# message for `suc zero`. The promised value and the awaited value differ,
+# so conversion fails: `AcceptMsg zero` is not `AcceptMsg (suc zero)`.
+# This is the Paxos value-discipline violation -- accepting a value the
+# acceptor never promised -- caught at compile time.
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+
+data Session : ? where
+| sendS (A : ?) (s : Session) : Session
+| recvS (A : ?) (s : Session) : Session
+| endS : Session
+
+data Chan : Session -> ? where
+| mkChan (s : Session) : Chan s
+
+postulate AcceptMsg : Nat -> ?
+
+proc accS1 : Session =
+  sendS Nat (recvS Nat (sendS Nat endS))
+proc accS2 (v : Nat) : Session =
+  recvS (AcceptMsg v) (sendS Nat endS)
+proc accS3 : Session =
+  sendS Nat endS
+
+postulate sendPromise : Pi (v : Nat). Pi (1 ch : Chan accS1). Sig (t : AcceptMsg v). Chan (accS2 v)
+postulate recvAccept : Pi (v : Nat). Pi (1 ch : Chan (accS2 v)). Sig (m : AcceptMsg v). Chan accS3
+
+# Violation: promise `zero`, then wait for an accept of `suc zero`.
+# Expected error: inferred type (Chan (accS2 zero)) does not match
+# expected type (Chan (accS2 (suc zero))).
+proc badAcceptor (1 ch : Chan accS1) : Sig (m : AcceptMsg (suc zero)). Chan accS3 =
+  let pt = sendPromise zero ch in
+  let ch2 = snd pt in
+  recvAccept (suc zero) ch2
