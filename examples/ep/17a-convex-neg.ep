@@ -1,0 +1,31 @@
+# Negative test for the DCP-checked convex library (Issue #101).
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+#
+# x*x is the classic DCP violation (CVXPY raises DCPError for it): the
+# product of two variables is not certifiably convex. Here `eMul` is in
+# the AST but admits no `Convex` rule, so no certificate exists. The
+# bogus proof below (claiming x^2-of-var certifies x*x) is rejected:
+# `Convex (eSq eVar)` does not convert with `Convex (eMul eVar eVar)`.
+postulate Int : ?
+
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+
+data CExpr : ? where
+| eVar : CExpr
+| eMul (e1 : CExpr) (e2 : CExpr) : CExpr
+| eSq (e : CExpr) : CExpr
+
+data Affine : CExpr -> ? where
+| afVar : Affine eVar
+
+data Convex : CExpr -> ? where
+| cvSq (e : CExpr) (h : Affine e) : Convex (eSq e)
+
+proc minimize (e : CExpr) (h : Convex e) : CExpr = e
+
+# Rejected: there is no DCP rule for eMul, and the offered proof is for
+# eSq eVar, not eMul eVar eVar.
+proc bad : CExpr = minimize (eMul eVar eVar) (cvSq eVar afVar)

@@ -50,6 +50,10 @@ checks it succeeds. These test the elaborator in isolation.
 - **16b-paxos-wrong-value-neg.ep** — Negative test for the Paxos protocol
   (Issue #101): promising `zero` but waiting for an accept of `suc zero`
   is rejected (`Chan (accS2 zero)` vs `Chan (accS2 (suc zero))`).
+- **17a-convex-neg.ep** — Negative test for the DCP-checked convex library
+  (Issue #101): `minimize` of `x*x` with a bogus certificate is rejected
+  (`Convex (eSq eVar)` vs `Convex (eMul eVar eVar)` — `eMul` admits no
+  DCP rule, the classic CVXPY DCPError, here a compile-time error).
 
 ## `embedded/` — Embedded Nim library use
 
@@ -73,6 +77,15 @@ for verified components inside a larger Nim application.
   message sequence to an in-memory transport and runs a full round,
   mirroring the checked roles step by step. Wrong-order and wrong-value
   violations are compile-time errors (see 16a/16b negative tests above).
+- **convex_opt.nim** — Disciplined convex programming as a compile-time
+  check (Issue #101): the DCP rule table (curvature composition rules)
+  as `Affine`/`Convex` proof families over a small expression language;
+  `minimize` demands a `Convex` certificate in the objective position.
+  The example proves `2*(x-3)^2 + x` convex by construction and then
+  optimizes it from Nim with ternary search — a *local* optimizer,
+  licensed by the compile-time convexity proof. Non-DCP objectives
+  (`x*x`) are compile-time errors (see 17a above), where CVXPY would
+  raise DCPError at solve() time.
 
 ### The embedded pattern
 

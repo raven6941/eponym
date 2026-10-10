@@ -1370,11 +1370,14 @@ proc genRedDecls(d: SurfDecl, elimName: string, methodNames: seq[string],
     for p in d.params: sc = mkApp(sc, mkVar(p.name, loc), loc)
     for t in ctor.tele: sc = mkApp(sc, mkVar(t.name, loc), loc)
     lhs = mkApp(lhs, sc, loc)
-    # contractum: method teleVars recCalls...
+    # contractum: method applied to teleVars with each recursive call
+    # immediately after its argument, matching the interleaved method
+    # telescope built by genElimTy (Pi (a) (ih_a) (b) (ih_b) ...).
+    # (A two-loop form -- all args, then all recursive calls -- is only
+    # correct when every recursive argument is trailing.)
     var rhs = mkVar(methodNames[ci], loc)
     for t in ctor.tele:
       rhs = mkApp(rhs, mkVar(t.name, loc), loc)
-    for t in ctor.tele:
       if mentionsFam(t.ty, famName):
         let argIndices = extractIndices(t.ty, famName, d.params.len, ctor.cloc)
         var rec = mkVar(elimName, loc)
