@@ -44,7 +44,8 @@ proc client (1 ch : Chan (sendS Nat endS)) : Chan endS =
 # test, run by tests/run_examples.nim):
 #   15b-session-types-neg.ep — double-send (linearity)
 #   15c-session-types-neg.ep — recv before send (wrong order)
-#   15d-session-types-neg.ep — send on a closed channel
+#   15d-session-types-neg.ep — send on a closed channel (protocol state)
+#   15e-session-types-neg.ep — use after close (linearity)
 #
 # Violation 1: recv before send (wrong order)
 # proc badClient1 (1 ch : Chan (sendS Nat endS)) : Sig (x : Nat). Chan endS =
