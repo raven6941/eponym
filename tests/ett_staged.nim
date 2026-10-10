@@ -35,6 +35,7 @@
 
 import std/tables
 import ett
+import preterm  # Quantity/q0/q1/qOmega (Issue #94: erasure-aware staging)
 
 # --- Residual IR nodes for ETT (the residual *code*; ETT formers only) ---
 
@@ -51,7 +52,10 @@ type
     enkPrim,                     # primitive operator application (residual)
     enkLet                       # let-inserted residual (effect escape hatch)
 
-  SValKind* = enum svStatic, svStaticLam, svDynamic
+  SValKind* = enum svStatic, svStaticLam, svDynamic, svErased
+    ## svErased (Issue #94): the staging-time stand-in for a 0-quantity-bound
+    ## variable. It must never flow into residual code: every residual
+    ## constructor rejects it loudly via checkNotErased.
 
   ETTNode* = ref object
     case kind*: ETTNodeKind
@@ -63,6 +67,10 @@ type
       domNode*: SVal
       bindName*: string
       bodyNode*: proc(x: SVal): SVal
+      qty*: Quantity  # Issue #94: binder quantity; q0 term binders are
+                      # dropped at residualization (enkLam). enkPi/enkSigma
+                      # keep the binder (dependency may mention it; types
+                      # are not runtime code).
     of enkPair:
       fstN*, sndN*: SVal
     of enkFst, enkSnd, enkAbsurd:
@@ -86,8 +94,11 @@ type
       val*: Value                  # known at staging time
     of svStaticLam:
       body*: proc(x: SVal): SVal   # staging-time function
+      lamQty*: Quantity            # Issue #94: binder quantity
     of svDynamic:
       node*: ETTNode                # residual IR (ETT formers only)
+    of svErased:
+      discard                       # marker only; no payload
 
 var betaCount* = 0
   ## Staging-time beta-reductions performed. A measure of static work
@@ -106,8 +117,24 @@ proc dynamicVar*(name: string): SVal =
   ## A dynamic (runtime-known) variable: the residual input.
   SVal(kind: svDynamic, node: ETTNode(kind: enkVar, varName: name))
 
-proc staticLam*(b: proc(x: SVal): SVal): SVal =
-  SVal(kind: svStaticLam, body: b)
+proc staticLam*(b: proc(x: SVal): SVal, qty = qOmega): SVal =
+  SVal(kind: svStaticLam, body: b, lamQty: qty)
+
+proc erasedSVal*(): SVal =
+  ## The staging-time stand-in for a 0-quantity-bound variable (Issue #94).
+  SVal(kind: svErased)
+
+proc isErased*(s: SVal): bool =
+  s.kind == svErased
+
+proc checkNotErased(s: SVal, ctx: string) =
+  ## Boundary check (Issue #94, step 3): an erased binder must never appear
+  ## in residualized code. A violation means the quantity checker certified
+  ## a variable absent at runtime that the staging-time program actually
+  ## residualized — surfaced loudly, never silenced.
+  if s.kind == svErased:
+    raise newException(ValueError,
+      "erasure violation (Issue #94): 0-quantity binder flows into " & ctx)
 
 proc resetBetaCount*() =
   betaCount = 0
@@ -124,44 +151,76 @@ proc stagedSym*(): Sym[SVal] =
     cPi: proc(dom: SVal, cod: proc(x: SVal): SVal): SVal =
       # Types are residualized: stage the family against a fresh dynamic
       # variable. The domain keeps its staging info (may stay static).
+      checkNotErased(dom, "cPi domain")
       let x = dynamicVar(freshVar("pi"))
       SVal(kind: svDynamic, node: ETTNode(kind: enkPi, domNode: dom,
-        bindName: x.node.varName, bodyNode: cod)),
+        bindName: x.node.varName, bodyNode: cod, qty: qOmega)),
 
     cLam: proc(dom: SVal, body: proc(x: SVal): SVal): SVal =
       # Always a staging-time function: application beta-reduces now.
       # (The domain annotation is irrelevant for staging; it matters for
       # checking, which happens before staging.)
+      checkNotErased(dom, "cLam domain")
       staticLam(body),
 
     cApp: proc(f, a: SVal): SVal =
       # The key rule: staging-time beta-reduction.
+      checkNotErased(f, "function position of cApp")
       case f.kind
       of svStaticLam:
         inc betaCount
-        f.body(a)
+        if f.lamQty == q0:
+          # Erasure (Issue #94): the argument is dropped at staging time —
+          # never staged, never residualized. The body runs against the
+          # erased marker; any attempt to residualize it raises loudly.
+          # (Sound for the pure core; an effectful #79 argument would lose
+          # its effect — the elaborator must not pass those to q0 binders.)
+          f.body(erasedSVal())
+        else:
+          f.body(a)
       of svStatic:
         if a.kind == svStatic and f.val.kind == vkLam:
           inc betaCount
           staticVal(f.val.body(a.val))
         else:
+          checkNotErased(a, "residual application argument")
           SVal(kind: svDynamic,
             node: ETTNode(kind: enkApp, fn: f, arg: a))
       of svDynamic:
-        SVal(kind: svDynamic, node: ETTNode(kind: enkApp, fn: f, arg: a)),
+        if f.node.kind == enkLam:
+          # Residual redex (Issue #94): beta-reduce at staging time (HOAS —
+          # just supply the argument SVal). A q0 binder drops the argument
+          # from the residual: the call-site half of the issue's step 2.
+          inc betaCount
+          if f.node.qty == q0:
+            f.node.bodyNode(erasedSVal())
+          else:
+            checkNotErased(a, "residual application argument")
+            f.node.bodyNode(a)
+        else:
+          checkNotErased(a, "residual application argument")
+          SVal(kind: svDynamic,
+            node: ETTNode(kind: enkApp, fn: f, arg: a))
+      of svErased:
+        raise newException(ValueError,
+          "unreachable: erased function (checked above)"),
 
     cSigma: proc(dom: SVal, cod: proc(x: SVal): SVal): SVal =
+      checkNotErased(dom, "cSigma domain")
       let x = dynamicVar(freshVar("sig"))
       SVal(kind: svDynamic, node: ETTNode(kind: enkSigma, domNode: dom,
-        bindName: x.node.varName, bodyNode: cod)),
+        bindName: x.node.varName, bodyNode: cod, qty: qOmega)),
 
     cPair: proc(a, b: SVal): SVal =
       if a.kind == svStatic and b.kind == svStatic:
         staticVal(Value(kind: vkPair, fstV: a.val, sndV: b.val))
       else:
+        checkNotErased(a, "cPair first component")
+        checkNotErased(b, "cPair second component")
         SVal(kind: svDynamic, node: ETTNode(kind: enkPair, fstN: a, sndN: b)),
 
     cFst: proc(p: SVal): SVal =
+      checkNotErased(p, "cFst")
       case p.kind
       of svStatic:
         if p.val.kind == vkPair: staticVal(p.val.fstV)
@@ -170,9 +229,13 @@ proc stagedSym*(): Sym[SVal] =
         if p.node.kind == enkPair: p.node.fstN  # staging-time projection
         else: SVal(kind: svDynamic, node: ETTNode(kind: enkFst, subN: p))
       of svStaticLam:
-        SVal(kind: svDynamic, node: ETTNode(kind: enkFst, subN: p)),
+        SVal(kind: svDynamic, node: ETTNode(kind: enkFst, subN: p))
+      of svErased:
+        raise newException(ValueError,
+          "unreachable: erased value (checked above)"),
 
     cSnd: proc(p: SVal): SVal =
+      checkNotErased(p, "cSnd")
       case p.kind
       of svStatic:
         if p.val.kind == vkPair: staticVal(p.val.sndV)
@@ -181,11 +244,75 @@ proc stagedSym*(): Sym[SVal] =
         if p.node.kind == enkPair: p.node.sndN  # staging-time projection
         else: SVal(kind: svDynamic, node: ETTNode(kind: enkSnd, subN: p))
       of svStaticLam:
-        SVal(kind: svDynamic, node: ETTNode(kind: enkSnd, subN: p)),
+        SVal(kind: svDynamic, node: ETTNode(kind: enkSnd, subN: p))
+      of svErased:
+        raise newException(ValueError,
+          "unreachable: erased value (checked above)"),
 
     cAbsurd: proc(z: SVal): SVal =
+      checkNotErased(z, "cAbsurd")
       SVal(kind: svDynamic, node: ETTNode(kind: enkAbsurd, subN: z)),
   )
+
+# --- Quantity-annotated staging (Issue #94) ---
+##
+## Explicit binder quantities for the staged layer. The shared Sym[R]
+## interface stays quantity-free; programs that want erasure use these
+## staged-layer constructors directly ("behind annotations"; quantity
+## inference is Issue #84).
+
+proc cLamQ*(dom: SVal, qty: Quantity, body: proc(x: SVal): SVal): SVal =
+  ## Quantity-annotated lambda. A q0 binder is erased: cApp drops the
+  ## argument at staging time (staging it against the erased marker), and
+  ## reifyLam drops the binder from the residual.
+  checkNotErased(dom, "cLamQ domain")
+  staticLam(body, qty)
+
+proc cPiQ*(dom: SVal, qty: Quantity, cod: proc(x: SVal): SVal): SVal =
+  ## Quantity-annotated Pi. The qty is recorded on the residual type node;
+  ## the binder is KEPT even for q0: the codomain is a type and may mention
+  ## the variable (dependency) — types are not runtime code, so erasure
+  ## does not drop them. Term-level erasure is cLamQ/reifyLam.
+  checkNotErased(dom, "cPiQ domain")
+  let x = dynamicVar(freshVar("pi"))
+  SVal(kind: svDynamic, node: ETTNode(kind: enkPi, domNode: dom,
+    bindName: x.node.varName, bodyNode: cod, qty: qty))
+
+proc cSigmaQ*(dom: SVal, qty: Quantity, cod: proc(x: SVal): SVal): SVal =
+  ## Quantity-annotated Sigma (same policy as cPiQ).
+  checkNotErased(dom, "cSigmaQ domain")
+  let x = dynamicVar(freshVar("sig"))
+  SVal(kind: svDynamic, node: ETTNode(kind: enkSigma, domNode: dom,
+    bindName: x.node.varName, bodyNode: cod, qty: qty))
+
+proc reifyLam*(s: SVal, dom: SVal): SVal =
+  ## NbE-style reification: turn a staging-time function into a residual
+  ## enkLam node. This is what makes enkLam — previously never produced —
+  ## real: it is the residual a higher-order or unapplied staged function
+  ## leaves behind. A q0 binder is dropped from the residual: the body is
+  ## staged once, eagerly, against the erased marker (so a boundary
+  ## violation raises here, at reification time), and the node carries no
+  ## binder name.
+  checkNotErased(dom, "reifyLam domain")
+  checkNotErased(s, "reifyLam")
+  case s.kind
+  of svStaticLam:
+    let q = s.lamQty
+    let b = s.body
+    if q == q0:
+      let stagedBody = b(erasedSVal())  # raises loudly on misuse
+      SVal(kind: svDynamic, node: ETTNode(kind: enkLam, domNode: dom,
+        bindName: "", bodyNode: proc(x: SVal): SVal = stagedBody, qty: q))
+    else:
+      # bodyNode threads its argument: reification stages b against the
+      # named variable, and a residual redex (cApp on this node) beta-
+      # reduces by supplying the actual argument SVal.
+      let nm = freshVar("lam")
+      SVal(kind: svDynamic, node: ETTNode(kind: enkLam, domNode: dom,
+        bindName: nm, bodyNode: b, qty: q))
+  else:
+    raise newException(ValueError,
+      "reifyLam: expected a staging-time function (svStaticLam)")
 
 # --- Online primitive operators (GH #79) ---
 ##
@@ -270,12 +397,14 @@ proc arithSimp*(name: string, args: seq[SVal]): SVal =
   nil
 
 proc primNode(name: string, args: seq[SVal]): SVal =
+  for a in args: checkNotErased(a, "primitive '" & name & "' argument")
   SVal(kind: svDynamic,
     node: ETTNode(kind: enkPrim, opName: name, primArgs: args))
 
 proc letInsert*(s: SVal): SVal =
   ## Name a residual computation: `let x = s in x`. The residual keeps
   ## the call ordered and shared (the local counterpart of #61 genlet).
+  checkNotErased(s, "letInsert")
   if s.kind == svDynamic and s.node.kind == enkPrim:
     let nm = freshVar("p")
     SVal(kind: svDynamic,
@@ -358,8 +487,18 @@ proc evalSVal*(s: SVal, env: Table[string, Value]): Value =
     # Reify the staging-time function as a host closure over Values.
     let b = s.body
     let e = env
-    Value(kind: vkLam, body: proc(x: Value): Value =
-      evalSVal(b(staticVal(x)), e))
+    let q = s.lamQty
+    if q == q0:
+      # Erased binder (Issue #94): the residual closure takes no meaningful
+      # argument; the body was already staged against the marker.
+      Value(kind: vkLam, body: proc(x: Value): Value =
+        evalSVal(b(erasedSVal()), e))
+    else:
+      Value(kind: vkLam, body: proc(x: Value): Value =
+        evalSVal(b(staticVal(x)), e))
+  of svErased:
+    raise newException(ValueError,
+      "erasure violation (Issue #94): erased value reached residual evaluation")
   of svDynamic:
     let n = s.node
     case n.kind
@@ -375,10 +514,16 @@ proc evalSVal*(s: SVal, env: Table[string, Value]): Value =
       let e = env
       let bn = n.bindName
       let bb = n.bodyNode
-      Value(kind: vkLam, body: proc(x: Value): Value =
-        var e2 = e
-        e2[bn] = x
-        evalSVal(bb(staticVal(x)), e2))
+      if n.qty == q0:
+        # Erased binder (Issue #94): no binder in the residual; the body
+        # was staged against the marker. The closure ignores its argument.
+        Value(kind: vkLam, body: proc(x: Value): Value =
+          evalSVal(bb(erasedSVal()), e))
+      else:
+        Value(kind: vkLam, body: proc(x: Value): Value =
+          var e2 = e
+          e2[bn] = x
+          evalSVal(bb(staticVal(x)), e2))
     of enkPi:
       let d = evalSVal(n.domNode, env)
       let e = env
@@ -427,6 +572,12 @@ proc evalSVal*(s: SVal, env: Table[string, Value]): Value =
 # avoid overload/tuple-`$` ambiguity) ---
 
 proc ppSVal(s: SVal, depth: int): string
+proc qtyTag(q: Quantity): string =
+  ## Suffix showing the threaded binder quantity (Issue #94).
+  case q
+  of q0: ":q0"
+  of q1: ":q1"
+  of qOmega: ""
 proc ppNode(n: ETTNode, depth: int): string =
   if depth > 8: return "..."
   case n.kind
@@ -436,9 +587,18 @@ proc ppNode(n: ETTNode, depth: int): string =
   of enkStar: "*"
   of enkEmpty: "0"
   of enkApp: "(" & ppSVal(n.fn, depth+1) & " " & ppSVal(n.arg, depth+1) & ")"
-  of enkLam: "(lam [" & n.bindName & "] " & ppSVal(n.bodyNode(dynamicVar(n.bindName)), depth+1) & ")"
-  of enkPi: "(Pi [" & n.bindName & "] " & ppSVal(n.bodyNode(dynamicVar(n.bindName)), depth+1) & ")"
-  of enkSigma: "(Sig [" & n.bindName & "] " & ppSVal(n.bodyNode(dynamicVar(n.bindName)), depth+1) & ")"
+  of enkLam:
+    # A q0 binder is dropped from the residual: no binder name printed.
+    let bnd = if n.qty == q0: "[]" else: "[" & n.bindName & "]"
+    let argS = if n.qty == q0: erasedSVal() else: dynamicVar(n.bindName)
+    "(lam" & qtyTag(n.qty) & " " & bnd & " " &
+      ppSVal(n.bodyNode(argS), depth+1) & ")"
+  of enkPi:
+    "(Pi" & qtyTag(n.qty) & " [" & n.bindName & "] " &
+      ppSVal(n.bodyNode(dynamicVar(n.bindName)), depth+1) & ")"
+  of enkSigma:
+    "(Sig" & qtyTag(n.qty) & " [" & n.bindName & "] " &
+      ppSVal(n.bodyNode(dynamicVar(n.bindName)), depth+1) & ")"
   of enkPair: "(pair " & ppSVal(n.fstN, depth+1) & " " & ppSVal(n.sndN, depth+1) & ")"
   of enkFst: "(fst " & ppSVal(n.subN, depth+1) & ")"
   of enkSnd: "(snd " & ppSVal(n.subN, depth+1) & ")"
@@ -456,7 +616,10 @@ proc ppSVal(s: SVal, depth: int): string =
   if depth > 8: return "..."
   case s.kind
   of svStatic: "static(" & $s.val.kind & ")"
-  of svStaticLam: "<slam>"
+  of svStaticLam: "<slam" & qtyTag(s.lamQty) & ">"
+  of svErased:
+    raise newException(ValueError,
+      "erasure violation (Issue #94): erased value reached the printer")
   of svDynamic: ppNode(s.node, depth)
 
 proc `$`*(s: SVal): string = ppSVal(s, 0)
@@ -467,13 +630,20 @@ proc countNodes*(s: SVal): int =
   case s.kind
   of svStatic: 0
   of svStaticLam: 0
+  of svErased:
+    raise newException(ValueError,
+      "erasure violation (Issue #94): erased value reached countNodes")
   of svDynamic:
     let n = s.node
     case n.kind
     of enkVar, enkTt, enkUnit, enkStar, enkEmpty: 1
     of enkApp: 1 + countNodes(n.fn) + countNodes(n.arg)
     of enkLam, enkPi, enkSigma:
-      1 + countNodes(n.domNode) + countNodes(n.bodyNode(dynamicVar(n.bindName)))
+      # A q0 enkLam body was staged against the marker and ignores its
+      # argument; pass the marker (never counted — bodyNode drops it).
+      let argS = if n.kind == enkLam and n.qty == q0: erasedSVal()
+                 else: dynamicVar(n.bindName)
+      1 + countNodes(n.domNode) + countNodes(n.bodyNode(argS))
     of enkPair: 1 + countNodes(n.fstN) + countNodes(n.sndN)
     of enkFst, enkSnd, enkAbsurd: 1 + countNodes(n.subN)
     of enkNat: 1
