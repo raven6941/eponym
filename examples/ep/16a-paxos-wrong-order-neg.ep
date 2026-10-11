@@ -1,16 +1,16 @@
-# Negative test for the Paxos session protocol: receive before send.
+# Negative test for dependent-session Paxos: receive before send.
 # Negative tests (files named *-neg.ep) are expected to raise ElabError;
 # tests/run_examples.nim verifies the rejection.
 #
 # A proposer that tries to receive the promise before sending prepare is
-# rejected: the channel is in `propS0` (send-state) but `recvPromise`
-# demands `propS1` (recv-state). The session indices are distinct
-# constructors, so conversion fails.
+# rejected: the channel is in `propProto` (sendD-state) but `recvPromise`
+# demands the after-prepare state. The session terms are distinct
+# (sendD vs recvD head constructors), so conversion fails.
 # import nat
 
 data Session : ? where
-| sendS (A : ?) (s : Session) : Session
-| recvS (A : ?) (s : Session) : Session
+| sendD (A : ?) (k : A -> Session) : Session
+| recvD (A : ?) (k : A -> Session) : Session
 | endS : Session
 
 data Chan : Session -> ? where
@@ -18,18 +18,20 @@ data Chan : Session -> ? where
 
 postulate AcceptMsg : Nat -> ?
 
-proc propS0 : Session =
-  sendS Nat (recvS Nat (sendS Nat (recvS Nat endS)))
-proc propS1 : Session =
-  recvS Nat (sendS Nat (recvS Nat endS))
-proc propS2 : Session =
-  sendS Nat (recvS Nat endS)
+proc propAfterAccept (a : Nat) : Session = endS
+proc propAfterPromise (pr : Sig (v : Nat). AcceptMsg v) : Session =
+  sendD (AcceptMsg (fst pr)) (lam (t : AcceptMsg (fst pr)). recvD Nat propAfterAccept)
+proc propAfterPrepare (n : Nat) : Session =
+  recvD (Sig (v : Nat). AcceptMsg v) propAfterPromise
+proc propProto : Session =
+  sendD Nat propAfterPrepare
 
-postulate sendPrepare : Pi (1 ch : Chan propS0). Pi (n : Nat). Chan propS1
-postulate recvPromise : Pi (1 ch : Chan propS1). Sig (pr : Sig (v : Nat). AcceptMsg v). Chan propS2
+postulate sendPrepare : Pi (ch : Chan propProto). Pi (n : Nat). Chan (propAfterPrepare n)
+postulate recvPromise : Pi (n : Nat). Pi (ch : Chan (propAfterPrepare n)).
+  Sig (pr : Sig (v : Nat). AcceptMsg v). Chan (propAfterPromise pr)
 
 # Violation: promise received before prepare is sent.
-# Expected error: inferred type (Chan propS0) does not match expected
-# type (Chan propS1).
-proc badProposer (1 ch : Chan propS0) : Sig (pr : Sig (v : Nat). AcceptMsg v). Chan propS2 =
-  recvPromise ch
+# Expected error: inferred type (Chan propProto) does not match expected
+# type (Chan (propAfterPrepare n)).
+proc badProposer (ch : Chan propProto) : Sig (pr : Sig (v : Nat). AcceptMsg v). Chan (propAfterPromise pr) =
+  recvPromise zero ch

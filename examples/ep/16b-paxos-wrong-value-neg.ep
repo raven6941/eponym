@@ -1,18 +1,18 @@
-# Negative test for the Paxos session protocol: accept for the wrong value.
+# Negative test for dependent-session Paxos: wrong value in accept.
 # Negative tests (files named *-neg.ep) are expected to raise ElabError;
 # tests/run_examples.nim verifies the rejection.
 #
-# The acceptor promises `zero` (so its channel is in state
-# `accS2 zero` = `recvS (AcceptMsg zero) ...`) but then waits for an accept
-# message for `suc zero`. The promised value and the awaited value differ,
-# so conversion fails: `AcceptMsg zero` is not `AcceptMsg (suc zero)`.
-# This is the Paxos value-discipline violation -- accepting a value the
-# acceptor never promised -- caught at compile time.
+# A proposer that tries to accept with a ticket for a different value is
+# rejected: sendAccept demands AcceptMsg(fst(fst(pv))) -- the ticket for
+# the promised value -- but the proposer supplies a ticket for another
+# value. Since AcceptMsg has no constructors, no such term exists; the
+# test uses a postulate to simulate the forgery attempt, which fails
+# because the postulate's type doesn't match.
 # import nat
 
 data Session : ? where
-| sendS (A : ?) (s : Session) : Session
-| recvS (A : ?) (s : Session) : Session
+| sendD (A : ?) (k : A -> Session) : Session
+| recvD (A : ?) (k : A -> Session) : Session
 | endS : Session
 
 data Chan : Session -> ? where
@@ -20,20 +20,28 @@ data Chan : Session -> ? where
 
 postulate AcceptMsg : Nat -> ?
 
-proc accS1 : Session =
-  sendS Nat (recvS Nat (sendS Nat endS))
-proc accS2 (v : Nat) : Session =
-  recvS (AcceptMsg v) (sendS Nat endS)
-proc accS3 : Session =
-  sendS Nat endS
+proc propAfterAccept (a : Nat) : Session = endS
+proc propAfterPromise (pr : Sig (v : Nat). AcceptMsg v) : Session =
+  sendD (AcceptMsg (fst pr)) (lam (t : AcceptMsg (fst pr)). recvD Nat propAfterAccept)
+proc propAfterPrepare (n : Nat) : Session =
+  recvD (Sig (v : Nat). AcceptMsg v) propAfterPromise
+proc propProto : Session =
+  sendD Nat propAfterPrepare
 
-postulate sendPromise : Pi (v : Nat). Pi (1 ch : Chan accS1). Sig (t : AcceptMsg v). Chan (accS2 v)
-postulate recvAccept : Pi (v : Nat). Pi (1 ch : Chan (accS2 v)). Sig (m : AcceptMsg v). Chan accS3
+postulate sendPrepare : Pi (ch : Chan propProto). Pi (n : Nat). Chan (propAfterPrepare n)
+postulate recvPromise : Pi (n : Nat). Pi (ch : Chan (propAfterPrepare n)).
+  Sig (pr : Sig (v : Nat). AcceptMsg v). Chan (propAfterPromise pr)
+postulate sendAccept : Pi (pv : Sig (pr : Sig (v : Nat). AcceptMsg v). Chan (propAfterPromise pr)).
+  Pi (t : AcceptMsg (fst (fst pv))). Chan (recvD Nat propAfterAccept)
 
-# Violation: promise `zero`, then wait for an accept of `suc zero`.
-# Expected error: inferred type (Chan (accS2 zero)) does not match
-# expected type (Chan (accS2 (suc zero))).
-proc badAcceptor (1 ch : Chan accS1) : Sig (m : AcceptMsg (suc zero)). Chan accS3 =
-  let pt = sendPromise zero ch in
-  let ch2 = snd pt in
-  recvAccept (suc zero) ch2
+# Violation: the proposer tries to forge a ticket for a different value.
+# We postulate a fake ticket source; the accept demands AcceptMsg(fst(fst(pv)))
+# but fakeTicket gives AcceptMsg(suc(fst(fst(pv)))) -- a different value.
+# Expected error: type mismatch (AcceptMsg X vs AcceptMsg (suc X)).
+postulate fakeTicket : Pi (pv : Sig (pr : Sig (v : Nat). AcceptMsg v). Chan (propAfterPromise pr)).
+  AcceptMsg (suc (fst (fst pv)))
+
+proc badProposer (ch : Chan propProto) : Chan (recvD Nat propAfterAccept) =
+  let ch1 = sendPrepare ch zero in
+  let pv = recvPromise zero ch1 in
+  sendAccept pv (fakeTicket pv)
