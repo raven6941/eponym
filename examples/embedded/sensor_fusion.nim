@@ -9,7 +9,8 @@
 # - `dot3` builds two `Vec Int three`s, proving arity matches.
 #
 # Nim-friendly forms used here (with Eponym equivalents):
-# - `ettBlock:` — block macro, no """ string (vs ettEmbed"""...""")
+# - `ettBlock:` — block macro, no """ string: the single embedding form
+#   (the old ettEmbed"""...""" string form was dropped in Issue #115)
 # - `proc` — Nim keyword (Eponym string syntax also uses `proc` now, was `def`)
 # - `=` — Nim definition (was `:=` in old Eponym syntax)
 # - `postulate(Int, Univ)` — call syntax; `Univ` stands for `?` (`?` isn't valid Nim)
@@ -50,9 +51,11 @@ ettBlock:
 
   # `proc` not `def`; `=` not `:=` — matches Nim.
   # Integer literals for Nat: write `3`, not `suc(suc(suc(zero())))`.
-  # The ettBlock macro converts them to unary; the elaborator never
-  # needs to manually reify — mkNatLit handles it in one place.
-  # (In ettBlock, int literals are Nat; for primitive Int, use string syntax.)
+  # Literals overload against the expected type (Issue #115): `3` in a
+  # Nat position elaborates as a Nat literal, in an Int position (e.g.
+  # `addInt(mulInt(2, x), 3)`) as a primitive Int literal — the same
+  # semantics as string syntax. (Exception: `1` is the unit type in
+  # surface syntax, so the Nat literal one is written `suc(zero())`.)
 
   # Build a 3-element vector. Return type `Vec(Int, 3)` uses Nat literal.
   # The body constructs 3 `cons` cells with Nat literal indices.

@@ -1746,3 +1746,43 @@
   (suc(n)==suc(zero) infers n:=zero, conflicts prune — corpus passes;
   no benchmark regression; measured delta on real residuals with
   wall-clock; this entry).
+
+* 2026-10-10 — Drop the string-embedding form; numerals in the core's conversion (Issue #115, fixes #8)
+
+  Aaron: Eponym code should parse and be valid Nim code — the
+  =ettEmbed"""..."""= string form is dropped; =ettBlock= is the single
+  embedding form. Converted =examples/embedded/convex_opt.nim= and
+  =convex_opt_vec.nim= (the DCP demos) to =ettBlock=; removed the
+  =ettEmbed= macro.
+
+  The conversion forced two deeper fixes:
+
+  1. =ettBlock= integer literals are now passed through verbatim and
+     overloaded by the elaborator's =checkTm= (Nat vs primitive Int from
+     the expected type) — the same semantics as string syntax. The old
+     macro generated Nat suc-chains for every literal, which made
+     primitive-=Int= literals (e.g. =eConst 3=) inexpressible. This is
+     the "better macro integration" option from Issue #8, which is now
+     closed: nested literals (=cons(Int, 2, a, ...)=, =mulInt(2, x)=)
+     elaborate per their expected type. Caveat: =1= lexes as the *unit
+     type* in surface syntax (QTT), so the macro spells the Nat literal
+     one as =(suc zero)=, exactly as string syntax must.
+
+  2. The core's conversion now equates =wNatLit(k)= with =suc=-chains.
+     The elaborator's canonical numeral is =tNatLit= (O(1), Issue #93)
+     and its =defaultConv= already expands literals against chains —
+     but the core's independent re-check compared literals only to
+     literals, so =Vec Int (suc 2)= (from =cons='s result type) vs
+     =Vec Int 3= (declared) was rejected after the elaborator accepted
+     it. =structuralEq= now peels =wNatLit(k)= against chains, verifying
+     the actual =suc=/=zero= refIds (registered by the elaborator on the
+     =Supply= when =data Nat= is declared — carried on the supply, not a
+     module global, so it works under compile-time macro evaluation).
+     No well-typedness assumption is needed; while unregistered,
+     comparison stays strict. An earlier attempt (expanding literals to
+     chains for the core check) was abandoned: it broke consistency with
+     globals' stored literal types, and collapsing chains to literals
+     would have broken evaluation (eliminators scrutinize constructor
+     shapes). Full CI matrix green, warning-clean; negative .ep tests
+     (incl. the DCP-violation files) still reject.
+  Status: CLOSED 2026-10-10 via PR (squash-merge).

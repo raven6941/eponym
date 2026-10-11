@@ -49,20 +49,17 @@ proc nimExprToEponym(n: NimNode): string =
     if s == "vecnil": s = "nil"
     if s == "Univ": "?" else: s
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
-    # In ettBlock, integer literals in term position are assumed to be Nat.
-    # Generate suc chain directly; the elaborator's mkNatLit now emits the
-    # O(1) primitive tNatLit instead (Issue #93), but surface chains still
-    # elaborate and stay definitionally equal to literals via defaultConv's
-    # expansion fallback. Generating the chain here avoids issues with
-    # nested positions in the current implementation.
-    # For primitive Int literals, use string syntax (ett"""...""") instead.
+    # In ettBlock, integer literals are passed through verbatim and
+    # overloaded by the elaborator (checkTm pkInt: Nat when the expected
+    # type is Nat, primitive Int when it is Int) -- the same semantics
+    # as string syntax. This also resolves Issue #8: nested literals in
+    # ettBlock bodies (e.g. cons(Int, 2, a, ...), eConst 3) now elaborate
+    # per their expected type instead of always becoming Nat suc-chains.
+    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so
+    # the Nat literal one is spelled `suc zero` here (as in string syntax).
     let v = n.intVal
-    if v < 0: error("negative Nat literal", n)
-    var res = "zero"
-    for i in 1..v:
-      res = "suc (" & res & ")"
-    # Paren if nested, to ensure correct grouping
-    "(" & res & ")"
+    if v < 0: error("negative integer literal", n)
+    if v == 1: "(suc zero)" else: $v
   of nnkStmtList:
     # Proc body: convert let-statements to nested let...in, final expr is body
     if n.len == 0: error("ettBlock: empty proc body", n)
@@ -126,15 +123,14 @@ proc nimTypeToEponym(n: NimNode): string =
     let s = $n
     if s == "Univ": "?" else: s
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
-    # Integer literal in type position: assume Nat, generate suc chain.
-    # (In term position, nimExprToEponym handles it via elaborator overloading.)
-    # Do NOT wrap in parens here; the caller (nnkCall) will paren if needed.
+    # Integer literal in type position: passed through verbatim; the
+    # elaborator overloads it against the expected type (Nat or Int),
+    # exactly as in string syntax (Issues #8, #115).
+    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so
+    # the Nat literal one is spelled `suc zero` (as in string syntax).
     let v = n.intVal
-    if v < 0: error("negative Nat literal in type", n)
-    var res = "zero"
-    for i in 1..v:
-      res = "suc (" & res & ")"
-    res
+    if v < 0: error("negative integer literal in type", n)
+    if v == 1: "(suc zero)" else: $v
   of nnkCall:
     # Vec(Int, three) -> Vec Int three (paren nested calls)
     # For zero-arg calls like zero(), just return head (no parens needed)
@@ -286,7 +282,8 @@ macro ettBlock*(body: untyped): untyped =
   ## in proc/data params emit `(1 ch : ...)` / `(0 ch : ...)` binders.
   ## Dependent Pi/Sigma types: Pi(x: A, y {.linear.}: B, C),
   ## Sig(x: A, B), Sig(A, B).
-  ## Generates wrapper procs like ettEmbed.
+  ## Generates wrapper procs (each `def : Int -> ... -> Int` becomes a
+  ## callable Nim proc via ett_embed.callIntFunc).
   let src = blockToEponym(body)
   var defs: seq[ElabDef]
   try:
@@ -318,39 +315,6 @@ macro ett*(src: string): untyped =
   except ParseError as e:
     error("ett parse error: " & e.msg, src)
   result = newStmtList()
-
-macro ettEmbed*(src: string): untyped =
-  ## Elaborate a surface program at compile time and generate Nim
-  ## wrapper procs for each `def`, so Nim code can call elaborated
-  ## definitions (each wrapper takes varargs[int] and returns int).
-  ##
-  ## Each wrapper has the form:
-  ##   proc name*(args: varargs[int]): int =
-  ##     callIntFunc("<source>", "name", @args)
-  ##
-  ## The elaborated terms are re-obtained at runtime via the
-  ## definition cache (compile-time elaboration ensures well-typedness).
-  let s = src.strVal
-  var defs: seq[ElabDef]
-  try:
-    defs = elabCheck(s)
-  except ElabError as e:
-    error("ettEmbed elaboration error: " & e.msg, src)
-  except ParseError as e:
-    error("ettEmbed parse error: " & e.msg, src)
-  
-  result = newStmtList()
-  # Note: the generated procs call callIntFunc, which must be
-  # imported by the user: `import ett_embed` before using ettEmbed.
-  
-  for d in defs:
-    let procName = ident(d.name)
-    let srcLit = newLit(s)
-    let nameLit = newLit(d.name)
-    result.add(quote do:
-      proc `procName`*(args: varargs[int]): int =
-        callIntFunc(`srcLit`, `nameLit`, @args)
-    )
 
 when isMainModule:
   ett"""

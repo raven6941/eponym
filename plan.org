@@ -68,6 +68,10 @@
   =structuralEq= =areEqual= (the paper's Checking-monad threading); core is
   now reentrant. Details in decisions.org.
 
+  Note (2026-10-10, Issue #115): the =ettEmbed"""..."""= string form was
+  dropped; =ettBlock= is now the single embedding form (Eponym code is
+  valid Nim code). The wrapper-proc mechanism is unchanged.
+
   References: =ett_init.nim= (=infer=); [[https://github.com/raven6941/notes/blob/main/staging.org][staging]];
   [[https://github.com/raven6941/notes/blob/main/turnstile.org][Turnstile]] §2.
 
