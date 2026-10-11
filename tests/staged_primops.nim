@@ -10,7 +10,7 @@
 ## - benchmark vs the fixed offline policy (applyPrimFixed)
 
 import std/[tables, times, strutils]
-import ett
+import eponym
 import ett_staged
 
 type ApplyFn = proc(name: string, args: seq[SVal]): SVal

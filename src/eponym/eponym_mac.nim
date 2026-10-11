@@ -368,21 +368,21 @@ macro eponymBlock*(body: untyped): untyped =
         callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @args)
     )
 
-macro ett*(src: string): untyped =
+macro eponym*(src: string): untyped =
   ## Elaborate and typecheck a surface program at compile time.
   ## On success expands to nothing; on failure compilation stops with an
-  ## error pointing at the ett"..." literal.
+  ## error pointing at the eponym"..." literal.
   let s = src.strVal  # src is a string literal (enforced by the signature)
   try:
     discard elabCheck(s)
   except ElabError as e:
-    error("ett elaboration error: " & e.msg, src)
+    error("eponym elaboration error: " & e.msg, src)
   except ParseError as e:
-    error("ett parse error: " & e.msg, src)
+    error("eponym parse error: " & e.msg, src)
   result = newStmtList()
 
 when isMainModule:
-  ett"""
+  eponym"""
 proc twice (A : ?) (f : A -> A) (x : A) : A =
   f (f x)
 proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =

@@ -10,7 +10,7 @@
 ## itself is not in the tagless core; the erasure mechanism is identical.)
 
 import std/[tables, times, strutils]
-import ett
+import eponym
 import ett_staged
 import preterm  # Quantity, q0/q1/qOmega
 

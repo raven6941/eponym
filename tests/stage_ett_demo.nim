@@ -9,7 +9,7 @@
 ##   static subterm evaluation move out of the dynamic loop.
 
 import std/[tables, times]
-import ett
+import eponym
 import ett_staged  # was staging/ett_staged (stale path); the module lives in tests/
 
 # --- structural equality on values (neutrals compared by id) ---
