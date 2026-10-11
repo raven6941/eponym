@@ -1844,3 +1844,42 @@
   =import= decls is follow-up work on #49.
   Status: OPEN (branch) — core implemented + tested; runner integration
   and example pair remain.
+
+* 2026-10-11 — #48 recursion schemes as a library: where the scheme style paid off
+
+  Context: #48 asks for the Squiggol vocabulary (cata/ana/hylo + proven
+  laws) as library combinators over the generated eliminators, no core
+  change. Delivered: =lib/schemes.ep= (Nat/List) and =lib/schemes_vec.ep=
+  (Vec), plus =examples/ep/25-schemes.ep= deforestation demo.
+  =cataNat=/=cataList=/=cataVec= are the eliminators renamed; =anaList=
+  is a fuel-bounded unfold (the fuel is the termination evidence —
+  corecursive =ana= without fuel would need codata, which Eponym lacks);
+  laws =cataNatRefl= (reflection), =vmapFusion=, =cataMapFusion=
+  (fold-after-map = fold with composed algebra), =hyloLenRepLaw= /
+  =deforestLenRep= (=length (replicate n x) = n=, fused = one pass).
+  The demo's =deforestDemo : Eq Nat unfused fused = refl Nat unfused=
+  typechecks only because both sides normalize to =suc (suc zero)= —
+  the proof *is* the evaluation.
+
+  Where schemes paid off vs direct structural recursion:
+  - Fusion laws compose: =cataMapFusion= is stated and proved once, and
+    every algebra gets deforestation for free. The direct-recursion
+    equivalent would re-prove the commuting case per function.
+  - The eliminator's definitional unfolding does real work in proofs:
+    =replicate (suc p) x= is *definitionally* =cons x (replicate p x)=
+    (=isZero (suc p)= is =false=, =pred (suc p)= is =p= by the red
+    rules), so the hylo cons-case is a one-line =cong= over =suc=.
+    Direct recursion would need the same unfoldings made explicit.
+  - Cost: motive plumbing. Every law restates the motive three times
+    (statement, nil-case context, cons-case context); deeply nested
+    motives (the =cataMapFusion= cons-case) are hard to read and a
+    paren-slip away from a confusing parse error. A =where=-style
+    motive abbreviation would help; not proposed as an issue yet.
+
+  First unqualified-import collision: =list.ep= and =vec.ep= both declare
+  =nil=/=cons=, so no one module can import both — hence the
+  =schemes.ep= / =schemes_vec.ep= split along datatype-family lines, and
+  no example imports both. This is the "revisit on first collision"
+  trigger from the #49 entry. Decision: workaround stands for v1 (split
+  modules); qualified imports remain a follow-up, not v1.
+  Status: CLOSED (branch) — merged via PR; laws + demo in CI.

@@ -1,0 +1,177 @@
+# Eponym common library: recursion schemes, Nat + List (issue #48).
+#
+# The eliminators generated for `data` declarations *are* catamorphisms:
+# folding over the datatype. This module offers the Squiggol vocabulary —
+# `cata` (fold), `ana` (unfold), `hylo` (unfold-then-fold) — as library
+# combinators over the existing eliminators, with no core change. The value
+# is the laws: fusion and reflection stated as `Eq` propositions and
+# discharged by the elaborator, so `map f . map g = map (f . g)` is a
+# checked proposition, not folklore.
+#
+# Per notes/recursion-schemes-as-library.org: do NOT mandate point-free
+# style. Realistic recursions too complicated for folds stay as direct
+# structural recursion; the schemes are an option with guaranteed laws.
+# See decisions.org for where the scheme style paid off vs direct recursion.
+#
+# Module split: this file covers Nat and List. The Vec schemes live in
+# `schemes_vec.ep` — `import` merges unqualified (issue #49, v1 decision),
+# so List's and Vec's `nil`/`cons` constructors collide in one importing
+# module. That is a genuine ergonomics wart; see decisions.org.
+#
+# Files under examples/ep/ pull this in with `import "../../lib/schemes.ep"`
+# (issue #49); imports resolve relative to the importing file.
+#
+import "nat.ep"
+import "bool.ep"
+import "list.ep"
+import "eq.ep"
+
+# --- catamorphisms: the eliminators, renamed ---
+#
+# `cataNat P z s` is `natElim P z s`: the fold for Nat. Naming it `cata`
+# documents the intent — every use is a fold, never ad-hoc recursion.
+
+proc cataNat (P : Nat -> ?) (z : P zero)
+    (s : (p : Nat) -> P p -> P (suc p)) (n : Nat) : P n =
+  natElim P z s n
+
+proc cataList (A : ?) (P : List A -> ?) (nilC : P (nil A))
+    (consC : (x : A) -> (tl : List A) -> P tl -> P (cons A x tl))
+    (xs : List A) : P xs =
+  listElim A P nilC consC xs
+
+# --- anamorphisms: bounded unfold ---
+#
+# Anamorphisms for *inductive* types need a termination argument: the
+# unfold must stop. `anaList` takes it as explicit fuel — a Nat bounding
+# the number of unfold steps — plus the coalgebra split into head/step/stop
+# observations on the seed. The fuel doubles as the structural argument, so
+# `anaList` is itself a fold (`cataNat`) over the fuel: unfold-then-fold
+# with the termination evidence in hand. (A corecursive `ana` without fuel
+# would need codata, which Eponym does not have.)
+
+proc anaList (A : ?) (S : ?) (fuel : Nat) (hd : S -> A) (tl : S -> S)
+    (stop : S -> Bool) (s : S) : List A =
+  cataNat (lam (u : Nat). S -> List A)
+          (lam (s0 : S). nil A)
+          (lam (p : Nat). lam (ih : S -> List A). lam (s0 : S).
+            boolElim (lam (b : Bool). List A)
+                     (nil A)
+                     (cons A (hd s0) (ih (tl s0)))
+                     (stop s0))
+          fuel s
+
+# Small Nat observations used by the unfold below (kept here, not in
+# nat.ep, to keep the schemes vocabulary self-contained).
+proc pred (n : Nat) : Nat =
+  cataNat (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). p) n
+
+proc isZero (n : Nat) : Bool =
+  cataNat (lam (u : Nat). Bool) true (lam (p : Nat). lam (ih : Bool). false) n
+
+# `replicate n x`: the length-n list of x's, as an anamorphism. Seed and
+# fuel are both n; the coalgebra observes head = x, step = pred, stop =
+# isZero.
+proc replicate (A : ?) (n : Nat) (x : A) : List A =
+  anaList A Nat n (lam (s : Nat). x) pred isZero n
+
+# --- laws ---
+
+# Reflection for Nat: folding with the constructors is the identity.
+# The cons-case goes through because `cataNat P z s (suc p)` is
+# definitionally `suc (cataNat P z s p)` (the eliminator's red rule), so
+# `cong` over `suc` lifts the induction hypothesis.
+proc cataNatRefl (n : Nat)
+    : Eq Nat (cataNat (lam (u : Nat). Nat) zero
+                       (lam (p : Nat). lam (ih : Nat). suc ih) n)
+               n =
+  cataNat (lam (u : Nat).
+            Eq Nat (cataNat (lam (w : Nat). Nat) zero
+                            (lam (p : Nat). lam (ih : Nat). suc ih) u)
+                   u)
+          (refl Nat zero)
+          (lam (p : Nat).
+            lam (ih : Eq Nat (cataNat (lam (w : Nat). Nat) zero
+                                              (lam (q : Nat). lam (r : Nat). suc r) p)
+                                     p).
+              cong Nat Nat (lam (k : Nat). suc k)
+                   (cataNat (lam (w : Nat). Nat) zero
+                            (lam (q : Nat). lam (r : Nat). suc r) p)
+                   p ih)
+          n
+
+# Cata-map fusion for List: folding after a map is folding with the
+# composed algebra — one pass, no intermediate list. This is the general
+# fusion law; `mapComp` in list.ep is the instance for the map algebra.
+proc cataMapFusion (A : ?) (B : ?) (P : List B -> ?)
+    (nilC : P (nil B))
+    (consC : (x : B) -> (tl : List B) -> P tl -> P (cons B x tl))
+    (g : A -> B) (xs : List A)
+    : Eq (P (map A B g xs))
+         (cataList B P nilC consC (map A B g xs))
+         (cataList A (lam (u : List A). P (map A B g u))
+                   nilC
+                   (lam (x : A). lam (tl : List A).
+                     lam (ih : P (map A B g tl)).
+                       consC (g x) (map A B g tl) ih)
+                   xs) =
+  cataList A (lam (u : List A).
+               Eq (P (map A B g u))
+                  (cataList B P nilC consC (map A B g u))
+                  (cataList A (lam (w : List A). P (map A B g w))
+                            nilC
+                            (lam (x : A). lam (tl : List A).
+                              lam (ih : P (map A B g tl)).
+                                consC (g x) (map A B g tl) ih)
+                            u))
+           (refl (P (nil B)) nilC)
+           (lam (x : A). lam (tl : List A).
+             lam (ih : Eq (P (map A B g tl))
+                            (cataList B P nilC consC (map A B g tl))
+                            (cataList A (lam (w : List A). P (map A B g w))
+                                      nilC
+                                      (lam (y : A). lam (tl2 : List A).
+                                        lam (ih2 : P (map A B g tl2)).
+                                          consC (g y) (map A B g tl2) ih2)
+                                      tl)).
+               cong (P (map A B g tl)) (P (cons B (g x) (map A B g tl)))
+                    (lam (t : P (map A B g tl)). consC (g x) (map A B g tl) t)
+                    (cataList B P nilC consC (map A B g tl))
+                    (cataList A (lam (w : List A). P (map A B g w))
+                              nilC
+                              (lam (y : A). lam (tl2 : List A).
+                                lam (ih2 : P (map A B g tl2)).
+                                  consC (g y) (map A B g tl2) ih2)
+                              tl)
+                    ih)
+           xs
+
+# Hylo deforestation, concretely: `length (replicate n x) = n`. The
+# intermediate list is built by the anamorphism and consumed by the fold;
+# the law says the composition is a single pass over the fuel — the
+# fused program `cataNat zero suc n`. The cons-case works because
+# `replicate (suc p) x` unfolds definitionally: `isZero (suc p)` is
+# `false`, `pred (suc p)` is `p`, so it is `cons x (replicate p x)`,
+# and `length` of that is `suc (length (replicate p x))`.
+proc hyloLenRepLaw (A : ?) (n : Nat) (x : A)
+    : Eq Nat (length A (replicate A n x)) n =
+  cataNat (lam (u : Nat). Eq Nat (length A (replicate A u x)) u)
+          (refl Nat zero)
+          (lam (p : Nat).
+            lam (ih : Eq Nat (length A (replicate A p x)) p).
+              cong Nat Nat (lam (k : Nat). suc k)
+                   (length A (replicate A p x)) p ih)
+          n
+
+# The fused program: what `length (replicate n x)` deforests to.
+proc fusedLenRep (n : Nat) : Nat =
+  cataNat (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). suc ih) n
+
+# Fusion lemma connecting fused and unfused: the intermediate list is
+# provably unnecessary. `trans`/`sym` from eq.ep; `cataNatRefl` says the
+# fused program is `n`.
+proc deforestLenRep (A : ?) (n : Nat) (x : A)
+    : Eq Nat (length A (replicate A n x)) (fusedLenRep n) =
+  trans Nat (length A (replicate A n x)) n (fusedLenRep n)
+        (hyloLenRepLaw A n x)
+        (sym Nat (fusedLenRep n) n (cataNatRefl n))
