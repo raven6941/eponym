@@ -60,11 +60,11 @@ checks it succeeds. These test the elaborator in isolation.
 - **15d-session-types-neg.ep** — Negative test: send on a closed channel
   is rejected.
 - **16a-paxos-wrong-order-neg.ep** — Negative test for the Paxos protocol
-  (Issue #101): receiving the promise before sending prepare is rejected
-  (`Chan propS0` vs `Chan propS1`).
+  (Issues #101, #120): receiving the promise before sending prepare is
+  rejected (`Chan propProto` vs `Chan (propAfterPrepare zero)`).
 - **16b-paxos-wrong-value-neg.ep** — Negative test for the Paxos protocol
-  (Issue #101): promising `zero` but waiting for an accept of `suc zero`
-  is rejected (`Chan (accS2 zero)` vs `Chan (accS2 (suc zero))`).
+  (Issues #101, #120): forging a ticket for `suc X` when `AcceptMsg X` is
+  demanded is rejected (`AcceptMsg (suc X)` vs `AcceptMsg X`).
 - **17a-convex-neg.ep** — Negative test for the DCP-checked convex library
   (Issue #101): `minimize` of `x*x` with a bogus certificate is rejected
   (`Convex (eSq eVar)` vs `Convex (eMul eVar eVar)` — `eMul` admits no
@@ -94,14 +94,17 @@ for verified components inside a larger Nim application.
   client/server are ordinary-looking Nim, and protocol violations
   (wrong order, send on closed channel, double use, dropped channel)
   are compile-time errors.
-- **paxos_session.nim** — Paxos prepare/promise/accept/accepted as session
-  types (Issue #101): two roles, four messages each, with the value
-  discipline enforced by *unforgeable promise tickets* (`AcceptMsg` is
-  postulated with no constructors, so the proposer can only accept the
-  value the acceptor promised). The normal-Nim driver binds the same
-  message sequence to an in-memory transport and runs a full round,
-  mirroring the checked roles step by step. Wrong-order and wrong-value
-  violations are compile-time errors (see 16a/16b negative tests above).
+- **paxos_session.nim** — Paxos prepare/promise/accept/accepted as dependent
+  session types (Issues #101, #120): two roles, four messages each, with
+  continuations that are functions of the communicated value (Issue #113).
+  The value discipline is enforced by *unforgeable promise tickets*
+  (`AcceptMsg` is postulated with no constructors, so the proposer can only
+  accept the value the acceptor promised); the dependent session binds the
+  received promise and indexes the continuation by it. The normal-Nim driver
+  binds the same message sequence to an in-memory transport and runs a full
+  round, mirroring the checked roles step by step. Wrong-order and
+  wrong-value violations are compile-time errors (see 16a/16b negative
+  tests above).
 - **convex_opt.nim** — Disciplined convex programming as a compile-time
   check (Issue #101): the DCP rule table (curvature composition rules)
   as `Affine`/`Convex` proof families over a small expression language;
