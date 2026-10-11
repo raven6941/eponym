@@ -208,7 +208,7 @@ type
     body*: PreTerm
     loc*: Loc
 
-  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData, dkClauses
+  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData, dkClauses, dkImport
   DataCtor* = object
     ## One constructor in a `data` declaration.
     name*: string
@@ -231,7 +231,7 @@ type
     loc*: Loc
   SurfDecl* = object
     ## A top-level declaration (Experiment 4 adds postulate/elim/red;
-    ## Experiment 5 adds data; issue #32 adds clauses).
+    ## Experiment 5 adds data; issue #32 adds clauses; issue #49 adds import).
     case kind*: DeclKind
     of dkDef: def*: SurfDef
     of dkPostulate, dkElim:
@@ -250,6 +250,9 @@ type
       daloc*: Loc
     of dkClauses:
       clausesDef*: ClausesDef
+    of dkImport:
+      ipath*: string  # as written, e.g. "lib/nat.ep" (issue #49)
+      iloc*: Loc
 
 proc desugarTy*(d: SurfDef): PreTerm =
   ## Telescope to nested Pis (implicit entries to implicit Pis).

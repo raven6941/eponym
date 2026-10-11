@@ -65,6 +65,8 @@ back. The dependent types evaporate — zero runtime cost.
 │      coreValid vs extending handlers (issue #41)             │
 │    · positivity checking (issue #33, planned)                │
 │    · constructor disjointness: noConfusion, noCycle (#80)    │
+│    · multi-file programs: `import` decls, ModuleDriver,     │
+│      elabCheckFile entry point (issue #49)                   │
 └──────────────────────────┬───────────────────────────────────┘
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
