@@ -1391,12 +1391,24 @@ proc genElimTy(d: SurfDecl, loc: Loc): tuple[ty: PreTerm, methodNames: seq[strin
   var indexNames: seq[string] = @[]
   for i in 0 ..< indexTele.len:
     indexNames.add("i" & $i)
+  # Issue #112: later index domains may mention earlier index binders
+  # (dependent index telescopes, e.g. `Pi (n : Nat). VExpr n -> ?`).
+  # The eliminator renames binders to i0, i1, ..., so substitute the
+  # old names for the generated ones across the telescope; a no-op for
+  # non-dependent telescopes. Capture-avoiding via substPreN (a domain
+  # that binds an iN name itself is renamed internally).
+  var idxSubs: seq[(string, PreTerm)] = @[]
+  var idxFresh = 0
+  var indexTys: seq[PreTerm] = @[]
+  for i in 0 ..< indexTele.len:
+    indexTys.add(substPreN(indexTele[i].ty, idxSubs, idxFresh))
+    idxSubs.add((indexTele[i].name, mkVar(indexNames[i], loc)))
   # C : Pi (idx...). F params idx -> ?
   var cTy = mkArrow(famAppPre(famName, d.params,
                              indexNames.mapIt(mkVar(it, loc)), loc),
                     mkUniv(loc), loc)
   for i in countdown(indexTele.high, 0):
-    cTy = mkPi(indexNames[i], indexTele[i].ty, cTy, loc)
+    cTy = mkPi(indexNames[i], indexTys[i], cTy, loc)
   # methods, one per constructor
   var methodNames: seq[string] = @[]
   var methodTys: seq[PreTerm] = @[]
@@ -1461,7 +1473,7 @@ proc genElimTy(d: SurfDecl, loc: Loc): tuple[ty: PreTerm, methodNames: seq[strin
   body = mkApp(body, mkVar("v", loc), loc)
   var elimTy = mkPi("v", vTy, body, loc)
   for i in countdown(indexNames.high, 0):
-    elimTy = mkPi(indexNames[i], indexTele[i].ty, elimTy, loc)
+    elimTy = mkPi(indexNames[i], indexTys[i], elimTy, loc)
   for i in countdown(methodNames.high, 0):
     elimTy = mkPi(methodNames[i], methodTys[i], elimTy, loc)
   elimTy = mkPi("C", cTy, elimTy, loc)
@@ -2071,9 +2083,18 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
   for pt in paramTerms: scrTyMotive = mkApp(scrTyMotive, pt, loc)
   for mn in motiveIdxNames: scrTyMotive = mkApp(scrTyMotive, mkVar(mn, loc), loc)
   var motive = mkLam("_motive", scrTyMotive, cBody, loc)
+  # Issue #112: later index domains may mention earlier index binders
+  # (dependent index telescopes); the motive binds midx0, midx1, ...,
+  # so substitute old->new across the telescope in dependency order
+  # (a no-op for non-dependent telescopes).
+  var idxSubst: seq[(string, PreTerm)] = @[]
+  var indexTysSub: seq[PreTerm] = @[]
+  for j in 0 ..< indexTele.len:
+    indexTysSub.add(substPreN(substPreN(indexTele[j].ty, paramSubst, fresh),
+                              idxSubst, fresh))
+    idxSubst.add((indexTele[j].name, mkVar(motiveIdxNames[j], loc)))
   for j in countdown(motiveIdxNames.high, 0):
-    motive = mkLam(motiveIdxNames[j],
-                   substPreN(indexTele[j].ty, paramSubst, fresh), motive, loc)
+    motive = mkLam(motiveIdxNames[j], indexTysSub[j], motive, loc)
   # Build methods, one per constructor (in dataDecl order)
   var methods: seq[PreTerm] = @[]
   for ctor in dataDecl.ctors:
