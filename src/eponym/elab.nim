@@ -1074,11 +1074,16 @@ proc flattenAppSpine(pre: PreTerm): seq[PreTerm] =
     result.add(rev[i])
 
 proc checkStructuralRec(rhs: PreTerm, elimName: string, nargs: int,
-                        smallerVars: seq[string], loc: Loc) =
+                        smallerVars: seq[string], loc: Loc,
+                        lamBound: seq[string] = @[]) =
   ## Issue #36: syntactic structural recursion check for `red` rules.
   ## Any application of `elimName` in the RHS must take a direct subterm
   ## of the LHS pattern (a variable from `smallerVars`) in the scrutinee
-  ## position (last argument). Otherwise the rule may not terminate.
+  ## position (last argument). Issue #113: for higher-order constructor
+  ## arguments the generated computation rule recurses under binders, so
+  ## a scrutinee of shape `(v y1..yn)` — a direct subterm `v` applied to
+  ## lambda-bound variables — is also accepted. Otherwise the rule may
+  ## not terminate.
   case rhs.kind
   of pkApp:
     var spine: seq[PreTerm] = @[]
@@ -1091,22 +1096,37 @@ proc checkStructuralRec(rhs: PreTerm, elimName: string, nargs: int,
     if h.kind == pkVar and h.name == elimName:
       if rspine.len == nargs:
         let scrutArg = rspine[^1]
-        if scrutArg.kind != pkVar or scrutArg.name notin smallerVars:
+        var structOk = scrutArg.kind == pkVar and
+                       scrutArg.name in smallerVars
+        if not structOk:
+          # Issue #113: higher-order subterm.
+          let ssp = flattenAppSpine(scrutArg)
+          if ssp.len > 1 and ssp[0].kind == pkVar and
+             ssp[0].name in smallerVars:
+            structOk = true
+            for k in 1 ..< ssp.len:
+              if ssp[k].kind != pkVar or ssp[k].name notin lamBound:
+                structOk = false
+                break
+        if not structOk:
           raise elabErr(rhs.loc,
             "non-structurally-recursive call in `red` rule: '" & elimName &
             "' applied to '" & $scrutArg &
-            "', which is not a direct subterm of the LHS pattern")
+            "', which is not a direct subterm of the LHS pattern " &
+            "(for higher-order arguments, apply the variable only to " &
+            "lambda-bound variables)")
       # Recurse into the spine args (they may contain nested calls)
       for a in rspine:
-        checkStructuralRec(a, elimName, nargs, smallerVars, loc)
+        checkStructuralRec(a, elimName, nargs, smallerVars, loc, lamBound)
     else:
-      checkStructuralRec(h, elimName, nargs, smallerVars, loc)
+      checkStructuralRec(h, elimName, nargs, smallerVars, loc, lamBound)
       for a in rspine:
-        checkStructuralRec(a, elimName, nargs, smallerVars, loc)
+        checkStructuralRec(a, elimName, nargs, smallerVars, loc, lamBound)
   of pkLam:
     if rhs.c1 != nil:
-      checkStructuralRec(rhs.c1, elimName, nargs, smallerVars, loc)
-    checkStructuralRec(rhs.c2, elimName, nargs, smallerVars, loc)
+      checkStructuralRec(rhs.c1, elimName, nargs, smallerVars, loc, lamBound)
+    checkStructuralRec(rhs.c2, elimName, nargs, smallerVars, loc,
+                       lamBound & @[rhs.name])
   of pkPi:
     checkStructuralRec(rhs.c1, elimName, nargs, smallerVars, loc)
     checkStructuralRec(rhs.c2, elimName, nargs, smallerVars, loc)
@@ -1280,6 +1300,78 @@ proc mentionsFam(pre: PreTerm, famName: string): bool =
   of pkAnn: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
   else: false
 
+proc substPreN(t: PreTerm, subs: seq[(string, PreTerm)],
+               fresh: var int): PreTerm
+proc substPreSeq(ts: seq[PreTerm], subs: seq[(string, PreTerm)],
+                 fresh: var int): seq[PreTerm]
+
+proc splitCtorArg(argTy: PreTerm, famName, ctorName, argName: string,
+                  nParams: int, loc: Loc):
+    tuple[tele: seq[tuple[name: string, ty: PreTerm]],
+          indices: seq[PreTerm]] =
+  ## Issue #113: split a constructor argument type into its leading Pi
+  ## telescope and the family indices of its head. The head must be a
+  ## direct application of the family (first-order case: empty telescope),
+  ## and the telescope domains must not mention the family (strict
+  ## positivity). Raises accurate errors naming the offending argument —
+  ## the old `extractIndices`-only path reported these as "constructor
+  ## return type must be the family", which was misleading.
+  var tele: seq[tuple[name: string, ty: PreTerm]] = @[]
+  var head = argTy
+  while head.kind == pkPi:
+    tele.add((head.name, head.c1))
+    head = head.c2
+  for (bn, bty) in tele:
+    if mentionsFam(bty, famName):
+      raise elabErr(loc, "constructor '" & ctorName & "' argument '" &
+        argName & "': the family '" & famName &
+        "' occurs in the domain of a higher-order argument " &
+        "(not strictly positive)")
+  let spine = flattenAppSpine(head)
+  if spine.len == 0 or spine[0].kind != pkVar or spine[0].name != famName:
+    raise elabErr(loc, "constructor '" & ctorName & "' argument '" &
+      argName & "': the family '" & famName &
+      "' must occur as a direct application to indices " &
+      "(nested occurrences are not supported)")
+  if spine.len < 1 + nParams:
+    raise elabErr(loc, "constructor '" & ctorName & "' argument '" &
+      argName & "': family application is missing parameters")
+  (tele, spine[1 + nParams .. ^1])
+
+proc freshenHoTele(tele: seq[tuple[name: string, ty: PreTerm]],
+                   taken: var seq[string], loc: Loc):
+    tuple[tele: seq[tuple[name: string, ty: PreTerm]], names: seq[string],
+          subst: seq[(string, PreTerm)]] =
+  ## Issue #113: rename a higher-order argument's Pi telescope binders to
+  ## names fresh w.r.t. `taken` (chosen names are added to `taken`),
+  ## substituting earlier binders in later domain types (capture-avoiding
+  ## via substPreN). Anonymous binders get a real name so the generated
+  ## induction hypothesis and computation-rule lambda can apply the
+  ## argument to them. The returned `subst` maps original binder names to
+  ## freshened variables (replace-on-shadow, matching surface scoping) for
+  ## use on index terms mentioning the telescope binders.
+  var subs: seq[(string, PreTerm)] = @[]
+  var fresh = 0
+  var names: seq[string] = @[]
+  var outTele: seq[tuple[name: string, ty: PreTerm]] = @[]
+  for (bn, bty) in tele:
+    var nb = if bn == "_" or bn.len == 0: "x" else: bn
+    while nb in taken: nb &= "'"
+    taken.add(nb)
+    let btySub = substPreN(bty, subs, fresh)
+    let rv = mkVar(nb, loc)
+    var replaced = false
+    for k in 0 ..< subs.len:
+      if subs[k][0] == bn:
+        subs[k] = (bn, rv)
+        replaced = true
+    if not replaced:
+      subs.add((bn, rv))
+    names.add(nb)
+    outTele.add((nb, btySub))
+  (outTele, names, subs)
+
+
 proc elimNameFor(dname: string): string =
   result = dname
   if result.len > 0:
@@ -1322,16 +1414,44 @@ proc genElimTy(d: SurfDecl, loc: Loc): tuple[ty: PreTerm, methodNames: seq[strin
     mRet = mkApp(mRet, ctorApp, loc)
     var mTy = mRet
     var ihCount = 0
+    # Issue #113: names already bound in the method telescope; freshened
+    # higher-order telescope binders must avoid all of these.
+    var taken: seq[string] = @["C", "v"]
+    for p in d.params: taken.add(p.name)
+    for mn in methodNames: taken.add(mn)
+    for iNm in indexNames: taken.add(iNm)
+    for t in ctor.tele: taken.add(t.name)
     for i in countdown(ctor.tele.high, 0):
       let argTy = ctor.tele[i].ty
+      let argName = ctor.tele[i].name
       if mentionsFam(argTy, famName):
-        let argIndices = extractIndices(argTy, famName, d.params.len, ctor.cloc)
+        # Issue #113: split off a leading Pi telescope; the empty
+        # telescope is the first-order case (identical to the old code).
+        let (hoTele, argIndices) = splitCtorArg(argTy, famName, ctor.name,
+                                               argName, d.params.len,
+                                               ctor.cloc)
+        let (freshTele, hoNames, hoSubst) =
+          freshenHoTele(hoTele, taken, ctor.cloc)
+        var fresh = 0
+        # Indices may mention the telescope binders (#113: e.g. an index
+        # computed from a bound value); freshen them too.
+        let argIndicesSub = substPreSeq(argIndices, hoSubst, fresh)
         var ihTy = mkVar("C", loc)
-        for ai in argIndices: ihTy = mkApp(ihTy, ai, loc)
-        ihTy = mkApp(ihTy, mkVar(ctor.tele[i].name, loc), loc)
-        mTy = mkPi("ih" & $ihCount, ihTy, mTy, loc)
+        for ai in argIndicesSub: ihTy = mkApp(ihTy, ai, loc)
+        var kApp = mkVar(argName, loc)
+        for hn in hoNames: kApp = mkApp(kApp, mkVar(hn, ctor.cloc), loc)
+        ihTy = mkApp(ihTy, kApp, loc)
+        # Higher-order induction hypothesis:
+        #   ih : Pi (x1:A1)...(xn:An). C idx (k x1 ... xn)
+        # Issue #66: generated IH binders are unrestricted (qOmega), like
+        # the rest of the generated method telescope.
+        for j in countdown(freshTele.high, 0):
+          ihTy = mkPi(freshTele[j].name, freshTele[j].ty, ihTy, ctor.cloc)
+        let ihName = "ih" & $ihCount
+        taken.add(ihName)
+        mTy = mkPi(ihName, ihTy, mTy, loc)
         inc ihCount
-      mTy = mkPi(ctor.tele[i].name, argTy, mTy, loc)
+      mTy = mkPi(argName, argTy, mTy, loc)
     methodTys.add(mTy)
   # Pi (params...)(C : cTy)(methods...)(idx...)(v : F params idx). C idx v
   var vTy = famAppPre(famName, d.params,
@@ -1375,18 +1495,40 @@ proc genRedDecls(d: SurfDecl, elimName: string, methodNames: seq[string],
     # telescope built by genElimTy (Pi (a) (ih_a) (b) (ih_b) ...).
     # (A two-loop form -- all args, then all recursive calls -- is only
     # correct when every recursive argument is trailing.)
+    # Issue #113: the lambda binders for higher-order arguments must avoid
+    # the red pattern variables (they are bound in the contractum context).
+    var taken: seq[string] = @["C"]
+    for p in d.params: taken.add(p.name)
+    for mn in methodNames: taken.add(mn)
+    for iNm in idxNames: taken.add(iNm)
+    for t in ctor.tele: taken.add(t.name)
     var rhs = mkVar(methodNames[ci], loc)
     for t in ctor.tele:
       rhs = mkApp(rhs, mkVar(t.name, loc), loc)
       if mentionsFam(t.ty, famName):
-        let argIndices = extractIndices(t.ty, famName, d.params.len, ctor.cloc)
+        # Issue #113: split off a leading Pi telescope (empty = first-order,
+        # identical to the old code below).
+        let (hoTele, argIndices) = splitCtorArg(t.ty, famName, ctor.name,
+                                               t.name, d.params.len,
+                                               ctor.cloc)
+        let (freshTele, hoNames, hoSubst) =
+          freshenHoTele(hoTele, taken, ctor.cloc)
+        var fresh = 0
+        let argIndicesSub = substPreSeq(argIndices, hoSubst, fresh)
         var rec = mkVar(elimName, loc)
         for p in d.params: rec = mkApp(rec, mkVar(p.name, loc), loc)
         rec = mkApp(rec, mkVar("C", loc), loc)
         for mn in methodNames: rec = mkApp(rec, mkVar(mn, loc), loc)
-        for ai in argIndices: rec = mkApp(rec, ai, loc)
-        rec = mkApp(rec, mkVar(t.name, loc), loc)
-        rhs = mkApp(rhs, rec, loc)
+        for ai in argIndicesSub: rec = mkApp(rec, ai, loc)
+        var kApp = mkVar(t.name, loc)
+        for hn in hoNames: kApp = mkApp(kApp, mkVar(hn, ctor.cloc), loc)
+        rec = mkApp(rec, kApp, loc)
+        # Issue #113: the method receives (fun x1..xn => elim C ms idx
+        # (k x1 .. xn)), not a direct recursive call.
+        var lam = rec
+        for j in countdown(freshTele.high, 0):
+          lam = mkLam(freshTele[j].name, freshTele[j].ty, lam, ctor.cloc)
+        rhs = mkApp(rhs, lam, loc)
     result.add(SurfDecl(kind: dkRed, lhs: lhs, rhs: rhs, rloc: ctor.cloc))
 
 proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
@@ -2015,6 +2157,17 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
     var ihCount = 0
     for ti, te in ctor.tele:
       if mentionsFam(te.ty, dataName):
+        # Issue #113: clause compilation passes a bare recursive call for
+        # each recursive argument; higher-order arguments need the
+        # under-binder lambda form, which is not implemented here yet.
+        let (clHoTele, _) = splitCtorArg(te.ty, dataName, ctor.name, te.name,
+                                        nParams, ctor.cloc)
+        if clHoTele.len > 0:
+          raise elabErr(cl.cloc, "constructor '" & ctor.name &
+            "' has a higher-order recursive argument '" & te.name &
+            "'; clause-style definitions over such datatypes are not yet " &
+            "supported (use the '" & elimNameFor(dataName) &
+            "' eliminator directly)")
         let ihN = "ih" & $ihCount
         if ihN in seenPats:
           raise elabErr(cl.cloc, "pattern variable '" & ihN &
@@ -2373,6 +2526,60 @@ proc lenIsTwo : Nat =
   assert dataVecDefs.len == 2
   assert dataSucDepth(eval(dataVecDefs[1].tmTm, @[])) == 2
   echo "ok: data Vec (indexed) desugars; eliminator computes (length = 2)"
+
+  # --- Issue #113: higher-order constructor arguments -----------------------
+  # A strictly-positive higher-order argument (k : A -> Session) gets an
+  # induction hypothesis under binders: ih : Pi (x:A). C (k x), and the
+  # computation rule pushes the recursive call under the binders.
+  let hoDefs = elabCheck("""
+data HNat : ? where
+| hzero : HNat
+| hsuc (n : HNat) : HNat
+data HTree : ? where
+| hleaf : HTree
+| hnode (k : HNat -> HTree) : HTree
+proc hdepth (t : HTree) : HNat =
+  hTreeElim (lam (u : HTree). HNat)
+    hzero
+    (lam (k : HNat -> HTree). lam (ih : Pi (x : HNat). HNat). hsuc (ih hzero))
+    t
+proc sampleTree : HTree =
+  hnode (lam (x : HNat). hnode (lam (y : HNat). hleaf))
+proc sampleDepth : HNat = hdepth sampleTree
+proc hone : HNat = hsuc hzero
+proc htwo : HNat = hsuc (hsuc hzero)
+""")
+  assert hoDefs.len == 5
+  let hsucId = hoDefs[4].tmTm.fn.refId
+  let hzeroId = hoDefs[4].tmTm.arg.arg.refId
+  proc hoDepth(v: Value): int =
+    if v.whnfKind == wRef and v.whnfRefId == hsucId and v.whnfSpineLen == 1:
+      1 + hoDepth(v.whnfSpineArg(0))
+    elif v.whnfKind == wRef and v.whnfRefId == hzeroId and v.whnfSpineLen == 0:
+      0
+    else: -1000
+  assert hoDepth(eval(hoDefs[2].tmTm, @[])) == 2,
+    "hdepth should reduce to hsuc (hsuc hzero)"
+  echo "ok: higher-order constructor argument elaborates; eliminator " &
+    "computes under binders (#113)"
+
+  # Genuinely non-positive argument: family in a domain position.
+  expectElabErr("""
+data HNat113 : ? where
+| hzero113 : HNat113
+data Bad : ? where
+| bad (k : (Bad -> HNat113) -> Bad) : Bad
+""", "not strictly positive")
+  # Nested occurrence: family under another type former, not a direct
+  # application to indices.
+  expectElabErr("""
+data Box113 (A : ?) : ? where
+| box113 (x : A) : Box113 A
+data Nest : ? where
+| nnil : Nest
+| ncons (b : Box113 Nest) : Nest
+""", "direct application to indices")
+  echo "ok: positivity violations rejected with accurate messages (#113)"
 
   # --- Experiment 5b: conversion in checkTm -------------------------
   # The inferred-vs-expected check now compares up to reduction: `add`

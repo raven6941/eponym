@@ -1,0 +1,8 @@
+# Negative test (issue #113): a genuinely non-positive constructor argument
+# is rejected with an accurate error naming the argument.
+# The family Bad occurs in the *domain* of k's type, so this is not
+# strictly positive and must be rejected (contrast 19-higher-order-session.ep,
+# where the family occurs only in codomains).
+
+data Bad : ? where
+| bad (k : (Bad -> Bad) -> Bad) : Bad
