@@ -2022,3 +2022,20 @@
   Branch-only per #137: nothing merges to main until the end-to-end loop
   works.
   Status: OPEN (branch) -- #135 acceptance met on the sheds-loop branch.
+
+** #136: VSCode extension as thin client over the Nim LSP (sheds-loop)
+  Date: 2026-10-11. The extension lives in =editors/vscode/= (separate
+  npm/tsc build, in-repo -- no build-tooling conflict materialized, so no
+  separate repo). Architecture: the Nim LSP server stays the backend; the
+  extension spawns it over stdio and is purely a client. Protocol and
+  rendering (=protocol.ts=, =render.ts=) are vscode-free modules shared with
+  a headless node smoke test that drives the real server against
+  =sheds_demo='s= sidecar (8 checks green). Buttons send
+  =textDocument/codeAction= (the server's existing #58 action path) rather
+  than =workspace/executeCommand=, which the server does not implement.
+  Gap for #137: the refine round-trip is not closed for =.nim= shed docs --
+  the action path elaborates document text as Eponym source, which a =.nim=
+  file is not; the webview surfaces the server's error. Branch-only per
+  #137: nothing merges until the end-to-end loop works.
+  Status: OPEN (branch) -- #136 acceptance partially met on the branch;
+  shed render + hole-click goal display work; refine loop is #137's job.
