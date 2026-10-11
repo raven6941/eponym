@@ -1,7 +1,7 @@
 # Eponym common library: length-indexed vectors (issue #54).
 #
-# import nat
-# import eq
+import "nat.ep"
+import "eq.ep"
 
 data Vec (A : ?) : Nat -> ? where
 | nil : Vec A zero

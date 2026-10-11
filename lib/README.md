@@ -5,20 +5,25 @@ example (issue #114). Each module is a `.ep` file in the surface syntax.
 
 ## Using the library from an example
 
-Add a header directive naming the module (without the `.ep` extension):
+Add an `import` declaration with a path relative to the importing file
+(issue #49). From `examples/ep/`:
 
 ```
-# import nat
+import "../../lib/nat.ep"
 ```
 
-`tests/run_examples.nim` expands the directive by prepending the module's
-source before elaboration. The result is still a single standalone
-elaboration unit — `#`-comments (including the directive itself) never
-reach the elaborator, so no parser or elaborator changes were needed.
+From inside `lib/` itself, a bare filename suffices:
 
-Directives may appear on multiple header lines; modules are prepended in
-order, each at most once. Library modules may themselves carry `# import`
-directives (expanded transitively).
+```
+import "nat.ep"
+```
+
+Imports elaborate recursively and merge **unqualified** into one
+environment (decisions.org: flat imports for v1; revisit on the first
+name collision). Import cycles are a located error naming the files in
+the cycle; a missing file reports the resolved path and the importing
+chain. `tests/run_examples.nim` elaborates every file with
+`elabCheckFile`, so real `import` declarations are exercised by CI.
 
 ## Modules
 

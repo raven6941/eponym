@@ -1,6 +1,6 @@
 # Negative test: quadForm needs a square matrix whose dimension matches
 # the vector (Issue #110). P2 is 2x2 but x is a 1-vector: rejected.
-# import nat
+import "../../lib/nat.ep"
 
 postulate Mat : Nat -> Nat -> ?
 

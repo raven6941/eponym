@@ -4,7 +4,7 @@
 # closeOp consumes its channel (Pi (1 ch : Chan endS). Nat), so a second
 # use of the same channel is a linearity violation, not merely a protocol
 # state mismatch: the protocol says close happens exactly once.
-# import nat
+import "../../lib/nat.ep"
 
 data Session : ? where
 | sendS (A : ?) (s : Session) : Session

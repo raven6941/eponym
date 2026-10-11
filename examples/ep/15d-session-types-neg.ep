@@ -2,7 +2,7 @@
 # Negative tests (files named *-neg.ep) are expected to raise ElabError;
 # tests/run_examples.nim verifies the rejection.
 # A channel in end-state cannot be used where send-state is expected.
-# import nat
+import "../../lib/nat.ep"
 
 data Session : ? where
 | sendS (A : ?) (s : Session) : Session

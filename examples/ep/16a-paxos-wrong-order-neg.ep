@@ -6,7 +6,7 @@
 # rejected: the channel is in `propProto` (sendD-state) but `recvPromise`
 # demands the after-prepare state. The session terms are distinct
 # (sendD vs recvD head constructors), so conversion fails.
-# import nat
+import "../../lib/nat.ep"
 
 data Session : ? where
 | sendD (A : ?) (k : A -> Session) : Session

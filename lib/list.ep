@@ -1,7 +1,7 @@
 # Eponym common library: lists (issue #54).
 #
-# import nat
-# import eq
+import "nat.ep"
+import "eq.ep"
 
 data List (A : ?) : ? where
 | nil : List A

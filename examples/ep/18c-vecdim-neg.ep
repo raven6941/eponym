@@ -4,7 +4,7 @@
 # violation. The bogus proof (a certificate for vVar, offered for vMul)
 # is rejected: VAffine (suc zero) (vVar (suc zero)) does not convert
 # with VAffine (suc zero) (vMul (suc zero) (vVar (suc zero)) (vVar (suc zero))).
-# import nat
+import "../../lib/nat.ep"
 
 data VExpr : Nat -> ? where
 | vVar (n : Nat) : VExpr n

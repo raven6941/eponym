@@ -12,7 +12,7 @@
 # and the computation rule pushes the recursive call under the binders:
 #   sessionElim C ms (recvDNat k) = m_recvDNat k (fun n => sessionElim C ms (k n))
 #
-# import nat
+import "../../lib/nat.ep"
 
 # Session protocol descriptions with dependent continuations
 data Session : ? where

@@ -1,6 +1,6 @@
 # Eponym common library: booleans (issue #54).
 #
-# import eq
+import "eq.ep"
 
 data Bool : ? where
 | true : Bool
