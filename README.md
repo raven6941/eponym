@@ -1,35 +1,22 @@
 # eponym
 
-A dependently-typed **embedded DSL for Nim**: surface syntax
-elaborates at compile time (via Nim macros) to an Epigram-style
-QTT core (Chapman, Altenkirch & McBride, "Epigram Reloaded",
-TYPES 2006, plus 0/1/ω quantities in the judgments — see
-issues #64, #66).
+Loosely, epigram + nim ~= eponym. What happens if we adapt (a subset of) ideas from McBride & McKinna's influential work from 20+ years ago, as an embedded DSL for Nim? This is an exploratory work currently in progress. "Loosely" and "in progress" show up in at least a few ways.
 
-The interesting part is the **elaborator** — the pipeline from
-surface syntax to checked core terms. The two ETT encodings
-(`ett.nim`, `ett_init.nim`) were the starting point; the elaborator
-is where the research lives.
+### Deliberate points of departure
+
+QTT instead of ETT. Idris has demonstrated the 0/1/ω approach taken. This allows support for session types, and opt-in checking of the style popularized by rust.
+
+Linear syntax is notably different to compromise with the macro approach to embedding in Nim.
+
+### Not yet delivered
+
+The 2d shed interactive editing experience. I have some hope that LSP + a vscode plugin may provide an avenue to this.
 
 ## Why embedded
 
-Eponym is deliberately *not* a standalone language. There's no
-compiler, stdlib, package manager, or community to maintain and
-market — just an elaborator macro and a prelude, hosted in Nim's
-compile time. The maintenance gap is roughly an order of magnitude,
-and the adoption friction is far lower: the dependent reasoning
-lives in library methods, so users get the safety through a
-normal-looking API without writing dependent types themselves.
+Eponym is deliberately *not* a standalone language. 
+The goal is not to build and grow a full independent compiler, stdlib, package system, community around a new language. Rather, if only _some_ of your program really calls for dependent typing, and some parts are fine with the type facilities already offered by Nim, then an embedded approach allows you to use the dependent types only where needed. I especially hope that libraries can host dependent reasoning, and use cases can get safety benefits whether or not they engage with dependent types directly.
 
-That encapsulation is the design constraint. The dependent part
-belongs in the library; the user's code stays ordinary Nim. The
-target case is a session-type library — protocol violations
-rejected at compile time through plain `send`/`recv` calls
-(issue #28; more motivating cases welcome). Deliberate-embedding
-prior art: SynQ, Turnstile/Turnstile+ (the architectural ancestor —
-dependent type systems as macros), Liquid Haskell. The honest case
-survey lives in the shared notes:
-[dep-types-motivating-cases.org](https://github.com/raven6941/notes/blob/main/dep-types-motivating-cases.org).
 
 ## The elaborator pipeline
 
