@@ -3,9 +3,7 @@
 # tests/run_examples.nim verifies the rejection.
 # The double-send must be rejected by the in-judgment quantity enforcement
 # (Issue #66), not merely by the old post-pass checker.
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
+# import nat
 
 data Session : ? where
 | sendS (A : ?) (s : Session) : Session

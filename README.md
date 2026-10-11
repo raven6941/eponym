@@ -134,10 +134,12 @@ nim c -r --path:src src/ett_init.nim    # initial-encoding ETT: 16 tests
 
 ## Examples
 
-See `examples/` — 11 self-contained `.ep` programs with header
+See `examples/` — documented `.ep` programs with header
 comments, from basic `twice` through indexed `Vec` with `append`.
 They're the regression suite (`run_examples.nim`) and the
-documentation of what the system can do.
+documentation of what the system can do. Shared definitions live in
+`lib/` (Issue #114) and are pulled into examples with `# import`
+header directives.
 
 ## Layout
 

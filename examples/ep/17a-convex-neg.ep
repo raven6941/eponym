@@ -7,11 +7,9 @@
 # the AST but admits no `Convex` rule, so no certificate exists. The
 # bogus proof below (claiming x^2-of-var certifies x*x) is rejected:
 # `Convex (eSq eVar)` does not convert with `Convex (eMul eVar eVar)`.
+# import nat
 postulate Int : ?
 
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
 
 data CExpr : ? where
 | eVar : CExpr

@@ -4,9 +4,7 @@
 # A channel in send-state cannot be used where recv-state is expected:
 # the session indices `sendS Nat endS` and `recvS Nat endS` are distinct
 # constructors, so conversion fails (noConfusion).
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
+# import nat
 
 data Session : ? where
 | sendS (A : ?) (s : Session) : Session

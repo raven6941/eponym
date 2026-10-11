@@ -6,9 +6,7 @@
 # rejected: the channel is in `propS0` (send-state) but `recvPromise`
 # demands `propS1` (recv-state). The session indices are distinct
 # constructors, so conversion fails.
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
+# import nat
 
 data Session : ? where
 | sendS (A : ?) (s : Session) : Session

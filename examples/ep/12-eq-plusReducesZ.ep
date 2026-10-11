@@ -5,16 +5,10 @@
 # Eq is an indexed family; refl typechecks up to conversion
 # (not just syntactic equality). J (eqElim) is the eliminator.
 # plusReducesZ is the Idris benchmark: (n : Nat) -> n = plus n Z.
-
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
+# import nat
 
 data Eq (A : ?) (x : A) : A -> ? where
 | refl : Eq A x x
-
-proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
 
 proc cong (A : ?) (B : ?) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
     : Eq B (f x) (f y) =
