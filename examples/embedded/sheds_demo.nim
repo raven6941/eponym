@@ -14,6 +14,7 @@
 
 import sheds_mac
 import sheds
+import shed_layout  # Issue #135: 2D deduction-style layout of shed proof states
 import os  # currentSourcePath, absolutePath
 import strutils  # `in` on strings
 
@@ -69,6 +70,14 @@ proc main() =
   echo "    draft (never elaborated): ", sh.draft
   echo "  surrounding code typechecked; shed stayed a hole."
   echo "  status: ", sh.status, " (yellow = stuck, refinable)."
+  # Issue #135: the shed's proof state as an Epigram-style 2D deduction
+  # (context above the rule, the hole below it), exactly what the LSP
+  # method `eponym/shedLayout` returns.
+  let lay = layoutShed(sh)
+  doAssert allHoleIds(lay) == @[sh.holeIdx], "hole id wiring"
+  echo "  layout (Issue #135, Epigram deduction style):"
+  for line in renderBox(lay).splitLines():
+    echo "    ", line
 
 when isMainModule:
   main()

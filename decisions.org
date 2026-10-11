@@ -1984,3 +1984,41 @@
   them; single-line fills are exact. Branch-only per #137: nothing merges
   to main until the end-to-end loop works.
   Status: OPEN (branch) -- #134 acceptance met on the sheds-loop branch.
+
+* 2026-10-11 — #135 2D box layout engine: Epigram deduction style (branch sheds-loop)
+
+  Context: #133/#134 give the LSP server shed metadata and status, but the
+  #136 webview and the #137 editor loop need a *visual* form of a shed's
+  proof state -- the 2D deduction layouts of the Epigram papers (premises
+  above a horizontal rule, conclusion below, sub-deductions side by side).
+  Decision: =src/eponym/shed_layout.nim= -- a =Box= tree with two shapes:
+  (a) *rule* boxes (premises rendered side-by-side above a rule, labeled
+  or not, conclusion below) and (b) *plain* boxes (header lines + children
+  stacked vertically or side-by-side). Constructors follow the issue's
+  layout rules: =goalStateBox= (context stacked above the rule, hole box
+  below -- the shed's proof state), =caseBox= (branches side-by-side),
+  =inductionBox= ("by induction on n" header, case boxes below),
+  =letSeq= (nested labeled deductions, value above the rule), =holeBox=
+  (empty box showing the goal type). Core terms render as deduction trees
+  (=layoutTerm=: application as Pi-elim with fn/arg above the rule, pair
+  as Si-intro, let as a labeled deduction, =tMeta= as a hole box).
+  Premises are side-by-side rather than stacked because the context (the
+  naturally stacked premise) is one box of stacked lines -- this keeps the
+  renderer to one combination rule and matches "multiple sub-deductions
+  placed side by side". Boxes measure bottom-up (=measure=: width/height
+  including borders) and render to Unicode box-art (=renderBox=, exact-ASCII
+  snapshot test) or JSON (=boxToJson=, for the webview). Hole IDs ride on
+  every box (=allHoleIds=) for #136 click-to-refine wiring. The LSP method
+  =eponym/shedLayout= (params: textDocument.uri, shedName) returns the box
+  JSON for a named shed from its sidecar; unknown sheds / missing sidecars
+  are errors (nil internally). =layoutShed= maps a white shed (no open
+  hole) to a plain "no open holes" box rather than failing.
+  Consequences: =tests/test_shed_layout.nim= (27 checks: snapshot, case
+  widths, let stacking, term layout, JSON shape, LSP round-trip incl.
+  handleMessage dispatch, white-shed box); =examples/embedded/sheds_demo.nim=
+  now prints the layout of its shed (end-to-end: macro -> sidecar ->
+  layout); branch CI builds =sheds=, =sheds_mac=, =shed_layout= and runs
+  =test_sheds= + =test_shed_layout= (both were untested in CI before).
+  Branch-only per #137: nothing merges to main until the end-to-end loop
+  works.
+  Status: OPEN (branch) -- #135 acceptance met on the sheds-loop branch.

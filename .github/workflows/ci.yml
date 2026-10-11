@@ -15,7 +15,7 @@ jobs:
         run: |
           nim --version
           P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
-          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac lsp egraph ett_embed; do
+          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac lsp egraph ett_embed sheds sheds_mac shed_layout; do
             echo "=== build $f ==="
             nim c --hints:off $P "src/eponym/$f.nim" || exit 1
           done
@@ -35,4 +35,7 @@ jobs:
           echo "=== lsp hole-session tests (issue #58, headless mock-LSP) ==="
           nim c -r --hints:off $P "tests/test_lsp_holes.nim" || exit 1
           nim c -r --hints:off $P "tests/test_lsp_actions.nim" || exit 1
+          echo "=== sheds tests (issues #133-135) ==="
+          nim c -r --hints:off $P "tests/test_sheds.nim" || exit 1
+          nim c -r --hints:off $P "tests/test_shed_layout.nim" || exit 1
           # Note: bench/ contains expensive benchmarks, not run in CI.

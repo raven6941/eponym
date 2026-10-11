@@ -28,6 +28,7 @@ import ett_init  # `$` for Term (issue #58)
 import parse_surf
 import unify  # HoleInfo, zonk (issue #58)
 import sheds  # ShedInfo, ShedStatus, sidecarPath, readShedSidecarEx (issue #134)
+import shed_layout  # Box, layoutShed, boxToJson (issue #135)
 
 type
   LspServer* = object
@@ -111,6 +112,21 @@ proc shedDiagnostics*(uri: string): JsonNode =
     of ssWhite:
       discard  # white: no diagnostic
   %*{"uri": uri, "diagnostics": diags}
+
+# --- issue #135: 2D box layout of a shed's proof state ----------------------
+
+proc shedLayout*(uri, shedName: string): JsonNode =
+  ## `eponym/shedLayout` (issue #135): the box tree for a shed with holes,
+  ## laid out Epigram deduction-style (context above the rule, the hole
+  ## below it). Returns nil when no sidecar exists or the shed is unknown;
+  ## `handleMessage` turns the latter into an error response.
+  let sc = sidecarPath(uriToPath(uri))
+  if not fileExists(sc):
+    return nil
+  for s in readShedSidecar(sc):
+    if s.name == shedName:
+      return %*{"box": boxToJson(layoutShed(s))}
+  nil
 
 proc publishDiagnostics(server: var LspServer, uri: string): JsonNode =
   ## Elaborate the document and build the publishDiagnostics notification.
@@ -483,6 +499,17 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
       term = msg["params"]["term"].getStr()
     return codeActionsAt(server.documents[uri], uri, line, col, variable,
                          term, id)
+  of "eponym/shedLayout":
+    let id = msg["id"]
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let shedName = msg["params"]["shedName"].getStr()
+    let res = shedLayout(uri, shedName)
+    if res.isNil:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "no layout: unknown shed '" & shedName &
+                            "' or no sheds sidecar for " & uri}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": res}
   of "shutdown":
     let id = msg["id"]
     return %*{"jsonrpc": "2.0", "id": id, "result": nil}
