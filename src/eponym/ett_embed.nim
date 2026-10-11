@@ -17,8 +17,11 @@ import tables
 import elab
 import ett_init
 
-# Cache: source hash -> elaborated defs
+# Cache: (baseDir, source) key -> elaborated defs
 var defCache {.global.}: Table[string, seq[ElabDef]]
+
+proc cacheKey(baseDir, src: string): string =
+  baseDir & "\x1f" & src
 
 proc getDefs*(src: string): seq[ElabDef] =
   ## Get elaborated defs for source, using cache.
@@ -26,6 +29,18 @@ proc getDefs*(src: string): seq[ElabDef] =
     return defCache[src]
   let defs = elabCheck(src)
   defCache[src] = defs
+  defs
+
+proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
+  ## Issue #131: like getDefs, but `import "path.ep"` declarations in `src`
+  ## resolve relative to `baseDir` (via elabCheckDir). Used by ettBlock
+  ## wrappers so runtime re-elaboration sees the same modules the
+  ## compile-time elaboration did.
+  let key = cacheKey(baseDir, src)
+  if key in defCache:
+    return defCache[key]
+  let defs = elabCheckDir(src, baseDir)
+  defCache[key] = defs
   defs
 
 proc findDef*(defs: seq[ElabDef], name: string): ElabDef =
@@ -47,10 +62,9 @@ proc valueToInt*(v: Value): int =
   # Force evaluation if it's not yet a wInt
   raise newException(ValueError, "value is not an Int")
 
-proc callIntFunc*(src: string, name: string, args: seq[int]): int =
-  ## Call an elaborated `def` of type `Int -> ... -> Int`.
-  let defs = getDefs(src)
-  let d = findDef(defs, name)
+proc callDefInt(d: ElabDef, args: seq[int]): int =
+  ## Evaluate an elaborated `def` of type `Int -> ... -> Int` on args.
+  ## (shared by callIntFunc and callIntFuncDir)
   let t = d.tmTm
   # Evaluate the term to a value
   var fn = eval(t, @[])
@@ -60,3 +74,17 @@ proc callIntFunc*(src: string, name: string, args: seq[int]): int =
     let w = applyWhnf(fn, v)
     fn = Value(syn: t, whnf: w)  # syn doesn't matter for result
   valueToInt(fn)
+
+proc callIntFunc*(src: string, name: string, args: seq[int]): int =
+  ## Call an elaborated `def` of type `Int -> ... -> Int`.
+  let defs = getDefs(src)
+  let d = findDef(defs, name)
+  callDefInt(d, args)
+
+proc callIntFuncDir*(baseDir, src: string, name: string,
+                     args: seq[int]): int =
+  ## Issue #131: like callIntFunc, but `src` may contain `import`
+  ## declarations resolved relative to `baseDir`.
+  let defs = getDefsDir(baseDir, src)
+  let d = findDef(defs, name)
+  callDefInt(d, args)

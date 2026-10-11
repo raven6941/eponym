@@ -14,7 +14,10 @@
 # - `proc` — Nim keyword (Eponym string syntax also uses `proc` now, was `def`)
 # - `=` — Nim definition (was `:=` in old Eponym syntax)
 # - `postulate(Int, Univ)` — call syntax; `Univ` stands for `?` (`?` isn't valid Nim)
-# - `data(Nat, Univ):` — block syntax for datatypes (vs `data Nat : ? where`)
+# - `import "../../lib/nat.ep"` — Eponym-module import (issue #131), resolved
+#   relative to this file's directory; pulls in Nat/Vec/etc. from the prelude
+#   instead of redefining them per file (`data(Nat, Univ):` block syntax still
+#   works for local datatypes)
 # - `Vec(A, zero())` — call syntax for type application (vs `Vec A zero`)
 # - `vecnil` — Nim keyword workaround; maps to Eponym `nil` constructor
 # - `Nat -> Univ` — infix `->` for Pi types (valid Nim, right-associative)
@@ -28,26 +31,15 @@ import ett_embed
 # Each proc/data/postulate is converted to Eponym source at compile time,
 # elaborated, and wrapped as a callable Nim proc.
 ettBlock:
+  # Prelude import (issue #131): Nat/Vec (+ zero, suc, nil, cons, add, vappend,
+  # ...) from lib/vec.ep (which pulls in lib/nat.ep and lib/eq.ep). This
+  # replaces the per-file data(Nat, ...)/data(Vec, ...) redefinitions.
+  import "../../lib/vec.ep"
+
   # postulate(Int, Univ): declares primitive Int type.
   # Call syntax because `postulate Int : ?` isn't valid Nim (`?` doesn't parse).
   # `Univ` is the Nim-friendly spelling of Eponym's `?` (the universe).
   postulate(Int, Univ)
-
-  # data(Nat, Univ): defines inductive Nat.
-  # Block syntax: `data Name:` + indented constructors (vs `data Nat : ? where`).
-  # Each constructor is a `proc` (valid Nim), converted to `| ctor : Ty`.
-  data(Nat, Univ):
-    proc zero(): Nat
-    proc suc(n: Nat): Nat
-
-  # Parameterized data: [A: Univ] is the telescope (vs `(A : ?)` in Eponym).
-  # `Nat -> Univ` is the kind (vs `Nat -> ?`); `->` is valid Nim infix.
-  data(Vec, [A: Univ], Nat -> Univ):
-    # `vecnil` because `nil` is a Nim keyword; maps to Eponym `nil`.
-    # Backticks (`` `nil` ``) also work but `vecnil` is clearer.
-    proc vecnil(): Vec(A, zero())
-    # `Vec(A, n)` is call syntax for type application (vs `Vec A n`).
-    proc cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, suc(n))
 
   # `proc` not `def`; `=` not `:=` — matches Nim.
   # Integer literals for Nat: write `3`, not `suc(suc(suc(zero())))`.

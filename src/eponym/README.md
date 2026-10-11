@@ -28,6 +28,12 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
    definitions from Nim. (The old `ettEmbed"""..."""` string-embedding
    form was dropped in Issue #115; `ettBlock` is the single embedding
    form — Eponym code is valid Nim code.)
+   `ettBlock` supports `import "path.ep"` (Issue #131): Eponym-module
+   imports resolved relative to the calling Nim file's directory, so
+   embedded code shares the `lib/*.ep` prelude instead of redefining
+   `Nat`/`Vec`/etc. per file. At runtime the generated wrappers
+   re-elaborate through `ett_embed.callIntFuncDir`, which resolves the
+   same imports.
 
 ## Files
 
