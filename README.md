@@ -1,35 +1,22 @@
 # eponym
 
-A dependently-typed **embedded DSL for Nim**: surface syntax
-elaborates at compile time (via Nim macros) to an Epigram-style
-QTT core (Chapman, Altenkirch & McBride, "Epigram Reloaded",
-TYPES 2006, plus 0/1/ω quantities in the judgments — see
-issues #64, #66).
+Loosely, epigram + nim ~= eponym. What happens if we adapt (a subset of) ideas from McBride & McKinna's influential work from 20+ years ago, as an embedded DSL for Nim? This is an exploratory work currently in progress. "Loosely" and "in progress" show up in at least a few ways.
 
-The interesting part is the **elaborator** — the pipeline from
-surface syntax to checked core terms. The two ETT encodings
-(`eponym.nim`, `eponym_init.nim`) were the starting point; the elaborator
-is where the research lives.
+### Deliberate points of departure
+
+QTT instead of ETT. Idris has demonstrated the 0/1/ω approach taken. This allows support for session types, and opt-in checking of the style popularized by rust.
+
+Linear syntax is notably different to compromise with the macro approach to embedding in Nim.
+
+### Not yet delivered
+
+The 2d shed interactive editing experience. I have some hope that LSP + a vscode plugin may provide an avenue to this.
 
 ## Why embedded
 
-Eponym is deliberately *not* a standalone language. There's no
-compiler, stdlib, package manager, or community to maintain and
-market — just an elaborator macro and a prelude, hosted in Nim's
-compile time. The maintenance gap is roughly an order of magnitude,
-and the adoption friction is far lower: the dependent reasoning
-lives in library methods, so users get the safety through a
-normal-looking API without writing dependent types themselves.
+Eponym is deliberately *not* a standalone language.
+The goal is not to build and grow a full independent compiler, stdlib, package system, community around a new language. Rather, if only _some_ of your program really calls for dependent typing, and some parts are fine with the type facilities already offered by Nim, then an embedded approach allows you to use the dependent types only where needed. I especially hope that libraries can host dependent reasoning, and use cases can get safety benefits whether or not they engage with dependent types directly.
 
-That encapsulation is the design constraint. The dependent part
-belongs in the library; the user's code stays ordinary Nim. The
-target case is a session-type library — protocol violations
-rejected at compile time through plain `send`/`recv` calls
-(issue #28; more motivating cases welcome). Deliberate-embedding
-prior art: SynQ, Turnstile/Turnstile+ (the architectural ancestor —
-dependent type systems as macros), Liquid Haskell. The honest case
-survey lives in the shared notes:
-[dep-types-motivating-cases.org](https://github.com/raven6941/notes/blob/main/dep-types-motivating-cases.org).
 
 ## The elaborator pipeline
 
@@ -43,11 +30,16 @@ Surface text → `PreTerm` (named) → de Bruijn core terms → elaborated
 - **`elab.nim`** — bidirectional elaborator: `inferTm`/`checkTm`,
   implicit insertion, `data` desugaring, conversion checking.
 
+All live in `src/eponym/`; the per-module notes are in
+`src/eponym/README.md`. The interesting part is this pipeline —
+the two ETT encodings (`eponym.nim`, `eponym_init.nim`) were the
+starting point; the elaborator is where the research lives.
+
 ## Experiments (see `plan.org`, `decisions.org`)
 
 1. **Surface syntax** — string parser and Nim-AST macro converge on
    `PreTerm`. Chose thin string-literal macro.
-2. **De Bruijn core** — named → de Bruijn, compile-time `ett"..."`.
+2. **De Bruijn core** — named → de Bruijn, compile-time `eponym"..."`.
 3. **Metavariables** — Miller-pattern unification, holes, bidirectional
    elaboration, implicit insertion. (`unify.nim`)
 4. **Extensible reduction** — `postulate`/`elim`/`red`; reduction rules
@@ -77,23 +69,36 @@ Surface text → `PreTerm` (named) → de Bruijn core terms → elaborated
 The `eponymBlock` macro lets you write Eponym directly in Nim:
 ```nim
 import eponym_mac
+import eponym_embed
+
 eponymBlock:
-  postulate(Int, Univ)
-  data(Nat, Univ):
-    proc zero(): Nat
-    proc suc(n: Nat): Nat
-  proc add(a, b: Nat): Nat = ...
+  import "lib/nat.ep"   # shared prelude, not a per-file redefinition
+
+  data(Session, Univ):
+    proc sendD(A: Univ, k: A -> Session): Session
+    proc recvD(A: Univ, k: A -> Session): Session
+    proc endS(): Session
+  ...
 ```
-- `Univ` is `?` (universe); `vecnil` for `nil` (Nim keyword).
+- `Univ` is `?` (universe); call syntax for declarations
+  (`postulate(Int, Univ)`); `proc` not `def`; `=` not `:=` — it reads
+  as Nim, and the elaborator typechecks it at compile time.
 - Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).
-- See `examples/sensor_fusion.nim` for a complete example.
+- Two-layer shape: the checked definitions are the proof layer; the
+  surrounding Nim is the running layer, calling them through generated
+  wrappers.
+- The headline demos in `examples/embedded/` are built this way:
+  `paxos_session.nim` (Paxos as dependent session types with
+  unforgeable promise tickets), `convex_opt_vec.nim` (DCP-checked
+  logistic regression with dimension-indexed vectors), `qtt_borrow.nim`
+  (Rust-style borrow discipline checked at compile time).
 
 ## Track C: Relational × staged interpreters
 
 One relational spec of a small language, many tools
 (inference, checking, synthesis) via staging.
 
-- **`src/minikanren.nim`** — independent µKanren-style engine
+- **`src/relational/minikanren.nim`** — independent µKanren-style engine
   (no elaborator deps): S-expr terms, unification with occurs
   check, explicit `Stream` tree (no call-stack recursion),
   FIFO worklist (fair search — backward `typeo` now enumerates
@@ -101,17 +106,17 @@ One relational spec of a small language, many tools
   `setEqo` global set-equality constraint, and
   most-constrained-first branching over constraint-derived
   domains (4×4 Sudoku in ~20ms; was a 30s timeout).
-- **`src/rel_elab.nim`** — `typeo` relation for STLC+Nat, plus
+- **`src/relational/rel_elab.nim`** — `typeo` relation for STLC+Nat, plus
   a `Vec` length-indexed branch.
 - **Staged tools** — each direction of the relation staged to
   direct code: inference with zero search; synthesis pruned
   by expected type (~17000x); evaluation as direct recursion
   (61x); a language-specialized engine on top (546x over the
   generic staged version).
-- **`src/lms_staging.nim`** — LMS-style: one `prog` polymorphic
+- **`tests/lms_staging.nim`** — LMS-style: one `prog` polymorphic
   over `R`; `R = int` executes, `R = Rep` builds IR which
   constant-folds at staging time. No hand-written staged duplicate.
-- **`src/synth_staged.nim`** — `evalo` run backwards (static
+- **`tests/synth_staged.nim`** — `evalo` run backwards (static
   language rules, dynamic target value), staged to a direct
   recursive search (6860x), witnesses verified.
 
@@ -126,28 +131,42 @@ Requires Nim 2.x (built with 2.2.12 via
 
 ```sh
 export PATH=$HOME/.nimble/bin:$PATH
-nim c -r --path:src src/elab.nim        # elaborator: all suites
-nim c -r --path:src tests/run_examples.nim # 11 documented example programs
-nim c -r --path:src src/eponym/eponym.nim         # finally-tagless ETT: 16 tests
-nim c -r --path:src src/eponym/eponym_init.nim    # initial-encoding ETT: 16 tests
+P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
+for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac egraph eponym_embed; do
+  nim c -r --hints:off $P src/eponym/$f.nim   # build + run each test suite
+done
+nim c -r --hints:off $P tests/run_examples.nim            # 36 .ep examples
+nim c -r --hints:off $P tests/fuzz_soundness.nim -- --seed 424242 -n 1000
+# (src/eponym/lsp.nim is built but not run: it is a server that blocks on stdin.)
 ```
 
 ## Examples
 
-See `examples/` — documented `.ep` programs with header
-comments, from basic `twice` through indexed `Vec` with `append`.
-They're the regression suite (`run_examples.nim`) and the
-documentation of what the system can do. Shared definitions live in
-`lib/` (Issue #114) and are pulled into examples with `# import`
-header directives.
+Three kinds, reflecting the project's dual nature as both a standalone
+elaborator and an embedded Nim library:
+
+- **`examples/ep/`** — 36 documented `.ep` surface-syntax programs,
+  the elaborator's regression suite (run by `tests/run_examples.nim`),
+  from basic `twice` through indexed `Vec` with `append` to
+  negative cases for the session-type and borrow demos.
+- **`lib/`** — the shared prelude: `nat.ep`, `bool.ep`, `list.ep`,
+  `vec.ep`, `eq.ep`, `schemes.ep`, `schemes_vec.ep` (+ machine-checked
+  `nat_lemmas.ep`).
+  Pulled in with `# import` header directives.
+- **`examples/embedded/`** — ordinary Nim programs whose Eponym-checked
+  definitions are elaborated by `eponymBlock` at compile time, then used
+  from plain Nim: Paxos, DCP convex optimization, QTT borrow-checking,
+  session types, sensor fusion. Each has header comments explaining
+  what the dependent types are buying.
 
 ## Layout
 
-- `elab.nim`, `unify.nim`, `preterm.nim`, `parse_surf.nim`,
+- `src/eponym/elab.nim`, `unify.nim`, `preterm.nim`, `parse_surf.nim`,
   `mac_surf.nim` — the elaborator.
-- `eponym.nim` — finally-tagless ETT (evaluator, printer, checker).
-- `eponym_init.nim` — initial-encoding ETT (de Bruijn AST, evaluator,
-  `infer`/`check`/`areEqual`). The elaborator's target.
+- `src/eponym/eponym.nim` — finally-tagless ETT (evaluator, printer, checker).
+- `src/eponym/eponym_init.nim` — initial-encoding ETT (de Bruijn AST,
+  evaluator, `infer`/`check`/`areEqual`). The elaborator's target.
+- `src/eponym/lsp.nim` — language server (Experiment 7).
 - `plan.org` — experiment plan and research tracks.
 - `decisions.org` — design decision log.
 - `research.org` — the driving question.
