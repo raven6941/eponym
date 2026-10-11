@@ -40,6 +40,8 @@ proc qtyPrefix(n: NimNode): string =
     return ""
   return ""
 
+proc nimTypeToEponym(n: NimNode): string
+
 proc nimExprToEponym(n: NimNode): string =
   ## Convert a Nim expression AST to Eponym source string.
   case n.kind
@@ -86,14 +88,29 @@ proc nimExprToEponym(n: NimNode): string =
       let (nm, vl) = lets[i]
       res = "let " & nm & " = " & vl & " in " & res
     res
+  of nnkObjConstr:
+    # Pi(...)/Sig(...) type expressions in body position: Nim parses
+    # them as object constructors, not calls. They are types, so route
+    # through the type converter.
+    nimTypeToEponym(n)
   of nnkCall:
+    # Pi/Sig in expression position, positional form Sig(name, Dom, Body):
+    # Nim parses it as a call, not an obj-constr. Route to the type converter.
+    if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
+      return nimTypeToEponym(n)
+    # lam(x, T, body) -> lam (x : T). body (surface lambdas in ettBlock bodies)
+    if n[0].kind == nnkIdent and $n[0] == "lam":
+      if n.len != 4 or n[1].kind != nnkIdent:
+        error("lam expects (binder, type, body)", n)
+      return "lam (" & $n[1] & " : " & nimTypeToEponym(n[2]) & "). " & nimExprToEponym(n[3])
     # f(a, b) -> f a b (with parens for nested calls to preserve grouping)
     let head = nimExprToEponym(n[0])
     var args: seq[string] = @[]
     for i in 1 ..< n.len:
       let a = n[i]
-      # Parenthesize if arg is a call (to preserve Nim's explicit grouping)
-      if a.kind == nnkCall:
+      # Parenthesize if arg is a call or obj-constr (Pi/Sig type args
+      # parse as nnkObjConstr in expression position and need grouping too)
+      if a.kind in {nnkCall, nnkObjConstr}:
         args.add("(" & nimExprToEponym(a) & ")")
       else:
         args.add(nimExprToEponym(a))
@@ -136,6 +153,11 @@ proc nimTypeToEponym(n: NimNode): string =
     # For zero-arg calls like zero(), just return head (no parens needed)
     if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
       return piSigToEponym(n)
+    if n[0].kind == nnkIdent and $n[0] == "lam":
+      # lam(x, T, body) -> lam (x : T). body (continuations in types)
+      if n.len != 4 or n[1].kind != nnkIdent:
+        error("lam expects (binder, type, body)", n)
+      return "lam (" & $n[1] & " : " & nimTypeToEponym(n[2]) & "). " & nimTypeToEponym(n[3])
     let head = nimTypeToEponym(n[0])
     if n.len == 1:
       head
@@ -143,8 +165,10 @@ proc nimTypeToEponym(n: NimNode): string =
       var args: seq[string] = @[]
       for i in 1 ..< n.len:
         let a = n[i]
-        # Paren if arg is a call with args, or an int literal (suc chain needs grouping)
-        if (a.kind == nnkCall and a.len > 1) or a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit}:
+        # Paren if arg is a call with args, an obj-constr (Pi/Sig type args
+        # parse as nnkObjConstr and need grouping too), or an int literal
+        # (suc chain needs grouping)
+        if (a.kind == nnkCall and a.len > 1) or a.kind == nnkObjConstr or a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit}:
           args.add("(" & nimTypeToEponym(a) & ")")
         else:
           args.add(nimTypeToEponym(a))
@@ -167,10 +191,26 @@ proc nimTypeToEponym(n: NimNode): string =
 proc piSigToEponym(n: NimNode): string =
   let isPi = $n[0] == "Pi"
   if n.len < 3: error($n[0] & " expects binders and a body", n)
+  # Sig in Call form (positional args, no colons): Sig(name, Dom, Body).
+  if not isPi and n.kind == nnkCall:
+    if n.len == 4 and n[1].kind == nnkIdent:
+      return "Sig (" & $n[1] & " : " & nimTypeToEponym(n[2]) & "). " & nimTypeToEponym(n[3])
+    elif n.len == 3:
+      return "Sig (_ : " & nimTypeToEponym(n[1]) & "). " & nimTypeToEponym(n[2])
+    else:
+      error("Sig expects (binder, dom, body) or (dom, body)", n)
   var parts: seq[string] = @[]
   for i in 1 ..< n.len - 1:
     let b = n[i]
     var q, nm, dom: string
+    if b.kind == nnkTableConstr:
+      # {A : T, ...} -> implicit binders (Pi only). Each pair: name : type.
+      if not isPi: error("implicit binders only meaningful in Pi", b)
+      for pair in b:
+        if pair.kind != nnkExprColonExpr or pair.len != 2 or pair[0].kind != nnkIdent:
+          error("implicit binder must have form {name : type}", b)
+        parts.add("Pi {" & $pair[0] & " : " & nimTypeToEponym(pair[1]) & "}. ")
+      continue
     if b.kind == nnkExprColonExpr and b.len == 2:
       q = qtyPrefix(b[0])
       nm = binderName(b[0])
