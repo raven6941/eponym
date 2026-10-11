@@ -730,7 +730,12 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
   of pkEmptyTy: (tmC(cZero), tmC(cStar))
   of pkHole:
     let tyM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
-    (freshMeta(ms, tyM, ctx.len, 0, pre.loc), tyM)
+    let holeTm = freshMeta(ms, tyM, ctx.len, 0, pre.loc)
+    # Issue #58: record the hole for LSP hover — goal type + binder context.
+    var hctx: seq[tuple[name: string, ty: Term]] = @[]
+    for e in ctx: hctx.add((e.name, e.ty))
+    ms.holes.add(HoleInfo(holeLoc: pre.loc, holeGoal: tyM, holeCtx: hctx))
+    (holeTm, tyM)
   of pkInt:
     # Experiment 11: integer literal; type is the postulated Int
     if "Int" notin globals:
@@ -992,14 +997,20 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   unifyElab(ms, tyTy, tmC(cStar), d.loc)
   let tyT = zonk(ms, tyTm0)
   let ru = findUnsolved(ms, tyT)
-  if ru.found:
+  if ru.found and not ms.allowHoles:
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
       " in the type of '" & d.name & "'")
   let tyV =
-    try: check(supply, vStar(), tyT)
-    except ValueError as e:
-      raise elabErr(d.loc,
-        "ill-formed type of '" & d.name & "': " & e.msg)
+    if ru.found:
+      # allowHoles (issue #58): the type mentions holes, so the core
+      # cannot value it; registration is skipped below and this dummy
+      # is never read.
+      vStar()
+    else:
+      try: check(supply, vStar(), tyT)
+      except ValueError as e:
+        raise elabErr(d.loc,
+          "ill-formed type of '" & d.name & "': " & e.msg)
   # 2. elaborate the body against the type; zonk; reject leftovers
   if qtyFirst:
     convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals)
@@ -1007,9 +1018,25 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
     tmT0 = checkTm(tmPre, @[], globals, ms, supply, tyT)
   let tmT = zonk(ms, tmT0)
   let ru2 = findUnsolved(ms, tmT)
-  if ru2.found:
+  if ru2.found and not ms.allowHoles:
     raise elabErr(ru2.loc, "unsolved metavariable ?m" & $ru2.id &
       " in the definition of '" & d.name & "'")
+  if d.name in globals:
+    raise elabErr(d.loc, "duplicate definition '" & d.name & "'")
+  if ms.allowHoles and (ru.found or ru2.found):
+    # Issue #58: hole-tolerant tooling mode. The core can never see a
+    # metavariable, so skip the core re-check; register postulate-style
+    # (type known, value stuck) when the type is meta-free, otherwise
+    # leave the name unregistered — later decls mentioning it fail at
+    # their own location.
+    if not ru.found:
+      let tyV =
+        try: check(supply, vStar(), tyT)
+        except ValueError as e:
+          raise elabErr(d.loc,
+            "ill-formed type of '" & d.name & "': " & e.msg)
+      globals[d.name] = GEntry(tm: newPostulateRef(supply, tyV), ty: tyT)
+    return ElabDef(name: d.name, tyTm: tyT, tmTm: tmT, loc: d.loc)
   # 3. the core verifies the zonked (meta-free) terms — unless a
   # domain handler extended conversion for this definition (see above).
   let tmV =
@@ -1022,8 +1049,6 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
           "' does not check against its declared type: " & e.msg &
           "\n  expected: " & $d.desugarTy() &
           "\n  body:     " & $d.desugarTm())
-  if d.name in globals:
-    raise elabErr(d.loc, "duplicate definition '" & d.name & "'")
   globals[d.name] = GEntry(tm: newDefRef(supply, tyV, tmV), ty: tyT)
   ElabDef(name: d.name, tyTm: tyT, tmTm: tmT, loc: d.loc)
 
@@ -1040,13 +1065,22 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
   unifyElab(ms, tyTy, tmC(cStar), loc)
   let tyT = zonk(ms, tyTm0)
   let ru = findUnsolved(ms, tyT)
-  if ru.found:
+  if ru.found and not ms.allowHoles:
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
       " in the type of '" & name & "'")
   let tyV =
-    try: check(supply, vStar(), tyT)
-    except ValueError as e:
-      raise elabErr(loc, "ill-formed type of '" & name & "': " & e.msg)
+    if ru.found:
+      # allowHoles (issue #58): the type mentions holes; the core cannot
+      # value it and registration is skipped below — dummy never read.
+      vStar()
+    else:
+      try: check(supply, vStar(), tyT)
+      except ValueError as e:
+        raise elabErr(loc, "ill-formed type of '" & name & "': " & e.msg)
+  if ru.found:
+    # allowHoles: leave the name unregistered; later decls mentioning it
+    # fail at their own location.
+    return
   # the type must be a Pi spine (for `elim`: determines the arity)
   var nargs = 0
   var tyHead = tyT
@@ -1241,7 +1275,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
   let (rhsTm0, _) = inferTm(rhs, ctx, globals, ms, supply)
   let rhsTm = zonk(ms, rhsTm0)
   let ru = findUnsolved(ms, rhsTm)
-  if ru.found:
+  if ru.found and not ms.allowHoles:
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
       " in the contractum of a red rule")
   try:
@@ -2283,18 +2317,18 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
   of dkClauses:
     result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
 
-proc elabCheck*(src: string, handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
-  ## Parse, elaborate, and typecheck a surface program, decl by decl.
-  ## Later decls may mention earlier ones (via closed R nodes).
+proc elabCheckState*(src: string, handlers: seq[ConvHandler] = @[]):
+    tuple[defs: seq[ElabDef], ms: MetaStore] =
+  ## Parse, elaborate, and typecheck a surface program, decl by decl,
+  ## returning the MetaStore too (for tooling: hole info, issue #58).
   ## Raises ParseError (carries loc) or ElabError (carries loc).
-  ## Experiment 41: `handlers` installs conversion decision procedures
-  ## for the dynamic extent of the whole program (e.g. @[cacheConvHandler]).
   let decls = parseProgram(src)
   var globals: Globals = initTable[string, GEntry]()
   var supply = Supply()
   var ms = initMetaStore()  # includes fresh convCache (Experiment 10)
   for h in handlers: ms.convHandlers.add(h)
   var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
+  var defs: seq[ElabDef] = @[]
   for d in decls:
     let eds = elabDecl(d, globals, supply, ms, dataInfos)
     for ed in eds:
@@ -2303,7 +2337,55 @@ proc elabCheck*(src: string, handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
         checkUsage(ed.tmTm)
       except UsageError as e:
         raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
-      result.add(ed)
+      defs.add(ed)
+  (defs, ms)
+
+proc elabCheck*(src: string, handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
+  ## Parse, elaborate, and typecheck a surface program, decl by decl.
+  ## Later decls may mention earlier ones (via closed R nodes).
+  ## Raises ParseError (carries loc) or ElabError (carries loc).
+  ## Experiment 41: `handlers` installs conversion decision procedures
+  ## for the dynamic extent of the whole program (e.g. @[cacheConvHandler]).
+  elabCheckState(src, handlers).defs
+
+proc elabCheckHoles*(src: string): tuple[defs: seq[ElabDef], ms: MetaStore,
+    errLoc: Loc, errMsg: string] =
+  ## Issue #58: hole-tolerant elaboration for tooling (LSP hover).
+  ## Like elabCheckState, but unsolved metavariables (surface `_` holes)
+  ## do not fail the declaration: open defs are registered postulate-style
+  ## and the core re-check is skipped for them. Elaborates decl by decl
+  ## and stops at the first declaration that fails for any *other* reason,
+  ## returning the accumulated state so holes from the successful prefix
+  ## stay queryable; the first failure is reported via errLoc/errMsg
+  ## (both empty when the whole document elaborated). Raises ParseError
+  ## as usual (an unparseable document has no meaningful hole state).
+  let decls = parseProgram(src)
+  var globals: Globals = initTable[string, GEntry]()
+  var supply = Supply()
+  var ms = initMetaStore()
+  ms.allowHoles = true
+  var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
+  var defs: seq[ElabDef] = @[]
+  var errLoc = noLoc
+  var errMsg = ""
+  for d in decls:
+    try:
+      let eds = elabDecl(d, globals, supply, ms, dataInfos)
+      for ed in eds:
+        # checkUsage is meta-safe (tMeta is a no-op case); open defs keep
+        # their holes in tmTm.
+        try:
+          checkUsage(ed.tmTm)
+        except UsageError as e:
+          raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
+        defs.add(ed)
+    except ElabError as e:
+      # A partially elaborated decl may have recorded holes before the
+      # failure; keep the successful prefix and stop.
+      errLoc = e.loc
+      errMsg = e.msg
+      break
+  (defs, ms, errLoc, errMsg)
 
 proc elabPrelude*(src: string): tuple[globals: Globals, ms: MetaStore,
                                       supply: Supply] =

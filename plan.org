@@ -198,6 +198,19 @@
   Tested with mock LSP session. Hover, code actions, and incremental
   sync are future work.
 
+  Progress (2026-10-11, issue #58): hover slice landed on branch
+  exp58-lsp-holes. =textDocument/hover= returns the goal type +
+  binder context at =_= holes (markdown). Supporting machinery:
+  =MetaStore.holes= records each hole at creation (loc, goal type-meta,
+  context); =elabCheckHoles= is a hole-tolerant elaboration entry point
+  (=allowHoles= flag: unsolved metas no longer fail the decl, open defs
+  register postulate-style, core re-check skipped for open defs;
+  elaborates decl-by-decl and reports the first non-hole failure);
+  diagnostics are hole-tolerant too (holes are goals, not errors).
+  =tests/test_lsp_holes.nim= drives a scripted in-process mock session
+  (18 checks). Remaining for #58: refine / case-split / give code
+  actions, prettier (name-resolving) goal rendering.
+
   This experiment is the tooling half of "convincingly": a useful system
   anyone would actually want to use needs it.
 
