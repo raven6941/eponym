@@ -1,7 +1,7 @@
 # Vectors (indexed family). Tests indexed data and eliminator computation.
 # Experiment: 10
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
-# `data T : ? where` defines inductive types; in ettBlock: `data(T, Univ):` + indented `proc` ctors
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
+# `data T : ? where` defines inductive types; in eponymBlock: `data(T, Univ):` + indented `proc` ctors
 import "../../lib/nat.ep"
 
 data Vec (A : ?) : Nat -> ? where

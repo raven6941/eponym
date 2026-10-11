@@ -32,7 +32,7 @@ import rel_elab_out
 import staging/gen_elabo_full
 import elab
 import preterm
-import ett_init
+import eponym_init
 import unify
 import tables
 import times

@@ -30,7 +30,7 @@
 
 import elab
 import unify
-import ett_init   # Term for the counting wrapper
+import eponym_init   # Term for the counting wrapper
 import preterm    # Loc for the counting wrapper
 import times
 import strformat

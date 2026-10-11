@@ -20,7 +20,7 @@ import minikanren
 import rel_elab
 import elab
 import preterm
-import ett_init
+import eponym_init
 import unify
 import tables
 import times

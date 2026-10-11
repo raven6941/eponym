@@ -1,23 +1,23 @@
 # Session-typed channels, embedded (Issue #28).
 #
-# The protocol is stated once as indexed Eponym types inside an ettBlock;
+# The protocol is stated once as indexed Eponym types inside an eponymBlock;
 # the client is written in ordinary-looking Nim. Protocol violations are
 # compile-time errors: the block is elaborated when this module compiles.
 #
-# New ettBlock surface used here (Issue #28 / #64):
+# New eponymBlock surface used here (Issue #28 / #64):
 # - `ch {.linear.}` params become `(1 ch : ...)` binders; the elaborator
 #   rejects using a linear variable zero or 2+ times.
 # - `Pi(x: A, y {.linear.}: B, C)` call syntax for dependent Pi types
-#   (Nim parses this as nnkObjConstr; ett_mac handles both shapes).
+#   (Nim parses this as nnkObjConstr; eponym_mac handles both shapes).
 # - `Sig(x: A, B)` / `Sig(A, B)` for dependent pairs.
 #
 # The operations are postulates (mock socket ops); a real library would
 # bind them to socket code. Linearity is enforced at use sites (clients).
 
-import ett_mac
-import ett_embed
+import eponym_mac
+import eponym_embed
 
-ettBlock:
+eponymBlock:
   # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
   # (was a per-file data(Nat, ...) redefinition before #131).
   import "../../lib/nat.ep"

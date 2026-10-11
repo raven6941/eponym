@@ -1,5 +1,5 @@
 #===============================================================================
-# ett.nim -- A finally-tagless interpreter for ETT, Epigram's Type Theory.
+# eponym.nim -- A finally-tagless interpreter for ETT, Epigram's Type Theory.
 #
 # Based on: Chapman, Altenkirch & McBride, "Epigram Reloaded: A Standalone
 #           Typechecker for ETT" (TYPES 2006).

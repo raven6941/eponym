@@ -34,7 +34,7 @@
 ##   computed -- specialization targets terms, and types follow.
 
 import std/tables
-import ett
+import eponym
 import preterm  # Quantity/q0/q1/qOmega (Issue #94: erasure-aware staging)
 
 # --- Residual IR nodes for ETT (the residual *code*; ETT formers only) ---

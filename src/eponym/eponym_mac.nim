@@ -8,11 +8,11 @@
 import macros
 import elab
 import parse_surf
-import os  # issue #131: parentDir of the ettBlock call site
+import os  # issue #131: parentDir of the eponymBlock call site
 import strutils
 import sequtils
 
-# --- ettBlock: Nim-block syntax (no """) ---------------------------------
+# --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
 # and generates wrapper procs. Uses call syntax:
 #   proc add42(n: Int): Int = addInt(n, 42)
@@ -28,7 +28,7 @@ proc callerDir(body: NimNode): string =
   let li = lineInfo(body)
   let p = li.rfind('(')
   if p < 0:
-    error("ettBlock: cannot determine calling file", body)
+    error("eponymBlock: cannot determine calling file", body)
   parentDir(li[0 ..< p])
 
 proc binderName(n: NimNode): string =
@@ -39,15 +39,15 @@ proc binderName(n: NimNode): string =
 proc qtyPrefix(n: NimNode): string =
   ## Eponym quantity prefix from a Nim param pragma:
   ## `ch {.linear.}` -> "1 ", `ch {.erased.}` -> "0 ", otherwise "".
-  ## (Issue #28: linear binders in ettBlock; elaborator enforces usage.)
+  ## (Issue #28: linear binders in eponymBlock; elaborator enforces usage.)
   if n.kind == nnkPragmaExpr and n.len == 2 and n[1].kind == nnkPragma:
     for pr in n[1]:
       if pr.kind != nnkIdent:
-        error("ettBlock: unsupported param pragma", pr)
+        error("eponymBlock: unsupported param pragma", pr)
       case $pr
       of "linear": return "1 "
       of "erased": return "0 "
-      else: error("ettBlock: unknown quantity pragma: " & $pr & " (want linear/erased)", pr)
+      else: error("eponymBlock: unknown quantity pragma: " & $pr & " (want linear/erased)", pr)
     return ""
   return ""
 
@@ -62,11 +62,11 @@ proc nimExprToEponym(n: NimNode): string =
     if s == "vecnil": s = "nil"
     if s == "Univ": "?" else: s
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
-    # In ettBlock, integer literals are passed through verbatim and
+    # In eponymBlock, integer literals are passed through verbatim and
     # overloaded by the elaborator (checkTm pkInt: Nat when the expected
     # type is Nat, primitive Int when it is Int) -- the same semantics
     # as string syntax. This also resolves Issue #8: nested literals in
-    # ettBlock bodies (e.g. cons(Int, 2, a, ...), eConst 3) now elaborate
+    # eponymBlock bodies (e.g. cons(Int, 2, a, ...), eConst 3) now elaborate
     # per their expected type instead of always becoming Nat suc-chains.
     # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so
     # the Nat literal one is spelled `suc zero` here (as in string syntax).
@@ -75,7 +75,7 @@ proc nimExprToEponym(n: NimNode): string =
     if v == 1: "(suc zero)" else: $v
   of nnkStmtList:
     # Proc body: convert let-statements to nested let...in, final expr is body
-    if n.len == 0: error("ettBlock: empty proc body", n)
+    if n.len == 0: error("eponymBlock: empty proc body", n)
     # Collect lets and final expression
     var lets: seq[(string, string)] = @[]  # (name, value)
     var finalExpr: NimNode = nil
@@ -89,10 +89,10 @@ proc nimExprToEponym(n: NimNode): string =
       else:
         # Final expression (or single expression)
         if finalExpr != nil:
-          error("ettBlock: proc body must be lets followed by single expr", n)
+          error("eponymBlock: proc body must be lets followed by single expr", n)
         finalExpr = stmt
     if finalExpr == nil:
-      error("ettBlock: proc body must end with expression", n)
+      error("eponymBlock: proc body must end with expression", n)
     var res = nimExprToEponym(finalExpr)
     # Wrap in let...in (innermost first, so reverse)
     for i in countdown(lets.len - 1, 0):
@@ -109,7 +109,7 @@ proc nimExprToEponym(n: NimNode): string =
     # Nim parses it as a call, not an obj-constr. Route to the type converter.
     if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
       return nimTypeToEponym(n)
-    # lam(x, T, body) -> lam (x : T). body (surface lambdas in ettBlock bodies)
+    # lam(x, T, body) -> lam (x : T). body (surface lambdas in eponymBlock bodies)
     if n[0].kind == nnkIdent and $n[0] == "lam":
       if n.len != 4 or n[1].kind != nnkIdent:
         error("lam expects (binder, type, body)", n)
@@ -135,7 +135,7 @@ proc nimExprToEponym(n: NimNode): string =
     # (a, b) -> (a, b) [Eponym pair syntax]
     "(" & n.mapIt(nimExprToEponym(it)).join(", ") & ")"
   else:
-    error("ettBlock: unsupported expression: " & $n.kind, n)
+    error("eponymBlock: unsupported expression: " & $n.kind, n)
 
 proc piSigToEponym(n: NimNode): string
   ## Convert Pi(...)/Sig(...) (nnkCall or nnkObjConstr) to Eponym.
@@ -189,13 +189,13 @@ proc nimTypeToEponym(n: NimNode): string =
     # constructor, not a call. Only Pi/Sig are meaningful here.
     if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
       return piSigToEponym(n)
-    error("ettBlock: unsupported object construction in type: " & $n[0], n)
+    error("eponymBlock: unsupported object construction in type: " & $n[0], n)
   of nnkInfix:
     # A -> B -> A -> B (right associative, as in Eponym)
     if $n[0] == "->" and n.len == 3:
       nimTypeToEponym(n[1]) & " -> " & nimTypeToEponym(n[2])
     else:
-      error("ettBlock: unsupported infix in type: " & $n[0], n)
+      error("eponymBlock: unsupported infix in type: " & $n[0], n)
   else:
     nimExprToEponym(n)
 
@@ -266,10 +266,10 @@ proc blockToEponym*(body: NimNode): string =
     of nnkImportStmt:
       # Issue #131: import "../../lib/nat.ep" -> import "../../lib/nat.ep"
       # (Eponym source line). Paths resolve relative to the Nim file
-      # containing the ettBlock call (see the ettBlock macro below).
+      # containing the eponymBlock call (see the eponymBlock macro below).
       for p in st:
         if p.kind != nnkStrLit:
-          error("ettBlock: import expects a string path, e.g. import \"lib/nat.ep\"", p)
+          error("eponymBlock: import expects a string path, e.g. import \"lib/nat.ep\"", p)
         result.add("import \"" & p.strVal & "\"\n")
     of nnkCall:
       let head = $st[0]
@@ -329,11 +329,11 @@ proc blockToEponym*(body: NimNode): string =
               cparamStrs.add("(" & q & binderName(p[j]) & " : " & ty2 & ")")
           result.add("| " & cname & " " & cparamStrs.join(" ") & " : " & cretTy & "\n")
       else:
-        error("ettBlock: unsupported call: " & head, st)
+        error("eponymBlock: unsupported call: " & head, st)
     else:
-      error("ettBlock: unsupported statement: " & $st.kind, st)
+      error("eponymBlock: unsupported statement: " & $st.kind, st)
 
-macro ettBlock*(body: untyped): untyped =
+macro eponymBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
   ## data(N, Univ): block.
@@ -342,10 +342,10 @@ macro ettBlock*(body: untyped): untyped =
   ## Dependent Pi/Sigma types: Pi(x: A, y {.linear.}: B, C),
   ## Sig(x: A, B), Sig(A, B).
   ## `import "path.ep"` (Issue #131): Eponym-module import, resolved
-  ## relative to the Nim file containing the ettBlock call; makes prelude
+  ## relative to the Nim file containing the eponymBlock call; makes prelude
   ## definitions (lib/*.ep) available without redefinition.
   ## Generates wrapper procs (each `def : Int -> ... -> Int` becomes a
-  ## callable Nim proc via ett_embed.callIntFuncDir).
+  ## callable Nim proc via eponym_embed.callIntFuncDir).
   let src = blockToEponym(body)
   # Issue #131: imports resolve relative to the calling Nim file's dir.
   let baseDir = callerDir(body)
@@ -353,9 +353,9 @@ macro ettBlock*(body: untyped): untyped =
   try:
     defs = elabCheckDir(src, baseDir)
   except ElabError as e:
-    error("ettBlock elaboration error: " & e.msg, body)
+    error("eponymBlock elaboration error: " & e.msg, body)
   except ParseError as e:
-    error("ettBlock parse error: " & e.msg, body)
+    error("eponymBlock parse error: " & e.msg, body)
 
   result = newStmtList()
   let dirLit = newLit(baseDir)
@@ -368,24 +368,24 @@ macro ettBlock*(body: untyped): untyped =
         callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @args)
     )
 
-macro ett*(src: string): untyped =
+macro eponym*(src: string): untyped =
   ## Elaborate and typecheck a surface program at compile time.
   ## On success expands to nothing; on failure compilation stops with an
-  ## error pointing at the ett"..." literal.
+  ## error pointing at the eponym"..." literal.
   let s = src.strVal  # src is a string literal (enforced by the signature)
   try:
     discard elabCheck(s)
   except ElabError as e:
-    error("ett elaboration error: " & e.msg, src)
+    error("eponym elaboration error: " & e.msg, src)
   except ParseError as e:
-    error("ett parse error: " & e.msg, src)
+    error("eponym parse error: " & e.msg, src)
   result = newStmtList()
 
 when isMainModule:
-  ett"""
+  eponym"""
 proc twice (A : ?) (f : A -> A) (x : A) : A =
   f (f x)
 proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 """
-  echo "ok: ett macro accepts well-typed programs at compile time"
+  echo "ok: eponym macro accepts well-typed programs at compile time"

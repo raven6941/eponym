@@ -1,7 +1,7 @@
 # Higher-order constructor arguments (issue #113): dependent session
 # continuations.
 # Experiment: 19
-# Syntax: `proc` (Nim), `=` , `?` = universe (in ettBlock: `Univ`)
+# Syntax: `proc` (Nim), `=` , `?` = universe (in eponymBlock: `Univ`)
 #
 # A session continuation can depend on a value received earlier:
 #   recvDNat (k : Nat -> Session)

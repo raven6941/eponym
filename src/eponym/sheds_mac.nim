@@ -1,7 +1,7 @@
 # sheds_mac.nim -- the `shedsBlock` macro (issue #133).
 #
-# Deliberately thin, like ett_mac.nim (see decisions.org on Nimony/Nim 3):
-# the Nim->Eponym conversion is plain Nim code (ett_mac.blockToEponym,
+# Deliberately thin, like eponym_mac.nim (see decisions.org on Nimony/Nim 3):
+# the Nim->Eponym conversion is plain Nim code (eponym_mac.blockToEponym,
 # after sheds.rewriteSheds replaces shed nodes with placeholders); the
 # macro only feeds the elaborator a string and turns failures into
 # compiler errors.
@@ -14,9 +14,9 @@
 # context, draft) is written to `<nimfile>.sheds.json` for the LSP
 # server (issues #134/#135).
 #
-# Generated code: like ettBlock, each hole-free `def` gets a wrapper
+# Generated code: like eponymBlock, each hole-free `def` gets a wrapper
 # proc callable from normal Nim code (via the hole-tolerant runtime
-# elaboration in ett_embed). Defs mentioning shed holes get no wrapper --
+# elaboration in eponym_embed). Defs mentioning shed holes get no wrapper --
 # a hole is not callable -- but their shed metadata is still emitted.
 #
 # Issue #134: each shed's elaboration status (white/yellow/brown) is
@@ -25,22 +25,22 @@
 # can show brown.
 
 import macros
-import os  # parentDir (issue #131, via ett_mac.callerDir)
+import os  # parentDir (issue #131, via eponym_mac.callerDir)
 import elab  # elabCheckHolesDir, ElabError, ElabDef, MetaStore
 import parse_surf  # ParseError
-import ett_mac  # blockToEponym, callerDir
-import ett_embed  # callIntFuncHolesDir (issue #133)
+import eponym_mac  # blockToEponym, callerDir
+import eponym_embed  # callIntFuncHolesDir (issue #133)
 import sheds  # ShedInfo, rewriteSheds, resolveShedPlaceholders, sidecar IO,
               # assignShedStatuses (issue #134)
 import usage_check  # hasUnresolvedMetas
 import unify  # zonk
-import ett_init  # `$` for Term (goal pretty-printing, issue #58)
+import eponym_init  # `$` for Term (goal pretty-printing, issue #58)
 
 macro shedsBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions containing
   ## Epigram-style sheds (`![ name ]` or `![ name, draft ]` in a proc
   ## body). Shed bodies are unchecked scratch; surrounding code typechecks
-  ## normally. `import "path.ep"` works as in ettBlock (issue #131),
+  ## normally. `import "path.ep"` works as in eponymBlock (issue #131),
   ## resolved relative to the calling Nim file.
   var sheds: seq[ShedInfo] = @[]
   rewriteSheds(body, sheds)

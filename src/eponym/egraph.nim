@@ -11,7 +11,7 @@
 
 import tables
 import hashes
-import ett_init
+import eponym_init
 
 type
   ConvKey* = tuple[ctxLen: int, ha: Hash, hb: Hash]

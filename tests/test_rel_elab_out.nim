@@ -13,7 +13,7 @@ import rel_elab_dep
 import rel_elab_out
 import elab
 import preterm
-import ett_init
+import eponym_init
 import unify
 import tables
 import strutils

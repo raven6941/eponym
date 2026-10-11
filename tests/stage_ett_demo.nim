@@ -1,6 +1,6 @@
 ## End-to-end validation for Phase 2 (#17): ETT-specific staging rules.
 ##
-## - Stages real ETT terms (twice / const / pairSwap from ett.nim, built
+## - Stages real ETT terms (twice / const / pairSwap from eponym.nim, built
 ##   once polymorphically over Sym[R]) and checks the staged result
 ##   evaluates to the same Value as the unstaged interpreter (evalSym).
 ## - Prints the residual: only ETT former nodes (var/app/pair/...); no
@@ -9,7 +9,7 @@
 ##   static subterm evaluation move out of the dynamic loop.
 
 import std/[tables, times]
-import ett
+import eponym
 import ett_staged  # was staging/ett_staged (stale path); the module lives in tests/
 
 # --- structural equality on values (neutrals compared by id) ---

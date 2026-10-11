@@ -93,11 +93,11 @@ checks it succeeds. These test the elaborator in isolation.
 ## `embedded/` — Embedded Nim library use
 
 These are ordinary Nim programs that embed dependently-typed code via
-the `ettBlock` macro. This is the *primary* use case: Eponym as a library
+the `eponymBlock` macro. This is the *primary* use case: Eponym as a library
 for verified components inside a larger Nim application.
 
 - **sensor_fusion.nim** — Verified 3-element vector dot product for sensor
-  fusion. The `ettBlock` elaborates at compile time; the surrounding Nim
+  fusion. The `eponymBlock` elaborates at compile time; the surrounding Nim
   handles IO and orchestration.
 - **session_types.nim** — Session-typed channels as an embedded DSL
   (Issue #28): the protocol is stated once as indexed Eponym types, the
@@ -150,10 +150,10 @@ for verified components inside a larger Nim application.
 ### The embedded pattern
 
 ```nim
-import ett_mac
-import ett_embed
+import eponym_mac
+import eponym_embed
 
-ettBlock:
+eponymBlock:
   postulate(Int, Univ)
   data(Nat, Univ):
     proc zero(): Nat
@@ -164,7 +164,7 @@ ettBlock:
 let x = add(2, 3)
 ```
 
-The `ettBlock` macro takes Nim AST (not a string), converts it to Eponym
+The `eponymBlock` macro takes Nim AST (not a string), converts it to Eponym
 surface syntax at compile time, elaborates it (type-checking), and
 generates callable Nim wrappers. If elaboration fails, compilation stops
 with the type error.

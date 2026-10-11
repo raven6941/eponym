@@ -1,6 +1,6 @@
 # Basic definitions: twice, const, pairSwap. Tests Pi types and application.
 # Experiment: 01
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
 
 proc twice (A : ?) (f : A -> A) (x : A) : A =
   f (f x)

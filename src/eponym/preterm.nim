@@ -2,7 +2,7 @@
 #
 # Named binders + source locations. Both front ends (the string-literal
 # parser in parse_surf.nim and the Nim-AST macro in mac_surf.nim)
-# produce these; Experiment 2 will elaborate them to ett_init.Term.
+# produce these; Experiment 2 will elaborate them to eponym_init.Term.
 #
 # Representation: flat ref object with three child slots whose meaning
 # depends on `kind` (documented per constructor). Client code should
@@ -22,7 +22,7 @@ type
     ## Surface binder quantity (Issue #66): a concrete quantity or a
     ## quantity variable. A variable is solved by elaboration from the
     ## bound variable's uses (0 -> q0, 1 -> q1, 2+ -> qOmega); the core
-    ## language (ett_init) only ever sees concrete quantities.
+    ## language (eponym_init) only ever sees concrete quantities.
     case isVar*: bool
     of true: vname*: string
     of false: q*: Quantity

@@ -54,12 +54,12 @@ the judgments, #66), elaborator, surface syntax. This is the end goal;
 Layers 1 and 2 are infrastructure to make it better.
 
 **Files**:
-- `src/ett.nim`, `src/ett_init.nim` — QTT core (finally-tagless and initial).
+- `src/eponym.nim`, `src/eponym_init.nim` — QTT core (finally-tagless and initial).
 - `src/elab.nim` — the real elaborator (bidirectional, metavariables,
   implicits, conversion).
 - `src/unify.nim` — Miller pattern unification for the elaborator.
 - `src/preterm.nim`, `src/parse_surf.nim`, `src/mac_surf.nim` — surface syntax.
-- `src/ett_mac.nim`, `src/ett_embed.nim` — macro embedding.
+- `src/eponym_mac.nim`, `src/eponym_embed.nim` — macro embedding.
 - `src/egraph.nim` — e-graph conversion cache (Exp 10).
 - `src/lsp.nim` — LSP tooling (Exp 7).
 

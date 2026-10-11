@@ -14,7 +14,7 @@ import staging/stage_rel_elab_dep
 import rel_elab_dep
 import elab
 import preterm
-import ett_init
+import eponym_init
 import unify
 import times
 

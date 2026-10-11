@@ -1,6 +1,6 @@
 # Booleans via postulate/elim/red. Tests Experiment 4 machinery.
 # Experiment: 07
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
 
 postulate Bool : ?
 postulate true : Bool

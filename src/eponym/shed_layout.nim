@@ -28,7 +28,7 @@
 import json
 import strutils
 import unicode  # runeLen: display width of header text
-import ett_init  # Term, TermKind (`$` for Term)
+import eponym_init  # Term, TermKind (`$` for Term)
 import sheds  # ShedInfo (layoutShed)
 
 type

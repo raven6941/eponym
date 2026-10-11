@@ -10,6 +10,10 @@ src/**
 tests/**
 !tests/**/
 !tests/**/*.nim
+bench/**
+!bench/**/
+!bench/**/*.nim
+!bench/**/*.md
 # Examples dir: keep sources, ignore built outputs
 examples/*
 !examples/ep/

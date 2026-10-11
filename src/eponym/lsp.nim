@@ -24,7 +24,7 @@ import tables
 import os  # fileExists (issue #134: shed sidecar)
 import elab
 import preterm
-import ett_init  # `$` for Term (issue #58)
+import eponym_init  # `$` for Term (issue #58)
 import parse_surf
 import unify  # HoleInfo, zonk (issue #58)
 import sheds  # ShedInfo, ShedStatus, sidecarPath, readShedSidecarEx (issue #134)

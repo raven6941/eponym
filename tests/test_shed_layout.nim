@@ -9,7 +9,7 @@ import strutils
 import sequtils  # anyIt
 import json
 import tables  # initTable (LSP server in tests)
-import ett_init  # tmApp, tmLam, tmLet, tmMeta, tmInt, vv, `$`
+import eponym_init  # tmApp, tmLam, tmLet, tmMeta, tmInt, vv, `$`
 import sheds  # ShedInfo, sidecarPath, writeShedSidecar
 import shed_layout
 import lsp  # handleMessage, shedLayout

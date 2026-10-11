@@ -29,7 +29,7 @@ import os        # issue #49: module file loading
 import hashes    # issue #49: content-hash module cache
 import preterm
 import parse_surf
-import ett_init
+import eponym_init
 import unify
 import egraph
 import usage_check  # Issue #64: linear usage verification
@@ -2465,7 +2465,7 @@ proc elabDeclsDir*(drv: var ModuleDriver, decls: seq[SurfDecl],
   ## Elaborate `decls` into the driver's environment, recursively
   ## elaborating `import` declarations first. Import paths resolve relative
   ## to `baseDir` (the importing source's directory); `srcLabel` names the
-  ## importing source in error messages (a file path, or "<ettBlock>").
+  ## importing source in error messages (a file path, or "<eponymBlock>").
   ## Returns the defs declared by `decls` themselves; imported definitions
   ## live in `drv.globals`. Raises ElabError on cycles, missing files, or
   ## elaboration failures.
@@ -2502,7 +2502,7 @@ proc elabFile*(drv: var ModuleDriver, path: string,
       when nimvm:
         # Issue #131: expandFilename needs realpath/getcwd (importc), which
         # the Nim VM cannot call. Imports elaborated at compile time (via
-        # ettBlock) always resolve to absolute paths (callerDir is absolute),
+        # eponymBlock) always resolve to absolute paths (callerDir is absolute),
         # so lexical normalization suffices there; symlinks are resolved
         # only at runtime.
         normalizedPath(path)
@@ -2538,12 +2538,12 @@ proc elabCheckDir*(src: string, baseDir: string,
                    handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
   ## Issue #131: like elabCheck, but `import "path.ep"` declarations resolve
   ## relative to `baseDir` instead of failing with "requires a file context".
-  ## For embedded sources (e.g. ettBlock) that live in a Nim file rather
+  ## For embedded sources (e.g. eponymBlock) that live in a Nim file rather
   ## than an .ep file on disk. Returns the defs declared by `src` itself;
   ## raises ParseError or ElabError on failure.
   let decls = parseProgram(src)  # ParseError propagates
   var drv = initModuleDriver(handlers)
-  drv.elabDeclsDir(decls, baseDir, "<ettBlock>")
+  drv.elabDeclsDir(decls, baseDir, "<eponymBlock>")
 
 proc elabCheckFile*(path: string,
                     handlers: seq[ConvHandler] = @[]): seq[ElabDef] =

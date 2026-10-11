@@ -1,7 +1,7 @@
 # Eponym elaborator (`src/eponym/`)
 
 The dependently-typed language embedded in Nim. This is the product:
-user code is ordinary Nim, with Eponym surface syntax in `ettBlock`
+user code is ordinary Nim, with Eponym surface syntax in `eponymBlock`
 macros elaborated at compile time.
 
 ## Pipeline
@@ -12,27 +12,27 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
 
 1. **Surface**: Two front ends produce the same `PreTerm` AST:
    - `parse_surf.nim`: string parser for `.ep` files (`examples/ep/`)
-   - `mac_surf.nim`: Nim-AST macro for `ettBlock` (embedded use)
+   - `mac_surf.nim`: Nim-AST macro for `eponymBlock` (embedded use)
 2. **Elaboration** (`elab.nim`): bidirectional type checking (`inferTm`,
    `checkTm`) producing core `Term`s. Handles implicits, metavariables,
    unification, and conversion.
-3. **Core** (`ett_init.nim`, `ett.nim`): the ETT type theory — `Term` AST
+3. **Core** (`eponym_init.nim`, eponym.nim): the ETT type theory — `Term` AST
    (de Bruijn), evaluator (NbE-style with explicit environments), and
-   the core typechecker. `ett.nim` is the finally-tagless alternative
-   encoding; `ett_init.nim` is the initial encoding used by the elaborator.
+   the core typechecker. eponym.nim is the finally-tagless alternative
+   encoding; `eponym_init.nim` is the initial encoding used by the elaborator.
 4. **Usage check** (`usage_check.nim`): post-elaboration pass enforcing
    quantitative binder usage (Issue #64). Linear (`q1`) binders must be
    used exactly once; erased (`q0`) binders must not be used.
-5. **Embedding** (`ett_mac.nim`, `ett_embed.nim`): the `ett"..."` and
-   `ettBlock` macros plus runtime support for calling elaborated
+5. **Embedding** (`eponym_mac.nim`, `eponym_embed.nim`): the `eponym"..."` and
+   `eponymBlock` macros plus runtime support for calling elaborated
    definitions from Nim. (The old `ettEmbed"""..."""` string-embedding
-   form was dropped in Issue #115; `ettBlock` is the single embedding
+   form was dropped in Issue #115; `eponymBlock` is the single embedding
    form — Eponym code is valid Nim code.)
-   `ettBlock` supports `import "path.ep"` (Issue #131): Eponym-module
+   `eponymBlock` supports `import "path.ep"` (Issue #131): Eponym-module
    imports resolved relative to the calling Nim file's directory, so
    embedded code shares the `lib/*.ep` prelude instead of redefining
    `Nat`/`Vec`/etc. per file. At runtime the generated wrappers
-   re-elaborate through `ett_embed.callIntFuncDir`, which resolves the
+   re-elaborate through `eponym_embed.callIntFuncDir`, which resolves the
    same imports.
 
 ## Files
@@ -42,14 +42,14 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
   to nested binders)
 - `parse_surf.nim` — recursive-descent parser; `(1 x : T)` for linear,
   `(0 x : T)` for erased binders
-- `mac_surf.nim` — converts Nim AST to `PreTerm` (the `ettBlock` macro)
+- `mac_surf.nim` — converts Nim AST to `PreTerm` (the `eponymBlock` macro)
 - `elab.nim` — the elaborator: context, metas, `inferTm`/`checkTm`,
   `elabDefDecl`, `elabCheck`
-- `ett_init.nim` — core `Term`, `tmPi`/`tmLam`/`tmLet` constructors,
+- `eponym_init.nim` — core `Term`, `tmPi`/`tmLam`/`tmLet` constructors,
   evaluator, `check`/`infer`/`areEqual`
-- `ett.nim` — finally-tagless ETT (`Sym[R]` interface)
-- `ett_mac.nim` — `ett`, `ettBlock` macros
-- `ett_embed.nim` — runtime: definition cache, `callIntFunc`
+- eponym.nim — finally-tagless ETT (`Sym[R]` interface)
+- `eponym_mac.nim` — `eponym`, `eponymBlock` macros
+- `eponym_embed.nim` — runtime: definition cache, `callIntFunc`
 - `egraph.nim` — e-graph conversion cache (Experiment 10)
 - `lsp.nim` — language server (Experiment 7)
 - `heap.nim` — heap for the evaluator
@@ -64,6 +64,6 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
   checker is a post-pass, not part of the typing judgments — full QTT
   integration is tracked in Issue #66.
 - **Two front ends, one AST**: the string parser and Nim macro both
-  produce `PreTerm`, so `.ep` files and `ettBlock`s share the elaborator.
+  produce `PreTerm`, so `.ep` files and `eponymBlock`s share the elaborator.
 - **Metavariables**: elaboration uses metas solved by pattern unification;
   `zonk` substitutes solutions before the core re-check.

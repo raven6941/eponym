@@ -15,14 +15,14 @@ jobs:
         run: |
           nim --version
           P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
-          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac lsp egraph ett_embed sheds sheds_mac shed_layout; do
+          for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac lsp egraph eponym_embed sheds sheds_mac shed_layout; do
             echo "=== build $f ==="
             nim c --hints:off $P "src/eponym/$f.nim" || exit 1
           done
       - name: Test
         run: |
           P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
-          for f in ett ett_init preterm parse_surf mac_surf elab ett_mac egraph ett_embed; do
+          for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac egraph eponym_embed; do
             echo "=== test $f ==="
             nim c -r --hints:off $P "src/eponym/$f.nim" || exit 1
           done
