@@ -1,9 +1,9 @@
 #===============================================================================
 # eponym_init.nim -- ETT with an *initial* encoding (concrete first-order AST),
-# for comparison with the finally-tagless ett.nim.
+# for comparison with the finally-tagless eponym.nim.
 #
 # This follows Chapman, Altenkirch & McBride, "Epigram Reloaded" §§6.4-6.7 far
-# more directly than ett.nim does:
+# more directly than eponym.nim does:
 #   §6.4  Term is a datatype with de Bruijn indices (V Int); free variables
 #         are R nodes carrying their type (and value, for definitions).
 #   §6.6  Values glue syntax to weak-head normal forms; evaluation threads an
@@ -872,7 +872,7 @@ proc infer(s: var Supply, t: Term): Value =
     ScoVal(syn: asc, fn: proc(v: Value): Value = eval(asc.bdy, @[v])).fn(sv)
 
 ## --- examples (the paper's twice, plus friends) --------------------------------
-## Written directly as ASTs -- compare with the HOAS versions in ett.nim.
+## Written directly as ASTs -- compare with the HOAS versions in eponym.nim.
 
 # twice : Pi(X:? ). (X -> X) -> X -> X      (paper §6.4)
 let twiceT = tmLam(tStar(), "X",

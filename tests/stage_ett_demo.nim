@@ -1,6 +1,6 @@
 ## End-to-end validation for Phase 2 (#17): ETT-specific staging rules.
 ##
-## - Stages real ETT terms (twice / const / pairSwap from ett.nim, built
+## - Stages real ETT terms (twice / const / pairSwap from eponym.nim, built
 ##   once polymorphically over Sym[R]) and checks the staged result
 ##   evaluates to the same Value as the unstaged interpreter (evalSym).
 ## - Prints the residual: only ETT former nodes (var/app/pair/...); no

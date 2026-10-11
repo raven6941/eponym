@@ -8,7 +8,7 @@ issues #64, #66).
 
 The interesting part is the **elaborator** — the pipeline from
 surface syntax to checked core terms. The two ETT encodings
-(`ett.nim`, `ett_init.nim`) were the starting point; the elaborator
+(`eponym.nim`, `eponym_init.nim`) were the starting point; the elaborator
 is where the research lives.
 
 ## Why embedded
@@ -74,10 +74,10 @@ Surface text → `PreTerm` (named) → de Bruijn core terms → elaborated
 
 ## Writing eponym in Nim code
 
-The `ettBlock` macro lets you write Eponym directly in Nim:
+The `eponymBlock` macro lets you write Eponym directly in Nim:
 ```nim
-import ett_mac
-ettBlock:
+import eponym_mac
+eponymBlock:
   postulate(Int, Univ)
   data(Nat, Univ):
     proc zero(): Nat
@@ -128,8 +128,8 @@ Requires Nim 2.x (built with 2.2.12 via
 export PATH=$HOME/.nimble/bin:$PATH
 nim c -r --path:src src/elab.nim        # elaborator: all suites
 nim c -r --path:src tests/run_examples.nim # 11 documented example programs
-nim c -r --path:src src/ett.nim         # finally-tagless ETT: 16 tests
-nim c -r --path:src src/ett_init.nim    # initial-encoding ETT: 16 tests
+nim c -r --path:src src/eponym/eponym.nim         # finally-tagless ETT: 16 tests
+nim c -r --path:src src/eponym/eponym_init.nim    # initial-encoding ETT: 16 tests
 ```
 
 ## Examples
@@ -145,8 +145,8 @@ header directives.
 
 - `elab.nim`, `unify.nim`, `preterm.nim`, `parse_surf.nim`,
   `mac_surf.nim` — the elaborator.
-- `ett.nim` — finally-tagless ETT (evaluator, printer, checker).
-- `ett_init.nim` — initial-encoding ETT (de Bruijn AST, evaluator,
+- `eponym.nim` — finally-tagless ETT (evaluator, printer, checker).
+- `eponym_init.nim` — initial-encoding ETT (de Bruijn AST, evaluator,
   `infer`/`check`/`areEqual`). The elaborator's target.
 - `plan.org` — experiment plan and research tracks.
 - `decisions.org` — design decision log.

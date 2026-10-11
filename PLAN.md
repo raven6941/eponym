@@ -38,7 +38,7 @@ back. The dependent types evaporate — zero runtime cost.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  Nim source: ordinary Nim + ett"..." / ettBlock surface      │
+│  Nim source: ordinary Nim + eponymBlock surface syntax       │
 └──────────────────────────┬───────────────────────────────────┘
                            │ macro expansion (compile time)
                            ▼
@@ -71,13 +71,13 @@ back. The dependent types evaporate — zero runtime cost.
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  QTT core — small trusted kernel, quantities in judgments    │
-│  ett.nim (finally-tagless)  ·  ett_init.nim (initial enc.)    │
+│  eponym.nim (finally-tagless)  ·  eponym_init.nim (initial)   │
 │  postulate / elim / red declarations; wRed values            │
 └──────────────────────────┬───────────────────────────────────┘
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  Ordinary Nim — residual code, compiled as usual              │
-│  ett_mac.nim / ett_embed.nim                                 │
+│  eponym_mac.nim / eponym_embed.nim                           │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -95,8 +95,9 @@ upper layers depend on lower ones, never the reverse. (See
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Layer 3: Eponym — the dependently-typed language            │
-│  elab.nim, ett.nim/ett_init.nim, unify.nim, surface syntax,   │
-│  ett_mac.nim, ett_embed.nim, egraph.nim, lsp.nim              │
+│  elab.nim, eponym.nim, eponym_init.nim, unify.nim,                │
+│  surface syntax, eponym_mac.nim, eponym_embed.nim,                │
+│  egraph.nim, lsp.nim                                              │
 │  May use Layers 1–2 for staging/relations, but the core       │
 │  must work without them.                                     │
 └──────────────────────────┬───────────────────────────────────┘
@@ -229,9 +230,9 @@ export PATH=$HOME/.nimble/bin:$PATH
 ```
 
 Full local CI matrix before merging to main (mirrors
-`.github/workflows/ci.yml`): build and run `ett`, `ett_init`,
-`preterm`, `parse_surf`, `mac_surf`, `elab`, `ett_mac`, `egraph`,
-`ett_embed`, plus `tests/run_examples.nim`. `lsp.nim` is built but not
+`.github/workflows/ci.yml`): build and run `eponym`, `eponym_init`,
+`preterm`, `parse_surf`, `mac_surf`, `elab`, `eponym_mac`, `egraph`,
+`eponym_embed`, plus `tests/run_examples.nim`. `lsp.nim` is built but not
 executed (it's a server loop, not a test). Keep the build warning-clean.
 
 ## References

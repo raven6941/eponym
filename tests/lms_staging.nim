@@ -13,7 +13,7 @@
 ## - Hand-staged: write the staged version manually, separately
 ## - LMS-style: write once, get both by instantiating R differently
 
-# Note: ett.nim has Sym[R] for the full ETT language, but this demo
+# Note: eponym.nim has Sym[R] for the full ETT language, but this demo
 # uses a minimal ArithSym to keep the LMS pattern clear.
 
 # --- The Rep type: staged computations build IR ---
@@ -35,7 +35,7 @@ proc `$`(r: Rep): string =
   of rkAdd: "(" & $r.left & " + " & $r.right & ")"
   of rkMul: "(" & $r.left & " * " & $r.right & ")"
 
-# Actually, Sym[R] in ett.nim is for the full ETT language.
+# Actually, Sym[R] in eponym.nim is for the full ETT language.
 # For this LMS demo, let's define a smaller arithmetic language
 # to keep the staging clear.
 

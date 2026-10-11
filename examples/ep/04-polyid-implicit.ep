@@ -1,6 +1,6 @@
 # Polymorphic identity with implicit arguments. Tests implicit insertion.
 # Experiment: 04
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
 
 proc polyId {A : ?} (x : A) : A =
   x

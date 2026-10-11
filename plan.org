@@ -14,9 +14,9 @@
 * Phase 0 — ETT core (done, 2026-10-06/07)
 
   Two implementations of Epigram's Type Theory in Nim, tested:
-  - finally-tagless (=ett.nim=): =Sym[R]= interface, evaluator, printer,
+  - finally-tagless (=eponym.nim=): =Sym[R]= interface, evaluator, printer,
     typechecker instances;
-  - initial encoding (=ett_init.nim=): de Bruijn =Term= AST, glued values,
+  - initial encoding (=eponym_init.nim=): de Bruijn =Term= AST, glued values,
     =infer= / =check= / =areEqual=.
   Decision: the initial encoding is the elaborator target
   (see [[https://github.com/raven6941/notes/blob/main/encodings.org][encoding comparison]]).
@@ -55,14 +55,14 @@
   runs during expansion.
 
   Result: yes. =elab.nim= (bidirectional-lite: expected-type-guided pairs,
-  cross-def refs via =R= nodes) + =ett"..."= macro (=ett_mac.nim=). Key find:
+  cross-def refs via =R= nodes) + =eponymBlock= macro (=eponym_mac.nim=). Key find:
   Nim's VM cannot capture module-level =var=, so the core's global
   =freshSupply= was threaded explicitly through =infer= =check= =synth=
 
   Extension (2026-10-07): =ettEmbed= macro generates callable Nim procs
-  from =ett= blocks. Each =def : Int -> ... -> Int= becomes
+  from =eponym= blocks. Each =def : Int -> ... -> Int= becomes
   =proc name(args: varargs[int]): int= that evaluates the elaborated term
-  at runtime (via =ett_embed.callIntFunc=). Compile-time elaboration
+  at runtime (via =eponym_embed.callIntFunc=). Compile-time elaboration
   ensures well-typedness; runtime re-elaboration (cached) provides the
   evaluable terms. Enables embedding verified code in normal Nim programs.
   =structuralEq= =areEqual= (the paper's Checking-monad threading); core is
@@ -72,7 +72,7 @@
   dropped; =ettBlock= is now the single embedding form (Eponym code is
   valid Nim code). The wrapper-proc mechanism is unchanged.
 
-  References: =ett_init.nim= (=infer=); [[https://github.com/raven6941/notes/blob/main/staging.org][staging]];
+  References: =eponym_init.nim= (=infer=); [[https://github.com/raven6941/notes/blob/main/staging.org][staging]];
   [[https://github.com/raven6941/notes/blob/main/turnstile.org][Turnstile]] §2.
 
 * Experiment 3 — Implicits, metavariables, unification [DONE 2026-10-07]
@@ -245,7 +245,7 @@
   Shan showed — evaluator, compiler, partial evaluator as *instances*
   of one =Sym[R]= interface?
 
-  Build: a staging/partial-evaluation instance for =ett.nim='s
+  Build: a staging/partial-evaluation instance for =eponym.nim='s
   =Sym[R]=, producing residual code from ETT terms — a compiler from
   ETT obtained as just another interpretation. Keeps both encodings
   productive (initial for elaboration, tagless-final for staged
