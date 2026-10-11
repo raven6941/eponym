@@ -1,0 +1,18 @@
+# Negative test for borrow checking (Issue #122): a borrow that is never
+# used. Negative tests (files named *-neg.ep) are expected to raise
+# ElabError; tests/run_examples.nim verifies the rejection.
+#
+# The continuation receives the unique borrow `b` and ignores it. A
+# dropped borrow is a leaked exclusive access — the backend could never
+# reclaim it. Expected error: linear variable 'b' not used, from the
+# in-judgment quantity enforcement (Issue #66).
+# import nat
+
+postulate Res : ?
+postulate Borrow : ?
+
+postulate withBorrow : Pi (1 r : Res). Pi (k : Pi (1 b : Borrow). Nat). Nat
+
+# Violation: borrow dropped on the floor.
+proc badDrop (1 r : Res) : Nat =
+  withBorrow r (lam (b : Borrow). zero)
