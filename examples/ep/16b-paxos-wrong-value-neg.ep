@@ -8,9 +8,7 @@
 # so conversion fails: `AcceptMsg zero` is not `AcceptMsg (suc zero)`.
 # This is the Paxos value-discipline violation -- accepting a value the
 # acceptor never promised -- caught at compile time.
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
+# import nat
 
 data Session : ? where
 | sendS (A : ?) (s : Session) : Session

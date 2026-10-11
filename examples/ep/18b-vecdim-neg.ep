@@ -1,8 +1,6 @@
 # Negative test: quadForm needs a square matrix whose dimension matches
 # the vector (Issue #110). P2 is 2x2 but x is a 1-vector: rejected.
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
+# import nat
 
 postulate Mat : Nat -> Nat -> ?
 

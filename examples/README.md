@@ -1,7 +1,22 @@
 # Eponym examples
 
-Two kinds of examples, reflecting Eponym's dual nature as both a
+Three kinds of examples, reflecting Eponym's dual nature as both a
 standalone elaborator and an embedded Nim library.
+
+## `../lib/` — Common library (Issue #114)
+
+Shared definitions that would otherwise be copy-pasted into every
+example — currently `nat.ep` (`Nat`, `add`, `mul`). An example pulls a
+module in with a header directive:
+
+```
+# import nat
+```
+
+`run_examples.nim` prepends the module's source before elaboration, so
+each `.ep` file is still a single standalone elaboration unit. Examples
+that test the definition mechanism itself (`08-nat-postulate.ep`,
+`09-data-nat.ep`) stay self-contained and do not import.
 
 ## `ep/` — Elaborator regression tests
 

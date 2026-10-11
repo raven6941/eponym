@@ -2,15 +2,11 @@
 # Experiment: 11
 # Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
 # `data T : ? where` defines inductive types; in ettBlock: `data(T, Univ):` + indented `proc` ctors
+# import nat
 
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
 data Vec (A : ?) : Nat -> ? where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
 proc vnil : Vec Nat (add zero zero) =
   nil Nat
 proc constNil (A : ?) (x : A) : Vec A (add zero zero) =

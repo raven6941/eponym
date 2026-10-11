@@ -1,9 +1,7 @@
 # Negative test: vDot demands equal dimensions (Issue #110).
 # A dimension mismatch is a compile-time error here; NumPy would raise
 # it at runtime. `VExpr zero` does not convert with `VExpr (suc zero)`.
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
+# import nat
 
 data VExpr : Nat -> ? where
 | vVar (n : Nat) : VExpr n

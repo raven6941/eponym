@@ -6,10 +6,8 @@
 # a session type ensures at compile time that send/recv follow the protocol.
 # Violations (wrong order, use after close) are elaboration errors, not
 # runtime failures.
+# import nat
 
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
 
 # Session protocol descriptions: what comes next on the channel
 data Session : ? where
