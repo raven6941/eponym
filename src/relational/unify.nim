@@ -63,9 +63,21 @@ type
     metaLoc*: Loc     # where the meta was created (for error messages)
     solution*: Term   # nil = unsolved; lives in the creation context
 
+  # Issue #58 (LSP holes): a surface `_` hole recorded at creation time,
+  # with the goal type (a type metavariable, zonked at query time) and the
+  # binder context (names + types, innermost-first) for hover display.
+  HoleInfo* = object
+    holeLoc*: Loc
+    holeGoal*: Term
+    holeCtx*: seq[tuple[name: string, ty: Term]]
+
   MetaStore* = object
     nextId*: int
     entries*: Table[int, MetaEntry]
+    holes*: seq[HoleInfo]  # Issue #58: surface holes, in source order
+    allowHoles*: bool     # Issue #58: tooling mode — unsolved metas
+                         # (holes) do not fail the declaration; the
+                         # core re-check is skipped for open defs
     convCache*: EGraph  # Experiment 10: conversion cache (per elabCheck)
     convHandlers*: seq[ConvHandler]  # Experiment 41: handler stack (top = last)
     extDischarges*: int  # Experiment 41: discharges by coreValid=false handlers
@@ -159,7 +171,8 @@ proc constructorForbidEdges*(ms: MetaStore): seq[(int, int)] =
         result.add((cids[i], cids[j]))
 
 proc initMetaStore*(): MetaStore =
-  MetaStore(nextId: 0, entries: initTable[int, MetaEntry](),
+  MetaStore(nextId: 0, entries: initTable[int, MetaEntry](), holes: @[],
+            allowHoles: false,
             convCache: initEGraph(), convHandlers: @[], extDischarges: 0,
             qvarNames: initTable[string, int](), qvarSols: @[],
             qvarPending: initTable[string, seq[tuple[varName: string, loc: Loc]]](),

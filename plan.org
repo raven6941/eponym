@@ -198,6 +198,44 @@
   Tested with mock LSP session. Hover, code actions, and incremental
   sync are future work.
 
+  Result (2026-10-11, issue #58): hole commands landed over the existing
+  elaborator, all driven headless through `textDocument/codeAction` and
+  verified by scripted mock-LSP sessions (tests/test_lsp_holes.nim,
+  tests/test_lsp_actions.nim, both wired into CI):
+  - `textDocument/hover` returns the hole's goal type + binder context;
+    diagnostics are hole-tolerant (open holes are goals, not errors).
+  - `refine`: fills a `_` with a user term; the edit is accepted only if
+    the document still elaborates hole-tolerantly (rejections carry the
+    elaborator's message + location).
+  - `case-split`: on a datatype-typed variable that is the first explicit
+    argument, rewrites the enclosing `proc` into a clause-style `def`
+    (#32) with one covering clause per constructor, constructor arguments
+    freshened against the context (the elaborator rejects shadowing), each
+    RHS a fresh hole.
+  - `give`: like refine, but offered only when the term leaves no holes
+    in the filled region.
+  - Acceptance session: `Vec` append developed hole-by-hole — split on
+    `xs`, refine the nil clause with `ys`, give the cons clause the
+    recursive call — ending in a definition that passes strict
+    `elabCheck` with no holes remaining.
+  Limitation: case-split requires the split variable to be the first
+  explicit argument (the #32 clause form eliminates on the first explicit
+  Pi domain); no variable/catch-all patterns. Incremental sync still
+  future work.
+
+  Progress (2026-10-11, issue #58): hover slice landed on branch
+  exp58-lsp-holes. =textDocument/hover= returns the goal type +
+  binder context at =_= holes (markdown). Supporting machinery:
+  =MetaStore.holes= records each hole at creation (loc, goal type-meta,
+  context); =elabCheckHoles= is a hole-tolerant elaboration entry point
+  (=allowHoles= flag: unsolved metas no longer fail the decl, open defs
+  register postulate-style, core re-check skipped for open defs;
+  elaborates decl-by-decl and reports the first non-hole failure);
+  diagnostics are hole-tolerant too (holes are goals, not errors).
+  =tests/test_lsp_holes.nim= drives a scripted in-process mock session
+  (18 checks). Remaining for #58: refine / case-split / give code
+  actions, prettier (name-resolving) goal rendering.
+
   This experiment is the tooling half of "convincingly": a useful system
   anyone would actually want to use needs it.
 
