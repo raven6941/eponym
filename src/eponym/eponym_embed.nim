@@ -1,6 +1,6 @@
 # eponym_embed.nim — Embedding dependently-typed sections in Nim programs
 #
-# The `ett` macro elaborates at compile time (type checking). This module
+# The `eponym`/`eponymBlock` macros elaborate at compile time (type checking). This module
 # provides the runtime support for *calling* elaborated definitions from
 # Nim code.
 #

@@ -47,7 +47,7 @@
 ## and reports residual node counts + staging wall-clock before/after.
 
 import std/tables
-import ett
+import eponym
 
 # --- First-order term language (de Bruijn indices, innermost-first) ---
 #

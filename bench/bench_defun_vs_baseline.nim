@@ -15,7 +15,7 @@
 ## in both counters).
 
 import std/[tables, times]
-import ett
+import eponym
 import ett_staged
 import staged_defun
 
