@@ -1,5 +1,5 @@
 #===============================================================================
-# ett_init.nim -- ETT with an *initial* encoding (concrete first-order AST),
+# eponym_init.nim -- ETT with an *initial* encoding (concrete first-order AST),
 # for comparison with the finally-tagless ett.nim.
 #
 # This follows Chapman, Altenkirch & McBride, "Epigram Reloaded" §§6.4-6.7 far

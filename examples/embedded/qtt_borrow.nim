@@ -31,10 +31,10 @@
 # Eponym-checked client is the spec; the driver is the trusted backend
 # that upholds it (in particular: it never creates a second borrow).
 
-import ett_mac
-import ett_embed
+import eponym_mac
+import eponym_embed
 
-ettBlock:
+eponymBlock:
   # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
   # (was a per-file data(Nat, ...) redefinition before #131).
   import "../../lib/nat.ep"

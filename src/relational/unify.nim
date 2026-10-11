@@ -1,6 +1,6 @@
 # unify.nim -- Experiment 3: metavariables + Miller pattern unification.
 #
-# Metavariables live in the core Term as tMeta(id, spine) (see ett_init.nim):
+# Metavariables live in the core Term as tMeta(id, spine) (see eponym_init.nim):
 # every occurrence carries a spine with one entry per creation-context
 # variable (innermost-first). The elaborator maintains the invariant that an
 # occurrence's context has the same length as the creation context; the
@@ -22,7 +22,7 @@ import tables
 import sets
 import sequtils
 import preterm   # Loc
-import ett_init
+import eponym_init
 import egraph
 
 type
@@ -230,7 +230,7 @@ proc noConfusionConflict*(ms: MetaStore, a, b: Term): tuple[bad: bool,
     c1, c2: int]
 
 proc rigidHead(t: Term): bool =
-  ## A head that never unfolds under the core evaluator (ett_init.nim:
+  ## A head that never unfolds under the core evaluator (eponym_init.nim:
   ## only tR with refIsDefn unfolds): constructor / type-former / axiom
   ## postulates, bound variables, and core constants. Descent through
   ## such heads is sound; descent through definitions is not (e.g. a
