@@ -1,0 +1,20 @@
+# Eponym common library: booleans (issue #54).
+#
+# import eq
+
+data Bool : ? where
+| true : Bool
+| false : Bool
+
+proc not (b : Bool) : Bool =
+  boolElim (lam (u : Bool). Bool) false true b
+
+proc and (a : Bool) (b : Bool) : Bool =
+  boolElim (lam (u : Bool). Bool) b false a
+
+proc or (a : Bool) (b : Bool) : Bool =
+  boolElim (lam (u : Bool). Bool) true b a
+
+proc notNot (b : Bool) : Eq Bool (not (not b)) b =
+  boolElim (lam (u : Bool). Eq Bool (not (not u)) u)
+           (refl Bool true) (refl Bool false) b

@@ -1,0 +1,47 @@
+# Eponym common library: Nat lemmas (issue #54).
+#
+# `add` (lib/nat.ep) recurses on its first argument, so left identities are
+# definitional (`add zero n` reduces to `n`) while right identities need
+# induction. `by arith` (#41) discharges open linear goals directly.
+#
+# import nat
+# import eq
+
+proc addZeroR (n : Nat) : Eq Nat (add n zero) n =
+  natElim (lam (m : Nat). Eq Nat (add m zero) m)
+          (refl Nat zero)
+          (lam (k : Nat). lam (ih : Eq Nat (add k zero) k).
+            cong Nat Nat (lam (x : Nat). suc x) (add k zero) k ih)
+          n
+
+proc addSucR (n : Nat) (m : Nat) : Eq Nat (add n (suc m)) (suc (add n m)) =
+  natElim (lam (k : Nat). Eq Nat (add k (suc m)) (suc (add k m)))
+          (refl Nat (suc m))
+          (lam (k : Nat). lam (ih : Eq Nat (add k (suc m)) (suc (add k m))).
+            cong Nat Nat (lam (x : Nat). suc x)
+                 (add k (suc m)) (suc (add k m)) ih)
+          n
+
+proc addComm (n : Nat) (m : Nat) : Eq Nat (add n m) (add m n) =
+  by arith
+
+proc addAssoc (a : Nat) (b : Nat) (c : Nat)
+    : Eq Nat (add a (add b c)) (add (add a b) c) =
+  by arith
+
+proc mulZeroR (n : Nat) : Eq Nat (mul n zero) zero =
+  natElim (lam (m : Nat). Eq Nat (mul m zero) zero)
+          (refl Nat zero)
+          (lam (k : Nat). lam (ih : Eq Nat (mul k zero) zero).
+            refl Nat zero)
+          n
+
+# Computational check: lemmas evaluate (issue #54 acceptance criterion).
+# `by refl` proves up to conversion, so this checks that
+# `add (suc (suc zero)) (suc (suc zero))` really computes to 4.
+proc twoPlusTwo : Nat = add (suc (suc zero)) (suc (suc zero))
+
+proc twoPlusTwoIsFour
+    : Eq Nat (add (suc (suc zero)) (suc (suc zero)))
+             (suc (suc (suc (suc zero)))) =
+  by refl

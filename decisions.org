@@ -1786,3 +1786,35 @@
      shapes). Full CI matrix green, warning-clean; negative .ep tests
      (incl. the DCP-violation files) still reject.
   Status: CLOSED 2026-10-10 via PR (squash-merge).
+
+* 2026-10-11 — #54 prelude: library layout, and a motive-instantiation bug (branch exp54-prelude)
+
+  Context: #54 asks for a standard library with machine-checked lemmas —
+  the "useful system" direction and the highest-signal elaborator stress
+  test. #114 had already established =lib/nat.ep= with =# import= header
+  directives expanded by =tests/run_examples.nim=.
+  Decision: keep the flat =lib/*.ep= layout (no =lib/prelude/= subdir, no
+  =src/prelude.nim=). Each domain gets one module; =Eq= gets its own
+  (=lib/eq.ep=) so that =nat_lemmas.ep= and =list.ep= can both import it
+  without defining =Eq= twice in one elaboration unit (directives are
+  deduplicated transitively). Modules: =eq= (Eq/refl/cong/sym/trans),
+  =bool= (Bool, not/and/or, notNot), =list= (List, map/append/length;
+  mapId, mapComp, appendAssoc, appendNilR, lengthAppend),
+  =nat_lemmas= (addZeroR/addSucR by induction, addComm/addAssoc by
+  =by arith= (#41), mulZeroR, twoPlusTwoIsFour by =by refl=),
+  =vec= (Vec, vappend, vmap). 12 lemmas total, all machine-checked;
+  =run_examples.nim= already walks =lib/=, so the corpus is
+  regression-protected with no runner changes.
+  Ergonomics findings (per #54 step 3, gaps become follow-ups):
+  1. =vmapId : Eq (Vec A n) (vmap id xs) xs= cannot be stated: the nil-case
+     fails with =cannot unify tV with tApp=. A motive that applies a
+     defined proc with implicits solved to the bound index variable
+     (=vmap ... v=, ={n} := i=) breaks =vecElim='s case-type
+     instantiation. Ruled out: the nil-case goal in isolation (passes),
+     trivial indexed motives (pass), the same shape with a non-recursive
+     proc (=getLen=, passes), source-written beta-redexes (pass). Filed
+     as #125 with a 30-line repro; =lib/vec.ep= notes the omission.
+  2. Clause-style =def= (#32) is still unused by any =.ep= file — the
+     whole prelude is =proc=+eliminator style. A clause-style port of
+     =append= would be the natural demonstration; left as future work.
+  Status: OPEN (branch) — pending full CI matrix + PR.

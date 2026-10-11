@@ -26,6 +26,22 @@ directives (expanded transitively).
   `add` recurses on its first argument (Idris's `plus` — `add zero n` ≡ `n`
   definitionally, which `append`'s motive relies on); `mul` is defined via
   `add`.
+- **eq.ep** — propositional equality: `Eq` (indexed family), `refl`,
+  `cong`, `sym`, `trans`.
+- **bool.ep** — `Bool`, `not`/`and`/`or`; lemma `notNot`.
+- **list.ep** — `List`, `map`/`append`/`length`; lemmas `mapId`,
+  `mapComp` (fusion), `appendAssoc`, `appendNilR`, `lengthAppend`.
+- **nat_lemmas.ep** — `addZeroR`/`addSucR` (induction), `addComm`/`addAssoc`
+  (`by arith`, #41), `mulZeroR`, plus the computational check
+  `twoPlusTwoIsFour` (`by refl` — `add 2 2` really computes to `4`).
+- **vec.ep** — `Vec` (length-indexed), `vappend`, `vmap`.
+  (`vmapId` omitted: hits an eliminator-motive bug, see the note in
+  `vec.ep` and the follow-up issue.)
+
+Import graph: `bool.ep` → `eq`; `list.ep` → `nat`, `eq`;
+`nat_lemmas.ep` → `nat`, `eq`; `vec.ep` → `nat`, `eq`.
+`Eq` lives in its own module so importing both `nat`-lemmas and
+`list`-lemmas never defines it twice.
 
 ## Conventions
 
