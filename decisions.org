@@ -2039,3 +2039,37 @@
   #137: nothing merges until the end-to-end loop works.
   Status: OPEN (branch) -- #136 acceptance partially met on the branch;
   shed render + hole-click goal display work; refine loop is #137's job.
+
+** #137: end-to-end shed loop, scripted headless (sheds-loop)
+  Date: 2026-10-11. The loop the #136 webview performs with clicks, driven
+  headlessly through the real LSP server (=handleMessage=) in
+  =tests/test_shed_loop.nim= (17 checks, all green; also wired into branch
+  CI). A block with two sheds (two holes, each on its own line):
+  sidecar-written yellow/yellow at macro time -> =didOpen= the =.nim= doc
+  shows two yellow diagnostics -> =eponym/shedLayout= shows each shed's
+  hole -> refine hole 1 via the #58 =textDocument/codeAction= on the
+  generated Eponym source (the server's existing action path -- surface
+  syntax is curried, =addInt n n=, not =addInt(n, n)=, which parses as a
+  pair argument) -> =refreshShedStatuses= -> shed A white, shed B yellow
+  (single-line fills keep the #134 line matching exact) -> sidecar
+  re-written -> =didChange= shows only shed B's warning -> layout for A is
+  the done box, layout for B still shows its hole -> refine hole 2 -> both
+  white -> =didChange= silent; the completed program passes strict
+  =elabCheck=. What worked: every link of the loop (#133 macro, #134
+  statuses, #135 layout, #58 refine, diagnostics, layout update) composes
+  through the server's real methods. What didn't: the refine round-trip is
+  still not closed for real =.nim= docs -- the server's action path
+  elaborates document text as Eponym source, which a =.nim= file is not
+  (the #136 gap). The script holds the generated source itself, simulating
+  the mapping the client must do: run the fill against the generated
+  source server-side, splice the returned term into the =.nim= at the
+  shed's (nimLine, nimCol) position, and let =refreshShedStatuses= drive
+  the sidecar. Closing that gap (a server method that owns the whole
+  refine: generated source -> fill -> status refresh -> sidecar write ->
+  term text for the client to splice) is the remaining work before the
+  branch can merge; #139 (name-resolving pretty-printer) is the other
+  known gap in the demo's goal display. Rename reconciliation: this run
+  also merged main into sheds-loop (PR #140 ett->eponym), fixing the fallout
+  in =sheds*.nim=, the shed tests, the demo, and branch CI.
+  Status: OPEN (branch) -- #137 scripted acceptance met on the branch; the
+  =.nim= refine round-trip gap is documented, not closed.

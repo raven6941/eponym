@@ -35,7 +35,8 @@ jobs:
           echo "=== lsp hole-session tests (issue #58, headless mock-LSP) ==="
           nim c -r --hints:off $P "tests/test_lsp_holes.nim" || exit 1
           nim c -r --hints:off $P "tests/test_lsp_actions.nim" || exit 1
-          echo "=== sheds tests (issues #133-135) ==="
+          echo "=== sheds tests (issues #133-135, #137) ==="
           nim c -r --hints:off $P "tests/test_sheds.nim" || exit 1
           nim c -r --hints:off $P "tests/test_shed_layout.nim" || exit 1
+          nim c -r --hints:off $P "tests/test_shed_loop.nim" || exit 1
           # Note: bench/ contains expensive benchmarks, not run in CI.
