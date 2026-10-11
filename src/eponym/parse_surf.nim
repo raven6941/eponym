@@ -2,7 +2,9 @@
 # syntax, producing preterm.PreTerm / SurfDef.
 #
 # Surface syntax (Nim-consistent):
-#   program = proc+
+#   program = decl*
+#   decl    = proc | def | postulate | elim | red | data | import
+#   import  = "import" string        -- multi-file programs (issue #49)
 #   proc    = "proc" name tele ":" term "=" term
 #   tele    = (binder)*
 #   binder  = "(" name ":" term ")" | "{" name ":" term "}"  -- {} = implicit
@@ -22,8 +24,9 @@ import preterm, strutils
 
 type
   TokKind = enum
-    tkEof, tkIdent, tkInt,
+    tkEof, tkIdent, tkInt, tkString,
     tkDef, tkClauses, tkPostulate, tkElim, tkRed, tkData, tkWhere, tkBy,
+    tkImport,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
     tkLParen, tkRParen, tkLBrace, tkRBrace,
@@ -49,6 +52,7 @@ const keywords = [
   ("proc", tkDef), ("def", tkClauses),
   ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
   ("data", tkData), ("where", tkWhere), ("by", tkBy),
+  ("import", tkImport),
   ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
 
@@ -85,6 +89,21 @@ proc lex(src: string): seq[Token] =
     elif c == '?':
       result.add Token(kind: tkUniv, lexeme: "?", loc: curLoc())
       inc col; inc i
+    elif c == '"':
+      # String literal (issue #49: `import "path"`); only `\"` escapes.
+      let l = curLoc()
+      inc col; inc i
+      var s = ""
+      while i < src.len and src[i] != '"':
+        if src[i] == '\\' and i + 1 < src.len and src[i+1] == '"':
+          s.add('"'); col += 2; i += 2
+        elif src[i] == '\n':
+          raise fail(l, "unterminated string literal")
+        else:
+          s.add(src[i]); inc col; inc i
+      if i >= src.len: raise fail(l, "unterminated string literal")
+      inc col; inc i  # closing quote
+      result.add Token(kind: tkString, lexeme: s, loc: l)
     elif c in {'0'..'9'}:
       let l = curLoc()
       var j = i
@@ -401,6 +420,12 @@ proc parseClauses(p: var Parser): SurfDecl =
            clausesDef: ClausesDef(name: nm.lexeme, ty: ty, clauses: clauses,
                                   loc: t.loc))
 
+proc parseImport(p: var Parser): SurfDecl =
+  ## Issue #49: `import "path"` — multi-file programs.
+  let t = p.expect(tkImport, "'import'")
+  let s = p.expect(tkString, "import path string")
+  SurfDecl(kind: dkImport, ipath: s.lexeme, iloc: t.loc)
+
 proc parseDecl(p: var Parser): SurfDecl =
   case p.peek().kind
   of tkDef: SurfDecl(kind: dkDef, def: p.parseDef())
@@ -409,7 +434,8 @@ proc parseDecl(p: var Parser): SurfDecl =
   of tkElim: p.parseElim()
   of tkRed: p.parseRed()
   of tkData: p.parseData()
-  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red' or 'data'")
+  of tkImport: p.parseImport()
+  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data' or 'import'")
 
 proc parseProgram*(src: string): seq[SurfDecl] =
   ## Parse a whole program; raises ParseError with source location.
@@ -500,5 +526,11 @@ red boolElim C t f false = f
   assert decls[2].kind == dkElim and decls[2].name == "boolElim"
   assert decls[3].kind == dkRed
   assert decls[3].lhs.kind == pkApp
+
+  # import declarations (issue #49)
+  let imps = parseProgram("import \"lib/nat.ep\"\nproc id (A : ?) (x : A) : A = x")
+  assert imps.len == 2
+  assert imps[0].kind == dkImport and imps[0].ipath == "lib/nat.ep"
+  assert imps[1].kind == dkDef
 
   echo "parse_surf: all tests passed"

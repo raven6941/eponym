@@ -8,7 +8,7 @@
 # value. Since AcceptMsg has no constructors, no such term exists; the
 # test uses a postulate to simulate the forgery attempt, which fails
 # because the postulate's type doesn't match.
-# import nat
+import "../../lib/nat.ep"
 
 data Session : ? where
 | sendD (A : ?) (k : A -> Session) : Session

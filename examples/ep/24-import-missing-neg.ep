@@ -1,0 +1,5 @@
+# Issue #49: importing a nonexistent file is a located ElabError naming
+# the resolved path and the importing chain. This file must be rejected.
+import "no-such-module.ep"
+
+proc dead (n : Nat) : Nat = n

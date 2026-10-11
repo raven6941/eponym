@@ -4,7 +4,7 @@
 # substitute the old names into later index domains; without the fix the
 # motive C is ill-scoped (unbound `n`).
 # Issue: 112
-# import nat
+import "../../lib/nat.ep"
 
 data Vec (A : ?) : Nat -> ? where
 | nil : Vec A zero

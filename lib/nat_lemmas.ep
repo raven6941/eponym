@@ -4,8 +4,8 @@
 # definitional (`add zero n` reduces to `n`) while right identities need
 # induction. `by arith` (#41) discharges open linear goals directly.
 #
-# import nat
-# import eq
+import "nat.ep"
+import "eq.ep"
 
 proc addZeroR (n : Nat) : Eq Nat (add n zero) n =
   natElim (lam (m : Nat). Eq Nat (add m zero) m)

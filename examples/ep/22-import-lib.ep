@@ -1,0 +1,7 @@
+# Issue #49: sibling library for the multi-file import example.
+# Imported by 23-import-client.ep via a same-directory `import`; the path
+# resolves relative to this file, so the client needs no `../..` prefix.
+import "../../lib/nat.ep"
+
+proc double (n : Nat) : Nat =
+  add n n

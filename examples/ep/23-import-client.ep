@@ -1,0 +1,13 @@
+# Issue #49: multi-file client. Imports `Vec`/`vappend`/`cons` from lib/
+# and `double` from a sibling module in this directory; both merge
+# unqualified into one environment (the v1 policy in decisions.org).
+#
+# The annotation's `double (suc zero)` must unfold (delta) and compute
+# (`add` recursing on its first argument) to `suc (suc zero)` for the
+# check against `vappend`'s `Vec Nat (add (suc zero) (suc zero))` result
+# to pass — the imports really elaborate, they are not just in scope.
+import "../../lib/vec.ep"
+import "22-import-lib.ep"
+
+proc pair : Vec Nat (double (suc zero)) =
+  vappend (cons Nat zero zero (nil Nat)) (cons Nat zero zero (nil Nat))

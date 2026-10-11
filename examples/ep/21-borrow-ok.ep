@@ -22,7 +22,7 @@
 # demos: the types enforce the borrow discipline; the embedded demo
 # (examples/embedded/qtt_borrow.nim) binds the same op sequence to a real
 # buffer, the Wu & Xi "typed API over untrusted backend" architecture.
-# import nat
+import "../../lib/nat.ep"
 
 postulate Res : ?
 postulate Borrow : ?

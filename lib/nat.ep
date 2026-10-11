@@ -1,10 +1,9 @@
 # Eponym common library: natural numbers (issue #114).
 #
 # `data` desugars to postulate/elim/red (Experiment 5); `natElim` is the
-# generated eliminator. Files under examples/ep/ pull this in with the
-# header directive `# import nat` — tests/run_examples.nim prepends this
-# file's source before elaboration, so each example stays a standalone
-# elaboration unit.
+# generated eliminator. Files under examples/ep/ pull this in with
+# `import "../../lib/nat.ep"` (issue #49); imports resolve relative to the
+# importing file and merge unqualified into one environment.
 #
 # Canonical definitions: `add` recurses on its first argument (Idris's
 # `plus`: `add zero n` is definitionally `n`); `mul` is defined via `add`.

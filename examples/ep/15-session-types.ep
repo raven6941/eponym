@@ -6,7 +6,7 @@
 # a session type ensures at compile time that send/recv follow the protocol.
 # Violations (wrong order, use after close) are elaboration errors, not
 # runtime failures.
-# import nat
+import "../../lib/nat.ep"
 
 
 # Session protocol descriptions: what comes next on the channel

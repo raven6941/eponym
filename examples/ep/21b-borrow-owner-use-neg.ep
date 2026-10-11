@@ -8,7 +8,7 @@
 # owner. Expected error: linear variable 'r' used 2 times (expected
 # exactly once). This is the borrow checker's exclusive-access rule: no
 # use of the owner while a unique borrow is outstanding.
-# import nat
+import "../../lib/nat.ep"
 
 postulate Res : ?
 postulate Borrow : ?

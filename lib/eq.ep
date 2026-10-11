@@ -2,7 +2,7 @@
 #
 # `Eq` is an indexed family; `refl` typechecks up to conversion (not just
 # syntactic equality). `eqElim` is the generated eliminator (J).
-# Files under examples/ep/ pull this in with `# import eq`.
+# Files under examples/ep/ pull this in with `import "../../lib/eq.ep"` (issue #49).
 
 data Eq (A : ?) (x : A) : A -> ? where
 | refl : Eq A x x

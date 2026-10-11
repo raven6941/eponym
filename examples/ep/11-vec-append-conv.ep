@@ -2,7 +2,7 @@
 # Experiment: 11
 # Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in ettBlock: `Univ`)
 # `data T : ? where` defines inductive types; in ettBlock: `data(T, Univ):` + indented `proc` ctors
-# import nat
+import "../../lib/nat.ep"
 
 data Vec (A : ?) : Nat -> ? where
 | nil : Vec A zero

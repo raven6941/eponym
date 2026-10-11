@@ -25,6 +25,8 @@ import tables
 import sequtils
 import strutils
 import sets
+import os        # issue #49: module file loading
+import hashes    # issue #49: content-hash module cache
 import preterm
 import parse_surf
 import ett_init
@@ -2316,6 +2318,12 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
     elabDataDecl(d, globals, supply, ms, dataInfos)
   of dkClauses:
     result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
+  of dkImport:
+    # Issue #49: `import` needs a file context (base directory for path
+    # resolution); the ModuleDriver below handles it. A bare elabCheck
+    # over a source string has no directory to resolve against.
+    raise elabErr(d.iloc, "import \"" & d.ipath &
+      "\" requires a file context; use elabCheckFile")
 
 proc elabCheckState*(src: string, handlers: seq[ConvHandler] = @[]):
     tuple[defs: seq[ElabDef], ms: MetaStore] =
@@ -2386,6 +2394,89 @@ proc elabCheckHoles*(src: string): tuple[defs: seq[ElabDef], ms: MetaStore,
       errMsg = e.msg
       break
   (defs, ms, errLoc, errMsg)
+
+# --- Issue #49: multi-file programs via `import` ------------------------------
+
+type
+  ModuleDriver* = object
+    ## Stateful driver for elaborating multi-file programs. `import "path"`
+    ## declarations resolve relative to the importing file's directory and
+    ## merge unqualified into one shared environment (decisions.org: flat,
+    ## unqualified imports for v1; revisit on first name collision).
+    globals*: Globals
+    supply*: Supply
+    ms*: MetaStore
+    dataInfos*: Table[string, SurfDecl]
+    loading*: seq[string]        # canonical paths on the import stack
+    modHash*: Table[string, Hash] # canonical path -> content hash (skip unchanged)
+    elabCount*: Table[string, int] # canonical path -> times elaborated
+
+proc initModuleDriver*(handlers: seq[ConvHandler] = @[]): ModuleDriver =
+  result.ms = initMetaStore()  # includes fresh convCache (Experiment 10)
+  for h in handlers: result.ms.convHandlers.add(h)
+  result.globals = initTable[string, GEntry]()
+  result.dataInfos = initTable[string, SurfDecl]()
+
+proc elabFile*(drv: var ModuleDriver, path: string,
+               importLoc: Loc = noLoc): seq[ElabDef] =
+  ## Elaborate the file at `path`, recursively elaborating its `import`
+  ## declarations first. Returns the defs declared by this file itself;
+  ## imported definitions live in `drv.globals`.
+  ## Raises ElabError (located) on import cycles, missing files, parse
+  ## errors, or elaboration failures. Files already elaborated with
+  ## identical content are skipped via the content-hash cache.
+  let cpath =
+    try: expandFilename(path)
+    except OSError:
+      raise elabErr(importLoc, "import '" & path & "': file not found" &
+        (if drv.loading.len > 0: " (imported from '" & drv.loading[^1] & "')"
+         else: ""))
+  if cpath in drv.loading:
+    raise elabErr(importLoc, "import cycle detected: " &
+      (drv.loading & @[cpath]).join(" -> "))
+  let src =
+    try: readFile(cpath)
+    except IOError as e:
+      raise elabErr(importLoc, "cannot read '" & cpath & "': " & e.msg)
+  let h = hash(src)
+  if drv.modHash.getOrDefault(cpath, 0) == h:
+    return @[]  # unchanged since this driver elaborated it: skip
+  let decls =
+    try: parseProgram(src)
+    except ParseError as e:
+      raise elabErr(e.loc, "in imported file '" & cpath & "': " & e.msg)
+  drv.loading.add(cpath)
+  let baseDir = parentDir(cpath)
+  try:
+    for d in decls:
+      if d.kind == dkImport:
+        let target = if isAbsolute(d.ipath): d.ipath
+                     else: baseDir / d.ipath
+        if not fileExists(target):
+          raise elabErr(d.iloc, "import \"" & d.ipath & "\": file not found " &
+            "(resolved to '" & target & "', imported from '" & cpath & "')")
+        discard drv.elabFile(target, d.iloc)
+      else:
+        let eds = elabDecl(d, drv.globals, drv.supply, drv.ms, drv.dataInfos)
+        for ed in eds:
+          # Issue #64: verify linear/erased usage in the elaborated term
+          try:
+            checkUsage(ed.tmTm)
+          except UsageError as e:
+            raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
+          result.add(ed)
+  finally:
+    discard drv.loading.pop()
+  drv.modHash[cpath] = h
+  drv.elabCount[cpath] = drv.elabCount.getOrDefault(cpath, 0) + 1
+
+proc elabCheckFile*(path: string,
+                    handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
+  ## Issue #49: elaborate a file on disk with `import` support (fresh driver).
+  ## Like elabCheck, but `import "rel/path.ep"` declarations resolve relative
+  ## to the file's directory. Raises ElabError (located) on failure.
+  var drv = initModuleDriver(handlers)
+  drv.elabFile(path)
 
 proc elabPrelude*(src: string): tuple[globals: Globals, ms: MetaStore,
                                       supply: Supply] =
@@ -3536,5 +3627,94 @@ def badm : Nat -> Nat -> Nat
   assert termRejected >= 5, "need >= 5 rejected, got " & $termRejected
   echo "ok: termination corpus (", termAccepted, " accepted, ",
     termRejected, " rejected)"
+
+  # --- Issue #49: multi-file programs via `import` ---------------------------
+  let modDir = getTempDir() / "eponym_import_test"
+  createDir(modDir)
+  writeFile(modDir / "mynat.ep", """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+proc two : Nat = suc (suc zero)
+""")
+  writeFile(modDir / "mybool.ep", """
+import "mynat.ep"
+data Bool : ? where
+| true : Bool
+| false : Bool
+proc twoIsNat : Nat = two
+""")
+  writeFile(modDir / "client.ep", """
+import "mybool.ep"
+proc four : Nat = two
+proc isTrue (b : Bool) : Bool = b
+""")
+  writeFile(modDir / "cyc1.ep", "import \"cyc2.ep\"\nproc a : Nat = zero\n")
+  writeFile(modDir / "cyc2.ep", "import \"cyc1.ep\"\nproc b : Nat = zero\n")
+  writeFile(modDir / "missing.ep", "import \"nope.ep\"\n")
+
+  # Basic: transitive imports, unqualified names in scope.
+  var drv = initModuleDriver()
+  let clientDefs = drv.elabFile(modDir / "client.ep")
+  assert clientDefs.len == 2, "client declares four + isTrue"
+  assert "two" in drv.globals and "Bool" in drv.globals and
+    "twoIsNat" in drv.globals, "imported names visible unqualified"
+  # elabCheckFile convenience entry point.
+  let cfDefs = elabCheckFile(modDir / "client.ep")
+  assert cfDefs.len == 2
+
+  # Diamond: b and c both import d; d elaborates once.
+  writeFile(modDir / "d.ep", "import \"mynat.ep\"\nproc d0 : Nat = zero\n")
+  writeFile(modDir / "b.ep", "import \"d.ep\"\nimport \"mynat.ep\"\nproc b0 : Nat = d0\n")
+  writeFile(modDir / "c.ep", "import \"d.ep\"\nimport \"mynat.ep\"\nproc c0 : Nat = d0\n")
+  writeFile(modDir / "a.ep", "import \"b.ep\"\nimport \"c.ep\"\nproc a0 : Nat = b0\n")
+  var drv2 = initModuleDriver()
+  discard drv2.elabFile(modDir / "a.ep")
+  assert drv2.elabCount[expandFilename(modDir / "d.ep")] == 1,
+    "diamond import elaborates d.ep once"
+
+  # Cycle: located error naming the files in the cycle.
+  var drv3 = initModuleDriver()
+  try:
+    discard drv3.elabFile(modDir / "cyc1.ep")
+    assert false, "cycle should have raised"
+  except ElabError as e:
+    assert "import cycle detected" in e.msg, e.msg
+    assert "cyc1.ep" in e.msg and "cyc2.ep" in e.msg, e.msg
+
+  # Missing file: located error with the importing chain.
+  var drv4 = initModuleDriver()
+  try:
+    discard drv4.elabFile(modDir / "missing.ep")
+    assert false, "missing import should have raised"
+  except ElabError as e:
+    assert "file not found" in e.msg, e.msg
+    assert "nope.ep" in e.msg and "missing.ep" in e.msg, e.msg
+
+  # Content-hash cache: re-elaborating the client on the same driver
+  # skips the unchanged library files (elabCount frozen); wall-clock
+  # of the second run is small.
+  let t1 = cpuTime()
+  var drv5 = initModuleDriver()
+  discard drv5.elabFile(modDir / "client.ep")
+  let tFirst = cpuTime() - t1
+  let counts1 = drv5.elabCount
+  let t2 = cpuTime()
+  discard drv5.elabFile(modDir / "client.ep")
+  let tSecond = cpuTime() - t2
+  for k, v in counts1:
+    assert drv5.elabCount[k] == v, "cache: " & k & " re-elaborated"
+  echo "ok: import cache (first ", tFirst.formatFloat(ffDecimal, 3), "s, ",
+    "cached ", tSecond.formatFloat(ffDecimal, 3), "s)"
+
+  # elabCheck (string context) rejects import decls with a clear error.
+  try:
+    discard elabCheck("import \"x.ep\"\nproc p : Nat = zero\n")
+    assert false, "string-context import should have raised"
+  except ElabError as e:
+    assert "elabCheckFile" in e.msg, e.msg
+
+  removeDir(modDir)
+  echo "ok: multi-file import (basic, diamond, cycle, missing, cache)"
 
   echo "--- all elaborator tests passed ---"

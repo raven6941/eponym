@@ -1818,3 +1818,29 @@
      whole prelude is =proc=+eliminator style. A clause-style port of
      =append= would be the natural demonstration; left as future work.
   Status: OPEN (branch) — pending full CI matrix + PR.
+
+* 2026-10-11 — Module system: unqualified imports for v1 (#49)
+
+  Context: #49 asks for multi-file programs. The =lib/= prelude (6
+  modules since #114/#54) is currently shared only via a test-harness
+  hack (=# import= header directives expanded by concatenation in
+  =tests/run_examples.nim=); user programs cannot reuse definitions
+  across files. New: =import "path"= surface declaration, =ModuleDriver=
+  in =elab.nim=, =elabCheckFile= entry point.
+  Options: (a) qualified imports (=M.x=) with a module namespace;
+  (b) unqualified flat merge into one environment.
+  Decision: (b) for v1. Flat merge keeps the elaborator's single-=Globals=
+  model untouched (imports elaborate into the same =globals/supply/ms=
+  state, so =checkUsage=, handlers, and the conv cache apply uniformly);
+  diamonds elaborate once via canonical-path + content-hash cache.
+  Consequences: first name collision triggers a revisit (qualified
+  imports or explicit import lists). =import= is allowed anywhere at
+  top level, not only before other decls — a superset of the issue's
+  step 1. Bare =elabCheck= (string context) rejects =import= with a
+  located error pointing at =elabCheckFile=; the LSP hole path
+  (=elabCheckHoles=) inherits that error until file resolution lands
+  there. The =run_examples.nim= =# import= header mechanism stays as
+  the harness-level sharing story; migrating =lib/*.ep= to real
+  =import= decls is follow-up work on #49.
+  Status: OPEN (branch) — core implemented + tested; runner integration
+  and example pair remain.
