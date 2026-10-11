@@ -79,6 +79,16 @@ checks it succeeds. These test the elaborator in isolation.
   objective — `vMul` (elementwise product of variables) admits no
   certificate rule, so a bogus `vLogSum`-of-`vMul` proof is rejected
   (the vector analog of 17a's `x*x`).
+- **21-borrow-ok.ep** — Positive test for QTT borrow checking (Issue
+  #122): a well-bracketed unique borrow (read, bump, write, read) with
+  every borrow binder used exactly once.
+- **21a-borrow-double-use-neg.ep** — Negative test (Issue #122): a borrow
+  used twice is rejected (`linear variable 'b2' used 2 times`).
+- **21b-borrow-owner-use-neg.ep** — Negative test (Issue #122): the owner
+  used while borrowed is rejected (`linear variable 'r' used 2 times`) —
+  the borrow checker's exclusive-access rule.
+- **21c-borrow-drop-neg.ep** — Negative test (Issue #122): a dropped
+  borrow is rejected (`linear variable 'b' not used`).
 
 ## `embedded/` — Embedded Nim library use
 
@@ -126,6 +136,16 @@ for verified components inside a larger Nim application.
   driver runs gradient descent on the certified objective. Dimension
   mismatches and non-DCP vector products (`vMul`) are compile-time
   errors (see 18a/18b/18c above).
+- **qtt_borrow.nim** — QTT borrow checking as an embedded DSL (Issue
+  #122): a unique borrow of a buffer, scoped by `withBorrow` (bracket
+  semantics — the linear resource is fully consumed, so it cannot leak).
+  The borrow threads through `readB`/`writeB`/`endB` in
+  continuation-passing style so every borrow is a lambda binder, and the
+  quantity checker fires at every step; unannotated lambdas inherit the
+  linear quantity from the expected `Pi` (Idris 2 behaviour). The
+  normal-Nim driver binds the same op sequence to a real buffer and runs
+  it. Double-use, owner-use-while-borrowed, and dropped borrows are
+  compile-time errors (see 21a/21b/21c above).
 
 ### The embedded pattern
 
@@ -165,4 +185,5 @@ nim c -r --path:src tests/run_examples.nim
 nim c -r --path:src --path:src/eponym --path:src/relational --path:src/staging examples/embedded/sensor_fusion.nim
 nim c -r --path:src --path:src/eponym --path:src/relational --path:src/staging examples/embedded/session_types.nim
 nim c -r --path:src --path:src/eponym --path:src/relational --path:src/staging examples/embedded/paxos_session.nim
+nim c -r --path:src --path:src/eponym --path:src/relational --path:src/staging examples/embedded/qtt_borrow.nim
 ```

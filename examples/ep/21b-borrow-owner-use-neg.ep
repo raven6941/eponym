@@ -1,0 +1,26 @@
+# Negative test for borrow checking (Issue #122): using the owner while
+# it is borrowed. Negative tests (files named *-neg.ep) are expected to
+# raise ElabError; tests/run_examples.nim verifies the rejection.
+#
+# `withBorrow r k` consumes `r` (linear): while the borrow is live the
+# owner is gone from the context. Smuggling `r` back in — here via
+# `freeRes r` inside the borrow scope — is a second use of the linear
+# owner. Expected error: linear variable 'r' used 2 times (expected
+# exactly once). This is the borrow checker's exclusive-access rule: no
+# use of the owner while a unique borrow is outstanding.
+# import nat
+
+postulate Res : ?
+postulate Borrow : ?
+
+postulate withBorrow : Pi (1 r : Res). Pi (k : Pi (1 b : Borrow). Nat). Nat
+postulate readB : Pi (1 b : Borrow).
+  Pi (k : Pi (v : Nat). Pi (1 b2 : Borrow). Nat). Nat
+postulate endB : Pi (1 b : Borrow). Pi (v : Nat). Nat
+postulate freeRes : Pi (1 r : Res). Nat
+
+# Violation: owner used inside the borrow scope.
+proc badOwnerUse (1 r : Res) : Nat =
+  withBorrow r (lam (b : Borrow).
+    readB b (lam (v : Nat). lam (b2 : Borrow).
+      endB b2 (freeRes r)))
