@@ -2422,6 +2422,44 @@ proc elabFile*(drv: var ModuleDriver, path: string,
   ## Forward: elaborates one file (defined below); elabDeclsDir recurses
   ## through it for nested imports.
 
+proc elabDeclsDirInner(drv: var ModuleDriver, decls: seq[SurfDecl],
+                       baseDir: string, srcLabel: string,
+                       holeTolerant: bool):
+    tuple[defs: seq[ElabDef], errLoc: Loc, errMsg: string] =
+  ## Inner driver loop (issues #49/#131/#133). With `holeTolerant=false`
+  ## the first ElabError propagates to the caller. With `holeTolerant=true`
+  ## (issue #133) decls elaborate one at a time and the loop stops at the
+  ## first *non-hole* failure, reporting it via errLoc/errMsg (both empty =
+  ## full success) while holes from the successful prefix stay queryable.
+  var defs: seq[ElabDef] = @[]
+  var errLoc = noLoc
+  var errMsg = ""
+  for d in decls:
+    try:
+      if d.kind == dkImport:
+        let target = if isAbsolute(d.ipath): d.ipath
+                     else: baseDir / d.ipath
+        if not fileExists(target):
+          raise elabErr(d.iloc, "import \"" & d.ipath & "\": file not found " &
+            "(resolved to '" & target & "', imported from '" & srcLabel & "')")
+        discard drv.elabFile(target, d.iloc)
+      else:
+        let eds = elabDecl(d, drv.globals, drv.supply, drv.ms, drv.dataInfos)
+        for ed in eds:
+          # Issue #64: verify linear/erased usage in the elaborated term
+          try:
+            checkUsage(ed.tmTm)
+          except UsageError as e:
+            raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
+          defs.add(ed)
+    except ElabError as e:
+      if not holeTolerant:
+        raise
+      errLoc = e.loc
+      errMsg = e.msg
+      break
+  (defs, errLoc, errMsg)
+
 proc elabDeclsDir*(drv: var ModuleDriver, decls: seq[SurfDecl],
                    baseDir: string, srcLabel: string): seq[ElabDef] =
   ## Elaborate `decls` into the driver's environment, recursively
@@ -2431,23 +2469,25 @@ proc elabDeclsDir*(drv: var ModuleDriver, decls: seq[SurfDecl],
   ## Returns the defs declared by `decls` themselves; imported definitions
   ## live in `drv.globals`. Raises ElabError on cycles, missing files, or
   ## elaboration failures.
-  for d in decls:
-    if d.kind == dkImport:
-      let target = if isAbsolute(d.ipath): d.ipath
-                   else: baseDir / d.ipath
-      if not fileExists(target):
-        raise elabErr(d.iloc, "import \"" & d.ipath & "\": file not found " &
-          "(resolved to '" & target & "', imported from '" & srcLabel & "')")
-      discard drv.elabFile(target, d.iloc)
-    else:
-      let eds = elabDecl(d, drv.globals, drv.supply, drv.ms, drv.dataInfos)
-      for ed in eds:
-        # Issue #64: verify linear/erased usage in the elaborated term
-        try:
-          checkUsage(ed.tmTm)
-        except UsageError as e:
-          raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
-        result.add(ed)
+  let (defs, _, errMsg) = drv.elabDeclsDirInner(decls, baseDir, srcLabel, false)
+  assert errMsg == "",
+    "elabDeclsDirInner(holeTolerant=false) raises instead of reporting"
+  defs
+
+proc elabCheckHolesDir*(src: string, baseDir: string,
+                        handlers: seq[ConvHandler] = @[]):
+    tuple[defs: seq[ElabDef], ms: MetaStore, errLoc: Loc, errMsg: string] =
+  ## Issue #133: hole-tolerant elaboration (issue #58 semantics) with
+  ## `import` support (issue #131 semantics): `import "path.ep"` resolves
+  ## relative to `baseDir`. Used by the shedsBlock macro: each shed becomes
+  ## a hole, so the surrounding program must elaborate hole-tolerantly
+  ## while still resolving prelude imports. Raises ParseError as usual.
+  let decls = parseProgram(src)  # ParseError propagates
+  var drv = initModuleDriver(handlers)
+  drv.ms.allowHoles = true
+  let (defs, errLoc, errMsg) =
+    drv.elabDeclsDirInner(decls, baseDir, "<shedsBlock>", true)
+  (defs, drv.ms, errLoc, errMsg)
 
 proc elabFile*(drv: var ModuleDriver, path: string,
                importLoc: Loc = noLoc): seq[ElabDef] =

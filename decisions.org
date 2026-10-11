@@ -1906,3 +1906,47 @@
   =import "../../lib/nat.ep"= (or =vec.ep=) instead of redefining
   =data(Nat, ...)= per file — Aaron's 2026-10-11 request, unblocked.
   Status: CLOSED (branch) — merged via PR.
+
+* 2026-10-11 — #133 shedsBlock: Epigram sheds as holes + metadata sidecar (branch sheds-loop)
+
+  Context: Experiment 7's first slice. Epigram sheds are unchecked regions
+  ("the typechecker is forbidden to tread", Altenkirch-McBride-McKinna
+  2005); the ASCII document notation marks them =![...]!=. In the Nim-
+  embedded linearization the macro receives already-parsed Nim AST, so a
+  shed is =![ name ]= / =![ name, draft ]= in a proc body (prefix =!= over
+  a bracket). Comma, not =|=, separates name from draft: =|= binds tighter
+  than =+= in Nim, so =![ n | a + a ]= misparses; the macro errors
+  helpfully on other shapes. A top-level =![...]= (outside any proc body)
+  is an error -- write a proc whose body is the shed instead, which is the
+  Epigram shape (declaration with its type; the shed is the incomplete
+  RHS). An early attempt at =![ name, proc f... = ... ]= top-level shed
+  declarations died on a Nim grammar fact: a proc definition is a
+  statement and cannot appear inside =[...]=.
+  Decision: =src/eponym/sheds.nim= (ShedInfo, in-place NimNode rewrite of
+  shed nodes to =__eponym_shed_i__= placeholder idents, placeholder ->
+  =_= resolution recording the generated-source line, sidecar JSON
+  read/write) + =src/eponym/sheds_mac.nim= (the =shedsBlock= macro,
+  deliberately thin like =ett_mac=). Conversion reuses =ett_mac=
+  unchanged via a pre-pass -- no threading of accumulators through the
+  converters. Elaboration is hole-tolerant with import support via a new
+  =elab.elabCheckHolesDir= (the =elabDeclsDir= loop refactored into an
+  inner with a =holeTolerant= flag; imported files still elaborate
+  strictly). Each shed is matched to =MetaStore.holes= by generated-
+  source line; goal type and binder context are zonked and pretty-printed.
+  Metadata goes to =<nimfile>.sheds.json= (read-merge-write keyed by shed
+  name, so edits that shift line numbers update in place; names should be
+  unique per file) for the LSP server (#134/#135 read it via
+  =readShedSidecar=). Generated code: wrappers for hole-free defs via a
+  hole-tolerant runtime elaboration (=ett_embed.callIntFuncHolesDir=);
+  defs mentioning shed holes get no wrapper (a hole is not callable).
+  Drafts are captured with =repr= and never reach the elaborator -- the
+  demo's draft (=n ++++ n=) is not even valid Eponym, proving
+  non-inspection. Known limitation: goal types render as rigids (=R134=)
+  -- the elaborator's =$= never resolves global names (same in LSP hover
+  today); name-resolving pretty-printing is a follow-up.
+  Consequences: =examples/embedded/sheds_demo.nim= demonstrates the
+  slice (checked =double= called from Nim; shed metadata asserted from
+  the sidecar); =tests/test_sheds.nim= covers =elabCheckHolesDir= and
+  the sidecar round-trip. Branch-only per #137: nothing merges to main
+  until the end-to-end loop works.
+  Status: OPEN (branch) -- #133 acceptance met on the sheds-loop branch.
