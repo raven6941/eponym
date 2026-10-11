@@ -22,10 +22,24 @@ proc vmap {A : ?} {B : ?} {n : Nat} (f : A -> B) (xs : Vec A n) : Vec B n =
               lam (ih : Vec B i). cons B i (f x) ih)
             n xs
 
-# NOTE (issue #54, step 3): `vmapId` — `Eq (Vec A n) (vmap id xs) xs` by
-# induction — does NOT elaborate: the nil-case fails with
-# "cannot unify tV with tApp". A motive that applies a defined proc with
-# implicits solved to the bound index variable (here `vmap ... v`, {n} := i)
-# breaks vecElim's case-type instantiation. Filed as a follow-up issue with
-# a minimal repro; the getLen analogue (vectest5) works, so the trigger is
-# specific to unfolding a vecElim-defined proc in the motive.
+proc myid (A : ?) (x : A) : A = x
+
+# `vmapId`: mapping the identity over a vector is the identity, by induction.
+# (Issue #125 filed this as an elaborator bug — "cannot unify tV with tApp"
+# at the nil-case — but the repro's cons-case was ill-typed: `cong` was
+# applied with both type arguments as `Vec A (suc i)` while the mapped
+# function has domain `Vec A i`. The elaborator was right to reject
+# `Vec A i =?= Vec A (suc i)`. With `cong (Vec A i) (Vec A (suc i))` the
+# whole induction checks, including the nil-case whose motive applies the
+# defined proc `vmap` with `{n} := i`.)
+proc vmapId {A : ?} {n : Nat} (xs : Vec A n)
+    : Eq (Vec A n) (vmap (myid A) xs) xs =
+  vecElim A (lam (i : Nat). lam (v : Vec A i).
+              Eq (Vec A i) (vmap (myid A) v) v)
+            (refl (Vec A zero) (nil A))
+            (lam (i : Nat). lam (x : A). lam (xs2 : Vec A i).
+              lam (ih : Eq (Vec A i) (vmap (myid A) xs2) xs2).
+                cong (Vec A i) (Vec A (suc i))
+                     (lam (t : Vec A i). cons A i x t)
+                     (vmap (myid A) xs2) xs2 ih)
+            n xs
