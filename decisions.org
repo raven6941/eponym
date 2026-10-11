@@ -1883,3 +1883,26 @@
   trigger from the #49 entry. Decision: workaround stands for v1 (split
   modules); qualified imports remain a follow-up, not v1.
   Status: CLOSED (branch) — merged via PR; laws + demo in CI.
+
+* 2026-10-11 — #131 ettBlock import: compile-time file IO in the Nim VM
+
+  Context: =ettBlock= elaborates at macro-expansion time, so =import=
+  in embedded Eponym must do file IO inside the Nim VM. Two VM limits
+  shaped the design:
+  - =instantiationInfo()= returns =???= inside macros; the caller's
+    directory comes from =lineInfo(body)= instead (absolute
+    =/path/file.nim(line, col)=, parsed at the last =(=). Imports
+    resolve relative to the calling Nim file's directory, matching #49.
+  - =os.expandFilename= calls =realpath= and =os.absolutePath= calls
+    =getcwd=, both =importc= and unavailable at compile time
+    ("cannot 'importc' variable at compile time"). =elabFile= now uses
+    =when nimvm: normalizedPath(path)= (lexical only; compile-time
+    import targets are always absolute already) and keeps
+    =expandFilename= at runtime. =readFile=/=fileExists=/=parentDir=
+    all work in the VM.
+  Runtime wrappers re-elaborate through =callIntFuncDir= (base dir baked
+  in as a literal at macro-expansion time), so compile-time and runtime
+  see the same modules. The six =examples/embedded/*.nim= files now
+  =import "../../lib/nat.ep"= (or =vec.ep=) instead of redefining
+  =data(Nat, ...)= per file — Aaron's 2026-10-11 request, unblocked.
+  Status: CLOSED (branch) — merged via PR.

@@ -8,6 +8,7 @@
 import macros
 import elab
 import parse_surf
+import os  # issue #131: parentDir of the ettBlock call site
 import strutils
 import sequtils
 
@@ -19,6 +20,16 @@ import sequtils
 #   data(Nat, Univ):
 #     proc zero(): Nat
 #     proc suc(n: Nat): Nat
+
+proc callerDir(body: NimNode): string =
+  ## Directory of the Nim file containing the macro call (Issue #131).
+  ## instantiationInfo() is unreliable inside macros, so parse it out of
+  ## lineInfo, which has the form /abs/path/file.nim(line, col).
+  let li = lineInfo(body)
+  let p = li.rfind('(')
+  if p < 0:
+    error("ettBlock: cannot determine calling file", body)
+  parentDir(li[0 ..< p])
 
 proc binderName(n: NimNode): string =
   ## Param/binder name, unwrapping a quantity pragma: `ch {.linear.}` -> "ch".
@@ -252,6 +263,14 @@ proc blockToEponym*(body: NimNode): string =
     case st.kind
     of nnkProcDef:
       result.add(procDefToEponym(st))
+    of nnkImportStmt:
+      # Issue #131: import "../../lib/nat.ep" -> import "../../lib/nat.ep"
+      # (Eponym source line). Paths resolve relative to the Nim file
+      # containing the ettBlock call (see the ettBlock macro below).
+      for p in st:
+        if p.kind != nnkStrLit:
+          error("ettBlock: import expects a string path, e.g. import \"lib/nat.ep\"", p)
+        result.add("import \"" & p.strVal & "\"\n")
     of nnkCall:
       let head = $st[0]
       if head == "postulate":
@@ -322,25 +341,31 @@ macro ettBlock*(body: untyped): untyped =
   ## in proc/data params emit `(1 ch : ...)` / `(0 ch : ...)` binders.
   ## Dependent Pi/Sigma types: Pi(x: A, y {.linear.}: B, C),
   ## Sig(x: A, B), Sig(A, B).
+  ## `import "path.ep"` (Issue #131): Eponym-module import, resolved
+  ## relative to the Nim file containing the ettBlock call; makes prelude
+  ## definitions (lib/*.ep) available without redefinition.
   ## Generates wrapper procs (each `def : Int -> ... -> Int` becomes a
-  ## callable Nim proc via ett_embed.callIntFunc).
+  ## callable Nim proc via ett_embed.callIntFuncDir).
   let src = blockToEponym(body)
+  # Issue #131: imports resolve relative to the calling Nim file's dir.
+  let baseDir = callerDir(body)
   var defs: seq[ElabDef]
   try:
-    defs = elabCheck(src)
+    defs = elabCheckDir(src, baseDir)
   except ElabError as e:
     error("ettBlock elaboration error: " & e.msg, body)
   except ParseError as e:
     error("ettBlock parse error: " & e.msg, body)
-  
+
   result = newStmtList()
+  let dirLit = newLit(baseDir)
   for d in defs:
     let procName = ident(d.name)
     let srcLit = newLit(src)
     let nameLit = newLit(d.name)
     result.add(quote do:
       proc `procName`*(args: varargs[int]): int =
-        callIntFunc(`srcLit`, `nameLit`, @args)
+        callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @args)
     )
 
 macro ett*(src: string): untyped =

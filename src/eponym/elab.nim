@@ -2418,6 +2418,38 @@ proc initModuleDriver*(handlers: seq[ConvHandler] = @[]): ModuleDriver =
   result.dataInfos = initTable[string, SurfDecl]()
 
 proc elabFile*(drv: var ModuleDriver, path: string,
+               importLoc: Loc = noLoc): seq[ElabDef]
+  ## Forward: elaborates one file (defined below); elabDeclsDir recurses
+  ## through it for nested imports.
+
+proc elabDeclsDir*(drv: var ModuleDriver, decls: seq[SurfDecl],
+                   baseDir: string, srcLabel: string): seq[ElabDef] =
+  ## Elaborate `decls` into the driver's environment, recursively
+  ## elaborating `import` declarations first. Import paths resolve relative
+  ## to `baseDir` (the importing source's directory); `srcLabel` names the
+  ## importing source in error messages (a file path, or "<ettBlock>").
+  ## Returns the defs declared by `decls` themselves; imported definitions
+  ## live in `drv.globals`. Raises ElabError on cycles, missing files, or
+  ## elaboration failures.
+  for d in decls:
+    if d.kind == dkImport:
+      let target = if isAbsolute(d.ipath): d.ipath
+                   else: baseDir / d.ipath
+      if not fileExists(target):
+        raise elabErr(d.iloc, "import \"" & d.ipath & "\": file not found " &
+          "(resolved to '" & target & "', imported from '" & srcLabel & "')")
+      discard drv.elabFile(target, d.iloc)
+    else:
+      let eds = elabDecl(d, drv.globals, drv.supply, drv.ms, drv.dataInfos)
+      for ed in eds:
+        # Issue #64: verify linear/erased usage in the elaborated term
+        try:
+          checkUsage(ed.tmTm)
+        except UsageError as e:
+          raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
+        result.add(ed)
+
+proc elabFile*(drv: var ModuleDriver, path: string,
                importLoc: Loc = noLoc): seq[ElabDef] =
   ## Elaborate the file at `path`, recursively elaborating its `import`
   ## declarations first. Returns the defs declared by this file itself;
@@ -2426,7 +2458,16 @@ proc elabFile*(drv: var ModuleDriver, path: string,
   ## errors, or elaboration failures. Files already elaborated with
   ## identical content are skipped via the content-hash cache.
   let cpath =
-    try: expandFilename(path)
+    try:
+      when nimvm:
+        # Issue #131: expandFilename needs realpath/getcwd (importc), which
+        # the Nim VM cannot call. Imports elaborated at compile time (via
+        # ettBlock) always resolve to absolute paths (callerDir is absolute),
+        # so lexical normalization suffices there; symlinks are resolved
+        # only at runtime.
+        normalizedPath(path)
+      else:
+        expandFilename(path)
     except OSError:
       raise elabErr(importLoc, "import '" & path & "': file not found" &
         (if drv.loading.len > 0: " (imported from '" & drv.loading[^1] & "')"
@@ -2446,29 +2487,23 @@ proc elabFile*(drv: var ModuleDriver, path: string,
     except ParseError as e:
       raise elabErr(e.loc, "in imported file '" & cpath & "': " & e.msg)
   drv.loading.add(cpath)
-  let baseDir = parentDir(cpath)
   try:
-    for d in decls:
-      if d.kind == dkImport:
-        let target = if isAbsolute(d.ipath): d.ipath
-                     else: baseDir / d.ipath
-        if not fileExists(target):
-          raise elabErr(d.iloc, "import \"" & d.ipath & "\": file not found " &
-            "(resolved to '" & target & "', imported from '" & cpath & "')")
-        discard drv.elabFile(target, d.iloc)
-      else:
-        let eds = elabDecl(d, drv.globals, drv.supply, drv.ms, drv.dataInfos)
-        for ed in eds:
-          # Issue #64: verify linear/erased usage in the elaborated term
-          try:
-            checkUsage(ed.tmTm)
-          except UsageError as e:
-            raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
-          result.add(ed)
+    result = drv.elabDeclsDir(decls, parentDir(cpath), cpath)
   finally:
     discard drv.loading.pop()
   drv.modHash[cpath] = h
   drv.elabCount[cpath] = drv.elabCount.getOrDefault(cpath, 0) + 1
+
+proc elabCheckDir*(src: string, baseDir: string,
+                   handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
+  ## Issue #131: like elabCheck, but `import "path.ep"` declarations resolve
+  ## relative to `baseDir` instead of failing with "requires a file context".
+  ## For embedded sources (e.g. ettBlock) that live in a Nim file rather
+  ## than an .ep file on disk. Returns the defs declared by `src` itself;
+  ## raises ParseError or ElabError on failure.
+  let decls = parseProgram(src)  # ParseError propagates
+  var drv = initModuleDriver(handlers)
+  drv.elabDeclsDir(decls, baseDir, "<ettBlock>")
 
 proc elabCheckFile*(path: string,
                     handlers: seq[ConvHandler] = @[]): seq[ElabDef] =

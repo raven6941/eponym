@@ -33,11 +33,11 @@ import ett_mac
 import ett_embed
 
 ettBlock:
-  postulate(Int, Univ)
+  # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
+  # (was a per-file data(Nat, ...) redefinition before #131).
+  import "../../lib/nat.ep"
 
-  data(Nat, Univ):
-    proc zero(): Nat
-    proc suc(n: Nat): Nat
+  postulate(Int, Univ)
 
   # Expression language, one variable. eMul is in the AST but has no
   # Convex rule -- that absence IS the DCP check for products.

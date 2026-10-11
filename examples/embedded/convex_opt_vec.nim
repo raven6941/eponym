@@ -42,11 +42,11 @@ import ett_mac
 import ett_embed
 
 ettBlock:
-  postulate(Int, Univ)
+  # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
+  # (was a per-file data(Nat, ...) redefinition before #131).
+  import "../../lib/nat.ep"
 
-  data(Nat, Univ):
-    proc zero(): Nat
-    proc suc(n: Nat): Nat
+  postulate(Int, Univ)
 
   # Matrices: values abstract, dimensions in the type.
   postulate(Mat, Nat -> Nat -> Univ)

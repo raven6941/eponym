@@ -42,9 +42,9 @@ import ett_mac
 import ett_embed
 
 ettBlock:
-  data(Nat, Univ):
-    proc zero(): Nat
-    proc suc(n: Nat): Nat
+  # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
+  # (was a per-file data(Nat, ...) redefinition before #131).
+  import "../../lib/nat.ep"
 
   # Dependent session datatype (Issue #113): continuations are functions
   # of the communicated value.
