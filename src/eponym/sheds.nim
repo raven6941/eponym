@@ -1,5 +1,18 @@
 # sheds.nim -- Shed metadata for the sheds line (issues #133-#137).
 #
+# Issue #134: each shed carries an elaboration *status* following Epigram's
+# colour scheme (McBride 2005 §1.5) -- white (elaborated successfully),
+# yellow (stuck: open holes, constraints not yet solvable but possibly
+# later), brown (definitely bad: elaboration failed before a goal was
+# established). The status is computed by `assignShedStatuses` (shared by
+# the shedsBlock macro at macro time and by `refreshShedStatuses` for the
+# LSP/editor loop, e.g. after holes are filled via the #58 refine/give
+# actions) and serialized in the sidecar JSON, which the LSP server
+# (lsp.nim) turns into diagnostics: yellow -> Warning, brown -> Error,
+# white -> no diagnostic. The LSP re-reads the sidecar on every
+# textDocument/didOpen and didChange, so status updates as the Nim
+# compiler re-runs the macro (and, in the #137 loop, as holes are filled).
+#
 # A *shed* is an Epigram-style unchecked region: "the typechecker is
 # forbidden to tread" there (Altenkirch, McBride & McKinna 2005). In the
 # linearized Nim-friendly syntax accepted by the shedsBlock macro
@@ -31,8 +44,16 @@ import json
 import os
 import strutils
 import sequtils
+import elab  # elabCheckHolesDir (issue #134: refreshShedStatuses)
+import parse_surf  # ParseError (issue #134: refreshShedStatuses)
 
 type
+  ShedStatus* = enum
+    ## Epigram's status colours (McBride 2005 §1.5), tracked per shed.
+    ssWhite   ## elaborated successfully: no open holes, no errors
+    ssYellow  ## stuck: open hole(s); constraints not yet solvable, possibly later
+    ssBrown   ## definitely bad: elaboration failed before a goal was established
+
   ShedInfo* = object
     ## Metadata for one shed (see module doc).
     name*: string      # shed name, from `![ name ... ]`
@@ -45,6 +66,7 @@ type
                        # (-1 = not matched)
     goal*: string      # zonked, pretty-printed goal type at the hole
     ctx*: seq[string]  # zonked, pretty-printed binder context ("name : type")
+    status*: ShedStatus  # issue #134: white/yellow/brown elaboration status
 
 proc isShedNode*(n: NimNode): bool =
   ## `![ ... ]`: prefix `!` applied to a bracket.
@@ -111,7 +133,8 @@ proc rewriteSheds*(body: NimNode, sheds: var seq[ShedInfo]) =
         acc.add(ShedInfo(name: name,
                          draft: if hasDraft: repr(draft) else: "",
                          nimLine: ln, nimCol: co,
-                         holeLine: 0, holeIdx: -1))
+                         holeLine: 0, holeIdx: -1,
+                         status: ssYellow))  # issue #134: not yet elaborated
         let ph = ident(shedPlaceholder(acc.len - 1))
         copyLineInfo(ph, c)
         n[i] = ph
@@ -137,18 +160,36 @@ proc resolveShedPlaceholders*(src: var string, sheds: var seq[ShedInfo]) =
 
 # --- sidecar JSON: the bridge to the LSP server (issues #134/#135) --------
 
+proc shedStatusToStr*(s: ShedStatus): string =
+  ## Issue #134: readable status in the sidecar (debuggable by hand).
+  case s
+  of ssWhite: "white"
+  of ssYellow: "yellow"
+  of ssBrown: "brown"
+
+proc shedStatusFromStr*(s: string): ShedStatus =
+  ## Unknown or missing strings map to yellow (stuck) -- the safe state:
+  ## a shed whose status we cannot establish is not known-good.
+  case s
+  of "white": ssWhite
+  of "brown": ssBrown
+  else: ssYellow
+
 proc shedToJson*(s: ShedInfo): JsonNode =
   %*{"name": s.name, "draft": s.draft,
       "nimLine": s.nimLine, "nimCol": s.nimCol,
       "holeLine": s.holeLine, "holeIdx": s.holeIdx,
-      "goal": s.goal, "ctx": s.ctx}
+      "goal": s.goal, "ctx": s.ctx,
+      "status": shedStatusToStr(s.status)}
 
 proc shedFromJson*(j: JsonNode): ShedInfo =
   ShedInfo(name: j["name"].getStr, draft: j["draft"].getStr,
            nimLine: j["nimLine"].getInt, nimCol: j["nimCol"].getInt,
            holeLine: j["holeLine"].getInt, holeIdx: j["holeIdx"].getInt,
            goal: j["goal"].getStr,
-           ctx: j["ctx"].elems.mapIt(it.getStr))
+           ctx: j["ctx"].elems.mapIt(it.getStr),
+           status: if j.hasKey("status"): shedStatusFromStr(j["status"].getStr)
+                   else: ssYellow)  # pre-#134 sidecars: stuck is the safe default
 
 proc shedsToJson*(sheds: seq[ShedInfo]): JsonNode =
   result = newJArray()
@@ -162,7 +203,8 @@ proc sidecarPath*(nimFile: string): string =
   let (dir, base, _) = splitFile(nimFile)
   dir / (base & ".sheds.json")
 
-proc writeShedSidecar*(nimFile: string, sheds: seq[ShedInfo]) =
+proc writeShedSidecar*(nimFile: string, sheds: seq[ShedInfo],
+                       errMsg = "") =
   ## Write the sidecar for the LSP server. Read-merge-write keyed by shed
   ## *name* (names should be unique per file -- the LSP server targets
   ## sheds by position, and a name identifies the shed across edits that
@@ -170,6 +212,8 @@ proc writeShedSidecar*(nimFile: string, sheds: seq[ShedInfo]) =
   ## accumulate and a recompiled shed overwrites its earlier entry.
   ## Known limitation: entries for sheds deleted from the source linger
   ## until the sidecar is removed by hand.
+  ## `errMsg` (issue #134): the elaboration failure, if any, so the LSP
+  ## server can show *why* a brown shed is brown.
   let path = sidecarPath(nimFile)
   var old: seq[ShedInfo] = @[]
   if fileExists(path):
@@ -186,12 +230,67 @@ proc writeShedSidecar*(nimFile: string, sheds: seq[ShedInfo]) =
       merged.add(s)
   for s in sheds:
     merged.add(s)
-  writeFile(path, pretty(%*{"file": nimFile, "sheds": shedsToJson(merged)}))
+  writeFile(path, pretty(%*{"file": nimFile, "errMsg": errMsg,
+                            "sheds": shedsToJson(merged)}))
+
+proc readShedSidecarEx*(path: string): tuple[sheds: seq[ShedInfo], errMsg: string] =
+  ## Read a sidecar file plus the document-level elaboration failure
+  ## ("" when the last compile succeeded). LSP server side, issue #134.
+  let j = parseJson(readFile(path))
+  let errMsg = if j.hasKey("errMsg"): j["errMsg"].getStr else: ""
+  (shedsFromJson(j["sheds"]), errMsg)
 
 proc readShedSidecar*(path: string): seq[ShedInfo] =
   ## Read a sidecar file (LSP server side, issues #134/#135).
-  let j = parseJson(readFile(path))
-  shedsFromJson(j["sheds"])
+  readShedSidecarEx(path).sheds
+
+# --- issue #134: shed status tracking (white/yellow/brown) ----------------
+
+proc assignShedStatuses*(sheds: var seq[ShedInfo], errMsg: string) =
+  ## The #134 status rule, shared by the shedsBlock macro (macro-time) and
+  ## refreshShedStatuses (LSP/editor-loop time). `holeIdx >= 0` means the
+  ## shed was matched to an open hole in MetaStore.holes:
+  ## - matched to an open hole -> yellow (stuck, possibly solvable later);
+  ## - no goal after a failed elaboration -> brown (definitely bad: the
+  ##   shed's own declaration never elaborated, so refinement cannot help
+  ##   until the surrounding code is fixed);
+  ## - no open hole after a clean elaboration -> white (done).
+  for i in 0 ..< sheds.len:
+    if sheds[i].holeIdx >= 0:
+      sheds[i].status = ssYellow
+    elif errMsg != "":
+      sheds[i].status = ssBrown
+    else:
+      sheds[i].status = ssWhite
+
+proc refreshShedStatuses*(sheds: var seq[ShedInfo], genSrc: string,
+                         baseDir: string) =
+  ## Recompute per-shed status from the (possibly edited) generated Eponym
+  ## source -- the #137 editor loop, headless: after holes are filled via
+  ## the #58 refine/give actions, re-elaborate hole-tolerantly, re-match
+  ## sheds to holes by generated-source line, and re-apply the status
+  ## rule. A document that no longer parses marks every shed brown.
+  ## Limitation: matching is by generated-source line, so a multi-line
+  ## hole fill shifts later sheds' lines and unmatches them (they read as
+  ## white/brown instead of yellow); single-line fills are exact.
+  var errMsg = ""
+  var holesOk = false
+  try:
+    let r = elabCheckHolesDir(genSrc, baseDir)
+    errMsg = r.errMsg
+    for i in 0 ..< sheds.len:
+      sheds[i].holeIdx = -1
+      for j in 0 ..< r.ms.holes.len:
+        if r.ms.holes[j].holeLoc.line == sheds[i].holeLine:
+          sheds[i].holeIdx = j
+          break
+    holesOk = true
+  except ParseError:
+    discard
+  if not holesOk:
+    for i in 0 ..< sheds.len: sheds[i].status = ssBrown
+    return
+  assignShedStatuses(sheds, errMsg)
 
 macro runShedSmoke(): untyped =
   ## Compile-time smoke test: shed rewriting + placeholder resolution

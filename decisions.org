@@ -1950,3 +1950,37 @@
   the sidecar round-trip. Branch-only per #137: nothing merges to main
   until the end-to-end loop works.
   Status: OPEN (branch) -- #133 acceptance met on the sheds-loop branch.
+
+* 2026-10-11 — #134 shed status tracking: white/yellow/brown (branch sheds-loop)
+
+  Context: #133 records shed metadata but no elaboration status; the #137
+  end-to-end loop needs the editor to show per-shed status and to see it go
+  white when holes are filled.
+  Decision: =ShedStatus= (ssWhite/ssYellow/ssBrown) on =ShedInfo=,
+  serialized as "white"/"yellow"/"brown" in the sidecar (missing key reads
+  as yellow -- the safe "not known-good" default for pre-#134 sidecars).
+  One shared rule (=assignShedStatuses=): a shed matched to an open hole is
+  yellow (stuck, possibly later); a shed with no goal after a failed
+  elaboration is brown (definitely bad); a shed with no open hole after a
+  clean elaboration is white. The macro assigns status at macro time and,
+  on elaboration failure, writes the sidecar *before* raising the compile
+  error (so the editor sees brown); the sidecar also carries the
+  document-level =errMsg= so brown diagnostics can say why.
+  =refreshShedStatuses= re-elaborates a (possibly edited) generated source,
+  re-matches sheds to holes by generated-source line, and re-applies the
+  rule -- the headless core of the #137 "refine holes, see white" loop.
+  The LSP server publishes shed diagnostics for =.nim= documents from the
+  sidecar (yellow -> Warning with the goal, brown -> Error with the
+  failure message, white -> silent), re-reading the sidecar on every
+  didOpen/didChange. A =.nim= file without a sidecar keeps the old
+  behaviour (parse-error diagnostic).
+  Consequences: =tests/test_sheds.nim= covers the JSON round-trip, the
+  yellow->white transition on hole fill (via the #58 refine shape),
+  brown on a broken shed decl and on unparseable source, and the LSP
+  diagnostics (positions, severities, message contents, didChange
+  re-read); =examples/embedded/sheds_demo.nim= asserts macro-time yellow.
+  Known limitation: =refreshShedStatuses= matches by generated-source
+  line, so a multi-line hole fill shifts later sheds' lines and unmatches
+  them; single-line fills are exact. Branch-only per #137: nothing merges
+  to main until the end-to-end loop works.
+  Status: OPEN (branch) -- #134 acceptance met on the sheds-loop branch.

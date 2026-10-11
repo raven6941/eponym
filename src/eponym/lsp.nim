@@ -2,6 +2,9 @@
 #
 # Exposes the elaborator via the Language Server Protocol:
 # - Diagnostics: parse and elaboration errors at surface locations
+# - Shed status (issue #134): white/yellow/brown per shed, read from the
+#   `<nimfile>.sheds.json` sidecar the shedsBlock macro writes; published
+#   as diagnostics (yellow -> Warning, brown -> Error, white -> none)
 # - Hover (issue #58): goal type + context at `_` holes
 # - Code actions (issue #58): refine, case-split, give at holes
 #
@@ -18,11 +21,13 @@
 import json
 import strutils
 import tables
+import os  # fileExists (issue #134: shed sidecar)
 import elab
 import preterm
 import ett_init  # `$` for Term (issue #58)
 import parse_surf
 import unify  # HoleInfo, zonk (issue #58)
+import sheds  # ShedInfo, ShedStatus, sidecarPath, readShedSidecarEx (issue #134)
 
 type
   LspServer* = object
@@ -66,11 +71,67 @@ proc makeDiagnostic(uri: string, line, col: int, msg: string): JsonNode =
     ]
   }
 
+# --- issue #134: shed status diagnostics ----------------------------------
+
+proc uriToPath(uri: string): string =
+  ## `file:///abs/path` -> `/abs/path`.
+  if uri.startsWith("file://"): uri[len("file://") .. ^1]
+  else: uri
+
+proc shedDiagnostics*(uri: string): JsonNode =
+  ## Per-shed status diagnostics for a `.nim` document, from its
+  ## `<nimfile>.sheds.json` sidecar: yellow -> Warning ("stuck"),
+  ## brown -> Error, white -> no diagnostic. Returns nil when no sidecar
+  ## exists (the macro has not compiled this file yet).
+  let sc = sidecarPath(uriToPath(uri))
+  if not fileExists(sc):
+    return nil
+  let (sheds, errMsg) = readShedSidecarEx(sc)
+  var diags = newJArray()
+  for s in sheds:
+    let rng = %*{
+      "start": {"line": s.nimLine - 1, "character": s.nimCol - 1},
+      "end": {"line": s.nimLine - 1, "character": s.nimCol}}
+    case s.status
+    of ssYellow:
+      diags.add(%*{
+        "range": rng,
+        "severity": 2,  # Warning
+        "message": "shed '" & s.name & "': stuck (yellow); goal: " & s.goal,
+        "source": "eponym"})
+    of ssBrown:
+      var msg = "shed '" & s.name & "': elaboration failed (brown)"
+      if errMsg != "":
+        msg &= ": " & errMsg
+      diags.add(%*{
+        "range": rng,
+        "severity": 1,  # Error
+        "message": msg,
+        "source": "eponym"})
+    of ssWhite:
+      discard  # white: no diagnostic
+  %*{"uri": uri, "diagnostics": diags}
+
 proc publishDiagnostics(server: var LspServer, uri: string): JsonNode =
   ## Elaborate the document and build the publishDiagnostics notification.
   ## Returns nil only when the document is unknown (no notification sent).
   if uri notin server.documents:
     return nil
+  # Issue #134: `.nim` documents carry Epigram-style sheds; their status
+  # comes from the sidecar the shedsBlock macro wrote at compile time,
+  # re-read on every didOpen/didChange so the editor tracks status as the
+  # Nim compiler re-runs the macro. (A `.nim` file is not Eponym source,
+  # so elaborating its text directly would only yield a parse error.)
+  if uri.endsWith(".nim"):
+    let sd = shedDiagnostics(uri)
+    if not sd.isNil:
+      return %*{
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": sd
+      }
+    # No sidecar (yet): fall through to the Eponym-source path, which
+    # reports the document as unparseable -- same as before #134.
   let text = server.documents[uri]
   var params: JsonNode
   try:

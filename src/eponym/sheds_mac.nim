@@ -18,6 +18,11 @@
 # proc callable from normal Nim code (via the hole-tolerant runtime
 # elaboration in ett_embed). Defs mentioning shed holes get no wrapper --
 # a hole is not callable -- but their shed metadata is still emitted.
+#
+# Issue #134: each shed's elaboration status (white/yellow/brown) is
+# computed at macro time and written to the sidecar; on elaboration
+# failure the sidecar is written before the compile error so the editor
+# can show brown.
 
 import macros
 import os  # parentDir (issue #131, via ett_mac.callerDir)
@@ -25,7 +30,8 @@ import elab  # elabCheckHolesDir, ElabError, ElabDef, MetaStore
 import parse_surf  # ParseError
 import ett_mac  # blockToEponym, callerDir
 import ett_embed  # callIntFuncHolesDir (issue #133)
-import sheds  # ShedInfo, rewriteSheds, resolveShedPlaceholders, sidecar IO
+import sheds  # ShedInfo, rewriteSheds, resolveShedPlaceholders, sidecar IO,
+              # assignShedStatuses (issue #134)
 import usage_check  # hasUnresolvedMetas
 import unify  # zonk
 import ett_init  # `$` for Term (goal pretty-printing, issue #58)
@@ -44,12 +50,12 @@ macro shedsBlock*(body: untyped): untyped =
   let baseDir = parentDir(nimFile)
   var defs: seq[ElabDef]
   var ms: MetaStore
+  var elabErr = ""
   try:
     let r = elabCheckHolesDir(src, baseDir)
-    if r.errMsg != "":
-      error("shedsBlock elaboration error: " & r.errMsg, body)
     defs = r.defs
     ms = r.ms
+    elabErr = r.errMsg
   except ParseError as e:
     error("shedsBlock parse error: " & e.msg, body)
 
@@ -63,6 +69,16 @@ macro shedsBlock*(body: untyped): untyped =
         for (nm, ty) in ms.holes[j].holeCtx:
           sheds[i].ctx.add(nm & " : " & $(zonk(ms, ty)))
         break
+
+  # Issue #134: per-shed status (white/yellow/brown). On failure the
+  # sidecar is written *before* raising the compile error, so the LSP
+  # server can show brown at the shed's source position; sheds that did
+  # get a goal stay yellow (stuck, possibly refinable once the
+  # surrounding code is fixed).
+  assignShedStatuses(sheds, elabErr)
+  if elabErr != "":
+    writeShedSidecar(nimFile, sheds, elabErr)
+    error("shedsBlock elaboration error: " & elabErr, body)
 
   writeShedSidecar(nimFile, sheds)
 

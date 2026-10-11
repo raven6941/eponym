@@ -7,8 +7,11 @@
 ## examples/embedded/sheds_demo.nim (compile + run).
 import os
 import strutils
+import json  # JsonNode indexing in status assertions
+import tables  # initTable (issue #134: LSP server in tests)
 import elab
 import sheds
+import lsp  # issue #134: shed diagnostics via handleMessage
 
 var failures = 0
 proc check(cond: bool, label: string) =
@@ -78,6 +81,103 @@ block:
   let shedsOut2 = readShedSidecar(path)
   check(shedsOut2.len == 1 and shedsOut2[0].nimLine == 40,
     "sidecar merge: recompile updates the named entry")
+  removeDir(dir)
+
+# --- Issue #134: shed status tracking --------------------------------------
+# Status serializes in the sidecar; a missing key (pre-#134 sidecar)
+# defaults to yellow (stuck), the safe "not known-good" state.
+block:
+  let s = ShedInfo(name: "q", draft: "", nimLine: 1, nimCol: 1,
+                   holeLine: 2, holeIdx: 0, goal: "Int", ctx: @[],
+                   status: ssBrown)
+  check(shedFromJson(shedToJson(s)).status == ssBrown,
+    "status round-trip: brown")
+  check(shedToJson(s)["status"].getStr() == "brown",
+    "status serializes as \"brown\"")
+  let j = shedToJson(s)
+  j.delete("status")
+  check(shedFromJson(j).status == ssYellow,
+    "status missing: defaults to yellow")
+  check(shedStatusFromStr("white") == ssWhite and
+        shedStatusFromStr("bogus") == ssYellow,
+    "status parse: white ok, unknown -> yellow")
+
+# refreshShedStatuses: the #137 editor loop, headless. A shed with an open
+# hole is yellow; filling the hole (as the #58 refine action would) and
+# re-elaborating turns it white; breaking the shed's own declaration so no
+# goal is established turns it brown.
+let srcOneHole = """postulate Int : ?
+proc quad (n : Int) : Int = _
+"""
+block:
+  var sheds = @[ShedInfo(name: "quadBody", draft: "", nimLine: 7, nimCol: 25,
+                         holeLine: 2, holeIdx: -1, goal: "", ctx: @[],
+                         status: ssYellow)]
+  refreshShedStatuses(sheds, srcOneHole, ".")
+  check(sheds[0].status == ssYellow and sheds[0].holeIdx == 0,
+    "open hole: yellow, matched to hole 0")
+  let filled = srcOneHole.replace("= _", "= n")
+  refreshShedStatuses(sheds, filled, ".")
+  check(sheds[0].status == ssWhite and sheds[0].holeIdx == -1,
+    "hole filled, clean elaboration: white")
+  let broken = srcOneHole.replace("(n : Int)", "(n : Nope)")
+  refreshShedStatuses(sheds, broken, ".")
+  check(sheds[0].status == ssBrown,
+    "shed decl fails before a goal is established: brown")
+  let unparseable = srcOneHole.replace("proc", "proc proc")
+  refreshShedStatuses(sheds, unparseable, ".")
+  check(sheds[0].status == ssBrown,
+    "unparseable document: brown")
+
+# LSP: `.nim` documents get shed-status diagnostics from the sidecar --
+# yellow -> Warning, brown -> Error (carrying the elaboration message),
+# white -> no diagnostic. Re-read on every didOpen/didChange.
+block:
+  let dir = getTempDir() / "sheds_lsp_test"
+  createDir(dir)
+  let nimFile = dir / "demo.nim"
+  writeFile(nimFile, "-- placeholder")
+  let shedsIn = @[
+    ShedInfo(name: "stuck", draft: "", nimLine: 10, nimCol: 5,
+             holeLine: 3, holeIdx: 0, goal: "Int", ctx: @["n : Int"],
+             status: ssYellow),
+    ShedInfo(name: "bad", draft: "", nimLine: 20, nimCol: 5,
+             holeLine: 0, holeIdx: -1, goal: "", ctx: @[],
+             status: ssBrown),
+    ShedInfo(name: "done", draft: "", nimLine: 30, nimCol: 5,
+             holeLine: 0, holeIdx: -1, goal: "Int", ctx: @[],
+             status: ssWhite)]
+  writeShedSidecar(nimFile, shedsIn, "kaboom")
+  var server = LspServer(documents: initTable[string, string]())
+  let uri = "file://" & nimFile
+  let resp = handleMessage(server, %*{
+    "jsonrpc": "2.0", "method": "textDocument/didOpen",
+    "params": {"textDocument": {"uri": uri, "text": "-- nim source"}}})
+  check(resp["method"].getStr() == "textDocument/publishDiagnostics",
+    "shed diagnostics: notification published on didOpen")
+  let diags = resp["params"]["diagnostics"]
+  check(diags.len == 2, "shed diagnostics: yellow+brown only, got " &
+    $diags.len)
+  check(diags[0]["severity"].getInt() == 2 and
+        diags[0]["range"]["start"]["line"].getInt() == 9 and
+        diags[0]["range"]["start"]["character"].getInt() == 4 and
+        diags[0]["message"].getStr().contains("stuck (yellow)") and
+        diags[0]["message"].getStr().contains("goal: Int"),
+    "shed diagnostics: yellow warning at 10:5 with goal")
+  check(diags[1]["severity"].getInt() == 1 and
+        diags[1]["range"]["start"]["line"].getInt() == 19 and
+        diags[1]["message"].getStr().contains("kaboom"),
+    "shed diagnostics: brown error at 20:5 carrying the failure message")
+  # didChange re-reads the sidecar: rewrite it all-white, expect silence.
+  var shedsIn2 = shedsIn
+  for i in 0 ..< shedsIn2.len: shedsIn2[i].status = ssWhite
+  writeShedSidecar(nimFile, shedsIn2)
+  let resp2 = handleMessage(server, %*{
+    "jsonrpc": "2.0", "method": "textDocument/didChange",
+    "params": {"textDocument": {"uri": uri},
+               "contentChanges": [{"text": "-- nim source v2"}]}})
+  check(resp2["params"]["diagnostics"].len == 0,
+    "shed diagnostics: all white -> no diagnostics on didChange")
   removeDir(dir)
 
 if failures > 0:

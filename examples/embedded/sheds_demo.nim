@@ -60,11 +60,15 @@ proc main() =
   doAssert sh.ctx == @["n : " & sh.goal], "ctx was: " & $sh.ctx
   doAssert "++++" in sh.draft, "draft was: " & sh.draft
   doAssert sh.holeIdx == 0
+  # Issue #134: the open shed is yellow (stuck, refinable); it would go
+  # white once its hole is filled and brown if elaboration failed.
+  doAssert sh.status == ssYellow, "status was: " & $sh.status
   echo "  shed '", sh.name, "' at ", me, ":", sh.nimLine, ":", sh.nimCol
   echo "    goal: ", sh.goal
   echo "    ctx:  ", sh.ctx
   echo "    draft (never elaborated): ", sh.draft
-  echo "  surrounding code typechecked; shed stayed a hole (white/yellow/brown in #134)."
+  echo "  surrounding code typechecked; shed stayed a hole."
+  echo "  status: ", sh.status, " (yellow = stuck, refinable)."
 
 when isMainModule:
   main()
