@@ -1,0 +1,22 @@
+# Eponym common library: propositional equality (issue #54).
+#
+# `Eq` is an indexed family; `refl` typechecks up to conversion (not just
+# syntactic equality). `eqElim` is the generated eliminator (J).
+# Files under examples/ep/ pull this in with `# import eq`.
+
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+
+proc cong (A : ?) (B : ?) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
+    : Eq B (f x) (f y) =
+  eqElim A x (lam (z : A). lam (q : Eq A x z). Eq B (f x) (f z))
+         (refl B (f x)) y p
+
+proc sym (A : ?) (x : A) (y : A) (p : Eq A x y) : Eq A y x =
+  eqElim A x (lam (z : A). lam (q : Eq A x z). Eq A z x)
+         (refl A x) y p
+
+proc trans (A : ?) (x : A) (y : A) (z : A) (p : Eq A x y) (q : Eq A y z)
+    : Eq A x z =
+  eqElim A x (lam (w : A). lam (r : Eq A x w). Eq A w z -> Eq A x z)
+         (lam (s : Eq A x z). s) y p q
