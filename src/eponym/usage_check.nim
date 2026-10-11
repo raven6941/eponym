@@ -8,7 +8,7 @@
 ## Walks the elaborated Term (which carries qty on tPi/tLam from the
 ## integration) with a stack of (qty, used) flags.
 
-import ett_init
+import eponym_init
 import preterm  # for Quantity
 
 type

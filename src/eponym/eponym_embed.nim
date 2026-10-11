@@ -1,4 +1,4 @@
-# ett_embed.nim — Embedding dependently-typed sections in Nim programs
+# eponym_embed.nim — Embedding dependently-typed sections in Nim programs
 #
 # The `ett` macro elaborates at compile time (type checking). This module
 # provides the runtime support for *calling* elaborated definitions from
@@ -15,7 +15,7 @@
 
 import tables
 import elab
-import ett_init
+import eponym_init
 
 # Cache: (baseDir, source) key -> elaborated defs
 var defCache {.global.}: Table[string, seq[ElabDef]]
@@ -33,7 +33,7 @@ proc getDefs*(src: string): seq[ElabDef] =
 
 proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
   ## Issue #131: like getDefs, but `import "path.ep"` declarations in `src`
-  ## resolve relative to `baseDir` (via elabCheckDir). Used by ettBlock
+  ## resolve relative to `baseDir` (via elabCheckDir). Used by eponymBlock
   ## wrappers so runtime re-elaboration sees the same modules the
   ## compile-time elaboration did.
   let key = cacheKey(baseDir, src)

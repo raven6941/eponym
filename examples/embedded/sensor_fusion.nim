@@ -1,7 +1,7 @@
-# Sensor fusion with verified core (ettBlock version)
+# Sensor fusion with verified core (eponymBlock version)
 #
 # A Nim program that fuses 3 sensor readings with a weighted sum.
-# The core math is in an ettBlock where dependent types check the
+# The core math is in an eponymBlock where dependent types check the
 # implementation — no """ string delimiter needed!
 #
 # - `mkVec3` builds a `Vec Int three`; the elaborator CHECKS the body
@@ -9,7 +9,7 @@
 # - `dot3` builds two `Vec Int three`s, proving arity matches.
 #
 # Nim-friendly forms used here (with Eponym equivalents):
-# - `ettBlock:` — block macro, no """ string: the single embedding form
+# - `eponymBlock:` — block macro, no """ string: the single embedding form
 #   (the old ettEmbed"""...""" string form was dropped in Issue #115)
 # - `proc` — Nim keyword (Eponym string syntax also uses `proc` now, was `def`)
 # - `=` — Nim definition (was `:=` in old Eponym syntax)
@@ -24,13 +24,13 @@
 #
 # The surrounding Nim program handles IO and orchestration.
 
-import ett_mac
-import ett_embed
+import eponym_mac
+import eponym_embed
 
-# ettBlock: takes a Nim AST block (not a string). No """ delimiter.
+# eponymBlock: takes a Nim AST block (not a string). No """ delimiter.
 # Each proc/data/postulate is converted to Eponym source at compile time,
 # elaborated, and wrapped as a callable Nim proc.
-ettBlock:
+eponymBlock:
   # Prelude import (issue #131): Nat/Vec (+ zero, suc, nil, cons, add, vappend,
   # ...) from lib/vec.ep (which pulls in lib/nat.ep and lib/eq.ep). This
   # replaces the per-file data(Nat, ...)/data(Vec, ...) redefinitions.
@@ -81,7 +81,7 @@ proc main() =
   echo "Sensor readings: ", x1, ", ", x2, ", ", x3
   echo "Weights: ", w1, ", ", w2, ", ", w3
 
-  # Verified: dot3's ettBlock was elaborated at compile time.
+  # Verified: dot3's eponymBlock was elaborated at compile time.
   # The `Vec(Int, three())` types ensure the implementation builds
   # 3-element vectors; a 2-element bug would be a type error.
   let fused = dot3(w1, w2, w3, x1, x2, x3)

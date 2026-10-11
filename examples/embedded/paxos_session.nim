@@ -38,10 +38,10 @@
 # step -- the Wu & Xi "typed API over untrusted backend" architecture.
 
 import std/deques
-import ett_mac
-import ett_embed
+import eponym_mac
+import eponym_embed
 
-ettBlock:
+eponymBlock:
   # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
   # (was a per-file data(Nat, ...) redefinition before #131).
   import "../../lib/nat.ep"
