@@ -23,9 +23,11 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
 4. **Usage check** (`usage_check.nim`): post-elaboration pass enforcing
    quantitative binder usage (Issue #64). Linear (`q1`) binders must be
    used exactly once; erased (`q0`) binders must not be used.
-5. **Embedding** (`ett_mac.nim`, `ett_embed.nim`): the `ett"..."`,
-   `ettEmbed`, and `ettBlock` macros plus runtime support for calling
-   elaborated definitions from Nim.
+5. **Embedding** (`ett_mac.nim`, `ett_embed.nim`): the `ett"..."` and
+   `ettBlock` macros plus runtime support for calling elaborated
+   definitions from Nim. (The old `ettEmbed"""..."""` string-embedding
+   form was dropped in Issue #115; `ettBlock` is the single embedding
+   form — Eponym code is valid Nim code.)
 
 ## Files
 
@@ -40,7 +42,7 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
 - `ett_init.nim` — core `Term`, `tmPi`/`tmLam`/`tmLet` constructors,
   evaluator, `check`/`infer`/`areEqual`
 - `ett.nim` — finally-tagless ETT (`Sym[R]` interface)
-- `ett_mac.nim` — `ett`, `ettBlock`, `ettEmbed` macros
+- `ett_mac.nim` — `ett`, `ettBlock` macros
 - `ett_embed.nim` — runtime: definition cache, `callIntFunc`
 - `egraph.nim` — e-graph conversion cache (Experiment 10)
 - `lsp.nim` — language server (Experiment 7)

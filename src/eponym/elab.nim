@@ -1431,6 +1431,16 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
         "' did not elaborate to a global reference")
     ctorIds.add((ctm.refId, ctor.name))
   ms.registerDataCtors(globals[d.dname].tm.refId, d.dname, ctorIds)
+  # Issue #115: register Nat's constructor refIds on the supply so the
+  # core's conversion can equate wNatLit(k) with suc-chains
+  # (definitionally equal per Issue #93). Carried on the supply (not a
+  # module global) so it works under compile-time macro evaluation.
+  if d.dname == "Nat":
+    for ctor in d.ctors:
+      let ctm = globals[ctor.name].tm
+      if ctm.kind == tR:
+        if ctor.name == "zero": supply.natZeroRefId = ctm.refId
+        elif ctor.name == "suc": supply.natSucRefId = ctm.refId
 
 # --- Capture-avoiding PreTerm substitution ----------------------------------
 # Needed by issue #32 (indexed clause defs): instantiating the motive and

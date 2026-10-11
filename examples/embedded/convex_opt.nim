@@ -32,78 +32,78 @@
 import ett_mac
 import ett_embed
 
-ettEmbed"""
-postulate Int : ?
+ettBlock:
+  postulate(Int, Univ)
 
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
+  data(Nat, Univ):
+    proc zero(): Nat
+    proc suc(n: Nat): Nat
 
-# Expression language, one variable. eMul is in the AST but has no
-# Convex rule -- that absence IS the DCP check for products.
-data CExpr : ? where
-| eVar : CExpr
-| eConst (c : Int) : CExpr
-| ePlus (e1 : CExpr) (e2 : CExpr) : CExpr
-| eMinus (e1 : CExpr) (e2 : CExpr) : CExpr
-| eMul (e1 : CExpr) (e2 : CExpr) : CExpr
-| eScaleN (k : Nat) (e : CExpr) : CExpr
-| eSq (e : CExpr) : CExpr
-| eExp (e : CExpr) : CExpr
-| eMax (e1 : CExpr) (e2 : CExpr) : CExpr
+  # Expression language, one variable. eMul is in the AST but has no
+  # Convex rule -- that absence IS the DCP check for products.
+  data(CExpr, Univ):
+    proc eVar(): CExpr
+    proc eConst(c: Int): CExpr
+    proc ePlus(e1: CExpr, e2: CExpr): CExpr
+    proc eMinus(e1: CExpr, e2: CExpr): CExpr
+    proc eMul(e1: CExpr, e2: CExpr): CExpr
+    proc eScaleN(k: Nat, e: CExpr): CExpr
+    proc eSq(e: CExpr): CExpr
+    proc eExp(e: CExpr): CExpr
+    proc eMax(e1: CExpr, e2: CExpr): CExpr
 
-# Affine expressions: the DCP base cases (constants, the variable) and
-# the affine-preserving compositions.
-data Affine : CExpr -> ? where
-| afVar : Affine eVar
-| afConst (c : Int) : Affine (eConst c)
-| afPlus (e1 : CExpr) (e2 : CExpr) (h1 : Affine e1) (h2 : Affine e2) :
-    Affine (ePlus e1 e2)
-| afMinus (e1 : CExpr) (e2 : CExpr) (h1 : Affine e1) (h2 : Affine e2) :
-    Affine (eMinus e1 e2)
-| afScaleN (k : Nat) (e : CExpr) (h : Affine e) :
-    Affine (eScaleN k e)
+  # Affine expressions: the DCP base cases (constants, the variable) and
+  # the affine-preserving compositions.
+  data(Affine, CExpr -> Univ):
+    proc afVar(): Affine(eVar())
+    proc afConst(c: Int): Affine(eConst(c))
+    proc afPlus(e1: CExpr, e2: CExpr, h1: Affine(e1), h2: Affine(e2)):
+      Affine(ePlus(e1, e2))
+    proc afMinus(e1: CExpr, e2: CExpr, h1: Affine(e1), h2: Affine(e2)):
+      Affine(eMinus(e1, e2))
+    proc afScaleN(k: Nat, e: CExpr, h: Affine(e)): Affine(eScaleN(k, e))
 
-# Convex expressions: the DCP composition rules as constructors.
-# cvSq/cvExp demand an *affine* argument (convex atom of affine is
-# convex; of general convex it is not DCP-certifiable without sign
-# info -- the conservative gap DCP is known for).
-data Convex : CExpr -> ? where
-| cvAffine (e : CExpr) (h : Affine e) : Convex e
-| cvPlus (e1 : CExpr) (e2 : CExpr) (h1 : Convex e1) (h2 : Convex e2) :
-    Convex (ePlus e1 e2)
-| cvScaleN (k : Nat) (e : CExpr) (h : Convex e) :
-    Convex (eScaleN k e)
-| cvSq (e : CExpr) (h : Affine e) : Convex (eSq e)
-| cvExp (e : CExpr) (h : Affine e) : Convex (eExp e)
-| cvMax (e1 : CExpr) (e2 : CExpr) (h1 : Convex e1) (h2 : Convex e2) :
-    Convex (eMax e1 e2)
+  # Convex expressions: the DCP composition rules as constructors.
+  # cvSq/cvExp demand an *affine* argument (convex atom of affine is
+  # convex; of general convex it is not DCP-certifiable without sign
+  # info -- the conservative gap DCP is known for).
+  data(Convex, CExpr -> Univ):
+    proc cvAffine(e: CExpr, h: Affine(e)): Convex(e)
+    proc cvPlus(e1: CExpr, e2: CExpr, h1: Convex(e1), h2: Convex(e2)):
+      Convex(ePlus(e1, e2))
+    proc cvScaleN(k: Nat, e: CExpr, h: Convex(e)): Convex(eScaleN(k, e))
+    proc cvSq(e: CExpr, h: Affine(e)): Convex(eSq(e))
+    proc cvExp(e: CExpr, h: Affine(e)): Convex(eExp(e))
+    proc cvMax(e1: CExpr, e2: CExpr, h1: Convex(e1), h2: Convex(e2)):
+      Convex(eMax(e1, e2))
 
-# The objective position: minimize demands the convexity certificate.
-proc minimize (e : CExpr) (h : Convex e) : CExpr = e
+  # The objective position: minimize demands the convexity certificate.
+  proc minimize(e: CExpr, h: Convex(e)): CExpr = e
 
-# f(x) = 2*(x-3)^2 + x, as a reified expression...
-proc quadExpr : CExpr =
-  ePlus (eScaleN 2 (eSq (eMinus eVar (eConst 3)))) eVar
+  # f(x) = 2*(x-3)^2 + x, as a reified expression...
+  # Integer literals overload: 2 elaborates as Nat (eScaleN's scalar),
+  # 3 as primitive Int (eConst's payload) -- the elaborator decides
+  # from the expected type, exactly as in string syntax (Issue #115).
+  proc quadExpr(): CExpr =
+    ePlus(eScaleN(2, eSq(eMinus(eVar(), eConst(3)))), eVar())
 
-# ...with its DCP certificate, built bottom-up from the rule table:
-# x-3 affine, sq of affine convex, nonneg scale of convex convex,
-# x affine hence convex, sum of convex convex.
-proc quadConvex : Convex quadExpr =
-  cvPlus (eScaleN 2 (eSq (eMinus eVar (eConst 3)))) eVar
-    (cvScaleN 2 (eSq (eMinus eVar (eConst 3)))
-      (cvSq (eMinus eVar (eConst 3))
-        (afMinus eVar (eConst 3) afVar (afConst 3))))
-    (cvAffine eVar afVar)
+  # ...with its DCP certificate, built bottom-up from the rule table:
+  # x-3 affine, sq of affine convex, nonneg scale of convex convex,
+  # x affine hence convex, sum of convex convex.
+  proc quadConvex(): Convex(quadExpr()) =
+    cvPlus(eScaleN(2, eSq(eMinus(eVar(), eConst(3)))), eVar(),
+      cvScaleN(2, eSq(eMinus(eVar(), eConst(3))),
+        cvSq(eMinus(eVar(), eConst(3)),
+          afMinus(eVar(), eConst(3), afVar(), afConst(3)))),
+      cvAffine(eVar(), afVar()))
 
-# The problem: accepted only because the certificate checks.
-proc prob : CExpr = minimize quadExpr quadConvex
+  # The problem: accepted only because the certificate checks.
+  proc prob(): CExpr = minimize(quadExpr(), quadConvex())
 
-# The same formula as a runnable function (Int literals elaborate in
-# the string syntax). The Nim driver calls this through the embedding.
-proc f (x : Int) : Int =
-  addInt (mulInt 2 (mulInt (subInt x 3) (subInt x 3))) x
-"""
+  # The same formula as a runnable function. The Nim driver calls this
+  # through the embedding.
+  proc f(x: Int): Int =
+    addInt(mulInt(2, mulInt(subInt(x, 3), subInt(x, 3))), x)
 
 # --- Normal Nim program: optimize the certified-convex objective --------
 # Ternary search is a *local* method: it is only correct because `f` is

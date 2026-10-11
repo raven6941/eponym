@@ -41,149 +41,147 @@ import std/sequtils
 import ett_mac
 import ett_embed
 
-ettEmbed"""
-postulate Int : ?
+ettBlock:
+  postulate(Int, Univ)
 
-data Nat : ? where
-| zero : Nat
-| suc (n : Nat) : Nat
+  data(Nat, Univ):
+    proc zero(): Nat
+    proc suc(n: Nat): Nat
 
-# Matrices: values abstract, dimensions in the type.
-postulate Mat : Nat -> Nat -> ?
-# PSD-ness: the DCP side condition for quadForm. DCP tools check it
-# numerically at solve time; here it is an explicit assumption.
-postulate PSD : Pi (n : Nat). Mat n n -> ?
+  # Matrices: values abstract, dimensions in the type.
+  postulate(Mat, Nat -> Nat -> Univ)
+  # PSD-ness: the DCP side condition for quadForm. DCP tools check it
+  # numerically at solve time; here it is an explicit assumption.
+  postulate(PSD, Pi(n: Nat, Mat(n, n) -> Univ))
 
-# Vector expressions indexed by dimension. vMul is in the AST but admits
-# NO certificate rule: the elementwise product of two variables is the
-# vector analog of x*x -- the classic DCP violation -- and the absence
-# of a rule is the check (see 18c).
-data VExpr : Nat -> ? where
-| vVar (n : Nat) : VExpr n
-| vConstV (n : Nat) : VExpr n
-| vPlus (n : Nat) (e1 : VExpr n) (e2 : VExpr n) : VExpr n
-| vMinus (n : Nat) (e1 : VExpr n) (e2 : VExpr n) : VExpr n
-| vScale (n : Nat) (k : Nat) (e : VExpr n) : VExpr n
-| vMatVec (m : Nat) (n : Nat) (A : Mat m n) (e : VExpr n) : VExpr m
-| vMul (n : Nat) (e1 : VExpr n) (e2 : VExpr n) : VExpr n
+  # Vector expressions indexed by dimension. vMul is in the AST but admits
+  # NO certificate rule: the elementwise product of two variables is the
+  # vector analog of x*x -- the classic DCP violation -- and the absence
+  # of a rule is the check (see 18c).
+  data(VExpr, Nat -> Univ):
+    proc vVar(n: Nat): VExpr(n)
+    proc vConstV(n: Nat): VExpr(n)
+    proc vPlus(n: Nat, e1: VExpr(n), e2: VExpr(n)): VExpr(n)
+    proc vMinus(n: Nat, e1: VExpr(n), e2: VExpr(n)): VExpr(n)
+    proc vScale(n: Nat, k: Nat, e: VExpr(n)): VExpr(n)
+    proc vMatVec(m: Nat, n: Nat, A: Mat(m, n), e: VExpr(n)): VExpr(m)
+    proc vMul(n: Nat, e1: VExpr(n), e2: VExpr(n)): VExpr(n)
 
-# Scalar expressions: the convex_opt.nim core (eConst/ePlus/eScaleN/eSq)
-# plus vector-to-scalar projections. logistic is the softplus atom
-# log(1+exp(e)); vLogSum is sum-of-softplus-losses, the logistic-
-# regression objective shape.
-data CExpr : ? where
-| eConst (c : Int) : CExpr
-| ePlus (e1 : CExpr) (e2 : CExpr) : CExpr
-| eScaleN (k : Nat) (e : CExpr) : CExpr
-| eSq (e : CExpr) : CExpr
-| logistic (e : CExpr) : CExpr
-| vDot (n : Nat) (e1 : VExpr n) (e2 : VExpr n) : CExpr
-| vSum (n : Nat) (e : VExpr n) : CExpr
-| vLogSum (n : Nat) (e : VExpr n) : CExpr
-| norm1 (n : Nat) (e : VExpr n) : CExpr
-| sumSq (n : Nat) (e : VExpr n) : CExpr
-| quadForm (n : Nat) (P : Mat n n) (x : VExpr n) : CExpr
+  # Scalar expressions: the convex_opt.nim core (eConst/ePlus/eScaleN/eSq)
+  # plus vector-to-scalar projections. logistic is the softplus atom
+  # log(1+exp(e)); vLogSum is sum-of-softplus-losses, the logistic-
+  # regression objective shape.
+  data(CExpr, Univ):
+    proc eConst(c: Int): CExpr
+    proc ePlus(e1: CExpr, e2: CExpr): CExpr
+    proc eScaleN(k: Nat, e: CExpr): CExpr
+    proc eSq(e: CExpr): CExpr
+    proc logistic(e: CExpr): CExpr
+    proc vDot(n: Nat, e1: VExpr(n), e2: VExpr(n)): CExpr
+    proc vSum(n: Nat, e: VExpr(n)): CExpr
+    proc vLogSum(n: Nat, e: VExpr(n)): CExpr
+    proc norm1(n: Nat, e: VExpr(n)): CExpr
+    proc sumSq(n: Nat, e: VExpr(n)): CExpr
+    proc quadForm(n: Nat, P: Mat(n, n), x: VExpr(n)): CExpr
 
-# Affine vector expressions, dimension-indexed (n is a parameter,
-# Vec-style, so the index type VExpr n -> ? stays non-dependent).
-data VAffine (n : Nat) : VExpr n -> ? where
-| vafVar : VAffine n (vVar n)
-| vafConstV : VAffine n (vConstV n)
-| vafPlus (e1 : VExpr n) (e2 : VExpr n) (h1 : VAffine n e1) (h2 : VAffine n e2) :
-    VAffine n (vPlus n e1 e2)
-| vafMinus (e1 : VExpr n) (e2 : VExpr n) (h1 : VAffine n e1) (h2 : VAffine n e2) :
-    VAffine n (vMinus n e1 e2)
-| vafScale (k : Nat) (e : VExpr n) (h : VAffine n e) :
-    VAffine n (vScale n k e)
+  # Affine vector expressions, dimension-indexed (n is a parameter,
+  # Vec-style, so the index type VExpr n -> ? stays non-dependent).
+  data(VAffine, [n: Nat], VExpr(n) -> Univ):
+    proc vafVar(): VAffine(n, vVar(n))
+    proc vafConstV(): VAffine(n, vConstV(n))
+    proc vafPlus(e1: VExpr(n), e2: VExpr(n), h1: VAffine(n, e1), h2: VAffine(n, e2)):
+      VAffine(n, vPlus(n, e1, e2))
+    proc vafMinus(e1: VExpr(n), e2: VExpr(n), h1: VAffine(n, e1), h2: VAffine(n, e2)):
+      VAffine(n, vMinus(n, e1, e2))
+    proc vafScale(k: Nat, e: VExpr(n), h: VAffine(n, e)):
+      VAffine(n, vScale(n, k, e))
 
-# Linear map of affine is affine (dimension-changing: postulate, see
-# the header note for why it cannot be a constructor).
-postulate vafMatVec : Pi (m : Nat). Pi (n : Nat). Pi (A : Mat m n). Pi (e : VExpr n).
-  VAffine n e -> VAffine m (vMatVec m n A e)
+  # Linear map of affine is affine (dimension-changing: postulate, see
+  # the header note for why it cannot be a constructor).
+  postulate(vafMatVec, Pi(m: Nat, n: Nat, A: Mat(m, n), e: VExpr(n),
+    VAffine(n, e) -> VAffine(m, vMatVec(m, n, A, e))))
 
-# Affine scalars: the DCP base cases plus affine-preserving compositions.
-# afDotConst: dot with a constant vector is a linear functional.
-data Affine : CExpr -> ? where
-| afConst (c : Int) : Affine (eConst c)
-| afPlus (e1 : CExpr) (e2 : CExpr) (h1 : Affine e1) (h2 : Affine e2) :
-    Affine (ePlus e1 e2)
-| afScaleN (k : Nat) (e : CExpr) (h : Affine e) : Affine (eScaleN k e)
-| afDotConst (n : Nat) (e : VExpr n) (h : VAffine n e) :
-    Affine (vDot n (vConstV n) e)
-| afSum (n : Nat) (e : VExpr n) (h : VAffine n e) : Affine (vSum n e)
+  # Affine scalars: the DCP base cases plus affine-preserving compositions.
+  # afDotConst: dot with a constant vector is a linear functional.
+  data(Affine, CExpr -> Univ):
+    proc afConst(c: Int): Affine(eConst(c))
+    proc afPlus(e1: CExpr, e2: CExpr, h1: Affine(e1), h2: Affine(e2)):
+      Affine(ePlus(e1, e2))
+    proc afScaleN(k: Nat, e: CExpr, h: Affine(e)): Affine(eScaleN(k, e))
+    proc afDotConst(n: Nat, e: VExpr(n), h: VAffine(n, e)):
+      Affine(vDot(n, vConstV(n), e))
+    proc afSum(n: Nat, e: VExpr(n), h: VAffine(n, e)): Affine(vSum(n, e))
 
-# Convex scalars: the DCP composition rules as constructors.
-# cvLogistic is the interesting one: softplus is convex *nondecreasing*,
-# so its argument must be convex (affine qualifies) -- this is the rule
-# that makes logistic regression check, and it has no analog in the
-# single-variable quadratic demo.
-data Convex : CExpr -> ? where
-| cvAffine (e : CExpr) (h : Affine e) : Convex e
-| cvPlus (e1 : CExpr) (e2 : CExpr) (h1 : Convex e1) (h2 : Convex e2) :
-    Convex (ePlus e1 e2)
-| cvScaleN (k : Nat) (e : CExpr) (h : Convex e) : Convex (eScaleN k e)
-| cvSq (e : CExpr) (h : Affine e) : Convex (eSq e)
-| cvLogistic (e : CExpr) (h : Convex e) : Convex (logistic e)
-| cvSumSq (n : Nat) (e : VExpr n) (h : VAffine n e) : Convex (sumSq n e)
-| cvLogSum (n : Nat) (e : VExpr n) (h : VAffine n e) : Convex (vLogSum n e)
-| cvNorm1 (n : Nat) (e : VExpr n) (h : VAffine n e) : Convex (norm1 n e)
-| cvQuadForm (n : Nat) (P : Mat n n) (hp : PSD n P) (x : VExpr n)
-    (h : VAffine n x) : Convex (quadForm n P x)
+  # Convex scalars: the DCP composition rules as constructors.
+  # cvLogistic is the interesting one: softplus is convex *nondecreasing*,
+  # so its argument must be convex (affine qualifies) -- this is the rule
+  # that makes logistic regression check, and it has no analog in the
+  # single-variable quadratic demo.
+  data(Convex, CExpr -> Univ):
+    proc cvAffine(e: CExpr, h: Affine(e)): Convex(e)
+    proc cvPlus(e1: CExpr, e2: CExpr, h1: Convex(e1), h2: Convex(e2)):
+      Convex(ePlus(e1, e2))
+    proc cvScaleN(k: Nat, e: CExpr, h: Convex(e)): Convex(eScaleN(k, e))
+    proc cvSq(e: CExpr, h: Affine(e)): Convex(eSq(e))
+    proc cvLogistic(e: CExpr, h: Convex(e)): Convex(logistic(e))
+    proc cvSumSq(n: Nat, e: VExpr(n), h: VAffine(n, e)): Convex(sumSq(n, e))
+    proc cvLogSum(n: Nat, e: VExpr(n), h: VAffine(n, e)): Convex(vLogSum(n, e))
+    proc cvNorm1(n: Nat, e: VExpr(n), h: VAffine(n, e)): Convex(norm1(n, e))
+    proc cvQuadForm(n: Nat, P: Mat(n, n), hp: PSD(n, P), x: VExpr(n),
+      h: VAffine(n, x)): Convex(quadForm(n, P, x))
 
-# The objective position: minimize demands the convexity certificate.
-proc minimize (e : CExpr) (h : Convex e) : CExpr = e
+  # The objective position: minimize demands the convexity certificate.
+  proc minimize(e: CExpr, h: Convex(e)): CExpr = e
 
-# Logistic regression: minimize sum_i softplus((A x)_i - b_i) with
-# A : Mat m n, x : VExpr n, b an abstract constant vector of dim m.
-# The certificate: A x - b is affine (matvec of affine, minus const),
-# and sum-of-softplus of affine is convex by cvLogSum.
-proc lrTerm (m : Nat) (n : Nat) (A : Mat m n) : CExpr =
-  vLogSum m (vMinus m (vMatVec m n A (vVar n)) (vConstV m))
+  # Logistic regression: minimize sum_i softplus((A x)_i - b_i) with
+  # A : Mat m n, x : VExpr n, b an abstract constant vector of dim m.
+  # The certificate: A x - b is affine (matvec of affine, minus const),
+  # and sum-of-softplus of affine is convex by cvLogSum.
+  proc lrTerm(m: Nat, n: Nat, A: Mat(m, n)): CExpr =
+    vLogSum(m, vMinus(m, vMatVec(m, n, A, vVar(n)), vConstV(m)))
 
-proc lrCert (m : Nat) (n : Nat) (A : Mat m n) : Convex (lrTerm m n A) =
-  cvLogSum m (vMinus m (vMatVec m n A (vVar n)) (vConstV m))
-    (vafMinus m (vMatVec m n A (vVar n)) (vConstV m)
-      (vafMatVec m n A (vVar n) (vafVar n))
-      (vafConstV m))
+  proc lrCert(m: Nat, n: Nat, A: Mat(m, n)): Convex(lrTerm(m, n, A)) =
+    cvLogSum(m, vMinus(m, vMatVec(m, n, A, vVar(n)), vConstV(m)),
+      vafMinus(m, vMatVec(m, n, A, vVar(n)), vConstV(m),
+        vafMatVec(m, n, A, vVar(n), vafVar(n)),
+        vafConstV(m)))
 
-proc lrProb (m : Nat) (n : Nat) (A : Mat m n) : CExpr =
-  minimize (lrTerm m n A) (lrCert m n A)
+  proc lrProb(m: Nat, n: Nat, A: Mat(m, n)): CExpr =
+    minimize(lrTerm(m, n, A), lrCert(m, n, A))
 
-# Two variables of *different* dimensions in one objective: logistic
-# loss on x (dim n) plus an l1 penalty on y (dim m). Both check, and
-# their dimensions stay distinct throughout the certificate.
-proc twoVarTerm (p : Nat) (n : Nat) (m : Nat) (A : Mat p n) : CExpr =
-  ePlus (vLogSum p (vMinus p (vMatVec p n A (vVar n)) (vConstV p)))
-        (norm1 m (vVar m))
+  # Two variables of *different* dimensions in one objective: logistic
+  # loss on x (dim n) plus an l1 penalty on y (dim m). Both check, and
+  # their dimensions stay distinct throughout the certificate.
+  proc twoVarTerm(p: Nat, n: Nat, m: Nat, A: Mat(p, n)): CExpr =
+    ePlus(vLogSum(p, vMinus(p, vMatVec(p, n, A, vVar(n)), vConstV(p))),
+          norm1(m, vVar(m)))
 
-proc twoVarCert (p : Nat) (n : Nat) (m : Nat) (A : Mat p n)
-    : Convex (twoVarTerm p n m A) =
-  cvPlus (vLogSum p (vMinus p (vMatVec p n A (vVar n)) (vConstV p)))
-         (norm1 m (vVar m))
-    (cvLogSum p (vMinus p (vMatVec p n A (vVar n)) (vConstV p))
-      (vafMinus p (vMatVec p n A (vVar n)) (vConstV p)
-        (vafMatVec p n A (vVar n) (vafVar n))
-        (vafConstV p)))
-    (cvNorm1 m (vVar m) (vafVar m))
+  proc twoVarCert(p: Nat, n: Nat, m: Nat, A: Mat(p, n)):
+      Convex(twoVarTerm(p, n, m, A)) =
+    cvPlus(vLogSum(p, vMinus(p, vMatVec(p, n, A, vVar(n)), vConstV(p))),
+           norm1(m, vVar(m)),
+      cvLogSum(p, vMinus(p, vMatVec(p, n, A, vVar(n)), vConstV(p)),
+        vafMinus(p, vMatVec(p, n, A, vVar(n)), vConstV(p),
+          vafMatVec(p, n, A, vVar(n), vafVar(n)),
+          vafConstV(p))),
+      cvNorm1(m, vVar(m), vafVar(m)))
 
-proc twoVarProb (p : Nat) (n : Nat) (m : Nat) (A : Mat p n) : CExpr =
-  minimize (twoVarTerm p n m A) (twoVarCert p n m A)
+  proc twoVarProb(p: Nat, n: Nat, m: Nat, A: Mat(p, n)): CExpr =
+    minimize(twoVarTerm(p, n, m, A), twoVarCert(p, n, m, A))
 
-# Portfolio risk term x' P x: P must be square (Mat n n) and PSD, x must
-# have dimension n. PSD-ness is discharged by postulate (DCP tools check
-# it numerically at solve time).
-postulate eye2 : Mat (suc (suc zero)) (suc (suc zero))
-postulate psdEye2 : PSD (suc (suc zero)) eye2
+  # Portfolio risk term x' P x: P must be square (Mat n n) and PSD, x must
+  # have dimension n. PSD-ness is discharged by postulate (DCP tools check
+  # it numerically at solve time). Dimension literals overload as Nat.
+  postulate(eye2, Mat(2, 2))
+  postulate(psdEye2, PSD(2, eye2))
 
-proc qfTerm : CExpr =
-  quadForm (suc (suc zero)) eye2 (vVar (suc (suc zero)))
+  proc qfTerm(): CExpr =
+    quadForm(2, eye2, vVar(2))
 
-proc qfCert : Convex qfTerm =
-  cvQuadForm (suc (suc zero)) eye2 psdEye2
-    (vVar (suc (suc zero))) (vafVar (suc (suc zero)))
+  proc qfCert(): Convex(qfTerm()) =
+    cvQuadForm(2, eye2, psdEye2, vVar(2), vafVar(2))
 
-proc qfProb : CExpr = minimize qfTerm qfCert
-"""
+  proc qfProb(): CExpr = minimize(qfTerm(), qfCert())
 
 # --- Normal Nim program: logistic-regression driver -----------------------
 # The Eponym layer certified `lrTerm` convex with all dimensions lined

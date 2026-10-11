@@ -277,6 +277,16 @@ proc hashTerm*(t: Term): Hash =
 
 type Supply* = object
   n: int
+  ## Numeral constructors for conversion (Issue #115). The elaborator
+  ## sets these when `data Nat` is declared (see elab.nim's elabDataDecl).
+  ## structuralEq uses them to equate wNatLit(k) with suc-chains, which
+  ## are definitionally equal per Issue #93. This is client configuration
+  ## carried on the supply (so it works under compile-time macro
+  ## evaluation, where module-level `var` is unavailable): the core stays
+  ## generic, and while unset (-1) numeral comparison is strict
+  ## (literal-to-literal only).
+  natZeroRefId*: int = -1
+  natSucRefId*: int = -1
 
 proc freshId*(s: var Supply): int =
   inc s.n
@@ -643,6 +653,30 @@ proc vAbsurd(): Value =
 
 ## --- the typechecker (§§6.5, 6.7) ----------------------------------------------
 
+proc numeralChainEq(k: int, v: Value, zeroId, sucId: int): bool =
+  ## True iff the value v denotes the numeral k: either a matching
+  ## wNatLit, or a chain of exactly k suc applications (identified by
+  ## the given refIds) bottoming out at zero (bare) or wNatLit(0).
+  ## The refIds are verified at each layer, so this is sound without
+  ## any well-typedness assumption about v.
+  var kk = k
+  var vv = v
+  while true:
+    case vv.whnf.kind
+    of wNatLit:
+      return vv.whnf.natLitVal == kk
+    of wRef:
+      if vv.whnf.spine.len == 1 and vv.whnf.spine[0].kind == eApp and
+          vv.whnf.refId == sucId and kk > 0:
+        kk -= 1
+        vv = vv.whnf.spine[0].arg
+      elif vv.whnf.spine.len == 0 and vv.whnf.refId == zeroId and kk == 0:
+        return true
+      else:
+        return false
+    else:
+      return false
+
 proc infer(s: var Supply, t: Term): Value
 proc check*(s: var Supply, ty: Value, t: Term): Value
 proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value]
@@ -679,6 +713,17 @@ proc check*(s: var Supply, ty: Value, t: Term): Value =
 
 proc structuralEq(s: var Supply, a, b: Value) =
   ## structural equality on weak-head forms, with eta for lambdas vs neutrals
+  ## Issue #115: a wNatLit(k) is definitionally suc^k(zero) (Issue #93), so
+  ## when one side is a literal and the other is a suc-chain, compare as
+  ## numerals via the Nat constructors registered on the supply (see the
+  ## Supply type). The refIds are verified, so no well-typedness
+  ## assumption is needed. While unset, comparison stays strict.
+  if a.whnf.kind == wNatLit and b.whnf.kind != wNatLit and
+      s.natSucRefId >= 0 and s.natZeroRefId >= 0:
+    if numeralChainEq(a.whnf.natLitVal, b, s.natZeroRefId, s.natSucRefId): return
+  if b.whnf.kind == wNatLit and a.whnf.kind != wNatLit and
+      s.natSucRefId >= 0 and s.natZeroRefId >= 0:
+    if numeralChainEq(b.whnf.natLitVal, a, s.natZeroRefId, s.natSucRefId): return
   if a.whnf.kind != b.whnf.kind:
     if a.whnf.kind == wLam and b.whnf.kind == wRef:
       let x = freshPara(s, nil)
