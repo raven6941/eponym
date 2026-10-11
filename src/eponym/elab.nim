@@ -2500,6 +2500,17 @@ proc constLam : Pi (A : ?) . A -> A =
   expectElabErr("proc bad : ? =\n  lam (x : ?) . x\n",
     "expected a function type")
 
+  # --- Issue #65: Pi binders in type annotations are in scope ---------------
+  let defs65 = elabCheck("""
+postulate foo65 : (A : ?) -> A -> A
+proc bar65 : (A : ?) -> A -> A =
+  lam (A : ?) . lam (x : A) . x
+proc useFoo65 : 1 =
+  foo65 1 <>
+""")
+  assert defs65.len == 2  # postulates elaborate but return no ElabDef
+  echo "ok: inline Pi binders in type annotations (#65)"
+
   # --- parse errors propagate with locations ----------------------------------
   try:
     discard elabCheck("proc bad (A : ?) : =\n  x\n")

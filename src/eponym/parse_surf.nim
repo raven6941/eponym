@@ -264,7 +264,48 @@ proc parseApp(p: var Parser): PreTerm =
     let loc = result.loc
     result = mkApp(result, p.parseAtom(), loc)
 
+proc atBinderArrow(p: Parser): bool =
+  ## Issue #65: token lookahead for a binder in arrow position:
+  ## `(x : A) ->`, `{x : A} ->`, `(0 x : A) ->`, `(q x : A) ->`.
+  ## Mirrors parseBinder's prefix; consumes no parser state.
+  var i = p.pos
+  let open = p.toks[i].kind
+  if open notin {tkLParen, tkLBrace}: return false
+  inc i
+  var needName = true
+  if open == tkLParen and i <= p.toks.high:
+    let q = p.toks[i]
+    if q.kind == tkInt and q.lexeme in ["0", "1"]:
+      inc i
+    elif q.kind == tkUnitTy and q.lexeme == "1":
+      inc i
+    elif q.kind == tkIdent and i + 1 <= p.toks.high and
+         p.toks[i + 1].kind == tkIdent:
+      i += 2  # `(q x : A)`: quantity variable + binder name
+      needName = false
+  if needName:
+    if i > p.toks.high or p.toks[i].kind != tkIdent: return false
+    inc i
+  if i > p.toks.high or p.toks[i].kind != tkColon: return false
+  inc i
+  var depth = 1  # balanced scan for the matching close bracket
+  while i <= p.toks.high and depth > 0:
+    case p.toks[i].kind
+    of tkLParen, tkLBrace: inc depth
+    of tkRParen, tkRBrace: dec depth
+    else: discard
+    inc i
+  if depth != 0: return false
+  i <= p.toks.high and p.toks[i].kind == tkArrow
+
 proc parseTerm(p: var Parser): PreTerm =
+  # Issue #65: `(x : A) -> B` binds x (a Pi); it was previously parsed as
+  # an ascription, leaving x unbound in B.
+  if p.atBinderArrow():
+    let loc = p.peek().loc
+    let b = p.parseBinder()
+    discard p.expect(tkArrow, "'->'")
+    return mkPi(b.name, b.ty, p.parseTerm(), loc, b.impl, b.erased, b.qty)
   let lhs = p.parseApp()
   if p.peek().kind == tkArrow:
     let t = p.next()
