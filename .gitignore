@@ -21,3 +21,7 @@ examples/*
 # Shed metadata sidecars (issue #133): written by the shedsBlock macro
 # next to the calling Nim file for the LSP server; regenerated on compile.
 *.sheds.json
+
+# VSCode extension build (issue #136)
+editors/vscode/node_modules/
+editors/vscode/out/
