@@ -39,14 +39,36 @@ chain. `tests/run_examples.nim` elaborates every file with
 - **nat_lemmas.ep** — `addZeroR`/`addSucR` (induction), `addComm`/`addAssoc`
   (`by arith`, #41), `mulZeroR`, plus the computational check
   `twoPlusTwoIsFour` (`by refl` — `add 2 2` really computes to `4`).
-- **vec.ep** — `Vec` (length-indexed), `vappend`, `vmap`.
-  (`vmapId` omitted: hits an eliminator-motive bug, see the note in
-  `vec.ep` and the follow-up issue.)
+- **vec.ep** — `Vec` (length-indexed), `vappend`, `vmap`, `vmapId`
+  (map-identity, by induction — #125 showed the earlier failure was an
+  ill-typed repro, not an elaborator bug).
+- **schemes.ep** — recursion schemes over Nat/List (#48): `cataNat`,
+  `cataList` (the eliminators, renamed), `anaList` (fuel-bounded unfold),
+  `replicate`, `pred`, `isZero`; laws `cataNatRefl` (reflection),
+  `cataMapFusion` (fold-after-map = fold with composed algebra),
+  `hyloLenRepLaw`/`deforestLenRep` (deforestation:
+  `length (replicate n x) = n`, fused = `fusedLenRep`).
+- **schemes_vec.ep** — recursion schemes over Vec (#48): `cataVec`,
+  `vmapFusion` (`vmap g (vmap f xs) = vmap (g . f) xs`). Lives in its own
+  module because List's and Vec's `nil`/`cons` collide under unqualified
+  import (see below).
 
 Import graph: `bool.ep` → `eq`; `list.ep` → `nat`, `eq`;
-`nat_lemmas.ep` → `nat`, `eq`; `vec.ep` → `nat`, `eq`.
+`nat_lemmas.ep` → `nat`, `eq`; `vec.ep` → `nat`, `eq`;
+`schemes.ep` → `nat`, `bool`, `list`, `eq`;
+`schemes_vec.ep` → `nat`, `vec`, `eq`.
 `Eq` lives in its own module so importing both `nat`-lemmas and
 `list`-lemmas never defines it twice.
+
+## Name collisions under unqualified import
+
+`import` merges unqualified into one environment (decisions.org: flat
+imports for v1). The first real collision arrived with #48: `list.ep`
+and `vec.ep` both declare `nil`/`cons` constructors, so no single module
+can import both — hence `schemes.ep` (Nat/List) and `schemes_vec.ep`
+(Vec) are separate modules, and no example imports both. Workaround for
+now: split modules along datatype-family lines. Qualified imports would
+fix this properly; that is a follow-up, not v1.
 
 ## Conventions
 
