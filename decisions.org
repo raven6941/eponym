@@ -1906,3 +1906,75 @@
   =import "../../lib/nat.ep"= (or =vec.ep=) instead of redefining
   =data(Nat, ...)= per file — Aaron's 2026-10-11 request, unblocked.
   Status: CLOSED (branch) — merged via PR.
+
+* 2026-10-12 — #45: evidence-returning equality handlers (interface + validation; natArithHandler migration open)
+
+  Context: #41 landed equality handlers as *trusted* decision procedures
+  (=coreValid=false= extends conversion for the handler's dynamic extent,
+  counted in =ms.extDischarges=, relaxing =elabDefDecl='s bare-core
+  re-check). The Andromeda endgame is handlers that *return evidence*:
+  automation without trust extension.
+
+  Design (this chunk):
+  - Evidence format: a core =Term= claimed to prove =Eq goalTy a b=
+    (=ConvResult{verdict, evidence}=; new verdict =cvDischargedEv=).
+    =goalTy= is threaded through =convElab= and =ConvDecide= — the
+    =tacRefl= site passes the =Eq='s =A=, the seven type-vs-type sites
+    pass the universe =tmC(cStar)= — so the handler can build a
+    well-typed proof term.
+  - Validation: =validateEvidence= closes goal and evidence over the
+    elaboration context by substituting fresh rigid postulate refs for
+    =tV(i)= (descending =subst=; ctx types mention only strictly outer
+    vars, so closing types first in the same order is sound), pops the
+    handler stack, and runs the core's own =check=. Bogus evidence
+    raises a located =ElabError=; validated evidence does NOT touch
+    =extDischarges=, so =elabDefDecl='s bare-core re-check stays in
+    force. Fail-closed throughout: nil evidence, unknown =goalTy=, or
+    =Eq= out of scope all raise rather than silently trusting.
+  - Why a proof =Term= and not a rewrite trace: a trace the core replays
+    can only cover definitional/congruence steps — the comm/assoc
+    rearrangements that motivate the handler are not definitional, so a
+    replayable trace would need the same induction proofs anyway. The
+    proof-term format pushes all the intelligence into the handler and
+    keeps the validator to one =check= call.
+  - Mock-handler tests (in =elab.nim='s suite): positive — =refl Nat
+    zero= evidence for =Eq Nat (add zero zero) zero= validates, the def
+    elaborates, =extDischarges == 0=, and a =fired= flag proves the
+    evidence path (not =defaultConv=) discharged the goal; negative —
+    =refl Nat zero= for =Eq Nat zero (suc zero)= is rejected with
+    "evidence rejected".
+
+  Open (next chunk): migrate =natArithHandler= from the trusted fast
+  path to =cvDischargedEv=. Its rearrangement steps genuinely need
+  induction proofs, so the handler must synthesize them: build the four
+  linear-arithmetic lemmas (addZeroR/addSucR/addComm/addAssoc) as =Term=
+  proofs via Nat's eliminator at handler-construction time (proved with
+  the bare core, no handlers — no circularity with the =by arith=
+  corpus), then assemble each goal's evidence as a transitivity chain
+  of congruence + lemma steps over the normalization trace. The
+  =closeOverCtx= machinery already handles the open-context case this
+  needs (=n m : Nat= binders become rigid refs).
+
+  Done (same day, this chunk): =natArithHandler= now returns
+  =cvDischargedEv= evidence. =buildArithLemmas= synthesizes the four
+  lemmas as closed =Term=s via =natElim=/=eqElim= (J-based
+  =congAt=/=symAt=/=transAt= combinators, de Bruijn-exact shifting) and
+  verifies each with the bare core at handler-construction time
+  (=ok=false= falls back to the trusted path — no hard dependency).
+  =normEvArith= is a proof-carrying normalizer mirroring =normNat=:
+  each step (atom via =sym (addZeroR t)=, =suc= via =sucPushArith= +
+  =addSucR=, =add= via =peelArith= + =addAssoc= reassociation and
+  =sortArith= insertion sort with =addComm= swaps) carries its =Eq=
+  proof; =buildArithEvidence= closes =a ≡ canon ≡ canon ≡ b= with
+  =refl= on the structurally identical canonical forms. The =by arith=
+  corpus (addSucRight/addZeroRight/addComm/addAssoc over open =Nat=
+  goals) now elaborates with =extDischarges == 0= — automation, not
+  trust. Two bugs the bare core caught while debugging (evidence for
+  the design's value): (1) =validateEvidence= closed goal and evidence
+  with two independent fresh-ref sets — refactored to =closeParams=
+  computing one shared set; (2) =swapAtArith='s outer =transAt= passed
+  =T2= as the middle term while the inner proof had type =Eq T1 T3=,
+  and =buildArithEvidence= passed =symAt= its arguments swapped.
+  Trusted =cvDischarged= remains only for Eq-congruence type goals and
+  exotic shapes (=ExoticArithShape=) the prover does not cover.
+  Status: CLOSED (branch) — merged via PR.
