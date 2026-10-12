@@ -40,4 +40,9 @@ jobs:
           nim c -r --hints:off $P "tests/test_shed_layout.nim" || exit 1
           nim c -r --hints:off $P "tests/test_shed_loop.nim" || exit 1
           nim c -r --hints:off $P "tests/test_shed_refine_method.nim" || exit 1
+          echo "=== vscode extension smoke (issue #136 client path, real lsp binary) ==="
+          cd editors/vscode
+          npm install --no-audit --no-fund || exit 1
+          npm run build || exit 1
+          LSP=../../src/eponym/lsp DEMO=../../examples/embedded/sheds_demo.nim node out/smoke.js || exit 1
           # Note: bench/ contains expensive benchmarks, not run in CI.

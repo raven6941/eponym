@@ -2097,5 +2097,23 @@
   round-trip; surface lambdas/Pis do not); a recompile after a partial
   fill re-matches by line exactly when the fill is single-line (the #134
   limitation). Status: the =.nim= round-trip is closed on the branch;
-  #137 stays open/in-progress for a live VSCode click-through and the
   merge decision (separate); #139 still open.
+
+  Addendum 2026-10-11 (loop verified end-to-end, branch-only): resumed
+  the stalled #137 and closed the verification loop as far as this
+  environment allows. The node smoke test (=editors/vscode/src/smoke.ts=)
+  drives the extension's own client code (=protocol.ts= request framing,
+  =render.ts= HTML) against the real compiled server binary: initialize
+  -> =eponym/shedNames= -> =eponym/shedLayout= (box tree, rendered HTML
+  carries hole + goal) -> =eponym/refineShed= on a fixture sidecar (14
+  checks, all green, including unknown-shed errors and the sidecar
+  re-write). The smoke test is now wired into branch CI (build + run
+  after the Nim sheds tests). What was NOT verified: an actual VSCode
+  click-through (no VSCode in this environment); the webview's click ->
+  =refineShed= -> splice path is exercised only via the client's own
+  code + the server contract, not inside a real editor. Kept honest:
+  this is the one step of the #137 acceptance that must happen on a
+  developer machine; it is listed as acceptance on the merge-decision
+  issue. Status: #137 CLOSED (scripted acceptance met on the branch;
+  loop documented here). Merge to main is a separate decision (new
+  issue); #139 (name-resolving pretty-printer) still open.
