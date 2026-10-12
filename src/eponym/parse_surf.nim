@@ -1,5 +1,13 @@
-# parse_surf.nim — front end (a): hand-written parser for a small surface
-# syntax, producing preterm.PreTerm / SurfDef.
+# parse_surf.nim — the canonical surface syntax of Eponym.
+#
+# This grammar is the single definition of Eponym's surface syntax
+# (issue #144: Eponym is embedded-first, so there is exactly one syntax).
+# Both entry points go through this parser:
+#   - standalone `.ep` files: lexed and parsed here directly;
+#   - embedded `eponymBlock` (eponym_mac.nim): `blockToEponym` converts the
+#     Nim AST to a source string in this grammar, which is then parsed here.
+# There is no second grammar to keep in sync — only a Nim-AST-to-string
+# mapping, whose rules are listed below.
 #
 # Surface syntax (Nim-consistent):
 #   program = decl*
@@ -8,17 +16,49 @@
 #   proc    = "proc" name tele ":" term "=" term
 #   tele    = (binder)*
 #   binder  = "(" name ":" term ")" | "{" name ":" term "}"  -- {} = implicit
+#            | "(" qty name ":" term ")"  -- qty: 0 (erased), 1 (linear),
+#                                            or a quantity variable (#66)
 #   term    = arrow
 #   arrow   = app ("->" arrow)?              -- right associative
 #   app     = atom+
 #   atom    = "(" term ")" | "(" term "," term ")" | "(" term ":" term ")"
 #            | "lam" binder "." term | "Pi" binder "." term
-#            | "Sig" "(" name ":" term ")" "." term
+#            | "Sig" binder "." term
 #            | "let" name (":" term)? "=" term "in" term
-#            | "fst" atom | "snd" atom
+#            | "fst" atom | "snd" atom | "by" tactic
 #            | "_"                                     -- hole (Experiment 3)
-#            | name | "?" | "1" | "<>" | "O"
+#            | name | "?" | "1" | "<>" | "O" | integer
+#   binder-arrow: "(" name ":" term ")" "->" term  -- binds name (issue #65)
 # Comments: `--` or `#` to end of line.
+#
+# eponymBlock Nim-AST mapping (eponym_mac.nim `blockToEponym`):
+#   `Univ`                -> `?`            (Nim can't parse a bare `?`)
+#   `A -> B` (infix)      -> Pi (_ : A). B  (right associative)
+#   `lam(x, T, body)`     -> lam (x : T). body
+#   `Sig(A, B)`           -> Sig (_ : A). B
+#   `Sig(x, A, B)`        -> Sig (x : A). B
+#   `Pi(x: A, y: B, C)`   -> Pi (x : A). Pi (y : B). C
+#   `Pi{A: T, ...}`       -> Pi {A : T}. ...        (implicit binders)
+#   `ch {.linear.}`       -> (1 ch : T)             (quantity prefix)
+#   `ch {.erased.}`       -> (0 ch : T)
+#   `(a, b)`              -> pair; `fst p` / `snd p` -> projections
+#   `f(x, y)`             -> application `f x y`
+#   `vecnil`              -> `nil`          (`nil` is a Nim keyword)
+#   integer `1`           -> `(suc zero)`    (`1` lexes as the unit type)
+#   `data(N, T):` block   -> data N : T where | ctor ...
+#   `postulate(N, T)`     -> postulate N : T
+#   `import "path"`       -> import "path"
+#
+# Deliberate divergences (standalone-only surface; eponymBlock cannot
+# emit these — a macro-ergonomics follow-up, issue #144):
+#   - `elim` / `red` declarations (used by smoke tests 07, 08);
+#   - `by tac` tactic terms (used by smoke test 14);
+#   - `def` clause-style definitions (no .ep corpus usage);
+#   - quantity-variable binders `(q x : A)` (#66);
+#   - the unit value `<>` (`tt` passes through eponymBlock as a variable).
+# Removing them from this grammar would break the smoke-test corpus for
+# no user benefit, so they stay: the canonical syntax is this grammar,
+# and eponymBlock emits a documented subset of it.
 
 import preterm, strutils
 
