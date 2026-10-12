@@ -1978,3 +1978,33 @@
   Trusted =cvDischarged= remains only for Eq-congruence type goals and
   exotic shapes (=ExoticArithShape=) the prover does not cover.
   Status: CLOSED (branch) — merged via PR.
+
+* 2026-10-12 — One surface syntax: parse_surf's grammar is canonical, eponymBlock emits a subset
+
+  Context: issue #144 step 2 asked for the standalone and embedded
+  grammars to be unified ("accept exactly the embedded grammar — no more,
+  no less"). Investigation showed the premise was wrong: there are not
+  two grammars. =eponymBlock= (eponym_mac.nim) converts the Nim AST to an
+  Eponym *source string* via =blockToEponym=, which is then parsed by
+  =parse_surf.parseProgram= — the embedded pipeline already routes
+  through the standalone parser. The legacy =ettDefs= macro in mac_surf.nim
+  (proc-defs only) is not the embedded front end and is not on the
+  elaboration path.
+  Options: (a) carve parse_surf down to exactly what =blockToEponym=
+  emits; (b) keep parse_surf's grammar as the canonical syntax and
+  document =blockToEponym='s emitted subset plus deliberate divergences.
+  Decision: (b). Option (a) would delete =elim=, =red=, =by=-tactics and
+  =def=-clauses from the grammar, breaking smoke tests 07/08/14 for no
+  user benefit — those are elaborator-level features whose embedded
+  forms need macro design work (a follow-up ergonomics issue, value
+  category b). The canonical syntax is now stated in parse_surf.nim's
+  header: the grammar, the =blockToEponym= mapping rules (=Univ=→=?=,
+  =lam(x,T,body)=, =Sig= forms, quantity prefixes, =vecnil=→=nil=,
+  =1=→=(suc zero)=), and the standalone-only divergences (=elim=/=red=,
+  =by= tactics, =def= clauses, quantity-variable binders, =<>=).
+  Consequences: =tests/surface_conformance.nim= pins the agreement — a
+  corpus of (eponymBlock-block, equivalent .ep source) pairs must parse
+  to identical =SurfDecl=s (locations ignored, quantities compared
+  explicitly since =PreTerm.== ignores =qty= and the renderer drops it).
+  Full inventory in the goal's hidden_files/144-syntax-inventory.md.
+  Status: on branch =exp144-syntax-align=, PR pending.
