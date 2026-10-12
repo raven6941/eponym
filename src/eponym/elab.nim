@@ -66,7 +66,7 @@ type
 
 # Forward declaration for use in tactics
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-              ctx: Ctx, globals: Globals)
+              ctx: Ctx, globals: Globals, goalTy: Term = nil)
 
 # --- Basic tactics (Experiment 6) ------------------------------------
 
@@ -110,7 +110,7 @@ proc tacRefl(goal: Term, ctx: Ctx, globals: Globals,
     raise elabErr(loc, "refl: goal head is not Eq")
   # Check x and y are convertible via full conversion (Experiment 5b)
   try:
-    convElab(ms, supply, x, y, loc, ctx, globals)
+    convElab(ms, supply, x, y, loc, ctx, globals, aTy)
   except ElabError as e:
     raise elabErr(loc, "refl: sides are not convertible: " & e.msg)
   # Build refl A x : Eq A x x
@@ -283,8 +283,64 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
       " does not match expected type " & prettyTerm(b, ctx, refNames) &
       ": not convertible (" & e.msg & ")")
 
+proc closeOverCtx(s: var Supply, t: Term, ctx: Ctx): Term =
+  ## Issue #45: replace every free `tV(i)` (i < ctx.len) by a fresh rigid
+  ## postulate ref, so an open term becomes closed and the bare core can
+  ## check it. Descending substitution: replacing V_j for j from high to
+  ## low never disturbs the not-yet-replaced lower indices. Each ctx type
+  ## mentions only strictly outer variables (see `ext`'s weakening), so
+  ## closing the types in the same descending order yields closed types
+  ## to evaluate for the postulate refs' types.
+  var params = newSeq[Term](ctx.len)
+  var i = ctx.len - 1
+  while i >= 0:
+    var ty = ctx[i].ty
+    var j = ctx.len - 1
+    while j > i:
+      ty = subst(ty, j, params[j])
+      dec j
+    params[i] = newPostulateRef(s, eval(ty, @[]))
+    dec i
+  result = t
+  i = ctx.len - 1
+  while i >= 0:
+    result = subst(result, i, params[i])
+    dec i
+
+proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
+                      ev: Term, loc: Loc, ctx: Ctx, globals: Globals) =
+  ## Issue #45: validate a handler's evidence with the bare core.
+  ## The handler claims `ev : Eq goalTy a b`. Handlers are popped for the
+  ## validation (bare-core conversion only), the goal and evidence are
+  ## closed over the context with fresh rigid refs, and the core's own
+  ## `check` verifies the claim. Failure raises a located ElabError —
+  ## bogus evidence is rejected, never silently trusted.
+  if ev.isNil:
+    raise elabErr(loc, "conversion handler returned cvDischargedEv with nil evidence")
+  if goalTy.isNil:
+    raise elabErr(loc, "conversion handler returned evidence but the goal " &
+      "type is unknown (internal error: convElab call site did not pass goalTy)")
+  if "Eq" notin globals:
+    raise elabErr(loc, "conversion handler returned evidence but 'Eq' is not in scope")
+  let ev1 = zonk(ms, ev)
+  let ru = findUnsolved(ms, ev1)
+  if ru.found:
+    raise elabErr(loc, "conversion handler evidence mentions unsolved metavariable")
+  let eqTm = globals["Eq"].tm
+  let goal = tmApp(tmApp(tmApp(eqTm, goalTy), a), b)
+  let closedGoal = closeOverCtx(s, goal, ctx)
+  let closedEv = closeOverCtx(s, ev1, ctx)
+  let saved = ms.convHandlers
+  ms.convHandlers = @[]
+  try:
+    discard check(s, eval(closedGoal, @[]), closedEv)
+  except ValueError as e:
+    raise elabErr(loc, "conversion handler evidence rejected by the core: " & e.msg)
+  finally:
+    ms.convHandlers = saved
+
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-              ctx: Ctx, globals: Globals) =
+              ctx: Ctx, globals: Globals, goalTy: Term = nil) =
   ## Conversion for the inferred-vs-expected check (Experiment 5b):
   ## compare up to full reduction — delta-unfolding of
   ## definitions, beta, and the registered wRed rules — via the core
@@ -318,12 +374,23 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   var i = ms.convHandlers.high
   while i >= 0:
     let h = ms.convHandlers[i]
-    if h.decide(ms, s, a1, b1, loc, ctx.len) == cvDischarged:
+    let r = h.decide(ms, s, a1, b1, loc, ctx.len, goalTy)
+    case r.verdict
+    of cvDischarged:
       if not h.coreValid:
         # A domain handler extended conversion beyond the core: record it
         # so elabDefDecl can relax the core re-check for this definition.
         inc ms.extDischarges
       return
+    of cvDischargedEv:
+      # Issue #45: evidence-returning discharge. The core revalidates the
+      # evidence with no handlers installed; trust is NOT extended, so
+      # extDischarges is untouched and elabDefDecl's bare-core re-check
+      # stays in force for this definition.
+      validateEvidence(ms, s, a1, b1, goalTy, r.evidence, loc, ctx, globals)
+      return
+    of cvDeclined:
+      discard
     dec i
   defaultConv(ms, s, a1, b1, loc, ctx, globals)
 
@@ -337,10 +404,11 @@ proc cacheConvHandler*(): ConvHandler =
   ## so the core's re-check backstop stays in force.
   let decide: ConvDecide =
     proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-         ctxLen: int): ConvVerdict {.closure.} =
+         ctxLen: int, goalTy: Term): ConvResult {.closure.} =
       let (hit, _) = areEqualCached(ms.convCache,
                                     convKey(ctxLen, a, b))
-      if hit: cvDischarged else: cvDeclined
+      if hit: ConvResult(verdict: cvDischarged)
+      else: ConvResult(verdict: cvDeclined)
   ConvHandler(decide: decide, coreValid: true)
 
 type NatPoly = object
@@ -435,11 +503,16 @@ proc natArithHandler*(globals: Globals): ConvHandler =
   result.coreValid = false
   result.decide =
     proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-         ctxLen: int): ConvVerdict {.closure.} =
+         ctxLen: int, goalTy: Term): ConvResult {.closure.} =
       if addId < 0 or zeroId < 0 or sucId < 0:
-        return cvDeclined  # no Nat/add in scope: nothing to decide
-      if natConv(a, b, zeroId, sucId, addId, eqId): cvDischarged
-      else: cvDeclined
+        return ConvResult(verdict: cvDeclined)  # no Nat/add in scope: nothing to decide
+      # Issue #45: still the trusted fast path for now. Migrating to
+      # evidence-returning discharge needs the handler to synthesize
+      # induction proofs (the comm/assoc rearrangement steps are not
+      # definitional), so it stays cvDischarged until that lands.
+      if natConv(a, b, zeroId, sucId, addId, eqId):
+        ConvResult(verdict: cvDischarged)
+      else: ConvResult(verdict: cvDeclined)
 
 proc ext(ctx: Ctx, name: string, ty: Term, qty: Qty = qOmega): Ctx =
   ## Extend the context: every stored type is weakened into the new frame.
@@ -795,7 +868,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         # the value; infer the value first, then elaborate the annotation.
         let (vi, vtyi) = inferTm(pre.c2, ctx, globals, ms, supply)
         let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-        convElab(ms, supply, vtyi, aty, pre.loc, ctx, globals)
+        convElab(ms, supply, vtyi, aty, pre.loc, ctx, globals, tmC(cStar))
         (vi, aty)
       else:
         let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
@@ -808,7 +881,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       # variables in the ascribed type are solved before it elaborates.
       let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply)
       let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
-      convElab(ms, supply, tty, ty, pre.loc, ctx, globals)
+      convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
       (t, ty)
     else:
       let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
@@ -843,7 +916,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         try:
           let natTm = mkNatLit(pre.intVal, pre.loc)
           let natTy = globals["Nat"].tm
-          convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals)
+          convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals, tmC(cStar))
           resTm = natTm
           done = true
         except ElabError:
@@ -852,7 +925,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         if "Int" notin globals:
           raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?' or 'data Nat'")
         let intTy = globals["Int"].tm
-        convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals)
+        convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals, tmC(cStar))
         resTm = tmInt(pre.intVal)
       resTm
   of pkLam:
@@ -914,7 +987,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       # the value; infer the value first, then elaborate the annotation.
       let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply)
       let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-      convElab(ms, supply, vty, aty, pre.loc, ctx, globals)
+      convElab(ms, supply, vty, aty, pre.loc, ctx, globals, tmC(cStar))
       let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply)
       unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
       tmLet(v, aty, pre.name, b)
@@ -930,7 +1003,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       # variables in the ascribed type are solved before it elaborates.
       let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply)
       let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
-      convElab(ms, supply, tty, ty, pre.loc, ctx, globals)
+      convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
       unifyElab(ms, ty, expTy, pre.loc)
       t
     else:
@@ -955,7 +1028,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     else: raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
   else:
     let (t, ty) = inferTm(pre, ctx, globals, ms, supply)
-    convElab(ms, supply, ty, expTy, pre.loc, ctx, globals)
+    convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar))
     t
 
 type
@@ -1015,7 +1088,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
           "ill-formed type of '" & d.name & "': " & e.msg)
   # 2. elaborate the body against the type; zonk; reject leftovers
   if qtyFirst:
-    convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals)
+    convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals, tmC(cStar))
   else:
     tmT0 = checkTm(tmPre, @[], globals, ms, supply, tyT)
   let tmT = zonk(ms, tmT0)
@@ -3246,6 +3319,82 @@ proc bad : Eq Nat zero (suc zero) =
   by arith
 """, "not convertible")
   echo "ok: arith handler is scoped (default still rejects; false goals rejected)"
+
+  # --- Issue #45: evidence-returning handlers ---------------------------
+  # A mock handler returning `refl`-evidence for one closed goal, built
+  # against a ModuleDriver's globals so refIds line up with the elaborated
+  # goal. Positive: the evidence validates with the bare core, the
+  # definition elaborates, and extDischarges stays 0 (trust not extended —
+  # the bare-core re-check in elabDefDecl stays in force). Negative:
+  # bogus evidence for a false goal is rejected with a located error.
+  let evPrelude = """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+"""
+  proc mockEvHandler(g: Globals, bogus: bool, fired: ref bool): ConvHandler =
+    ## Fires on one closed goal only (shape-matched by refId):
+    ## good mode: `add zero zero === zero` with `refl Nat zero` evidence
+    ## (valid: `add zero zero` unfolds definitionally to `zero`);
+    ## bogus mode: `zero === suc zero` with `refl Nat zero` evidence
+    ## (invalid: the core must reject it).
+    let zeroId = g["zero"].tm.refId
+    let sucId = g["suc"].tm.refId
+    let addId = g["add"].tm.refId
+    let natT = g["Nat"].tm
+    let reflT = g["refl"].tm
+    let zeroT = g["zero"].tm
+    let decide: ConvDecide =
+      proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
+           ctxLen: int, goalTy: Term): ConvResult {.closure.} =
+        let (ha, aa) = spineOf(a)
+        let isAddZeroZero =
+          ha.kind == tR and ha.refId == addId and aa.len == 2 and
+          aa[0].kind == tR and aa[0].refId == zeroId and
+          aa[1].kind == tR and aa[1].refId == zeroId and
+          b.kind == tR and b.refId == zeroId
+        let isZeroSucZero =
+          a.kind == tR and a.refId == zeroId and
+          b.kind == tApp and b.fn.kind == tR and b.fn.refId == sucId and
+          b.arg.kind == tR and b.arg.refId == zeroId
+        if not bogus and isAddZeroZero:
+          fired[] = true
+          ConvResult(verdict: cvDischargedEv,
+                     evidence: tmApp(tmApp(reflT, natT), zeroT))
+        elif bogus and isZeroSucZero:
+          fired[] = true
+          ConvResult(verdict: cvDischargedEv,
+                     evidence: tmApp(tmApp(reflT, natT), zeroT))
+        else:
+          ConvResult(verdict: cvDeclined)
+    ConvHandler(decide: decide, coreValid: false)
+  var evDrv = initModuleDriver()
+  discard evDrv.elabDeclsDir(parseProgram(evPrelude), ".", "<ev-test>")
+  var evFired = new(bool)
+  evDrv.ms.convHandlers.add(mockEvHandler(evDrv.globals, false, evFired))
+  let evDefs = evDrv.elabDeclsDir(parseProgram(
+    "proc evOk : Eq Nat (add zero zero) zero =\n  by refl\n"), ".", "<ev-test>")
+  assert evDefs.len == 1
+  assert evFired[], "mock evidence handler never fired on the positive goal"
+  assert evDrv.ms.extDischarges == 0,
+    "evidence discharge must not extend trust"
+  echo "ok: evidence-returning discharge validated by the bare core"
+  var badDrv = initModuleDriver()
+  discard badDrv.elabDeclsDir(parseProgram(evPrelude), ".", "<ev-test>")
+  var badFired = new(bool)
+  badDrv.ms.convHandlers.add(mockEvHandler(badDrv.globals, true, badFired))
+  try:
+    discard badDrv.elabDeclsDir(parseProgram(
+      "proc evBad : Eq Nat zero (suc zero) =\n  by refl\n"), ".", "<ev-test>")
+    assert false, "expected ElabError for bogus evidence"
+  except ElabError as e:
+    assert "evidence rejected" in e.msg, "missing 'evidence rejected' in: " & e.msg
+  echo "ok: bogus handler evidence rejected by the core"
 
   # --- Issue #32: clause-style definitions ---------------------------
   let clauseDefs = elabCheck("""

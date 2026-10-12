@@ -32,11 +32,12 @@ type
   #
   # A conversion handler discharges one conversion goal `a === b` (both
   # already zonked by convElab). It returns cvDischarged if it proves the
-  # goal, or cvDeclined if it cannot decide it — the driver then tries the
-  # next handler down the stack; the bottom of the stack is the default
-  # handler (full conversion via the core evaluator + areEqual), which
-  # raises ElabError on failure exactly as before. Handlers never raise
-  # for goals they merely cannot decide; they decline.
+  # goal, cvDischargedEv if it proves the goal *and* supplies checkable
+  # evidence (issue #45), or cvDeclined if it cannot decide it — the
+  # driver then tries the next handler down the stack; the bottom of the
+  # stack is the default handler (full conversion via the core evaluator
+  # + areEqual), which raises ElabError on failure exactly as before.
+  # Handlers never raise for goals they merely cannot decide; they decline.
   #
   # Handlers are dynamically scoped: they apply only within the dynamic
   # extent of their installation (see withConvHandler in elab.nim).
@@ -48,11 +49,29 @@ type
   # coreValid=false (e.g. a domain decision procedure) extends what
   # counts as convertible for its dynamic extent — installing it is an
   # explicit, scoped trust extension, à la Andromeda.
+  #
+  # Issue #45: evidence-returning handlers. Instead of a bare verdict, the
+  # handler returns a ConvResult. With cvDischargedEv it supplies
+  # `evidence`, a *closed-over-context* core Term claimed to prove
+  # `Eq goalTy a b`. convElab validates the evidence with the bare core
+  # (handlers popped): free context variables are replaced by fresh rigid
+  # postulate refs, then the core's own `check` verifies
+  # `evidence : Eq goalTy a b`. A handler whose evidence fails validation
+  # is rejected with a located error, and validated evidence does NOT
+  # extend trust (no extDischarges increment) — the Andromeda endgame:
+  # installing the handler extends automation, not the trusted base.
+  # `goalTy` is the type of the goal's sides (the universe `?` when the
+  # sides are themselves types); it lets the handler build a well-typed
+  # evidence term.
   ConvVerdict* = enum
     cvDischarged
+    cvDischargedEv
     cvDeclined
+  ConvResult* = object
+    verdict*: ConvVerdict
+    evidence*: Term  # proof of `Eq goalTy a b`; set iff verdict == cvDischargedEv
   ConvDecide* = proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-                     ctxLen: int): ConvVerdict {.closure.}
+                     ctxLen: int, goalTy: Term): ConvResult {.closure.}
   ConvHandler* = object
     decide*: ConvDecide
     coreValid*: bool
