@@ -148,7 +148,11 @@ proc nimTypeToEponym(n: NimNode): string =
   ## Convert a Nim type AST to Eponym type string.
   case n.kind
   of nnkIdent:
-    let s = $n
+    var s = $n
+    # Map Nim-safe names to Eponym names (issue #144: same mapping as
+    # expressions -- `nil` is a Nim keyword, so constructor references in
+    # types must go through `vecnil` too)
+    if s == "vecnil": s = "nil"
     if s == "Univ": "?" else: s
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
     # Integer literal in type position: passed through verbatim; the
