@@ -92,9 +92,28 @@ export class LspClient {
   }
 
   shedNames(docUri: string): Promise<string[]> {
-    // Best-effort: no dedicated LSP method yet (#137); the webview falls
-    // back to an input box. Kept here so #137 can plug the method in.
+    // Issue #137: the server now implements eponym/shedNames; keep the
+    // fallback so an older server binary still yields [].
     return this.request("eponym/shedNames", { textDocument: { uri: docUri } }).catch(() => []);
+  }
+
+  refineShed(docUri: string, shedName: string, term: string): Promise<{
+    shedName: string;
+    term: string;
+    nimLine: number; // 1-based start of the `![...]` node in the .nim
+    nimCol: number;
+    status: "white" | "yellow" | "brown";
+    yellowCount: number;
+  }> {
+    // Issue #137: the server-owned refine round-trip. The server fills
+    // the hole in the macro-recorded generated source, refreshes
+    // statuses, rewrites the sidecar, and returns the term for the
+    // client to splice over the shed node.
+    return this.request("eponym/refineShed", {
+      textDocument: { uri: docUri },
+      shedName,
+      term,
+    });
   }
 
   shutdown() {

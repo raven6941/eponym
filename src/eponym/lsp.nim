@@ -7,6 +7,12 @@
 #   as diagnostics (yellow -> Warning, brown -> Error, white -> none)
 # - Hover (issue #58): goal type + context at `_` holes
 # - Code actions (issue #58): refine, case-split, give at holes
+# - `eponym/refineShed` (issue #137): the server-owned refine round-trip
+#   for real `.nim` shed documents -- fill the hole in the macro-recorded
+#   generated source, refresh statuses, rewrite the sidecar, and return
+#   the term plus the `.nim` splice position for the client
+# - `eponym/shedNames` (issue #137): shed names from a `.nim` sidecar, for
+#   client pickers
 #
 # This is a minimal version: stdio JSON-RPC, full-document sync.
 # Incremental sync is future work.
@@ -309,7 +315,8 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
   except ParseError as e:
     (false, "parse error: " & e.msg, 0,0,0,0, "")
 
-proc fillHoleAt*(src: string, line, col: int, term: string):
+proc fillHoleAt*(src: string, line, col: int, term: string,
+                baseDir = ""):
     tuple[ok: bool, why: string, errLine, errCol: int,
           startLine, startChar, endLine, endChar: int, newSrc: string,
           holesInRegion: int] =
@@ -318,6 +325,10 @@ proc fillHoleAt*(src: string, line, col: int, term: string):
   ## filled region fails to elaborate (why carries the message, errLine/
   ## errCol its 0-based location). holesInRegion counts holes left inside
   ## the replaced span (refine tolerates them; give rejects them).
+  ## `baseDir` (issue #137): when non-empty, elaboration resolves
+  ## `import` declarations relative to it (elabCheckHolesDir semantics,
+  ## as the shedsBlock macro does); empty keeps the old elabCheckHoles
+  ## behavior for `.ep` documents.
   let lines = src.splitLines()
   if line < 0 or line >= lines.len or col < 0 or col >= lines[line].len or
      lines[line][col] != '_':
@@ -336,7 +347,9 @@ proc fillHoleAt*(src: string, line, col: int, term: string):
   let sLine = line + 1
   let sCol = col + 1
   try:
-    let (_, ms, errLoc, errMsg) = elabCheckHoles(newSrc)
+    let (_, ms, errLoc, errMsg) =
+      if baseDir == "": elabCheckHoles(newSrc)
+      else: elabCheckHolesDir(newSrc, baseDir)
     if errMsg != "":
       return (false, errMsg, errLoc.line - 1, errLoc.col - 1,
               0,0,0,0, "", 0)
@@ -431,6 +444,102 @@ proc codeActionsAt*(src, uri: string, line, col: int, variable, term: string,
       discard
   %*{"jsonrpc": "2.0", "id": id, "result": actions}
 
+# --- issue #137: server-owned refine round-trip for `.nim` sheds -------
+
+proc shedNames*(uri: string): seq[string] =
+  ## `eponym/shedNames`: shed names from the `.nim` document's sidecar, so
+  ## a client can offer a picker instead of a free-form name box. Empty
+  ## when no sidecar exists (the macro has not compiled this file yet).
+  let sc = sidecarPath(uriToPath(uri))
+  if not fileExists(sc):
+    return @[]
+  for s in readShedSidecar(sc):
+    result.add(s.name)
+
+proc refineShed*(nimFile, shedName, term: string):
+    tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
+          status: string, yellowCount: int] =
+  ## Issue #137: the server-owned refine round-trip for real `.nim` shed
+  ## documents -- the #136 gap. The #58 `textDocument/codeAction` path
+  ## elaborates document text as Eponym source, which a `.nim` file is
+  ## not; here the client sends only (shedName, term) and the server does
+  ## the whole loop: fill the hole in the macro-recorded generated source
+  ## (`ShedInfo.genSrc`), refresh statuses, rewrite the sidecar, and
+  ## return the term plus the `.nim` splice position (`nimLine`, `nimCol`:
+  ## 1-based start of the `![...]` node -- the client replaces that node,
+  ## a single-line span, with the term).
+  ##
+  ## Sheds from other shedsBlock expansions in the same file are
+  ## identified by sharing the block's `genSrc` string: their sources are
+  ## updated to the filled source and their hole lines shifted past a
+  ## multi-line fill, while sheds from other blocks are untouched.
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)",
+            "", 0, 0, "", 0)
+  let (sheds0, errMsg0) = readShedSidecarEx(sc)
+  var sheds = sheds0
+  var si = -1
+  for i in 0 ..< sheds.len:
+    if sheds[i].name == shedName:
+      si = i
+      break
+  if si < 0:
+    return (false, "unknown shed '" & shedName & "'", "", 0, 0, "", 0)
+  let oldSrc = sheds[si].genSrc
+  if oldSrc == "":
+    return (false, "shed '" & shedName &
+            "': no generated source recorded (sidecar predates #137; " &
+            "recompile)", "", 0, 0, "", 0)
+  if sheds[si].status != ssYellow:
+    return (false, "shed '" & shedName & "' is not refinable (status " &
+            shedStatusToStr(sheds[si].status) & ")", "", 0, 0, "", 0)
+  let baseDir = parentDir(nimFile)
+  # Locate the hole in the recorded source: exact (line, col) when the
+  # column is known, else the first line match (the #134 rule).
+  var holeLine1 = -1
+  var holeCol1 = -1
+  try:
+    let r = elabCheckHolesDir(oldSrc, baseDir)
+    var best = -1
+    for k, h in r.ms.holes:
+      if h.holeLoc.line != sheds[si].holeLine: continue
+      if best < 0: best = k  # first line match: the fallback
+      if sheds[si].holeCol > 0 and h.holeLoc.col == sheds[si].holeCol:
+        best = k
+        break  # exact match wins
+    if best < 0:
+      return (false, "shed '" & shedName &
+              "': hole no longer open in the recorded source " &
+              "(sidecar stale? recompile)", "", 0, 0, "", 0)
+    holeLine1 = r.ms.holes[best].holeLoc.line
+    holeCol1 = r.ms.holes[best].holeLoc.col
+  except ParseError as e:
+    return (false, "recorded source no longer parses: " & e.msg,
+            "", 0, 0, "", 0)
+  let f = fillHoleAt(oldSrc, holeLine1 - 1, holeCol1 - 1, term, baseDir)
+  if not f.ok:
+    return (false, "refine rejected: " & f.why, "", 0, 0, "", 0)
+  # A multi-line fill shifts later sheds' generated-source lines; the
+  # filled shed keeps its line (the fill starts there) and is re-matched
+  # by refreshShedStatuses below.
+  let newSrc = f.newSrc
+  let filledLine = sheds[si].holeLine
+  let linesAdded = term.count('\n')
+  for i in 0 ..< sheds.len:
+    if sheds[i].genSrc == oldSrc:
+      sheds[i].genSrc = newSrc
+      if sheds[i].holeLine > filledLine:
+        sheds[i].holeLine += linesAdded
+  refreshShedStatuses(sheds, newSrc, baseDir, onlyGenSrc = newSrc)
+  writeShedSidecar(nimFile, sheds, errMsg0)  # keep the doc-level message
+  var yellowCount = 0
+  for s in sheds:
+    if s.status == ssYellow: inc yellowCount
+  (true, "", term, sheds[si].nimLine, sheds[si].nimCol,
+   shedStatusToStr(sheds[si].status), yellowCount)
+
 proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
   ## Handle one incoming message; returns the outgoing message, or nil
   ## when there is no response (e.g. `initialized`, `exit` handled by caller).
@@ -510,6 +619,31 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
                           "message": "no layout: unknown shed '" & shedName &
                             "' or no sheds sidecar for " & uri}}
     return %*{"jsonrpc": "2.0", "id": id, "result": res}
+  of "eponym/shedNames":
+    let id = msg["id"]
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    var arr = newJArray()
+    for nm in shedNames(uri): arr.add(%nm)
+    return %*{"jsonrpc": "2.0", "id": id, "result": arr}
+  of "eponym/refineShed":
+    let id = msg["id"]
+    if "textDocument" notin msg["params"] or "shedName" notin msg["params"] or
+       "term" notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "eponym/refineShed needs " &
+                            "textDocument.uri, shedName, term"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let shedName = msg["params"]["shedName"].getStr()
+    let term = msg["params"]["term"].getStr()
+    let r = refineShed(uriToPath(uri), shedName, term)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id,
+              "result": {"shedName": shedName, "term": r.term,
+                         "nimLine": r.nimLine, "nimCol": r.nimCol,
+                         "status": r.status, "yellowCount": r.yellowCount}}
   of "shutdown":
     let id = msg["id"]
     return %*{"jsonrpc": "2.0", "id": id, "result": nil}

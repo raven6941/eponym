@@ -64,6 +64,12 @@ type
     holeLine*: int     # 1-based line of the `_` in the generated Eponym source
     holeIdx*: int      # index into MetaStore.holes after elaboration
                        # (-1 = not matched)
+    holeCol*: int      # 1-based column of the `_` in the generated source
+                       # (0 = unknown; re-matched by refreshShedStatuses)
+    genSrc*: string     # issue #137: the block's generated Eponym source at
+                       # macro time, so the LSP server can run the #58
+                       # refine action for real `.nim` documents
+                       # ("" = sidecar predates #137: recompile)
     goal*: string      # zonked, pretty-printed goal type at the hole
     ctx*: seq[string]  # zonked, pretty-printed binder context ("name : type")
     status*: ShedStatus  # issue #134: white/yellow/brown elaboration status
@@ -144,8 +150,9 @@ proc rewriteSheds*(body: NimNode, sheds: var seq[ShedInfo]) =
 
 proc resolveShedPlaceholders*(src: var string, sheds: var seq[ShedInfo]) =
   ## Replace each placeholder with `_` (a #58 hole), recording the
-  ## 1-based generated-source line so the macro can match sheds to
-  ## MetaStore.holes after elaboration.
+  ## 1-based generated-source line *and column* so the macro can match
+  ## sheds to MetaStore.holes after elaboration (and so issue #137's
+  ## `eponym/refineShed` can target the hole exactly).
   for i in 0 ..< sheds.len:
     let ph = shedPlaceholder(i)
     let pos = src.find(ph)
@@ -153,9 +160,13 @@ proc resolveShedPlaceholders*(src: var string, sheds: var seq[ShedInfo]) =
       raise newException(ValueError, "shed '" & sheds[i].name &
         "': placeholder vanished during conversion (internal error)")
     var line = 1
-    for ch in src[0 ..< pos]:
-      if ch == '\n': inc line
+    var lineStart = -1
+    for k in 0 ..< pos:
+      if src[k] == '\n':
+        inc line
+        lineStart = k
     sheds[i].holeLine = line
+    sheds[i].holeCol = pos - lineStart  # 1-based column of the `_`
     src = src[0 ..< pos] & "_" & src[pos + ph.len .. ^1]
 
 # --- sidecar JSON: the bridge to the LSP server (issues #134/#135) --------
@@ -178,7 +189,8 @@ proc shedStatusFromStr*(s: string): ShedStatus =
 proc shedToJson*(s: ShedInfo): JsonNode =
   %*{"name": s.name, "draft": s.draft,
       "nimLine": s.nimLine, "nimCol": s.nimCol,
-      "holeLine": s.holeLine, "holeIdx": s.holeIdx,
+      "holeLine": s.holeLine, "holeIdx": s.holeIdx, "holeCol": s.holeCol,
+      "genSrc": s.genSrc,
       "goal": s.goal, "ctx": s.ctx,
       "status": shedStatusToStr(s.status)}
 
@@ -186,6 +198,8 @@ proc shedFromJson*(j: JsonNode): ShedInfo =
   ShedInfo(name: j["name"].getStr, draft: j["draft"].getStr,
            nimLine: j["nimLine"].getInt, nimCol: j["nimCol"].getInt,
            holeLine: j["holeLine"].getInt, holeIdx: j["holeIdx"].getInt,
+           holeCol: if j.hasKey("holeCol"): j["holeCol"].getInt else: 0,
+           genSrc: if j.hasKey("genSrc"): j["genSrc"].getStr else: "",
            goal: j["goal"].getStr,
            ctx: j["ctx"].elems.mapIt(it.getStr),
            status: if j.hasKey("status"): shedStatusFromStr(j["status"].getStr)
@@ -246,7 +260,8 @@ proc readShedSidecar*(path: string): seq[ShedInfo] =
 
 # --- issue #134: shed status tracking (white/yellow/brown) ----------------
 
-proc assignShedStatuses*(sheds: var seq[ShedInfo], errMsg: string) =
+proc assignShedStatuses*(sheds: var seq[ShedInfo], errMsg: string,
+                         onlyGenSrc = "") =
   ## The #134 status rule, shared by the shedsBlock macro (macro-time) and
   ## refreshShedStatuses (LSP/editor-loop time). `holeIdx >= 0` means the
   ## shed was matched to an open hole in MetaStore.holes:
@@ -255,7 +270,12 @@ proc assignShedStatuses*(sheds: var seq[ShedInfo], errMsg: string) =
   ##   shed's own declaration never elaborated, so refinement cannot help
   ##   until the surrounding code is fixed);
   ## - no open hole after a clean elaboration -> white (done).
+  ## `onlyGenSrc` (issue #137): when non-empty, only sheds whose recorded
+  ## generated source equals it are re-assigned -- a sidecar can hold
+  ## sheds from several shedsBlock expansions, and re-elaborating one
+  ## block's source must not touch another block's sheds.
   for i in 0 ..< sheds.len:
+    if onlyGenSrc != "" and sheds[i].genSrc != onlyGenSrc: continue
     if sheds[i].holeIdx >= 0:
       sheds[i].status = ssYellow
     elif errMsg != "":
@@ -264,33 +284,42 @@ proc assignShedStatuses*(sheds: var seq[ShedInfo], errMsg: string) =
       sheds[i].status = ssWhite
 
 proc refreshShedStatuses*(sheds: var seq[ShedInfo], genSrc: string,
-                         baseDir: string) =
+                         baseDir: string, onlyGenSrc = "") =
   ## Recompute per-shed status from the (possibly edited) generated Eponym
   ## source -- the #137 editor loop, headless: after holes are filled via
   ## the #58 refine/give actions, re-elaborate hole-tolerantly, re-match
   ## sheds to holes by generated-source line, and re-apply the status
   ## rule. A document that no longer parses marks every shed brown.
+  ## `onlyGenSrc` (issue #137): restrict re-matching to sheds belonging
+  ## to the elaborated block (see assignShedStatuses); other sheds keep
+  ## their status, holeIdx, and holeCol untouched.
   ## Limitation: matching is by generated-source line, so a multi-line
   ## hole fill shifts later sheds' lines and unmatches them (they read as
-  ## white/brown instead of yellow); single-line fills are exact.
+  ## white/brown instead of yellow); single-line fills are exact. The
+  ## #137 `eponym/refineShed` adjusts holeLine for the shift before
+  ## calling here.
   var errMsg = ""
   var holesOk = false
   try:
     let r = elabCheckHolesDir(genSrc, baseDir)
     errMsg = r.errMsg
     for i in 0 ..< sheds.len:
+      if onlyGenSrc != "" and sheds[i].genSrc != onlyGenSrc: continue
       sheds[i].holeIdx = -1
       for j in 0 ..< r.ms.holes.len:
         if r.ms.holes[j].holeLoc.line == sheds[i].holeLine:
           sheds[i].holeIdx = j
+          sheds[i].holeCol = r.ms.holes[j].holeLoc.col  # self-healing
           break
     holesOk = true
   except ParseError:
     discard
   if not holesOk:
-    for i in 0 ..< sheds.len: sheds[i].status = ssBrown
+    for i in 0 ..< sheds.len:
+      if onlyGenSrc != "" and sheds[i].genSrc != onlyGenSrc: continue
+      sheds[i].status = ssBrown
     return
-  assignShedStatuses(sheds, errMsg)
+  assignShedStatuses(sheds, errMsg, onlyGenSrc)
 
 macro runShedSmoke(): untyped =
   ## Compile-time smoke test: shed rewriting + placeholder resolution

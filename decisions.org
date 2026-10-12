@@ -2073,3 +2073,29 @@
   in =sheds*.nim=, the shed tests, the demo, and branch CI.
   Status: OPEN (branch) -- #137 scripted acceptance met on the branch; the
   =.nim= refine round-trip gap is documented, not closed.
+
+  Addendum 2026-10-11 (gap closed, branch-only): =eponym/refineShed=
+  now owns the whole refine for real =.nim= docs. The macro records the
+  block's generated Eponym source per shed (=ShedInfo.genSrc=, plus
+  =holeCol= from =resolveShedPlaceholders=); the server fills the hole in
+  that recorded source via the #58 =fillHoleAt= path (new =baseDir=
+  parameter so =import= resolution matches the macro), shifts later
+  sheds' =holeLine= past multi-line fills (same block identified by
+  shared =genSrc= string; other blocks' sheds untouched via the new
+  =onlyGenSrc= filter on =refreshShedStatuses=), refreshes statuses,
+  rewrites the sidecar (keeping the doc-level =errMsg=), and returns the
+  term plus the 1-based =![...]= node position for the client splice.
+  Headless coverage: =tests/test_shed_refine_method.nim= (20 checks --
+  the webview's exact sequence including the client-side splice,
+  ill-typed-term/unknown-shed/white-shed errors, and the multi-line
+  shift); the node smoke test drives the real server binary against a
+  fixture sidecar (5 new checks); the webview now calls =refineShed= and
+  splices instead of the #58 =codeAction= path (which cannot work on Nim
+  text). =eponym/shedNames= added for client pickers. Known limits, kept
+  honest: the splice assumes a single-line =![...]= node; the spliced
+  term must be valid in the Nim-syntax front end (applications and idents
+  round-trip; surface lambdas/Pis do not); a recompile after a partial
+  fill re-matches by line exactly when the fill is single-line (the #134
+  limitation). Status: the =.nim= round-trip is closed on the branch;
+  #137 stays open/in-progress for a live VSCode click-through and the
+  merge decision (separate); #139 still open.

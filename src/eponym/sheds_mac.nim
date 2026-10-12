@@ -46,6 +46,11 @@ macro shedsBlock*(body: untyped): untyped =
   rewriteSheds(body, sheds)
   var src = blockToEponym(body)
   resolveShedPlaceholders(src, sheds)
+  # Issue #137: record the generated source per shed so the LSP server's
+  # `eponym/refineShed` can run the #58 refine action for real `.nim`
+  # documents without the client holding the source.
+  for i in 0 ..< sheds.len:
+    sheds[i].genSrc = src
   let nimFile = callerFileOf(body)
   let baseDir = parentDir(nimFile)
   var defs: seq[ElabDef]

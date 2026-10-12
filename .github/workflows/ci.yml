@@ -39,4 +39,5 @@ jobs:
           nim c -r --hints:off $P "tests/test_sheds.nim" || exit 1
           nim c -r --hints:off $P "tests/test_shed_layout.nim" || exit 1
           nim c -r --hints:off $P "tests/test_shed_loop.nim" || exit 1
+          nim c -r --hints:off $P "tests/test_shed_refine_method.nim" || exit 1
           # Note: bench/ contains expensive benchmarks, not run in CI.

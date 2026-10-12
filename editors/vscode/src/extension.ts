@@ -54,8 +54,33 @@ export function activate(ctx: vscode.ExtensionContext) {
       panel.webview.onDidReceiveMessage(async (m: any) => {
         try {
           if (m.cmd === "refine" || m.cmd === "give") {
-            const res = await client.codeAction(docUri, 0, 0, m.term ?? "");
-            await applyCodeActions(res, editor);
+            // Issue #137: the server owns the whole refine round-trip --
+            // it fills the hole in the macro-recorded generated source,
+            // refreshes statuses, and rewrites the sidecar. The client
+            // splices the returned term over the single-line `![...]`
+            // node at (nimLine, nimCol) so the .nim source advances.
+            const res = await client.refineShed(docUri, shedName, m.term ?? "");
+            const line = res.nimLine - 1;
+            const startCh = res.nimCol - 1;
+            const text = editor.document.lineAt(line).text;
+            let depth = 0;
+            let endCh = -1;
+            for (let i = startCh; i < text.length; i++) {
+              if (text[i] === "[") depth++;
+              else if (text[i] === "]") {
+                depth--;
+                if (depth === 0) { endCh = i + 1; break; }
+              }
+            }
+            if (endCh < 0) throw new Error("Eponym: unbalanced shed node at " +
+              `${res.nimLine}:${res.nimCol}`);
+            await editor.edit((b) =>
+              b.replace(new vscode.Range(line, startCh, line, endCh), res.term)
+            );
+            panel.webview.postMessage({
+              cmd: "actionmsg",
+              text: `refined ${res.shedName}: ${res.status} (${res.yellowCount} yellow left)`,
+            });
             await refresh();
           } else if (m.cmd === "case-split") {
             const res = await client.request("textDocument/codeAction", {
