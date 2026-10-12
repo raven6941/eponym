@@ -755,7 +755,7 @@ proc structuralEq(s: var Supply, a, b: Value) =
     structuralEq(s, a.whnf.sndV, b.whnf.sndV)
   of wRef:
     if a.whnf.refId != b.whnf.refId or a.whnf.spine.len != b.whnf.spine.len:
-      raise newException(ValueError, "neutral mismatch")
+      raise newException(ValueError, "neutral mismatch: " & $a.syn & " vs " & $b.syn)
     for i in 0 ..< a.whnf.spine.len:
       let ea = a.whnf.spine[i]
       let eb = b.whnf.spine[i]

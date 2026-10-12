@@ -1954,4 +1954,27 @@
   of congruence + lemma steps over the normalization trace. The
   =closeOverCtx= machinery already handles the open-context case this
   needs (=n m : Nat= binders become rigid refs).
-  Status: IN PROGRESS (branch exp45-evidence-handlers).
+
+  Done (same day, this chunk): =natArithHandler= now returns
+  =cvDischargedEv= evidence. =buildArithLemmas= synthesizes the four
+  lemmas as closed =Term=s via =natElim=/=eqElim= (J-based
+  =congAt=/=symAt=/=transAt= combinators, de Bruijn-exact shifting) and
+  verifies each with the bare core at handler-construction time
+  (=ok=false= falls back to the trusted path — no hard dependency).
+  =normEvArith= is a proof-carrying normalizer mirroring =normNat=:
+  each step (atom via =sym (addZeroR t)=, =suc= via =sucPushArith= +
+  =addSucR=, =add= via =peelArith= + =addAssoc= reassociation and
+  =sortArith= insertion sort with =addComm= swaps) carries its =Eq=
+  proof; =buildArithEvidence= closes =a ≡ canon ≡ canon ≡ b= with
+  =refl= on the structurally identical canonical forms. The =by arith=
+  corpus (addSucRight/addZeroRight/addComm/addAssoc over open =Nat=
+  goals) now elaborates with =extDischarges == 0= — automation, not
+  trust. Two bugs the bare core caught while debugging (evidence for
+  the design's value): (1) =validateEvidence= closed goal and evidence
+  with two independent fresh-ref sets — refactored to =closeParams=
+  computing one shared set; (2) =swapAtArith='s outer =transAt= passed
+  =T2= as the middle term while the inner proof had type =Eq T1 T3=,
+  and =buildArithEvidence= passed =symAt= its arguments swapped.
+  Trusted =cvDischarged= remains only for Eq-congruence type goals and
+  exotic shapes (=ExoticArithShape=) the prover does not cover.
+  Status: CLOSED (branch) — merged via PR.

@@ -64,9 +64,11 @@ type
     elimNargs*: int               # Experiment 4: eliminator arity (incl. scrutinee)
   Globals* = Table[string, GEntry]
 
-# Forward declaration for use in tactics
+# Forward declaration for use in tactics. Returns the validated evidence
+# Term when an evidence-returning handler (issue #45) discharged the goal,
+# nil otherwise.
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-              ctx: Ctx, globals: Globals, goalTy: Term = nil)
+              ctx: Ctx, globals: Globals, goalTy: Term = nil): Term
 
 # --- Basic tactics (Experiment 6) ------------------------------------
 
@@ -109,10 +111,17 @@ proc tacRefl(goal: Term, ctx: Ctx, globals: Globals,
   if eqHead.kind != tR:
     raise elabErr(loc, "refl: goal head is not Eq")
   # Check x and y are convertible via full conversion (Experiment 5b)
-  try:
-    convElab(ms, supply, x, y, loc, ctx, globals, aTy)
-  except ElabError as e:
-    raise elabErr(loc, "refl: sides are not convertible: " & e.msg)
+  let ev =
+    try:
+      convElab(ms, supply, x, y, loc, ctx, globals, aTy)
+    except ElabError as e:
+      raise elabErr(loc, "refl: sides are not convertible: " & e.msg)
+  if not ev.isNil:
+    # Issue #45: an evidence-returning handler discharged the goal — splice
+    # its bare-core-validated proof as the tactic's result. The old `refl`
+    # below would not survive elabDefDecl's bare-core re-check for
+    # non-definitional goals (that is exactly what the evidence is for).
+    return ev
   # Build refl A x : Eq A x x
   if "refl" notin globals:
     raise elabErr(loc, "refl: 'refl' not in scope")
@@ -283,38 +292,45 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
       " does not match expected type " & prettyTerm(b, ctx, refNames) &
       ": not convertible (" & e.msg & ")")
 
-proc closeOverCtx(s: var Supply, t: Term, ctx: Ctx): Term =
-  ## Issue #45: replace every free `tV(i)` (i < ctx.len) by a fresh rigid
-  ## postulate ref, so an open term becomes closed and the bare core can
-  ## check it. Descending substitution: replacing V_j for j from high to
-  ## low never disturbs the not-yet-replaced lower indices. Each ctx type
-  ## mentions only strictly outer variables (see `ext`'s weakening), so
-  ## closing the types in the same descending order yields closed types
-  ## to evaluate for the postulate refs' types.
-  var params = newSeq[Term](ctx.len)
+proc closeParams*(s: var Supply, ctx: Ctx): seq[Term] =
+  ## Issue #45: the fresh rigid postulate refs closing a context. The goal
+  ## and the evidence must be closed over the *same* refs — closing them
+  ## with two independent sets makes the core's check fail with a neutral
+  ## mismatch between the two sets — so this is computed once and shared
+  ## (see validateEvidence).
+  result = newSeq[Term](ctx.len)
   var i = ctx.len - 1
   while i >= 0:
     var ty = ctx[i].ty
     var j = ctx.len - 1
     while j > i:
-      ty = subst(ty, j, params[j])
+      ty = subst(ty, j, result[j])
       dec j
-    params[i] = newPostulateRef(s, eval(ty, @[]))
+    result[i] = newPostulateRef(s, eval(ty, @[]))
     dec i
+
+proc closeOverCtx*(t: Term, ctx: Ctx, params: seq[Term]): Term =
+  ## Issue #45: replace every free `tV(i)` (i < ctx.len) by the
+  ## corresponding rigid ref from `params` (computed once by closeParams
+  ## and shared between the goal and the evidence being validated).
+  ## Descending substitution: replacing V_j for j from high to low never
+  ## disturbs the not-yet-replaced lower indices.
   result = t
-  i = ctx.len - 1
+  var i = ctx.len - 1
   while i >= 0:
     result = subst(result, i, params[i])
     dec i
 
 proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
-                      ev: Term, loc: Loc, ctx: Ctx, globals: Globals) =
+                      ev: Term, loc: Loc, ctx: Ctx, globals: Globals): Term =
   ## Issue #45: validate a handler's evidence with the bare core.
   ## The handler claims `ev : Eq goalTy a b`. Handlers are popped for the
   ## validation (bare-core conversion only), the goal and evidence are
   ## closed over the context with fresh rigid refs, and the core's own
   ## `check` verifies the claim. Failure raises a located ElabError —
   ## bogus evidence is rejected, never silently trusted.
+  ## Returns the zonked (open) evidence for splicing into the elaborated
+  ## term (e.g. by tacRefl); the closed copy is check-only.
   if ev.isNil:
     raise elabErr(loc, "conversion handler returned cvDischargedEv with nil evidence")
   if goalTy.isNil:
@@ -328,8 +344,12 @@ proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
     raise elabErr(loc, "conversion handler evidence mentions unsolved metavariable")
   let eqTm = globals["Eq"].tm
   let goal = tmApp(tmApp(tmApp(eqTm, goalTy), a), b)
-  let closedGoal = closeOverCtx(s, goal, ctx)
-  let closedEv = closeOverCtx(s, ev1, ctx)
+  # The goal and the evidence are closed over the *same* fresh rigid refs
+  # (closeParams computes the set once); two independent closings would
+  # give the evidence's type different refIds than the goal's.
+  let params = closeParams(s, ctx)
+  let closedGoal = closeOverCtx(goal, ctx, params)
+  let closedEv = closeOverCtx(ev1, ctx, params)
   let saved = ms.convHandlers
   ms.convHandlers = @[]
   try:
@@ -338,9 +358,10 @@ proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
     raise elabErr(loc, "conversion handler evidence rejected by the core: " & e.msg)
   finally:
     ms.convHandlers = saved
+  ev1
 
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-              ctx: Ctx, globals: Globals, goalTy: Term = nil) =
+              ctx: Ctx, globals: Globals, goalTy: Term = nil): Term =
   ## Conversion for the inferred-vs-expected check (Experiment 5b):
   ## compare up to full reduction — delta-unfolding of
   ## definitions, beta, and the registered wRed rules — via the core
@@ -365,12 +386,12 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   ## so skip zonking, unification, handlers, and cache bookkeeping.
   ## This fires e.g. when the elaborator checks a literal against the
   ## canonical globals["Nat"].tm object it also used to build the type.
-  if a == b: return
+  if a == b: return nil
   let a1 = zonk(ms, a)
   let b1 = zonk(ms, b)
   if findUnsolved(ms, a1).found or findUnsolved(ms, b1).found:
     unifyElab(ms, a1, b1, loc)
-    return
+    return nil
   var i = ms.convHandlers.high
   while i >= 0:
     let h = ms.convHandlers[i]
@@ -381,18 +402,19 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
         # A domain handler extended conversion beyond the core: record it
         # so elabDefDecl can relax the core re-check for this definition.
         inc ms.extDischarges
-      return
+      return nil
     of cvDischargedEv:
       # Issue #45: evidence-returning discharge. The core revalidates the
       # evidence with no handlers installed; trust is NOT extended, so
       # extDischarges is untouched and elabDefDecl's bare-core re-check
-      # stays in force for this definition.
-      validateEvidence(ms, s, a1, b1, goalTy, r.evidence, loc, ctx, globals)
-      return
+      # stays in force for this definition. The validated evidence is
+      # returned for splicing (tacRefl uses it as the tactic's proof term).
+      return validateEvidence(ms, s, a1, b1, goalTy, r.evidence, loc, ctx, globals)
     of cvDeclined:
       discard
     dec i
   defaultConv(ms, s, a1, b1, loc, ctx, globals)
+  nil
 
 proc cacheConvHandler*(): ConvHandler =
   ## Experiment 41: the Experiment 10 conversion cache as a scoped,
@@ -421,7 +443,7 @@ proc polyAdd(a, b: NatPoly): NatPoly =
   for k, v in b.coeff:
     result.coeff.mgetOrPut(k, 0) += v
 
-proc spineOf(t: Term): tuple[head: Term, args: seq[Term]] =
+proc spineOf*(t: Term): tuple[head: Term, args: seq[Term]] =
   ## Destructure an application spine; args are innermost-first.
   var args: seq[Term] = @[]
   var cur = t
@@ -472,7 +494,442 @@ proc natConv(a, b: Term, zeroId, sucId, addId, eqId: int): bool =
       return true
   false
 
-proc natArithHandler*(globals: Globals): ConvHandler =
+# --- Issue #45: evidence synthesis for natArithHandler -------------------
+#
+# The Andromeda endgame for the Nat decision procedure: instead of trusting
+# it, the handler returns a proof Term the bare core revalidates. The four
+# linear-arithmetic lemmas (addZeroR/addSucR/addComm/addAssoc) are
+# synthesized once per handler construction as closed Terms via Nat's
+# eliminator and Eq's eliminator (J), each verified with the bare core
+# with no handlers installed — so there is no circularity with the
+# `by arith` corpus. Per-goal evidence is a transitivity chain of
+# congruence + lemma steps over a proof-carrying normalization to a
+# canonical form (sorted summand list).
+#
+# All terms below are built with de Bruijn indices (vv(i), innermost-first);
+# shiftN re-weakens an embedded term under additional binders.
+
+proc appN*(f: Term, args: seq[Term]): Term =
+  result = f
+  for a in args: result = tmApp(result, a)
+
+proc shiftN*(t: Term, n: int): Term =
+  ## Weaken t under n additional binders.
+  result = t
+  for _ in 0 ..< n: result = weaken(result)
+
+type ExoticArithShape* = object of CatchableError
+  ## normEvArith's escape hatch: a zero/suc/add-headed term in a shape the
+  ## proof-carrying normalizer does not cover (e.g. add applied to more
+  ## than 2 arguments — a leniency of normNat). The handler falls back to
+  ## the trusted discharge for these.
+
+type ArithLemmas* = object
+  ok*: bool           # false: synthesis failed; use the trusted path
+  failReason*: string # why, for diagnostics
+  natT*, zeroT*, sucT*, addT*: Term
+  eqT*, reflT*, natElimT*, eqElimT*: Term
+  addZeroR*, addSucR*, addComm*, addAssoc*: Term  # closed proof terms
+
+proc eqNatAt*(L: ArithLemmas, x, y: Term): Term =
+  appN(L.eqT, @[L.natT, x, y])
+
+proc reflAtN*(L: ArithLemmas, x: Term): Term =
+  appN(L.reflT, @[L.natT, x])
+
+proc addAt*(L: ArithLemmas, x, y: Term): Term = appN(L.addT, @[x, y])
+proc sucAt*(L: ArithLemmas, x: Term): Term = tmApp(L.sucT, x)
+
+proc congAt*(L: ArithLemmas, f, x, y, p: Term): Term =
+  ## J-based congruence: from p : Eq Nat x y derive Eq Nat (f x) (f y).
+  ## motive = lam (z:Nat). lam (q : Eq Nat x z). Eq Nat (f x) (f z).
+  let x1 = shiftN(x, 1)
+  let x2 = shiftN(x, 2)
+  let f2 = shiftN(f, 2)
+  let motive = tmLam(L.natT, "z",
+    tmLam(L.eqNatAt(x1, vv(0)), "q",
+      L.eqNatAt(tmApp(f2, x2), tmApp(f2, vv(1)))))
+  let base = L.reflAtN(tmApp(f, x))
+  appN(L.eqElimT, @[L.natT, x, motive, base, y, p])
+
+proc symAt*(L: ArithLemmas, x, y, p: Term): Term =
+  ## From p : Eq Nat x y derive Eq Nat y x.
+  ## motive = lam (z:Nat). lam (q : Eq Nat x z). Eq Nat z x.
+  ## NB: the domain of q is under (ctx, z) — one binder — so x needs
+  ## shiftN(x, 1) there (x1); the body under (ctx, z, q) needs shiftN(x, 2).
+  let x1 = shiftN(x, 1)
+  let x2 = shiftN(x, 2)
+  let motive = tmLam(L.natT, "z",
+    tmLam(L.eqNatAt(x1, vv(0)), "q",
+      L.eqNatAt(vv(1), x2)))
+  let base = L.reflAtN(x)
+  appN(L.eqElimT, @[L.natT, x, motive, base, y, p])
+
+proc transAt*(L: ArithLemmas, x, y, z, p, q: Term): Term =
+  ## From p : Eq Nat x y and q : Eq Nat y z derive Eq Nat x z.
+  ## motive = lam (w:Nat). lam (r : Eq Nat x w). Eq Nat w z -> Eq Nat x z.
+  ## NB: the domain of r is under (ctx, w) — one binder — so x needs
+  ## shiftN(x, 1) there (x1); the r-body under (ctx, w, r) needs shiftN(x, 2)
+  ## (x2, z2); and the inner Pi's body under (ctx, w, r, _) needs
+  ## shiftN(x, 3) (x3, z3).
+  let x1 = shiftN(x, 1)
+  let x2 = shiftN(x, 2)
+  let z2 = shiftN(z, 2)
+  let x3 = shiftN(x, 3)
+  let z3 = shiftN(z, 3)
+  let motive = tmLam(L.natT, "w",
+    tmLam(L.eqNatAt(x1, vv(0)), "r",
+      tmPi(L.eqNatAt(vv(1), z2), "_", L.eqNatAt(x3, z3))))
+  let base = tmLam(L.eqNatAt(x, z), "s", vv(0))
+  appN(L.eqElimT, @[L.natT, x, motive, base, y, p, q])
+
+proc addHeadLam*(L: ArithLemmas, fixed: Term): Term =
+  ## lam (w:Nat). add fixed w
+  tmLam(L.natT, "w", L.addAt(shiftN(fixed, 1), vv(0)))
+
+proc addArgLam*(L: ArithLemmas, fixed: Term): Term =
+  ## lam (w:Nat). add w fixed
+  tmLam(L.natT, "w", L.addAt(vv(0), shiftN(fixed, 1)))
+
+proc sucLamOf*(L: ArithLemmas): Term =
+  tmLam(L.natT, "v", L.sucAt(vv(0)))
+
+proc buildAddZeroR*(L: ArithLemmas): tuple[ty, tm: Term] =
+  ## addZeroR : Pi (n:Nat). Eq Nat (add n zero) n, by induction on n.
+  ## Step: C (suc k) needs Eq Nat (suc (add k zero)) (suc k) — cong suc ih,
+  ## since add (suc k) zero unfolds definitionally to suc (add k zero).
+  let C = tmLam(L.natT, "m", L.eqNatAt(L.addAt(vv(0), L.zeroT), vv(0)))
+  let mz = L.reflAtN(L.zeroT)  # add zero zero ≡ zero
+  let ihTy = L.eqNatAt(L.addAt(vv(0), L.zeroT), vv(0))  # C k, under (k)
+  let msBody = L.congAt(L.sucLamOf(), L.addAt(vv(1), L.zeroT), vv(1), vv(0))
+  let ms = tmLam(L.natT, "k", tmLam(ihTy, "ih", msBody))
+  let tm = tmLam(L.natT, "n", appN(L.natElimT, @[C, mz, ms, vv(0)]))
+  let ty = tmPi(L.natT, "n", L.eqNatAt(L.addAt(vv(0), L.zeroT), vv(0)))
+  (ty, tm)
+
+proc buildAddSucR*(L: ArithLemmas): tuple[ty, tm: Term] =
+  ## addSucR : Pi (m:Nat)(n:Nat). Eq Nat (add n (suc m)) (suc (add n m)),
+  ## by induction on n with m as an outer parameter.
+  # Positions: under (m, n): m = vv(1), n = vv(0);
+  # C's body under (m, n, k): m = vv(2); ms body under (m, n, k, ih): m = vv(3).
+  let C = tmLam(L.natT, "k",
+    L.eqNatAt(L.addAt(vv(0), L.sucAt(vv(2))), L.sucAt(L.addAt(vv(0), vv(2)))))
+  let mz = L.reflAtN(L.sucAt(vv(1)))  # add zero (suc m) ≡ suc m ≡ suc (add zero m)
+  # ihTy is the domain of the ih binder: under (m, n, k), so m = vv(2)
+  # (not vv(3) — that is the body depth under (m, n, k, ih)).
+  let ihTy = L.eqNatAt(L.addAt(vv(0), L.sucAt(vv(2))),
+                       L.sucAt(L.addAt(vv(0), vv(2))))
+  let msBody = L.congAt(L.sucLamOf(),
+    L.addAt(vv(1), L.sucAt(vv(3))), L.sucAt(L.addAt(vv(1), vv(3))), vv(0))
+  let ms = tmLam(L.natT, "k", tmLam(ihTy, "ih", msBody))
+  let tm = tmLam(L.natT, "m",
+    tmLam(L.natT, "n", appN(L.natElimT, @[C, mz, ms, vv(0)])))
+  let ty = tmPi(L.natT, "m", tmPi(L.natT, "n",
+    L.eqNatAt(L.addAt(vv(0), L.sucAt(vv(1))), L.sucAt(L.addAt(vv(0), vv(1))))))
+  (ty, tm)
+
+proc buildAddComm*(L: ArithLemmas): tuple[ty, tm: Term] =
+  ## addComm : Pi (m:Nat)(n:Nat). Eq Nat (add n m) (add m n),
+  ## by induction on n with m outer.
+  # Base: C zero = Eq Nat (add zero m) (add m zero):
+  #   trans (refl m) (sym (addZeroR m)).
+  # Step: C (suc k) via trans (cong suc ih) (sym (addSucR k m)).
+  let C = tmLam(L.natT, "k",
+    L.eqNatAt(L.addAt(vv(0), vv(2)), L.addAt(vv(2), vv(0))))
+  let m1 = vv(1)  # under (m, n)
+  let mz = L.transAt(L.addAt(L.zeroT, m1), m1, L.addAt(m1, L.zeroT),
+    L.reflAtN(m1),
+    L.symAt(L.addAt(m1, L.zeroT), m1, appN(L.addZeroR, @[m1])))
+  let m3 = vv(3); let k1 = vv(1)  # under (m, n, k, ih)
+  # ihTy is the domain of ih: under (m, n, k), so k = vv(0), m = vv(2).
+  let ihTy = L.eqNatAt(L.addAt(vv(0), vv(2)), L.addAt(vv(2), vv(0)))
+  let step1 = L.congAt(L.sucLamOf(), L.addAt(k1, m3), L.addAt(m3, k1), vv(0))
+  let step2 = L.symAt(L.addAt(m3, L.sucAt(k1)), L.sucAt(L.addAt(m3, k1)),
+    appN(L.addSucR, @[k1, m3]))  # addSucR k m : Eq (add m (suc k)) (suc (add m k))
+  let msBody = L.transAt(L.sucAt(L.addAt(k1, m3)), L.sucAt(L.addAt(m3, k1)),
+    L.addAt(m3, L.sucAt(k1)), step1, step2)
+  let ms = tmLam(L.natT, "k", tmLam(ihTy, "ih", msBody))
+  let tm = tmLam(L.natT, "m",
+    tmLam(L.natT, "n", appN(L.natElimT, @[C, mz, ms, vv(0)])))
+  let ty = tmPi(L.natT, "m", tmPi(L.natT, "n",
+    L.eqNatAt(L.addAt(vv(0), vv(1)), L.addAt(vv(1), vv(0)))))
+  (ty, tm)
+
+proc buildAddAssoc*(L: ArithLemmas): tuple[ty, tm: Term] =
+  ## addAssoc : Pi (b:Nat)(c:Nat)(a:Nat).
+  ##   Eq Nat (add a (add b c)) (add (add a b) c), by induction on a.
+  # Base: both sides unfold to add b c. Step: cong suc ih.
+  # C's body under (b, c, a, k): k = vv(0), a = vv(1), c = vv(2), b = vv(3).
+  let C = tmLam(L.natT, "k",
+    L.eqNatAt(L.addAt(vv(0), L.addAt(vv(3), vv(2))),
+              L.addAt(L.addAt(vv(0), vv(3)), vv(2))))
+  let mz = L.reflAtN(L.addAt(vv(2), vv(1)))  # under (b, c, a)
+  let b4 = vv(4); let c3 = vv(3); let k1 = vv(1)  # under (b, c, a, k, ih)
+  # ihTy is the domain of ih: under (b, c, a, k), so k = vv(0), b = vv(3),
+  # c = vv(2) (not the body-depth indices b4/c3/k1).
+  let ihTy = L.eqNatAt(L.addAt(vv(0), L.addAt(vv(3), vv(2))),
+                       L.addAt(L.addAt(vv(0), vv(3)), vv(2)))
+  let msBody = L.congAt(L.sucLamOf(),
+    L.addAt(k1, L.addAt(b4, c3)), L.addAt(L.addAt(k1, b4), c3), vv(0))
+  let ms = tmLam(L.natT, "k", tmLam(ihTy, "ih", msBody))
+  let tm = tmLam(L.natT, "b", tmLam(L.natT, "c", tmLam(L.natT, "a",
+    appN(L.natElimT, @[C, mz, ms, vv(0)]))))
+  let ty = tmPi(L.natT, "b", tmPi(L.natT, "c", tmPi(L.natT, "a",
+    L.eqNatAt(L.addAt(vv(0), L.addAt(vv(2), vv(1))),
+              L.addAt(L.addAt(vv(0), vv(2)), vv(1))))))
+  (ty, tm)
+
+proc checkLemma(s: var Supply, ty, tm: Term, name: string) =
+  ## Verify a synthesized lemma with the bare core (no handlers installed):
+  ## the handler's evidence is only as trustworthy as these proofs.
+  try:
+    discard check(s, eval(ty, @[]), tm)
+  except ValueError as e:
+    when defined(arithDebug):
+      echo "LEMMA ", name, " FAILED"
+      echo "  ty: ", $ty
+      echo "  tm: ", $tm
+    raise newException(ValueError, "lemma '" & name &
+      "' rejected by the bare core: " & e.msg)
+
+proc needRef(globals: Globals, name: string): Term =
+  if name notin globals:
+    raise newException(ValueError, "'" & name & "' not in scope")
+  let t = globals[name].tm
+  if t.kind != tR:
+    raise newException(ValueError, "'" & name & "' is not a reference")
+  t
+
+proc buildArithLemmas*(globals: Globals, s: var Supply): ArithLemmas =
+  ## Synthesize the four linear-arithmetic lemmas as closed Terms and
+  ## verify each with the bare core. ok=false (with failReason) when a
+  ## prerequisite is missing or a proof does not check — the handler then
+  ## keeps the trusted discharge path.
+  try:
+    result.natT = needRef(globals, "Nat")
+    result.zeroT = needRef(globals, "zero")
+    result.sucT = needRef(globals, "suc")
+    result.addT = needRef(globals, "add")
+    result.natElimT = needRef(globals, "natElim")
+    result.eqT = needRef(globals, "Eq")
+    result.reflT = needRef(globals, "refl")
+    result.eqElimT = needRef(globals, "eqElim")
+    let zr = buildAddZeroR(result)
+    checkLemma(s, zr.ty, zr.tm, "addZeroR")
+    result.addZeroR = zr.tm
+    let sr = buildAddSucR(result)
+    checkLemma(s, sr.ty, sr.tm, "addSucR")
+    result.addSucR = sr.tm
+    let cm = buildAddComm(result)
+    checkLemma(s, cm.ty, cm.tm, "addComm")
+    result.addComm = cm.tm
+    let asc = buildAddAssoc(result)
+    checkLemma(s, asc.ty, asc.tm, "addAssoc")
+    result.addAssoc = asc.tm
+    result.ok = true
+  except CatchableError as e:
+    result.ok = false
+    result.failReason = e.msg
+
+type
+  ArithUnit = tuple[key: string, tm: Term, isOne: bool]
+    ## One summand of the canonical form: an atom (variable or opaque
+    ## subterm, keyed exactly like normNat's polynomial atoms) or a unit
+    ## of the constant part (`suc zero`, sorted last).
+  ArithNorm* = object
+    poly*: NatPoly
+    units*: seq[ArithUnit]  # canonical (sorted) order
+    canon*: Term            # right-nested adds of the units
+    proof*: Term            # Eq Nat t canon
+
+proc canonArith*(L: ArithLemmas, units: seq[ArithUnit]): Term =
+  result = L.zeroT
+  for i in countdown(units.high, 0):
+    result = L.addAt(units[i].tm, result)
+
+proc oneUnit*(L: ArithLemmas): ArithUnit =
+  (key: "", tm: L.sucAt(L.zeroT), isOne: true)
+
+proc sucPushArith*(L: ArithLemmas, us: seq[ArithUnit]): Term =
+  ## Eq Nat (suc (canon us)) (canon (us ++ [1])): push the suc rightward
+  ## through the adds with addSucR. Base case is definitional
+  ## (add (suc zero) zero unfolds to suc zero).
+  if us.len == 0:
+    return L.reflAtN(L.sucAt(L.zeroT))
+  let u = us[0]
+  let rest = us[1 .. ^1]
+  let cRest = canonArith(L, rest)
+  let step = L.symAt(L.addAt(u.tm, L.sucAt(cRest)),
+                     L.sucAt(L.addAt(u.tm, cRest)),
+                     appN(L.addSucR, @[cRest, u.tm]))
+  let rec = sucPushArith(L, rest)
+  let tailCanon = canonArith(L, rest & oneUnit(L))
+  let congRec = L.congAt(L.addHeadLam(u.tm), L.sucAt(cRest), tailCanon, rec)
+  L.transAt(L.sucAt(L.addAt(u.tm, cRest)), L.addAt(u.tm, L.sucAt(cRest)),
+            L.addAt(u.tm, tailCanon), step, congRec)
+
+proc peelArith*(L: ArithLemmas, us1, us2: seq[ArithUnit]):
+    tuple[units: seq[ArithUnit], proof: Term] =
+  ## Eq Nat (add (canon us1) (canon us2)) (canon (us1 ++ us2)): reassociate
+  ## with addAssoc, peeling us1's summands one at a time.
+  if us1.len == 0:
+    let c2 = canonArith(L, us2)
+    return (us2, L.reflAtN(c2))  # add zero c2 ≡ c2, definitionally
+  let u = us1[0]
+  let rest1 = us1[1 .. ^1]
+  let c1r = canonArith(L, rest1)
+  let c2 = canonArith(L, us2)
+  let assoc = L.symAt(L.addAt(u.tm, L.addAt(c1r, c2)),
+                      L.addAt(L.addAt(u.tm, c1r), c2),
+                      appN(L.addAssoc, @[c1r, c2, u.tm]))
+  let (catR, pRec) = peelArith(L, rest1, us2)
+  let pRecC = L.congAt(L.addHeadLam(u.tm), L.addAt(c1r, c2),
+                       canonArith(L, catR), pRec)
+  let cat = us1 & us2
+  (cat, L.transAt(L.addAt(L.addAt(u.tm, c1r), c2),
+                  L.addAt(u.tm, L.addAt(c1r, c2)),
+                  canonArith(L, cat), assoc, pRecC))
+
+proc unitLess(a, b: ArithUnit): bool =
+  ## Canonical order: atoms by key first, constant ones last.
+  if a.isOne != b.isOne: return b.isOne
+  a.key < b.key
+
+proc swapAtArith*(L: ArithLemmas, prefix: seq[ArithUnit], x, y: ArithUnit,
+                 rest: seq[ArithUnit]): Term =
+  ## Eq Nat (canon (prefix++[x,y]++rest)) (canon (prefix++[y,x]++rest)):
+  ## one adjacent swap, via addAssoc + addComm + addAssoc under the prefix.
+  let R = canonArith(L, rest)
+  let s1 = appN(L.addAssoc, @[y.tm, R, x.tm])
+  let s2 = L.congAt(L.addArgLam(R), L.addAt(x.tm, y.tm), L.addAt(y.tm, x.tm),
+                    appN(L.addComm, @[y.tm, x.tm]))
+  let s3 = L.symAt(L.addAt(y.tm, L.addAt(x.tm, R)),
+                   L.addAt(L.addAt(y.tm, x.tm), R),
+                   appN(L.addAssoc, @[x.tm, R, y.tm]))
+  let core = L.transAt(L.addAt(x.tm, L.addAt(y.tm, R)),
+                       L.addAt(L.addAt(y.tm, x.tm), R),
+                       L.addAt(y.tm, L.addAt(x.tm, R)),
+                       L.transAt(L.addAt(x.tm, L.addAt(y.tm, R)),
+                                 L.addAt(L.addAt(x.tm, y.tm), R),
+                                 L.addAt(L.addAt(y.tm, x.tm), R), s1, s2), s3)
+  var fbody = vv(0)
+  for i in countdown(prefix.high, 0):
+    fbody = L.addAt(shiftN(prefix[i].tm, 1), fbody)
+  let f = tmLam(L.natT, "w", fbody)
+  let X = L.addAt(x.tm, L.addAt(y.tm, R))
+  let Y = L.addAt(y.tm, L.addAt(x.tm, R))
+  L.congAt(f, X, Y, core)
+
+proc sortArith*(L: ArithLemmas, units: seq[ArithUnit]):
+    tuple[units: seq[ArithUnit], proof: Term] =
+  ## Insertion sort into canonical order; each adjacent swap contributes
+  ## its proof, chained with transitivity.
+  var us = units
+  var pf = L.reflAtN(canonArith(L, units))
+  for i in 1 ..< us.len:
+    var j = i
+    while j > 0 and unitLess(us[j], us[j-1]):
+      let sw = swapAtArith(L, us[0 ..< j-1], us[j-1], us[j], us[j+1 .. ^1])
+      var us2 = us
+      let tmp = us2[j-1]; us2[j-1] = us2[j]; us2[j] = tmp
+      pf = L.transAt(canonArith(L, units), canonArith(L, us),
+                     canonArith(L, us2), pf, sw)
+      us = us2
+      dec j
+  (us, pf)
+
+proc mergeArith*(L: ArithLemmas, us1, us2: seq[ArithUnit]):
+    tuple[units: seq[ArithUnit], proof: Term] =
+  ## Eq Nat (add (canon us1) (canon us2)) (canon (sorted (us1 ++ us2))).
+  let (cat, pcat) = peelArith(L, us1, us2)
+  let (srt, psrt) = sortArith(L, cat)
+  (srt, L.transAt(L.addAt(canonArith(L, us1), canonArith(L, us2)),
+                  canonArith(L, cat), canonArith(L, srt), pcat, psrt))
+
+proc normEvArith*(L: ArithLemmas, t: Term): ArithNorm =
+  ## Proof-carrying Nat normalization: the polynomial (computed exactly as
+  ## normNat computes it), the canonical term, and a proof
+  ## `Eq Nat t canon`. Raises ExoticArithShape for zero/suc/add-headed
+  ## terms in shapes the prover does not cover (the caller then falls back
+  ## to the trusted discharge, preserving the old behavior).
+  let (head, args) = spineOf(t)
+  if head.kind == tR and head.refId == L.zeroT.refId:
+    if args.len != 0: raise newException(ExoticArithShape, "zero with args")
+    let c = canonArith(L, @[])
+    return ArithNorm(poly: NatPoly(cst: 0, coeff: initTable[string, int]()),
+                     units: @[], canon: c, proof: L.reflAtN(c))
+  if head.kind == tR and head.refId == L.sucT.refId:
+    if args.len != 1: raise newException(ExoticArithShape, "suc arity")
+    let r = normEvArith(L, args[0])
+    let units = r.units & oneUnit(L)
+    let c = canonArith(L, units)
+    let p1 = L.congAt(L.sucLamOf(), args[0], r.canon, r.proof)
+    let push = sucPushArith(L, r.units)
+    let proof = L.transAt(L.sucAt(args[0]), L.sucAt(r.canon), c, p1, push)
+    var poly = r.poly
+    poly.cst += 1
+    return ArithNorm(poly: poly, units: units, canon: c, proof: proof)
+  if head.kind == tR and head.refId == L.addT.refId:
+    if args.len > 2: raise newException(ExoticArithShape, "add arity")
+    if args.len == 2:
+      # args is innermost-first: args[1] is the first argument.
+      let x = args[1]; let y = args[0]
+      let r1 = normEvArith(L, x)
+      let r2 = normEvArith(L, y)
+      let c1 = r1.canon; let c2 = r2.canon
+      let s1 = L.congAt(L.addArgLam(y), x, c1, r1.proof)
+      let s2 = L.congAt(L.addHeadLam(c1), y, c2, r2.proof)
+      let q12 = L.transAt(L.addAt(x, y), L.addAt(c1, y), L.addAt(c1, c2),
+                          s1, s2)
+      let (mus, mpf) = mergeArith(L, r1.units, r2.units)
+      let c = canonArith(L, mus)
+      let proof = L.transAt(L.addAt(x, y), L.addAt(c1, c2), c, q12, mpf)
+      return ArithNorm(poly: polyAdd(r1.poly, r2.poly), units: mus,
+                       canon: c, proof: proof)
+    # else: partial application — an opaque atom, exactly like normNat.
+  # Opaque atom (variables and non-Nat subterms), keyed like normNat.
+  # The canonical form is `add t zero`, so the proof is not reflexivity:
+  # sym (addZeroR t) : Eq t (add t zero).
+  var co = initTable[string, int]()
+  let k = if t.kind == tV: "v" & $t.idx else: "t:" & $t
+  co[k] = 1
+  let u: ArithUnit = (key: k, tm: t, isOne: false)
+  let c = canonArith(L, @[u])
+  ArithNorm(poly: NatPoly(cst: 0, coeff: co), units: @[u],
+            canon: c, proof: L.symAt(c, t, appN(L.addZeroR, @[t])))
+
+proc buildArithEvidence*(L: ArithLemmas, a, b: Term):
+    tuple[found: bool, evidence: Term] =
+  ## Prove `Eq Nat a b` for Nat-fragment sides with equal normal forms:
+  ## a ≡ canon(a) ≡ canon(b) ≡ b. The middle step is reflexivity — both
+  ## canonical terms are built deterministically from the same sorted
+  ## summand multiset, so they are structurally identical (checked via
+  ## the rendering; the bare core revalidates the whole chain anyway).
+  ## Raises ExoticArithShape when a side is outside the covered fragment.
+  let ra = normEvArith(L, a)
+  let rb = normEvArith(L, b)
+  if ra.poly.cst != rb.poly.cst or ra.poly.coeff != rb.poly.coeff:
+    return (false, nil)
+  let ca = ra.canon
+  let cb = rb.canon
+  if $ca != $cb:
+    raise newException(ExoticArithShape, "canonical forms differ")
+  let cab = L.reflAtN(ca)  # : Eq Nat ca cb, by structural identity
+  let ev = L.transAt(a, ca, b, ra.proof,
+                     L.transAt(ca, cb, b, cab, L.symAt(b, cb, rb.proof)))
+  (true, ev)
+
+proc isEqSpineGoal(a, b: Term, eqId: int): bool =
+  ## Shape check mirroring natConv's Eq-congruence case (type-vs-type
+  ## goals like `Eq Nat x x` vs `Eq Nat x y`): those stay on the trusted
+  ## path — evidence for Eq-of-Eq needs double-J congruence (future work).
+  if eqId < 0: return false
+  let (ha, aa) = spineOf(a)
+  let (hb, bb) = spineOf(b)
+  ha.kind == tR and hb.kind == tR and ha.refId == eqId and
+    hb.refId == eqId and aa.len == bb.len and aa.len >= 3
+
+proc natArithHandler*(globals: Globals, s: var Supply): ConvHandler =
   ## Experiment 41: a tiny domain-specific decision procedure for linear
   ## Nat equations over {zero, suc, add}, installed with dynamic scope
   ## (see the `arith` tactic). It discharges goals the default conversion
@@ -480,14 +937,16 @@ proc natArithHandler*(globals: Globals): ConvHandler =
   ## where the core's NbE gets stuck on the neutral first argument — by
   ## normalizing both sides to c + Σ kᵢ·xᵢ and comparing.
   ##
-  ## Soundness (trusted decision procedure): each normalization step is a
-  ## lemma provable by induction (add-zero-right, add-suc-right, and
-  ## associativity/commutativity of +), and the normal form is complete
-  ## for linear equations over (ℕ, 0, suc, +). Goals outside the fragment
-  ## are declined, never discharged. The handler only ever equates terms
-  ## whose normal forms agree syntactically, so it agrees with the default
-  ## conversion on ground terms. Returning proof evidence for the core to
-  ## validate (the full Andromeda design) is future work — see decisions.org.
+  ## Issue #45: evidence-returning discharge. At construction the four
+  ## linear-arithmetic lemmas (addZeroR/addSucR/addComm/addAssoc) are
+  ## synthesized as closed Terms via Nat's eliminator and verified with
+  ## the bare core (no handlers installed — no circularity with the
+  ## `by arith` corpus). Each goal's evidence is a transitivity chain of
+  ## congruence + lemma steps over a proof-carrying normalization; the
+  ## bare core revalidates it (see validateEvidence), so installing the
+  ## handler extends automation, not trust. Goals outside the evidence
+  ## path's reach (Eq-congruence type goals, exotic add/suc shapes, or a
+  ## failed lemma synthesis) keep the old trusted cvDischarged behavior.
   var zeroId = -1
   var sucId = -1
   var addId = -1
@@ -500,16 +959,25 @@ proc natArithHandler*(globals: Globals): ConvHandler =
     addId = globals["add"].tm.refId
   if "Eq" in globals and globals["Eq"].tm.kind == tR:
     eqId = globals["Eq"].tm.refId
+  let lemmas = buildArithLemmas(globals, s)
   result.coreValid = false
   result.decide =
     proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
          ctxLen: int, goalTy: Term): ConvResult {.closure.} =
       if addId < 0 or zeroId < 0 or sucId < 0:
         return ConvResult(verdict: cvDeclined)  # no Nat/add in scope: nothing to decide
-      # Issue #45: still the trusted fast path for now. Migrating to
-      # evidence-returning discharge needs the handler to synthesize
-      # induction proofs (the comm/assoc rearrangement steps are not
-      # definitional), so it stays cvDischarged until that lands.
+      if lemmas.ok and not goalTy.isNil and not isEqSpineGoal(a, b, eqId):
+        try:
+          let r = buildArithEvidence(lemmas, a, b)
+          if r.found:
+            return ConvResult(verdict: cvDischargedEv, evidence: r.evidence)
+          return ConvResult(verdict: cvDeclined)
+        except ExoticArithShape:
+          discard  # fall through to the trusted path below
+      # Trusted fast path (Experiment 41): normalization decides, and the
+      # core re-check is relaxed via extDischarges. Reached when lemma
+      # synthesis failed, the goal type is unknown, for Eq-congruence
+      # type goals, and for exotic shapes the evidence builder skips.
       if natConv(a, b, zeroId, sucId, addId, eqId):
         ConvResult(verdict: cvDischarged)
       else: ConvResult(verdict: cvDeclined)
@@ -868,7 +1336,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         # the value; infer the value first, then elaborate the annotation.
         let (vi, vtyi) = inferTm(pre.c2, ctx, globals, ms, supply)
         let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-        convElab(ms, supply, vtyi, aty, pre.loc, ctx, globals, tmC(cStar))
+        discard convElab(ms, supply, vtyi, aty, pre.loc, ctx, globals, tmC(cStar))
         (vi, aty)
       else:
         let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
@@ -881,7 +1349,7 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       # variables in the ascribed type are solved before it elaborates.
       let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply)
       let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
-      convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
+      discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
       (t, ty)
     else:
       let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
@@ -916,7 +1384,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         try:
           let natTm = mkNatLit(pre.intVal, pre.loc)
           let natTy = globals["Nat"].tm
-          convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals, tmC(cStar))
+          discard convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals, tmC(cStar))
           resTm = natTm
           done = true
         except ElabError:
@@ -925,7 +1393,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         if "Int" notin globals:
           raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?' or 'data Nat'")
         let intTy = globals["Int"].tm
-        convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals, tmC(cStar))
+        discard convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals, tmC(cStar))
         resTm = tmInt(pre.intVal)
       resTm
   of pkLam:
@@ -987,7 +1455,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       # the value; infer the value first, then elaborate the annotation.
       let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply)
       let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-      convElab(ms, supply, vty, aty, pre.loc, ctx, globals, tmC(cStar))
+      discard convElab(ms, supply, vty, aty, pre.loc, ctx, globals, tmC(cStar))
       let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply)
       unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
       tmLet(v, aty, pre.name, b)
@@ -1003,7 +1471,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       # variables in the ascribed type are solved before it elaborates.
       let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply)
       let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
-      convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
+      discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
       unifyElab(ms, ty, expTy, pre.loc)
       t
     else:
@@ -1023,12 +1491,12 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       # decision procedure installed for the dynamic extent of the
       # tactic *and* the subsequent inferred-vs-expected check — both
       # raise conversion goals through convElab, so both see the handler.
-      withConvHandler(ms, natArithHandler(globals),
+      withConvHandler(ms, natArithHandler(globals, supply),
         tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
     else: raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
   else:
     let (t, ty) = inferTm(pre, ctx, globals, ms, supply)
-    convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar))
+    discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar))
     t
 
 type
@@ -1088,7 +1556,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
           "ill-formed type of '" & d.name & "': " & e.msg)
   # 2. elaborate the body against the type; zonk; reject leftovers
   if qtyFirst:
-    convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals, tmC(cStar))
+    discard convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals, tmC(cStar))
   else:
     tmT0 = checkTm(tmPre, @[], globals, ms, supply, tyT)
   let tmT = zonk(ms, tmT0)
@@ -3270,7 +3738,28 @@ proc v4 : Vec Nat (suc (suc (suc (suc zero)))) =
   # the default conversion cannot: the eliminator is stuck on the
   # neutral first argument, while the handler normalizes linear
   # polynomials.
-  let arithDefs = elabCheck("""
+  # --- Issue #45: natArithHandler returns evidence, extends no trust ----
+  # The four synthesized lemmas verify with the bare core at handler
+  # construction (no handlers installed — no circularity with `by arith`).
+  block:
+    var drv = initModuleDriver()
+    discard drv.elabDeclsDir(parseProgram("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+"""), ".", "<lemma-test>")
+    # NB: use drv.supply, not a fresh Supply(): the core allocates
+    # freshPara ids from the supply counter, and a fresh counter restarts
+    # at 0, colliding with the global refIds this driver allocated.
+    let lem = buildArithLemmas(drv.globals, drv.supply)
+    assert lem.ok, "lemma synthesis failed: " & lem.failReason
+    echo "ok: arith lemmas synthesize and check with the bare core"
+  let (arithDefs, arithMs) = elabCheckState("""
 data Nat : ? where
 | zero : Nat
 | suc (n : Nat) : Nat
@@ -3291,7 +3780,9 @@ proc addAssoc (a : Nat) (b : Nat) (c : Nat)
   by arith
 """)
   assert arithDefs.len == 5
-  echo "ok: arith handler discharges open Nat goals"
+  assert arithMs.extDischarges == 0,
+    "by arith must not extend trust: evidence discharge leaves extDischarges at 0"
+  echo "ok: arith handler discharges open Nat goals with validated evidence"
   # The same open goal fails with the default `refl` tactic — the gap is
   # real — and a false goal still fails under `by arith` (no overreach).
   expectElabErr("""
