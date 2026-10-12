@@ -174,4 +174,53 @@ proc one : Nat = (suc zero)
   proc three(): Nat = 3
   proc one(): Nat = 1
 
+# elim / red declarations (smoke tests 07/08; issue #151)
+conforms """elim boolElim : Pi (C : Bool -> ?). C true -> C false -> Pi (b : Bool). C b
+red boolElim C t f true = t
+red boolElim C t f false = f
+""":
+  elim(boolElim, Pi(C: Bool -> Univ, C(true) -> C(false) -> Pi(b: Bool, C(b))))
+  red(boolElim(C, t, f, true), t)
+  red(boolElim(C, t, f, false), f)
+
+# by-tactic terms (smoke test 14; issue #151)
+conforms """proc pf1 : Eq Int 42 42 = by refl
+proc pid (x : Int) : Int = by assumption
+""":
+  proc pf1(): Eq(Int, 42, 42) = byTac(refl)
+  proc pid(x: Int): Int = byTac("assumption")
+
+# def clause-style definitions (issue #151)
+conforms """def isZero : Nat -> Bool
+| zero = true
+| (suc n) = false
+""":
+  def(isZero, Nat -> Bool):
+    clause([zero], true)
+    clause([suc(n)], false)
+
+# quantity-variable binders (issue #151 / #66)
+conforms """proc qid (q x : ?) : ? = x
+""":
+  proc qid(x {.qvar(q).}: Univ): Univ = x
+
+# unit value, unit type, empty type (issue #151)
+conforms """proc unitVal : 1 = <>
+proc absurd (x : O) : O = x
+""":
+  proc unitVal(): unitTy = unitv
+  proc absurd(x: emptyTy): emptyTy = x
+
+# term ascription, typed let, quantity-annotated lam (issue #151)
+conforms """proc asc (A : ?) (x : A) : A = (x : A)
+proc typedLet (A : ?) (x : A) : A =
+  let y : A = x in y
+proc linLam : ? = lam (1 x : ?). x
+""":
+  proc asc(A: Univ, x: A): A = (x: A)
+  proc typedLet(A: Univ, x: A): A =
+    let y: A = x
+    y
+  proc linLam(): Univ = lam(x {.linear.}, Univ, x)
+
 echo "surface_conformance: all tests passed"

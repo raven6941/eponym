@@ -33,32 +33,44 @@
 #
 # eponymBlock Nim-AST mapping (eponym_mac.nim `blockToEponym`):
 #   `Univ`                -> `?`            (Nim can't parse a bare `?`)
+#   `unitTy`              -> `1`            (unit type; `1` lexes as unit, #151)
+#   `emptyTy`             -> `O`            (empty type, #151)
+#   `unitv`               -> `<>`           (unit value; `<>` isn't valid Nim, #151)
 #   `A -> B` (infix)      -> Pi (_ : A). B  (right associative)
 #   `lam(x, T, body)`     -> lam (x : T). body
+#   `lam(x {.linear.}, T, body)` -> lam (1 x : T). body   (quantity binders, #151)
+#   `(t : T)`             -> (t : T)            (ascription, #151)
+#   `let y: T = v` (in proc bodies) -> let y : T = v in ...
 #   `Sig(A, B)`           -> Sig (_ : A). B
 #   `Sig(x, A, B)`        -> Sig (x : A). B
 #   `Pi(x: A, y: B, C)`   -> Pi (x : A). Pi (y : B). C
 #   `Pi{A: T, ...}`       -> Pi {A : T}. ...        (implicit binders)
 #   `ch {.linear.}`       -> (1 ch : T)             (quantity prefix)
 #   `ch {.erased.}`       -> (0 ch : T)
+#   `ch {.qvar(q).}`      -> (q ch : T)             (quantity *variable*, #151/#66)
 #   `(a, b)`              -> pair; `fst p` / `snd p` -> projections
 #   `f(x, y)`             -> application `f x y`
+#   `byTac(tac)`          -> by tac                (tactic terms, #151)
 #   `vecnil`              -> `nil`          (`nil` is a Nim keyword)
 #   integer `1`           -> `(suc zero)`    (`1` lexes as the unit type)
 #   `data(N, T):` block   -> data N : T where | ctor ...
 #   `postulate(N, T)`     -> postulate N : T
+#   `elim(N, T)`          -> elim N : T             (#151)
+#   `red(lhs, rhs)`       -> red lhs = rhs          (#151)
+#   `def(N, T):` block    -> def N : T, with `clause([pats], rhs)` -> | pats = rhs (#151)
 #   `import "path"`       -> import "path"
 #
-# Deliberate divergences (standalone-only surface; eponymBlock cannot
-# emit these — a macro-ergonomics follow-up, issue #144):
-#   - `elim` / `red` declarations (used by smoke tests 07, 08);
-#   - `by tac` tactic terms (used by smoke test 14);
-#   - `def` clause-style definitions (no .ep corpus usage);
-#   - quantity-variable binders `(q x : A)` (#66);
-#   - the unit value `<>` (`tt` passes through eponymBlock as a variable).
-# Removing them from this grammar would break the smoke-test corpus for
-# no user benefit, so they stay: the canonical syntax is this grammar,
-# and eponymBlock emits a documented subset of it.
+# Mapping completeness (issue #151): every surface form is emittable from
+# eponymBlock — the former divergences (elim/red, `by` tactics, `def`
+# clause-style definitions, quantity-variable binders, the unit value `<>`)
+# are all closed, and the previously unlisted unit/empty types, term
+# ascriptions `(t : T)`, typed `let`, and quantity-annotated `lam` binders
+# are covered too. One remainder: implicit-binder lambdas (`lam {x : T}. t`)
+# have no Nim-side spelling (no surface-syntax corpus usage; `{x: T}` in
+# expression position would collide with the Pi-implicit table syntax).
+# If a new surface form is added to the grammar above, a mapping (or a
+# documented reason it cannot be emitted) must be added here in the same
+# commit.
 
 import preterm, strutils
 
