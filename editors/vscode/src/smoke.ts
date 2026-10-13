@@ -5,6 +5,8 @@
 //
 // Usage (after `npm run build`):
 //   LSP=../../src/eponym/lsp DEMO=../../examples/embedded/sheds_demo.nim node out/smoke.js
+// The env defaults resolve from out/ up three levels to the repo root, so
+// plain `npm run smoke` also works (the CI still passes them explicitly).
 
 import { LspClient } from "./protocol";
 import { boxToHtml, pageHtml } from "./render";
@@ -27,11 +29,11 @@ function check(cond: boolean, msg: string) {
 }
 
 async function main() {
-  const lsp = process.env.LSP ?? path.resolve(__dirname, "..", "..", "src", "eponym", "lsp");
+  const lsp = process.env.LSP ?? path.resolve(__dirname, "..", "..", "..", "src", "eponym", "lsp");
   // Resolve: DEMO may be relative to the caller's cwd (as CI passes it),
   // while generateSidecar compiles with cwd=repoRoot.
   const demo = path.resolve(
-    process.env.DEMO ?? path.resolve(__dirname, "..", "..", "examples", "embedded", "sheds_demo.nim")
+    process.env.DEMO ?? path.resolve(__dirname, "..", "..", "..", "examples", "embedded", "sheds_demo.nim")
   );
   const uri = "file://" + demo;
 
