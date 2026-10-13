@@ -10,7 +10,7 @@
 
 import minikanren
 import staging/relcompile
-import staging/stage_rel_elab_dep
+import stage_rel_elab_dep
 import rel_elab_dep
 import elab
 import preterm
