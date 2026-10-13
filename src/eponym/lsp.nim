@@ -106,12 +106,20 @@ proc hoverAt*(src: string, line, col: int): string =
     let i = findHoleAt(ms, line, col)
     if i >= 0:
       let h = ms.holes[i]
-      let goal = $(zonk(ms, h.holeGoal))
+      # Issue #139: name-resolving pretty-printer. Binder names come from
+      # the hole context (innermost-first, matching Ctx); global names come
+      # from ms.refNames, populated by the elaborator at global
+      # registration. Unknown refIds keep the `R<n>` fallback.
+      var ctx: Ctx = @[]
+      for (n, t) in h.holeCtx:
+        ctx.add(CtxEntry(name: n, ty: zonk(ms, t), qty: qOmega))
+      let goal = prettyTerm(zonk(ms, h.holeGoal), ctx, ms.refNames)
       var lines: seq[string] = @["```", "goal : " & goal, "```"]
       if h.holeCtx.len > 0:
         lines.add("**context**")
         for (n, t) in h.holeCtx:  # innermost-first
-          lines.add("- `" & n & " : " & $(zonk(ms, t)) & "`")
+          lines.add("- `" & n & " : " &
+            prettyTerm(zonk(ms, t), ctx, ms.refNames) & "`")
       return lines.join("\n")
   except ParseError, ElabError:
     discard

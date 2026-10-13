@@ -110,6 +110,12 @@ type
     # the entry when the variable is solved (a q1 solution rejects).
     qvarPending*: Table[string, seq[tuple[varName: string, loc: Loc]]]
     ctorTable*: CtorTable  # Issue #80: constructor disjointness facts
+    # Issue #139: surface name of every registered global (refId -> name),
+    # for the name-resolving pretty-printer (elab.prettyTerm) used by LSP
+    # hover and shed goal display. Populated by the elaborator at global
+    # registration (elabDefDecl / elabPostulateDecl); unknown refIds keep
+    # the old `R<n>` fallback rendering.
+    refNames*: Table[int, string]
 
   QtySolKind* = enum qsUnknown, qsSolved
   QtySol* = object
@@ -195,7 +201,8 @@ proc initMetaStore*(): MetaStore =
             convCache: initEGraph(), convHandlers: @[], extDischarges: 0,
             qvarNames: initTable[string, int](), qvarSols: @[],
             qvarPending: initTable[string, seq[tuple[varName: string, loc: Loc]]](),
-            ctorTable: initCtorTable())
+            ctorTable: initCtorTable(),
+            refNames: initTable[int, string]())
 
 proc uerr(loc: Loc, msg: string): ref UnifyError =
   # No location prefix here: the elaborator catches UnifyError and re-raises

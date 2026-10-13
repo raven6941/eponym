@@ -193,7 +193,10 @@ proc tZero(): Term = Term(kind: tC, c: cZero)
 
 ## --- viewing the records (this replaces the pretty-printer) -----------------
 
-proc `$`(c: Const): string =
+proc `$`*(c: Const): string =
+  ## Exported (issue #139): elab.prettyTerm's `of tC: $t.c` resolves to the
+  ## generic enum `$` ("cStar") when this proc is not exported, so keep it
+  ## exported to render `?` like the Term `$` does.
   case c
   of cStar: "?"
   of cOne: "1"
