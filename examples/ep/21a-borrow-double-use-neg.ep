@@ -6,14 +6,7 @@
 # one. Expected error: linear variable 'b2' used 2 times (expected
 # exactly once), from the in-judgment quantity enforcement (Issue #66).
 import "../../lib/nat.ep"
-
-postulate Res : ?
-postulate Borrow : ?
-
-postulate withBorrow : Pi (1 r : Res). Pi (k : Pi (1 b : Borrow). Nat). Nat
-postulate readB : Pi (1 b : Borrow).
-  Pi (k : Pi (v : Nat). Pi (1 b2 : Borrow). Nat). Nat
-postulate endB : Pi (1 b : Borrow). Pi (v : Nat). Nat
+import "../../lib/borrow.ep"
 
 # Violation: double use of the borrow b2.
 proc badDouble (1 r : Res) : Nat =
