@@ -2522,9 +2522,9 @@ proc noConfusionConflictPre(t1, t2: PreTerm,
 # (Maranget/Augustsson style): each split node is one eliminator
 # application reusing #32's clause-to-eliminator construction; nested
 # constructor patterns in argument positions compile to nested splits
-# inside method bodies. Multi-argument (multi-column) matching is still
-# open: only the first-column matrix plus nested argument columns are
-# handled; non-scrutinee patterns must still be variables.
+# inside method bodies. Multi-column (multi-argument) matching: the
+# first column with a constructor pattern is split, so match columns
+# (post-scrutinee explicit arguments) split inside the top methods.
 
 type
   MatrixCol = object
@@ -2541,11 +2541,7 @@ type
     ## One clause row: patterns for the active columns (the scrutinee
     ## column first, then one column per post-scrutinee explicit
     ## argument, in telescope order) and the right-hand side.
-    ## `restPats` holds the post-scrutinee patterns until the top split
-    ## fixes the canonical rest binders; `compileBranch` then merges them
-    ## into `pats` and builds the match columns.
     pats: seq[PreTerm]
-    restPats: seq[PreTerm]
     rhs: PreTerm
     cloc: Loc
     src: int          # index into cd.clauses
@@ -2775,7 +2771,7 @@ proc specializeRows(rows: seq[MatrixRow], dd: SurfDecl, ci: int,
       doAssert nargs.len == ctor.tele.len  # checked by coverage
       var npats = nargs
       for p in row.pats[1 .. ^1]: npats.add(p)
-      result.add(MatrixRow(pats: npats, restPats: copyPres(row.restPats),
+      result.add(MatrixRow(pats: npats,
                            rhs: copyPre(row.rhs), cloc: row.cloc,
                            src: row.src, catchVar: ""))
     else:
@@ -2783,7 +2779,7 @@ proc specializeRows(rows: seq[MatrixRow], dd: SurfDecl, ci: int,
       for _ in ctor.tele: npats.add(mkHole(loc))
       for p in row.pats[1 .. ^1]: npats.add(p)
       let cv = if row.pats[0].kind == pkVar: row.pats[0].name else: ""
-      result.add(MatrixRow(pats: npats, restPats: copyPres(row.restPats),
+      result.add(MatrixRow(pats: npats,
                            rhs: copyPre(row.rhs), cloc: row.cloc,
                            src: row.src, catchVar: cv))
 
@@ -2965,7 +2961,7 @@ proc compileBranch(ctx: ClauseCtx, dd: SurfDecl, ci: int,
     # per-row substitution is needed here.)
     var canonNames: seq[string] = @[]
     for ep_i, ti in expTis:
-      let p0 = sub0[0].restPats[ep_i]
+      let p0 = sub0[0].pats[ctor.tele.len + ep_i]
       var base = if p0.kind == pkVar and p0.name.len > 0: p0.name
                  elif ctx.tele[ti].name.len > 0: ctx.tele[ti].name
                  else: "marg" & $ep_i
@@ -2999,8 +2995,9 @@ proc compileBranch(ctx: ClauseCtx, dd: SurfDecl, ci: int,
         teleToCanon.add((ctx.tele[ti].name, mkVar(bn, ctx.loc)))
     # Build the match columns (one per explicit post-scrutinee argument):
     # their terms are the canonical rest binders, bound by this method's
-    # lambda nest below, so nested splits on them are well-scoped. Merge
-    # each row's rest patterns into its pattern vector to match.
+    # lambda nest below, so nested splits on them are well-scoped. The
+    # rows' pattern vectors already carry the rest patterns (merged at
+    # the top level), aligned with `newCols & matchCols`.
     ep_i = 0
     var ri = 0
     for ti in ctx.sPos + 1 .. ctx.tele.high:
@@ -3014,9 +3011,6 @@ proc compileBranch(ctx: ClauseCtx, dd: SurfDecl, ci: int,
                                 argTy: restTys[ri]))
         inc ep_i
       inc ri
-    for r in sub0.mitems:
-      r.pats = r.pats & r.restPats
-      r.restPats = @[]
     var midxToRet: seq[(string, PreTerm)] = @[]
     for j, mn in ctx.motiveIdxNames: midxToRet.add((mn, retIdx[j]))
     # The tail's Pi binders use canonical rest names, so the motive body
@@ -3199,8 +3193,7 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
         "the type has " & $nExplicit & " explicit arguments")
   var topRows: seq[MatrixRow] = @[]
   for si, cl in cd.clauses:
-    topRows.add(MatrixRow(pats: @[copyPre(cl.pats[0])],
-                          restPats: copyPres(cl.pats[1 .. ^1]),
+    topRows.add(MatrixRow(pats: @[copyPre(cl.pats[0])] & copyPres(cl.pats[1 .. ^1]),
                           rhs: copyPre(cl.rhs), cloc: cl.cloc, src: si,
                           catchVar: ""))
   let perCtorTop = checkMatrixCoverage(topRows, dataDecl, dataInfos, ctorToData,
@@ -3257,38 +3250,32 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
   if sPos < 0:
     raise elabErr(loc, "'def' clauses need at least one explicit argument " &
       "(the scrutinee)")
-  # Issue #78: per-clause pattern validation. Non-scrutinee patterns must
-  # be variables (multi-column matching is still open); pattern variables
-  # at any nesting depth must be unique per clause and must not shadow
-  # telescope binders (the method body rebinds rest implicits by their
-  # tele names, so a colliding pattern variable would be misread).
+  # Issue #78: per-clause pattern validation. Patterns (scrutinee and
+  # rest columns, at any nesting depth) must be constructor patterns,
+  # variables, or wildcards; pattern variables must be unique per clause
+  # and must not shadow telescope binders (the method body rebinds rest
+  # implicits by their tele names, so a colliding pattern variable would
+  # be misread).
   var allPatVars = initHashSet[string]()
   for cl in cd.clauses:
+    var pvars: seq[string] = @[]
+    collectPatVarSeq(cl.pats[0], ctorToData, pvars)
     var pi = 1
     for ti in sPos + 1 .. tele.high:
       if not tele[ti].impl:
-        if cl.pats[pi].kind != pkVar and cl.pats[pi].kind != pkHole:
-          raise elabErr(cl.cloc, "'def' clauses: non-scrutinee patterns " &
-            "must be variables")
+        let rp = cl.pats[pi]
+        let (rpIsCtor, _, _) = patKindOf(rp, ctorToData)
+        if not rpIsCtor and rp.kind != pkVar and rp.kind != pkHole:
+          raise elabErr(cl.cloc, "'def' clauses: pattern must be a " &
+            "constructor pattern, a variable, or a wildcard `_`")
+        collectPatVarSeq(rp, ctorToData, pvars)
         inc pi
-    var pvars: seq[string] = @[]
-    collectPatVarSeq(cl.pats[0], ctorToData, pvars)
     var seen = initHashSet[string]()
     for v in pvars:
       if v in seen:
         raise elabErr(cl.cloc, "duplicate pattern variable '" & v & "'")
       seen.incl(v)
       allPatVars.incl(v)
-    pi = 1
-    for ti in sPos + 1 .. tele.high:
-      if not tele[ti].impl:
-        if cl.pats[pi].kind == pkVar:
-          let v = cl.pats[pi].name
-          if v in seen:
-            raise elabErr(cl.cloc, "duplicate pattern variable '" & v & "'")
-          seen.incl(v)
-          allPatVars.incl(v)
-        inc pi
     for v in pvars:
       if v in teleNames and v != tele[sPos].name:
         raise elabErr(cl.cloc, "pattern variable '" & v &
