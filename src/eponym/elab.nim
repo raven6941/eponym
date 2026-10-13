@@ -3261,6 +3261,11 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
     var pvars: seq[string] = @[]
     collectPatVarSeq(cl.pats[0], ctorToData, pvars)
     var pi = 1
+    # Issue #32 (kept through the #165 rewrite): a rest-column variable
+    # pattern may reuse the name of the telescope binder it binds (an
+    # identity pattern, e.g. what the LSP case-split generates); it must
+    # not shadow any *other* telescope binder.
+    var identRest = initHashSet[string]()
     for ti in sPos + 1 .. tele.high:
       if not tele[ti].impl:
         let rp = cl.pats[pi]
@@ -3269,6 +3274,8 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
           raise elabErr(cl.cloc, "'def' clauses: pattern must be a " &
             "constructor pattern, a variable, or a wildcard `_`")
         collectPatVarSeq(rp, ctorToData, pvars)
+        if rp.kind == pkVar and rp.name == tele[ti].name:
+          identRest.incl(rp.name)
         inc pi
     var seen = initHashSet[string]()
     for v in pvars:
@@ -3277,7 +3284,7 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
       seen.incl(v)
       allPatVars.incl(v)
     for v in pvars:
-      if v in teleNames and v != tele[sPos].name:
+      if v in teleNames and v != tele[sPos].name and v notin identRest:
         raise elabErr(cl.cloc, "pattern variable '" & v &
           "' shadows argument '" & v & "'; rename the pattern variable")
   # Scrutinee domain analysis: `D params... idxs...`
