@@ -59,19 +59,19 @@ proc ctorsOf(ty: string): seq[CtorSig] =
     assert false, "unknown type " & ty
     @[]
 
-const DataTypes = ["Nat", "Bool", "ListN"]
+const DataTypes* = ["Nat", "Bool", "ListN"]
 
 # --- patterns and values ----------------------------------------------------
 
 type
-  PatKind = enum pkWild, pkVar, pkCtor
-  Pat = object
-    case kind: PatKind
+  PatKind* = enum pkWild, pkVar, pkCtor
+  Pat* = object
+    case kind*: PatKind
     of pkWild: discard
-    of pkVar: vname: string
+    of pkVar: vname*: string
     of pkCtor:
-      ctor: string
-      args: seq[Pat]
+      ctor*: string
+      args*: seq[Pat]
 
 type
   ValKind = enum vkNat, vkBool, vkList
@@ -82,9 +82,9 @@ type
     of vkList: elems: seq[int]
 
 type
-  Row = object
-    pats: seq[Pat]   # one pattern per column
-    rhsTrue: bool    # RHS is the `true` or `false` constructor
+  Row* = object
+    pats*: seq[Pat]   # one pattern per column
+    rhsTrue*: bool    # RHS is the `true` or `false` constructor
 
 type Case = object
   src: string
@@ -95,7 +95,7 @@ proc `$`(c: Case): string = c.src
 
 # --- rendering ----------------------------------------------------------------
 
-proc renderPat(p: Pat): string =
+proc renderPat*(p: Pat): string =
   case p.kind
   of pkWild: "_"
   of pkVar: p.vname
@@ -116,7 +116,7 @@ proc renderVal(v: Val): string =
       result = "(lcons " & renderVal(Val(kind: vkNat, n: v.elems[i])) &
         " " & result & ")"
 
-const Prelude = """data Nat : ? where
+const Prelude* = """data Nat : ? where
 | zero : Nat
 | suc (n : Nat) : Nat
 data Bool : ? where
@@ -173,10 +173,10 @@ proc freshVar(r: var Rng, ns: var int): Pat =
   inc ns
   Pat(kind: pkVar, vname: "v" & $ns)
 
-proc wildOrVar(r: var Rng, ns: var int): Pat =
+proc wildOrVar*(r: var Rng, ns: var int): Pat =
   if r.below(4) == 0: Pat(kind: pkWild) else: r.freshVar(ns)
 
-proc expandPat(r: var Rng, ty: string, depth, maxDepth: int,
+proc expandPat*(r: var Rng, ty: string, depth, maxDepth: int,
                ns: var int): seq[Pat] =
   ## Patterns that partition the whole value space of `ty`: exhaustive and
   ## pairwise disjoint by construction. A constructor's argument is either
@@ -305,11 +305,12 @@ proc checkCase(c: Case): bool =
 
 # --- main ---------------------------------------------------------------------
 
-var r = initRng(Seed)
-let ok1 = forAll("clause-matrix single-column", r, CasesSingle,
-                 genSingleCase, checkCase)
-let ok2 = forAll("clause-matrix two-column", r, CasesMulti,
-                 genTwoColCase, checkCase)
-if not (ok1 and ok2):
-  quit(1)
-echo "all clause-matrix differential properties passed"
+when isMainModule:
+  var r = initRng(Seed)
+  let ok1 = forAll("clause-matrix single-column", r, CasesSingle,
+                   genSingleCase, checkCase)
+  let ok2 = forAll("clause-matrix two-column", r, CasesMulti,
+                   genTwoColCase, checkCase)
+  if not (ok1 and ok2):
+    quit(1)
+  echo "all clause-matrix differential properties passed"
