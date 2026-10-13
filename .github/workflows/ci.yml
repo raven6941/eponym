@@ -42,6 +42,8 @@ jobs:
           nim c -r --hints:off $P "tests/fuzz_soundness.nim" -- --seed 424242 -n 1000 || exit 1
           echo "=== egraph property tests (issue #163, fixed seed) ==="
           nim c -r --hints:off $P "tests/pbt_egraph.nim" || exit 1
+          echo "=== minikanren property tests (issue #163, fixed seed) ==="
+          nim c -r --hints:off $P "tests/pbt_minikanren.nim" || exit 1
           # Note: lsp is built but not run — it's a server that blocks on stdin,
           # not a test suite. (Was hanging CI since Experiment 7.)
           echo "=== lsp hole-session tests (issue #58, headless mock-LSP) ==="
