@@ -46,6 +46,8 @@ jobs:
           nim c -r --hints:off $P "tests/pbt_minikanren.nim" || exit 1
           echo "=== clause-matrix differential tests (issue #163, fixed seed) ==="
           nim c -r --hints:off $P "tests/pbt_clause_matrix.nim" || exit 1
+          echo "=== clause-matrix negative tests (issue #163, fixed seed) ==="
+          nim c -r --hints:off $P "tests/pbt_clause_matrix_neg.nim" || exit 1
           # Note: lsp is built but not run — it's a server that blocks on stdin,
           # not a test suite. (Was hanging CI since Experiment 7.)
           echo "=== lsp hole-session tests (issue #58, headless mock-LSP) ==="
