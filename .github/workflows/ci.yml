@@ -28,6 +28,8 @@ jobs:
           done
           echo "=== examples ==="
           nim c -r --hints:off $P "tests/run_examples.nim" || exit 1
+          echo "=== embedded examples (issue #149) ==="
+          nim c -r --hints:off $P "tests/run_embedded_examples.nim" || exit 1
           echo "=== surface-syntax conformance (issue #144) ==="
           nim c -r --hints:off $P "tests/surface_conformance.nim" || exit 1
           echo "=== embedded macro forms (issue #151) ==="
