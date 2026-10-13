@@ -3,16 +3,7 @@
 # tests/run_examples.nim verifies the rejection.
 # A channel in end-state cannot be used where send-state is expected.
 import "../../lib/nat.ep"
-
-data Session : ? where
-| sendS (A : ?) (s : Session) : Session
-| recvS (A : ?) (s : Session) : Session
-| endS : Session
-
-data Chan : Session -> ? where
-| mkChan (s : Session) : Chan s
-
-postulate sendNat : Pi (x : Nat). Pi (1 ch : Chan (sendS Nat endS)). Chan endS
+import "../../lib/session.ep"
 
 # Violation 2: send on a closed (endS) channel.
 # Expected error: inferred type (Chan endS) does not match expected type
