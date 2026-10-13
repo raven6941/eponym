@@ -1578,7 +1578,9 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
         except ValueError as e:
           raise elabErr(d.loc,
             "ill-formed type of '" & d.name & "': " & e.msg)
-      globals[d.name] = GEntry(tm: newPostulateRef(supply, tyV), ty: tyT)
+      let tm = newPostulateRef(supply, tyV)  # Issue #139: register the name
+      globals[d.name] = GEntry(tm: tm, ty: tyT)
+      ms.refNames[tm.refId] = d.name
     return ElabDef(name: d.name, tyTm: tyT, tmTm: tmT, loc: d.loc)
   # 3. the core verifies the zonked (meta-free) terms — unless a
   # domain handler extended conversion for this definition (see above).
@@ -1592,7 +1594,9 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
           "' does not check against its declared type: " & e.msg &
           "\n  expected: " & $d.desugarTy() &
           "\n  body:     " & $d.desugarTm())
-  globals[d.name] = GEntry(tm: newDefRef(supply, tyV, tmV), ty: tyT)
+  let dtm = newDefRef(supply, tyV, tmV)  # Issue #139: register the name
+  globals[d.name] = GEntry(tm: dtm, ty: tyT)
+  ms.refNames[dtm.refId] = d.name
   ElabDef(name: d.name, tyTm: tyT, tmTm: tmT, loc: d.loc)
 
 proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
@@ -1639,6 +1643,7 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
     if isElim: newRedRef(supply, tyV, nargs)
     else: newPostulateRef(supply, tyV)
   globals[name] = GEntry(tm: tm, ty: tyT, isElim: isElim, elimNargs: nargs)
+  ms.refNames[tm.refId] = name  # Issue #139: name-resolving pretty-printer
 
 proc flattenAppSpine(pre: PreTerm): seq[PreTerm] =
   ## head-first application spine
