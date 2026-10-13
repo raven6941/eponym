@@ -2038,3 +2038,46 @@
   expansion, and wiring the kernel as an audit pass over elaborated
   definitions.
   Status: OPEN (branch =exp62-kernel=) — v1 kernel + self-tests.
+
+* 2026-10-13 — Independent kernel checker, part 2: differential audit harness (issue #62)
+
+  Context: the v1 kernel existed with unit self-tests but had never faced
+  real elaborator output. Built =tests/kernel_audit.nim=: elaborates every
+  =.ep= file under =lib/=, =examples/=, =examples/ep/= (fresh
+  =ModuleDriver= per file, =*-neg.ep= must be rejected), builds the
+  kernel's globals from =drv.globals= plus a new =ModuleDriver.allDefs=
+  log (every def elaborated through the driver, including via =import= —
+  without it, imported definitions' bodies were missing and conversion
+  failed instead of reaching the eliminator-fragment rule), and
+  re-checks each definition with =kernelCheckDef=. Verdicts:
+  PASS / SKIP (out of kernel fragment, honestly counted) / DISAGREE
+  (elaborator accepted, kernel rejected — fails the suite).
+  Supporting changes: =elabCheckStateG= (exposes elaborator globals),
+  exported =prettyTerm=, =docs/kernel-fragment-spec.md= (versioned
+  "kernel accepts" language), CI runs =kernel_check= self-tests and the
+  audit harness.
+  Decision: the first audit runs found 29 disagreements; triage showed
+  every one was a kernel-side bug, fixed the same session —
+  (1) sigma-binder elimination must decrement outer indices: =tSnd=
+  inference and check-mode =tPair= used same-depth =ksubstKeep=, giving
+  =snd p : A= instead of =B= for =p : Sig (u:A). B= (caught by =pairSwap=);
+  =kinst= is correct, =ksubstKeep= only for check-mode lambda where the
+  context gains the binder; regression self-test added;
+  (2) fragment-error messages must share one prefix: =tPrim=/=tInt=/
+  =tNatLit= messages did not start with "out of kernel fragment" and were
+  swallowed into =false= instead of SKIP;
+  (3) =<> = (cVoid) synthesizes =1= (cOne), not =?= (elab: =pkUnitV=);
+  (4) lambdas synthesize =Pi(dom, bodyTy)= from their domain annotation
+  (always filled in elaborated terms) — needed when let-substitution
+  exposes a lambda in infer position (=letU=).
+  Also: conversion encountering a fully-applied eliminator-headed neutral
+  raises the fragment error (via =isElim= on =KGEntry=) instead of
+  rejecting — iota-dependent programs are not-yet-auditable, not wrong.
+  Consequences: 41 files, 55 PASS, 32 SKIP (24 eliminator-iota, 8
+  primop/literal), 0 DISAGREE, 15 negative tests rejected as expected.
+  The kernel is deliberately more permissive in one direction (ignores
+  quantities in conversion), so it cannot catch elaborator bugs visible
+  only as quantity misuse — noted in the fragment spec. Next: v2 kernel
+  with eliminator iota (largest skip class), then =tNatLit=/primop
+  semantics; the harness makes each extension falsifiable.
+  Status: OPEN (branch =exp62-kernel=) — audit green; v2 (iota) not started.

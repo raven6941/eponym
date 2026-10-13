@@ -23,10 +23,12 @@
 #   Pi, Sigma, Lam, Pair, App, Fst, Snd, Let, Absurd, ?, 1, O, 0,
 #   variables and global references (data constructors as neutrals,
 #   definitions delta-unfolded from the kernel's own table).
-# NOT yet covered: data-eliminator iota reduction (needs the RedRule
-#   registry the kernel deliberately does not share), tInt/tPrim
-#   (Experiment 11), tNatLit literal expansion (Issue #93), metavariables
-#   (tMeta raises -- the zonk invariant must hold before kernel checking).
+# NOT yet covered: tInt/tPrim (Experiment 11), tNatLit literal expansion
+# (Issue #93), metavariables (tMeta raises -- the zonk invariant must hold
+# before kernel checking). Data-eliminator iota reduction is detected but
+# not implemented: conversion encountering a fully-applied eliminator-headed
+# neutral raises "out of kernel fragment", so such programs are reported as
+# not-yet-auditable rather than rejected.
 # A term outside the fragment raises KernelError("out of kernel fragment"),
 # never a silent pass: absence of a rule is a failure, not an acceptance.
 #===============================================================================
@@ -42,9 +44,16 @@ type
   KGEntry* = object
     ## A global known to the kernel. `ty` is the declared type (syntax);
     ## `def` is the definition body (nil for postulates and constructors,
-    ## which the kernel treats as neutrals).
+    ## which the kernel treats as neutrals). `isElim`/`elimNargs` mark
+    ## data eliminators (from `elim` declarations): a fully-applied
+    ## eliminator-headed neutral encountered during conversion raises an
+    ## "out of kernel fragment" error (v1 has no iota reduction), rather
+    ## than failing the comparison -- absence of the rule is reported,
+    ## never silently turned into a rejection.
     ty*: Term
     def*: Term
+    isElim*: bool
+    elimNargs*: int
 
   KernelGlobals* = Table[int, KGEntry]
 
@@ -52,8 +61,10 @@ proc kerr(msg: string): ref KernelError =
   newException(KernelError, msg)
 
 proc isFragmentViolation(e: ref KernelError): bool =
-  e.msg.startsWith("out of kernel fragment") or
-    e.msg.startsWith("tMeta")
+  # All fragment-exclusion errors share the "out of kernel fragment" prefix
+  # (tMeta/tInt/tNatLit/tPrim/eliminator-iota); everything else is a genuine
+  # rejection by the kernel.
+  e.msg.startsWith("out of kernel fragment")
 
 # --- de Bruijn plumbing (fresh implementation) -------------------------------
 
@@ -66,7 +77,7 @@ proc kshift(tm: Term, cutoff, amt: int): Term =
   of tR, tC, tInt, tNatLit:
     tm
   of tMeta:
-    raise kerr("tMeta in kernel term: zonk invariant violated")
+    raise kerr("out of kernel fragment: tMeta in kernel term (zonk invariant violated)")
   of tPi:
     Term(kind: tPi, dom: kshift(tm.dom, cutoff, amt),
          scope: Scope(adv: tm.scope.adv, bdy: kshift(tm.scope.bdy, cutoff+1, amt)),
@@ -96,7 +107,7 @@ proc kshift(tm: Term, cutoff, amt: int): Term =
          letTy: kshift(tm.letTy, cutoff, amt),
          letScope: Scope(adv: tm.letScope.adv, bdy: kshift(tm.letScope.bdy, cutoff+1, amt)))
   of tPrim:
-    raise kerr("tPrim out of kernel fragment (v1)")
+    raise kerr("out of kernel fragment: tPrim (Experiment 11 primops)")
 
 proc ksubst(tm: Term, s: Term, cutoff: int, shrink: static bool = true): Term =
   ## Substitute `s` (already shifted for depth `cutoff`) for index `cutoff`.
@@ -114,7 +125,7 @@ proc ksubst(tm: Term, s: Term, cutoff: int, shrink: static bool = true): Term =
   of tR, tC, tInt, tNatLit:
     tm
   of tMeta:
-    raise kerr("tMeta in kernel term: zonk invariant violated")
+    raise kerr("out of kernel fragment: tMeta in kernel term (zonk invariant violated)")
   of tPi:
     Term(kind: tPi, dom: ksubst(tm.dom, s, cutoff, shrink),
          scope: Scope(adv: tm.scope.adv,
@@ -149,7 +160,7 @@ proc ksubst(tm: Term, s: Term, cutoff: int, shrink: static bool = true): Term =
          letScope: Scope(adv: tm.letScope.adv,
                          bdy: ksubst(tm.letScope.bdy, kshift(s, 0, 1), cutoff+1, shrink)))
   of tPrim:
-    raise kerr("tPrim out of kernel fragment (v1)")
+    raise kerr("out of kernel fragment: tPrim (Experiment 11 primops)")
 
 proc kinst(bdy: Term, arg: Term): Term =
   ## Instantiate the body of a scope with `arg` (index 0); the result lives
@@ -158,8 +169,11 @@ proc kinst(bdy: Term, arg: Term): Term =
 
 proc ksubstKeep(bdy: Term, s: Term): Term =
   ## Substitute `s` for index 0 without changing the depth: outer binders
-  ## keep their indices. For check-mode lambda/pair and snd-projection,
-  ## where the body is checked in the same context the codomain was written.
+  ## keep their indices. For check-mode lambda only, where the context the
+  ## body is checked in gains an entry for the bound variable at the same
+  ## depth the codomain was written. Pair components and snd-projection
+  ## eliminate the sigma binder with no replacement, so they use the
+  ## beta-like `kinst` instead (regression test below: dependent pairSwap).
   ksubst(bdy, s, 0, shrink = false)
 
 # --- weak-head evaluation (fresh; beta + delta + pair/let, no eliminators) ---
@@ -195,22 +209,41 @@ proc kwhnf(tm: Term, g: KernelGlobals, depth: int = 0): Term =
     of tLet:
       t = kinst(t.letScope.bdy, t.letVal)
     of tMeta:
-      raise kerr("tMeta in kernel term: zonk invariant violated")
+      raise kerr("out of kernel fragment: tMeta in kernel term (zonk invariant violated)")
     of tInt:
-      raise kerr("tInt out of kernel fragment (v1)")
+      raise kerr("out of kernel fragment: tInt literal")
     of tNatLit:
-      raise kerr("tNatLit out of kernel fragment (v1)")
+      raise kerr("out of kernel fragment: tNatLit literal (issue #93)")
     of tPrim:
-      raise kerr("tPrim out of kernel fragment (v1)")
+      raise kerr("out of kernel fragment: tPrim (Experiment 11 primops)")
     else:
       return t
 
 # --- conversion (type-directed, eta for functions) ---------------------------
 
+proc appHead(t: Term): tuple[head: Term, nargs: int] =
+  ## Walk an application spine; return (head, argument count).
+  var h = t
+  var n = 0
+  while h.kind == tApp:
+    inc n
+    h = h.fn
+  (h, n)
+
+proc isElimStuck(t: Term, g: KernelGlobals): bool =
+  ## True when `t` is a neutral headed by a fully-applied data eliminator.
+  ## The kernel has no iota reduction, so conversion cannot decide anything
+  ## about such a term: callers must raise a fragment error, not reject.
+  let (head, nargs) = appHead(t)
+  head.kind == tR and g.hasKey(head.refId) and
+    g[head.refId].isElim and nargs >= g[head.refId].elimNargs
+
 proc kconv(a, b: Term, g: KernelGlobals, depth: int = 0): bool =
   if depth > 200: raise kerr("conversion depth exceeded")
   let wa = kwhnf(a, g)
   let wb = kwhnf(b, g)
+  if isElimStuck(wa, g) or isElimStuck(wb, g):
+    raise kerr("out of kernel fragment (eliminator iota not implemented in v1)")
   if wa.kind == tLam and wb.kind != tLam:
     # eta: lam x. b =?= n  <=>  b =?= n x, with n shifted under the binder
     return kconv(wa.scope.bdy,
@@ -264,7 +297,9 @@ proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term =
       raise kerr("unknown global refId " & $tm.refId)
     g[tm.refId].ty
   of tC:
-    star  # ? : ?, 1 : ?, O : ?, 0 : ?
+    # ? : ?, 1 : ?, O : ? -- but the unit value <> : 1 (elab: pkUnitV).
+    if tm.c == cVoid: Term(kind: tC, c: cOne)
+    else: star
   of tPi, tSi:
     kCheck(tm.dom, star, ctx, g)
     kCheck(tm.scope.bdy, star, tm.dom & ctx, g)
@@ -282,12 +317,24 @@ proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term =
   of tSnd:
     let sty = kwhnf(kInfer(tm.sub, ctx, g), g)
     if sty.kind != tSi: raise kerr("snd of non-pair")
-    ksubstKeep(sty.scope.bdy, Term(kind: tFst, sub: tm.sub))
+    # The sigma binder is eliminated with no replacement in the context,
+    # so outer indices decrement: beta-like kinst, NOT ksubstKeep
+    # (ksubstKeep is only for check-mode lambda, where the context gains
+    # an entry for the bound variable at the same depth).
+    kinst(sty.scope.bdy, Term(kind: tFst, sub: tm.sub))
   of tAbsurd:
     # in infer mode the result type is unknown; kernel requires check mode
     raise kerr("tAbsurd requires check mode (result type unknown)")
   of tLam:
-    raise kerr("tLam requires check mode (domain not annotated)")
+    # Elaborated lambdas always carry their domain annotation (the
+    # elaborator fills it even for unannotated surface lambdas, via a
+    # zonked metavar), so synthesis is sound: check the domain is a type,
+    # infer the body under it, and form the Pi. Needed e.g. after
+    # let-substitution exposes a lambda in infer position (05-id-universe).
+    kCheck(tm.dom, star, ctx, g)
+    let bty = kInfer(tm.scope.bdy, tm.dom & ctx, g)
+    Term(kind: tPi, dom: tm.dom, scope: Scope(bdy: bty),
+         impl: tm.impl, erased: tm.erased, qty: tm.qty)
   of tPair:
     # Non-dependent synthesis (mirrors the elaborator's cPair limitation:
     # infer gives Sigma(A, _. B) with B independent of the first component).
@@ -302,13 +349,13 @@ proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term =
     kCheck(tm.letVal, tm.letTy, ctx, g)
     kInfer(kinst(tm.letScope.bdy, tm.letVal), ctx, g)
   of tMeta:
-    raise kerr("tMeta in kernel term: zonk invariant violated")
+    raise kerr("out of kernel fragment: tMeta in kernel term (zonk invariant violated)")
   of tInt:
-    raise kerr("tInt out of kernel fragment (v1)")
+    raise kerr("out of kernel fragment: tInt literal")
   of tNatLit:
-    raise kerr("tNatLit out of kernel fragment (v1)")
+    raise kerr("out of kernel fragment: tNatLit literal (issue #93)")
   of tPrim:
-    raise kerr("tPrim out of kernel fragment (v1)")
+    raise kerr("out of kernel fragment: tPrim (Experiment 11 primops)")
 
 proc kCheck(tm: Term, ty: Term, ctx: KCtx, g: KernelGlobals) =
   let wty = kwhnf(ty, g)
@@ -322,7 +369,9 @@ proc kCheck(tm: Term, ty: Term, ctx: KCtx, g: KernelGlobals) =
     if wty.kind != tSi:
       raise kerr("pair checked against non-Sigma")
     kCheck(tm.pFst, wty.dom, ctx, g)
-    kCheck(tm.pSnd, ksubstKeep(wty.scope.bdy, tm.pFst), ctx, g)
+    # Beta-like instantiation: the sigma binder is eliminated, so outer
+    # indices decrement (kinst, not ksubstKeep -- cf. the tSnd case above).
+    kCheck(tm.pSnd, kinst(wty.scope.bdy, tm.pFst), ctx, g)
   of tAbsurd:
     let sty = kwhnf(kInfer(tm.sub, ctx, g), g)
     if sty.kind != tC or sty.c != cVoid:
@@ -399,4 +448,25 @@ when isMainModule:
   let dRef = Term(kind: tR, refId: 7, refTyp: nil, refIsDefn: true, refVal: nil)
   assert kernelCheck(app(app(app(dRef, star), star), star), star, g),
     "defined reference should unfold and check"
+  # dependent pair elimination (regression: sigma-binder elimination must
+  # decrement outer indices -- kinst, not ksubstKeep):
+  # (A B : ?) (p : Sig (u : A). B) |- (snd p, fst p) : Sig (v : B). A
+  let siAB = Term(kind: tSi, dom: vv(1), scope: Scope(bdy: vv(1)),
+                  impl: false, erased: false, qty: qOmega)   # at depth 2
+  let siBA = Term(kind: tSi, dom: vv(1), scope: Scope(bdy: vv(3)),
+                  impl: false, erased: false, qty: qOmega)   # at depth 3
+  let swapTy =
+    Term(kind: tPi, dom: star, scope: Scope(bdy:
+      Term(kind: tPi, dom: star, scope: Scope(bdy:
+        Term(kind: tPi, dom: siAB, scope: Scope(bdy: siBA),
+             impl: false, erased: false, qty: qOmega)),
+        impl: false, erased: false, qty: qOmega)),
+      impl: false, erased: false, qty: qOmega)
+  let swapTm = lam(lam(Term(kind: tLam, dom: siAB,
+    scope: Scope(bdy: Term(kind: tPair,
+      pFst: Term(kind: tSnd, sub: vv(0)),
+      pSnd: Term(kind: tFst, sub: vv(0)),
+      pScope: Scope(bdy: star))),
+    impl: false, erased: false, qty: qOmega)))
+  assert kernelCheck(swapTm, swapTy, g), "dependent pairSwap should check"
   echo "all kernel self-tests passed"

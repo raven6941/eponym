@@ -15,19 +15,21 @@ jobs:
         run: |
           nim --version
           P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
-          for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac lsp egraph eponym_embed; do
+          for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac lsp egraph eponym_embed kernel_check; do
             echo "=== build $f ==="
             nim c --hints:off $P "src/eponym/$f.nim" || exit 1
           done
       - name: Test
         run: |
           P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
-          for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac egraph eponym_embed; do
+          for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac egraph eponym_embed kernel_check; do
             echo "=== test $f ==="
             nim c -r --hints:off $P "src/eponym/$f.nim" || exit 1
           done
           echo "=== examples ==="
           nim c -r --hints:off $P "tests/run_examples.nim" || exit 1
+          echo "=== kernel audit (issue #62: independent re-check) ==="
+          nim c -r --hints:off $P "tests/kernel_audit.nim" || exit 1
           echo "=== embedded examples (issue #149) ==="
           nim c -r --hints:off $P "tests/run_embedded_examples.nim" || exit 1
           echo "=== surface-syntax conformance (issue #144) ==="
