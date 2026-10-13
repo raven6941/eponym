@@ -8,6 +8,68 @@
   =exp-NN-short-name= branches, merged to =main= when the experiment
   concludes with a decision recorded here.
 
+* 2026-10-13 — Independent kernel checker v2: eliminator iota + primop/nat-literal coverage (issue #156)
+
+  Context: #62's v1 kernel audited 55 definitions with 32 honest SKIP
+  (24 eliminator-iota, 8 primop/nat-literal). #156 asks to shrink the
+  SKIP class by extending the kernel, keeping the LCF posture: share
+  syntax, re-implement judgments.
+  Decision: three independent re-implementations, plus one check the
+  elaborator itself skips:
+  (1) Iota (=kwhnfElim=): the kernel flattens application spines itself,
+  detects eliminator-headed heads via its own =isElim= flag (never the
+  elaborator's =wRed= values), weak-head-evaluates the scrutinee, and on
+  a constructor-headed scrutinee instantiates the contractum template
+  with a fresh parallel substitution (=ksubstSpine=, outside-in) following
+  =fireRed='s context convention ([elim args except scrutinee,
+  ctor tele args], innermost-first) -- re-derived, not imported.
+  Under-applied eliminators and stuck scrutinees stay neutral, mirroring
+  =fireRed='s neutral case. What iota cost the kernel: the application
+  shape detection moved from "the elaborator's =RedRule= registry says
+  so" to "the kernel's own spine walk + its own =elimRules= table";
+  the template context convention had to be re-derived from
+  =elabRedDecl='s context construction and =fireRed='s spine order, and
+  getting it wrong fails loudly at rule-validation time (below), not
+  silently.
+  (2) The motive check (=validateElimRules=): =elabRedDecl= elaborates
+  each =red= contractum in inference mode only -- "the rule is trusted,
+  like an axiom". The kernel does not trust it. For each
+  (eliminator, constructor) rule it rebuilds the template's context from
+  the eliminator's and constructor's Pi types in its own globals,
+  discovers the index structure (scrutinee type = family applied to
+  params+index vars; constructor return = family applied to
+  params+index exprs; leading params must match syntactically), and
+  *checks* the template against the motive instance. One subtlety found
+  while implementing: the kernel's =KCtx= convention needs =ctx[i]=
+  written *outside* the =i= innermost binders (=kInfer(V(i))= shifts up
+  by =i+1=), so context types built in the full template context must be
+  shifted down by =i+1= -- caught by the self-test, not by reasoning.
+  A rule failing the check is an audit disagreement (triage, never
+  silent); a rule whose shape cannot be discovered is marked invalid and
+  its use raises a fragment error (honest SKIP). The self-tests include
+  a deliberately ill-typed rule that the motive check must catch.
+  (3) =tNatLit= (=kExpandNatLit=, issue #93): definitionally
+  =suc^n(zero)=, expanded with the kernel's own =zero=/=suc= globals --
+  uniform expansion instead of the elaborator's O(1) fast path +
+  =numeralChainEq= fallback. Documented limitation: very large literals
+  would build large chains.
+  (4) =tInt=/=tPrim= (Experiment 11): axiom-style. The kernel *knows*
+  primops are binary =Int -> Int -> Int= operations; the elaborator's
+  claimed =primTy= is verified against the kernel's own axiom type, not
+  trusted. Fully-applied primops fire on literal args via host
+  arithmetic, else stay neutral.
+  Data-vs-logic line: the harness hands the kernel elaborator-produced
+  *data* (rule tables via a new =redRuleInfo= accessor, =zero=/=suc=/
+  =Int= refIds) exactly as it already hands over definition bodies; every
+  judgment over that data is fresh kernel code.
+  Consequences: audit now 87 PASS, 0 SKIP, 0 DISAGREE over 41 files;
+  every iota rule in the corpus passed the motive check (no
+  disagreements to triage). =docs/kernel-fragment-spec.md= updated to
+  v2. The kernel is now strictly stronger than the elaborator in one
+  place (it checks =red= contractums against the motive); the elaborator
+  could adopt the same check at declaration time.
+  Status: OPEN (branch =exp156-kernel-v2=).
+
 * 2026-10-07 — Initial encoding as elaborator target
 
   Context: ETT implemented twice (finally-tagless =ett.nim=, initial

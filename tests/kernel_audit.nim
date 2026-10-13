@@ -7,12 +7,15 @@
 ##
 ## Verdicts per definition:
 ##   PASS     -- kernel accepted an elaborator-accepted definition.
-##   SKIP     -- kernel raised "out of kernel fragment" (tMeta/tInt/tNatLit/
-##               tPrim, or a fully-applied eliminator needing iota): the
-##               definition is not auditable by the v1 kernel, honestly
-##               reported rather than counted as a pass.
-##   DISAGREE -- elaborator accepted but kernel rejected: a soundness bug in
-##               one of the two, which must be triaged explicitly. Any
+##   SKIP     -- kernel raised "out of kernel fragment" (tMeta, or an iota
+##               rule whose shape the kernel cannot discover): the
+##               definition is not auditable by the kernel, honestly
+##               reported rather than counted as a pass. (v2: eliminator
+##               iota, tNatLit, tInt/tPrim are all in-fragment; see
+##               docs/kernel-fragment-spec.md.)
+##   DISAGREE -- elaborator accepted but kernel rejected (or an iota rule
+##               failed the kernel's motive check): a soundness bug in one
+##               of the two, which must be triaged explicitly. Any
 ##               disagreement fails this test (exit 1).
 ##
 ## Mirrors tests/run_examples.nim: the same .ep files are elaborated
@@ -37,13 +40,38 @@ proc buildKernelGlobals(globals: Globals,
   ## does not read them). Definitions get their elaborated bodies for
   ## delta-unfolding; postulates / constructors / eliminators keep
   ## def=nil and are treated as neutrals.
+  ##
+  ## Issue #156: the harness also hands the kernel elaborator-produced
+  ## *data* it cannot derive itself -- each eliminator's iota rule table
+  ## (contractum templates, via redRuleInfo) and the refIds of zero/suc/Int
+  ## (for the kernel's own tNatLit expansion and primop axiom). The kernel
+  ## re-implements every judgment over this data and validates each iota
+  ## rule against its motive (validateElimRules below).
+  result = initKernelGlobals()
   for name, e in globals:
     if e.tm.kind == tR:
-      result[e.tm.refId] = KGEntry(ty: e.ty, def: nil,
-                                   isElim: e.isElim, elimNargs: e.elimNargs)
+      result.entries[e.tm.refId] = KGEntry(ty: e.ty, def: nil,
+                                           isElim: e.isElim,
+                                           elimNargs: e.elimNargs)
+      if e.isElim and not e.tm.refVal.isNil:
+        try:
+          let (nargs, nParams, cases) = redRuleInfo(e.tm)
+          var cs = initTable[int, KElimCase]()
+          for ctorId, tmpl in cases:
+            cs[ctorId] = KElimCase(tmpl: tmpl, valid: false)
+          result.elimRules[e.tm.refId] =
+            KElimRuleSet(nParams: nParams, cases: cs)
+        except ValueError:
+          discard  # no readable rule table; iota stays stuck (v1 behavior)
+      if name == "zero" and result.natZeroId < 0:
+        result.natZeroId = e.tm.refId
+      elif name == "suc" and result.natSucId < 0:
+        result.natSucId = e.tm.refId
+      elif name == "Int" and result.intId < 0:
+        result.intId = e.tm.refId
   for name, d in defsByName:
     if globals.hasKey(name) and globals[name].tm.kind == tR:
-      result[globals[name].tm.refId].def = d.tmTm
+      result.entries[globals[name].tm.refId].def = d.tmTm
 
 proc auditFile(path: string,
                totals: var tuple[pass, skip, disagree, negOk: int]) =
@@ -71,7 +99,20 @@ proc auditFile(path: string,
   # which elabFile omits from its return): drv.allDefs (issue #62) logs
   # them all. Only the file's own defs are audited here; imported defs
   # are audited when their own file is walked.
-  let g = buildKernelGlobals(drv.globals, drv.allDefs)
+  var g = buildKernelGlobals(drv.globals, drv.allDefs)
+  # Issue #156: validate every iota rule against its motive before the
+  # audit uses it. A genuine validation failure is an audit disagreement
+  # (the elaborator trusted a rule the kernel's judgment rejects).
+  try:
+    validateElimRules(g)
+  except KernelError as e:
+    if isFragmentViolation(e):
+      echo "RULE-SKIP ", path, ": iota rule not auditable: ", e.msg
+    else:
+      inc totals.disagree
+      echo "DISAGREE ", path, ": iota rule failed the kernel's motive check: ",
+        e.msg
+      return
   for name in sorted(toSeq(defsByName.keys)):
     let d = defsByName[name]
     if d.tmTm.isNil or d.tyTm.isNil:

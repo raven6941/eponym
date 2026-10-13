@@ -338,6 +338,16 @@ proc redNargs*(elim: Term): int =
   ## number of arguments (incl. scrutinee) the eliminator takes
   elim.refVal.whnf.rule.nargs
 
+proc redRuleInfo*(elim: Term): tuple[nargs, nParams: int, cases: Table[int, Term]] =
+  ## Issue #156: read an eliminator's reduction rule table as plain data
+  ## (constructor refId -> contractum template Term). For the independent
+  ## kernel audit harness: the kernel re-implements iota from this data,
+  ## never reusing the elaborator's fireRed.
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  (w.rule.nargs, w.rule.nParams, w.rule.cases)
+
 proc freshPara*(s: var Supply, ty: Value): Value =
   ## vpara: a fresh neutral parameter of the given type.
   ## Exported for the elaborator's conversion check (Experiment 5b):
