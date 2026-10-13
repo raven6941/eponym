@@ -1,0 +1,9 @@
+# Issue #78 (negative): a nested constructor pattern subsumed by an earlier
+# clause's nested patterns is an overlap.
+import "../../lib/nat.ep"
+import "../../lib/bool.ep"
+
+def ov : Nat -> Bool
+| (suc x) = true
+| (suc zero) = false
+| zero = false

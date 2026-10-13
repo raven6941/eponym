@@ -2216,3 +2216,52 @@
   stays retired in =tests/= as the comparison oracle. If #76/#68 ever
   give the relational side metavariable refinement, this verdict can
   be revisited.
+
+* 2026-10-13 — #78: clause-matrix compilation, rest-binder design (resumed)
+
+  Context: resumed the stalled =exp78-nested-patterns= branch. The
+  in-progress refactor (matrix types + =checkMatrixCoverage=/
+  =specializeRows=/=compileMatrixNode=/=compileBranch=) did not compile:
+  =MatrixRow.restPats= referenced but undeclared, =cols[1+ep_i]= mutated
+  through a by-value parameter, the top call passed only the scrutinee
+  column, =cBodyRet= never computed, and the method lambda nest omitted
+  the rest binders. Completed the design as follows.
+
+  1. Rest binders are bound once, by the top split's methods: method =
+     =lam args. lam ihs. lam rest. inner=, where =inner= is the matrix
+     compilation and nested split nodes sit under =lam rest=. Nested
+     methods bind only their constructor args + IHs; their motive/IH
+     types use the stripped tail =retTy= (=TailCtx.restBound=). A
+     "bind-rest-at-the-leaves" design was rejected: a match-column split
+     would scrutinize a rest binder that is only bound inside the
+     methods, i.e. out of scope at the split site.
+  2. The lambda-nest order bug: each =mkLam= wraps outside the previous,
+     so the rest binders must be wrapped *first* (args, then IHs, then
+     rest outside-in means rest wrapped first). Wrapping rest last put
+     =lam rest= outside =lam args= and the method failed to check
+     ("cannot unify tR with tPi").
+  3. =subsumesAll= was unsound for coverage: a nullary constructor
+     pattern (=zero=) counted as match-all, so =| (suc (suc zero))= was
+     treated as covering the whole =suc= case and a following =| _=
+     vanished from the =zero= branch ("missing case for constructor
+     'zero' (under 'suc')"). Fix: a constructor pattern is match-all
+     only for a single-constructor datatype with recursively match-all
+     arguments.
+  4. Nested IHs have the stripped type =retTy= (rest binders free, bound
+     by the enclosing method), so =replaceRecCalls= drops the trailing
+     rest arguments for nested pairs (=nested= flag on =recPairs=).
+     Limitation: a nested recursive call whose rest arguments are not
+     exactly the enclosing rest binders is miscompiled (no such programs
+     existed before #78; documented in the proc comment).
+
+  Verified: =examples/ep/25b-clause-nested.ep= (nested patterns to three
+  levels, rest arguments, wildcard rest patterns, a nested recursive
+  call) elaborates, and ten =Eq=-by-=refl= computation proofs check;
+  =25c/=25d= negative tests pin nested overlap and missing-nested-case
+  errors; =tests/kernel_audit.nim= re-checks the generated eliminator
+  applications independently (119 passed, 0 disagreements). Indexed
+  nested matches work for non-dependent results
+  (=Vec Nat n= with =(cons k zero xs)=); the nested motive is constant
+  in the nested indices (outer refinement already applied). Open
+  (unchanged): multi-column matching — non-scrutinee patterns must
+  still be variables/wildcards.

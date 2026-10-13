@@ -1,0 +1,56 @@
+# Issue #78: nested constructor patterns in `def` clauses, compiled to
+# nested case splits (one eliminator application per split node).
+import "../../lib/nat.ep"
+import "../../lib/bool.ep"
+import "../../lib/eq.ep"
+
+# nested patterns on the scrutinee
+def isTwo : Nat -> Bool
+| zero = false
+| (suc zero) = false
+| (suc (suc n)) = true
+
+# nested patterns with a rest argument (incl. a nested recursive call)
+def add3 : Nat -> Nat -> Nat
+| zero m = m
+| (suc n) m = suc (add3 n m)
+
+# variable under constructor
+def pred2 : Nat -> Nat
+| zero = zero
+| (suc zero) = zero
+| (suc (suc n)) = n
+
+# wildcard nested pattern with a rest argument
+def constF : Nat -> Bool -> Bool
+| zero _ = false
+| (suc n) b = b
+
+# deep nesting: three levels
+def isThree : Nat -> Bool
+| (suc (suc (suc zero))) = true
+| _ = false
+
+proc t1 : Bool = isTwo zero
+proc t2 : Bool = isTwo (suc zero)
+proc t3 : Bool = isTwo (suc (suc zero))
+proc t4 : Bool = isTwo (suc (suc (suc zero)))
+proc t5 : Nat = add3 (suc (suc zero)) (suc zero)
+proc t6 : Nat = pred2 (suc (suc (suc zero)))
+proc t7 : Bool = constF (suc zero) true
+proc t8 : Bool = constF zero true
+proc t9 : Bool = isThree (suc (suc (suc zero)))
+proc t10 : Bool = isThree (suc (suc zero))
+
+# Issue #78: the compiled matches compute correctly (each `refl` checks
+# only if the eliminator application reduces to the expected value).
+proc c1 : Eq Bool (isTwo zero) false = refl Bool false
+proc c2 : Eq Bool (isTwo (suc zero)) false = refl Bool false
+proc c3 : Eq Bool (isTwo (suc (suc zero))) true = refl Bool true
+proc c4 : Eq Bool (isTwo (suc (suc (suc zero)))) true = refl Bool true
+proc c5 : Eq Nat (add3 (suc (suc zero)) (suc zero)) (suc (suc (suc zero))) = refl Nat (suc (suc (suc zero)))
+proc c6 : Eq Nat (pred2 (suc (suc (suc zero)))) (suc zero) = refl Nat (suc zero)
+proc c7 : Eq Bool (constF (suc zero) true) true = refl Bool true
+proc c8 : Eq Bool (constF zero true) false = refl Bool false
+proc c9 : Eq Bool (isThree (suc (suc (suc zero)))) true = refl Bool true
+proc c10 : Eq Bool (isThree (suc (suc zero))) false = refl Bool false

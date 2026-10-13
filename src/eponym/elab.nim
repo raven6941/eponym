@@ -2364,9 +2364,16 @@ proc isIhName(nm: string): bool =
   false
 
 proc replaceRecCalls(rhs: PreTerm, fname: string, recVar: string,
-                    ihName: string): PreTerm =
+                    ihName: string, dropRest: bool = false): PreTerm =
   ## Replace `fname recVar rest...` (recursive call on recVar in the
   ## scrutinee position) with `ihName rest...` (IH application).
+  ## When `dropRest` (nested induction hypothesis, whose type is the
+  ## stripped tail `Ret` with the rest binders free rather than
+  ## `Pi rest. Ret`), the trailing rest arguments are dropped: the IH
+  ## variable already has the right type mentioning the enclosing rest
+  ## binders. (Limitation: a nested recursive call whose rest arguments
+  ## are not exactly the enclosing rest binders is miscompiled; such
+  ## programs are rare and this path did not exist before #78.)
   ## MVP: only handles the case where recVar is the first (scrutinee)
   ## argument. Calls with recVar elsewhere are left alone for the
   ## termination checker (issue #36) to reject.
@@ -2386,27 +2393,28 @@ proc replaceRecCalls(rhs: PreTerm, fname: string, recVar: string,
       if a0.kind == pkVar and a0.name == recVar:
         # Build `ihName` applied to args after the scrutinee
         var res = mkVar(ihName, rhs.loc)
-        for j in 1 ..< spine.len:
-          res = mkApp(res, replaceRecCalls(spine[j], fname, recVar, ihName),
-                      rhs.loc)
+        if not dropRest:
+          for j in 1 ..< spine.len:
+            res = mkApp(res, replaceRecCalls(spine[j], fname, recVar, ihName,
+                                             dropRest), rhs.loc)
         return res
     # Not a structural recursive call; recurse into children
     result = rhs
-    result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName)
-    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName)
+    result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName, dropRest)
+    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName, dropRest)
   of pkLam:
     result = rhs
-    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName)
+    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName, dropRest)
     if rhs.c1 != nil:
-      result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName)
+      result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName, dropRest)
   of pkPi:
     result = rhs
-    result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName)
-    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName)
+    result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName, dropRest)
+    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName, dropRest)
   of pkPair:
     result = rhs
-    result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName)
-    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName)
+    result.c1 = replaceRecCalls(rhs.c1, fname, recVar, ihName, dropRest)
+    result.c2 = replaceRecCalls(rhs.c2, fname, recVar, ihName, dropRest)
   else:
     result = rhs
 
@@ -2509,6 +2517,651 @@ proc noConfusionConflictPre(t1, t2: PreTerm,
           let r = noConfusionConflictPre(a1[i], a2[i], ctorToData, bound)
           if r.bad: return r
   (false, "")
+# --- Issue #78: clause-matrix compilation (nested patterns) -------------------
+# `elabClausesDecl` compiles clause matrices to nested case splits
+# (Maranget/Augustsson style): each split node is one eliminator
+# application reusing #32's clause-to-eliminator construction; nested
+# constructor patterns in argument positions compile to nested splits
+# inside method bodies. Multi-argument (multi-column) matching is still
+# open: only the first-column matrix plus nested argument columns are
+# handled; non-scrutinee patterns must still be variables.
+
+type
+  MatrixCol = object
+    ## One column under match: the scrutinee term plus its data type.
+    term: PreTerm
+    dataName: string
+    isData: bool
+    matchCol: bool    # a post-scrutinee explicit-argument column (vs the
+                      # scrutinee or a constructor-argument column)
+    params: seq[PreTerm]    # actual parameter terms for the eliminator
+    idxTerms: seq[PreTerm]  # scrutinee index terms (variables)
+    argTy: PreTerm          # the scrutinee's type (for nested columns)
+  MatrixRow = object
+    ## One clause row: patterns for the active columns (the scrutinee
+    ## column first, then one column per post-scrutinee explicit
+    ## argument, in telescope order) and the right-hand side.
+    ## `restPats` holds the post-scrutinee patterns until the top split
+    ## fixes the canonical rest binders; `compileBranch` then merges them
+    ## into `pats` and builds the match columns.
+    pats: seq[PreTerm]
+    restPats: seq[PreTerm]
+    rhs: PreTerm
+    cloc: Loc
+    src: int          # index into cd.clauses
+    catchVar: string  # catch-all variable replaced by the ctor app ("" if none)
+  TailCtx = object
+    ## The fixed method tail for one outer constructor: canonical rest
+    ## binders, their types, the motive-body type `Pi rest. Ret[...]` (with
+    ## this constructor's index refinement applied), and `retTy`, the same
+    ## body with the `Pi rest` prefix stripped. The top split's methods bind
+    ## the rest binders in their lambda nest (`restBound = false`); nested
+    ## splits sit under those binders (`restBound = true`), use `retTy` for
+    ## their motive/IH types, and do not re-bind.
+    restNames: seq[string]
+    restTys: seq[PreTerm]
+    tailTy: PreTerm
+    retTy: PreTerm
+    restBound: bool
+  ClauseCtx = ref object
+    ## Everything the recursive compiler needs from `elabClausesDecl`.
+    cdName: string
+    loc: Loc
+    dataInfos: Table[string, SurfDecl]
+    ctorToData: Table[string, string]
+    tele: seq[tuple[name: string, ty: PreTerm, impl: bool]]
+    teleNames: HashSet[string]
+    sPos: int
+    paramSubst: seq[(string, PreTerm)]
+    motiveIdxNames: seq[string]
+    cBody: PreTerm
+    cBodyRet: PreTerm  # cBody with the `Pi rest` prefix stripped
+    scrIdxVars: seq[string]
+    usedNames: HashSet[string]
+    allPatVars: HashSet[string]
+    fresh: int
+    ihFresh: int
+    recPairs: seq[tuple[rv: string, ihn: string, nested: bool]]
+      # (pattern var, IH name, nested?) per method. A nested IH has the
+      # stripped tail type `Ret` (the rest binders are already bound by an
+      # enclosing method), so a recursive call `f v rest...` on it rewrites
+      # to just `ihn` (the rest arguments are dropped); a top-level IH has
+      # type `Pi rest. Ret` and keeps them.
+
+proc copyPre(t: PreTerm): PreTerm =
+  ## Deep copy. PreTerm is a ref object and `replaceRecCalls` mutates in
+  ## place, so rows fanning out to several constructors need owned copies.
+  if t.isNil: return nil
+  PreTerm(loc: t.loc, kind: t.kind, name: t.name, impl: t.impl,
+          erased: t.erased, qty: t.qty, intVal: t.intVal,
+          c1: copyPre(t.c1), c2: copyPre(t.c2), c3: copyPre(t.c3))
+
+proc copyPres(ts: seq[PreTerm]): seq[PreTerm] =
+  result = @[]
+  for t in ts: result.add(copyPre(t))
+
+proc patKindOf(pat: PreTerm, ctorToData: Table[string, string]):
+    tuple[isCtor: bool, name: string, args: seq[PreTerm]] =
+  ## Like patHeadName, but nested constructor heads are classified against
+  ## every known datatype (a nested `suc` is a constructor even when the
+  ## node being split is over a different datatype). A bare variable
+  ## naming a known constructor is a nullary constructor pattern.
+  if pat.kind == pkVar:
+    if ctorToData.hasKey(pat.name):
+      return (true, pat.name, @[])
+    return (false, pat.name, @[])
+  var h = pat
+  var args: seq[PreTerm] = @[]
+  while h.kind == pkApp:
+    args.add(h.c2)
+    h = h.c1
+  if h.kind == pkVar and ctorToData.hasKey(h.name):
+    var rargs: seq[PreTerm] = @[]
+    for i in countdown(args.high, 0): rargs.add(args[i])
+    return (true, h.name, rargs)
+  (false, "", @[])
+
+proc collectPatVarSeq(pat: PreTerm, ctorToData: Table[string, string],
+                      acc: var seq[string]) =
+  ## Pattern variable names at every nesting depth (constructor heads are
+  ## not variables, even bare nullary ones).
+  let (isCtor, _, args) = patKindOf(pat, ctorToData)
+  if isCtor:
+    for a in args: collectPatVarSeq(a, ctorToData, acc)
+  elif pat.kind == pkVar:
+    acc.add(pat.name)
+  # wildcards and ill-shaped patterns: handled by the coverage check
+
+proc subsumesPat(p, q: PreTerm, ctorToData: Table[string, string]): bool
+  ## Does pattern p subsume pattern q (every value matched by q is matched
+  ## by p)? A variable/wildcard subsumes anything; a constructor pattern
+  ## subsumes the same head with recursively subsuming arguments.
+
+proc subsumesNests(ps, qs: seq[PreTerm],
+                   ctorToData: Table[string, string]): bool =
+  if ps.len != qs.len: return false
+  for k in 0 ..< ps.len:
+    if not subsumesPat(ps[k], qs[k], ctorToData): return false
+  true
+
+proc subsumesPat(p, q: PreTerm, ctorToData: Table[string, string]): bool =
+  let (ip, hp, ap) = patKindOf(p, ctorToData)
+  if not ip:
+    # A genuine variable/wildcard subsumes anything (a bare pkVar naming
+    # a constructor was classified as a constructor above).
+    return p.kind == pkVar or p.kind == pkHole
+  let (iq, hq, aq) = patKindOf(q, ctorToData)
+  iq and hp == hq and subsumesNests(ap, aq, ctorToData)
+
+proc subsumesAll(p: PreTerm, dataInfos: Table[string, SurfDecl],
+                 ctorToData: Table[string, string]): bool =
+  ## The pattern matches every value of its type: variables/wildcards, or
+  ## a constructor pattern whose datatype has exactly this one constructor
+  ## (so every value is headed by it) applied to recursively match-all
+  ## patterns. (A bare `zero` is *not* match-all for Nat: it misses `suc`.)
+  let (isCtor, head, args) = patKindOf(p, ctorToData)
+  if not isCtor:
+    return p.kind == pkVar or p.kind == pkHole
+  let d2 = ctorToData.getOrDefault(head, "")
+  if d2 == "" or not dataInfos.hasKey(d2): return false
+  if dataInfos[d2].ctors.len != 1: return false
+  for a in args:
+    if not subsumesAll(a, dataInfos, ctorToData): return false
+  true
+
+proc ctorNamesOf(dd: SurfDecl): seq[string] =
+  result = @[]
+  for c in dd.ctors: result.add(c.name)
+
+proc checkMatrixCoverage(rows: seq[MatrixRow], dd: SurfDecl,
+                         dataInfos: Table[string, SurfDecl],
+                         ctorToData: Table[string, string], ctxMsg: string,
+                         loc: Loc): seq[seq[MatrixRow]] =
+  ## Per-constructor row lists (in dd.ctors order) for one split node.
+  ## Overlap is by subsumption: a constructor-headed row overlaps iff an
+  ## earlier row for the same head subsumes its nested patterns (so
+  ## `| (suc zero)` then `| (suc (suc n))` is fine, but `| (suc x)` then
+  ## `| (suc zero)` is an overlap). A variable/wildcard row is redundant
+  ## iff every constructor is already fully covered. Raises on overlap,
+  ## redundancy, missing cases, unknown constructors, bad arities, and
+  ## ill-shaped patterns.
+  result = newSeq[seq[MatrixRow]](dd.ctors.len)
+  let ctorNames = ctorNamesOf(dd)
+  var covered = initTable[string, seq[int]]()
+  for cn in ctorNames: covered[cn] = @[]
+  proc ctorIndex(nm: string): int =
+    for i, c in dd.ctors:
+      if c.name == nm: return i
+    -1
+  proc allWildNests(nested: seq[PreTerm]): bool =
+    for p in nested:
+      if not subsumesAll(p, dataInfos, ctorToData): return false
+    true
+  for ri, row in rows:
+    let (isCtor, headName, nargs) = patKindOf(row.pats[0], ctorToData)
+    if isCtor:
+      let ci = ctorIndex(headName)
+      if ci < 0:
+        raise elabErr(row.cloc, "'" & headName & "' is not a constructor of '" &
+          dd.dname & "'" & ctxMsg)
+      if nargs.len != dd.ctors[ci].tele.len:
+        raise elabErr(row.cloc, "constructor '" & headName & "' takes " &
+          $dd.ctors[ci].tele.len & " arguments but pattern has " & $nargs.len)
+      # Overlap against every earlier row. A constructor-headed earlier row
+      # overlaps iff it subsumes this row's nested patterns *and* every
+      # other column; a variable/wildcard earlier row overlaps iff it
+      # subsumes this row on all columns. (For a single column this is the
+      # old per-constructor check.)
+      for qj in 0 ..< ri:
+        let q = rows[qj]
+        let (qIsCtor, qHead, qNargs) = patKindOf(q.pats[0], ctorToData)
+        var subsumed = false
+        if qIsCtor and qHead == headName:
+          subsumed = subsumesNests(qNargs, nargs, ctorToData) and
+            subsumesNests(q.pats[1 .. ^1], row.pats[1 .. ^1], ctorToData)
+        elif not qIsCtor:
+          subsumed = subsumesNests(q.pats, row.pats, ctorToData)
+        if subsumed:
+          raise elabErr(row.cloc, "overlapping clauses: '" & headName &
+            "' already covered by the clause at " & $q.cloc.line & ":" &
+            $q.cloc.col & ctxMsg)
+      covered[headName].add(ri)
+    else:
+      if row.pats[0].kind != pkVar and row.pats[0].kind != pkHole:
+        raise elabErr(row.cloc, "pattern must be a constructor pattern, a " &
+          "variable, or a wildcard `_`" & ctxMsg)
+      # A variable/wildcard row is redundant iff every constructor is
+      # already covered *for the values this row matches*: a constructor
+      # counts as covered when an earlier row covers its head with
+      # match-all nested patterns (or is itself a catch-all) and subsumes
+      # this row on every other column. Single-column subsumption on the
+      # other columns is vacuous, recovering the old check.
+      var newCover = 0
+      for cn in ctorNames:
+        var full = false
+        for qj in 0 ..< ri:
+          let q = rows[qj]
+          let (qIsCtor, qHead, qNargs) = patKindOf(q.pats[0], ctorToData)
+          let coversHead = (not qIsCtor) or
+            (qHead == cn and allWildNests(qNargs))
+          if coversHead and
+             subsumesNests(q.pats[1 .. ^1], row.pats[1 .. ^1], ctorToData):
+            full = true
+            break
+        if not full:
+          covered[cn].add(ri)
+          inc newCover
+      if newCover == 0:
+        raise elabErr(row.cloc, "redundant clause: every constructor is " &
+          "already covered by an earlier clause" & ctxMsg)
+  for ci, ctor in dd.ctors:
+    if covered[ctor.name].len == 0:
+      raise elabErr(loc, "missing case for constructor '" & ctor.name &
+        "' of '" & dd.dname & "'" & ctxMsg)
+    for qj in covered[ctor.name]:
+      result[ci].add(rows[qj])
+
+proc specializeRows(rows: seq[MatrixRow], dd: SurfDecl, ci: int,
+                    ctorToData: Table[string, string],
+                    loc: Loc): seq[MatrixRow] =
+  ## Rows for constructor dd.ctors[ci]: constructor-headed rows contribute
+  ## their nested argument patterns; variable/wildcard rows contribute
+  ## fresh wildcards and record a catch-all substitution.
+  let ctor = dd.ctors[ci]
+  for row in rows:
+    let (isCtor, headName, nargs) = patKindOf(row.pats[0], ctorToData)
+    if isCtor:
+      doAssert headName == ctor.name
+      doAssert nargs.len == ctor.tele.len  # checked by coverage
+      var npats = nargs
+      for p in row.pats[1 .. ^1]: npats.add(p)
+      result.add(MatrixRow(pats: npats, restPats: copyPres(row.restPats),
+                           rhs: copyPre(row.rhs), cloc: row.cloc,
+                           src: row.src, catchVar: ""))
+    else:
+      var npats: seq[PreTerm] = @[]
+      for _ in ctor.tele: npats.add(mkHole(loc))
+      for p in row.pats[1 .. ^1]: npats.add(p)
+      let cv = if row.pats[0].kind == pkVar: row.pats[0].name else: ""
+      result.add(MatrixRow(pats: npats, restPats: copyPres(row.restPats),
+                           rhs: copyPre(row.rhs), cloc: row.cloc,
+                           src: row.src, catchVar: cv))
+
+proc analyzeColType(ctx: ClauseCtx, col: MatrixCol): tuple[params: seq[PreTerm],
+    idxTerms: seq[PreTerm]] =
+  ## Decompose a nested column's scrutinee type `D params idxs`. Index
+  ## terms must be variables (rigid indices under a nested match are
+  ## rejected with a clear error rather than miscompiled).
+  let dd = ctx.dataInfos[col.dataName]
+  let spine = flattenAppSpine(col.argTy)
+  let nParams = dd.params.len
+  let (indexTele, _) = flattenPiPre(dd.indexTy)
+  if spine.len == 0 or spine[0].kind != pkVar or
+     spine[0].name != col.dataName or
+     spine.len - 1 != nParams + indexTele.len:
+    raise elabErr(ctx.loc, "'def' clauses: nested match scrutinee has " &
+      "malformed type (expected '" & col.dataName & "' applied to " &
+      $nParams & " parameter(s) and " & $indexTele.len & " indice(s))")
+  var params: seq[PreTerm] = @[]
+  for i in 1 .. nParams: params.add(spine[i])
+  var idxTerms: seq[PreTerm] = @[]
+  for i in 1 + nParams ..< spine.len:
+    if spine[i].kind != pkVar:
+      raise elabErr(ctx.loc, "'def' clauses: nested match on '" &
+        col.dataName & "' requires variable indices")
+    idxTerms.add(spine[i])
+  (params, idxTerms)
+
+proc buildNestedMotive(ctx: ClauseCtx, dd: SurfDecl,
+                       paramSubstI: seq[(string, PreTerm)],
+                       paramsI: seq[PreTerm], tail: TailCtx): PreTerm =
+  ## Motive for a nested split: `lam idxs. lam (_ : D params idxs). BODY`.
+  ## Nested splits are always under a method that already binds the rest
+  ## (`tail.restBound`), so BODY is the stripped `tail.retTy`. The body is
+  ## constant in the indices (the outer constructor's index refinement is
+  ## already applied), but the eliminator still takes them.
+  let (indexTele, _) = flattenPiPre(dd.indexTy)
+  var midxNames: seq[string] = @[]
+  for i in 0 ..< indexTele.len:
+    var nm = "midxn" & $i
+    var k = 0
+    while nm in ctx.usedNames:
+      nm = "midxn" & $i & "_" & $k
+      inc k
+    ctx.usedNames.incl(nm)
+    midxNames.add(nm)
+  var scrTy = mkVar(dd.dname, ctx.loc)
+  for pt in paramsI: scrTy = mkApp(scrTy, pt, ctx.loc)
+  for mn in midxNames: scrTy = mkApp(scrTy, mkVar(mn, ctx.loc), ctx.loc)
+  result = mkLam("_motive", scrTy, tail.retTy, ctx.loc)
+  # Issue #112: dependent index telescopes substitute old->new in order.
+  var idxSubst: seq[(string, PreTerm)] = @[]
+  var indexTysSub: seq[PreTerm] = @[]
+  for j in 0 ..< indexTele.len:
+    indexTysSub.add(substPreN(substPreN(indexTele[j].ty, paramSubstI,
+                                        ctx.fresh), idxSubst, ctx.fresh))
+    idxSubst.add((indexTele[j].name, mkVar(midxNames[j], ctx.loc)))
+  for j in countdown(midxNames.high, 0):
+    result = mkLam(midxNames[j], indexTysSub[j], result, ctx.loc)
+
+proc freshIhName(ctx: ClauseCtx, loc: Loc): string =
+  ## A globally fresh IH binder name; a user pattern variable with the
+  ## generated shape is a hard error (it would be silently misread).
+  while true:
+    let nm = "ih" & $ctx.ihFresh
+    inc ctx.ihFresh
+    if nm in ctx.allPatVars:
+      raise elabErr(loc, "pattern variable '" & nm &
+        "' clashes with a generated induction hypothesis name; " &
+        "rename the pattern variable")
+    if nm notin ctx.usedNames:
+      ctx.usedNames.incl(nm)
+      return nm
+
+proc assembleLeaf(ctx: ClauseCtx, cols: seq[MatrixCol], rows: seq[MatrixRow],
+                  tail: TailCtx): PreTerm =
+  ## No column has a constructor pattern: the first row matches everything
+  ## left in this branch (later rows are shadowed here). Substitute variable
+  ## patterns by their column terms. The rest arguments are bound by the
+  ## enclosing method (see compileBranch), so no binding happens here.
+  let row = rows[0]
+  var rhs = row.rhs
+  for i, col in cols:
+    let p = row.pats[i]
+    if p.kind == pkVar:
+      rhs = substPre(rhs, p.name, col.term, ctx.fresh)
+    elif p.kind != pkHole:
+      raise elabErr(row.cloc, "'def' clauses: cannot pattern-match on '" &
+        $p & "': the argument type is not a data type")
+  result = rhs
+
+proc compileMatrixNode(ctx: ClauseCtx, cols: seq[MatrixCol],
+                       rows: seq[MatrixRow], tail: TailCtx,
+                       ctxMsg: string): PreTerm
+  ## Compile one split node: the first column with a constructor pattern
+  ## becomes one eliminator application; otherwise assemble the leaf.
+
+proc compileBranch(ctx: ClauseCtx, dd: SurfDecl, ci: int,
+                   cols: seq[MatrixCol], rows: seq[MatrixRow], tail: TailCtx,
+                   hasTail: bool, ctxMsg: string): PreTerm =
+  ## Compile the method(s) for constructor dd.ctors[ci] of the split on
+  ## cols[0]. `hasTail=false` only for the top split: then the rest
+  ## binders are canonicalized and the tail type computed here; nested
+  ## splits inherit the enclosing constructor's tail.
+  let ctor = dd.ctors[ci]
+  var sub0 = specializeRows(rows, dd, ci, ctx.ctorToData, ctx.loc)
+  # Parameter substitution for this data type.
+  var paramSubstI: seq[(string, PreTerm)] = @[]
+  for i, p in dd.params: paramSubstI.add((p.name, cols[0].params[i]))
+  # Canonical constructor-argument binders. Positions where every row
+  # agrees on one variable keep the user's name; anything else (nested
+  # patterns, wildcards, disagreement) gets a fresh name, with each row's
+  # pattern variable substituted accordingly.
+  var argNames: seq[string] = @[]
+  var chosen = initHashSet[string]()
+  for i, te in ctor.tele:
+    var agreeName = ""
+    var ok = true
+    for r in sub0:
+      let p = r.pats[i]
+      if p.kind == pkVar:
+        if agreeName == "": agreeName = p.name
+        elif agreeName != p.name: ok = false
+      else: ok = false
+    var nm: string
+    if ok and agreeName != "" and agreeName notin chosen:
+      nm = agreeName
+    else:
+      let base = if te.name.len > 0: te.name else: "carg"
+      nm = base
+      var k = 0
+      while nm in ctx.usedNames or isIhName(nm) or nm in chosen:
+        nm = base & "'" & $k
+        inc k
+      ctx.usedNames.incl(nm)
+    chosen.incl(nm)
+    argNames.add(nm)
+  # Name substitution: constructor tele names := argument binders.
+  var nameSubst: seq[(string, PreTerm)] = @[]
+  for i, te in ctor.tele:
+    nameSubst.add((te.name, mkVar(argNames[i], ctx.loc)))
+  # Constructor return indices, with params and tele names substituted.
+  var retIdx = substPreSeq(extractIndices(ctor.retTy, dd.dname,
+                                          dd.params.len, ctor.cloc),
+                           paramSubstI, ctx.fresh)
+  retIdx = substPreSeq(retIdx, nameSubst, ctx.fresh)
+  # Issue #80: impossible-clause check — the constructor's return indices
+  # must be compatible with the scrutinee's indices.
+  var bound80 = ctx.teleNames
+  for an in argNames: bound80.incl(an)
+  for j in 0 ..< min(cols[0].idxTerms.len, retIdx.len):
+    let nc = noConfusionConflictPre(retIdx[j], cols[0].idxTerms[j],
+                                    ctx.ctorToData, bound80)
+    if nc.bad:
+      raise elabErr(sub0[0].cloc, "impossible clause for constructor '" &
+        ctor.name & "': " & nc.reason & ctxMsg)
+  # Constructor argument types with params/names substituted.
+  var argTys: seq[PreTerm] = @[]
+  for te in ctor.tele:
+    argTys.add(substPreN(substPreN(te.ty, paramSubstI, ctx.fresh),
+                         nameSubst, ctx.fresh))
+  # The tail: computed here for the top split, inherited for nested ones.
+  # The rest binders are bound at the method level (see below): nested
+  # splits scrutinize the rest binders, so they must be in scope at the
+  # split site rather than bound at the leaves.
+  var tailOut = tail
+  var matchCols: seq[MatrixCol] = @[]
+  var idxSubst: seq[(string, PreTerm)] = @[]
+  if not hasTail:
+    for j, v in ctx.scrIdxVars: idxSubst.add((v, retIdx[j]))
+    # Explicit argument positions after the scrutinee: the match columns.
+    var expTis: seq[int] = @[]
+    for ti in ctx.sPos + 1 .. ctx.tele.high:
+      if not ctx.tele[ti].impl: expTis.add(ti)
+    # Canonical rest binders, freshened against every name in sight. Base
+    # name: this constructor's first row's variable pattern for the column
+    # when it has one, else the telescope binder name. (Pattern variables
+    # are substituted by these binders per row at the leaves, so no eager
+    # per-row substitution is needed here.)
+    var canonNames: seq[string] = @[]
+    for ep_i, ti in expTis:
+      let p0 = sub0[0].restPats[ep_i]
+      var base = if p0.kind == pkVar and p0.name.len > 0: p0.name
+                 elif ctx.tele[ti].name.len > 0: ctx.tele[ti].name
+                 else: "marg" & $ep_i
+      var nm = base
+      var k = 0
+      while nm in ctx.usedNames or isIhName(nm):
+        nm = base & "'" & $k
+        inc k
+      ctx.usedNames.incl(nm)
+      canonNames.add(nm)
+    # Rest binders in telescope order (implicits keep their tele names).
+    # Telescope names are rewritten to the canonical ones so dependent
+    # rest types stay well-scoped.
+    var restNames: seq[string] = @[]
+    var restTys: seq[PreTerm] = @[]
+    var teleToCanon: seq[(string, PreTerm)] = @[]
+    var ep_i = 0
+    for ti in ctx.sPos + 1 .. ctx.tele.high:
+      var bn: string
+      if ctx.tele[ti].impl:
+        bn = if ctx.tele[ti].name.len > 0: ctx.tele[ti].name else: "x" & $ti
+      else:
+        bn = canonNames[ep_i]
+        inc ep_i
+      restNames.add(bn)
+      restTys.add(substPreN(substPreN(substPreN(ctx.tele[ti].ty,
+                                                ctx.paramSubst, ctx.fresh),
+                                     idxSubst, ctx.fresh),
+                            teleToCanon, ctx.fresh))
+      if ctx.tele[ti].name.len > 0 and ctx.tele[ti].name != bn:
+        teleToCanon.add((ctx.tele[ti].name, mkVar(bn, ctx.loc)))
+    # Build the match columns (one per explicit post-scrutinee argument):
+    # their terms are the canonical rest binders, bound by this method's
+    # lambda nest below, so nested splits on them are well-scoped. Merge
+    # each row's rest patterns into its pattern vector to match.
+    ep_i = 0
+    var ri = 0
+    for ti in ctx.sPos + 1 .. ctx.tele.high:
+      if not ctx.tele[ti].impl:
+        var h = restTys[ri]
+        while h.kind == pkApp: h = h.c1
+        let isD = h.kind == pkVar and ctx.dataInfos.hasKey(h.name)
+        matchCols.add(MatrixCol(term: mkVar(restNames[ri], ctx.loc),
+                                dataName: (if isD: h.name else: ""),
+                                isData: isD, matchCol: true,
+                                argTy: restTys[ri]))
+        inc ep_i
+      inc ri
+    for r in sub0.mitems:
+      r.pats = r.pats & r.restPats
+      r.restPats = @[]
+    var midxToRet: seq[(string, PreTerm)] = @[]
+    for j, mn in ctx.motiveIdxNames: midxToRet.add((mn, retIdx[j]))
+    # The tail's Pi binders use canonical rest names, so the motive body
+    # gets the tele->canonical rewrite as well.
+    tailOut = TailCtx(restNames: restNames, restTys: restTys,
+                      tailTy: substPreN(substPreN(ctx.cBody, teleToCanon,
+                                                 ctx.fresh),
+                                        midxToRet, ctx.fresh),
+                      retTy: substPreN(substPreN(ctx.cBodyRet, teleToCanon,
+                                                ctx.fresh),
+                                       midxToRet, ctx.fresh),
+                      restBound: false)
+  else:
+    # Nested split: the rest binders are bound by the enclosing method's
+    # lambda nest, so this method must not re-bind them.
+    tailOut.restBound = true
+  # Catch-all and pattern-variable substitutions per row.
+  var ctorApp = mkVar(ctor.name, ctx.loc)
+  for an in argNames: ctorApp = mkApp(ctorApp, mkVar(an, ctx.loc), ctx.loc)
+  for r in sub0.mitems:
+    if r.catchVar != "":
+      r.rhs = substPre(r.rhs, r.catchVar, ctorApp, ctx.fresh)
+    for i in 0 ..< ctor.tele.len:
+      let p = r.pats[i]
+      if p.kind == pkVar and p.name != argNames[i]:
+        r.rhs = substPre(r.rhs, p.name, mkVar(argNames[i], ctx.loc),
+                         ctx.fresh)
+  # Induction hypotheses for recursive arguments (Issue #113: reject
+  # higher-order recursive arguments here as before).
+  var ihTys = newSeq[PreTerm](ctor.tele.len)
+  var ihNames = newSeq[string](ctor.tele.len)
+  for ti, te in ctor.tele:
+    if mentionsFam(te.ty, dd.dname):
+      let (hoTele, _) = splitCtorArg(te.ty, dd.dname, ctor.name, te.name,
+                                     dd.params.len, ctor.cloc)
+      if hoTele.len > 0:
+        raise elabErr(sub0[0].cloc, "constructor '" & ctor.name &
+          "' has a higher-order recursive argument '" & te.name &
+          "'; clause-style definitions over such datatypes are not yet " &
+          "supported (use the '" & elimNameFor(dd.dname) &
+          "' eliminator directly)" & ctxMsg)
+      let ihN = freshIhName(ctx, sub0[0].cloc)
+      var ihTy: PreTerm
+      if hasTail:
+        # The nested motive is constant in its indices and the rest
+        # binders are bound by the enclosing method: the IH type is the
+        # stripped inherited tail `Ret` (the nested eliminator applied to
+        # this argument computes exactly it).
+        ihTy = tailOut.retTy
+      else:
+        var argIdx = substPreSeq(extractIndices(te.ty, dd.dname,
+                                                dd.params.len, ctor.cloc),
+                                 paramSubstI, ctx.fresh)
+        argIdx = substPreSeq(argIdx, nameSubst, ctx.fresh)
+        ihTy = ctx.cBody
+        for j, mn in ctx.motiveIdxNames:
+          ihTy = substPre(ihTy, mn, argIdx[j], ctx.fresh)
+      ihTys[ti] = ihTy
+      ihNames[ti] = ihN
+      ctx.recPairs.add((rv: argNames[ti], ihn: ihN, nested: hasTail))
+  # Columns for the constructor arguments; recurse into nested patterns.
+  var newCols: seq[MatrixCol] = @[]
+  for i, te in ctor.tele:
+    let aty = argTys[i]
+    var h = aty
+    while h.kind == pkApp: h = h.c1
+    var isD = false
+    var dn = ""
+    if h.kind == pkVar and ctx.dataInfos.hasKey(h.name):
+      isD = true
+      dn = h.name
+    newCols.add(MatrixCol(term: mkVar(argNames[i], ctx.loc), dataName: dn,
+                          isData: isD, argTy: aty))
+  let restCols = if hasTail: cols[1 .. ^1] else: matchCols
+  let inner = compileMatrixNode(ctx, newCols & restCols, sub0, tailOut,
+                                ctxMsg & " (under '" & ctor.name & "')")
+  # Lambda nest: args, then IHs (in tele order, IH after its var), then
+  # the rest binders — unless the rest is already bound by an enclosing
+  # split node (`tailOut.restBound`), in which case nested splits see the
+  # enclosing binders and use the stripped tail `retTy`. Each mkLam wraps
+  # outside the previous, so the rest binders are wrapped first.
+  result = inner
+  if not tailOut.restBound:
+    for ri in countdown(tailOut.restNames.high, 0):
+      result = mkLam(tailOut.restNames[ri], tailOut.restTys[ri], result,
+                     ctx.loc)
+  for ti in countdown(ctor.tele.high, 0):
+    if not ihTys[ti].isNil:
+      result = mkLam(ihNames[ti], ihTys[ti], result, ctx.loc)
+    result = mkLam(argNames[ti], argTys[ti], result, ctx.loc)
+
+proc compileMatrixNode(ctx: ClauseCtx, cols: seq[MatrixCol],
+                       rows: seq[MatrixRow], tail: TailCtx,
+                       ctxMsg: string): PreTerm =
+  ## Compile one split node: the first column with a constructor pattern
+  ## becomes one eliminator application; otherwise assemble the leaf.
+  var j = -1
+  for cji in 0 ..< cols.len:
+    for row in rows:
+      let (isCtor, headName, _) = patKindOf(row.pats[cji], ctx.ctorToData)
+      if isCtor:
+        if not cols[cji].isData:
+          raise elabErr(row.cloc,
+            "'def' clauses: cannot pattern-match on '" & headName &
+            "': the argument type is not a data type" & ctxMsg)
+        j = cji
+        break
+    if j >= 0: break
+  if j < 0:
+    return assembleLeaf(ctx, cols, rows, tail)
+  # Swap the split column to the front (patterns move with it).
+  var cols2 = cols
+  cols2[0] = cols[j]
+  cols2[j] = cols[0]
+  var rows2 = rows
+  if j != 0:
+    for r in rows2.mitems:
+      let t = r.pats[0]
+      r.pats[0] = r.pats[j]
+      r.pats[j] = t
+  let dd = ctx.dataInfos[cols2[0].dataName]
+  # Analyze the column type once for this split.
+  let (paramsI, idxTermsI) = analyzeColType(ctx, cols2[0])
+  cols2[0].params = paramsI
+  cols2[0].idxTerms = idxTermsI
+  let perCtor = checkMatrixCoverage(rows2, dd, ctx.dataInfos, ctx.ctorToData,
+                                ctxMsg, ctx.loc)
+  # The motive: constant in the indices, body is the inherited tail.
+  var paramSubstI: seq[(string, PreTerm)] = @[]
+  for i, p in dd.params: paramSubstI.add((p.name, paramsI[i]))
+  let motive = buildNestedMotive(ctx, dd, paramSubstI, paramsI, tail)
+  var methods: seq[PreTerm] = @[]
+  for ci, ctor in dd.ctors:
+    methods.add(compileBranch(ctx, dd, ci, cols2, perCtor[ci], tail, true,
+                              ctxMsg))
+  result = mkVar(elimNameFor(dd.dname), ctx.loc)
+  for i, p in dd.params:
+    if not p.impl:
+      result = mkApp(result, paramsI[i], ctx.loc)
+  result = mkApp(result, motive, ctx.loc)
+  for m in methods: result = mkApp(result, m, ctx.loc)
+  for it in idxTermsI: result = mkApp(result, it, ctx.loc)
+  result = mkApp(result, cols2[0].term, ctx.loc)
+
+
 
 proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
                      ms: var MetaStore,
@@ -2535,48 +3188,23 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
   while cur.kind == pkPi:
     if not cur.impl: inc nExplicit
     cur = cur.c2
-  # 3. Process clauses: coverage + overlap over the first-pattern column.
-  #    Issue #78: the first pattern may be a constructor pattern, a
-  #    variable, or a wildcard `_`. A variable/wildcard covers every
-  #    constructor not already covered; a clause covering nothing new is
-  #    redundant.
-  var covered: Table[string, int] = initTable[string, int]()  # ctor -> clause idx
-  var ctorNames: seq[string] = @[]
-  for ctor in dataDecl.ctors: ctorNames.add(ctor.name)
-  for ci, cl in cd.clauses:
+  # 3. Build the top-level clause matrix: coverage + overlap over the
+  #    first-pattern column. Issue #78: the first pattern may be a
+  #    constructor pattern (possibly nested), a variable, or a wildcard
+  #    `_`. A variable/wildcard covers every constructor not already
+  #    covered; a clause covering nothing new is redundant.
+  for cl in cd.clauses:
     if cl.pats.len != nExplicit:
       raise elabErr(cl.cloc, "clause has " & $cl.pats.len & " patterns but " &
         "the type has " & $nExplicit & " explicit arguments")
-    let (isCtor, headName, _) = patHeadName(cl.pats[0], ctorNames)
-    if isCtor:
-      if headName notin ctorNames:
-        raise elabErr(cl.cloc, "'" & headName & "' is not a constructor of '" &
-          dataName & "'")
-      if covered.hasKey(headName):
-        raise elabErr(cl.cloc, "overlapping clauses: '" & headName &
-          "' already covered by the clause at " &
-          $cd.clauses[covered[headName]].cloc.line & ":" &
-          $cd.clauses[covered[headName]].cloc.col)
-      covered[headName] = ci
-    else:
-      # Issue #78: a variable/wildcard first pattern covers every
-      # constructor not matched by an earlier clause. Anything else that
-      # is not a constructor pattern is rejected here.
-      if cl.pats[0].kind != pkVar and cl.pats[0].kind != pkHole:
-        raise elabErr(cl.cloc, "first pattern must be a constructor " &
-          "pattern, a variable, or a wildcard `_`")
-      var newCover = 0
-      for cn in ctorNames:
-        if not covered.hasKey(cn):
-          covered[cn] = ci
-          inc newCover
-      if newCover == 0:
-        raise elabErr(cl.cloc, "redundant clause: every constructor is " &
-          "already covered by an earlier clause")
-  for ctor in dataDecl.ctors:
-    if not covered.hasKey(ctor.name):
-      raise elabErr(loc, "missing case for constructor '" & ctor.name &
-        "' of '" & dataName & "'")
+  var topRows: seq[MatrixRow] = @[]
+  for si, cl in cd.clauses:
+    topRows.add(MatrixRow(pats: @[copyPre(cl.pats[0])],
+                          restPats: copyPres(cl.pats[1 .. ^1]),
+                          rhs: copyPre(cl.rhs), cloc: cl.cloc, src: si,
+                          catchVar: ""))
+  let perCtorTop = checkMatrixCoverage(topRows, dataDecl, dataInfos, ctorToData,
+                                  "", loc)
   # 4. Build the eliminator application as a PreTerm, then elaborate as a def.
   #    Supports indexed families: the scrutinee's type may be
   #    `D params idxs...` with variable indices.
@@ -2629,6 +3257,42 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
   if sPos < 0:
     raise elabErr(loc, "'def' clauses need at least one explicit argument " &
       "(the scrutinee)")
+  # Issue #78: per-clause pattern validation. Non-scrutinee patterns must
+  # be variables (multi-column matching is still open); pattern variables
+  # at any nesting depth must be unique per clause and must not shadow
+  # telescope binders (the method body rebinds rest implicits by their
+  # tele names, so a colliding pattern variable would be misread).
+  var allPatVars = initHashSet[string]()
+  for cl in cd.clauses:
+    var pi = 1
+    for ti in sPos + 1 .. tele.high:
+      if not tele[ti].impl:
+        if cl.pats[pi].kind != pkVar and cl.pats[pi].kind != pkHole:
+          raise elabErr(cl.cloc, "'def' clauses: non-scrutinee patterns " &
+            "must be variables")
+        inc pi
+    var pvars: seq[string] = @[]
+    collectPatVarSeq(cl.pats[0], ctorToData, pvars)
+    var seen = initHashSet[string]()
+    for v in pvars:
+      if v in seen:
+        raise elabErr(cl.cloc, "duplicate pattern variable '" & v & "'")
+      seen.incl(v)
+      allPatVars.incl(v)
+    pi = 1
+    for ti in sPos + 1 .. tele.high:
+      if not tele[ti].impl:
+        if cl.pats[pi].kind == pkVar:
+          let v = cl.pats[pi].name
+          if v in seen:
+            raise elabErr(cl.cloc, "duplicate pattern variable '" & v & "'")
+          seen.incl(v)
+          allPatVars.incl(v)
+        inc pi
+    for v in pvars:
+      if v in teleNames and v != tele[sPos].name:
+        raise elabErr(cl.cloc, "pattern variable '" & v &
+          "' shadows argument '" & v & "'; rename the pattern variable")
   # Scrutinee domain analysis: `D params... idxs...`
   let domS = tele[sPos].ty
   let domSpine = flattenAppSpine(domS)
@@ -2685,6 +3349,7 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
   for j, v in scrIdxVars:
     midxSubst.add((v, mkVar(motiveIdxNames[j], loc)))
   var cBody = substPreN(retTy, midxSubst, fresh)
+  let cBodyRet = copyPre(cBody)  # cBody with the `Pi rest` prefix stripped
   for ti in countdown(tele.high, sPos + 1):
     let bn = if tele[ti].name.len > 0: tele[ti].name else: "x" & $ti
     cBody = mkPi(bn, substPreN(tele[ti].ty, midxSubst, fresh), cBody, loc)
@@ -2704,179 +3369,39 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
     idxSubst.add((indexTele[j].name, mkVar(motiveIdxNames[j], loc)))
   for j in countdown(motiveIdxNames.high, 0):
     motive = mkLam(motiveIdxNames[j], indexTysSub[j], motive, loc)
-  # Build methods, one per constructor (in dataDecl order)
+  # Build methods, one per constructor (in dataDecl order), via the
+  # recursive clause-matrix compiler (issue #78). Nested constructor
+  # patterns become nested eliminator applications inside method bodies.
+  let ctx = ClauseCtx(
+    cdName: cd.name, loc: loc, dataInfos: dataInfos, ctorToData: ctorToData,
+    tele: tele, teleNames: teleNames, sPos: sPos, paramSubst: paramSubst,
+    motiveIdxNames: motiveIdxNames, cBody: cBody, cBodyRet: cBodyRet,
+    scrIdxVars: scrIdxVars,
+    usedNames: usedNames, allPatVars: allPatVars, fresh: fresh, ihFresh: 0,
+    recPairs: @[])
+  let scrutBinder = if tele[sPos].name.len > 0: tele[sPos].name
+                    else: "x" & $sPos
+  let topCol = MatrixCol(term: mkVar(scrutBinder, loc), dataName: dataName,
+                         isData: true, params: paramTerms,
+                         idxTerms: scrIdxTerms, argTy: domS)
   var methods: seq[PreTerm] = @[]
-  for ctor in dataDecl.ctors:
-    let ci = covered[ctor.name]
-    let cl = cd.clauses[ci]
-    let (isCtorPat, _, patArgs0) = patHeadName(cl.pats[0], ctorNames)
-    # Constructor-argument binder names for this method's lambdas.
-    var argNames: seq[string] = @[]
-    # Issue #78: name bound by a catch-all variable first pattern
-    # (`| x = rhs`); "" for constructor patterns and wildcards.
-    var catchAllVar = ""
-    if isCtorPat:
-      let patArgs = patArgs0
-      if patArgs.len != ctor.tele.len:
-        raise elabErr(cl.cloc, "constructor '" & ctor.name & "' takes " &
-          $ctor.tele.len & " arguments but pattern has " & $patArgs.len)
-      # Pattern arg names (must be variables; no nested patterns yet)
-      for pa in patArgs:
-        if pa.kind != pkVar:
-          raise elabErr(cl.cloc, "'def' clauses: constructor arguments " &
-            "must be variables (no nested patterns)")
-        argNames.add(pa.name)
-    else:
-      # Catch-all (variable or wildcard) first pattern: the eliminator
-      # binds this constructor's arguments, so freshen them against every
-      # name in sight (and against generated `ihN` names). A variable
-      # pattern stands for the whole scrutinee and is replaced by the
-      # constructor application in the RHS below.
-      for te in ctor.tele:
-        let base = if te.name.len > 0: te.name else: "carg"
-        var nm = base
-        var k = 0
-        while nm in usedNames or isIhName(nm) or nm in argNames:
-          nm = base & "'" & $k
-          inc k
-        usedNames.incl(nm)
-        argNames.add(nm)
-      if cl.pats[0].kind == pkVar:
-        catchAllVar = cl.pats[0].name
-    # Remaining patterns must be variables; collect explicit rest names
-    var restPatNames: seq[string] = @[]
-    var seenPats = initHashSet[string]()
-    for pn in argNames:
-      if pn in seenPats:
-        raise elabErr(cl.cloc, "duplicate pattern variable '" & pn & "'")
-      seenPats.incl(pn)
-    if catchAllVar.len > 0:
-      if catchAllVar in seenPats:
-        raise elabErr(cl.cloc, "duplicate pattern variable '" &
-          catchAllVar & "'")
-      seenPats.incl(catchAllVar)
-    var pi = 1
-    for ti in sPos + 1 .. tele.high:
-      if not tele[ti].impl:
-        if cl.pats[pi].kind != pkVar:
-          raise elabErr(cl.cloc, "'def' clauses: non-scrutinee patterns " &
-            "must be variables")
-        if cl.pats[pi].name in seenPats:
-          raise elabErr(cl.cloc, "duplicate pattern variable '" &
-            cl.pats[pi].name & "'")
-        seenPats.incl(cl.pats[pi].name)
-        restPatNames.add(cl.pats[pi].name)
-        inc pi
-    # Pattern variables must not shadow other telescope binders (the
-    # method body rebinds rest implicits by their tele names, so a
-    # colliding pattern variable would be silently misread).
-    for ti, b in tele:
-      if ti != sPos and b.name.len > 0 and b.name in seenPats and
-         b.name notin restPatNames:
-        raise elabErr(cl.cloc, "pattern variable '" & b.name &
-          "' shadows argument '" & b.name & "'; rename the pattern variable")
-    # Name substitution: constructor tele names := pattern names
-    var nameSubst: seq[(string, PreTerm)] = @[]
-    for i, tn in ctor.tele:
-      nameSubst.add((tn.name, mkVar(argNames[i], loc)))
-    # Constructor return indices, with params and tele names substituted
-    var retIdx = substPreSeq(extractIndices(ctor.retTy, dataName, nParams,
-                                            ctor.cloc), paramSubst, fresh)
-    retIdx = substPreSeq(retIdx, nameSubst, fresh)
-    # Issue #80: impossible-clause check — the constructor's return indices
-    # must be compatible with the scrutinee's indices. A rigid noConfusion
-    # conflict (e.g. clause `nil` against a scrutinee of type `Vec A (suc
-    # n)`) is rejected here with a named error instead of failing later
-    # with a confusing unification/conversion error. (Currently the
-    # scrutinee indices are always variables, so this fires once rigid
-    # scrutinee indices are allowed; the check itself is tested directly.)
-    # Pattern variables shadowing constructor names are excluded via bound.
-    var bound80 = teleNames
-    for an in argNames: bound80.incl(an)
-    for j in 0 ..< min(scrIdxTerms.len, retIdx.len):
-      let nc = noConfusionConflictPre(retIdx[j], scrIdxTerms[j], ctorToData,
-                                      bound80)
-      if nc.bad:
-        raise elabErr(cl.cloc, "impossible clause for constructor '" &
-          ctor.name & "': " & nc.reason)
-    # Index refinement for this method: scrutinee idx vars := ret indices
-    var idxSubst: seq[(string, PreTerm)] = @[]
-    for j, v in scrIdxVars:
-      idxSubst.add((v, retIdx[j]))
-    # Constructor argument types with params/names substituted
-    var argTys: seq[PreTerm] = @[]
-    for te in ctor.tele:
-      argTys.add(substPreN(substPreN(te.ty, paramSubst, fresh),
-                           nameSubst, fresh))
-    # Build method body: lam (args...). lam (ihs...). lam (rest...). rhs'
-    var rhs = substPreN(cl.rhs, idxSubst, fresh)
-    # Issue #78: a catch-all variable pattern binds the whole scrutinee;
-    # in this method it is the constructor applied to the method's binders.
-    if catchAllVar.len > 0:
-      var ctorApp = mkVar(ctor.name, loc)
-      for an in argNames:
-        ctorApp = mkApp(ctorApp, mkVar(an, loc), loc)
-      rhs = substPre(rhs, catchAllVar, ctorApp, fresh)
-    # Identify recursive args and their IH names/types
-    var ihTys: seq[PreTerm] = @[]
-    var ihCount = 0
-    for ti, te in ctor.tele:
-      if mentionsFam(te.ty, dataName):
-        # Issue #113: clause compilation passes a bare recursive call for
-        # each recursive argument; higher-order arguments need the
-        # under-binder lambda form, which is not implemented here yet.
-        let (clHoTele, _) = splitCtorArg(te.ty, dataName, ctor.name, te.name,
-                                        nParams, ctor.cloc)
-        if clHoTele.len > 0:
-          raise elabErr(cl.cloc, "constructor '" & ctor.name &
-            "' has a higher-order recursive argument '" & te.name &
-            "'; clause-style definitions over such datatypes are not yet " &
-            "supported (use the '" & elimNameFor(dataName) &
-            "' eliminator directly)")
-        let ihN = "ih" & $ihCount
-        if ihN in seenPats:
-          raise elabErr(cl.cloc, "pattern variable '" & ihN &
-            "' clashes with a generated induction hypothesis name; " &
-            "rename the pattern variable")
-        var argIdx = substPreSeq(extractIndices(te.ty, dataName, nParams,
-                                                ctor.cloc), paramSubst, fresh)
-        argIdx = substPreSeq(argIdx, nameSubst, fresh)
-        # IH type: the motive tail with index binders := this arg's indices
-        var ihTy = cBody
-        for j, mn in motiveIdxNames:
-          ihTy = substPre(ihTy, mn, argIdx[j], fresh)
-        ihTys.add(ihTy)
-        inc ihCount
-        # Replace recursive calls on this variable
-        rhs = replaceRecCalls(rhs, cd.name, argNames[ti], ihN)
+  for ci, ctor in dataDecl.ctors:
+    ctx.recPairs = @[]
+    var body = compileBranch(ctx, dataDecl, ci, @[topCol], perCtorTop[ci],
+                             TailCtx(), false, "")
+    # Rewrite structural recursive calls on pattern binders (at any
+    # nesting depth) to IH applications.
+    for rp in ctx.recPairs:
+      body = replaceRecCalls(body, cd.name, rp.rv, rp.ihn, rp.nested)
     # Issue #36: any self-reference surviving IH-rewriting is a
     # non-structural recursive call — reject with a termination error.
-    checkClauseTermination(rhs, cd.name, cl.cloc)
-    # Build the lambda nest: args, then IHs (in tele order, IH after its
-    # var), then rest args. Rest lambdas are explicit to match the
-    # all-explicit motive tail.
-    var body = rhs
-    var rpi = 0
-    for ti in countdown(tele.high, sPos + 1):
-      var bn: string
-      if tele[ti].impl:
-        bn = if tele[ti].name.len > 0: tele[ti].name else: "x" & $ti
-      else:
-        bn = restPatNames[rpi]
-        inc rpi
-      let bty = substPreN(substPreN(tele[ti].ty, paramSubst, fresh),
-                          idxSubst, fresh)
-      body = mkLam(bn, bty, body, loc)
-    # constructor args and IHs (reverse order, IH after its var)
-    for ti in countdown(ctor.tele.high, 0):
-      if mentionsFam(ctor.tele[ti].ty, dataName):
-        # IH for this var; IHs were numbered in forward order
-        var fwdIdx = 0
-        for tj in 0 ..< ti:
-          if mentionsFam(ctor.tele[tj].ty, dataName): inc fwdIdx
-        body = mkLam("ih" & $fwdIdx, ihTys[fwdIdx], body, loc)
-      body = mkLam(argNames[ti], argTys[ti], body, loc)
+    let fc = if perCtorTop[ci].len > 0: perCtorTop[ci][0].cloc else: loc
+    checkClauseTermination(body, cd.name, fc)
     methods.add(body)
+  # Write back the consumed fresh-name state.
+  fresh = ctx.fresh
+  usedNames = ctx.usedNames
+
   # Build the full application:
   #   elimD params... C m_0 ... m_(k-1) idxs... x_s rest...
   var app = mkVar(elimName, loc)
