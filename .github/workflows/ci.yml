@@ -34,6 +34,8 @@ jobs:
           nim c -r --hints:off $P "tests/run_embedded_examples.nim" || exit 1
           echo "=== surface-syntax conformance (issue #144) ==="
           nim c -r --hints:off $P "tests/surface_conformance.nim" || exit 1
+          echo "=== elaboration adequacy properties (issue #38) ==="
+          nim c -r --hints:off $P "tests/adequacy_props.nim" || exit 1
           echo "=== embedded macro forms (issue #151) ==="
           nim c -r --hints:off $P "tests/test_embedded_macro_forms.nim" || exit 1
           echo "=== staging soundness fuzz (issue #29, fixed seed) ==="
