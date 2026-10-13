@@ -19,18 +19,42 @@ Package with vsce (`npm i -g @vscode/vsce && vsce package`) and install the
 
 ## Use
 
-1. Open a `.nim` file containing a `shedsBlock` and compile it once with Nim
-   so the macro writes the `<file>.sheds.json` sidecar.
-2. Run **Eponym: Show shed layout** (`eponym.showShedLayout`), enter the shed
-   name (e.g. `quadBody` in `examples/embedded/sheds_demo.nim`).
+1. Open a `.nim` file containing a `shedsBlock` and run **Eponym: Show shed
+   layout** (`eponym.showShedLayout`), then enter the shed name (e.g.
+   `quadBody` in `examples/embedded/sheds_demo.nim`).
+2. The extension compiles the file with Nim itself — the `shedsBlock` macro
+   writes the `<file>.sheds.json` sidecar at macro-expansion time, so no
+   terminal invocation is needed. The compile uses the repo's `--path`
+   setup, derived from the repo root, with progress in a notification.
 3. The webview renders the shed's proof state as Epigram-style 2D boxes.
    Click a hole (`?n`) to see its goal type.
 
-Hole actions (refine / give / case-split) send `textDocument/codeAction`
-requests to the server and apply the returned edits, then re-render. For
-`.nim` shed docs the round-trip is not yet closed — the server's action path
-elaborates the document text as Eponym source, which a `.nim` file is not.
-Closing the loop (edit the shed draft, recompile, re-render) is issue #137.
+Editing a shed block and saving recompiles the file and refreshes any open
+shed webview for it. Files without shed blocks are never compiled as a side
+effect of saving.
+
+Hole actions (refine / give) call the server method `eponym/refineShed`,
+which fills the hole in the macro-recorded generated source, refreshes
+shed statuses, rewrites the sidecar, and returns the term for the client to
+splice over the `![...]` node in the `.nim` source (issue #137). Case-split
+sends `textDocument/codeAction` and applies the returned edits, then
+re-renders.
+
+### If sidecar generation fails
+
+The compile output goes to the **Eponym** output channel and an error
+notification offers to show it. Common causes: Nim not on PATH (set the
+`eponym.nimPath` setting to the Nim binary), or the file not being inside
+the eponym repo checkout (the extension derives the `--path` flags from
+the repo root containing `src/eponym/lsp.nim`).
+
+### Settings
+
+- `eponym.lspServerPath` — path to the compiled `lsp` server binary
+  (defaults to `<workspace>/src/eponym/lsp`; build it with
+  `nim c --hints:off --path:src --path:src/eponym --path:src/relational --path:src/staging src/eponym/lsp.nim`).
+- `eponym.nimPath` — Nim binary used for automatic sidecar generation
+  (defaults to `nim` on PATH).
 
 ## Headless smoke test
 
@@ -40,9 +64,10 @@ No VSCode needed; drives the real LSP server:
 # from the repo root:
 nim c --hints:off --path:src --path:src/eponym --path:src/relational \
   --path:src/staging src/eponym/lsp.nim
-nim c -r --hints:off --path:src --path:src/eponym --path:src/relational \
-  --path:src/staging examples/embedded/sheds_demo.nim   # writes sidecar
-cd editors/vscode && npm run build
+cd editors/vscode && npm install && npm run build
+# NIMBIN= only needed when nim is not on PATH. The smoke test drives the
+# extension's own generateSidecar path to produce the sidecar (issue #153),
+# so the fresh-checkout case is covered without a manual nim invocation.
 LSP=../../src/eponym/lsp DEMO=../../examples/embedded/sheds_demo.nim npm run smoke
 ```
 
@@ -52,6 +77,9 @@ LSP=../../src/eponym/lsp DEMO=../../examples/embedded/sheds_demo.nim npm run smo
   `textDocument/codeAction`). vscode-free.
 - `src/render.ts` — `boxToJson` tree → nested HTML/CSS (premises above a rule
   line, hole below); hole click shows the goal. vscode-free.
+- `src/sidecar.ts` — shed-block detection, repo-root discovery, and the
+  `nim c` invocation that (re)generates the sidecar. vscode-free; used by
+  the extension and the smoke test.
 - `src/extension.ts` — VSCode glue: command, webview panel, message passing,
-  applying code-action edits.
+  applying code-action edits, automatic sidecar generation on open/save.
 - `src/smoke.ts` — node smoke test asserting the full path above.

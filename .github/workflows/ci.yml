@@ -41,10 +41,10 @@ jobs:
           nim c -r --hints:off $P "tests/test_shed_loop.nim" || exit 1
           nim c -r --hints:off $P "tests/test_shed_refine_method.nim" || exit 1
           echo "=== vscode extension smoke (issue #136 client path, real lsp binary) ==="
-          # The smoke test reads the shed sidecar; generate it by compiling the
-          # demo (macro-expansion writes examples/embedded/sheds_demo.sheds.json,
-          # which is gitignored, so CI must regenerate it in a fresh checkout).
-          nim c --hints:off $P examples/embedded/sheds_demo.nim || exit 1
+          # The smoke test self-provisions the shed sidecar: it exercises the
+          # extension's own generateSidecar path (issue #153) on the demo before
+          # reading layouts from it. The sidecar is gitignored (*.sheds.json),
+          # so this also covers the fresh-checkout case (was issue #142's fix).
           cd editors/vscode
           npm install --no-audit --no-fund || exit 1
           npm run build || exit 1

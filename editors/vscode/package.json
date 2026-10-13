@@ -24,6 +24,11 @@
           "type": "string",
           "default": "",
           "description": "Path to the compiled `lsp` server binary (src/eponym/lsp). Defaults to <workspace>/src/eponym/lsp."
+        },
+        "eponym.nimPath": {
+          "type": "string",
+          "default": "nim",
+          "description": "Nim binary used to compile shed files for automatic sidecar generation. Defaults to `nim` on PATH."
         }
       }
     }

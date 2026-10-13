@@ -2117,3 +2117,41 @@
   issue. Status: #137 CLOSED (scripted acceptance met on the branch;
   loop documented here). Merge to main is a separate decision (new
   issue); #139 (name-resolving pretty-printer) still open.
+
+* 2026-10-13 — #153 automatic shed sidecar generation (branch sheds-loop)
+
+  Context: #137 closed the shed loop headlessly, but using it still
+  required a manual =nim c= at a terminal to write the sidecar -- the
+  friction Aaron flagged in his 2026-10-12 VSCode click-through.
+  Decision (issue step 1): the *extension* owns sidecar generation
+  (option 1), not the LSP server (option 2). Rationale: the extension
+  already owns all VSCode integration and process spawning; having the
+  Nim stdio server shell out to a toolchain at request time would inject
+  blocking and toolchain dependence into the request path. The server
+  stays pure: it re-reads the sidecar on every request, so a regenerated
+  sidecar is picked up without restarting anything.
+  Implementation: new vscode-free =editors/vscode/src/sidecar.ts=
+  (=hasShedBlocks= regex gate, =eponymRepoRoot= walk-up discovery of the
+  repo root via =src/eponym/lsp.nim=, =sidecarCompileArgs= building the
+  =nim c --hints:off --path:...= invocation, =generateSidecar= spawning
+  it with a 5-minute timeout). =extension.ts= calls =ensureSidecar= (with
+  progress notification) before showing a layout, and on document save
+  for documents with an open shed panel (shed-free files are never
+  compiled as a save side effect). Errors surface in the *Eponym* output
+  channel plus an error notification with a "Show output" button -- never
+  silent. New =eponym.nimPath= setting for a non-PATH Nim binary.
+  Verification: the node smoke test now self-provisions the sidecar by
+  deleting =sheds_demo.sheds.json= and running the extension's own
+  =generateSidecar= against the real demo (22 checks green, including
+  the pure-function checks and the end-to-end =nim c=); this also
+  replaces the manual pre-step in branch CI (issue #142's fix survives in
+  a stronger form -- the fresh-checkout case is now covered by the
+  extension's own code path). Error paths verified headlessly: ENOENT
+  names =eponym.nimPath=; compile errors carry the nim stderr tail.
+  README rewritten: automatic flow documented, the stale "round-trip not
+  closed" paragraph (superseded by #137's =refineShed=) corrected. NOT
+  verified: inside a real VSCode (no VSCode in this environment) -- the
+  save-refresh wiring and the error notification are code-reviewed only;
+  they ride the #142 click-through as the real acceptance.
+  Status: #153 implementation complete on the sheds-loop branch; issue
+  left open for Aaron's click-through confirmation alongside #142.
