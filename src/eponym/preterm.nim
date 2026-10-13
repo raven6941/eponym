@@ -157,7 +157,12 @@ proc render(p: PreTerm, prec: int): string =
   case p.kind
   of pkVar: p.name
   of pkHole: "_"
-  of pkInt: $p.intVal
+  of pkInt:
+    # Issue #158: `1` lexes as the unit *type* (QTT), so a bare `1` would
+    # re-parse as pkUnitTy, not pkInt(1). The integer literal one is written
+    # `01` (the lexer's documented escape hatch); the renderer must honor it
+    # to keep render->parse faithful.
+    if p.intVal == 1: "01" else: $p.intVal
   of pkBy: "by " & p.name
   of pkUniv: "?"
   of pkUnitTy: "1"

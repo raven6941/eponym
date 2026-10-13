@@ -8,6 +8,34 @@
   =exp-NN-short-name= branches, merged to =main= when the experiment
   concludes with a decision recorded here.
 
+* 2026-10-13 — Integer literal 1: renderer emits `01`; `1` stays the unit type (issue #158)
+
+  Context: `1` lexes as the unit *type* (QTT) in surface syntax, so the
+  canonical renderer (`$` on =PreTerm=) emitting `"1"` for `pkInt(1)` made
+  render->parse unfaithful: the text re-parsed as `pkUnitTy`. The adequacy
+  suite's P4 round-trip had to skip `pkInt(1)` terms. The lexer already
+  documented the escape hatch ("use 01 for the integer"): `01` lexes as
+  `tkInt("01")` → `mkInt(1)`.
+  Options considered: (a) context-sensitive lexing reclaiming `1` in term
+  positions — rejected: genuinely ambiguous, since `id 1` passes the unit
+  *type* as a term argument today and no lexer position distinguishes
+  "type-as-term" from "literal"; (b) new explicit literal syntax (`#1`
+  unavailable — `#` is the comment char; `lit 1` would reserve an
+  identifier for a single value) — rejected as disproportionate;
+  (c) complete the existing `01` decision: the renderer emits `01` for
+  `pkInt(1)`.
+  Decision: (c). `preterm.render` special-cases `pkInt(1)` → `"01"`; all
+  other literals render as before. Lexer, quantity annotations, binder
+  positions, and the QTT `1`-as-unit-type story are untouched. Embedded
+  (`eponymBlock`) unchanged: Nim literal `1` still maps to `(suc zero)`.
+  Consequences: P4's `pkInt(1)` skip removed; P4 now asserts non-vacuity
+  (`withOne > 0`, 91/300 generated terms in the seed run); new
+  deterministic P7 pins the contract (`$mkInt(1) == "01"`, `$mkUnitTy()
+  == "1"`, `01` parses to `pkInt(1)`, `1` still parses to the unit type).
+  Residual wart, documented: users write `01` for the integer one in
+  `.ep` files; rendered output (error messages, shed goals) shows `01`.
+  Status: OPEN (branch =exp158-int-one-render=).
+
 * 2026-10-13 — Independent kernel checker v2: eliminator iota + primop/nat-literal coverage (issue #156)
 
   Context: #62's v1 kernel audited 55 definitions with 32 honest SKIP

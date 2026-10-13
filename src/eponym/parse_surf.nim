@@ -163,7 +163,9 @@ proc lex(src: string): seq[Token] =
       let w = src[i ..< j]
       col += j - i; i = j
       if w == "1":
-        # Single 1 is the unit type (backward compat); use 01 for the integer
+        # Single 1 is the unit type (backward compat, QTT); the integer
+        # literal one is written 01 (issue #158: the renderer emits `01`
+        # for pkInt(1) so render->parse stays faithful).
         result.add Token(kind: tkUnitTy, lexeme: "1", loc: l)
       else:
         result.add Token(kind: tkInt, lexeme: w, loc: l)
