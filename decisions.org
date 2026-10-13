@@ -2008,3 +2008,33 @@
   explicitly since =PreTerm.== ignores =qty= and the renderer drops it).
   Full inventory in the goal's hidden_files/144-syntax-inventory.md.
   Status: on branch =exp144-syntax-align=, PR pending.
+
+* 2026-10-13 — Independent kernel checker: shared syntax, independent judgments (issue #62)
+
+  Context: #62 asks for an LCF-style minimal kernel that re-checks every
+  elaborated core term, so soundness does not rest on "we tested the
+  elaborator a lot". The key design question is what the kernel shares
+  with the elaborator.
+  Decision: share the =Term= syntax (=eponym_init.Term=) — it is the
+  artifact being audited — but re-implement everything else from scratch:
+  capture-avoiding substitution (with an explicit same-depth variant
+  =ksubstKeep= for check-mode lambda/pair and snd-projection, where the
+  body is checked in the same context the codomain was written; the
+  beta-like =kinst= decrements indices and is only for application/let),
+  a fresh weak-head evaluator (beta + delta + pair/let; no NbE, no
+  =Value=, no =RedRule= registry), type-directed conversion with eta,
+  and the bidirectional check/infer rules. The cached =Value= fields in
+  =tR= nodes (=refTyp=, =refVal=) are treated as untrusted hints and never
+  consulted; the kernel takes its own =KernelGlobals= table (type + def).
+  Fragment violations (=tMeta=, =tInt=, =tNatLit=, =tPrim=,
+  eliminator-dependent conversion) raise rather than pass: absence of a
+  rule is a failure, never a silent acceptance.
+  Consequences: =src/eponym/kernel_check.nim= v1 covers the pure ETT
+  fragment (Pi/Sigma/Lam/Pair/App/Fst/Snd/Let/Absurd, ?, 1, O, 0, vars,
+  global refs with delta-unfolding definitions); self-tests pass
+  (identity, ill-typed rejection, eta, pairs, fst/snd, unbound vars,
+  defined-reference unfolding). Next: data-eliminator iota (needs an
+  eliminator interface the kernel does not yet share), =tNatLit=
+  expansion, and wiring the kernel as an audit pass over elaborated
+  definitions.
+  Status: OPEN (branch =exp62-kernel=) — v1 kernel + self-tests.
