@@ -2230,9 +2230,10 @@ proc allNamesPre(t: PreTerm): HashSet[string] =
   result = initHashSet[string]()
   allNamesPreAux(t, result)
 
-proc substPre(t: PreTerm, name: string, repl: PreTerm,
+proc substPre*(t: PreTerm, name: string, repl: PreTerm,
               fresh: var int): PreTerm =
   ## Capture-avoiding substitution of free variable `name` by `repl`.
+  ## Exported for the adequacy property suite (issue #38).
   ## `fresh` supplies suffixes when a binder must be renamed to avoid
   ## capturing free variables of `repl`.
   case t.kind
