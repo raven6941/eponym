@@ -2262,6 +2262,21 @@
   applications independently (119 passed, 0 disagreements). Indexed
   nested matches work for non-dependent results
   (=Vec Nat n= with =(cons k zero xs)=); the nested motive is constant
-  in the nested indices (outer refinement already applied). Open
-  (unchanged): multi-column matching — non-scrutinee patterns must
-  still be variables/wildcards.
+  in the nested indices (outer refinement already applied).
+
+* 2026-10-13 — #78: multi-column matching (follow-up)
+
+  The separate =MatrixRow.restPats= field was an artifact of building the
+  top split from the scrutinee column alone: rest patterns had to be
+  merged into =pats= inside =compileBranch=, after the top split fixed the
+  canonical rest binders. Merging at the top level (rows carry the full
+  pattern vector from the start) lets =compileMatrixNode= pick *any*
+  column with a constructor pattern, not just the first — genuine
+  Maranget/Augustsson column selection — and deletes =restPats= entirely
+  (elab.nim: 24 insertions, 37 deletions across the refactor). Non-scrutinee patterns may now be constructor patterns too; validation
+  accepts constructor patterns, variables, and wildcards at any nesting
+  depth in any column.
+
+  Verified: =examples/ep/25e-clause-multicol.ep= (two-argument =andb= with
+  a variable rest pattern =false y=, three =Eq=-by-=refl= computation
+  proofs); full =tests/run_examples.nim= green, no regressions.
