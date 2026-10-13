@@ -1,0 +1,8 @@
+# Issue #78 (negative): a missing nested case is reported with its location
+# under the enclosing constructor.
+import "../../lib/nat.ep"
+import "../../lib/bool.ep"
+
+def miss : Nat -> Bool
+| zero = true
+| (suc zero) = false
