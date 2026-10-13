@@ -9,15 +9,7 @@
 # exactly once). This is the borrow checker's exclusive-access rule: no
 # use of the owner while a unique borrow is outstanding.
 import "../../lib/nat.ep"
-
-postulate Res : ?
-postulate Borrow : ?
-
-postulate withBorrow : Pi (1 r : Res). Pi (k : Pi (1 b : Borrow). Nat). Nat
-postulate readB : Pi (1 b : Borrow).
-  Pi (k : Pi (v : Nat). Pi (1 b2 : Borrow). Nat). Nat
-postulate endB : Pi (1 b : Borrow). Pi (v : Nat). Nat
-postulate freeRes : Pi (1 r : Res). Nat
+import "../../lib/borrow.ep"
 
 # Violation: owner used inside the borrow scope.
 proc badOwnerUse (1 r : Res) : Nat =
