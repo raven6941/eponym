@@ -5,16 +5,7 @@
 # the session indices `sendS Nat endS` and `recvS Nat endS` are distinct
 # constructors, so conversion fails (noConfusion).
 import "../../lib/nat.ep"
-
-data Session : ? where
-| sendS (A : ?) (s : Session) : Session
-| recvS (A : ?) (s : Session) : Session
-| endS : Session
-
-data Chan : Session -> ? where
-| mkChan (s : Session) : Chan s
-
-postulate recvNat : Pi (1 ch : Chan (recvS Nat endS)). Sig (x : Nat). Chan endS
+import "../../lib/session.ep"
 
 # Violation 1: recv on a channel whose protocol says send first.
 # Expected error: inferred type (Chan (sendS Nat endS)) does not match
