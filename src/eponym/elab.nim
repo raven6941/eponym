@@ -2354,6 +2354,15 @@ proc patHeadName(pat: PreTerm, ctorNames: seq[string]): tuple[isCtor: bool,
     return (true, h.name, rargs)
   (false, "", @[])
 
+proc isIhName(nm: string): bool =
+  ## Issue #78: generated induction-hypothesis binders are `ih0`, `ih1`,
+  ## ... — freshened catch-all binders must avoid that shape.
+  if nm.len > 2 and nm[0] == 'i' and nm[1] == 'h':
+    for c in nm[2 .. ^1]:
+      if c notin {'0' .. '9'}: return false
+    return true
+  false
+
 proc replaceRecCalls(rhs: PreTerm, fname: string, recVar: string,
                     ihName: string): PreTerm =
   ## Replace `fname recVar rest...` (recursive call on recVar in the
@@ -2526,7 +2535,11 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
   while cur.kind == pkPi:
     if not cur.impl: inc nExplicit
     cur = cur.c2
-  # 3. Process clauses: coverage + overlap.
+  # 3. Process clauses: coverage + overlap over the first-pattern column.
+  #    Issue #78: the first pattern may be a constructor pattern, a
+  #    variable, or a wildcard `_`. A variable/wildcard covers every
+  #    constructor not already covered; a clause covering nothing new is
+  #    redundant.
   var covered: Table[string, int] = initTable[string, int]()  # ctor -> clause idx
   var ctorNames: seq[string] = @[]
   for ctor in dataDecl.ctors: ctorNames.add(ctor.name)
@@ -2535,18 +2548,31 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
       raise elabErr(cl.cloc, "clause has " & $cl.pats.len & " patterns but " &
         "the type has " & $nExplicit & " explicit arguments")
     let (isCtor, headName, _) = patHeadName(cl.pats[0], ctorNames)
-    if not isCtor:
-      raise elabErr(cl.cloc, "first pattern must be a constructor pattern " &
-        "(no variable/catch-all patterns yet)")
-    if headName notin ctorNames:
-      raise elabErr(cl.cloc, "'" & headName & "' is not a constructor of '" &
-        dataName & "'")
-    if covered.hasKey(headName):
-      raise elabErr(cl.cloc, "overlapping clauses: '" & headName &
-        "' already covered by the clause at " &
-        $cd.clauses[covered[headName]].cloc.line & ":" &
-        $cd.clauses[covered[headName]].cloc.col)
-    covered[headName] = ci
+    if isCtor:
+      if headName notin ctorNames:
+        raise elabErr(cl.cloc, "'" & headName & "' is not a constructor of '" &
+          dataName & "'")
+      if covered.hasKey(headName):
+        raise elabErr(cl.cloc, "overlapping clauses: '" & headName &
+          "' already covered by the clause at " &
+          $cd.clauses[covered[headName]].cloc.line & ":" &
+          $cd.clauses[covered[headName]].cloc.col)
+      covered[headName] = ci
+    else:
+      # Issue #78: a variable/wildcard first pattern covers every
+      # constructor not matched by an earlier clause. Anything else that
+      # is not a constructor pattern is rejected here.
+      if cl.pats[0].kind != pkVar and cl.pats[0].kind != pkHole:
+        raise elabErr(cl.cloc, "first pattern must be a constructor " &
+          "pattern, a variable, or a wildcard `_`")
+      var newCover = 0
+      for cn in ctorNames:
+        if not covered.hasKey(cn):
+          covered[cn] = ci
+          inc newCover
+      if newCover == 0:
+        raise elabErr(cl.cloc, "redundant clause: every constructor is " &
+          "already covered by an earlier clause")
   for ctor in dataDecl.ctors:
     if not covered.hasKey(ctor.name):
       raise elabErr(loc, "missing case for constructor '" & ctor.name &
@@ -2683,17 +2709,40 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
   for ctor in dataDecl.ctors:
     let ci = covered[ctor.name]
     let cl = cd.clauses[ci]
-    let (_, _, patArgs) = patHeadName(cl.pats[0], ctorNames)
-    if patArgs.len != ctor.tele.len:
-      raise elabErr(cl.cloc, "constructor '" & ctor.name & "' takes " &
-        $ctor.tele.len & " arguments but pattern has " & $patArgs.len)
-    # Pattern arg names (must be variables; no nested patterns yet)
+    let (isCtorPat, _, patArgs0) = patHeadName(cl.pats[0], ctorNames)
+    # Constructor-argument binder names for this method's lambdas.
     var argNames: seq[string] = @[]
-    for pa in patArgs:
-      if pa.kind != pkVar:
-        raise elabErr(cl.cloc, "'def' clauses: constructor arguments " &
-          "must be variables (no nested patterns)")
-      argNames.add(pa.name)
+    # Issue #78: name bound by a catch-all variable first pattern
+    # (`| x = rhs`); "" for constructor patterns and wildcards.
+    var catchAllVar = ""
+    if isCtorPat:
+      let patArgs = patArgs0
+      if patArgs.len != ctor.tele.len:
+        raise elabErr(cl.cloc, "constructor '" & ctor.name & "' takes " &
+          $ctor.tele.len & " arguments but pattern has " & $patArgs.len)
+      # Pattern arg names (must be variables; no nested patterns yet)
+      for pa in patArgs:
+        if pa.kind != pkVar:
+          raise elabErr(cl.cloc, "'def' clauses: constructor arguments " &
+            "must be variables (no nested patterns)")
+        argNames.add(pa.name)
+    else:
+      # Catch-all (variable or wildcard) first pattern: the eliminator
+      # binds this constructor's arguments, so freshen them against every
+      # name in sight (and against generated `ihN` names). A variable
+      # pattern stands for the whole scrutinee and is replaced by the
+      # constructor application in the RHS below.
+      for te in ctor.tele:
+        let base = if te.name.len > 0: te.name else: "carg"
+        var nm = base
+        var k = 0
+        while nm in usedNames or isIhName(nm) or nm in argNames:
+          nm = base & "'" & $k
+          inc k
+        usedNames.incl(nm)
+        argNames.add(nm)
+      if cl.pats[0].kind == pkVar:
+        catchAllVar = cl.pats[0].name
     # Remaining patterns must be variables; collect explicit rest names
     var restPatNames: seq[string] = @[]
     var seenPats = initHashSet[string]()
@@ -2701,6 +2750,11 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
       if pn in seenPats:
         raise elabErr(cl.cloc, "duplicate pattern variable '" & pn & "'")
       seenPats.incl(pn)
+    if catchAllVar.len > 0:
+      if catchAllVar in seenPats:
+        raise elabErr(cl.cloc, "duplicate pattern variable '" &
+          catchAllVar & "'")
+      seenPats.incl(catchAllVar)
     var pi = 1
     for ti in sPos + 1 .. tele.high:
       if not tele[ti].impl:
@@ -2756,6 +2810,13 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
                            nameSubst, fresh))
     # Build method body: lam (args...). lam (ihs...). lam (rest...). rhs'
     var rhs = substPreN(cl.rhs, idxSubst, fresh)
+    # Issue #78: a catch-all variable pattern binds the whole scrutinee;
+    # in this method it is the constructor applied to the method's binders.
+    if catchAllVar.len > 0:
+      var ctorApp = mkVar(ctor.name, loc)
+      for an in argNames:
+        ctorApp = mkApp(ctorApp, mkVar(an, loc), loc)
+      rhs = substPre(rhs, catchAllVar, ctorApp, fresh)
     # Identify recursive args and their IH names/types
     var ihTys: seq[PreTerm] = @[]
     var ihCount = 0
@@ -4156,6 +4217,76 @@ def badShadow : Pi {A : ?}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n -> Ve
 | nil ys = ys
 | (cons n x xs) ys = ys
 """, "shadows argument")
+
+  # --- Issue #78: catch-all (variable/wildcard) first patterns --------
+  # A variable/wildcard first pattern covers every constructor not matched
+  # by an earlier clause; a variable pattern stands for the scrutinee.
+  let catchAllDefs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Bool : ? where
+| true : Bool
+| false : Bool
+def isZeroV : Nat -> Bool
+| zero = true
+| m = false
+def constT : Nat -> Bool
+| _ = true
+def idNat : Nat -> Nat
+| x = x
+proc t1 : Bool = isZeroV zero
+proc t2 : Bool = isZeroV (suc zero)
+proc t3 : Nat = idNat (suc zero)
+proc t4 : Bool = constT (suc (suc zero))
+proc tru : Bool = true
+proc fls : Bool = false
+proc one : Nat = suc zero
+""")
+  proc findDef(nm: string): ElabDef =
+    for d in catchAllDefs:
+      if d.name == nm: return d
+    assert false, "missing def " & nm
+  let truId = eval(findDef("tru").tmTm, @[]).whnfRefId
+  let flsId = eval(findDef("fls").tmTm, @[]).whnfRefId
+  assert eval(findDef("t1").tmTm, @[]).whnfRefId == truId,
+    "isZeroV zero should reduce to true"
+  assert eval(findDef("t2").tmTm, @[]).whnfRefId == flsId,
+    "isZeroV (suc zero) should reduce to false"
+  assert eval(findDef("t4").tmTm, @[]).whnfRefId == truId,
+    "constT (suc (suc zero)) should reduce to true"
+  let t3v = eval(findDef("t3").tmTm, @[])
+  let onev = eval(findDef("one").tmTm, @[])
+  assert t3v.whnfKind == wRef and onev.whnfKind == wRef and
+    t3v.whnfRefId == onev.whnfRefId and
+    t3v.whnfSpineLen == onev.whnfSpineLen,
+    "idNat (suc zero) should reduce to suc zero"
+  echo "ok: catch-all first patterns elaborate and compute (issue #78)"
+  # A clause after a catch-all covers nothing new
+  expectElabErr("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Bool : ? where
+| true : Bool
+| false : Bool
+def bad : Nat -> Bool
+| _ = true
+| zero = false
+""", "already covered")
+  # A catch-all after full coverage is redundant
+  expectElabErr("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Bool : ? where
+| true : Bool
+| false : Bool
+def bad : Nat -> Bool
+| zero = true
+| (suc n) = false
+| _ = true
+""", "redundant clause")
 
   # --- Issue #36: termination checking (structural recursion) --------
   # Corpus: terminating definitions accepted, non-terminating rejected.

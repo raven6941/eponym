@@ -1,0 +1,7 @@
+# Issue #78 (negative): a clause after a catch-all covers nothing new.
+import "../../lib/nat.ep"
+import "../../lib/bool.ep"
+
+def bad : Nat -> Bool
+| _ = true
+| zero = false
