@@ -130,7 +130,7 @@ proc tacRefl(goal: Term, ctx: Ctx, globals: Globals,
 
 # (initTactics removed: built-ins are dispatched directly in pkBy case)
 
-proc prettyTerm(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
+proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
   ## User-facing pretty-printer: uses names from the context and globals
   ## instead of internal IDs (R1, V6, ?m3).
   if t == nil: return "<nil>"
@@ -2866,11 +2866,12 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
     raise elabErr(d.iloc, "import \"" & d.ipath &
       "\" requires a file context; use elabCheckFile")
 
-proc elabCheckState*(src: string, handlers: seq[ConvHandler] = @[]):
-    tuple[defs: seq[ElabDef], ms: MetaStore] =
-  ## Parse, elaborate, and typecheck a surface program, decl by decl,
-  ## returning the MetaStore too (for tooling: hole info, issue #58).
-  ## Raises ParseError (carries loc) or ElabError (carries loc).
+proc elabCheckStateG*(src: string, handlers: seq[ConvHandler] = @[]):
+    tuple[defs: seq[ElabDef], globals: Globals, ms: MetaStore] =
+  ## Issue #62: like elabCheckState, but also returns the elaborator's
+  ## global table (name -> GEntry with the tR node and zonked type) so the
+  ## independent audit kernel can build its own KernelGlobals over the
+  ## same refIds. Raises ParseError (carries loc) or ElabError (carries loc).
   let decls = parseProgram(src)
   var globals: Globals = initTable[string, GEntry]()
   var supply = Supply()
@@ -2887,7 +2888,15 @@ proc elabCheckState*(src: string, handlers: seq[ConvHandler] = @[]):
       except UsageError as e:
         raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
       defs.add(ed)
-  (defs, ms)
+  (defs, globals, ms)
+
+proc elabCheckState*(src: string, handlers: seq[ConvHandler] = @[]):
+    tuple[defs: seq[ElabDef], ms: MetaStore] =
+  ## Parse, elaborate, and typecheck a surface program, decl by decl,
+  ## returning the MetaStore too (for tooling: hole info, issue #58).
+  ## Raises ParseError (carries loc) or ElabError (carries loc).
+  let st = elabCheckStateG(src, handlers)
+  (st.defs, st.ms)
 
 proc elabCheck*(src: string, handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
   ## Parse, elaborate, and typecheck a surface program, decl by decl.
@@ -2951,12 +2960,18 @@ type
     loading*: seq[string]        # canonical paths on the import stack
     modHash*: Table[string, Hash] # canonical path -> content hash (skip unchanged)
     elabCount*: Table[string, int] # canonical path -> times elaborated
+    allDefs*: Table[string, ElabDef]
+      ## Issue #62: every definition elaborated through this driver
+      ## (including via `import`), by name. Lets consumers (e.g. the
+      ## independent audit kernel) recover definition bodies for globals
+      ## that `elabFile`'s return value omits as "imported".
 
 proc initModuleDriver*(handlers: seq[ConvHandler] = @[]): ModuleDriver =
   result.ms = initMetaStore()  # includes fresh convCache (Experiment 10)
   for h in handlers: result.ms.convHandlers.add(h)
   result.globals = initTable[string, GEntry]()
   result.dataInfos = initTable[string, SurfDecl]()
+  result.allDefs = initTable[string, ElabDef]()
 
 proc elabFile*(drv: var ModuleDriver, path: string,
                importLoc: Loc = noLoc): seq[ElabDef]
@@ -2989,6 +3004,7 @@ proc elabDeclsDir*(drv: var ModuleDriver, decls: seq[SurfDecl],
         except UsageError as e:
           raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
         result.add(ed)
+        drv.allDefs[ed.name] = ed  # issue #62: log imported defs too
 
 proc elabFile*(drv: var ModuleDriver, path: string,
                importLoc: Loc = noLoc): seq[ElabDef] =
