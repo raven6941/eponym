@@ -1,0 +1,1 @@
+line 6, col 1: missing case for constructor 'suc' of 'Nat' (under 'suc')

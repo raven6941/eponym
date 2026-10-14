@@ -1,0 +1,6 @@
+# Negative test (issue #34): a red rule whose pattern does not start with
+# the eliminator name is rejected at the rule, not at use sites.
+postulate Nat : ?
+postulate zero : Nat
+elim natElim : Pi (C : Nat -> ?). C zero -> Pi (n : Nat). C n
+red wrongElim C z n = z
