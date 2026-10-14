@@ -1,0 +1,7 @@
+# Ship only the compiled extension + metadata.
+.vscode/**
+src/**
+tsconfig.json
+.gitignore
+package-lock.json
+node_modules/**

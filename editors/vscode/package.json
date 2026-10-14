@@ -5,10 +5,17 @@
   "version": "0.1.0",
   "publisher": "eponym",
   "license": "MIT",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Programming Languages", "Other"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
   "main": "./out/extension.js",
-  "activationEvents": ["onCommand:eponym.showShedLayout"],
+  "activationEvents": [
+    "onCommand:eponym.showShedLayout"
+  ],
   "contributes": {
     "commands": [
       {
@@ -41,5 +48,9 @@
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "typescript": "^5.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/raven6941/eponym"
   }
 }
