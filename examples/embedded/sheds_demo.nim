@@ -53,11 +53,10 @@ proc main() =
   doAssert ss.len == 1, "expected 1 shed, got " & $ss.len
   let sh = ss[0]
   doAssert sh.name == "quadBody"
-  # Goal/context render with the elaborator's `$` (rigid `R<n>` for the
-  # postulated Int -- the same rendering LSP hover uses today; resolving
-  # rigid names is a follow-up). What matters: the goal is Int and the
-  # context carries `n` at that same type.
-  doAssert sh.goal.startsWith("R"), "goal was: " & sh.goal
+  # Goal/context render with name-resolving pretty-printing (issue #191):
+  # the postulated Int renders as "Int", not rigid `R<n>`. What matters:
+  # the goal is Int and the context carries `n` at that same type.
+  doAssert sh.goal == "Int", "goal was: " & sh.goal
   doAssert sh.ctx == @["n : " & sh.goal], "ctx was: " & $sh.ctx
   doAssert "++++" in sh.draft, "draft was: " & sh.draft
   doAssert sh.holeIdx == 0
