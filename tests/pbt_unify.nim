@@ -230,9 +230,11 @@ var p3ok = 0
 var p3fail = 0
 
 proc propP3(c: PairCase): bool =
-  ## At most one side flexible here (genPair's terms share metas, but we
-  ## only keep cases where one side is ground) — success must agree both
-  ## ways. Plus rigid-rigid ground symmetry.
+  ## Success must agree in both directions. With pattern spines this
+  ## holds across the generator's cases: one-flex-side pairs dispatch to
+  ## the same solveMeta call either way; distinct-meta flex-flex succeeds
+  ## in both directions (solving opposite sides); rigid-rigid and the eta
+  ## cases are symmetric by construction.
   var (ms, a, b) = c
   var ms2 = ms  # value copy: same meta ids, independent solutions
   let ok1 = tryUnify(ms, a, b)
