@@ -18,8 +18,28 @@ requires "nim >= 2.0.0"
 # The Eponym prelude (lib/*.ep) ships with the package. `import "x.ep"`
 # inside eponymBlock resolves relative to the calling Nim file, so users
 # vendor the prelude files they need next to their project; see README
-# "Installation". Installed at <pkgdir>/lib/.
-installDirs   = @["lib"]
+# "Installation". installDirs resolves relative to srcDir, hence ../lib.
+# Installed at <pkgdir>/lib/.
+installDirs   = @["../lib"]
+
+# Production modules: srcDir's .nim files must be listed explicitly --
+# nimble does not install them by default. Patterns are relative to the
+# package root. (Experimental code in src/experimental/ is deliberately
+# excluded: issue #189, release packaging excludes experiment code.)
+installFiles  = @["src/eponym/eponym_init.nim",
+                  "src/eponym/preterm.nim",
+                  "src/eponym/parse_surf.nim",
+                  "src/eponym/elab.nim",
+                  "src/eponym/unify.nim",
+                  "src/eponym/eponym_mac.nim",
+                  "src/eponym/lsp.nim",
+                  "src/eponym/egraph.nim",
+                  "src/eponym/eponym_embed.nim",
+                  "src/eponym/kernel_check.nim",
+                  "src/eponym/sheds.nim",
+                  "src/eponym/sheds_mac.nim",
+                  "src/eponym/shed_layout.nim",
+                  "src/repl.nim"]
 
 # Tasks
 #
