@@ -4,8 +4,8 @@
 ## (fully determined output), or Stuck (partial state: holes awaiting
 ## information from outside elaboration).
 ##
-## Usage: nim c -r --path:src --path:src/eponym --path:src/relational \
-##   --path:src/staging tests/test_lattice_synth.nim
+## Usage: nim c -r --path:src --path:src/eponym --path:src/experimental/relational \
+##   --path:src/experimental/staging tests/test_lattice_synth.nim
 
 import minikanren
 import lattice_elab

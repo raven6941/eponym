@@ -1,5 +1,5 @@
 ## tests/pbt_unify.nim — Issue #163: property tests for the Miller
-## pattern-fragment unifier (src/relational/unify.nim).
+## pattern-fragment unifier (src/eponym/unify.nim).
 ##
 ## The unifier is the elaborator's workhorse for implicit arguments,
 ## and its spine-inversion machinery (invertSpine/renameAt/solveMeta) is
@@ -27,7 +27,7 @@
 ##      binders) and on bare unsolved metas.
 ##
 ## Run: nim c -r --hints:off --path:src --path:src/eponym \
-##        --path:src/relational --path:src/staging tests/pbt_unify.nim
+##        --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging tests/pbt_unify.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
 import pbt

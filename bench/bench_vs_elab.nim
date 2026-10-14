@@ -13,7 +13,7 @@
 ##   iteration (each check independent, as on the staged side).
 ## - Unstaged typeo timed as a third column for reference.
 ##
-## Usage: nim c -r --path:src src/staging/bench_vs_elab.nim
+## Usage: nim c -r --path:src src/experimental/staging/bench_vs_elab.nim
 
 import staging/relcompile   # stagedTypeoProcs macro + stagedTypeo template
 import minikanren

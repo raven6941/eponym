@@ -5,7 +5,7 @@
 ## 2. Wall-clock: compiled residual vs unstaged (and vs the interpreted
 ##    residual, to check compilation actually removes the overhead).
 ##
-## Usage: nim c -r --path:src src/staging/test_compiled_typeo.nim
+## Usage: nim c -r --path:src tests/test_compiled_typeo.nim
 
 import staging/relcompile   # stagedTypeoProcs macro + rgFailGoal helpers
 import staging/relgoal

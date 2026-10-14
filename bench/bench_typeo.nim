@@ -9,7 +9,7 @@
 ##      test term?
 ##   2. Wall-clock: per-term timing over N iterations; report speedup.
 ##
-## Usage: nim c -r --path:src src/staging/bench_typeo.nim
+## Usage: nim c -r --path:src src/experimental/staging/bench_typeo.nim
 
 import staging/relgoal
 import staging/stagegoal

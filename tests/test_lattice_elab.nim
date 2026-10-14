@@ -3,8 +3,8 @@
 ## bench_elab_end_to_end.nim), and the rebuilt output matches the input
 ## term on acceptance (output determination smoke test).
 ##
-## Usage: nim c -r --path:src --path:src/eponym --path:src/relational \
-##   --path:src/staging tests/test_lattice_elab.nim
+## Usage: nim c -r --path:src --path:src/eponym --path:src/experimental/relational \
+##   --path:src/experimental/staging tests/test_lattice_elab.nim
 
 import minikanren
 import lattice_elab

@@ -14,7 +14,7 @@
 ## the relation goals (12-15) stage the full typeo relation under different
 ## static/dynamic splits and measure real residual size.
 ##
-## Usage: nim c -r --path:src --path:src/relational --path:src/staging bench/bench_nested_decompose.nim
+## Usage: nim c -r --path:src --path:src/experimental/relational --path:src/experimental/staging bench/bench_nested_decompose.nim
 
 import staging/relgoal
 import staging/stagegoal

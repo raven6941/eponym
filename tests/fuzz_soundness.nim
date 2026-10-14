@@ -10,8 +10,8 @@
 ## On divergence: shrink to a minimal failing case, print the seed and the
 ## minimal case, exit 1.
 ##
-## Fixed-seed suite (CI):   nim c -r --path:src src/staging/fuzz_soundness.nim -- --seed 424242 -n 1000
-## Fresh-seed fuzz (local): nim c -r --path:src src/staging/fuzz_soundness.nim -- --seed random -n 5000
+## Fixed-seed suite (CI):   nim c -r --path:src tests/fuzz_soundness.nim -- --seed 424242 -n 1000
+## Fresh-seed fuzz (local): nim c -r --path:src tests/fuzz_soundness.nim -- --seed random -n 5000
 ##
 ## Search is bounded (FuzzDepth/FuzzN), so every goal terminates; a goal
 ## that hits the answer cap is reported as capped (inconclusive), never as

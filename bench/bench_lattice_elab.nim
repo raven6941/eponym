@@ -4,14 +4,14 @@
 ##
 ## Engines (same programs, native representations, built once outside the
 ## timed loop — the bench_elab_end_to_end.nim fairness discipline):
-## - lattice:  checkLatTop from src/relational/lattice_elab.nim
+## - lattice:  checkLatTop from src/experimental/relational/lattice_elab.nim
 ## - engine:   stagedCheckoVec2 from tests/stage_rel_elab_dep.nim — the
 ##             #143 staged-relational engine (16.0-26.8x slower than direct
 ##             on invalids); ty = Vec Nat 2 is static, so it only runs the
 ##             invalid-scaling table where ty is fixed.
 ## - unstaged: run(freshVar(), checko(tm, ty, ctx), 1) — search-exhaustion
 ##             baseline.
-## - residual: elaboD from src/staging/gen_elabo_full.nim (#57's
+## - residual: elaboD from src/experimental/staging/gen_elabo_full.nim (#57's
 ##             generated-direct residual, general ty).
 ## - direct:   checkTermElab with a fresh MetaStore + Supply per iteration.
 ##
@@ -20,8 +20,8 @@
 ## cons^n : Vec Nat n. The issue's target: invalid-case latency
 ## proportional to input size on the lattice side, no exhaustion blowup.
 ##
-## Usage: nim c -r --path:src --path:src/eponym --path:src/relational \
-##   --path:src/staging --path:tests bench/bench_lattice_elab.nim
+## Usage: nim c -r --path:src --path:src/eponym --path:src/experimental/relational \
+##   --path:src/experimental/staging --path:tests bench/bench_lattice_elab.nim
 
 import minikanren
 import staging/relcompile

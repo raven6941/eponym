@@ -7,7 +7,7 @@
 ##
 ## Build (profiling ON):
 ##   nim c -r -d:elabProfile --hints:off \
-##     --path:src --path:src/eponym --path:src/relational --path:src/staging \
+##     --path:src --path:src/eponym --path:src/experimental/relational --path:src/experimental/staging \
 ##     --path:bench bench/bench_elab_profile.nim
 ## Without -d:elabProfile the phase report prints "profiling disabled"
 ## (instrumentation compiles away; see src/eponym/elab_prof.nim).

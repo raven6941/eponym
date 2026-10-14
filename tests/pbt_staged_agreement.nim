@@ -1,7 +1,7 @@
 ## tests/pbt_staged_agreement.nim — Issue #163: property tests pinning
 ## agreement between the #57 generated-direct residual
-## (src/staging/gen_elabo_full.nim: elaboD / inferD) and the unstaged
-## relational elaborator it was staged from (src/relational/rel_elab_out.nim:
+## (src/experimental/staging/gen_elabo_full.nim: elaboD / inferD) and the unstaged
+## relational elaborator it was staged from (src/experimental/relational/rel_elab_out.nim:
 ## elabo / inferoOut).
 ##
 ## This is the extensional half of the #143 verdict: the direct elaborator
@@ -24,7 +24,7 @@
 ##     the probe shows its ground-fragment reading agrees with the relation
 ##     (which elaborates the lam in check mode against a fresh Pi).
 ##
-## Run: nim c -r --hints:off --path:src --path:src/eponym --path:src/relational --path:src/staging tests/pbt_staged_agreement.nim
+## Run: nim c -r --hints:off --path:src --path:src/eponym --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging tests/pbt_staged_agreement.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
 import pbt

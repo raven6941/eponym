@@ -14,17 +14,24 @@ jobs:
       - name: Build
         run: |
           nim --version
-          P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
-          for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout; do
+          P="--path:src --path:src/eponym"
+          XP="$P --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging"
+          for f in eponym_init preterm parse_surf elab unify eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout; do
             echo "=== build $f ==="
             nim c --hints:off $P "src/eponym/$f.nim" || exit 1
           done
           echo "=== build repl (issue #50) ==="
           nim c --hints:off $P "src/repl.nim" || exit 1
+          echo "=== build experimental (issue #189: kept building, clearly labeled) ==="
+          for f in eponym mac_surf heap qtt_proto; do
+            echo "=== build experimental/$f ==="
+            nim c --hints:off $XP "src/experimental/$f.nim" || exit 1
+          done
       - name: Test
         run: |
-          P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
-          for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac egraph eponym_embed kernel_check; do
+          P="--path:src --path:src/eponym"
+          XP="$P --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging"
+          for f in eponym_init preterm parse_surf elab unify eponym_mac egraph eponym_embed kernel_check; do
             echo "=== test $f ==="
             nim c -r --hints:off $P "src/eponym/$f.nim" || exit 1
           done
@@ -42,20 +49,20 @@ jobs:
           nim c -r --hints:off $P "tests/adequacy_props.nim" || exit 1
           echo "=== embedded macro forms (issue #151) ==="
           nim c -r --hints:off $P "tests/test_embedded_macro_forms.nim" || exit 1
-          echo "=== staging soundness fuzz (issue #29, fixed seed) ==="
-          nim c -r --hints:off $P "tests/fuzz_soundness.nim" -- --seed 424242 -n 1000 || exit 1
+          echo "=== staging soundness fuzz (issue #29, fixed seed; experimental paths) ==="
+          nim c -r --hints:off $XP "tests/fuzz_soundness.nim" -- --seed 424242 -n 1000 || exit 1
           echo "=== egraph property tests (issue #163, fixed seed) ==="
           nim c -r --hints:off $P "tests/pbt_egraph.nim" || exit 1
-          echo "=== minikanren property tests (issue #163, fixed seed) ==="
-          nim c -r --hints:off $P "tests/pbt_minikanren.nim" || exit 1
+          echo "=== minikanren property tests (issue #163, fixed seed; experimental paths) ==="
+          nim c -r --hints:off $XP "tests/pbt_minikanren.nim" || exit 1
           echo "=== clause-matrix differential tests (issue #163, fixed seed) ==="
           nim c -r --hints:off $P "tests/pbt_clause_matrix.nim" || exit 1
           echo "=== clause-matrix negative tests (issue #163, fixed seed) ==="
           nim c -r --hints:off $P "tests/pbt_clause_matrix_neg.nim" || exit 1
           echo "=== QTT usage-checker property tests (issue #163, fixed seed) ==="
           nim c -r --hints:off $P "tests/pbt_usage.nim" || exit 1
-          echo "=== staged-residual vs relational differential tests (issue #163, fixed seed) ==="
-          nim c -r --hints:off $P "tests/pbt_staged_agreement.nim" || exit 1
+          echo "=== staged-residual vs relational differential tests (issue #163, fixed seed; experimental paths) ==="
+          nim c -r --hints:off $XP "tests/pbt_staged_agreement.nim" || exit 1
           echo "=== unifier property tests (issue #163, fixed seed) ==="
           nim c -r --hints:off $P "tests/pbt_unify.nim" || exit 1
           # Note: lsp is built but not run — it's a server that blocks on stdin,

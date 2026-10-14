@@ -16,7 +16,7 @@
 ##                         improvement) must update this property.
 ##
 ## Run: nim c -r --hints:off --path:src --path:src/eponym \
-##        --path:src/relational --path:src/staging tests/pbt_egraph.nim
+##        --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging tests/pbt_egraph.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
 import pbt

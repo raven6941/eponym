@@ -10,15 +10,18 @@ srcDir        = "src"
 
 requires "nim >= 2.0.0"
 
-# Tasks
+# Tasks (production paths; issue #189: experimental code lives in src/experimental/)
 
 task test, "Run all test suites and examples":
-  for f in ["eponym", "eponym_init", "preterm", "parse_surf", "mac_surf", "elab", "eponym_mac"]:
+  for f in ["eponym_init", "preterm", "parse_surf", "elab", "unify", "eponym_mac", "egraph", "eponym_embed", "kernel_check"]:
     echo "=== " & f & " ==="
-    exec "nim c -r --hints:off --path:src src/" & f & ".nim"
+    exec "nim c -r --hints:off --path:src --path:src/eponym src/eponym/" & f & ".nim"
   echo "=== examples ==="
-  exec "nim c -r --hints:off --path:src tests/run_examples.nim"
+  exec "nim c -r --hints:off --path:src --path:src/eponym tests/run_examples.nim"
 
-task build, "Build all modules":
-  for f in ["eponym", "eponym_init", "preterm", "parse_surf", "mac_surf", "elab", "eponym_mac", "lsp", "egraph", "eponym_embed"]:
-    exec "nim c --hints:off --path:src src/" & f & ".nim"
+task build, "Build all production modules":
+  for f in ["eponym_init", "preterm", "parse_surf", "elab", "unify", "eponym_mac", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout"]:
+    exec "nim c --hints:off --path:src --path:src/eponym src/eponym/" & f & ".nim"
+  exec "nim c --hints:off --path:src --path:src/eponym src/repl.nim"
+  echo "=== lsp (compile only; it blocks on stdin) ==="
+  exec "nim c --hints:off --path:src --path:src/eponym src/eponym/lsp.nim"

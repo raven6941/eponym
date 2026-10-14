@@ -8,13 +8,13 @@
 ##
 ## Run from the repo root (like tests/run_examples.nim):
 ##   nim c -r --hints:off --path:src --path:src/eponym \
-##       --path:src/relational --path:src/staging tests/run_embedded_examples.nim
+##       --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging tests/run_embedded_examples.nim
 import os
 import osproc
 import sequtils
 
 const pathFlags =
-  "--path:src --path:src/eponym --path:src/relational --path:src/staging"
+  "--path:src --path:src/eponym --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging"
 
 let tmpDir = getTempDir() / "eponym-embedded-tests"
 createDir(tmpDir)

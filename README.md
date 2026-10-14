@@ -23,14 +23,15 @@ The goal is not to build and grow a full independent compiler, stdlib, package s
 Surface text → `PreTerm` (named) → de Bruijn core terms → elaborated
 `Term` with metavariables solved → checked against the QTT core.
 
-- **`parse_surf.nim`** — hand-written surface parser.
-- **`mac_surf.nim`** — Nim-AST front end (alternative surface).
+- **`parse_surf.nim`** — hand-written surface parser (canonical front end;
+  `eponymBlock` renders Nim AST to text and feeds it here, issue #144).
 - **`preterm.nim`** — named preterm AST, the common interchange.
 - **`unify.nim`** — Miller pattern unification for metavariables.
 - **`elab.nim`** — bidirectional elaborator: `inferTm`/`checkTm`,
   implicit insertion, `data` desugaring, conversion checking.
 
-All live in `src/eponym/`; the per-module notes are in
+All live in `src/eponym/`; experimental code (the old `mac_surf` Nim-AST
+front end, the relational/staging work) lives in `src/experimental/`. the per-module notes are in
 `src/eponym/README.md`. The interesting part is this pipeline —
 the two ETT encodings (`eponym.nim`, `eponym_init.nim`) were the
 starting point; the elaborator is where the research lives.
@@ -96,17 +97,20 @@ eponymBlock:
 ## Track C: Relational × staged interpreters
 
 One relational spec of a small language, many tools
-(inference, checking, synthesis) via staging.
+(inference, checking, synthesis) via staging. Lives in
+`src/experimental/` (issue #189) — research material, not on production
+paths. The direct elaborator (`src/eponym/elab.nim`) is production; the
+#143 verdict kept it that way.
 
-- **`src/relational/minikanren.nim`** — independent µKanren-style engine
-  (no elaborator deps): S-expr terms, unification with occurs
-  check, explicit `Stream` tree (no call-stack recursion),
+- **`src/experimental/relational/minikanren.nim`** — independent
+  µKanren-style engine (no elaborator deps): S-expr terms, unification
+  with occurs check, explicit `Stream` tree (no call-stack recursion),
   FIFO worklist (fair search — backward `typeo` now enumerates
   all results), `=/=` disequality with a constraint store,
   `setEqo` global set-equality constraint, and
   most-constrained-first branching over constraint-derived
   domains (4×4 Sudoku in ~20ms; was a 30s timeout).
-- **`src/relational/rel_elab.nim`** — `typeo` relation for STLC+Nat, plus
+- **`src/experimental/relational/rel_elab.nim`** — `typeo` relation for STLC+Nat, plus
   a `Vec` length-indexed branch.
 - **Staged tools** — each direction of the relation staged to
   direct code: inference with zero search; synthesis pruned
@@ -120,9 +124,7 @@ One relational spec of a small language, many tools
   language rules, dynamic target value), staged to a direct
   recursive search (6860x), witnesses verified.
 
-Status: the relational path stays experimental until it can be
-compared head-to-head against `elab.nim` (the real elaborator).
-See `docs/staging-design.md` for the staging architecture.
+Status: experimental. See `docs/staging-design.md` for the staging architecture.
 
 ## Building
 

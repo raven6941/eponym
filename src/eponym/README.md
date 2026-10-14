@@ -10,9 +10,12 @@ macros elaborated at compile time.
 Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → Nim
 ```
 
-1. **Surface**: Two front ends produce the same `PreTerm` AST:
-   - `parse_surf.nim`: string parser for `.ep` files (`examples/ep/`)
-   - `mac_surf.nim`: Nim-AST macro for `eponymBlock` (embedded use)
+1. **Surface**: `parse_surf.nim` is the canonical front end: the string
+   parser for `.ep` files (`examples/ep/`), and `eponymBlock` renders Nim
+   AST to Eponym text and feeds it to the same parser (issue #144 — a
+   single grammar for both contexts). The old Nim-AST front end
+   (`mac_surf.nim`, Experiment 1's losing alternative) lives in
+   `src/experimental/`.
 2. **Elaboration** (`elab.nim`): bidirectional type checking (`inferTm`,
    `checkTm`) producing core `Term`s. Handles implicits, metavariables,
    unification, and conversion.
@@ -42,12 +45,12 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
   to nested binders)
 - `parse_surf.nim` — recursive-descent parser; `(1 x : T)` for linear,
   `(0 x : T)` for erased binders
-- `mac_surf.nim` — converts Nim AST to `PreTerm` (the `eponymBlock` macro)
+- `unify.nim` — Miller pattern unification for metavariables
 - `elab.nim` — the elaborator: context, metas, `inferTm`/`checkTm`,
   `elabDefDecl`, `elabCheck`
 - `eponym_init.nim` — core `Term`, `tmPi`/`tmLam`/`tmLet` constructors,
   evaluator, `check`/`infer`/`areEqual`
-- eponym.nim — finally-tagless ETT (`Sym[R]` interface)
+- `abilities.nim` — ambient abilities (Frank-style), issue #177
 - `eponym_mac.nim` — `eponym`, `eponymBlock` macros
 - `eponym_embed.nim` — runtime: definition cache, `callIntFunc`
 - `egraph.nim` — e-graph conversion cache (Experiment 10)

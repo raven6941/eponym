@@ -1,5 +1,5 @@
 ## tests/pbt_minikanren.nim — Issue #163: property tests for the Track C
-## relational engine (src/relational/minikanren.nim).
+## relational engine (src/experimental/relational/minikanren.nim).
 ##
 ## The engine is an explicit-stream miniKanren: goals are State -> Stream
 ## procs, `take` processes the stream tree with an explicit worklist, and
@@ -19,7 +19,7 @@
 ##                         that drops assignments must update this property.
 ##
 ## Run: nim c -r --hints:off --path:src --path:src/eponym \
-##        --path:src/relational --path:src/staging tests/pbt_minikanren.nim
+##        --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging tests/pbt_minikanren.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
 import pbt

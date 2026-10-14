@@ -32,7 +32,7 @@
 ##   over nested patterns where the hand-written examples don't reach.
 ##
 ## Run: nim c -r --hints:off --path:src --path:src/eponym \
-##        --path:src/relational --path:src/staging --path:tests \
+##        --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging --path:tests \
 ##        tests/pbt_clause_matrix_neg.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
