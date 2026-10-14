@@ -73,11 +73,38 @@ one rule applies, and it only meets. Two deliberate refinements over
   than the engine on small invalids. Honest note: `elaboD` (#57) is the
   fastest rejector outright (1–10us); the lattice's distinctive value is
   the ambiguity-preserving state, which step 5 will test.
-- Next: the synthesis-direction assessment (step 5) — can the lattice
-  state run backwards? The term-side lattice (degenerate singletons on
-  ground input) is the infrastructure; `checkLat` currently requires a
-  ground term head (ckNone → failure), so a backwards driver is real
-  work, not a tweak.
+- **Synthesis direction done** (step 5, 2026-10-13): `synthLatTop` runs the
+  *same* `checkLat` rules backwards — the term node starts at ⊤ and the
+  type side saturates it. The `ckNone` branch now refines an unknown term
+  from a singleton type head instead of failing. Outcomes are three-valued:
+  **Bottom** (rejection with provenance), **accept** (fully determined),
+  **Stuck** (partial state — holes awaiting external information, per the
+  lattice-state vs Klister-blocking decision above). `rebuildHoles` builds
+  the output from the converged state's constructions, emitting `rkVar`
+  holes for nodes that never refined past a threshold.
+- Step-5 findings (`tests/test_lattice_synth.nim`, 16/16):
+  - `synth(Vec Nat 2)` → the spine `cons(?h0, cons(?h1, nil))` is
+    *determined* by saturation; the two element unknowns stay holes
+    (Stuck, 2 nodes). The relation genuinely runs backwards: no search,
+    no branching, one deterministic pass.
+  - `synth(Vec Nat 0)` → `nil`, fully determined, nothing stuck.
+  - `synth(Vec Nat ?idx)` → nil-vs-cons ambiguity *preserved in the
+    state* (`{hNil, hCons}`), no branch taken, reported Stuck — not
+    Bottom. This is the multi-direction story surviving: ambiguity is
+    data, not control flow.
+  - `synth(Nat)` → stuck with `{hZero, hSuc, hNatLit}`: the fragment's
+    numeral spellings are all kept, no guessing.
+  - Backwards Bottom: term pre-constrained to `{hCons}` + type
+    `Vec Nat 0` → contradiction detected *by the meet* with provenance
+    (`wanted synth: Vec A 0 inhabitant, had shape {hCons}`) — local
+    failure in the backwards direction too.
+- Honest notes: output determination (§3) is no longer degenerate —
+  `rebuildHoles` is exercised on genuinely partial states. The backwards
+  cons case trusts `predIndex`'s structural predecessor (no explicit
+  suc-edge in the state); the Vec fragment's dependent-index story stays
+  structural, as in the forwards direction. Pi/lam synthesis refines the
+  shape to `{hLam}` only — body synthesis against an open codomain is
+  future work.
 
 ## Honest notes
 

@@ -2348,3 +2348,40 @@
   does the lattice style preserve enough information to run the relation
   backwards (synthesis direction)? The term-side lattice (currently
   degenerate singletons on ground input) is the infrastructure for it.
+
+* #170 step 5: synthesis direction — the lattice runs backwards (2026-10-13)
+
+  =synthLatTop= runs the *same* =checkLat= rules backwards: the term node
+  starts at top, the type side saturates it. The =ckNone= branch refines an
+  unknown term from a singleton type head instead of failing; outcomes are
+  three-valued — Bottom (provenance), accept, Stuck (partial state: holes
+  awaiting external info, per the lattice-vs-Klister decision).
+
+  Measured (=tests/test_lattice_synth.nim=, 16/16):
+  - =synth(Vec Nat 2)= → spine =cons(?h0, cons(?h1, nil))= *determined* by
+    saturation; the two element unknowns stay holes (Stuck). One
+    deterministic pass, no search, no branching.
+  - =synth(Vec Nat 0)= → =nil=, fully determined.
+  - =synth(Vec Nat ?idx)= → nil-vs-cons ambiguity preserved in the state
+    (={hNil, hCons}=), reported Stuck — not Bottom. Ambiguity is data,
+    not control flow; the multi-direction story survives.
+  - =synth(Nat)= → stuck with ={hZero, hSuc, hNatLit}=; no guessing among
+    numeral spellings.
+  - Backwards Bottom: term pre-constrained ={hCons}= + =Vec Nat 0= →
+    contradiction detected *by the meet* with provenance — local failure
+    works in the backwards direction too.
+
+  This answers the issue's step-5 question affirmatively for the Vec
+  fragment: the lattice style preserves enough information to run the
+  relation backwards, and the hole mechanism falls out of the same
+  representation (a permanently-partial node), needing no separate
+  stuck-task machinery for the representation itself. Output
+  determination (§3) is now exercised on genuinely partial states via
+  =rebuildHoles=. Caveat: Pi/lam synthesis refines only the shape
+  (={hLam}=); body synthesis against an open codomain is future work.
+
+  Decision: step 5 PASSED. The prototype now covers steps 1–5. Remaining
+  before close: the acceptance-criteria =decisions.org= verdict entry
+  (this is it) and the issue verdict — viable for the Vec fragment;
+  the lattice over dependent terms stays structural (no explicit
+  suc-edges), which is the open scaling question for full elaboration.

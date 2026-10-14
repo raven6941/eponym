@@ -200,7 +200,7 @@ proc number*(st: var LatState, t: RTerm): int =
       cur = cur.tail
     st.constr[result] = Constr(kind: ckPair, tag: tag, kids: kids)
 
-proc freshNode(st: var LatState, desc: string): int =
+proc freshNode*(st: var LatState, desc: string): int =
   ## A truly unknown node: top shape, top natl, no construction.
   result = st.parent.len
   st.parent.add(result)
@@ -238,7 +238,7 @@ proc materialize(st: var LatState, r: int) =
 
 # --- Meets (the only way the state changes) -----------------------------------
 
-proc meetShape(st: var LatState, id: int, s: set[Head], why: string): bool =
+proc meetShape*(st: var LatState, id: int, s: set[Head], why: string): bool =
   let r = st.find(id)
   let ns = st.shape[r] * s
   if ns == {}:
@@ -417,8 +417,51 @@ proc checkLat*(tmId, tyId: int, ctx: seq[int], st: var LatState): bool =
       st.setFailure(st.descs[rtm], "known pair tag", rc.tag)
       return false
   of ckNone:
-    st.setFailure(st.descs[rtm], "determined term head", "unknown")
-    return false
+    # Synthesis direction (issue step 5): the term node is unknown. Refine
+    # it from the type side — the same rules, a different partial state.
+    # Genuinely ambiguous cases (unknown index, Nat inhabitants) keep the
+    # ambiguity in the state and return true; the driver reports the
+    # undetermined nodes as Stuck, distinct from Bottom.
+    let rty = st.find(tyId)
+    st.materialize(rty)
+    if st.failure.isSome: return false
+    if st.shape[rty].card != 1:
+      return true  # type itself ambiguous: nothing determined yet
+    case singleOf(st.shape[rty])
+    of hVec:
+      let idxId = st.kid(tyId, 1)
+      let nl = st.natl[st.find(idxId)]
+      if nl.bot: return false  # failure already recorded by the meet
+      if not nl.known:
+        # nil-vs-cons genuinely ambiguous: keep it in the state, no branch.
+        return st.meetShape(tmId, {hNil, hCons}, "synth: Vec inhabitant")
+      if nl.val == 0:
+        if not st.meetShape(tmId, {hNil}, "synth: Vec A 0 inhabitant"):
+          return false
+        st.constr[st.find(tmId)] = Constr(kind: ckAtom, atomName: "nil")
+        return st.meetNatIdx(idxId, natExact(0), "synth: nil index")
+      # idx = suc k: the spine is determined; elements stay holes.
+      if not st.meetShape(tmId, {hCons}, "synth: Vec A (suc k) inhabitant"):
+        return false
+      let rtm2 = st.find(tmId)
+      let h = st.freshNode("synth.head")
+      let tl = st.freshNode("synth.tail")
+      st.constr[rtm2] = Constr(kind: ckPair, tag: "cons", kids: @[h, tl])
+      let aId = st.kid(tyId, 0)
+      let (okp, predId) = st.predIndex(idxId)
+      if not okp: return false
+      let tailTy = st.vecNode(aId, predId)
+      if not checkLat(h, aId, ctx, st): return false
+      return checkLat(tl, tailTy, ctx, st)
+    of hNat:
+      # zero / suc-chains / literals all inhabit Nat: preserve ambiguity.
+      return st.meetShape(tmId, {hZero, hSuc, hNatLit}, "synth: Nat inhabitant")
+    of hPi:
+      return st.meetShape(tmId, {hLam}, "synth: Pi inhabitant")
+    of hUniv:
+      return st.meetShape(tmId, {hPi, hVec, hNat}, "synth: former")
+    else:
+      return true  # e.g. hNil as a *type*: no rule; leave stuck
 
 proc inferLat(tmId: int, ctx: seq[int], st: var LatState): tuple[ok: bool, tyId: int] =
   ## Infer the type node for the term at tmId. Fresh unknowns (app domain /
@@ -479,25 +522,40 @@ type
   LatResult* = object
     ok*: bool
     failure*: Option[FailInfo]
+    stuck*: seq[string]  ## undetermined nodes on ok (Stuck, not Bottom)
     output*: RTerm  ## elaborated term, rebuilt from the converged state
 
-proc rebuild*(st: var LatState, id: int): RTerm =
-  ## Output determination (issue §3): the elaborated term is *built* from
-  ## the converged state's constructions, not returned by recursion.
+proc rebuildHoles*(st: var LatState, id: int): tuple[t: RTerm, holes: seq[string]] =
+  ## Output determination (issue §3) extended to partial states: the
+  ## elaborated term is built from the converged state's constructions;
+  ## nodes that never refined past a threshold become holes (rkVar
+  ## leaves), reported separately — the Stuck outcome, distinct from
+  ## Bottom. This is the hole representation the design doc anticipates:
+  ## a permanently-partial node, no separate stuck-task machinery.
   var r = id
   while st.parent[r] != r: r = st.parent[r]
   case st.constr[r].kind
   of ckAtom:
-    ratom(st.constr[r].atomName)
+    (ratom(st.constr[r].atomName), @[])
   of ckPair:
     var spine = rnil()
+    var holes: seq[string] = @[]
     let kids = st.constr[r].kids
     for i in countdown(kids.high, 0):
-      spine = rpair(st.rebuild(kids[i]), spine)
-    rpair(ratom(st.constr[r].tag), spine)
+      let (kt, kh) = st.rebuildHoles(kids[i])
+      holes.add(kh)
+      spine = rpair(kt, spine)
+    (rpair(ratom(st.constr[r].tag), spine), holes)
   of ckNone:
-    doAssert false, "rebuild: undetermined node " & st.descs[r]
-    rnil()
+    (rvar(r), @[st.descs[r] & " (shape " & $st.shape[r] & ")"])
+
+proc rebuild*(st: var LatState, id: int): RTerm =
+  ## Output determination (issue §3): the elaborated term is *built* from
+  ## the converged state's constructions, not returned by recursion.
+  ## Ground checking-mode runs must fully determine the term.
+  let (t, holes) = st.rebuildHoles(id)
+  doAssert holes.len == 0, "rebuild: undetermined node(s): " & holes.join(", ")
+  t
 
 proc dumpState*(st: var LatState) =
   ## Inspectable state: every node's class, shape, natl, construction.
@@ -527,3 +585,25 @@ proc checkLatTop*(tm, ty, ctx: RTerm): LatResult =
   result.failure = st.failure
   if ok:
     result.output = st.rebuild(tmId)
+
+proc synthLatTop*(ty, ctx: RTerm): LatResult =
+  ## Backwards driver (issue step 5): the term starts as a fully unknown
+  ## node; the *same* checkLat rules saturate from the type side. The
+  ## outcome is three-valued: reject (Bottom, with provenance), accept
+  ## (fully determined output), or Stuck (partial state — holes awaiting
+  ## information from outside elaboration).
+  var st = initLatState()
+  let tmId = st.freshNode("synth.root")
+  let tyId = st.number(ty)
+  var ctxIds: seq[int] = @[]
+  var cur = ctx
+  while cur.kind == rkPair:
+    ctxIds.add(st.number(cur.head))
+    cur = cur.tail
+  let ok = checkLat(tmId, tyId, ctxIds, st) and st.failure.isNone
+  result.ok = ok
+  result.failure = st.failure
+  if ok:
+    let (t, holes) = st.rebuildHoles(tmId)
+    result.output = t
+    result.stuck = holes
