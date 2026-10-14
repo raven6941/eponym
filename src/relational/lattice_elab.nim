@@ -162,12 +162,24 @@ proc natLatOf(t: RTerm): NatLat =
     return natTop()
   of rkVar: natTop()
 
+proc shortDesc(t: RTerm, id: int): string =
+  ## O(1) node description for provenance. Rendering the full subterm here
+  ## (`$t`) made numbering O(n^2) total — bench_lattice_elab showed invalid
+  ## latency growing ~n^1.7 on cons-chains (886us at n=32 vs 91us at n=8).
+  ## The head tag + node id locates the contradiction just as well.
+  case t.kind
+  of rkAtom: t.name
+  of rkVar: "var#" & $id
+  of rkPair:
+    if t.head.kind == rkAtom: t.head.name & "#" & $id
+    else: "pair#" & $id
+
 proc number*(st: var LatState, t: RTerm): int =
   ## Assign an id to an occurrence; numbering *is* the initial refinement:
   ## ground shape and numeric value are met into the fresh top node.
   result = st.parent.len
   st.parent.add(result)
-  st.descs.add($t)
+  st.descs.add(shortDesc(t, result))
   st.shape.add(shapeOf(t))
   st.natl.add(natLatOf(t))
   # Placeholder first: the recursive kid-numbering below appends to every
