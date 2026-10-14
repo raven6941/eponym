@@ -52,6 +52,8 @@ jobs:
           nim c -r --hints:off $P "tests/pbt_usage.nim" || exit 1
           echo "=== staged-residual vs relational differential tests (issue #163, fixed seed) ==="
           nim c -r --hints:off $P "tests/pbt_staged_agreement.nim" || exit 1
+          echo "=== unifier property tests (issue #163, fixed seed) ==="
+          nim c -r --hints:off $P "tests/pbt_unify.nim" || exit 1
           # Note: lsp is built but not run — it's a server that blocks on stdin,
           # not a test suite. (Was hanging CI since Experiment 7.)
           echo "=== lsp hole-session tests (issue #58, headless mock-LSP) ==="
