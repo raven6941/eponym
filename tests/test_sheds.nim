@@ -11,6 +11,8 @@ import json  # JsonNode indexing in status assertions
 import tables  # initTable (issue #134: LSP server in tests)
 import elab
 import sheds
+import sheds_mac  # issue #191: shedGoalAndCtx
+import eponym_init  # issue #191: Term/tR for the R<n>-fallback test
 import lsp  # issue #134: shed diagnostics via handleMessage
 
 var failures = 0
@@ -179,6 +181,24 @@ block:
   check(resp2["params"]["diagnostics"].len == 0,
     "shed diagnostics: all white -> no diagnostics on didChange")
   removeDir(dir)
+
+# --- Issue #191: shed goal/context use the name-resolving pretty-printer --
+block:
+  let src191 = """postulate Int : ?
+proc quad (n : Int) : Int = _
+"""
+  let (_, ms191, _, errMsg191) = elabCheckHolesDir(src191, ".")
+  check(errMsg191 == "", "name-aware shed goal: no error, got: " & errMsg191)
+  check(ms191.holes.len == 1, "name-aware shed goal: one hole recorded")
+  let (g191, c191) = shedGoalAndCtx(ms191, ms191.holes[0])
+  check(g191 == "Int",
+    "name-aware shed goal: goal shows 'Int', got: " & g191)
+  check(c191 == @["n : Int"],
+    "name-aware shed goal: ctx shows 'n : Int', got: " & $c191)
+  # Unnamed rigid keeps the R<n> fallback (no crash, no empty name).
+  let unreg = Term(kind: tR, refId: 424242)
+  check(prettyTerm(unreg, @[], initTable[int, string]()) == "R424242",
+    "name-aware shed goal: unregistered rigid falls back to R<n>")
 
 if failures > 0:
   echo failures, " failure(s)"

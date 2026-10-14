@@ -34,7 +34,24 @@ import sheds  # ShedInfo, rewriteSheds, resolveShedPlaceholders, sidecar IO,
               # assignShedStatuses (issue #134)
 import usage_check  # hasUnresolvedMetas
 import unify  # zonk
-import eponym_init  # `$` for Term (goal pretty-printing, issue #58)
+import preterm  # qOmega (issue #191: hole-context Ctx, like lsp.nim's hover)
+
+proc shedGoalAndCtx*(ms: MetaStore, h: HoleInfo): tuple[goal: string, ctx: seq[string]] =
+  ## Issue #191: name-resolving goal/context rendering for a shed's hole.
+  ## Uses #139's `prettyTerm` over `ms.refNames` (populated by the
+  ## elaborator when `postulate`/`elim`/data register globals), so
+  ## `postulate(Int, Univ)` shows as `Int` instead of `R134`. Binder names
+  ## come from the hole context (innermost-first, matching Ctx).
+  ## refIds with no registered name keep the `R<n>` fallback (never empty).
+  var ctx: Ctx = @[]
+  for (nm, ty) in h.holeCtx:
+    ctx.add(CtxEntry(name: nm, ty: zonk(ms, ty), qty: qOmega))
+  let goal = prettyTerm(zonk(ms, h.holeGoal), ctx, ms.refNames, ms.recordFields)
+  var c: seq[string] = @[]
+  for (nm, ty) in h.holeCtx:
+    c.add(nm & " : " & prettyTerm(zonk(ms, ty), ctx, ms.refNames,
+                                 ms.recordFields))
+  (goal, c)
 
 macro shedsBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions containing
@@ -70,9 +87,9 @@ macro shedsBlock*(body: untyped): untyped =
     for j in 0 ..< ms.holes.len:
       if ms.holes[j].holeLoc.line == sheds[i].holeLine:
         sheds[i].holeIdx = j
-        sheds[i].goal = $(zonk(ms, ms.holes[j].holeGoal))
-        for (nm, ty) in ms.holes[j].holeCtx:
-          sheds[i].ctx.add(nm & " : " & $(zonk(ms, ty)))
+        let (g, c) = shedGoalAndCtx(ms, ms.holes[j])
+        sheds[i].goal = g
+        sheds[i].ctx = c
         break
 
   # Issue #134: per-shed status (white/yellow/brown). On failure the
