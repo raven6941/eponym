@@ -4,24 +4,36 @@ version       = "0.1.0"
 author        = "Wally"
 description   = "Eponym: a dependently-typed language elaborator in Nim"
 license       = "MIT"
-srcDir        = "src"
+# Production modules live in src/eponym/ and import each other bare
+# (e.g. `import eponym_mac`); pointing srcDir there makes the installed
+# package support exactly the import style the embedded examples use.
+# Experimental code (src/experimental/) is outside srcDir and is never
+# installed (issue #189: release packaging excludes experiment code).
+srcDir        = "src/eponym"
 
 # Dependencies
 
 requires "nim >= 2.0.0"
 
-# Tasks (production paths; issue #189: experimental code lives in src/experimental/)
+# The Eponym prelude (lib/*.ep) ships with the package. `import "x.ep"`
+# inside eponymBlock resolves relative to the calling Nim file, so users
+# vendor the prelude files they need next to their project; see README
+# "Installation". Installed at <pkgdir>/lib/.
+installDirs   = @["lib"]
 
-task test, "Run all test suites and examples":
-  for f in ["eponym_init", "preterm", "parse_surf", "elab", "unify", "eponym_mac", "egraph", "eponym_embed", "kernel_check"]:
-    echo "=== " & f & " ==="
-    exec "nim c -r --hints:off --path:src --path:src/eponym src/eponym/" & f & ".nim"
-  echo "=== examples ==="
-  exec "nim c -r --hints:off --path:src --path:src/eponym tests/run_examples.nim"
+# Tasks
+#
+# `test` IS the CI matrix: tools/ci-local.sh is the single source of truth
+# (the GitHub workflow calls it too), so delegation -- not duplication --
+# keeps `nimble test` matching CI by construction (issue #183).
+task test, "Run the full CI matrix (same matrix GitHub CI runs)":
+  exec "sh tools/ci-local.sh"
 
+# `build` mirrors the "Build: production modules" section of
+# tools/ci-local.sh. Keep the module list in sync with that script.
 task build, "Build all production modules":
-  for f in ["eponym_init", "preterm", "parse_surf", "elab", "unify", "eponym_mac", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout"]:
+  for f in ["eponym_init", "preterm", "parse_surf", "elab", "unify", "eponym_mac", "lsp", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout"]:
+    echo "=== build " & f & " ==="
     exec "nim c --hints:off --path:src --path:src/eponym src/eponym/" & f & ".nim"
+  echo "=== build repl (issue #50) ==="
   exec "nim c --hints:off --path:src --path:src/eponym src/repl.nim"
-  echo "=== lsp (compile only; it blocks on stdin) ==="
-  exec "nim c --hints:off --path:src --path:src/eponym src/eponym/lsp.nim"
