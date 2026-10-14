@@ -22,24 +22,24 @@ requires "nim >= 2.0.0"
 # Installed at <pkgdir>/lib/.
 installDirs   = @["../lib"]
 
-# Production modules: srcDir's .nim files must be listed explicitly --
-# nimble does not install them by default. Patterns are relative to the
-# package root. (Experimental code in src/experimental/ is deliberately
-# excluded: issue #189, release packaging excludes experiment code.)
-installFiles  = @["src/eponym/eponym_init.nim",
-                  "src/eponym/preterm.nim",
-                  "src/eponym/parse_surf.nim",
-                  "src/eponym/elab.nim",
-                  "src/eponym/unify.nim",
-                  "src/eponym/eponym_mac.nim",
-                  "src/eponym/lsp.nim",
-                  "src/eponym/egraph.nim",
-                  "src/eponym/eponym_embed.nim",
-                  "src/eponym/kernel_check.nim",
-                  "src/eponym/sheds.nim",
-                  "src/eponym/sheds_mac.nim",
-                  "src/eponym/shed_layout.nim",
-                  "src/repl.nim"]
+# Production modules: list explicitly -- nimble does not install srcDir's
+# .nim files by default. installFiles resolves relative to srcDir, so these
+# are the bare module names. (Experimental code in src/experimental/ is
+# deliberately excluded: issue #189, release packaging excludes experiment
+# code. src/repl.nim is a dev tool, not part of the installed library.)
+installFiles  = @["eponym_init.nim",
+                  "preterm.nim",
+                  "parse_surf.nim",
+                  "elab.nim",
+                  "unify.nim",
+                  "eponym_mac.nim",
+                  "lsp.nim",
+                  "egraph.nim",
+                  "eponym_embed.nim",
+                  "kernel_check.nim",
+                  "sheds.nim",
+                  "sheds_mac.nim",
+                  "shed_layout.nim"]
 
 # Tasks
 #
@@ -49,9 +49,12 @@ installFiles  = @["src/eponym/eponym_init.nim",
 task test, "Run the full CI matrix (same matrix GitHub CI runs)":
   exec "sh tools/ci-local.sh"
 
-# `build` mirrors the "Build: production modules" section of
+# `buildall` mirrors the "Build: production modules" section of
 # tools/ci-local.sh. Keep the module list in sync with that script.
-task build, "Build all production modules":
+# (Named buildall because nimble's built-in `build` cannot be shadowed
+# by a custom task -- `nimble build` runs the built-in and reports
+# "Nothing to build" for a library with no `bin`.)
+task buildall, "Build all production modules":
   for f in ["eponym_init", "preterm", "parse_surf", "elab", "unify", "eponym_mac", "lsp", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout"]:
     echo "=== build " & f & " ==="
     exec "nim c --hints:off --path:src --path:src/eponym src/eponym/" & f & ".nim"
