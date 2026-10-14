@@ -138,6 +138,36 @@ block:
   check(renderBox(done).contains("no open holes"),
     "layoutShed: white shed renders a done box")
 
+# --- Issue #192: Pi-goal sheds nest one box per binder ----------------------
+block:
+  let pi = layoutShed(ShedInfo(name: "constEndoBody", draft: "", nimLine: 1,
+                               nimCol: 1, holeLine: 3, holeIdx: 0,
+                               goal: "Pi (f : A). Pi (g : A). A",
+                               ctx: @["A : ?"],
+                               goalPi: @["f : A", "g : A", "A"],
+                               status: ssYellow))
+  let pir = renderBox(pi)
+  check(pir.contains("f : A") and pir.contains("g : A") and
+        pir.contains("?0 : A"),
+    "goalPi: binder boxes and residual-goal hole box all render")
+  check(allHoleIds(pi) == @[0], "goalPi: hole id survives nesting")
+  # Structural nesting: rule box -> binder box -> binder box -> hole box
+  # (three nested boxes around the hole).
+  let outer = pi.conclusion
+  check(outer.header == @["f : A"] and outer.children.len == 1,
+    "goalPi: outer binder box wraps one child, got: " & $outer.header)
+  let mid = outer.children[0]
+  check(mid.header == @["g : A"] and mid.children.len == 1,
+    "goalPi: inner binder box wraps one child, got: " & $mid.header)
+  let hole = mid.children[0]
+  check(hole.holeIds == @[0] and hole.header == @["?0 : A"],
+    "goalPi: innermost box is the hole with the residual goal, got: " &
+      $hole.header)
+  # Flat sheds are unaffected: empty goalPi renders exactly as before.
+  let flat = goalStateBox(@["n : Int"], 0, "Int", @[])
+  check(renderBox(flat) == renderBox(goalStateBox(@["n : Int"], 0, "Int")),
+    "goalPi: empty spine renders identically to the flat box")
+
 if failures > 0:
   echo failures, " failure(s)"
   quit(1)

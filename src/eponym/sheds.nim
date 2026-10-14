@@ -72,6 +72,10 @@ type
                        # ("" = sidecar predates #137: recompile)
     goal*: string      # zonked, pretty-printed goal type at the hole
     ctx*: seq[string]  # zonked, pretty-printed binder context ("name : type")
+    goalPi*: seq[string]  # issue #192: Pi spine of the goal, outermost first:
+                          # binder strings ("f : A"), then the residual goal
+                          # as the last element (empty = goal is not a Pi, the
+                          # layout renders one flat hole box as before)
     status*: ShedStatus  # issue #134: white/yellow/brown elaboration status
 
 proc isShedNode*(n: NimNode): bool =
@@ -192,6 +196,7 @@ proc shedToJson*(s: ShedInfo): JsonNode =
       "holeLine": s.holeLine, "holeIdx": s.holeIdx, "holeCol": s.holeCol,
       "genSrc": s.genSrc,
       "goal": s.goal, "ctx": s.ctx,
+      "goalPi": s.goalPi,
       "status": shedStatusToStr(s.status)}
 
 proc shedFromJson*(j: JsonNode): ShedInfo =
@@ -202,6 +207,8 @@ proc shedFromJson*(j: JsonNode): ShedInfo =
            genSrc: if j.hasKey("genSrc"): j["genSrc"].getStr else: "",
            goal: j["goal"].getStr,
            ctx: j["ctx"].elems.mapIt(it.getStr),
+           goalPi: if j.hasKey("goalPi"): j["goalPi"].elems.mapIt(it.getStr)
+                   else: @[],  # pre-#192 sidecars: flat hole box as before
            status: if j.hasKey("status"): shedStatusFromStr(j["status"].getStr)
                    else: ssYellow)  # pre-#134 sidecars: stuck is the safe default
 

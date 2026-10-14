@@ -86,10 +86,19 @@ proc ruleBox*(premises: seq[Box], ruleLabel: string,
   Box(premises: premises, ruleLabel: ruleLabel, conclusion: conclusion,
       arrange: baHorizontal)
 
-proc goalStateBox*(ctx: seq[string], holeId: int, goal: string): Box =
+proc goalStateBox*(ctx: seq[string], holeId: int, goal: string,
+                   goalPi: seq[string] = @[]): Box =
   ## A shed's proof state, Epigram-style: the context hypotheses (stacked)
   ## above the rule, the hole (empty box showing its goal) below it.
-  ruleBox(@[textBox(ctx)], "", holeBox(holeId, goal))
+  ## Issue #192: when `goalPi` is non-empty -- the goal's Pi spine as
+  ## strings, binders outermost-first, residual goal last -- one box nests
+  ## per binder around the hole box, so a shed over a function type with
+  ## multiple binders shows real nesting instead of one flat hole box.
+  var inner = holeBox(holeId, if goalPi.len > 0: goalPi[^1] else: goal)
+  for i in countdown(goalPi.len - 2, 0):
+    inner = Box(header: @[goalPi[i]], children: @[inner],
+                arrange: baVertical)
+  ruleBox(@[textBox(ctx)], "", inner)
 
 proc caseBox*(scrutinee: string,
               branches: seq[tuple[pat: string, body: Box]]): Box =
@@ -121,7 +130,7 @@ proc layoutShed*(shed: ShedInfo): Box =
   ## (context above the rule, hole below). A shed with no open hole
   ## (white) gets a plain "done" box instead.
   if shed.holeIdx >= 0:
-    goalStateBox(shed.ctx, shed.holeIdx, shed.goal)
+    goalStateBox(shed.ctx, shed.holeIdx, shed.goal, shed.goalPi)
   else:
     textBox("shed '" & shed.name & "' elaborated: no open holes")
 

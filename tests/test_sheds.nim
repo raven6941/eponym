@@ -190,11 +190,13 @@ proc quad (n : Int) : Int = _
   let (_, ms191, _, errMsg191) = elabCheckHolesDir(src191, ".")
   check(errMsg191 == "", "name-aware shed goal: no error, got: " & errMsg191)
   check(ms191.holes.len == 1, "name-aware shed goal: one hole recorded")
-  let (g191, c191) = shedGoalAndCtx(ms191, ms191.holes[0])
+  let (g191, c191, pi191) = shedGoalAndCtx(ms191, ms191.holes[0])
   check(g191 == "Int",
     "name-aware shed goal: goal shows 'Int', got: " & g191)
   check(c191 == @["n : Int"],
     "name-aware shed goal: ctx shows 'n : Int', got: " & $c191)
+  check(pi191.len == 0,
+    "goalPi: non-Pi goal yields an empty spine, got: " & $pi191)
   # Unnamed rigid keeps the R<n> fallback (no crash, no empty name).
   let unreg = Term(kind: tR, refId: 424242)
   check(prettyTerm(unreg, @[], initTable[int, string]()) == "R424242",
