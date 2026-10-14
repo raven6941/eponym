@@ -126,6 +126,13 @@ paths. The direct elaborator (`src/eponym/elab.nim`) is production; the
 
 Status: experimental. See `docs/staging-design.md` for the staging architecture.
 
+## Trust model
+
+[docs/trust-model.md](docs/trust-model.md) states what the system checks and
+guarantees — and what is your problem: `? : ?` universes (#52), unchecked
+positivity of `data` declarations (#33), termination beyond single-function
+structural recursion (#42), and arbitrary type-level host programs.
+
 ## Building
 
 Requires Nim 2.x (built with 2.2.12 via
