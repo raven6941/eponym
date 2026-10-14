@@ -37,6 +37,32 @@ check(hoverAt(vecSrc, 0, 0) == "", "hoverAt returns \"\" away from holes")
 check(hoverAt("proc broken = = =", 0, 0) == "",
   "hoverAt returns \"\" for an unparseable document")
 
+# --- issue #139: name-resolving pretty-printer -----------------------------
+# Globals render as source names, not `R<n>` rigids.
+check(md.contains("goal : A"), "hover goal resolves to `A`")
+check(md.contains("`xs : ((Vec A) (suc n))`"),
+  "hover ctx resolves `Vec` and `suc`")
+check(md.contains("`n : Nat`"), "hover ctx resolves `Nat`")
+check(md.contains("`A : ?`"), "hover ctx renders the universe as `?`")
+# No `libpcre` in this VM, so scan for `R<digit>` without the `re` module.
+proc hasRigidRender(s: string): bool =
+  var i = 0
+  while i < s.len - 1:
+    if s[i] == 'R' and s[i+1] in {'0'..'9'}: return true
+    inc i
+  false
+check(not hasRigidRender(md),
+  "hover shows no rigid `R<n>` renderings for globals")
+const natGoalSrc = """data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+proc f : Nat =
+  _
+"""
+let mdNat = hoverAt(natGoalSrc, 4, 2)
+check(mdNat.contains("goal : Nat"),
+  "hover goal resolves a global type name (`Nat`)")
+
 # --- protocol: scripted session through handleMessage --------------------
 var server = LspServer(documents: initTable[string, string]())
 

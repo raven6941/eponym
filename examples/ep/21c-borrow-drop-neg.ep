@@ -7,11 +7,7 @@
 # reclaim it. Expected error: linear variable 'b' not used, from the
 # in-judgment quantity enforcement (Issue #66).
 import "../../lib/nat.ep"
-
-postulate Res : ?
-postulate Borrow : ?
-
-postulate withBorrow : Pi (1 r : Res). Pi (k : Pi (1 b : Borrow). Nat). Nat
+import "../../lib/borrow.ep"
 
 # Violation: borrow dropped on the floor.
 proc badDrop (1 r : Res) : Nat =

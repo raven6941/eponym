@@ -1,0 +1,37 @@
+# Records with named projections (Issue #37).
+# A `record` desugars to a transparent iterated-Sigma def, a positional
+# constructor `mkR`, and named projections `R.field`; `p.field` resolves
+# against the record table at elaboration time.
+
+postulate Nat : ?
+postulate zero : Nat
+postulate suc : Nat -> Nat
+
+record Point:
+| x : Nat
+| y : Nat
+
+proc origin : Point =
+  mkPoint zero (suc zero)
+
+proc getX (p : Point) : Nat =
+  p.x
+
+proc getY (p : Point) : Nat =
+  p.y
+
+proc swap (p : Point) : Point =
+  mkPoint p.y p.x
+
+# Dependent fields: later field types may mention earlier ones.
+postulate Vec : Nat -> ? -> ?
+
+record DepR:
+| n : Nat
+| v : Vec n Nat
+
+proc getN (r : DepR) : Nat =
+  r.n
+
+proc getV (r : DepR) : Vec r.n Nat =
+  r.v

@@ -1,0 +1,26 @@
+# Eponym common library: DCP-style convexity checking (issues #101, #164).
+#
+# Reusable core of the convexity DSL: an expression AST (`CExpr`), the
+# `Affine` and `Convex` certificate families, and `minimize`, which only
+# accepts certifiably convex objectives. Clients (e.g.
+# examples/ep/17a-convex-neg.ep) write their own objectives and offer
+# proofs against this library.
+#
+# The DCP discipline (CVXPY raises DCPError for the same violations):
+# the product of two variables is not certifiably convex, so `eMul` is
+# in the AST but admits no `Convex` rule — the absence of a rule *is*
+# the check.
+import "nat.ep"
+
+data CExpr : ? where
+| eVar : CExpr
+| eMul (e1 : CExpr) (e2 : CExpr) : CExpr
+| eSq (e : CExpr) : CExpr
+
+data Affine : CExpr -> ? where
+| afVar : Affine eVar
+
+data Convex : CExpr -> ? where
+| cvSq (e : CExpr) (h : Affine e) : Convex (eSq e)
+
+proc minimize (e : CExpr) (h : Convex e) : CExpr = e

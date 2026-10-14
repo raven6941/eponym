@@ -11,6 +11,19 @@
   Status of each experiment is tracked here. Per-experiment lab notes go
   under =experiments/= once started.
 
+* Public release focus (2026-10-14)
+
+  Work selection now prioritizes a public release: Eponym actually useful
+  to people, living up to "epigram as embedded opt-in dependent types in
+  Nim". Release scope is tracked in GitHub milestone 1 ("Public release"):
+  installation (#183), tutorial + syntax reference (#184), documented trust
+  model (#185), error-message UX (#186), sheds merge decision (#142), LSP
+  triage (#5), and the fix-or-document soundness items (#33 positivity,
+  #42 termination, #52 universes; #46/#34 feed the error UX). The Track C
+  close-pile (#9, #12-#14, #18-#22, #26, #27, #30, #31, #68, #69, #76, #90,
+  #95, #70, #102) is settled research awaiting triage/close, not release
+  work. The work-continuation worker checks the milestone first.
+
 * Phase 0 — ETT core (done, 2026-10-06/07)
 
   Two implementations of Epigram's Type Theory in Nim, tested:
@@ -554,3 +567,27 @@
   - [[https://github.com/raven6941/notes/blob/main/staging.org][Staging]]
   - [[https://github.com/raven6941/notes/blob/main/nim-macros.org][Nim macros]]
   - [[https://github.com/raven6941/notes/blob/main/turnstile-plus.org][Turnstile+]]
+
+* Experiment 14 (planned 2026-10-13, not started — do not pursue yet)
+
+  Question: can Eponym's object language get delimited continuations
+  (shift/reset) via a selective CPS transform, as the runtime substrate
+  for algebraic effects?
+
+  Motivation (Aaron, 2026-10-13): completes the effects story — #41
+  proved elaboration-time effects viable, #177 tracks abilities at the
+  type level, but object-level algebraic effects need continuations,
+  which Nim lacks natively. Key feasibility fact: Eponym generates the
+  Nim code, so the transform needs no host cooperation.
+
+  Full hypothetical plan recorded in docs/cps-delimcc-plan.md (7 steps,
+  Rompf-revised): selective CPS from the start, shift-sites-only
+  transform with reset-as-library, closure-based continuations,
+  answer types via the light route (per-expression control effect or
+  ambient-ability tracking — compare before building), one-shot
+  justified by QTT rather than precedent, and Nim-specific day-one
+  constraints (trampoline, explicit exception channel,
+  shift-inside-reset as macro error, stack-vs-heap continuations).
+
+  Prior art: Rompf/Maier/Odersky ICFP 2009 (selective type-directed
+  CPS); notes/pages/rompf-delimited-continuations-scala2.org.

@@ -8,6 +8,96 @@
   =exp-NN-short-name= branches, merged to =main= when the experiment
   concludes with a decision recorded here.
 
+* 2026-10-13 — Integer literal 1: renderer emits `01`; `1` stays the unit type (issue #158)
+
+  Context: `1` lexes as the unit *type* (QTT) in surface syntax, so the
+  canonical renderer (`$` on =PreTerm=) emitting `"1"` for `pkInt(1)` made
+  render->parse unfaithful: the text re-parsed as `pkUnitTy`. The adequacy
+  suite's P4 round-trip had to skip `pkInt(1)` terms. The lexer already
+  documented the escape hatch ("use 01 for the integer"): `01` lexes as
+  `tkInt("01")` → `mkInt(1)`.
+  Options considered: (a) context-sensitive lexing reclaiming `1` in term
+  positions — rejected: genuinely ambiguous, since `id 1` passes the unit
+  *type* as a term argument today and no lexer position distinguishes
+  "type-as-term" from "literal"; (b) new explicit literal syntax (`#1`
+  unavailable — `#` is the comment char; `lit 1` would reserve an
+  identifier for a single value) — rejected as disproportionate;
+  (c) complete the existing `01` decision: the renderer emits `01` for
+  `pkInt(1)`.
+  Decision: (c). `preterm.render` special-cases `pkInt(1)` → `"01"`; all
+  other literals render as before. Lexer, quantity annotations, binder
+  positions, and the QTT `1`-as-unit-type story are untouched. Embedded
+  (`eponymBlock`) unchanged: Nim literal `1` still maps to `(suc zero)`.
+  Consequences: P4's `pkInt(1)` skip removed; P4 now asserts non-vacuity
+  (`withOne > 0`, 91/300 generated terms in the seed run); new
+  deterministic P7 pins the contract (`$mkInt(1) == "01"`, `$mkUnitTy()
+  == "1"`, `01` parses to `pkInt(1)`, `1` still parses to the unit type).
+  Residual wart, documented: users write `01` for the integer one in
+  `.ep` files; rendered output (error messages, shed goals) shows `01`.
+  Status: OPEN (branch =exp158-int-one-render=).
+
+* 2026-10-13 — Independent kernel checker v2: eliminator iota + primop/nat-literal coverage (issue #156)
+
+  Context: #62's v1 kernel audited 55 definitions with 32 honest SKIP
+  (24 eliminator-iota, 8 primop/nat-literal). #156 asks to shrink the
+  SKIP class by extending the kernel, keeping the LCF posture: share
+  syntax, re-implement judgments.
+  Decision: three independent re-implementations, plus one check the
+  elaborator itself skips:
+  (1) Iota (=kwhnfElim=): the kernel flattens application spines itself,
+  detects eliminator-headed heads via its own =isElim= flag (never the
+  elaborator's =wRed= values), weak-head-evaluates the scrutinee, and on
+  a constructor-headed scrutinee instantiates the contractum template
+  with a fresh parallel substitution (=ksubstSpine=, outside-in) following
+  =fireRed='s context convention ([elim args except scrutinee,
+  ctor tele args], innermost-first) -- re-derived, not imported.
+  Under-applied eliminators and stuck scrutinees stay neutral, mirroring
+  =fireRed='s neutral case. What iota cost the kernel: the application
+  shape detection moved from "the elaborator's =RedRule= registry says
+  so" to "the kernel's own spine walk + its own =elimRules= table";
+  the template context convention had to be re-derived from
+  =elabRedDecl='s context construction and =fireRed='s spine order, and
+  getting it wrong fails loudly at rule-validation time (below), not
+  silently.
+  (2) The motive check (=validateElimRules=): =elabRedDecl= elaborates
+  each =red= contractum in inference mode only -- "the rule is trusted,
+  like an axiom". The kernel does not trust it. For each
+  (eliminator, constructor) rule it rebuilds the template's context from
+  the eliminator's and constructor's Pi types in its own globals,
+  discovers the index structure (scrutinee type = family applied to
+  params+index vars; constructor return = family applied to
+  params+index exprs; leading params must match syntactically), and
+  *checks* the template against the motive instance. One subtlety found
+  while implementing: the kernel's =KCtx= convention needs =ctx[i]=
+  written *outside* the =i= innermost binders (=kInfer(V(i))= shifts up
+  by =i+1=), so context types built in the full template context must be
+  shifted down by =i+1= -- caught by the self-test, not by reasoning.
+  A rule failing the check is an audit disagreement (triage, never
+  silent); a rule whose shape cannot be discovered is marked invalid and
+  its use raises a fragment error (honest SKIP). The self-tests include
+  a deliberately ill-typed rule that the motive check must catch.
+  (3) =tNatLit= (=kExpandNatLit=, issue #93): definitionally
+  =suc^n(zero)=, expanded with the kernel's own =zero=/=suc= globals --
+  uniform expansion instead of the elaborator's O(1) fast path +
+  =numeralChainEq= fallback. Documented limitation: very large literals
+  would build large chains.
+  (4) =tInt=/=tPrim= (Experiment 11): axiom-style. The kernel *knows*
+  primops are binary =Int -> Int -> Int= operations; the elaborator's
+  claimed =primTy= is verified against the kernel's own axiom type, not
+  trusted. Fully-applied primops fire on literal args via host
+  arithmetic, else stay neutral.
+  Data-vs-logic line: the harness hands the kernel elaborator-produced
+  *data* (rule tables via a new =redRuleInfo= accessor, =zero=/=suc=/
+  =Int= refIds) exactly as it already hands over definition bodies; every
+  judgment over that data is fresh kernel code.
+  Consequences: audit now 87 PASS, 0 SKIP, 0 DISAGREE over 41 files;
+  every iota rule in the corpus passed the motive check (no
+  disagreements to triage). =docs/kernel-fragment-spec.md= updated to
+  v2. The kernel is now strictly stronger than the elaborator in one
+  place (it checks =red= contractums against the motive); the elaborator
+  could adopt the same check at declaration time.
+  Status: OPEN (branch =exp156-kernel-v2=).
+
 * 2026-10-07 — Initial encoding as elaborator target
 
   Context: ETT implemented twice (finally-tagless =ett.nim=, initial
@@ -2118,6 +2208,108 @@
   loop documented here). Merge to main is a separate decision (new
   issue); #139 (name-resolving pretty-printer) still open.
 
+* 2026-10-12 — #45: evidence-returning equality handlers (interface + validation; natArithHandler migration open)
+
+  Context: #41 landed equality handlers as *trusted* decision procedures
+  (=coreValid=false= extends conversion for the handler's dynamic extent,
+  counted in =ms.extDischarges=, relaxing =elabDefDecl='s bare-core
+  re-check). The Andromeda endgame is handlers that *return evidence*:
+  automation without trust extension.
+
+  Design (this chunk):
+  - Evidence format: a core =Term= claimed to prove =Eq goalTy a b=
+    (=ConvResult{verdict, evidence}=; new verdict =cvDischargedEv=).
+    =goalTy= is threaded through =convElab= and =ConvDecide= — the
+    =tacRefl= site passes the =Eq='s =A=, the seven type-vs-type sites
+    pass the universe =tmC(cStar)= — so the handler can build a
+    well-typed proof term.
+  - Validation: =validateEvidence= closes goal and evidence over the
+    elaboration context by substituting fresh rigid postulate refs for
+    =tV(i)= (descending =subst=; ctx types mention only strictly outer
+    vars, so closing types first in the same order is sound), pops the
+    handler stack, and runs the core's own =check=. Bogus evidence
+    raises a located =ElabError=; validated evidence does NOT touch
+    =extDischarges=, so =elabDefDecl='s bare-core re-check stays in
+    force. Fail-closed throughout: nil evidence, unknown =goalTy=, or
+    =Eq= out of scope all raise rather than silently trusting.
+  - Why a proof =Term= and not a rewrite trace: a trace the core replays
+    can only cover definitional/congruence steps — the comm/assoc
+    rearrangements that motivate the handler are not definitional, so a
+    replayable trace would need the same induction proofs anyway. The
+    proof-term format pushes all the intelligence into the handler and
+    keeps the validator to one =check= call.
+  - Mock-handler tests (in =elab.nim='s suite): positive — =refl Nat
+    zero= evidence for =Eq Nat (add zero zero) zero= validates, the def
+    elaborates, =extDischarges == 0=, and a =fired= flag proves the
+    evidence path (not =defaultConv=) discharged the goal; negative —
+    =refl Nat zero= for =Eq Nat zero (suc zero)= is rejected with
+    "evidence rejected".
+
+  Open (next chunk): migrate =natArithHandler= from the trusted fast
+  path to =cvDischargedEv=. Its rearrangement steps genuinely need
+  induction proofs, so the handler must synthesize them: build the four
+  linear-arithmetic lemmas (addZeroR/addSucR/addComm/addAssoc) as =Term=
+  proofs via Nat's eliminator at handler-construction time (proved with
+  the bare core, no handlers — no circularity with the =by arith=
+  corpus), then assemble each goal's evidence as a transitivity chain
+  of congruence + lemma steps over the normalization trace. The
+  =closeOverCtx= machinery already handles the open-context case this
+  needs (=n m : Nat= binders become rigid refs).
+
+  Done (same day, this chunk): =natArithHandler= now returns
+  =cvDischargedEv= evidence. =buildArithLemmas= synthesizes the four
+  lemmas as closed =Term=s via =natElim=/=eqElim= (J-based
+  =congAt=/=symAt=/=transAt= combinators, de Bruijn-exact shifting) and
+  verifies each with the bare core at handler-construction time
+  (=ok=false= falls back to the trusted path — no hard dependency).
+  =normEvArith= is a proof-carrying normalizer mirroring =normNat=:
+  each step (atom via =sym (addZeroR t)=, =suc= via =sucPushArith= +
+  =addSucR=, =add= via =peelArith= + =addAssoc= reassociation and
+  =sortArith= insertion sort with =addComm= swaps) carries its =Eq=
+  proof; =buildArithEvidence= closes =a ≡ canon ≡ canon ≡ b= with
+  =refl= on the structurally identical canonical forms. The =by arith=
+  corpus (addSucRight/addZeroRight/addComm/addAssoc over open =Nat=
+  goals) now elaborates with =extDischarges == 0= — automation, not
+  trust. Two bugs the bare core caught while debugging (evidence for
+  the design's value): (1) =validateEvidence= closed goal and evidence
+  with two independent fresh-ref sets — refactored to =closeParams=
+  computing one shared set; (2) =swapAtArith='s outer =transAt= passed
+  =T2= as the middle term while the inner proof had type =Eq T1 T3=,
+  and =buildArithEvidence= passed =symAt= its arguments swapped.
+  Trusted =cvDischarged= remains only for Eq-congruence type goals and
+  exotic shapes (=ExoticArithShape=) the prover does not cover.
+  Status: CLOSED (branch) — merged via PR.
+
+* 2026-10-12 — One surface syntax: parse_surf's grammar is canonical, eponymBlock emits a subset
+
+  Context: issue #144 step 2 asked for the standalone and embedded
+  grammars to be unified ("accept exactly the embedded grammar — no more,
+  no less"). Investigation showed the premise was wrong: there are not
+  two grammars. =eponymBlock= (eponym_mac.nim) converts the Nim AST to an
+  Eponym *source string* via =blockToEponym=, which is then parsed by
+  =parse_surf.parseProgram= — the embedded pipeline already routes
+  through the standalone parser. The legacy =ettDefs= macro in mac_surf.nim
+  (proc-defs only) is not the embedded front end and is not on the
+  elaboration path.
+  Options: (a) carve parse_surf down to exactly what =blockToEponym=
+  emits; (b) keep parse_surf's grammar as the canonical syntax and
+  document =blockToEponym='s emitted subset plus deliberate divergences.
+  Decision: (b). Option (a) would delete =elim=, =red=, =by=-tactics and
+  =def=-clauses from the grammar, breaking smoke tests 07/08/14 for no
+  user benefit — those are elaborator-level features whose embedded
+  forms need macro design work (a follow-up ergonomics issue, value
+  category b). The canonical syntax is now stated in parse_surf.nim's
+  header: the grammar, the =blockToEponym= mapping rules (=Univ=→=?=,
+  =lam(x,T,body)=, =Sig= forms, quantity prefixes, =vecnil=→=nil=,
+  =1=→=(suc zero)=), and the standalone-only divergences (=elim=/=red=,
+  =by= tactics, =def= clauses, quantity-variable binders, =<>=).
+  Consequences: =tests/surface_conformance.nim= pins the agreement — a
+  corpus of (eponymBlock-block, equivalent .ep source) pairs must parse
+  to identical =SurfDecl=s (locations ignored, quantities compared
+  explicitly since =PreTerm.== ignores =qty= and the renderer drops it).
+  Full inventory in the goal's hidden_files/144-syntax-inventory.md.
+  Status: on branch =exp144-syntax-align=, PR pending.
+
 * 2026-10-13 — #153 automatic shed sidecar generation (branch sheds-loop)
 
   Context: #137 closed the shed loop headlessly, but using it still
@@ -2155,3 +2347,448 @@
   they ride the #142 click-through as the real acceptance.
   Status: #153 implementation complete on the sheds-loop branch; issue
   left open for Aaron's click-through confirmation alongside #142.
+* 2026-10-13 — Independent kernel checker: shared syntax, independent judgments (issue #62)
+
+  Context: #62 asks for an LCF-style minimal kernel that re-checks every
+  elaborated core term, so soundness does not rest on "we tested the
+  elaborator a lot". The key design question is what the kernel shares
+  with the elaborator.
+  Decision: share the =Term= syntax (=eponym_init.Term=) — it is the
+  artifact being audited — but re-implement everything else from scratch:
+  capture-avoiding substitution (with an explicit same-depth variant
+  =ksubstKeep= for check-mode lambda/pair and snd-projection, where the
+  body is checked in the same context the codomain was written; the
+  beta-like =kinst= decrements indices and is only for application/let),
+  a fresh weak-head evaluator (beta + delta + pair/let; no NbE, no
+  =Value=, no =RedRule= registry), type-directed conversion with eta,
+  and the bidirectional check/infer rules. The cached =Value= fields in
+  =tR= nodes (=refTyp=, =refVal=) are treated as untrusted hints and never
+  consulted; the kernel takes its own =KernelGlobals= table (type + def).
+  Fragment violations (=tMeta=, =tInt=, =tNatLit=, =tPrim=,
+  eliminator-dependent conversion) raise rather than pass: absence of a
+  rule is a failure, never a silent acceptance.
+  Consequences: =src/eponym/kernel_check.nim= v1 covers the pure ETT
+  fragment (Pi/Sigma/Lam/Pair/App/Fst/Snd/Let/Absurd, ?, 1, O, 0, vars,
+  global refs with delta-unfolding definitions); self-tests pass
+  (identity, ill-typed rejection, eta, pairs, fst/snd, unbound vars,
+  defined-reference unfolding). Next: data-eliminator iota (needs an
+  eliminator interface the kernel does not yet share), =tNatLit=
+  expansion, and wiring the kernel as an audit pass over elaborated
+  definitions.
+  Status: OPEN (branch =exp62-kernel=) — v1 kernel + self-tests.
+
+* 2026-10-13 — Independent kernel checker, part 2: differential audit harness (issue #62)
+
+  Context: the v1 kernel existed with unit self-tests but had never faced
+  real elaborator output. Built =tests/kernel_audit.nim=: elaborates every
+  =.ep= file under =lib/=, =examples/=, =examples/ep/= (fresh
+  =ModuleDriver= per file, =*-neg.ep= must be rejected), builds the
+  kernel's globals from =drv.globals= plus a new =ModuleDriver.allDefs=
+  log (every def elaborated through the driver, including via =import= —
+  without it, imported definitions' bodies were missing and conversion
+  failed instead of reaching the eliminator-fragment rule), and
+  re-checks each definition with =kernelCheckDef=. Verdicts:
+  PASS / SKIP (out of kernel fragment, honestly counted) / DISAGREE
+  (elaborator accepted, kernel rejected — fails the suite).
+  Supporting changes: =elabCheckStateG= (exposes elaborator globals),
+  exported =prettyTerm=, =docs/kernel-fragment-spec.md= (versioned
+  "kernel accepts" language), CI runs =kernel_check= self-tests and the
+  audit harness.
+  Decision: the first audit runs found 29 disagreements; triage showed
+  every one was a kernel-side bug, fixed the same session —
+  (1) sigma-binder elimination must decrement outer indices: =tSnd=
+  inference and check-mode =tPair= used same-depth =ksubstKeep=, giving
+  =snd p : A= instead of =B= for =p : Sig (u:A). B= (caught by =pairSwap=);
+  =kinst= is correct, =ksubstKeep= only for check-mode lambda where the
+  context gains the binder; regression self-test added;
+  (2) fragment-error messages must share one prefix: =tPrim=/=tInt=/
+  =tNatLit= messages did not start with "out of kernel fragment" and were
+  swallowed into =false= instead of SKIP;
+  (3) =<> = (cVoid) synthesizes =1= (cOne), not =?= (elab: =pkUnitV=);
+  (4) lambdas synthesize =Pi(dom, bodyTy)= from their domain annotation
+  (always filled in elaborated terms) — needed when let-substitution
+  exposes a lambda in infer position (=letU=).
+  Also: conversion encountering a fully-applied eliminator-headed neutral
+  raises the fragment error (via =isElim= on =KGEntry=) instead of
+  rejecting — iota-dependent programs are not-yet-auditable, not wrong.
+  Consequences: 41 files, 55 PASS, 32 SKIP (24 eliminator-iota, 8
+  primop/literal), 0 DISAGREE, 15 negative tests rejected as expected.
+  The kernel is deliberately more permissive in one direction (ignores
+  quantities in conversion), so it cannot catch elaborator bugs visible
+  only as quantity misuse — noted in the fragment spec. Next: v2 kernel
+  with eliminator iota (largest skip class), then =tNatLit=/primop
+  semantics; the harness makes each extension falsifiable.
+  Status: OPEN (branch =exp62-kernel=) — audit green; v2 (iota) not started.
+
+** #143 verdict: do NOT migrate to the staged-relational elaborator (2026-10-13)
+  Status: NEGATIVE (issue closed). The gate was the benchmark: the
+  staged-relational elaborator must meet or beat the direct elaborator,
+  especially on LSP-relevant workloads. Three independent lines say no:
+
+  1. Latency (fresh three-way, 2026-10-13, =bench/bench_rel_elab.nim=
+     revived with a one-line import fix — =stage_rel_elab_dep= now lives
+     in =tests/= — 50 iters, ms/iter, all sides agree on verdicts):
+     valid cases: staged/unstaged = 11.4-18.9x, staged/direct = 1.5-2.5x
+       slower; invalid cases: staged/direct = 16.0-26.8x slower (the
+       Goal/Stream machinery explores dead branches on rejection).
+     Retaining the engine is structurally, strictly worse than direct
+     elaboration. Replicates the 2026-10-09 numbers (2-5x valid,
+     20-44x invalid); the mechanism is unchanged.
+
+  2. Expressiveness: the LSP hole behaviors (=publishDiagnostics=,
+     =hoverAt=, =caseSplitAt=, =fillHoleAt=) run on =elabCheckHoles ->=
+     =MetaStore= over open terms with metavariables. The relational
+     fragment is ground-answer-only (=rel_elab.nim= has zero hole/meta
+     mentions; the residual returns none where the relation would return
+     a non-ground answer). Migrating the LSP is not a migration — it
+     would be a research project (cf. #76 unify°, #68 incremental
+     conversion-checking). The "LSP hole-heavy workload" comparison the
+     issue asked for is infeasible for this reason, which is itself the
+     stronger refutation: the staged-relational elaborator cannot
+     express the interactive workload at all.
+
+  3. The winning line is elsewhere: re-ran
+     =src/staging/bench_elab_end_to_end.nim= on current main — the #57
+     generated-direct residual (=elaboD=, direct-style code generated
+     *from* the relational spec) agrees byte-for-byte with the direct
+     elaborator on all 16 corpus cases and is 8.55x faster (geometric
+     mean, best-of-100 wall-clock, per-case 1.3-65.8x). The relational
+     definitions earn their keep as the specification and as the
+     *input* to complete codegen — not as the retained-engine
+     elaborator.
+
+  Decision: #143 closed as negative. =src/eponym/elab.nim= stays the
+  production elaborator. The relational spec remains the
+  specification/multi-direction artifact and the input to #57's
+  generator line; the staged-engine path (=tests/stage_rel_elab_dep.nim=)
+  stays retired in =tests/= as the comparison oracle. If #76/#68 ever
+  give the relational side metavariable refinement, this verdict can
+  be revisited.
+
+* 2026-10-13 — #78: clause-matrix compilation, rest-binder design (resumed)
+
+  Context: resumed the stalled =exp78-nested-patterns= branch. The
+  in-progress refactor (matrix types + =checkMatrixCoverage=/
+  =specializeRows=/=compileMatrixNode=/=compileBranch=) did not compile:
+  =MatrixRow.restPats= referenced but undeclared, =cols[1+ep_i]= mutated
+  through a by-value parameter, the top call passed only the scrutinee
+  column, =cBodyRet= never computed, and the method lambda nest omitted
+  the rest binders. Completed the design as follows.
+
+  1. Rest binders are bound once, by the top split's methods: method =
+     =lam args. lam ihs. lam rest. inner=, where =inner= is the matrix
+     compilation and nested split nodes sit under =lam rest=. Nested
+     methods bind only their constructor args + IHs; their motive/IH
+     types use the stripped tail =retTy= (=TailCtx.restBound=). A
+     "bind-rest-at-the-leaves" design was rejected: a match-column split
+     would scrutinize a rest binder that is only bound inside the
+     methods, i.e. out of scope at the split site.
+  2. The lambda-nest order bug: each =mkLam= wraps outside the previous,
+     so the rest binders must be wrapped *first* (args, then IHs, then
+     rest outside-in means rest wrapped first). Wrapping rest last put
+     =lam rest= outside =lam args= and the method failed to check
+     ("cannot unify tR with tPi").
+  3. =subsumesAll= was unsound for coverage: a nullary constructor
+     pattern (=zero=) counted as match-all, so =| (suc (suc zero))= was
+     treated as covering the whole =suc= case and a following =| _=
+     vanished from the =zero= branch ("missing case for constructor
+     'zero' (under 'suc')"). Fix: a constructor pattern is match-all
+     only for a single-constructor datatype with recursively match-all
+     arguments.
+  4. Nested IHs have the stripped type =retTy= (rest binders free, bound
+     by the enclosing method), so =replaceRecCalls= drops the trailing
+     rest arguments for nested pairs (=nested= flag on =recPairs=).
+     Limitation: a nested recursive call whose rest arguments are not
+     exactly the enclosing rest binders is miscompiled (no such programs
+     existed before #78; documented in the proc comment).
+
+  Verified: =examples/ep/25b-clause-nested.ep= (nested patterns to three
+  levels, rest arguments, wildcard rest patterns, a nested recursive
+  call) elaborates, and ten =Eq=-by-=refl= computation proofs check;
+  =25c/=25d= negative tests pin nested overlap and missing-nested-case
+  errors; =tests/kernel_audit.nim= re-checks the generated eliminator
+  applications independently (119 passed, 0 disagreements). Indexed
+  nested matches work for non-dependent results
+  (=Vec Nat n= with =(cons k zero xs)=); the nested motive is constant
+  in the nested indices (outer refinement already applied).
+
+* 2026-10-13 — #78: multi-column matching (follow-up)
+
+  The separate =MatrixRow.restPats= field was an artifact of building the
+  top split from the scrutinee column alone: rest patterns had to be
+  merged into =pats= inside =compileBranch=, after the top split fixed the
+  canonical rest binders. Merging at the top level (rows carry the full
+  pattern vector from the start) lets =compileMatrixNode= pick *any*
+  column with a constructor pattern, not just the first — genuine
+  Maranget/Augustsson column selection — and deletes =restPats= entirely
+  (elab.nim: 24 insertions, 37 deletions across the refactor). Non-scrutinee patterns may now be constructor patterns too; validation
+  accepts constructor patterns, variables, and wildcards at any nesting
+  depth in any column.
+
+  Verified: =examples/ep/25e-clause-multicol.ep= (two-argument =andb= with
+  a variable rest pattern =false y=, three =Eq=-by-=refl= computation
+  proofs); full =tests/run_examples.nim= green, no regressions.
+
+* 2026-10-13 — #170: lattice-monotone elaboration benchmark (issue open, step 5 remains)
+
+  Context: #170 applies Aaron's 2026-10-13 principle to #143's verdict —
+  instead of accepting the staged-relational engine's fast-fail deficit
+  (or recovering it with cut, which kills synthesis), refine the
+  relational style itself: relations never branch; ambiguity is reified
+  into a lattice state (shape possibility sets + NatLat over indices +
+  union-find with congruence closure); contradiction is a *value*
+  (bottom), detected by the meet at the step that creates it, with
+  provenance — never by stream exhaustion, never by cut.
+
+  What was built (branch =exp170-lattice-elab=):
+  - =src/relational/lattice_elab.nim=: LatState, meet-only rules
+    (=checkLat=/=inferLat=, no disj/logic-vars/streams), =checkLatTop=
+    driver, =rebuild= (output determination, §3).
+  - =src/relational/vec_corpus.nim=: the 16 RTerm cases from
+    =bench_elab_end_to_end.nim=; =tests/test_lattice_elab.nim= asserts
+    16/16 verdict agreement + output rebuild (green).
+  - =bench/bench_lattice_elab.nim=: lattice vs #143's staged-relational
+    engine (=stagedCheckoVec2=) vs unstaged =checko= vs #57 residual
+    (=elaboD=) vs direct (=checkTermElab=), on scaled cons-chains
+    (invalid: cons^n : Vec Nat 2, n=0..64; valid: cons^n : Vec Nat n),
+    best-of-adaptive wall-clock in microseconds.
+
+  Measured result (the issue's step-4 gate):
+  - Invalids, lattice: 10.7us (n=0) → 125.7us (n=64), linear in input
+    size (~1.8us/node + ~10us fixed). Fast-fail with no exhaustion:
+    the contradiction is found at depth 2 (pred of exact 0), numbering
+    is the only O(n) work. **Gate passed.**
+  - Invalids, staged-relational engine: 1.2ms → 7.9ms, *~flat* in term
+    size for n>=4. Reproduces #143 on the small cases (engine/direct =
+    16.2x, 16.9x on cons^0/cons^1; 46.8x on NEG 1, a shape mismatch —
+    worse than #143's 16–27x band). Refinement of the issue's framing:
+    on this corpus the engine's deficit is a large *constant* (~7ms of
+    Goal/Stream machinery exploring dead branches), not
+    size-dependent exhaustion — the blowup does not grow with input.
+  - Invalids, direct: 75us → 77ms, superlinear (~n^1.7): checkTermElab
+    elaborates the explicit cons spines and runs NbE conversion on the
+    index arguments at every level. Lattice rejects 7x faster at n=0,
+    614x faster at n=64; 113–227x faster than the engine on small
+    invalids.
+  - Honest finding: =elaboD= (the #57 generated-direct residual) is the
+    fastest rejector outright (1.4–10.4us, flat). The lattice's
+    distinctive value over =elaboD= is *not* raw ground-term speed —
+    it is the ambiguity-preserving state, which is what step 5
+    (synthesis direction) will test.
+  - Valids: lattice 10–26x faster than direct on ground chains, on par
+    with =elaboD=; unstaged =checko= is fastest on valids (no search on
+    ground input — just structural recursion). Caveat recorded: ground
+    checking-mode chains are the easiest workload; nothing here
+    generalizes to open terms or holes.
+  - Prototype bug fixed en route: node descriptions rendered the full
+    subterm (=$t=) at numbering, making it O(n²) total (invalid latency
+    grew ~n^1.7: 886us at n=32). Replaced with O(1) =head#id=
+    descriptions; provenance intact, e.g. "bottom at vec#2: wanted suc
+    needs Nat type, had shape {hVec}".
+
+  Output determination (§3): =rebuild= constructs the elaborated term
+  from the converged state's constructions (not returned by recursion);
+  degenerate on ground input (rebuild == input), as the design doc
+  predicted. The mechanism is in place for the non-ground extension.
+
+  Decision: benchmark gate PASSED — linear fast-fail, no exhaustion
+  blowup, 100% verdict agreement. Issue stays =in-progress= for step 5:
+  does the lattice style preserve enough information to run the relation
+  backwards (synthesis direction)? The term-side lattice (currently
+  degenerate singletons on ground input) is the infrastructure for it.
+
+* #170 step 5: synthesis direction — the lattice runs backwards (2026-10-13)
+
+  =synthLatTop= runs the *same* =checkLat= rules backwards: the term node
+  starts at top, the type side saturates it. The =ckNone= branch refines an
+  unknown term from a singleton type head instead of failing; outcomes are
+  three-valued — Bottom (provenance), accept, Stuck (partial state: holes
+  awaiting external info, per the lattice-vs-Klister decision).
+
+  Measured (=tests/test_lattice_synth.nim=, 16/16):
+  - =synth(Vec Nat 2)= → spine =cons(?h0, cons(?h1, nil))= *determined* by
+    saturation; the two element unknowns stay holes (Stuck). One
+    deterministic pass, no search, no branching.
+  - =synth(Vec Nat 0)= → =nil=, fully determined.
+  - =synth(Vec Nat ?idx)= → nil-vs-cons ambiguity preserved in the state
+    (={hNil, hCons}=), reported Stuck — not Bottom. Ambiguity is data,
+    not control flow; the multi-direction story survives.
+  - =synth(Nat)= → stuck with ={hZero, hSuc, hNatLit}=; no guessing among
+    numeral spellings.
+  - Backwards Bottom: term pre-constrained ={hCons}= + =Vec Nat 0= →
+    contradiction detected *by the meet* with provenance — local failure
+    works in the backwards direction too.
+
+  This answers the issue's step-5 question affirmatively for the Vec
+  fragment: the lattice style preserves enough information to run the
+  relation backwards, and the hole mechanism falls out of the same
+  representation (a permanently-partial node), needing no separate
+  stuck-task machinery for the representation itself. Output
+  determination (§3) is now exercised on genuinely partial states via
+  =rebuildHoles=. Caveat: Pi/lam synthesis refines only the shape
+  (={hLam}=); body synthesis against an open codomain is future work.
+
+  Decision: step 5 PASSED. The prototype now covers steps 1–5. Remaining
+  before close: the acceptance-criteria =decisions.org= verdict entry
+  (this is it) and the issue verdict — viable for the Vec fragment;
+  the lattice over dependent terms stays structural (no explicit
+  suc-edges), which is the open scaling question for full elaboration.
+
+* #177: ambient abilities (Frank-style) — prototype verdict (2026-10-13)
+
+  Threaded an ambient ability Σ through =checkTm=∕=inferTm= (51 call
+  sites, scripted), following Frank ("Do Be Do Be Do"): peg = checking-mode
+  input stamped on every elaborator-built =tPi=; Command rule as a
+  membership test in =resolveVar=; App rule as a peg-compatibility check;
+  one fresh =?aN= per signature (omitted brackets mean =[?aN]=, explicit
+  =[]= is closed). Surface: =interface I=, =command c : A -> B in I=,
+  =proc f : [I1, I2] Ret = body=. =tests/test_abilities.nim= (15 tests).
+
+  Verdicts:
+  - Pure programs elaborate with zero annotations; measured overhead on a
+    pure corpus (Nat∕Vec∕uses): 1.03x (6.65 → 6.84 ms∕iter, ±1.5% noise).
+  - Effectful programs get precise errors: wrong peg rejected
+    ("ability mismatch: operator requires peg [Console] but the ambient
+    ability is [?a6]"); unhandled command rejected; Frank's =bad=
+    (unannotated peg + =send= in body) rejected.
+  - No subeffecting, no row unification, no effect inference — Frank's
+    invariance held throughout; =[]= under a polymorphic ambient is
+    (deliberately) rejected.
+
+  Design finding (benchmark-driven): the first revision freshened =?aN=
+  per use and solved the copy to the ambient (Frank-literal
+  instantiation) — measured 1.19x on pure code. Profiling showed the
+  instantiation was *unobservable*: pegs only gate checks, never flow into
+  terms, so nothing ever read a solution. Replaced by a pure predicate
+  (=pegCompatible=: open peg compatible with anything; closed pegs need
+  syntactic equality) — no freshening, no solving, no per-use allocation.
+  Ability variables are now never solved during elaboration.
+
+  Metas∕holes (the issue's step-4 experiment): membership against an
+  ambient ending in an ability variable is *stuck* — and terminally so,
+  unlike Klister's resumable stuck tasks, because nothing in elaboration
+  ever solves an ability variable. So =proc bad : 1 = send msg= is
+  rejected with "not yet known (stuck on [?a5])": a clean, precise
+  rejection, needing no new deferral machinery. Holes record the ambient
+  (=HoleInfo.holeAb=) for future effectful-hole tooling.
+
+  Open: conversion unifies pegs by the same predicate (needed for
+  =map send xs= under =[Console]=); pegs are ignored by the core (like
+  =impl=∕erased metadata). Runtime handler semantics remain out of scope
+  (blocked on delimited continuations, per #41's note).
+
+* 2026-10-14 — Issue #55: elaboration wall-clock phase breakdown (kernel eval dominates)
+
+  Context: #47's temporary instrumentation showed conversion is only ~6%
+  of elaboration wall-clock on the bench_conv_cache corpus (0.45s NbE of
+  ~7.5s), leaving ~94% (parsing + checkTm/inferTm + unification + zonk)
+  unprofiled. #55 asked for permanent lightweight per-phase timers and
+  the breakdown.
+
+  What was built (branch =exp55-elab-profile=):
+  - =src/eponym/elab_prof.nim=: =ElabPhase= enum (parse, check, infer,
+    unify, zonk, conv, clause, data, usage, kernel, eval, other),
+    stack-based *exclusive* timers (child-phase time subtracted from the
+    enclosing phase; recursion-safe), =profilePhase= template, =reportPhases=.
+  - Gated on =-d:elabProfile= (=ElabProfile= booldefine); disabled build
+    expands =profilePhase= to exactly =body= — zero overhead, verified
+    warning-clean in both builds. Note: =import= inside =when= at module
+    scope does NOT bring symbols into scope (Nim quirk, 2.2.12), and
+    =MonoTime= lives in =std/monotimes=, not =std/times=.
+  - Instrumented: =parseProgram=, =checkTm=, =inferTm=, =unifyElab=,
+    =zonk=, =convElab=, =elabClausesDecl=, =elabDataDecl=, =checkUsage=,
+    kernel =check= and =eval=, and the =elabCheckStateG=/=elabDeclsDir=/
+    =elabCheckHoles= drivers (=epOther= catch-all).
+  - =bench/bench_elab_profile.nim=: runs both bench_conv_cache corpora
+    plus the 21 positive =examples/ep/*.ep= files, prints the breakdown.
+  - Drive-by fix: =bench/bench_conv_cache.nim='s =countingCache= no longer
+    compiled on main (stale =ConvDecide= signature from #177: now takes
+    =goalTy: Term= and returns =ConvResult=); updated.
+
+  Measured (exclusive % of tracked total; sum of phases ≈ wall clock):
+  - bench corpora (62/32 decls, unary-numeral-heavy, 7.8s/4.9s wall):
+    eval 83.7%, kernel-check 6–7%, zonk 4–6%, infer 2–2.5%, conv 1.2–1.3%,
+    parse/check/unify/clause/data/usage each ≤0.6%, other 0.2%.
+  - realistic corpus (21 positive .ep examples, 0.28s wall):
+    eval 33.4%, zonk 22.6%, kernel-check 11.7%, infer 10.5%, conv 9.5%,
+    parse 2.2%, check 3.5%, data 2.8%, clause 1.3%, unify 0.5%, other 2.0%.
+  - Refinement of #47: conversion *proper* (=epConv=, handler machinery +
+    probe) is only 1–10%; the NbE evaluation inside conversion goals was
+    the bulk of #47's "0.45s conversion" and is now correctly attributed
+    to =epEval=.
+
+  Decision / next steps (concrete proposals, not yet implemented):
+  1. Kernel =eval= is the top phase on every corpus (84% bench, 33%
+     realistic). The Andromeda-style core re-check (=elabDefDecl= step 3:
+     =check(supply, tyV, tmT)=) evaluates every definition's type and body
+     from scratch after the elaborator already evaluated them during
+     conversion. Follow-up: profile =eval='s hot path (whnf? spine
+     application? repeated evaluation of shared subterms with no
+     memoization?) and measure how much =epEval= is re-check-driven vs
+     conversion-NbE-driven (caller attribution not yet instrumented).
+  2. =epZonk= at 23% on realistic code is surprisingly high: zonk walks
+     whole terms substituting solved metas, and =elabDefDecl= zonks type
+     and body separately while =checkTm= zonks repeatedly. Candidate: a
+     dirty-flag so zonk is skipped when no meta was solved since the last
+     pass.
+  3. Longer-term: whether the elaborator can hand *evaluated* values to
+     the kernel re-check without extending the trusted base — a design
+     decision, not a quick hack; out of scope here.
+
+  Consequences: instrumentation stays (zero-cost when disabled); the
+  bench is the regression harness for future elaborator-performance
+  work. #55's acceptance criteria are met except the full-CI-matrix run,
+  which happens before merge.
+
+* 2026-10-14 — #37: records desugar to transparent Sigma defs (merged in PR #182, squash 63aae79)
+  Goal: named records for "a useful dependently typed system anyone would
+  want to use", following the Experiment 5 =data= precedent (desugar to
+  existing machinery, no new core constructs).
+
+  Design (implemented on =exp37-records=):
+  - =record R:= with =| f : T= lines elaborates to three kinds of defs:
+    =def R : ? = Sig (f0:T0). ... . 1= (a *transparent* def, so the
+    projections compute by delta+iota with no new reduction rules),
+    =def mkR (f0:T0) ... : R= (positional constructor, nested pairs over
+    =<>=), and =def R.fi (p : R) : Ti[p.f0..p.f(i-1)]= (named projections
+    as =fst (snd ...)= accessors; earlier fields substituted by their
+    projections so dependent fields get dependent types).
+  - =e.f= parses to a new =pkProj= node and resolves at elaboration time
+    against =ms.recordFields= (record name -> ordered field names), keyed
+    by the *un-unfolded* head of the scrutinee's type. A projection on a
+    bare (unfolded) Sigma is rejected — v1 only resolves named records.
+  - Constructor syntax (issue step 3): positional tuple lifting
+    (=mkPoint x y=). Named =(x := ...)= construction deferred; revisit if
+    positional proves awkward in larger examples.
+  - Dot binds tighter than application: =f x.y= is =f (x.y)=. (First
+    implementation attached the tail to the whole application, parsing
+    =mkPoint p.y= as =(mkPoint p).y=; caught by the swap test.)
+  - =ms.recordFields= is populated *before* the projections elaborate:
+    a later field's type may project an earlier one (=Vec r.n Nat=
+    elaborates =p.n= in =R.v='s type).
+  - Embedded (=eponymBlock=): =record(Pt):= block with =field(x, Int)=
+    statements; =nnkDotExpr= maps to =(p).x= (LHS parenthesized so the
+    dot cannot rebind to a call argument).
+
+  Not yet done: record parameters (=record Vec (A : ?):=),
+  and the =Point.y= global name is internal-only (surface =.= always
+  parses as projection).
+
+  Update (step 4, pretty-printing): =prettyTerm= now takes the record
+  table (=ms.recordFields=, default empty) and renders an iterated Sigma
+  whose binder names and =1= tail match a registered record skeleton as
+  =Point{x: Nat, y: Nat}=, including dependent fields
+  (=DepR{n: Nat, v: ((Vec n) Nat)}=). Recognition is purely syntactic —
+  records are *transparent* iterated Sigmas by design, so the skeleton
+  (binder names + unit tail) is the only identifier; =tR= references
+  already printed by name via =refNames=. Constructor applications and
+  projections were already named (=(mkPoint 3)=, =(Point.x p)=), so the
+  Sigma case was the last raw surface. Two records sharing an identical
+  field-name list are pathological; first registered wins. Threaded
+  through the convElab mismatch errors, LSP hover, and the REPL, with
+  tests in the elab suite (positive, dependent, and negative cases).
+
+  Evidence: =examples/ep/26-records.ep= and
+  =examples/embedded/records.nim= elaborate and run (projection
+  computation verified at runtime: =normSum(3,4) = 7= etc.); full CI
+  build matrix + elab/parse/conformance/example suites green.

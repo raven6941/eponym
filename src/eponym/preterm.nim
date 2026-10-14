@@ -41,6 +41,7 @@ type
     pkUnitTy, pkUnitV, pkEmptyTy,  # 1, <>, O
     pkPi, pkLam, pkApp,            # Pi, lam, application
     pkSigma, pkPair, pkFst, pkSnd, # Sig, pairs, projections
+    pkProj,                       # e.f (issue #37: record projection)
     pkLet, pkAnn,                  # let, ascription
     pkHole,                       # _ (Experiment 3: elaborator hole)
     pkInt,                        # integer literal (Experiment 11)
@@ -118,6 +119,10 @@ proc mkFst*(p: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkFst, c1: p)
 proc mkSnd*(p: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkSnd, c1: p)
+proc mkProj*(scrut: PreTerm, field: string, loc = noLoc): PreTerm =
+  ## Issue #37: `scrut.field` — resolved against the record table at
+  ## elaboration time. `name` carries the field name (not a variable).
+  PreTerm(loc: loc, kind: pkProj, name: field, c1: scrut)
 proc mkLet*(name: string, ann, val, body: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkLet, name: name, c1: ann, c2: val, c3: body)
 proc mkAnn*(e, ty: PreTerm, loc = noLoc): PreTerm =
@@ -157,7 +162,12 @@ proc render(p: PreTerm, prec: int): string =
   case p.kind
   of pkVar: p.name
   of pkHole: "_"
-  of pkInt: $p.intVal
+  of pkInt:
+    # Issue #158: `1` lexes as the unit *type* (QTT), so a bare `1` would
+    # re-parse as pkUnitTy, not pkInt(1). The integer literal one is written
+    # `01` (the lexer's documented escape hatch); the renderer must honor it
+    # to keep render->parse faithful.
+    if p.intVal == 1: "01" else: $p.intVal
   of pkBy: "by " & p.name
   of pkUniv: "?"
   of pkUnitTy: "1"
@@ -186,6 +196,8 @@ proc render(p: PreTerm, prec: int): string =
   of pkFst, pkSnd:
     let s = (if p.kind == pkFst: "fst " else: "snd ") & render(p.c1, 3)
     if prec > 2: par(s) else: s
+  of pkProj:
+    render(p.c1, 3) & "." & p.name
   of pkLet:
     let a = if p.c1.isNil: "" else: " : " & render(p.c1, 0)
     let s = "let " & p.name & a & " = " & render(p.c2, 0) &
@@ -207,8 +219,19 @@ type
     retTy*: PreTerm
     body*: PreTerm
     loc*: Loc
+    # Issue #177: optional peg annotation `proc f : [I1, I2] Ret = body`.
+    # hasPeg=false means omitted (fresh effect variable, Frank-style);
+    # hasPeg=true with empty pegNames means explicit `[]` (closed/pure).
+    hasPeg*: bool
+    pegNames*: seq[string]
 
-  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData, dkClauses, dkImport
+  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData, dkClauses,
+                   dkImport, dkInterface, dkCommand, dkRecord
+  RecordField* = object
+    ## One field in a `record` declaration (issue #37).
+    name*: string
+    ty*: PreTerm
+    floc*: Loc
   DataCtor* = object
     ## One constructor in a `data` declaration.
     name*: string
@@ -250,9 +273,27 @@ type
       daloc*: Loc
     of dkClauses:
       clausesDef*: ClausesDef
+    of dkInterface:
+      ## Issue #177: `interface Name` — declares an ability interface.
+      ifname*: string
+      ifloc*: Loc
+    of dkCommand:
+      ## Issue #177: `command c : A -> B in I` — declares a command of
+      ## interface I (an operator whose peg is the ambient at use).
+      cname*: string
+      cty*: PreTerm
+      ciface*: string
+      cloc*: Loc
     of dkImport:
       ipath*: string  # as written, e.g. "lib/nat.ep" (issue #49)
       iloc*: Loc
+    of dkRecord:
+      ## Issue #37: `record Name:` with `| field : Ty` lines. Desugars to
+      ## a def of the iterated Sigma type, a positional constructor
+      ## `mkName`, and named projections `Name.field` + dot notation.
+      rname*: string
+      fields*: seq[RecordField]
+      recloc*: Loc
 
 proc desugarTy*(d: SurfDef): PreTerm =
   ## Telescope to nested Pis (implicit entries to implicit Pis).

@@ -24,6 +24,8 @@ import sequtils
 import preterm   # Loc
 import eponym_init
 import egraph
+import abilities # Issue #177: ambient abilities (Frank-style)
+import elab_prof   # Issue #55: phase timers
 
 type
   UnifyError* = object of CatchableError
@@ -32,11 +34,12 @@ type
   #
   # A conversion handler discharges one conversion goal `a === b` (both
   # already zonked by convElab). It returns cvDischarged if it proves the
-  # goal, or cvDeclined if it cannot decide it — the driver then tries the
-  # next handler down the stack; the bottom of the stack is the default
-  # handler (full conversion via the core evaluator + areEqual), which
-  # raises ElabError on failure exactly as before. Handlers never raise
-  # for goals they merely cannot decide; they decline.
+  # goal, cvDischargedEv if it proves the goal *and* supplies checkable
+  # evidence (issue #45), or cvDeclined if it cannot decide it — the
+  # driver then tries the next handler down the stack; the bottom of the
+  # stack is the default handler (full conversion via the core evaluator
+  # + areEqual), which raises ElabError on failure exactly as before.
+  # Handlers never raise for goals they merely cannot decide; they decline.
   #
   # Handlers are dynamically scoped: they apply only within the dynamic
   # extent of their installation (see withConvHandler in elab.nim).
@@ -48,11 +51,29 @@ type
   # coreValid=false (e.g. a domain decision procedure) extends what
   # counts as convertible for its dynamic extent — installing it is an
   # explicit, scoped trust extension, à la Andromeda.
+  #
+  # Issue #45: evidence-returning handlers. Instead of a bare verdict, the
+  # handler returns a ConvResult. With cvDischargedEv it supplies
+  # `evidence`, a *closed-over-context* core Term claimed to prove
+  # `Eq goalTy a b`. convElab validates the evidence with the bare core
+  # (handlers popped): free context variables are replaced by fresh rigid
+  # postulate refs, then the core's own `check` verifies
+  # `evidence : Eq goalTy a b`. A handler whose evidence fails validation
+  # is rejected with a located error, and validated evidence does NOT
+  # extend trust (no extDischarges increment) — the Andromeda endgame:
+  # installing the handler extends automation, not the trusted base.
+  # `goalTy` is the type of the goal's sides (the universe `?` when the
+  # sides are themselves types); it lets the handler build a well-typed
+  # evidence term.
   ConvVerdict* = enum
     cvDischarged
+    cvDischargedEv
     cvDeclined
+  ConvResult* = object
+    verdict*: ConvVerdict
+    evidence*: Term  # proof of `Eq goalTy a b`; set iff verdict == cvDischargedEv
   ConvDecide* = proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-                     ctxLen: int): ConvVerdict {.closure.}
+                     ctxLen: int, goalTy: Term): ConvResult {.closure.}
   ConvHandler* = object
     decide*: ConvDecide
     coreValid*: bool
@@ -70,6 +91,7 @@ type
     holeLoc*: Loc
     holeGoal*: Term
     holeCtx*: seq[tuple[name: string, ty: Term]]
+    holeAb*: Ability  # Issue #177: the ambient ability at the hole
 
   MetaStore* = object
     nextId*: int
@@ -91,6 +113,25 @@ type
     # the entry when the variable is solved (a q1 solution rejects).
     qvarPending*: Table[string, seq[tuple[varName: string, loc: Loc]]]
     ctorTable*: CtorTable  # Issue #80: constructor disjointness facts
+    # Issue #37: record declarations (record name -> ordered field names),
+    # for resolving `e.f` dot-projections at elaboration time. Keyed by
+    # surface name (records elaborate to plain defs, so refIds alone do
+    # not identify them after delta-unfolding; the name is checked
+    # against the un-unfolded head of the scrutinee's type).
+    recordFields*: Table[string, seq[string]]
+    # Issue #139: surface name of every registered global (refId -> name),
+    # for the name-resolving pretty-printer (elab.prettyTerm) used by LSP
+    # hover and shed goal display. Populated by the elaborator at global
+    # registration (elabDefDecl / elabPostulateDecl); unknown refIds keep
+    # the old `R<n>` fallback rendering.
+    refNames*: Table[int, string]
+    # Issue #177: ability variables. Each signature freshens one `?aN`
+    # (Frank's implicit effect polymorphism). Ability variables are
+    # *never solved* during elaboration: the ability discipline is a pure
+    # predicate (peg compatibility), so per-use instantiation copies are
+    # unnecessary — an earlier revision freshened+solved per use at ~1.2x
+    # pure-code overhead for an instantiation nothing ever observed.
+    abNext*: int
 
   QtySolKind* = enum qsUnknown, qsSolved
   QtySol* = object
@@ -124,8 +165,7 @@ proc initCtorTable*(): CtorTable =
             dataNames: initTable[int, string]())
 
 proc registerDataCtors*(ms: var MetaStore, dataRefId: int, dataName: string,
-                        ctors: seq[(int, string)]) =
-  ## Issue #80: record one `data` declaration's constructor set.
+                        ctors: seq[(int, string)]) =  ## Issue #80: record one `data` declaration's constructor set.
   ms.ctorTable.dataNames[dataRefId] = dataName
   var ids: seq[int] = @[]
   for (cid, cname) in ctors:
@@ -133,6 +173,11 @@ proc registerDataCtors*(ms: var MetaStore, dataRefId: int, dataName: string,
     ms.ctorTable.ctorNames[cid] = cname
     ids.add(cid)
   ms.ctorTable.dataCtors[dataRefId] = ids
+
+proc registerRecord*(ms: var MetaStore, recName: string,
+                     fields: seq[string]) =
+  ## Issue #37: record one `record` declaration's ordered field names.
+  ms.recordFields[recName] = fields
 
 proc ctorHeadOf*(ms: MetaStore, t: Term): int =
   ## The constructor refId at the head of t's application spine, or -1
@@ -176,7 +221,9 @@ proc initMetaStore*(): MetaStore =
             convCache: initEGraph(), convHandlers: @[], extDischarges: 0,
             qvarNames: initTable[string, int](), qvarSols: @[],
             qvarPending: initTable[string, seq[tuple[varName: string, loc: Loc]]](),
-            ctorTable: initCtorTable())
+            ctorTable: initCtorTable(),
+            refNames: initTable[int, string](),
+            abNext: 0)
 
 proc uerr(loc: Loc, msg: string): ref UnifyError =
   # No location prefix here: the elaborator catches UnifyError and re-raises
@@ -197,6 +244,29 @@ proc freshMeta*(ms: var MetaStore, ty: Term, ctxLen, extra: int,
 
 proc isSolved*(ms: MetaStore, id: int): bool =
   id in ms.entries and not ms.entries[id].solution.isNil
+
+# --- Issue #177: ability variables ---------------------------------------
+#
+# Ability variables (`?aN`, one freshened per signature) are never solved
+# during elaboration: the ability discipline is a pure compatibility
+# predicate (see pegCompatible in abilities.nim). An earlier prototype
+# revision freshened ?aN per use and solved the copy to the ambient
+# (Frank-literal instantiation); measurement showed ~1.2x pure-code
+# overhead for an instantiation no elaborator rule ever observed, so it
+# was replaced by the predicate.
+
+proc freshAbMeta*(ms: var MetaStore): Ability =
+  ## A fresh ability variable `[?aN]`.
+  inc ms.abNext
+  abOpen(ms.abNext)
+
+proc unifyAbilitiesSym*(a, b: Ability, loc: Loc) =
+  ## Ability compatibility for conversion (Pi/Pi in `unify`): the
+  ## symmetric closure of pegCompatible — open pegs are compatible with
+  ## anything, closed pegs need syntactic equality. Pure predicate.
+  if a == b: return  # same object (common: one ambient per signature)
+  if not (pegCompatible(a, b) and pegCompatible(b, a)):
+    raise uerr(loc, "ability mismatch: " & $a & " vs " & $b)
 
 proc zonkHead*(ms: MetaStore, t: Term): Term =
   ## Follow solved metas at the head only.
@@ -290,29 +360,35 @@ proc noConfusionConflict*(ms: MetaStore, a, b: Term): tuple[bad: bool,
   (false, -1, -1)
 
 proc zonk*(ms: MetaStore, t: Term): Term =
-  ## Substitute every solved metavariable, recursively.
-  if t.isNil: return nil
-  case t.kind
-  of tMeta:
-    if t.metaId notin ms.entries: return t
-    let e = ms.entries[t.metaId]
-    let sp = t.metaSpine.mapIt(zonk(ms, it))
-    if e.solution.isNil: tmMeta(t.metaId, sp)
-    else: zonk(ms, substSpine(e.solution, sp))
-  of tV, tR, tC, tInt, tPrim, tNatLit: t
-  of tPi, tSi, tLam:
-    mkBinder(t.kind, zonk(ms, t.dom),
-              Scope(adv: t.scope.adv, bdy: zonk(ms, t.scope.bdy)), t.impl, t.qty)
-  of tPair:
-    tmPair(zonk(ms, t.pFst), zonk(ms, t.pSnd),
-           t.pScope.adv, zonk(ms, t.pScope.bdy))
-  of tApp: tmApp(zonk(ms, t.fn), zonk(ms, t.arg))
-  of tFst: tmFst(zonk(ms, t.sub))
-  of tSnd: tmSnd(zonk(ms, t.sub))
-  of tAbsurd: tmAbsurd(zonk(ms, t.sub))
-  of tLet:
-    tmLet(zonk(ms, t.letVal), zonk(ms, t.letTy),
-          t.letScope.adv, zonk(ms, t.letScope.bdy))
+  profilePhase(epZonk):
+      ## Substitute every solved metavariable, recursively.
+      if t.isNil: return nil
+      case t.kind
+      of tMeta:
+        if t.metaId notin ms.entries: return t
+        let e = ms.entries[t.metaId]
+        let sp = t.metaSpine.mapIt(zonk(ms, it))
+        if e.solution.isNil: tmMeta(t.metaId, sp)
+        else: zonk(ms, substSpine(e.solution, sp))
+      of tV, tR, tC, tInt, tPrim, tNatLit: t
+      of tPi, tSi, tLam:
+        # Issue #177: pegs are NOT zonked here. The core ignores pegs, and
+        # use sites (instPeg/unifyAbilitiesSym) zonk them on demand; zonking
+        # every binder's peg on every zonk pass showed up as pure-code
+        # overhead with no semantic effect.
+        mkBinder(t.kind, zonk(ms, t.dom),
+                  Scope(adv: t.scope.adv, bdy: zonk(ms, t.scope.bdy)), t.impl, t.qty,
+                  t.peg)
+      of tPair:
+        tmPair(zonk(ms, t.pFst), zonk(ms, t.pSnd),
+               t.pScope.adv, zonk(ms, t.pScope.bdy))
+      of tApp: tmApp(zonk(ms, t.fn), zonk(ms, t.arg))
+      of tFst: tmFst(zonk(ms, t.sub))
+      of tSnd: tmSnd(zonk(ms, t.sub))
+      of tAbsurd: tmAbsurd(zonk(ms, t.sub))
+      of tLet:
+        tmLet(zonk(ms, t.letVal), zonk(ms, t.letTy),
+              t.letScope.adv, zonk(ms, t.letScope.bdy))
 
 proc findUnsolved*(ms: MetaStore, t: Term): tuple[found: bool, id: int, loc: Loc] =
   ## First unsolved metavariable in t (after zonking), if any.
@@ -395,7 +471,7 @@ proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
     mkBinder(t.kind, renameAt(t.dom, inv, depth, n, loc),
               Scope(adv: t.scope.adv,
                     bdy: renameAt(t.scope.bdy, inv, depth + 1, n, loc)),
-              t.impl, t.qty)
+              t.impl, t.qty, t.peg)
   of tPair:
     tmPair(renameAt(t.pFst, inv, depth, n, loc),
            renameAt(t.pSnd, inv, depth, n, loc), t.pScope.adv,
@@ -496,6 +572,9 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
   of tPi, tSi, tLam:
     if a1.impl != b1.impl:
       raise uerr(loc, "implicit/explicit binder mismatch")
+    if a1.kind == tPi:
+      # Issue #177: operator pegs compare by the ability discipline.
+      unifyAbilitiesSym(a1.peg, b1.peg, loc)
     unify(ms, a1.dom, b1.dom, loc)
     unify(ms, a1.scope.bdy, b1.scope.bdy, loc)
   of tPair:

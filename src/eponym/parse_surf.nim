@@ -1,35 +1,91 @@
-# parse_surf.nim — front end (a): hand-written parser for a small surface
-# syntax, producing preterm.PreTerm / SurfDef.
+# parse_surf.nim — the canonical surface syntax of Eponym.
+#
+# This grammar is the single definition of Eponym's surface syntax
+# (issue #144: Eponym is embedded-first, so there is exactly one syntax).
+# Both entry points go through this parser:
+#   - standalone `.ep` files: lexed and parsed here directly;
+#   - embedded `eponymBlock` (eponym_mac.nim): `blockToEponym` converts the
+#     Nim AST to a source string in this grammar, which is then parsed here.
+# There is no second grammar to keep in sync — only a Nim-AST-to-string
+# mapping, whose rules are listed below.
 #
 # Surface syntax (Nim-consistent):
 #   program = decl*
-#   decl    = proc | def | postulate | elim | red | data | import
+#   decl    = proc | def | postulate | elim | red | data | record | import
+#   record  = "record" name ":" "|" field ( "|" field )*   -- issue #37
+#   field   = name ":" term
 #   import  = "import" string        -- multi-file programs (issue #49)
 #   proc    = "proc" name tele ":" term "=" term
 #   tele    = (binder)*
 #   binder  = "(" name ":" term ")" | "{" name ":" term "}"  -- {} = implicit
+#            | "(" qty name ":" term ")"  -- qty: 0 (erased), 1 (linear),
+#                                            or a quantity variable (#66)
 #   term    = arrow
 #   arrow   = app ("->" arrow)?              -- right associative
 #   app     = atom+
 #   atom    = "(" term ")" | "(" term "," term ")" | "(" term ":" term ")"
 #            | "lam" binder "." term | "Pi" binder "." term
-#            | "Sig" "(" name ":" term ")" "." term
+#            | "Sig" binder "." term
 #            | "let" name (":" term)? "=" term "in" term
-#            | "fst" atom | "snd" atom
+#            | "fst" atom | "snd" atom | "by" tactic
 #            | "_"                                     -- hole (Experiment 3)
-#            | name | "?" | "1" | "<>" | "O"
+#            | name | "?" | "1" | "<>" | "O" | integer
+#   binder-arrow: "(" name ":" term ")" "->" term  -- binds name (issue #65)
 # Comments: `--` or `#` to end of line.
+#
+# eponymBlock Nim-AST mapping (eponym_mac.nim `blockToEponym`):
+#   `Univ`                -> `?`            (Nim can't parse a bare `?`)
+#   `unitTy`              -> `1`            (unit type; `1` lexes as unit, #151)
+#   `emptyTy`             -> `O`            (empty type, #151)
+#   `unitv`               -> `<>`           (unit value; `<>` isn't valid Nim, #151)
+#   `A -> B` (infix)      -> Pi (_ : A). B  (right associative)
+#   `lam(x, T, body)`     -> lam (x : T). body
+#   `lam(x {.linear.}, T, body)` -> lam (1 x : T). body   (quantity binders, #151)
+#   `(t : T)`             -> (t : T)            (ascription, #151)
+#   `let y: T = v` (in proc bodies) -> let y : T = v in ...
+#   `Sig(A, B)`           -> Sig (_ : A). B
+#   `Sig(x, A, B)`        -> Sig (x : A). B
+#   `Pi(x: A, y: B, C)`   -> Pi (x : A). Pi (y : B). C
+#   `Pi{A: T, ...}`       -> Pi {A : T}. ...        (implicit binders)
+#   `ch {.linear.}`       -> (1 ch : T)             (quantity prefix)
+#   `ch {.erased.}`       -> (0 ch : T)
+#   `ch {.qvar(q).}`      -> (q ch : T)             (quantity *variable*, #151/#66)
+#   `(a, b)`              -> pair; `fst p` / `snd p` -> projections
+#   `f(x, y)`             -> application `f x y`
+#   `byTac(tac)`          -> by tac                (tactic terms, #151)
+#   `vecnil`              -> `nil`          (`nil` is a Nim keyword)
+#   integer `1`           -> `(suc zero)`    (`1` lexes as the unit type)
+#   `data(N, T):` block   -> data N : T where | ctor ...
+#   `postulate(N, T)`     -> postulate N : T
+#   `elim(N, T)`          -> elim N : T             (#151)
+#   `red(lhs, rhs)`       -> red lhs = rhs          (#151)
+#   `def(N, T):` block    -> def N : T, with `clause([pats], rhs)` -> | pats = rhs (#151)
+#   `import "path"`       -> import "path"
+#
+# Mapping completeness (issue #151): every surface form is emittable from
+# eponymBlock — the former divergences (elim/red, `by` tactics, `def`
+# clause-style definitions, quantity-variable binders, the unit value `<>`)
+# are all closed, and the previously unlisted unit/empty types, term
+# ascriptions `(t : T)`, typed `let`, and quantity-annotated `lam` binders
+# are covered too. One remainder: implicit-binder lambdas (`lam {x : T}. t`)
+# have no Nim-side spelling (no surface-syntax corpus usage; `{x: T}` in
+# expression position would collide with the Pi-implicit table syntax).
+# If a new surface form is added to the grammar above, a mapping (or a
+# documented reason it cannot be emitted) must be added here in the same
+# commit.
 
 import preterm, strutils
+import elab_prof  # Issue #55: phase timers
 
 type
   TokKind = enum
     tkEof, tkIdent, tkInt, tkString,
     tkDef, tkClauses, tkPostulate, tkElim, tkRed, tkData, tkWhere, tkBy,
-    tkImport,
+    tkRecord,
+    tkImport, tkInterface, tkCommand,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
-    tkLParen, tkRParen, tkLBrace, tkRBrace,
+    tkLParen, tkRParen, tkLBrace, tkRBrace, tkLBracket, tkRBracket,
     tkColon, tkColonEq, tkDot, tkComma, tkArrow, tkEq, tkPipe
   Token = object
     kind: TokKind
@@ -52,7 +108,8 @@ const keywords = [
   ("proc", tkDef), ("def", tkClauses),
   ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
   ("data", tkData), ("where", tkWhere), ("by", tkBy),
-  ("import", tkImport),
+  ("record", tkRecord),
+  ("import", tkImport), ("interface", tkInterface), ("command", tkCommand),
   ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
 
@@ -111,7 +168,9 @@ proc lex(src: string): seq[Token] =
       let w = src[i ..< j]
       col += j - i; i = j
       if w == "1":
-        # Single 1 is the unit type (backward compat); use 01 for the integer
+        # Single 1 is the unit type (backward compat, QTT); the integer
+        # literal one is written 01 (issue #158: the renderer emits `01`
+        # for pkInt(1) so render->parse stays faithful).
         result.add Token(kind: tkUnitTy, lexeme: "1", loc: l)
       else:
         result.add Token(kind: tkInt, lexeme: w, loc: l)
@@ -129,6 +188,12 @@ proc lex(src: string): seq[Token] =
       inc col; inc i
     elif c == '}':
       result.add Token(kind: tkRBrace, lexeme: "}", loc: curLoc())
+      inc col; inc i
+    elif c == '[':
+      result.add Token(kind: tkLBracket, lexeme: "[", loc: curLoc())
+      inc col; inc i
+    elif c == ']':
+      result.add Token(kind: tkRBracket, lexeme: "]", loc: curLoc())
       inc col; inc i
     elif c == ',':
       result.add Token(kind: tkComma, lexeme: ",", loc: curLoc())
@@ -277,11 +342,23 @@ proc parseAtom(p: var Parser): PreTerm =
   else:
     raise fail(t.loc, "expected a term, got '" & t.lexeme & "'")
 
+proc parseProjTail(p: var Parser, e: PreTerm): PreTerm =
+  ## Issue #37: postfix dot-projection `e.f` (also chains: `e.f.g`).
+  ## The `lam x. body` / `Pi/Sig (x:T). body` dots are consumed inside
+  ## parseAtom, so a dot here always starts a projection.
+  result = e
+  while p.peek().kind == tkDot:
+    let dloc = p.next().loc
+    let f = p.expect(tkIdent, "field name after '.'")
+    result = mkProj(result, f.lexeme, dloc)
+
 proc parseApp(p: var Parser): PreTerm =
-  result = p.parseAtom()
+  ## Issue #37: `.f` binds tighter than application: `g x.f` is `g (x.f)`.
+  ## The tail applies to each argument atom, never to an application node.
+  result = p.parseProjTail(p.parseAtom())
   while p.peek().kind.isAtomStart():
     let loc = result.loc
-    result = mkApp(result, p.parseAtom(), loc)
+    result = mkApp(result, p.parseProjTail(p.parseAtom()), loc)
 
 proc atBinderArrow(p: Parser): bool =
   ## Issue #65: token lookahead for a binder in arrow position:
@@ -332,6 +409,22 @@ proc parseTerm(p: var Parser): PreTerm =
   else:
     lhs
 
+proc parsePeg(p: var Parser): tuple[hasPeg: bool, names: seq[string]] =
+  ## Issue #177: parse `[I1, I2]` (possibly empty `[]`) after ':' in a
+  ## `proc` signature. Returns hasPeg=false when there is no bracket.
+  if p.peek().kind != tkLBracket:
+    return (false, @[])
+  discard p.next()
+  var names: seq[string] = @[]
+  if p.peek().kind != tkRBracket:
+    while true:
+      let n = p.expect(tkIdent, "interface name in peg")
+      names.add n.lexeme
+      if p.peek().kind == tkComma: discard p.next()
+      else: break
+  discard p.expect(tkRBracket, "']'")
+  (true, names)
+
 proc parseDef(p: var Parser): SurfDef =
   let t = p.expect(tkDef, "'proc'")
   let nm = p.expect(tkIdent, "definition name")
@@ -340,10 +433,29 @@ proc parseDef(p: var Parser): SurfDef =
     let b = p.parseBinder()
     tele.add b
   discard p.expect(tkColon, "':'")
+  let (hasPeg, pegNames) = p.parsePeg()  # Issue #177
   let retTy = p.parseTerm()
   discard p.expect(tkEq, "'='")
   let body = p.parseTerm()
-  SurfDef(name: nm.lexeme, tele: tele, retTy: retTy, body: body, loc: t.loc)
+  SurfDef(name: nm.lexeme, tele: tele, retTy: retTy, body: body, loc: t.loc,
+          hasPeg: hasPeg, pegNames: pegNames)
+
+proc parseInterface(p: var Parser): SurfDecl =
+  ## Issue #177: `interface Name`.
+  let t = p.expect(tkInterface, "'interface'")
+  let nm = p.expect(tkIdent, "interface name")
+  SurfDecl(kind: dkInterface, ifname: nm.lexeme, ifloc: t.loc)
+
+proc parseCommand(p: var Parser): SurfDecl =
+  ## Issue #177: `command c : A -> B in I`.
+  let t = p.expect(tkCommand, "'command'")
+  let nm = p.expect(tkIdent, "command name")
+  discard p.expect(tkColon, "':'")
+  let ty = p.parseTerm()
+  discard p.expect(tkIn, "'in'")
+  let iface = p.expect(tkIdent, "interface name")
+  SurfDecl(kind: dkCommand, cname: nm.lexeme, cty: ty, ciface: iface.lexeme,
+           cloc: t.loc)
 
 proc parsePostulate(p: var Parser): SurfDecl =
   let t = p.expect(tkPostulate, "'postulate'")
@@ -394,6 +506,29 @@ proc parseData(p: var Parser): SurfDecl =
   SurfDecl(kind: dkData, dname: nm.lexeme, params: params, indexTy: indexTy,
            ctors: ctors, daloc: t.loc)
 
+proc parseRecord(p: var Parser): SurfDecl =
+  ## Issue #37:
+  ## record Point:
+  ## | x : Int
+  ## | y : Int
+  let t = p.expect(tkRecord, "'record'")
+  let nm = p.expect(tkIdent, "record name")
+  discard p.expect(tkColon, "':'")
+  var fields: seq[RecordField] = @[]
+  while p.peek().kind == tkPipe:
+    discard p.next()
+    let fnm = p.expect(tkIdent, "field name")
+    discard p.expect(tkColon, "':'")
+    let fty = p.parseTerm()
+    for f in fields:
+      if f.name == fnm.lexeme:
+        raise fail(fnm.loc, "duplicate field '" & fnm.lexeme &
+          "' in record '" & nm.lexeme & "'")
+    fields.add RecordField(name: fnm.lexeme, ty: fty, floc: fnm.loc)
+  if fields.len == 0:
+    raise fail(t.loc, "record declaration needs at least one field")
+  SurfDecl(kind: dkRecord, rname: nm.lexeme, fields: fields, recloc: t.loc)
+
 proc parseClauses(p: var Parser): SurfDecl =
   ## `def name : Ty` followed by `| pat1 .. patn = rhs` clauses.
   ## Each pattern is an atom; constructor applications need parens: `(suc m)`.
@@ -434,14 +569,26 @@ proc parseDecl(p: var Parser): SurfDecl =
   of tkElim: p.parseElim()
   of tkRed: p.parseRed()
   of tkData: p.parseData()
+  of tkRecord: p.parseRecord()
   of tkImport: p.parseImport()
-  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data' or 'import'")
+  of tkInterface: p.parseInterface()
+  of tkCommand: p.parseCommand()
+  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'record', 'import', 'interface' or 'command'")
 
 proc parseProgram*(src: string): seq[SurfDecl] =
-  ## Parse a whole program; raises ParseError with source location.
+  profilePhase(epParse):
+      ## Parse a whole program; raises ParseError with source location.
+      var p = Parser(toks: lex(src), pos: 0)
+      while p.peek().kind != tkEof:
+        result.add p.parseDecl()
+
+proc parseTermStr*(src: string): PreTerm =
+  ## Issue #50: parse a single surface term (for the REPL's `:type`/`:eval`).
+  ## Raises ParseError with source location; trailing tokens are an error.
   var p = Parser(toks: lex(src), pos: 0)
-  while p.peek().kind != tkEof:
-    result.add p.parseDecl()
+  result = p.parseTerm()
+  if p.peek().kind != tkEof:
+    raise fail(p.peek().loc, "expected end of input after term")
 
 # --- tests ------------------------------------------------------------
 

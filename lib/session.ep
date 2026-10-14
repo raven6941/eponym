@@ -1,0 +1,27 @@
+# Eponym common library: session types (issues #28, #164).
+#
+# Reusable core of the session-types DSL: indexed protocol descriptions
+# (`Session`), session-indexed channels (`Chan`), and the primitive
+# channel operations as postulates. Clients (e.g. examples/ep/15-*.ep,
+# the Paxos example) write their own protocol terms and check them
+# against this library.
+import "nat.ep"
+
+# Session protocol descriptions: what comes next on the channel
+data Session : ? where
+| sendS (A : ?) (s : Session) : Session
+| recvS (A : ?) (s : Session) : Session
+| endS : Session
+
+# Channel indexed by current session state
+data Chan : Session -> ? where
+| mkChan (s : Session) : Chan s
+
+# Operations as primitives (a real library would bind these to socket
+# operations). The types enforce the protocol.
+# Linear (1) binders ensure channels are used exactly once (Issue #64).
+# As postulates, the linearity is enforced at use sites (clients), not
+# in the primitive definitions themselves.
+postulate sendNat : Pi (x : Nat). Pi (1 ch : Chan (sendS Nat endS)). Chan endS
+postulate recvNat : Pi (1 ch : Chan (recvS Nat endS)). Sig (x : Nat). Chan endS
+postulate closeOp : Pi (1 ch : Chan endS). Nat

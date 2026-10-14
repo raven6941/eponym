@@ -5,16 +5,7 @@
 # use of the same channel is a linearity violation, not merely a protocol
 # state mismatch: the protocol says close happens exactly once.
 import "../../lib/nat.ep"
-
-data Session : ? where
-| sendS (A : ?) (s : Session) : Session
-| recvS (A : ?) (s : Session) : Session
-| endS : Session
-
-data Chan : Session -> ? where
-| mkChan (s : Session) : Chan s
-
-postulate closeOp : Pi (1 ch : Chan endS). Nat
+import "../../lib/session.ep"
 
 # Violation 4: channel used after close (Issue #64 acceptance criterion).
 # Expected error: linear variable 'ch' used 2 times (expected exactly once)

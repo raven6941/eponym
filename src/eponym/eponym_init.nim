@@ -25,6 +25,8 @@ import sequtils
 import tables
 import hashes
 import preterm  # for Quantity (Issue #64)
+import abilities # Issue #177: operator pegs on tPi
+import elab_prof  # Issue #55: phase timers
 
 type
   Const* = enum cStar, cOne, cVoid, cZero   # ?  1  hi  O
@@ -63,7 +65,7 @@ type
     cases: Table[int, Term]
     nParams: int  # leading scrutinee spine args that are (already-bound)
                   # params, not fresh ctor vars (Experiment 5: data)
-  ElimVKind = enum eApp, eFst, eSnd, eAbsurd
+  ElimVKind* = enum eApp, eFst, eSnd, eAbsurd
   Scope* = object
     adv*: string   # display hint, as in the paper's Scope
     bdy*: Term
@@ -82,6 +84,9 @@ type
       impl*: bool
       erased*: bool  # Experiment 9: QTT-lite 0-quantity (erased at runtime)
       qty*: Quantity # Issue #64: binder quantity (q0/q1/qOmega)
+      peg*: Ability  # Issue #177: operator peg (tPi only; nil = []).
+                     # The elaborator stamps the ambient ability here;
+                     # the core ignores it (like impl/erased).
     of tMeta:
       metaId*: int
       metaSpine*: seq[Term]  # innermost-first; one entry per creation-var
@@ -152,25 +157,26 @@ proc mkR(id: int, typ: Value, isDefn: bool, dval: Value): Term =
 proc vv*(i: int): Term = Term(kind: tV, idx: i)
 
 proc tmPi*(dom: Term, adv: string, bdy: Term, impl = false, erased = false,
-           qty = qOmega): Term =
+           qty = qOmega, peg: Ability = nil): Term =
   Term(kind: tPi, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl,
-       erased: erased, qty: qty)
+       erased: erased, qty: qty, peg: peg)
 proc tmSi*(dom: Term, adv: string, bdy: Term, impl = false, erased = false,
            qty = qOmega): Term =
   Term(kind: tSi, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl,
-       erased: erased, qty: qty)
+       erased: erased, qty: qty, peg: nil)
 proc tmLam*(dom: Term, adv: string, bdy: Term, impl = false, erased = false,
-            qty = qOmega): Term =
+            qty = qOmega, peg: Ability = nil): Term =
   Term(kind: tLam, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl,
-       erased: erased, qty: qty)
+       erased: erased, qty: qty, peg: peg)
 proc tmMeta*(id: int, spine: seq[Term]): Term =
   Term(kind: tMeta, metaId: id, metaSpine: spine)
 
-proc mkBinder*(k: TermKind, dom: Term, sc: Scope, impl: bool, qty = qOmega): Term =
+proc mkBinder*(k: TermKind, dom: Term, sc: Scope, impl: bool, qty = qOmega,
+               peg: Ability = nil): Term =
   case k
-  of tPi: tmPi(dom, sc.adv, sc.bdy, impl, false, qty)
+  of tPi: tmPi(dom, sc.adv, sc.bdy, impl, false, qty, peg)
   of tSi: tmSi(dom, sc.adv, sc.bdy, impl, false, qty)
-  of tLam: tmLam(dom, sc.adv, sc.bdy, impl, false, qty)
+  of tLam: tmLam(dom, sc.adv, sc.bdy, impl, false, qty, peg)
   else: raise newException(ValueError, "mkBinder: not a binder")
 
 proc tmPair*(fstT, sndT: Term, adv: string, ranBdy: Term): Term =
@@ -193,7 +199,10 @@ proc tZero(): Term = Term(kind: tC, c: cZero)
 
 ## --- viewing the records (this replaces the pretty-printer) -----------------
 
-proc `$`(c: Const): string =
+proc `$`*(c: Const): string =
+  ## Exported (issue #139): elab.prettyTerm's `of tC: $t.c` resolves to the
+  ## generic enum `$` ("cStar") when this proc is not exported, so keep it
+  ## exported to render `?` like the Term `$` does.
   case c
   of cStar: "?"
   of cOne: "1"
@@ -213,7 +222,8 @@ proc `$`*(t: Term): string =
   of tInt: $t.intVal
   of tNatLit: $t.natLitVal
   of tPrim: $t.primOp
-  of tPi: (if t.impl: "Pi{" else: "Pi(") & $t.dom & ", " & $t.scope & ")"
+  of tPi: (if t.impl: "Pi{" else: "Pi(") & $t.dom & ", " & $t.scope & ")" &
+    (if t.peg.isNil or abIsEmpty(t.peg): "" else: $t.peg)
   of tSi: (if t.impl: "Si{" else: "Si(") & $t.dom & ", " & $t.scope & ")"
   of tLam: (if t.impl: "L{" else: "L(") & $t.dom & ", " & $t.scope & ")"
   of tMeta: "?m" & $t.metaId
@@ -297,10 +307,82 @@ proc newDefRef*(s: var Supply, typ, val: Value): Term =
   ## earlier elaborated defs become R nodes later defs can mention.
   mkR(freshId(s), typ, true, val)
 
+proc neutralVar*(lvl: int): Value =
+  ## Issue #50: a fresh neutral variable at de Bruijn level `lvl`.
+  ## The negative refId marks it as a printer-bound variable (never a
+  ## real global); the REPL's value printer resolves it via its level.
+  Value(syn: vv(lvl), whnf: Whnf(kind: wRef, refId: -(lvl + 1), spine: @[]))
+
 proc whnfKind*(v: Value): WhnfKind = v.whnf.kind
 proc whnfRefId*(v: Value): int = v.whnf.refId
 proc whnfSpineLen*(v: Value): int = v.whnf.spine.len
 proc whnfSpineArg*(v: Value, i: int): Value = v.whnf.spine[i].arg
+proc whnfSpineKind*(v: Value, i: int): ElimVKind = v.whnf.spine[i].kind
+  ## Issue #50: the elimination kind of the i-th spine entry (REPL printer).
+
+proc whnfDom*(v: Value): Value =
+  ## Issue #50: domain of a wPi/wSi value (REPL printer).
+  assert v.whnf.kind in {wPi, wSi}, "whnfDom of non-Pi/Sigma"
+  v.whnf.dom
+
+proc whnfScopeAdv*(v: Value): string =
+  ## Issue #50: binder name hint of a wPi/wSi/wLam value (REPL printer).
+  case v.whnf.kind
+  of wPi, wSi: v.whnf.tscope.syn.adv
+  of wLam: v.whnf.lscope.syn.adv
+  else: raise newException(ValueError, "whnfScopeAdv of non-binder")
+
+proc whnfScopeApply*(v: Value, x: Value): Value =
+  ## Issue #50: apply a wPi/wSi/wLam scope to a value (REPL printer).
+  case v.whnf.kind
+  of wPi, wSi: v.whnf.tscope.fn(x)
+  of wLam: v.whnf.lscope.fn(x)
+  else: raise newException(ValueError, "whnfScopeApply of non-binder")
+
+proc whnfFst*(v: Value): Value =
+  ## Issue #50: first component of a wPair value (REPL printer).
+  assert v.whnf.kind == wPair, "whnfFst of non-pair"
+  v.whnf.fstV
+
+proc whnfSnd*(v: Value): Value =
+  ## Issue #50: second component of a wPair value (REPL printer).
+  assert v.whnf.kind == wPair, "whnfSnd of non-pair"
+  v.whnf.sndV
+
+proc whnfConst*(v: Value): Const =
+  ## Issue #50: the constant of a wConst value (REPL printer).
+  assert v.whnf.kind == wConst, "whnfConst of non-const"
+  v.whnf.c
+
+proc whnfIntVal*(v: Value): int =
+  ## Issue #50: the literal of a wInt value (REPL printer).
+  assert v.whnf.kind == wInt, "whnfIntVal of non-int"
+  v.whnf.intVal
+
+proc whnfNatLitVal*(v: Value): int =
+  ## Issue #50: the literal of a wNatLit value (REPL printer).
+  assert v.whnf.kind == wNatLit, "whnfNatLitVal of non-natlit"
+  v.whnf.natLitVal
+
+proc whnfPrimOp*(v: Value): PrimOp =
+  ## Issue #50: operator of a wPrim value (REPL printer).
+  assert v.whnf.kind == wPrim, "whnfPrimOp of non-prim"
+  v.whnf.op
+
+proc whnfPrimArgs*(v: Value): seq[Value] =
+  ## Issue #50: accumulated args of a wPrim value (REPL printer).
+  assert v.whnf.kind == wPrim, "whnfPrimArgs of non-prim"
+  v.whnf.pargs
+
+proc whnfRedId*(v: Value): int =
+  ## Issue #50: eliminator refId of a stuck wRed value (REPL printer).
+  assert v.whnf.kind == wRed, "whnfRedId of non-red"
+  v.whnf.elimId
+
+proc whnfRedArgs*(v: Value): seq[Value] =
+  ## Issue #50: accumulated args of a stuck wRed value (REPL printer).
+  assert v.whnf.kind == wRed, "whnfRedArgs of non-red"
+  v.whnf.args
 
 proc newPostulateRef*(s: var Supply, typ: Value): Term =
   ## Experiment 4: a parameter-like global (type former or constructor).
@@ -337,6 +419,16 @@ proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term, nParams = 0) =
 proc redNargs*(elim: Term): int =
   ## number of arguments (incl. scrutinee) the eliminator takes
   elim.refVal.whnf.rule.nargs
+
+proc redRuleInfo*(elim: Term): tuple[nargs, nParams: int, cases: Table[int, Term]] =
+  ## Issue #156: read an eliminator's reduction rule table as plain data
+  ## (constructor refId -> contractum template Term). For the independent
+  ## kernel audit harness: the kernel re-implements iota from this data,
+  ## never reusing the elaborator's fireRed.
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  (w.rule.nargs, w.rule.nParams, w.rule.cases)
 
 proc freshPara*(s: var Supply, ty: Value): Value =
   ## vpara: a fresh neutral parameter of the given type.
@@ -375,7 +467,7 @@ proc subst*(t: Term, depth: int, s: Term): Term =
     mkBinder(t.kind, subst(t.dom, depth, s),
              Scope(adv: t.scope.adv,
                    bdy: subst(t.scope.bdy, depth + 1, weaken(s))),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     tmPair(subst(t.pFst, depth, s), subst(t.pSnd, depth, s),
            t.pScope.adv, subst(t.pScope.bdy, depth + 1, weaken(s)))
@@ -403,7 +495,7 @@ proc absGo(t: Term, id: int, depth: int): Term =
   of tPi, tSi, tLam:
     mkBinder(t.kind, absGo(t.dom, id, depth),
              Scope(adv: t.scope.adv, bdy: absGo(t.scope.bdy, id, depth + 1)),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     tmPair(absGo(t.pFst, id, depth), absGo(t.pSnd, id, depth),
            t.pScope.adv, absGo(t.pScope.bdy, id, depth + 1))
@@ -432,7 +524,7 @@ proc substEnv(t: Term, env: seq[Value], depth: int): Term =
   of tPi, tSi, tLam:
     mkBinder(t.kind, substEnv(t.dom, env, depth),
              Scope(adv: t.scope.adv, bdy: substEnv(t.scope.bdy, env, depth + 1)),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     tmPair(substEnv(t.pFst, env, depth), substEnv(t.pSnd, env, depth),
            t.pScope.adv, substEnv(t.pScope.bdy, env, depth + 1))
@@ -459,7 +551,7 @@ proc weakenAt(t: Term, depth: int): Term =
   of tPi, tSi, tLam:
     mkBinder(t.kind, weakenAt(t.dom, depth),
              Scope(adv: t.scope.adv, bdy: weakenAt(t.scope.bdy, depth + 1)),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     tmPair(weakenAt(t.pFst, depth), weakenAt(t.pSnd, depth),
            t.pScope.adv, weakenAt(t.pScope.bdy, depth + 1))
@@ -490,7 +582,7 @@ proc substSpine*(t: Term, spine: seq[Term]): Term =
     let sp = @[vv(0)] & spine.mapIt(weaken(it))
     mkBinder(t.kind, substSpine(t.dom, spine),
              Scope(adv: t.scope.adv, bdy: substSpine(t.scope.bdy, sp)),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     let sp = @[vv(0)] & spine.mapIt(weaken(it))
     tmPair(substSpine(t.pFst, spine), substSpine(t.pSnd, spine),
@@ -624,8 +716,9 @@ proc evalWhnf(t: Term, env: seq[Value]): Whnf =
       "cannot evaluate open metavariable ?m" & $t.metaId)
 
 proc eval*(t: Term, env: seq[Value]): Value =
-  ## eval t γ = close t γ ⇓ whnv t γ  (paper §6.6)
-  Value(syn: substEnv(t, env, 0), whnf: evalWhnf(t, env))
+  profilePhase(epEval):
+      ## eval t γ = close t γ ⇓ whnv t γ  (paper §6.6)
+      Value(syn: substEnv(t, env, 0), whnf: evalWhnf(t, env))
 
 ## --- smart value constructors (§6.5) ------------------------------------------
 
@@ -703,13 +796,14 @@ proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value] =
   (eval(t, @[]), ty)
 
 proc check*(s: var Supply, ty: Value, t: Term): Value =
-  # Experiment 11: primitives are trusted from the elaborator; the
-  # elaborator already assigned the correct type (Int or Int->Int->Int).
-  if t.kind == tInt or t.kind == tPrim or t.kind == tNatLit:
-    return eval(t, @[])
-  let r = synth(s, t)
-  areEqual(s, vStar(), ty, r.typ)
-  r.val
+  profilePhase(epKernel):
+      # Experiment 11: primitives are trusted from the elaborator; the
+      # elaborator already assigned the correct type (Int or Int->Int->Int).
+      if t.kind == tInt or t.kind == tPrim or t.kind == tNatLit:
+        return eval(t, @[])
+      let r = synth(s, t)
+      areEqual(s, vStar(), ty, r.typ)
+      r.val
 
 proc structuralEq(s: var Supply, a, b: Value) =
   ## structural equality on weak-head forms, with eta for lambdas vs neutrals
@@ -755,7 +849,7 @@ proc structuralEq(s: var Supply, a, b: Value) =
     structuralEq(s, a.whnf.sndV, b.whnf.sndV)
   of wRef:
     if a.whnf.refId != b.whnf.refId or a.whnf.spine.len != b.whnf.spine.len:
-      raise newException(ValueError, "neutral mismatch")
+      raise newException(ValueError, "neutral mismatch: " & $a.syn & " vs " & $b.syn)
     for i in 0 ..< a.whnf.spine.len:
       let ea = a.whnf.spine[i]
       let eb = b.whnf.spine[i]

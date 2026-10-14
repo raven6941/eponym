@@ -6,7 +6,6 @@
 ##
 ## Optional: best-first search via cost-ordered worklist (leftist heap).
 
-import sequtils
 import strutils
 
 # --- Terms ------------------------------------------------------------
