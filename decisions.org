@@ -2492,7 +2492,7 @@
   work. #55's acceptance criteria are met except the full-CI-matrix run,
   which happens before merge.
 
-* 2026-10-14 — #37: records desugar to transparent Sigma defs (in progress)
+* 2026-10-14 — #37: records desugar to transparent Sigma defs (merged in PR #182, squash 63aae79)
   Goal: named records for "a useful dependently typed system anyone would
   want to use", following the Experiment 5 =data= precedent (desugar to
   existing machinery, no new core constructs).
