@@ -58,9 +58,26 @@ one rule applies, and it only meets. Two deliberate refinements over
 - `tests/test_lattice_elab.nim`: **16/16 verdict agreement** with the
   corpus expectations; accepted outputs rebuilt from the converged state
   (`rebuild`); rejections carry provenance, e.g.
-  `bottom at 2: wanted nil needs index 0, had index is exact(2)`.
+  `bottom at vec#2: wanted suc needs Nat type, had shape {hVec}` (node
+  descriptions are O(1) `head#id` — full-subterm rendering made numbering
+  O(n²) and was fixed).
 - New shared corpus module `src/relational/vec_corpus.nim` (RTerm side of
   the `bench_elab_end_to_end.nim` cases).
+- **Benchmark done** (`bench/bench_lattice_elab.nim`, decisions.org
+  2026-10-13): invalid-case latency is linear in input size
+  (10.7us→125.7us for cons^0..cons^64 : Vec Nat 2) — the step-4 gate
+  passes. Staged-relational engine reproduces #143 (16–17x vs direct on
+  small invalids, 46.8x on the shape-mismatch case) but is ~flat ~7ms in
+  term size: its deficit is a large constant, not size-dependent
+  exhaustion. Lattice rejects 7–614x faster than direct, 113–227x faster
+  than the engine on small invalids. Honest note: `elaboD` (#57) is the
+  fastest rejector outright (1–10us); the lattice's distinctive value is
+  the ambiguity-preserving state, which step 5 will test.
+- Next: the synthesis-direction assessment (step 5) — can the lattice
+  state run backwards? The term-side lattice (degenerate singletons on
+  ground input) is the infrastructure; `checkLat` currently requires a
+  ground term head (ckNone → failure), so a backwards driver is real
+  work, not a tweak.
 
 ## Honest notes
 
@@ -72,6 +89,3 @@ one rule applies, and it only meets. Two deliberate refinements over
   input); the mechanism (per-root constructions, congruence-propagated,
   output built from converged state) is in place for the non-ground
   extension. The verdict will say so plainly if it stays degenerate.
-- Next: benchmark invalid-case latency vs the staged-relational engine
-  (16–27x blowup target) and vs direct; then the synthesis-direction
-  assessment (step 5).

@@ -2280,3 +2280,71 @@
   Verified: =examples/ep/25e-clause-multicol.ep= (two-argument =andb= with
   a variable rest pattern =false y=, three =Eq=-by-=refl= computation
   proofs); full =tests/run_examples.nim= green, no regressions.
+
+* 2026-10-13 — #170: lattice-monotone elaboration benchmark (issue open, step 5 remains)
+
+  Context: #170 applies Aaron's 2026-10-13 principle to #143's verdict —
+  instead of accepting the staged-relational engine's fast-fail deficit
+  (or recovering it with cut, which kills synthesis), refine the
+  relational style itself: relations never branch; ambiguity is reified
+  into a lattice state (shape possibility sets + NatLat over indices +
+  union-find with congruence closure); contradiction is a *value*
+  (bottom), detected by the meet at the step that creates it, with
+  provenance — never by stream exhaustion, never by cut.
+
+  What was built (branch =exp170-lattice-elab=):
+  - =src/relational/lattice_elab.nim=: LatState, meet-only rules
+    (=checkLat=/=inferLat=, no disj/logic-vars/streams), =checkLatTop=
+    driver, =rebuild= (output determination, §3).
+  - =src/relational/vec_corpus.nim=: the 16 RTerm cases from
+    =bench_elab_end_to_end.nim=; =tests/test_lattice_elab.nim= asserts
+    16/16 verdict agreement + output rebuild (green).
+  - =bench/bench_lattice_elab.nim=: lattice vs #143's staged-relational
+    engine (=stagedCheckoVec2=) vs unstaged =checko= vs #57 residual
+    (=elaboD=) vs direct (=checkTermElab=), on scaled cons-chains
+    (invalid: cons^n : Vec Nat 2, n=0..64; valid: cons^n : Vec Nat n),
+    best-of-adaptive wall-clock in microseconds.
+
+  Measured result (the issue's step-4 gate):
+  - Invalids, lattice: 10.7us (n=0) → 125.7us (n=64), linear in input
+    size (~1.8us/node + ~10us fixed). Fast-fail with no exhaustion:
+    the contradiction is found at depth 2 (pred of exact 0), numbering
+    is the only O(n) work. **Gate passed.**
+  - Invalids, staged-relational engine: 1.2ms → 7.9ms, *~flat* in term
+    size for n>=4. Reproduces #143 on the small cases (engine/direct =
+    16.2x, 16.9x on cons^0/cons^1; 46.8x on NEG 1, a shape mismatch —
+    worse than #143's 16–27x band). Refinement of the issue's framing:
+    on this corpus the engine's deficit is a large *constant* (~7ms of
+    Goal/Stream machinery exploring dead branches), not
+    size-dependent exhaustion — the blowup does not grow with input.
+  - Invalids, direct: 75us → 77ms, superlinear (~n^1.7): checkTermElab
+    elaborates the explicit cons spines and runs NbE conversion on the
+    index arguments at every level. Lattice rejects 7x faster at n=0,
+    614x faster at n=64; 113–227x faster than the engine on small
+    invalids.
+  - Honest finding: =elaboD= (the #57 generated-direct residual) is the
+    fastest rejector outright (1.4–10.4us, flat). The lattice's
+    distinctive value over =elaboD= is *not* raw ground-term speed —
+    it is the ambiguity-preserving state, which is what step 5
+    (synthesis direction) will test.
+  - Valids: lattice 10–26x faster than direct on ground chains, on par
+    with =elaboD=; unstaged =checko= is fastest on valids (no search on
+    ground input — just structural recursion). Caveat recorded: ground
+    checking-mode chains are the easiest workload; nothing here
+    generalizes to open terms or holes.
+  - Prototype bug fixed en route: node descriptions rendered the full
+    subterm (=$t=) at numbering, making it O(n²) total (invalid latency
+    grew ~n^1.7: 886us at n=32). Replaced with O(1) =head#id=
+    descriptions; provenance intact, e.g. "bottom at vec#2: wanted suc
+    needs Nat type, had shape {hVec}".
+
+  Output determination (§3): =rebuild= constructs the elaborated term
+  from the converged state's constructions (not returned by recursion);
+  degenerate on ground input (rebuild == input), as the design doc
+  predicted. The mechanism is in place for the non-ground extension.
+
+  Decision: benchmark gate PASSED — linear fast-fail, no exhaustion
+  blowup, 100% verdict agreement. Issue stays =in-progress= for step 5:
+  does the lattice style preserve enough information to run the relation
+  backwards (synthesis direction)? The term-side lattice (currently
+  degenerate singletons on ground input) is the infrastructure for it.
