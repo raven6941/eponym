@@ -10,6 +10,7 @@ src/**
 tests/**
 !tests/**/
 !tests/**/*.nim
+!tests/**/*.sh
 bench/**
 !bench/**/
 !bench/**/*.nim

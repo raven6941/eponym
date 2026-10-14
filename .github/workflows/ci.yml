@@ -19,6 +19,8 @@ jobs:
             echo "=== build $f ==="
             nim c --hints:off $P "src/eponym/$f.nim" || exit 1
           done
+          echo "=== build repl (issue #50) ==="
+          nim c --hints:off $P "src/repl.nim" || exit 1
       - name: Test
         run: |
           P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
@@ -28,6 +30,8 @@ jobs:
           done
           echo "=== examples ==="
           nim c -r --hints:off $P "tests/run_examples.nim" || exit 1
+          echo "=== repl scripted session (issue #50) ==="
+          sh tests/repl_session.sh || exit 1
           echo "=== kernel audit (issue #62: independent re-check) ==="
           nim c -r --hints:off $P "tests/kernel_audit.nim" || exit 1
           echo "=== embedded examples (issue #149) ==="

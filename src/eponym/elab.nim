@@ -1340,16 +1340,16 @@ proc insertImplicits(pre: PreTerm, tm, ty: Term, ctxLen: int,
       break
   (f, fty)
 
-proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
-             ms: var MetaStore, supply: var Supply,
-             ab: Ability): tuple[tm, ty: Term]
+proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
+              ms: var MetaStore, supply: var Supply,
+              ab: Ability): tuple[tm, ty: Term]
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
              ms: var MetaStore, supply: var Supply, expTy: Term,
              ab: Ability): Term
 
-proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
-             ms: var MetaStore, supply: var Supply,
-             ab: Ability): tuple[tm, ty: Term] =
+proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
+              ms: var MetaStore, supply: var Supply,
+              ab: Ability): tuple[tm, ty: Term] =
   ## Synthesis mode.
   case pre.kind
   of pkVar:
