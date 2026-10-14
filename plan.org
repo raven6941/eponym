@@ -554,3 +554,27 @@
   - [[https://github.com/raven6941/notes/blob/main/staging.org][Staging]]
   - [[https://github.com/raven6941/notes/blob/main/nim-macros.org][Nim macros]]
   - [[https://github.com/raven6941/notes/blob/main/turnstile-plus.org][Turnstile+]]
+
+* Experiment 14 (planned 2026-10-13, not started — do not pursue yet)
+
+  Question: can Eponym's object language get delimited continuations
+  (shift/reset) via a selective CPS transform, as the runtime substrate
+  for algebraic effects?
+
+  Motivation (Aaron, 2026-10-13): completes the effects story — #41
+  proved elaboration-time effects viable, #177 tracks abilities at the
+  type level, but object-level algebraic effects need continuations,
+  which Nim lacks natively. Key feasibility fact: Eponym generates the
+  Nim code, so the transform needs no host cooperation.
+
+  Full hypothetical plan recorded in docs/cps-delimcc-plan.md (7 steps,
+  Rompf-revised): selective CPS from the start, shift-sites-only
+  transform with reset-as-library, closure-based continuations,
+  answer types via the light route (per-expression control effect or
+  ambient-ability tracking — compare before building), one-shot
+  justified by QTT rather than precedent, and Nim-specific day-one
+  constraints (trampoline, explicit exception channel,
+  shift-inside-reset as macro error, stack-vs-heap continuations).
+
+  Prior art: Rompf/Maier/Odersky ICFP 2009 (selective type-directed
+  CPS); notes/pages/rompf-delimited-continuations-scala2.org.
