@@ -24,6 +24,7 @@ import sequtils
 import preterm   # Loc
 import eponym_init
 import egraph
+import abilities # Issue #177: ambient abilities (Frank-style)
 
 type
   UnifyError* = object of CatchableError
@@ -89,6 +90,7 @@ type
     holeLoc*: Loc
     holeGoal*: Term
     holeCtx*: seq[tuple[name: string, ty: Term]]
+    holeAb*: Ability  # Issue #177: the ambient ability at the hole
 
   MetaStore* = object
     nextId*: int
@@ -116,6 +118,13 @@ type
     # registration (elabDefDecl / elabPostulateDecl); unknown refIds keep
     # the old `R<n>` fallback rendering.
     refNames*: Table[int, string]
+    # Issue #177: ability variables. Each signature freshens one `?aN`
+    # (Frank's implicit effect polymorphism). Ability variables are
+    # *never solved* during elaboration: the ability discipline is a pure
+    # predicate (peg compatibility), so per-use instantiation copies are
+    # unnecessary — an earlier revision freshened+solved per use at ~1.2x
+    # pure-code overhead for an instantiation nothing ever observed.
+    abNext*: int
 
   QtySolKind* = enum qsUnknown, qsSolved
   QtySol* = object
@@ -202,7 +211,8 @@ proc initMetaStore*(): MetaStore =
             qvarNames: initTable[string, int](), qvarSols: @[],
             qvarPending: initTable[string, seq[tuple[varName: string, loc: Loc]]](),
             ctorTable: initCtorTable(),
-            refNames: initTable[int, string]())
+            refNames: initTable[int, string](),
+            abNext: 0)
 
 proc uerr(loc: Loc, msg: string): ref UnifyError =
   # No location prefix here: the elaborator catches UnifyError and re-raises
@@ -223,6 +233,29 @@ proc freshMeta*(ms: var MetaStore, ty: Term, ctxLen, extra: int,
 
 proc isSolved*(ms: MetaStore, id: int): bool =
   id in ms.entries and not ms.entries[id].solution.isNil
+
+# --- Issue #177: ability variables ---------------------------------------
+#
+# Ability variables (`?aN`, one freshened per signature) are never solved
+# during elaboration: the ability discipline is a pure compatibility
+# predicate (see pegCompatible in abilities.nim). An earlier prototype
+# revision freshened ?aN per use and solved the copy to the ambient
+# (Frank-literal instantiation); measurement showed ~1.2x pure-code
+# overhead for an instantiation no elaborator rule ever observed, so it
+# was replaced by the predicate.
+
+proc freshAbMeta*(ms: var MetaStore): Ability =
+  ## A fresh ability variable `[?aN]`.
+  inc ms.abNext
+  abOpen(ms.abNext)
+
+proc unifyAbilitiesSym*(a, b: Ability, loc: Loc) =
+  ## Ability compatibility for conversion (Pi/Pi in `unify`): the
+  ## symmetric closure of pegCompatible — open pegs are compatible with
+  ## anything, closed pegs need syntactic equality. Pure predicate.
+  if a == b: return  # same object (common: one ambient per signature)
+  if not (pegCompatible(a, b) and pegCompatible(b, a)):
+    raise uerr(loc, "ability mismatch: " & $a & " vs " & $b)
 
 proc zonkHead*(ms: MetaStore, t: Term): Term =
   ## Follow solved metas at the head only.
@@ -327,8 +360,13 @@ proc zonk*(ms: MetaStore, t: Term): Term =
     else: zonk(ms, substSpine(e.solution, sp))
   of tV, tR, tC, tInt, tPrim, tNatLit: t
   of tPi, tSi, tLam:
+    # Issue #177: pegs are NOT zonked here. The core ignores pegs, and
+    # use sites (instPeg/unifyAbilitiesSym) zonk them on demand; zonking
+    # every binder's peg on every zonk pass showed up as pure-code
+    # overhead with no semantic effect.
     mkBinder(t.kind, zonk(ms, t.dom),
-              Scope(adv: t.scope.adv, bdy: zonk(ms, t.scope.bdy)), t.impl, t.qty)
+              Scope(adv: t.scope.adv, bdy: zonk(ms, t.scope.bdy)), t.impl, t.qty,
+              t.peg)
   of tPair:
     tmPair(zonk(ms, t.pFst), zonk(ms, t.pSnd),
            t.pScope.adv, zonk(ms, t.pScope.bdy))
@@ -421,7 +459,7 @@ proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
     mkBinder(t.kind, renameAt(t.dom, inv, depth, n, loc),
               Scope(adv: t.scope.adv,
                     bdy: renameAt(t.scope.bdy, inv, depth + 1, n, loc)),
-              t.impl, t.qty)
+              t.impl, t.qty, t.peg)
   of tPair:
     tmPair(renameAt(t.pFst, inv, depth, n, loc),
            renameAt(t.pSnd, inv, depth, n, loc), t.pScope.adv,
@@ -522,6 +560,9 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
   of tPi, tSi, tLam:
     if a1.impl != b1.impl:
       raise uerr(loc, "implicit/explicit binder mismatch")
+    if a1.kind == tPi:
+      # Issue #177: operator pegs compare by the ability discipline.
+      unifyAbilitiesSym(a1.peg, b1.peg, loc)
     unify(ms, a1.dom, b1.dom, loc)
     unify(ms, a1.scope.bdy, b1.scope.bdy, loc)
   of tPair:

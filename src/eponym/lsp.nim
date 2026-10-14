@@ -232,6 +232,8 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
         of dkData: decls[i].daloc.line
         of dkClauses: decls[i].clausesDef.loc.line
         of dkImport: decls[i].iloc.line  # issue #49: import decls have no body to split
+        of dkInterface: decls[i].ifloc.line  # issue #177
+        of dkCommand: decls[i].cloc.line      # issue #177
       if dl > procLine1:
         endLine0 = dl - 2
         break

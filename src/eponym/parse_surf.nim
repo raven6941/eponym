@@ -78,10 +78,10 @@ type
   TokKind = enum
     tkEof, tkIdent, tkInt, tkString,
     tkDef, tkClauses, tkPostulate, tkElim, tkRed, tkData, tkWhere, tkBy,
-    tkImport,
+    tkImport, tkInterface, tkCommand,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
-    tkLParen, tkRParen, tkLBrace, tkRBrace,
+    tkLParen, tkRParen, tkLBrace, tkRBrace, tkLBracket, tkRBracket,
     tkColon, tkColonEq, tkDot, tkComma, tkArrow, tkEq, tkPipe
   Token = object
     kind: TokKind
@@ -104,7 +104,7 @@ const keywords = [
   ("proc", tkDef), ("def", tkClauses),
   ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
   ("data", tkData), ("where", tkWhere), ("by", tkBy),
-  ("import", tkImport),
+  ("import", tkImport), ("interface", tkInterface), ("command", tkCommand),
   ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
 
@@ -183,6 +183,12 @@ proc lex(src: string): seq[Token] =
       inc col; inc i
     elif c == '}':
       result.add Token(kind: tkRBrace, lexeme: "}", loc: curLoc())
+      inc col; inc i
+    elif c == '[':
+      result.add Token(kind: tkLBracket, lexeme: "[", loc: curLoc())
+      inc col; inc i
+    elif c == ']':
+      result.add Token(kind: tkRBracket, lexeme: "]", loc: curLoc())
       inc col; inc i
     elif c == ',':
       result.add Token(kind: tkComma, lexeme: ",", loc: curLoc())
@@ -386,6 +392,22 @@ proc parseTerm(p: var Parser): PreTerm =
   else:
     lhs
 
+proc parsePeg(p: var Parser): tuple[hasPeg: bool, names: seq[string]] =
+  ## Issue #177: parse `[I1, I2]` (possibly empty `[]`) after ':' in a
+  ## `proc` signature. Returns hasPeg=false when there is no bracket.
+  if p.peek().kind != tkLBracket:
+    return (false, @[])
+  discard p.next()
+  var names: seq[string] = @[]
+  if p.peek().kind != tkRBracket:
+    while true:
+      let n = p.expect(tkIdent, "interface name in peg")
+      names.add n.lexeme
+      if p.peek().kind == tkComma: discard p.next()
+      else: break
+  discard p.expect(tkRBracket, "']'")
+  (true, names)
+
 proc parseDef(p: var Parser): SurfDef =
   let t = p.expect(tkDef, "'proc'")
   let nm = p.expect(tkIdent, "definition name")
@@ -394,10 +416,29 @@ proc parseDef(p: var Parser): SurfDef =
     let b = p.parseBinder()
     tele.add b
   discard p.expect(tkColon, "':'")
+  let (hasPeg, pegNames) = p.parsePeg()  # Issue #177
   let retTy = p.parseTerm()
   discard p.expect(tkEq, "'='")
   let body = p.parseTerm()
-  SurfDef(name: nm.lexeme, tele: tele, retTy: retTy, body: body, loc: t.loc)
+  SurfDef(name: nm.lexeme, tele: tele, retTy: retTy, body: body, loc: t.loc,
+          hasPeg: hasPeg, pegNames: pegNames)
+
+proc parseInterface(p: var Parser): SurfDecl =
+  ## Issue #177: `interface Name`.
+  let t = p.expect(tkInterface, "'interface'")
+  let nm = p.expect(tkIdent, "interface name")
+  SurfDecl(kind: dkInterface, ifname: nm.lexeme, ifloc: t.loc)
+
+proc parseCommand(p: var Parser): SurfDecl =
+  ## Issue #177: `command c : A -> B in I`.
+  let t = p.expect(tkCommand, "'command'")
+  let nm = p.expect(tkIdent, "command name")
+  discard p.expect(tkColon, "':'")
+  let ty = p.parseTerm()
+  discard p.expect(tkIn, "'in'")
+  let iface = p.expect(tkIdent, "interface name")
+  SurfDecl(kind: dkCommand, cname: nm.lexeme, cty: ty, ciface: iface.lexeme,
+           cloc: t.loc)
 
 proc parsePostulate(p: var Parser): SurfDecl =
   let t = p.expect(tkPostulate, "'postulate'")
@@ -489,7 +530,9 @@ proc parseDecl(p: var Parser): SurfDecl =
   of tkRed: p.parseRed()
   of tkData: p.parseData()
   of tkImport: p.parseImport()
-  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data' or 'import'")
+  of tkInterface: p.parseInterface()
+  of tkCommand: p.parseCommand()
+  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'import', 'interface' or 'command'")
 
 proc parseProgram*(src: string): seq[SurfDecl] =
   ## Parse a whole program; raises ParseError with source location.

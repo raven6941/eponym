@@ -212,8 +212,14 @@ type
     retTy*: PreTerm
     body*: PreTerm
     loc*: Loc
+    # Issue #177: optional peg annotation `proc f : [I1, I2] Ret = body`.
+    # hasPeg=false means omitted (fresh effect variable, Frank-style);
+    # hasPeg=true with empty pegNames means explicit `[]` (closed/pure).
+    hasPeg*: bool
+    pegNames*: seq[string]
 
-  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData, dkClauses, dkImport
+  DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData, dkClauses,
+                   dkImport, dkInterface, dkCommand
   DataCtor* = object
     ## One constructor in a `data` declaration.
     name*: string
@@ -255,6 +261,17 @@ type
       daloc*: Loc
     of dkClauses:
       clausesDef*: ClausesDef
+    of dkInterface:
+      ## Issue #177: `interface Name` — declares an ability interface.
+      ifname*: string
+      ifloc*: Loc
+    of dkCommand:
+      ## Issue #177: `command c : A -> B in I` — declares a command of
+      ## interface I (an operator whose peg is the ambient at use).
+      cname*: string
+      cty*: PreTerm
+      ciface*: string
+      cloc*: Loc
     of dkImport:
       ipath*: string  # as written, e.g. "lib/nat.ep" (issue #49)
       iloc*: Loc

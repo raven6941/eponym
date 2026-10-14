@@ -25,6 +25,7 @@ import sequtils
 import tables
 import hashes
 import preterm  # for Quantity (Issue #64)
+import abilities # Issue #177: operator pegs on tPi
 
 type
   Const* = enum cStar, cOne, cVoid, cZero   # ?  1  hi  O
@@ -82,6 +83,9 @@ type
       impl*: bool
       erased*: bool  # Experiment 9: QTT-lite 0-quantity (erased at runtime)
       qty*: Quantity # Issue #64: binder quantity (q0/q1/qOmega)
+      peg*: Ability  # Issue #177: operator peg (tPi only; nil = []).
+                     # The elaborator stamps the ambient ability here;
+                     # the core ignores it (like impl/erased).
     of tMeta:
       metaId*: int
       metaSpine*: seq[Term]  # innermost-first; one entry per creation-var
@@ -152,25 +156,26 @@ proc mkR(id: int, typ: Value, isDefn: bool, dval: Value): Term =
 proc vv*(i: int): Term = Term(kind: tV, idx: i)
 
 proc tmPi*(dom: Term, adv: string, bdy: Term, impl = false, erased = false,
-           qty = qOmega): Term =
+           qty = qOmega, peg: Ability = nil): Term =
   Term(kind: tPi, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl,
-       erased: erased, qty: qty)
+       erased: erased, qty: qty, peg: peg)
 proc tmSi*(dom: Term, adv: string, bdy: Term, impl = false, erased = false,
            qty = qOmega): Term =
   Term(kind: tSi, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl,
-       erased: erased, qty: qty)
+       erased: erased, qty: qty, peg: nil)
 proc tmLam*(dom: Term, adv: string, bdy: Term, impl = false, erased = false,
-            qty = qOmega): Term =
+            qty = qOmega, peg: Ability = nil): Term =
   Term(kind: tLam, dom: dom, scope: Scope(adv: adv, bdy: bdy), impl: impl,
-       erased: erased, qty: qty)
+       erased: erased, qty: qty, peg: peg)
 proc tmMeta*(id: int, spine: seq[Term]): Term =
   Term(kind: tMeta, metaId: id, metaSpine: spine)
 
-proc mkBinder*(k: TermKind, dom: Term, sc: Scope, impl: bool, qty = qOmega): Term =
+proc mkBinder*(k: TermKind, dom: Term, sc: Scope, impl: bool, qty = qOmega,
+               peg: Ability = nil): Term =
   case k
-  of tPi: tmPi(dom, sc.adv, sc.bdy, impl, false, qty)
+  of tPi: tmPi(dom, sc.adv, sc.bdy, impl, false, qty, peg)
   of tSi: tmSi(dom, sc.adv, sc.bdy, impl, false, qty)
-  of tLam: tmLam(dom, sc.adv, sc.bdy, impl, false, qty)
+  of tLam: tmLam(dom, sc.adv, sc.bdy, impl, false, qty, peg)
   else: raise newException(ValueError, "mkBinder: not a binder")
 
 proc tmPair*(fstT, sndT: Term, adv: string, ranBdy: Term): Term =
@@ -216,7 +221,8 @@ proc `$`*(t: Term): string =
   of tInt: $t.intVal
   of tNatLit: $t.natLitVal
   of tPrim: $t.primOp
-  of tPi: (if t.impl: "Pi{" else: "Pi(") & $t.dom & ", " & $t.scope & ")"
+  of tPi: (if t.impl: "Pi{" else: "Pi(") & $t.dom & ", " & $t.scope & ")" &
+    (if t.peg.isNil or abIsEmpty(t.peg): "" else: $t.peg)
   of tSi: (if t.impl: "Si{" else: "Si(") & $t.dom & ", " & $t.scope & ")"
   of tLam: (if t.impl: "L{" else: "L(") & $t.dom & ", " & $t.scope & ")"
   of tMeta: "?m" & $t.metaId
@@ -388,7 +394,7 @@ proc subst*(t: Term, depth: int, s: Term): Term =
     mkBinder(t.kind, subst(t.dom, depth, s),
              Scope(adv: t.scope.adv,
                    bdy: subst(t.scope.bdy, depth + 1, weaken(s))),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     tmPair(subst(t.pFst, depth, s), subst(t.pSnd, depth, s),
            t.pScope.adv, subst(t.pScope.bdy, depth + 1, weaken(s)))
@@ -416,7 +422,7 @@ proc absGo(t: Term, id: int, depth: int): Term =
   of tPi, tSi, tLam:
     mkBinder(t.kind, absGo(t.dom, id, depth),
              Scope(adv: t.scope.adv, bdy: absGo(t.scope.bdy, id, depth + 1)),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     tmPair(absGo(t.pFst, id, depth), absGo(t.pSnd, id, depth),
            t.pScope.adv, absGo(t.pScope.bdy, id, depth + 1))
@@ -445,7 +451,7 @@ proc substEnv(t: Term, env: seq[Value], depth: int): Term =
   of tPi, tSi, tLam:
     mkBinder(t.kind, substEnv(t.dom, env, depth),
              Scope(adv: t.scope.adv, bdy: substEnv(t.scope.bdy, env, depth + 1)),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     tmPair(substEnv(t.pFst, env, depth), substEnv(t.pSnd, env, depth),
            t.pScope.adv, substEnv(t.pScope.bdy, env, depth + 1))
@@ -472,7 +478,7 @@ proc weakenAt(t: Term, depth: int): Term =
   of tPi, tSi, tLam:
     mkBinder(t.kind, weakenAt(t.dom, depth),
              Scope(adv: t.scope.adv, bdy: weakenAt(t.scope.bdy, depth + 1)),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     tmPair(weakenAt(t.pFst, depth), weakenAt(t.pSnd, depth),
            t.pScope.adv, weakenAt(t.pScope.bdy, depth + 1))
@@ -503,7 +509,7 @@ proc substSpine*(t: Term, spine: seq[Term]): Term =
     let sp = @[vv(0)] & spine.mapIt(weaken(it))
     mkBinder(t.kind, substSpine(t.dom, spine),
              Scope(adv: t.scope.adv, bdy: substSpine(t.scope.bdy, sp)),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     let sp = @[vv(0)] & spine.mapIt(weaken(it))
     tmPair(substSpine(t.pFst, spine), substSpine(t.pSnd, spine),

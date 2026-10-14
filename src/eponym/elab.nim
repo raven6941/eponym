@@ -29,6 +29,7 @@ import os        # issue #49: module file loading
 import hashes    # issue #49: content-hash module cache
 import preterm
 import parse_surf
+import abilities   # Issue #177: ambient abilities (Frank-style)
 import eponym_init
 import unify
 import egraph
@@ -62,6 +63,11 @@ type
     ty*: Term                     # elaborated + zonked type, for implicits
     isElim*: bool                 # Experiment 4: declared with 'elim'
     elimNargs*: int               # Experiment 4: eliminator arity (incl. scrutinee)
+    peg*: Ability                # Issue #177: the signature's peg ([?aN]
+                                 # freshened per signature, generalized;
+                                 # nil for interface markers)
+    cmdIface*: string            # Issue #177: interface name if a command
+    isIface*: bool               # Issue #177: `interface` declaration marker
   Globals* = Table[string, GEntry]
 
 # Forward declaration for use in tactics. Returns the validated evidence
@@ -69,6 +75,60 @@ type
 # nil otherwise.
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
               ctx: Ctx, globals: Globals, goalTy: Term = nil): Term
+
+# --- Issue #177: ambient abilities (Frank-style) ---------------------------
+#
+# The ambient ability is threaded through checkTm/inferTm as `ab`
+# (nil = [] = pure). Every operator (tPi) the elaborator builds is stamped
+# with the ambient at its construction site — Frank's "the peg is a
+# checking-mode input". Signatures freshen one implicit effect variable
+# ?aN per signature (omitted brackets mean [?aN]); `[]` is closed/pure.
+#
+# Design note: the discipline is a pure *predicate* (pegCompatible).
+# Ability variables are never solved during elaboration — an earlier
+# revision freshened ?aN per use and instantiated the copy to the ambient
+# (Frank-literal), but measurement showed ~1.2x pure-code overhead for an
+# instantiation no elaborator rule ever observed (pegs gate checks; they
+# never flow into terms). The Command rule is a membership test of the
+# command's interface in the ambient.
+
+type AbMember* = enum amYes, amNo, amStuck
+
+proc abMemberAb(iface: string, ab: Ability): AbMember =
+  ## Frank's Command rule premise: is `iface` in the ambient ability?
+  ## amStuck when the ambient ends in an ability variable — terminal,
+  ## since ability variables are never solved (cf. Klister's resumable
+  ## stuck tasks: there is nothing here to resume on).
+  if ab.isNil: return amNo
+  if iface in ab.ifaces: return amYes
+  if ab.tailOpen: return amStuck
+  amNo
+
+proc checkPeg(opPeg, ambient: Ability, loc: Loc) =
+  ## Frank's App rule as a predicate: the operator's peg must be
+  ## compatible with the ambient (pegCompatible). Never mutates.
+  if opPeg == ambient: return  # same object: all Pis built under one
+                               # ambient share its Ability (common case)
+  if not pegCompatible(opPeg, ambient):
+    raise elabErr(loc, "ability mismatch: operator requires peg " & $opPeg &
+      " but the ambient ability is " & $ambient)
+
+proc setPeg(t: Term, peg: Ability): Term =
+  ## Re-stamp the peg of a tPi (the Command rule pegs the operator type
+  ## at the ambient ability).
+  assert t.kind == tPi
+  tmPi(t.dom, t.scope.adv, t.scope.bdy, t.impl, t.erased, t.qty, peg)
+
+proc sigAmbient(d: SurfDef, globals: Globals, ms: var MetaStore): Ability =
+  ## Issue #177: the ambient ability for elaborating a `proc` signature
+  ## and body: the annotated peg, or a fresh ?aN (Frank's implicit effect
+  ## polymorphism: omitted brackets mean [ε]).
+  if d.hasPeg:
+    for n in d.pegNames:
+      if n notin globals or not globals[n].isIface:
+        raise elabErr(d.loc, "unknown interface '" & n & "' in peg")
+    return abClosed(d.pegNames)
+  freshAbMeta(ms)
 
 # --- Basic tactics (Experiment 6) ------------------------------------
 
@@ -219,7 +279,7 @@ proc expandNatLit(t: Term, zeroTm, sucTm: Term): Term =
     mkBinder(t.kind, expandNatLit(t.dom, zeroTm, sucTm),
              Scope(adv: t.scope.adv,
                    bdy: expandNatLit(t.scope.bdy, zeroTm, sucTm)),
-             t.impl, t.qty)
+             t.impl, t.qty, t.peg)
   of tPair:
     tmPair(expandNatLit(t.pFst, zeroTm, sucTm),
            expandNatLit(t.pSnd, zeroTm, sucTm), t.pScope.adv,
@@ -1174,13 +1234,15 @@ proc checkErasedArg(arg: Term, ctx: Ctx, loc: Loc, ms: var MetaStore) =
     ms.qvarPending.mgetOrPut(p.vname, @[]).add((p.varName, p.loc))
 
 proc resolveVar(ctx: Ctx, globals: Globals, name: string,
-                loc: Loc): tuple[tm, ty: Term] =
+                loc: Loc, ab: Ability,
+                ms: var MetaStore): tuple[tm, ty: Term] =
   for i, e in ctx:
     if e.name == name: return (vv(i), e.ty)
   # Experiment 11: primitive Int operations
   if name in ["addInt", "subInt", "mulInt"] and "Int" in globals:
     let intTy = globals["Int"].tm
-    let opTy = tmPi(intTy, "_", tmPi(intTy, "_", intTy))
+    # Issue #177: primops are pure operators; peg at the ambient like a lambda.
+    let opTy = tmPi(intTy, "_", tmPi(intTy, "_", intTy, peg = ab), peg = ab)
     let op = case name
       of "addInt": opAdd
       of "subInt": opSub
@@ -1188,6 +1250,27 @@ proc resolveVar(ctx: Ctx, globals: Globals, name: string,
     return (tmPrim(op, opTy), opTy)
   if name in globals:
     let g = globals[name]
+    if g.isIface:
+      raise elabErr(loc, "interface '" & name & "' is not a term")
+    if g.cmdIface != "":
+      # Issue #177, Command rule: `c : A -> B in I` used under ambient
+      # `ab` requires `I` in `ab`; the operator type is pegged at `ab`.
+      case abMemberAb(g.cmdIface, ab)
+      of amYes:
+        if g.ty.kind != tPi:
+          raise elabErr(loc, "command '" & name & "' has a non-function type")
+        return (g.tm, setPeg(g.ty, ab))
+      of amNo:
+        raise elabErr(loc, "command '" & name & "' requires interface '" &
+          g.cmdIface & "' but the ambient ability is " & $ab)
+      of amStuck:
+        raise elabErr(loc, "command '" & name & "' requires interface '" &
+          g.cmdIface & "', but the ambient ability is not yet known " &
+          "(stuck on " & $ab & ")")
+    # Ordinary global: the signature's peg must be compatible with the
+    # ambient. No freshening: ability variables are never solved, so the
+    # stored type is returned unchanged.
+    checkPeg(g.peg, ab, loc)
     return (g.tm, g.ty)
   raise elabErr(loc, "unbound variable '" & name & "'")
 
@@ -1212,19 +1295,21 @@ proc headTy(ms: MetaStore, t: Term): Term =
       return cur
 
 proc ensurePi(ms: var MetaStore, loc: Loc, t: Term,
-              ctxLen: int): tuple[dom, codBdy: Term, impl: bool, adv: string,
-                                  qty: Quantity] =
+              ctxLen: int, ab: Ability): tuple[dom, codBdy: Term, impl: bool,
+              adv: string, qty: Quantity, peg: Ability] =
   ## t's head must be a Pi; a metavariable head is unified with a fresh
   ## (explicit) Pi. Returns dom, the codomain body (in the extended frame),
-  ## and the binder's quantity (Issue #66: part of the Pi type).
+  ## the binder's quantity (Issue #66: part of the Pi type), and the
+  ## operator peg (Issue #177). A Pi invented for a meta head is pegged at
+  ## the ambient ability, like a lambda.
   let h = headTy(ms, t)
   if h.kind == tPi:
-    return (h.dom, h.scope.bdy, h.impl, h.scope.adv, h.qty)
+    return (h.dom, h.scope.bdy, h.impl, h.scope.adv, h.qty, h.peg)
   if h.kind == tMeta:
     let dom = freshMeta(ms, tmC(cStar), ctxLen, 0, loc)
     let cod = freshMeta(ms, tmC(cStar), ctxLen, 1, loc)
-    unifyElab(ms, h, tmPi(dom, "x", cod), loc)
-    return (dom, cod, false, "x", qOmega)
+    unifyElab(ms, h, tmPi(dom, "x", cod, peg = ab), loc)
+    return (dom, cod, false, "x", qOmega, ab)
   raise elabErr(loc, "expected a function type")
 
 proc ensureSi(ms: var MetaStore, loc: Loc, t: Term,
@@ -1256,16 +1341,19 @@ proc insertImplicits(pre: PreTerm, tm, ty: Term, ctxLen: int,
   (f, fty)
 
 proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
-             ms: var MetaStore, supply: var Supply): tuple[tm, ty: Term]
+             ms: var MetaStore, supply: var Supply,
+             ab: Ability): tuple[tm, ty: Term]
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
-             ms: var MetaStore, supply: var Supply, expTy: Term): Term
+             ms: var MetaStore, supply: var Supply, expTy: Term,
+             ab: Ability): Term
 
 proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
-             ms: var MetaStore, supply: var Supply): tuple[tm, ty: Term] =
+             ms: var MetaStore, supply: var Supply,
+             ab: Ability): tuple[tm, ty: Term] =
   ## Synthesis mode.
   case pre.kind
   of pkVar:
-    let (tm, ty) = resolveVar(ctx, globals, pre.name, pre.loc)
+    let (tm, ty) = resolveVar(ctx, globals, pre.name, pre.loc, ab, ms)
     insertImplicits(pre, tm, ty, ctx.len, ms)
   of pkUniv: (tmC(cStar), tmC(cStar))
   of pkUnitTy: (tmC(cOne), tmC(cStar))
@@ -1277,7 +1365,8 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     # Issue #58: record the hole for LSP hover — goal type + binder context.
     var hctx: seq[tuple[name: string, ty: Term]] = @[]
     for e in ctx: hctx.add((e.name, e.ty))
-    ms.holes.add(HoleInfo(holeLoc: pre.loc, holeGoal: tyM, holeCtx: hctx))
+    ms.holes.add(HoleInfo(holeLoc: pre.loc, holeGoal: tyM, holeCtx: hctx,
+                          holeAb: ab))  # Issue #177
     (holeTm, tyM)
   of pkInt:
     # Experiment 11: integer literal; type is the postulated Int
@@ -1286,30 +1375,33 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     let intTy = globals["Int"].tm  # the R node for Int
     (tmInt(pre.intVal), intTy)
   of pkPi:
-    let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-    let c = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, tmC(cStar))
-    (tmPi(d, pre.name, c, pre.impl, pre.erased, zonkQty(ms, pre.qty)), tmC(cStar))
+    let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+    let c = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, tmC(cStar), ab)
+    (tmPi(d, pre.name, c, pre.impl, pre.erased, zonkQty(ms, pre.qty), ab), tmC(cStar))
   of pkSigma:
-    let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-    let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar))
+    let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+    let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar), ab)
     (tmSi(d, pre.name, c), tmC(cStar))
   of pkLam:
     let d =
       if pre.c1.isNil: freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
-      else: checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-    let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply)
+      else: checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+    let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, ab)
     enforceBinderQty(pre.qty, b, pre.loc, pre.name, ms)  # Issue #66
     # zonkQty after enforcement: a variable is solved by now (or defaults).
     let bq = zonkQty(ms, pre.qty)
-    (tmLam(d, pre.name, b, pre.impl, pre.erased, bq), tmPi(d, pre.name, bty, pre.impl, pre.erased, bq))
+    (tmLam(d, pre.name, b, pre.impl, pre.erased, bq, ab), tmPi(d, pre.name, bty, pre.impl, pre.erased, bq, ab))
   of pkApp:
-    var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply)
+    var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
     (f, fty) = insertImplicits(pre, f, fty, ctx.len, ms)
-    let (dom, codBdy, impl, _, qty) = ensurePi(ms, pre.loc, fty, ctx.len)
+    let (dom, codBdy, impl, _, qty, fpeg) = ensurePi(ms, pre.loc, fty, ctx.len, ab)
     if impl:
       raise elabErr(pre.loc,
         "cannot apply explicitly to an implicit argument")
-    let a = checkTm(pre.c2, ctx, globals, ms, supply, dom)
+    # Issue #177, App rule: the operator's peg must be compatible
+    # with the ambient (pure predicate).
+    checkPeg(fpeg, ab, pre.loc)
+    let a = checkTm(pre.c2, ctx, globals, ms, supply, dom, ab)
     if qty == q0:
       checkErasedArg(a, ctx, pre.loc, ms)  # Issue #66: no linear var into 0-param
     (tmApp(f, a), subst(codBdy, 0, a))
@@ -1317,43 +1409,43 @@ proc inferTm(pre: PreTerm, ctx: Ctx, globals: Globals,
     # Non-dependent Sigma with metavariable components (as the core's cPair).
     let aM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
     let bM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
-    let a = checkTm(pre.c1, ctx, globals, ms, supply, aM)
-    let b = checkTm(pre.c2, ctx, globals, ms, supply, bM)
+    let a = checkTm(pre.c1, ctx, globals, ms, supply, aM, ab)
+    let b = checkTm(pre.c2, ctx, globals, ms, supply, bM, ab)
     (tmPair(a, b, "_", weaken(bM)), tmSi(aM, "_", weaken(bM)))
   of pkFst:
-    let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply)
+    let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
     let (dom, _, _) = ensureSi(ms, pre.loc, pty, ctx.len)
     (tmFst(p), dom)
   of pkSnd:
-    let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply)
+    let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
     let (_, codBdy, _) = ensureSi(ms, pre.loc, pty, ctx.len)
     (tmSnd(p), subst(codBdy, 0, tmFst(p)))
   of pkLet:
     let (v, vty) =
-      if pre.c1.isNil: inferTm(pre.c2, ctx, globals, ms, supply)
+      if pre.c1.isNil: inferTm(pre.c2, ctx, globals, ms, supply, ab)
       elif pretermHasQtyVar(pre.c1):
         # Issue #66: quantity variables in the annotation are solved from
         # the value; infer the value first, then elaborate the annotation.
-        let (vi, vtyi) = inferTm(pre.c2, ctx, globals, ms, supply)
-        let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
+        let (vi, vtyi) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
+        let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
         discard convElab(ms, supply, vtyi, aty, pre.loc, ctx, globals, tmC(cStar))
         (vi, aty)
       else:
-        let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-        (checkTm(pre.c2, ctx, globals, ms, supply, aty), aty)
-    let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply)
+        let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+        (checkTm(pre.c2, ctx, globals, ms, supply, aty, ab), aty)
+    let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply, ab)
     (tmLet(v, vty, pre.name, b), subst(bty, 0, v))
   of pkAnn:
     if pretermHasQtyVar(pre.c2):
       # Issue #66: as for pkLet above — infer the term first so quantity
       # variables in the ascribed type are solved before it elaborates.
-      let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply)
-      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
+      let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
+      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
       discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
       (t, ty)
     else:
-      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
-      (checkTm(pre.c1, ctx, globals, ms, supply, ty), ty)
+      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
+      (checkTm(pre.c1, ctx, globals, ms, supply, ty, ab), ty)
   of pkBy:
     raise elabErr(pre.loc, "'by' tactic requires an expected type (use in checking mode)")
 
@@ -1368,7 +1460,8 @@ proc mkNatLit(n: int, loc: Loc): Term =
   tmNatLit(n)
 
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
-             ms: var MetaStore, supply: var Supply, expTy: Term): Term =
+             ms: var MetaStore, supply: var Supply, expTy: Term,
+             ab: Ability): Term =
   ## Checking mode against an expected type.
   case pre.kind
   of pkInt:
@@ -1397,11 +1490,11 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         resTm = tmInt(pre.intVal)
       resTm
   of pkLam:
-    let (dom, codBdy, _, _, piQty) = ensurePi(ms, pre.loc, expTy, ctx.len)
+    let (dom, codBdy, _, _, piQty, _) = ensurePi(ms, pre.loc, expTy, ctx.len, ab)
     let d =
       if pre.c1.isNil: dom
       else:
-        let ad = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
+        let ad = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
         unifyElab(ms, ad, dom, pre.loc)
         ad
     # Issue #66: subject-side quantity tracking (Γ ⊢ t :^q A). Reconcile
@@ -1425,58 +1518,58 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       raise elabErr(pre.loc, "lambda binder quantity " & $pre.qty.q &
         " does not match the expected quantity " & $piQty &
         " from the function type")
-    let b = checkTm(pre.c2, ctx.ext(pre.name, d, bQty), globals, ms, supply, codBdy)
+    let b = checkTm(pre.c2, ctx.ext(pre.name, d, bQty), globals, ms, supply, codBdy, ab)
     enforceBinderQty(bQty, b, pre.loc, pre.name, ms)  # Issue #66
     # DEBUG
     # echo "DEBUG checkTm pkLam: pre.qty=", pre.qty, " name=", pre.name
-    tmLam(d, pre.name, b, pre.impl, pre.erased, zonkQty(ms, bQty))
+    tmLam(d, pre.name, b, pre.impl, pre.erased, zonkQty(ms, bQty), ab)
   of pkPair:
     let h = headTy(ms, expTy)
     if h.kind == tSi:
-      let a = checkTm(pre.c1, ctx, globals, ms, supply, h.dom)
-      let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(h.scope.bdy, 0, a))
+      let a = checkTm(pre.c1, ctx, globals, ms, supply, h.dom, ab)
+      let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(h.scope.bdy, 0, a), ab)
       tmPair(a, b, h.scope.adv, h.scope.bdy)
     elif h.kind == tMeta:
       let (dom, codBdy, adv) = ensureSi(ms, pre.loc, expTy, ctx.len)
-      let a = checkTm(pre.c1, ctx, globals, ms, supply, dom)
-      let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(codBdy, 0, a))
+      let a = checkTm(pre.c1, ctx, globals, ms, supply, dom, ab)
+      let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(codBdy, 0, a), ab)
       tmPair(a, b, adv, codBdy)
     else:
       raise elabErr(pre.loc, "pair " & $pre &
         " checked against a non-Sigma type")
   of pkLet:
     if pre.c1.isNil:
-      let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply)
-      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply)
+      let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
+      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply, ab)
       unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
       tmLet(v, vty, pre.name, b)
     elif pretermHasQtyVar(pre.c1):
       # Issue #66: quantity variables in the annotation are solved from
       # the value; infer the value first, then elaborate the annotation.
-      let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply)
-      let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
+      let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
+      let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
       discard convElab(ms, supply, vty, aty, pre.loc, ctx, globals, tmC(cStar))
-      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply)
+      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply, ab)
       unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
       tmLet(v, aty, pre.name, b)
     else:
-      let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar))
-      let v = checkTm(pre.c2, ctx, globals, ms, supply, aty)
-      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply)
+      let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+      let v = checkTm(pre.c2, ctx, globals, ms, supply, aty, ab)
+      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply, ab)
       unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
       tmLet(v, aty, pre.name, b)
   of pkAnn:
     if pretermHasQtyVar(pre.c2):
       # Issue #66: as for pkLet above — infer the term first so quantity
       # variables in the ascribed type are solved before it elaborates.
-      let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply)
-      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
+      let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
+      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
       discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
       unifyElab(ms, ty, expTy, pre.loc)
       t
     else:
-      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar))
-      let t = checkTm(pre.c1, ctx, globals, ms, supply, ty)
+      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
+      let t = checkTm(pre.c1, ctx, globals, ms, supply, ty, ab)
       unifyElab(ms, ty, expTy, pre.loc)
       t
   of pkBy:
@@ -1495,7 +1588,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
     else: raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
   else:
-    let (t, ty) = inferTm(pre, ctx, globals, ms, supply)
+    let (t, ty) = inferTm(pre, ctx, globals, ms, supply, ab)
     discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar))
     t
 
@@ -1518,6 +1611,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   # handler extends what the system accepts, scoping the trust extension.
   let extBefore = ms.extDischarges
   resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
+  let ab = sigAmbient(d, globals, ms)  # Issue #177: ambient ability
   # 1. elaborate the type; it must be a type and contain no metas
   let tyPre = d.desugarTy()
   let tmPre = d.desugarTm()
@@ -1533,10 +1627,10 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   var tmT0: Term
   var tmTy0: Term
   if qtyFirst:
-    let inferred = inferTm(tmPre, @[], globals, ms, supply)
+    let inferred = inferTm(tmPre, @[], globals, ms, supply, ab)
     tmT0 = inferred.tm
     tmTy0 = zonk(ms, inferred.ty)
-  let (tyTm0, tyTy) = inferTm(tyPre, @[], globals, ms, supply)
+  let (tyTm0, tyTy) = inferTm(tyPre, @[], globals, ms, supply, ab)
   unifyElab(ms, tyTy, tmC(cStar), d.loc)
   let tyT = zonk(ms, tyTm0)
   let ru = findUnsolved(ms, tyT)
@@ -1558,7 +1652,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   if qtyFirst:
     discard convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals, tmC(cStar))
   else:
-    tmT0 = checkTm(tmPre, @[], globals, ms, supply, tyT)
+    tmT0 = checkTm(tmPre, @[], globals, ms, supply, tyT, ab)
   let tmT = zonk(ms, tmT0)
   let ru2 = findUnsolved(ms, tmT)
   if ru2.found and not ms.allowHoles:
@@ -1579,7 +1673,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
           raise elabErr(d.loc,
             "ill-formed type of '" & d.name & "': " & e.msg)
       let tm = newPostulateRef(supply, tyV)  # Issue #139: register the name
-      globals[d.name] = GEntry(tm: tm, ty: tyT)
+      globals[d.name] = GEntry(tm: tm, ty: tyT, peg: ab)
       ms.refNames[tm.refId] = d.name
     return ElabDef(name: d.name, tyTm: tyT, tmTm: tmT, loc: d.loc)
   # 3. the core verifies the zonked (meta-free) terms — unless a
@@ -1595,7 +1689,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
           "\n  expected: " & $d.desugarTy() &
           "\n  body:     " & $d.desugarTm())
   let dtm = newDefRef(supply, tyV, tmV)  # Issue #139: register the name
-  globals[d.name] = GEntry(tm: dtm, ty: tyT)
+  globals[d.name] = GEntry(tm: dtm, ty: tyT, peg: ab)
   ms.refNames[dtm.refId] = d.name
   ElabDef(name: d.name, tyTm: tyT, tmTm: tmT, loc: d.loc)
 
@@ -1608,7 +1702,8 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
   resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
   if name in globals:
     raise elabErr(loc, "duplicate declaration '" & name & "'")
-  let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms, supply)
+  let ab = freshAbMeta(ms)  # Issue #177: signatures freshen one ?aN
+  let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms, supply, ab)
   unifyElab(ms, tyTy, tmC(cStar), loc)
   let tyT = zonk(ms, tyTm0)
   let ru = findUnsolved(ms, tyT)
@@ -1642,7 +1737,8 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
   let tm =
     if isElim: newRedRef(supply, tyV, nargs)
     else: newPostulateRef(supply, tyV)
-  globals[name] = GEntry(tm: tm, ty: tyT, isElim: isElim, elimNargs: nargs)
+  globals[name] = GEntry(tm: tm, ty: tyT, isElim: isElim, elimNargs: nargs,
+                         peg: ab)
   ms.refNames[tm.refId] = name  # Issue #139: name-resolving pretty-printer
 
 proc flattenAppSpine(pre: PreTerm): seq[PreTerm] =
@@ -1733,6 +1829,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
   ## Elaborates the contractum in the pattern context and registers
   resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
   ## the case on the eliminator's rule table.
+  let ab: Ability = nil  # Issue #177: reduction rules are pure (ambient [])
   let spine = flattenAppSpine(lhs)
   if spine[0].kind != pkVar:
     raise elabErr(loc, "red pattern must start with the eliminator name")
@@ -1820,7 +1917,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
   checkStructuralRec(rhs, elimName, nargs, ctorVars, loc)
   # elaborate the contractum (inference mode — the rule is trusted, like
   # an axiom; a production system would check it against the motive)
-  let (rhsTm0, _) = inferTm(rhs, ctx, globals, ms, supply)
+  let (rhsTm0, _) = inferTm(rhs, ctx, globals, ms, supply, ab)
   let rhsTm = zonk(ms, rhsTm0)
   let ru = findUnsolved(ms, rhsTm)
   if ru.found and not ms.allowHoles:
@@ -3426,6 +3523,46 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
                      loc: loc)
   elabDefDecl(sdef, globals, supply, ms)
 
+proc elabInterfaceDecl(name: string, loc: Loc,
+                       globals: var Globals, supply: var Supply,
+                       ms: var MetaStore) =
+  ## Issue #177: `interface Name` — registers an ability interface marker.
+  ## Interfaces are not terms; resolveVar rejects them as such.
+  if name in globals:
+    raise elabErr(loc, "duplicate declaration '" & name & "'")
+  globals[name] = GEntry(isIface: true)
+  # No refId: interfaces never appear in terms, so refNames skips them.
+
+proc elabCommandDecl(name: string, ty: PreTerm, iface: string, loc: Loc,
+                     globals: var Globals, supply: var Supply,
+                     ms: var MetaStore) =
+  ## Issue #177: `command c : A -> B in I` — declares a command of
+  ## interface I. The command is a global operator; the Command rule
+  ## (in resolveVar) checks `I` against the ambient at each use and pegs
+  ## the operator type at the ambient.
+  resetQVars(ms)
+  if name in globals:
+    raise elabErr(loc, "duplicate declaration '" & name & "'")
+  if iface notin globals or not globals[iface].isIface:
+    raise elabErr(loc, "unknown interface '" & iface & "'")
+  let ab: Ability = nil  # the command's *type* elaborates purely
+  let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms, supply, ab)
+  unifyElab(ms, tyTy, tmC(cStar), loc)
+  let tyT = zonk(ms, tyTm0)
+  let ru = findUnsolved(ms, tyT)
+  if ru.found and not ms.allowHoles:
+    raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
+      " in the type of command '" & name & "'")
+  if headTy(ms, tyT).kind != tPi:
+    raise elabErr(loc, "command '" & name & "' must have a function type")
+  let tyV =
+    try: check(supply, vStar(), tyT)
+    except ValueError as e:
+      raise elabErr(loc, "ill-formed type of command '" & name & "': " & e.msg)
+  let tm = newPostulateRef(supply, tyV)
+  globals[name] = GEntry(tm: tm, ty: tyT, cmdIface: iface)
+  ms.refNames[tm.refId] = name
+
 proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
               ms: var MetaStore,
               dataInfos: var Table[string, SurfDecl]): seq[ElabDef] =
@@ -3445,6 +3582,10 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
     elabDataDecl(d, globals, supply, ms, dataInfos)
   of dkClauses:
     result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
+  of dkInterface:
+    elabInterfaceDecl(d.ifname, d.ifloc, globals, supply, ms)
+  of dkCommand:
+    elabCommandDecl(d.cname, d.cty, d.ciface, d.cloc, globals, supply, ms)
   of dkImport:
     # Issue #49: `import` needs a file context (base directory for path
     # resolution); the ModuleDriver below handles it. A bare elabCheck
@@ -3671,10 +3812,11 @@ proc elabPrelude*(src: string): tuple[globals: Globals, ms: MetaStore,
 
 proc checkTermElab*(pre: PreTerm, ctx: Ctx, globals: Globals,
                     ms: var MetaStore, supply: var Supply,
-                    expTy: Term): Term =
+                    expTy: Term, ab: Ability = nil): Term =
   ## Check a single pre-term against an expected type (benchmark hook for
   ## issue #19). Returns the elaborated term; raises ElabError if ill-typed.
-  checkTm(pre, ctx, globals, ms, supply, expTy)
+  ## Issue #177: ambient ability (default [] = pure).
+  checkTm(pre, ctx, globals, ms, supply, expTy, ab)
 
 when isMainModule:
   import times
