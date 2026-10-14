@@ -25,6 +25,7 @@ import preterm   # Loc
 import eponym_init
 import egraph
 import abilities # Issue #177: ambient abilities (Frank-style)
+import elab_prof   # Issue #55: phase timers
 
 type
   UnifyError* = object of CatchableError
@@ -349,34 +350,35 @@ proc noConfusionConflict*(ms: MetaStore, a, b: Term): tuple[bad: bool,
   (false, -1, -1)
 
 proc zonk*(ms: MetaStore, t: Term): Term =
-  ## Substitute every solved metavariable, recursively.
-  if t.isNil: return nil
-  case t.kind
-  of tMeta:
-    if t.metaId notin ms.entries: return t
-    let e = ms.entries[t.metaId]
-    let sp = t.metaSpine.mapIt(zonk(ms, it))
-    if e.solution.isNil: tmMeta(t.metaId, sp)
-    else: zonk(ms, substSpine(e.solution, sp))
-  of tV, tR, tC, tInt, tPrim, tNatLit: t
-  of tPi, tSi, tLam:
-    # Issue #177: pegs are NOT zonked here. The core ignores pegs, and
-    # use sites (instPeg/unifyAbilitiesSym) zonk them on demand; zonking
-    # every binder's peg on every zonk pass showed up as pure-code
-    # overhead with no semantic effect.
-    mkBinder(t.kind, zonk(ms, t.dom),
-              Scope(adv: t.scope.adv, bdy: zonk(ms, t.scope.bdy)), t.impl, t.qty,
-              t.peg)
-  of tPair:
-    tmPair(zonk(ms, t.pFst), zonk(ms, t.pSnd),
-           t.pScope.adv, zonk(ms, t.pScope.bdy))
-  of tApp: tmApp(zonk(ms, t.fn), zonk(ms, t.arg))
-  of tFst: tmFst(zonk(ms, t.sub))
-  of tSnd: tmSnd(zonk(ms, t.sub))
-  of tAbsurd: tmAbsurd(zonk(ms, t.sub))
-  of tLet:
-    tmLet(zonk(ms, t.letVal), zonk(ms, t.letTy),
-          t.letScope.adv, zonk(ms, t.letScope.bdy))
+  profilePhase(epZonk):
+      ## Substitute every solved metavariable, recursively.
+      if t.isNil: return nil
+      case t.kind
+      of tMeta:
+        if t.metaId notin ms.entries: return t
+        let e = ms.entries[t.metaId]
+        let sp = t.metaSpine.mapIt(zonk(ms, it))
+        if e.solution.isNil: tmMeta(t.metaId, sp)
+        else: zonk(ms, substSpine(e.solution, sp))
+      of tV, tR, tC, tInt, tPrim, tNatLit: t
+      of tPi, tSi, tLam:
+        # Issue #177: pegs are NOT zonked here. The core ignores pegs, and
+        # use sites (instPeg/unifyAbilitiesSym) zonk them on demand; zonking
+        # every binder's peg on every zonk pass showed up as pure-code
+        # overhead with no semantic effect.
+        mkBinder(t.kind, zonk(ms, t.dom),
+                  Scope(adv: t.scope.adv, bdy: zonk(ms, t.scope.bdy)), t.impl, t.qty,
+                  t.peg)
+      of tPair:
+        tmPair(zonk(ms, t.pFst), zonk(ms, t.pSnd),
+               t.pScope.adv, zonk(ms, t.pScope.bdy))
+      of tApp: tmApp(zonk(ms, t.fn), zonk(ms, t.arg))
+      of tFst: tmFst(zonk(ms, t.sub))
+      of tSnd: tmSnd(zonk(ms, t.sub))
+      of tAbsurd: tmAbsurd(zonk(ms, t.sub))
+      of tLet:
+        tmLet(zonk(ms, t.letVal), zonk(ms, t.letTy),
+              t.letScope.adv, zonk(ms, t.letScope.bdy))
 
 proc findUnsolved*(ms: MetaStore, t: Term): tuple[found: bool, id: int, loc: Loc] =
   ## First unsolved metavariable in t (after zonking), if any.

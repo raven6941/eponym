@@ -105,11 +105,11 @@ proc countingCache(c: Counters): ConvHandler =
   let inner = cacheConvHandler()
   let decide: ConvDecide =
     proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-         ctxLen: int): ConvVerdict {.closure.} =
-      let v = inner.decide(ms, s, a, b, loc, ctxLen)
-      if v == cvDischarged: inc c.hits
+         ctxLen: int, goalTy: Term): ConvResult {.closure.} =
+      let r = inner.decide(ms, s, a, b, loc, ctxLen, goalTy)
+      if r.verdict == cvDischarged: inc c.hits
       else: inc c.misses
-      v
+      r
   ConvHandler(decide: decide, coreValid: true)
 
 proc runCorpus(name: string, corpus: string, rounds: int) =

@@ -73,6 +73,7 @@
 # commit.
 
 import preterm, strutils
+import elab_prof  # Issue #55: phase timers
 
 type
   TokKind = enum
@@ -535,10 +536,11 @@ proc parseDecl(p: var Parser): SurfDecl =
   else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'import', 'interface' or 'command'")
 
 proc parseProgram*(src: string): seq[SurfDecl] =
-  ## Parse a whole program; raises ParseError with source location.
-  var p = Parser(toks: lex(src), pos: 0)
-  while p.peek().kind != tkEof:
-    result.add p.parseDecl()
+  profilePhase(epParse):
+      ## Parse a whole program; raises ParseError with source location.
+      var p = Parser(toks: lex(src), pos: 0)
+      while p.peek().kind != tkEof:
+        result.add p.parseDecl()
 
 proc parseTermStr*(src: string): PreTerm =
   ## Issue #50: parse a single surface term (for the REPL's `:type`/`:eval`).
