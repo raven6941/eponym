@@ -26,6 +26,7 @@
 
 import macros
 import os  # parentDir (issue #131, via eponym_mac.callerDir)
+import eponym_init  # tPi (issue #192: Pi-spine walk of the shed goal)
 import elab  # elabCheckHolesDir, ElabError, ElabDef, MetaStore
 import parse_surf  # ParseError
 import eponym_mac  # blockToEponym, callerDir
@@ -36,13 +37,19 @@ import usage_check  # hasUnresolvedMetas
 import unify  # zonk
 import preterm  # qOmega (issue #191: hole-context Ctx, like lsp.nim's hover)
 
-proc shedGoalAndCtx*(ms: MetaStore, h: HoleInfo): tuple[goal: string, ctx: seq[string]] =
+proc shedGoalAndCtx*(ms: MetaStore, h: HoleInfo): tuple[goal: string, ctx: seq[string], goalPi: seq[string]] =
   ## Issue #191: name-resolving goal/context rendering for a shed's hole.
   ## Uses #139's `prettyTerm` over `ms.refNames` (populated by the
   ## elaborator when `postulate`/`elim`/data register globals), so
   ## `postulate(Int, Univ)` shows as `Int` instead of `R134`. Binder names
   ## come from the hole context (innermost-first, matching Ctx).
   ## refIds with no registered name keep the `R<n>` fallback (never empty).
+  ##
+  ## Issue #192: also returns the goal's Pi spine as strings, outermost
+  ## first -- one "name : dom" entry per Pi binder, then the residual goal
+  ## as the last element (empty when the goal is not a Pi). The 2D layout
+  ## nests one box per binder, so a shed over a multi-binder function type
+  ## shows real nesting instead of one flat hole box.
   var ctx: Ctx = @[]
   for (nm, ty) in h.holeCtx:
     ctx.add(CtxEntry(name: nm, ty: zonk(ms, ty), qty: qOmega))
@@ -51,7 +58,21 @@ proc shedGoalAndCtx*(ms: MetaStore, h: HoleInfo): tuple[goal: string, ctx: seq[s
   for (nm, ty) in h.holeCtx:
     c.add(nm & " : " & prettyTerm(zonk(ms, ty), ctx, ms.refNames,
                                  ms.recordFields))
-  (goal, c)
+  var pi: seq[string] = @[]
+  var g = zonk(ms, h.holeGoal)
+  var pc = ctx
+  while g.kind == tPi:
+    let nm = g.scope.adv
+    let dom = zonk(ms, g.dom)
+    pi.add(nm & " : " & prettyTerm(dom, pc, ms.refNames, ms.recordFields))
+    # Ctx is innermost-first (prettyTerm indexes tV 0 at ctx[0]), so the
+    # binder just descended under goes at the front, as prettyTerm itself
+    # does when it walks binders.
+    pc = @[CtxEntry(name: nm, ty: dom, qty: qOmega)] & pc
+    g = zonk(ms, g.scope.bdy)
+  if pi.len > 0:
+    pi.add(prettyTerm(g, pc, ms.refNames, ms.recordFields))
+  (goal, c, pi)
 
 macro shedsBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions containing
@@ -87,9 +108,10 @@ macro shedsBlock*(body: untyped): untyped =
     for j in 0 ..< ms.holes.len:
       if ms.holes[j].holeLoc.line == sheds[i].holeLine:
         sheds[i].holeIdx = j
-        let (g, c) = shedGoalAndCtx(ms, ms.holes[j])
+        let (g, c, pi) = shedGoalAndCtx(ms, ms.holes[j])
         sheds[i].goal = g
         sheds[i].ctx = c
+        sheds[i].goalPi = pi
         break
 
   # Issue #134: per-shed status (white/yellow/brown). On failure the
