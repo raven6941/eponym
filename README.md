@@ -140,6 +140,36 @@ nim c -r --hints:off $P tests/fuzz_soundness.nim -- --seed 424242 -n 1000
 # (src/eponym/lsp.nim is built but not run: it is a server that blocks on stdin.)
 ```
 
+## REPL
+
+An interactive read-eval loop — the fastest edit-check cycle for trying a
+definition, querying a type, or evaluating a term:
+
+```sh
+P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
+nim c --hints:off $P src/repl.nim
+./src/repl
+```
+
+```
+eponym> :load lib/nat.ep
+add : Pi(Nat, m. Pi(Nat, n. Nat))
+...
+eponym> proc two : Nat = suc (suc zero)
+two : Nat
+eponym> :type (add two two)
+Nat
+eponym> :eval (add (suc zero) two)
+(suc (suc (suc zero)))
+eponym> :quit
+```
+
+Commands: `:type <tm>`, `:eval <tm>` (weak-head normal form), `:load
+<file.ep>`, `:help`, `:quit`. Anything else is Eponym source: declarations
+elaborate into the persistent session and stay in scope; multi-line
+declarations work, and errors print as located messages without killing the
+session. A scripted session is exercised in CI (`tests/repl_session.sh`).
+
 ## Examples
 
 Three kinds, reflecting the project's dual nature as both a standalone

@@ -540,6 +540,14 @@ proc parseProgram*(src: string): seq[SurfDecl] =
   while p.peek().kind != tkEof:
     result.add p.parseDecl()
 
+proc parseTermStr*(src: string): PreTerm =
+  ## Issue #50: parse a single surface term (for the REPL's `:type`/`:eval`).
+  ## Raises ParseError with source location; trailing tokens are an error.
+  var p = Parser(toks: lex(src), pos: 0)
+  result = p.parseTerm()
+  if p.peek().kind != tkEof:
+    raise fail(p.peek().loc, "expected end of input after term")
+
 # --- tests ------------------------------------------------------------
 
 when isMainModule:

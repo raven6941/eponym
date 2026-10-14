@@ -64,7 +64,7 @@ type
     cases: Table[int, Term]
     nParams: int  # leading scrutinee spine args that are (already-bound)
                   # params, not fresh ctor vars (Experiment 5: data)
-  ElimVKind = enum eApp, eFst, eSnd, eAbsurd
+  ElimVKind* = enum eApp, eFst, eSnd, eAbsurd
   Scope* = object
     adv*: string   # display hint, as in the paper's Scope
     bdy*: Term
@@ -306,10 +306,82 @@ proc newDefRef*(s: var Supply, typ, val: Value): Term =
   ## earlier elaborated defs become R nodes later defs can mention.
   mkR(freshId(s), typ, true, val)
 
+proc neutralVar*(lvl: int): Value =
+  ## Issue #50: a fresh neutral variable at de Bruijn level `lvl`.
+  ## The negative refId marks it as a printer-bound variable (never a
+  ## real global); the REPL's value printer resolves it via its level.
+  Value(syn: vv(lvl), whnf: Whnf(kind: wRef, refId: -(lvl + 1), spine: @[]))
+
 proc whnfKind*(v: Value): WhnfKind = v.whnf.kind
 proc whnfRefId*(v: Value): int = v.whnf.refId
 proc whnfSpineLen*(v: Value): int = v.whnf.spine.len
 proc whnfSpineArg*(v: Value, i: int): Value = v.whnf.spine[i].arg
+proc whnfSpineKind*(v: Value, i: int): ElimVKind = v.whnf.spine[i].kind
+  ## Issue #50: the elimination kind of the i-th spine entry (REPL printer).
+
+proc whnfDom*(v: Value): Value =
+  ## Issue #50: domain of a wPi/wSi value (REPL printer).
+  assert v.whnf.kind in {wPi, wSi}, "whnfDom of non-Pi/Sigma"
+  v.whnf.dom
+
+proc whnfScopeAdv*(v: Value): string =
+  ## Issue #50: binder name hint of a wPi/wSi/wLam value (REPL printer).
+  case v.whnf.kind
+  of wPi, wSi: v.whnf.tscope.syn.adv
+  of wLam: v.whnf.lscope.syn.adv
+  else: raise newException(ValueError, "whnfScopeAdv of non-binder")
+
+proc whnfScopeApply*(v: Value, x: Value): Value =
+  ## Issue #50: apply a wPi/wSi/wLam scope to a value (REPL printer).
+  case v.whnf.kind
+  of wPi, wSi: v.whnf.tscope.fn(x)
+  of wLam: v.whnf.lscope.fn(x)
+  else: raise newException(ValueError, "whnfScopeApply of non-binder")
+
+proc whnfFst*(v: Value): Value =
+  ## Issue #50: first component of a wPair value (REPL printer).
+  assert v.whnf.kind == wPair, "whnfFst of non-pair"
+  v.whnf.fstV
+
+proc whnfSnd*(v: Value): Value =
+  ## Issue #50: second component of a wPair value (REPL printer).
+  assert v.whnf.kind == wPair, "whnfSnd of non-pair"
+  v.whnf.sndV
+
+proc whnfConst*(v: Value): Const =
+  ## Issue #50: the constant of a wConst value (REPL printer).
+  assert v.whnf.kind == wConst, "whnfConst of non-const"
+  v.whnf.c
+
+proc whnfIntVal*(v: Value): int =
+  ## Issue #50: the literal of a wInt value (REPL printer).
+  assert v.whnf.kind == wInt, "whnfIntVal of non-int"
+  v.whnf.intVal
+
+proc whnfNatLitVal*(v: Value): int =
+  ## Issue #50: the literal of a wNatLit value (REPL printer).
+  assert v.whnf.kind == wNatLit, "whnfNatLitVal of non-natlit"
+  v.whnf.natLitVal
+
+proc whnfPrimOp*(v: Value): PrimOp =
+  ## Issue #50: operator of a wPrim value (REPL printer).
+  assert v.whnf.kind == wPrim, "whnfPrimOp of non-prim"
+  v.whnf.op
+
+proc whnfPrimArgs*(v: Value): seq[Value] =
+  ## Issue #50: accumulated args of a wPrim value (REPL printer).
+  assert v.whnf.kind == wPrim, "whnfPrimArgs of non-prim"
+  v.whnf.pargs
+
+proc whnfRedId*(v: Value): int =
+  ## Issue #50: eliminator refId of a stuck wRed value (REPL printer).
+  assert v.whnf.kind == wRed, "whnfRedId of non-red"
+  v.whnf.elimId
+
+proc whnfRedArgs*(v: Value): seq[Value] =
+  ## Issue #50: accumulated args of a stuck wRed value (REPL printer).
+  assert v.whnf.kind == wRed, "whnfRedArgs of non-red"
+  v.whnf.args
 
 proc newPostulateRef*(s: var Supply, typ: Value): Term =
   ## Experiment 4: a parameter-like global (type former or constructor).
