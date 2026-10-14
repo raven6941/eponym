@@ -15,7 +15,7 @@ jobs:
         run: |
           nim --version
           P="--path:src --path:src/eponym --path:src/relational --path:src/staging"
-          for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac lsp egraph eponym_embed kernel_check; do
+          for f in eponym eponym_init preterm parse_surf mac_surf elab eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout; do
             echo "=== build $f ==="
             nim c --hints:off $P "src/eponym/$f.nim" || exit 1
           done
@@ -63,4 +63,18 @@ jobs:
           echo "=== lsp hole-session tests (issue #58, headless mock-LSP) ==="
           nim c -r --hints:off $P "tests/test_lsp_holes.nim" || exit 1
           nim c -r --hints:off $P "tests/test_lsp_actions.nim" || exit 1
+          echo "=== sheds tests (issues #133-135, #137) ==="
+          nim c -r --hints:off $P "tests/test_sheds.nim" || exit 1
+          nim c -r --hints:off $P "tests/test_shed_layout.nim" || exit 1
+          nim c -r --hints:off $P "tests/test_shed_loop.nim" || exit 1
+          nim c -r --hints:off $P "tests/test_shed_refine_method.nim" || exit 1
+          echo "=== vscode extension smoke (issue #136 client path, real lsp binary) ==="
+          # The smoke test self-provisions the shed sidecar: it exercises the
+          # extension's own generateSidecar path (issue #153) on the demo before
+          # reading layouts from it. The sidecar is gitignored (*.sheds.json),
+          # so this also covers the fresh-checkout case (was issue #142's fix).
+          cd editors/vscode
+          npm install --no-audit --no-fund || exit 1
+          npm run build || exit 1
+          LSP=../../src/eponym/lsp DEMO=../../examples/embedded/sheds_demo.nim node out/smoke.js || exit 1
           # Note: bench/ contains expensive benchmarks, not run in CI.

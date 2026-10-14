@@ -1,0 +1,45 @@
+{
+  "name": "eponym-sheds",
+  "displayName": "Eponym Sheds",
+  "description": "Renders Eponym shed proof states (Epigram-style 2D boxes) from the eponym LSP server.",
+  "version": "0.1.0",
+  "publisher": "eponym",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages", "Other"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onCommand:eponym.showShedLayout"],
+  "contributes": {
+    "commands": [
+      {
+        "command": "eponym.showShedLayout",
+        "title": "Eponym: Show shed layout",
+        "category": "Eponym"
+      }
+    ],
+    "configuration": {
+      "title": "Eponym Sheds",
+      "properties": {
+        "eponym.lspServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the compiled `lsp` server binary (src/eponym/lsp). Defaults to <workspace>/src/eponym/lsp."
+        },
+        "eponym.nimPath": {
+          "type": "string",
+          "default": "nim",
+          "description": "Nim binary used to compile shed files for automatic sidecar generation. Defaults to `nim` on PATH."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "smoke": "node out/smoke.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

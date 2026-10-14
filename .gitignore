@@ -16,10 +16,15 @@ bench/**
 !bench/**/*.nim
 !bench/**/*.md
 # Examples dir: keep sources, ignore built outputs
-examples/*
-!examples/ep/
-!examples/ep/*.ep
-!examples/embedded/
-!examples/embedded/*.nim
-!examples/*.nim
-!examples/*.ep
+examples/**
+!examples/**/
+!examples/**/*.nim
+!examples/**/*.ep
+!examples/**/*.md
+# Shed metadata sidecars (issue #133): written by the shedsBlock macro
+# next to the calling Nim file for the LSP server; regenerated on compile.
+*.sheds.json
+
+# VSCode extension build (issue #136)
+editors/vscode/node_modules/
+editors/vscode/out/

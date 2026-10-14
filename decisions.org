@@ -1997,6 +1997,217 @@
   =data(Nat, ...)= per file — Aaron's 2026-10-11 request, unblocked.
   Status: CLOSED (branch) — merged via PR.
 
+* 2026-10-11 — #133 shedsBlock: Epigram sheds as holes + metadata sidecar (branch sheds-loop)
+
+  Context: Experiment 7's first slice. Epigram sheds are unchecked regions
+  ("the typechecker is forbidden to tread", Altenkirch-McBride-McKinna
+  2005); the ASCII document notation marks them =![...]!=. In the Nim-
+  embedded linearization the macro receives already-parsed Nim AST, so a
+  shed is =![ name ]= / =![ name, draft ]= in a proc body (prefix =!= over
+  a bracket). Comma, not =|=, separates name from draft: =|= binds tighter
+  than =+= in Nim, so =![ n | a + a ]= misparses; the macro errors
+  helpfully on other shapes. A top-level =![...]= (outside any proc body)
+  is an error -- write a proc whose body is the shed instead, which is the
+  Epigram shape (declaration with its type; the shed is the incomplete
+  RHS). An early attempt at =![ name, proc f... = ... ]= top-level shed
+  declarations died on a Nim grammar fact: a proc definition is a
+  statement and cannot appear inside =[...]=.
+  Decision: =src/eponym/sheds.nim= (ShedInfo, in-place NimNode rewrite of
+  shed nodes to =__eponym_shed_i__= placeholder idents, placeholder ->
+  =_= resolution recording the generated-source line, sidecar JSON
+  read/write) + =src/eponym/sheds_mac.nim= (the =shedsBlock= macro,
+  deliberately thin like =ett_mac=). Conversion reuses =ett_mac=
+  unchanged via a pre-pass -- no threading of accumulators through the
+  converters. Elaboration is hole-tolerant with import support via a new
+  =elab.elabCheckHolesDir= (the =elabDeclsDir= loop refactored into an
+  inner with a =holeTolerant= flag; imported files still elaborate
+  strictly). Each shed is matched to =MetaStore.holes= by generated-
+  source line; goal type and binder context are zonked and pretty-printed.
+  Metadata goes to =<nimfile>.sheds.json= (read-merge-write keyed by shed
+  name, so edits that shift line numbers update in place; names should be
+  unique per file) for the LSP server (#134/#135 read it via
+  =readShedSidecar=). Generated code: wrappers for hole-free defs via a
+  hole-tolerant runtime elaboration (=ett_embed.callIntFuncHolesDir=);
+  defs mentioning shed holes get no wrapper (a hole is not callable).
+  Drafts are captured with =repr= and never reach the elaborator -- the
+  demo's draft (=n ++++ n=) is not even valid Eponym, proving
+  non-inspection. Known limitation: goal types render as rigids (=R134=)
+  -- the elaborator's =$= never resolves global names (same in LSP hover
+  today); name-resolving pretty-printing is a follow-up.
+  Consequences: =examples/embedded/sheds_demo.nim= demonstrates the
+  slice (checked =double= called from Nim; shed metadata asserted from
+  the sidecar); =tests/test_sheds.nim= covers =elabCheckHolesDir= and
+  the sidecar round-trip. Branch-only per #137: nothing merges to main
+  until the end-to-end loop works.
+  Status: OPEN (branch) -- #133 acceptance met on the sheds-loop branch.
+
+* 2026-10-11 — #134 shed status tracking: white/yellow/brown (branch sheds-loop)
+
+  Context: #133 records shed metadata but no elaboration status; the #137
+  end-to-end loop needs the editor to show per-shed status and to see it go
+  white when holes are filled.
+  Decision: =ShedStatus= (ssWhite/ssYellow/ssBrown) on =ShedInfo=,
+  serialized as "white"/"yellow"/"brown" in the sidecar (missing key reads
+  as yellow -- the safe "not known-good" default for pre-#134 sidecars).
+  One shared rule (=assignShedStatuses=): a shed matched to an open hole is
+  yellow (stuck, possibly later); a shed with no goal after a failed
+  elaboration is brown (definitely bad); a shed with no open hole after a
+  clean elaboration is white. The macro assigns status at macro time and,
+  on elaboration failure, writes the sidecar *before* raising the compile
+  error (so the editor sees brown); the sidecar also carries the
+  document-level =errMsg= so brown diagnostics can say why.
+  =refreshShedStatuses= re-elaborates a (possibly edited) generated source,
+  re-matches sheds to holes by generated-source line, and re-applies the
+  rule -- the headless core of the #137 "refine holes, see white" loop.
+  The LSP server publishes shed diagnostics for =.nim= documents from the
+  sidecar (yellow -> Warning with the goal, brown -> Error with the
+  failure message, white -> silent), re-reading the sidecar on every
+  didOpen/didChange. A =.nim= file without a sidecar keeps the old
+  behaviour (parse-error diagnostic).
+  Consequences: =tests/test_sheds.nim= covers the JSON round-trip, the
+  yellow->white transition on hole fill (via the #58 refine shape),
+  brown on a broken shed decl and on unparseable source, and the LSP
+  diagnostics (positions, severities, message contents, didChange
+  re-read); =examples/embedded/sheds_demo.nim= asserts macro-time yellow.
+  Known limitation: =refreshShedStatuses= matches by generated-source
+  line, so a multi-line hole fill shifts later sheds' lines and unmatches
+  them; single-line fills are exact. Branch-only per #137: nothing merges
+  to main until the end-to-end loop works.
+  Status: OPEN (branch) -- #134 acceptance met on the sheds-loop branch.
+
+* 2026-10-11 — #135 2D box layout engine: Epigram deduction style (branch sheds-loop)
+
+  Context: #133/#134 give the LSP server shed metadata and status, but the
+  #136 webview and the #137 editor loop need a *visual* form of a shed's
+  proof state -- the 2D deduction layouts of the Epigram papers (premises
+  above a horizontal rule, conclusion below, sub-deductions side by side).
+  Decision: =src/eponym/shed_layout.nim= -- a =Box= tree with two shapes:
+  (a) *rule* boxes (premises rendered side-by-side above a rule, labeled
+  or not, conclusion below) and (b) *plain* boxes (header lines + children
+  stacked vertically or side-by-side). Constructors follow the issue's
+  layout rules: =goalStateBox= (context stacked above the rule, hole box
+  below -- the shed's proof state), =caseBox= (branches side-by-side),
+  =inductionBox= ("by induction on n" header, case boxes below),
+  =letSeq= (nested labeled deductions, value above the rule), =holeBox=
+  (empty box showing the goal type). Core terms render as deduction trees
+  (=layoutTerm=: application as Pi-elim with fn/arg above the rule, pair
+  as Si-intro, let as a labeled deduction, =tMeta= as a hole box).
+  Premises are side-by-side rather than stacked because the context (the
+  naturally stacked premise) is one box of stacked lines -- this keeps the
+  renderer to one combination rule and matches "multiple sub-deductions
+  placed side by side". Boxes measure bottom-up (=measure=: width/height
+  including borders) and render to Unicode box-art (=renderBox=, exact-ASCII
+  snapshot test) or JSON (=boxToJson=, for the webview). Hole IDs ride on
+  every box (=allHoleIds=) for #136 click-to-refine wiring. The LSP method
+  =eponym/shedLayout= (params: textDocument.uri, shedName) returns the box
+  JSON for a named shed from its sidecar; unknown sheds / missing sidecars
+  are errors (nil internally). =layoutShed= maps a white shed (no open
+  hole) to a plain "no open holes" box rather than failing.
+  Consequences: =tests/test_shed_layout.nim= (27 checks: snapshot, case
+  widths, let stacking, term layout, JSON shape, LSP round-trip incl.
+  handleMessage dispatch, white-shed box); =examples/embedded/sheds_demo.nim=
+  now prints the layout of its shed (end-to-end: macro -> sidecar ->
+  layout); branch CI builds =sheds=, =sheds_mac=, =shed_layout= and runs
+  =test_sheds= + =test_shed_layout= (both were untested in CI before).
+  Branch-only per #137: nothing merges to main until the end-to-end loop
+  works.
+  Status: OPEN (branch) -- #135 acceptance met on the sheds-loop branch.
+
+** #136: VSCode extension as thin client over the Nim LSP (sheds-loop)
+  Date: 2026-10-11. The extension lives in =editors/vscode/= (separate
+  npm/tsc build, in-repo -- no build-tooling conflict materialized, so no
+  separate repo). Architecture: the Nim LSP server stays the backend; the
+  extension spawns it over stdio and is purely a client. Protocol and
+  rendering (=protocol.ts=, =render.ts=) are vscode-free modules shared with
+  a headless node smoke test that drives the real server against
+  =sheds_demo='s= sidecar (8 checks green). Buttons send
+  =textDocument/codeAction= (the server's existing #58 action path) rather
+  than =workspace/executeCommand=, which the server does not implement.
+  Gap for #137: the refine round-trip is not closed for =.nim= shed docs --
+  the action path elaborates document text as Eponym source, which a =.nim=
+  file is not; the webview surfaces the server's error. Branch-only per
+  #137: nothing merges until the end-to-end loop works.
+  Status: OPEN (branch) -- #136 acceptance partially met on the branch;
+  shed render + hole-click goal display work; refine loop is #137's job.
+
+** #137: end-to-end shed loop, scripted headless (sheds-loop)
+  Date: 2026-10-11. The loop the #136 webview performs with clicks, driven
+  headlessly through the real LSP server (=handleMessage=) in
+  =tests/test_shed_loop.nim= (17 checks, all green; also wired into branch
+  CI). A block with two sheds (two holes, each on its own line):
+  sidecar-written yellow/yellow at macro time -> =didOpen= the =.nim= doc
+  shows two yellow diagnostics -> =eponym/shedLayout= shows each shed's
+  hole -> refine hole 1 via the #58 =textDocument/codeAction= on the
+  generated Eponym source (the server's existing action path -- surface
+  syntax is curried, =addInt n n=, not =addInt(n, n)=, which parses as a
+  pair argument) -> =refreshShedStatuses= -> shed A white, shed B yellow
+  (single-line fills keep the #134 line matching exact) -> sidecar
+  re-written -> =didChange= shows only shed B's warning -> layout for A is
+  the done box, layout for B still shows its hole -> refine hole 2 -> both
+  white -> =didChange= silent; the completed program passes strict
+  =elabCheck=. What worked: every link of the loop (#133 macro, #134
+  statuses, #135 layout, #58 refine, diagnostics, layout update) composes
+  through the server's real methods. What didn't: the refine round-trip is
+  still not closed for real =.nim= docs -- the server's action path
+  elaborates document text as Eponym source, which a =.nim= file is not
+  (the #136 gap). The script holds the generated source itself, simulating
+  the mapping the client must do: run the fill against the generated
+  source server-side, splice the returned term into the =.nim= at the
+  shed's (nimLine, nimCol) position, and let =refreshShedStatuses= drive
+  the sidecar. Closing that gap (a server method that owns the whole
+  refine: generated source -> fill -> status refresh -> sidecar write ->
+  term text for the client to splice) is the remaining work before the
+  branch can merge; #139 (name-resolving pretty-printer) is the other
+  known gap in the demo's goal display. Rename reconciliation: this run
+  also merged main into sheds-loop (PR #140 ett->eponym), fixing the fallout
+  in =sheds*.nim=, the shed tests, the demo, and branch CI.
+  Status: OPEN (branch) -- #137 scripted acceptance met on the branch; the
+  =.nim= refine round-trip gap is documented, not closed.
+
+  Addendum 2026-10-11 (gap closed, branch-only): =eponym/refineShed=
+  now owns the whole refine for real =.nim= docs. The macro records the
+  block's generated Eponym source per shed (=ShedInfo.genSrc=, plus
+  =holeCol= from =resolveShedPlaceholders=); the server fills the hole in
+  that recorded source via the #58 =fillHoleAt= path (new =baseDir=
+  parameter so =import= resolution matches the macro), shifts later
+  sheds' =holeLine= past multi-line fills (same block identified by
+  shared =genSrc= string; other blocks' sheds untouched via the new
+  =onlyGenSrc= filter on =refreshShedStatuses=), refreshes statuses,
+  rewrites the sidecar (keeping the doc-level =errMsg=), and returns the
+  term plus the 1-based =![...]= node position for the client splice.
+  Headless coverage: =tests/test_shed_refine_method.nim= (20 checks --
+  the webview's exact sequence including the client-side splice,
+  ill-typed-term/unknown-shed/white-shed errors, and the multi-line
+  shift); the node smoke test drives the real server binary against a
+  fixture sidecar (5 new checks); the webview now calls =refineShed= and
+  splices instead of the #58 =codeAction= path (which cannot work on Nim
+  text). =eponym/shedNames= added for client pickers. Known limits, kept
+  honest: the splice assumes a single-line =![...]= node; the spliced
+  term must be valid in the Nim-syntax front end (applications and idents
+  round-trip; surface lambdas/Pis do not); a recompile after a partial
+  fill re-matches by line exactly when the fill is single-line (the #134
+  limitation). Status: the =.nim= round-trip is closed on the branch;
+  merge decision (separate); #139 still open.
+
+  Addendum 2026-10-11 (loop verified end-to-end, branch-only): resumed
+  the stalled #137 and closed the verification loop as far as this
+  environment allows. The node smoke test (=editors/vscode/src/smoke.ts=)
+  drives the extension's own client code (=protocol.ts= request framing,
+  =render.ts= HTML) against the real compiled server binary: initialize
+  -> =eponym/shedNames= -> =eponym/shedLayout= (box tree, rendered HTML
+  carries hole + goal) -> =eponym/refineShed= on a fixture sidecar (14
+  checks, all green, including unknown-shed errors and the sidecar
+  re-write). The smoke test is now wired into branch CI (build + run
+  after the Nim sheds tests). What was NOT verified: an actual VSCode
+  click-through (no VSCode in this environment); the webview's click ->
+  =refineShed= -> splice path is exercised only via the client's own
+  code + the server contract, not inside a real editor. Kept honest:
+  this is the one step of the #137 acceptance that must happen on a
+  developer machine; it is listed as acceptance on the merge-decision
+  issue. Status: #137 CLOSED (scripted acceptance met on the branch;
+  loop documented here). Merge to main is a separate decision (new
+  issue); #139 (name-resolving pretty-printer) still open.
+
 * 2026-10-12 — #45: evidence-returning equality handlers (interface + validation; natArithHandler migration open)
 
   Context: #41 landed equality handlers as *trusted* decision procedures
@@ -2099,6 +2310,43 @@
   Full inventory in the goal's hidden_files/144-syntax-inventory.md.
   Status: on branch =exp144-syntax-align=, PR pending.
 
+* 2026-10-13 — #153 automatic shed sidecar generation (branch sheds-loop)
+
+  Context: #137 closed the shed loop headlessly, but using it still
+  required a manual =nim c= at a terminal to write the sidecar -- the
+  friction Aaron flagged in his 2026-10-12 VSCode click-through.
+  Decision (issue step 1): the *extension* owns sidecar generation
+  (option 1), not the LSP server (option 2). Rationale: the extension
+  already owns all VSCode integration and process spawning; having the
+  Nim stdio server shell out to a toolchain at request time would inject
+  blocking and toolchain dependence into the request path. The server
+  stays pure: it re-reads the sidecar on every request, so a regenerated
+  sidecar is picked up without restarting anything.
+  Implementation: new vscode-free =editors/vscode/src/sidecar.ts=
+  (=hasShedBlocks= regex gate, =eponymRepoRoot= walk-up discovery of the
+  repo root via =src/eponym/lsp.nim=, =sidecarCompileArgs= building the
+  =nim c --hints:off --path:...= invocation, =generateSidecar= spawning
+  it with a 5-minute timeout). =extension.ts= calls =ensureSidecar= (with
+  progress notification) before showing a layout, and on document save
+  for documents with an open shed panel (shed-free files are never
+  compiled as a save side effect). Errors surface in the *Eponym* output
+  channel plus an error notification with a "Show output" button -- never
+  silent. New =eponym.nimPath= setting for a non-PATH Nim binary.
+  Verification: the node smoke test now self-provisions the sidecar by
+  deleting =sheds_demo.sheds.json= and running the extension's own
+  =generateSidecar= against the real demo (22 checks green, including
+  the pure-function checks and the end-to-end =nim c=); this also
+  replaces the manual pre-step in branch CI (issue #142's fix survives in
+  a stronger form -- the fresh-checkout case is now covered by the
+  extension's own code path). Error paths verified headlessly: ENOENT
+  names =eponym.nimPath=; compile errors carry the nim stderr tail.
+  README rewritten: automatic flow documented, the stale "round-trip not
+  closed" paragraph (superseded by #137's =refineShed=) corrected. NOT
+  verified: inside a real VSCode (no VSCode in this environment) -- the
+  save-refresh wiring and the error notification are code-reviewed only;
+  they ride the #142 click-through as the real acceptance.
+  Status: #153 implementation complete on the sheds-loop branch; issue
+  left open for Aaron's click-through confirmation alongside #142.
 * 2026-10-13 — Independent kernel checker: shared syntax, independent judgments (issue #62)
 
   Context: #62 asks for an LCF-style minimal kernel that re-checks every

@@ -88,3 +88,26 @@ proc callIntFuncDir*(baseDir, src: string, name: string,
   let defs = getDefsDir(baseDir, src)
   let d = findDef(defs, name)
   callDefInt(d, args)
+
+proc getDefsHolesDir*(baseDir, src: string): seq[ElabDef] =
+  ## Issue #133: like getDefsDir, but hole-tolerant (elabCheckHolesDir):
+  ## embedded sources containing shed holes (`_`) elaborate without
+  ## failing on unsolved metas. Used by shedsBlock wrappers so a block
+  ## mixing complete defs and shed holes still runs its complete defs.
+  let key = cacheKey(baseDir, src) & "\x1eholes"
+  if key in defCache:
+    return defCache[key]
+  let (defs, _, errLoc, errMsg) = elabCheckHolesDir(src, baseDir)
+  if errMsg != "":
+    raise newException(ValueError,
+      "shedsBlock runtime elaboration failed at " &
+      $errLoc.line & ":" & $errLoc.col & ": " & errMsg)
+  defCache[key] = defs
+  defs
+
+proc callIntFuncHolesDir*(baseDir, src: string, name: string,
+                          args: seq[int]): int =
+  ## Issue #133: like callIntFuncDir, but `src` may contain shed holes.
+  let defs = getDefsHolesDir(baseDir, src)
+  let d = findDef(defs, name)
+  callDefInt(d, args)

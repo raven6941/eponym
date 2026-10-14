@@ -2,8 +2,17 @@
 #
 # Exposes the elaborator via the Language Server Protocol:
 # - Diagnostics: parse and elaboration errors at surface locations
+# - Shed status (issue #134): white/yellow/brown per shed, read from the
+#   `<nimfile>.sheds.json` sidecar the shedsBlock macro writes; published
+#   as diagnostics (yellow -> Warning, brown -> Error, white -> none)
 # - Hover (issue #58): goal type + context at `_` holes
 # - Code actions (issue #58): refine, case-split, give at holes
+# - `eponym/refineShed` (issue #137): the server-owned refine round-trip
+#   for real `.nim` shed documents -- fill the hole in the macro-recorded
+#   generated source, refresh statuses, rewrite the sidecar, and return
+#   the term plus the `.nim` splice position for the client
+# - `eponym/shedNames` (issue #137): shed names from a `.nim` sidecar, for
+#   client pickers
 #
 # This is a minimal version: stdio JSON-RPC, full-document sync.
 # Incremental sync is future work.
@@ -18,11 +27,14 @@
 import json
 import strutils
 import tables
+import os  # fileExists (issue #134: shed sidecar)
 import elab
 import preterm
 import eponym_init  # `$` for Term (issue #58)
 import parse_surf
 import unify  # HoleInfo, zonk (issue #58)
+import sheds  # ShedInfo, ShedStatus, sidecarPath, readShedSidecarEx (issue #134)
+import shed_layout  # Box, layoutShed, boxToJson (issue #135)
 
 type
   LspServer* = object
@@ -66,11 +78,82 @@ proc makeDiagnostic(uri: string, line, col: int, msg: string): JsonNode =
     ]
   }
 
+# --- issue #134: shed status diagnostics ----------------------------------
+
+proc uriToPath(uri: string): string =
+  ## `file:///abs/path` -> `/abs/path`.
+  if uri.startsWith("file://"): uri[len("file://") .. ^1]
+  else: uri
+
+proc shedDiagnostics*(uri: string): JsonNode =
+  ## Per-shed status diagnostics for a `.nim` document, from its
+  ## `<nimfile>.sheds.json` sidecar: yellow -> Warning ("stuck"),
+  ## brown -> Error, white -> no diagnostic. Returns nil when no sidecar
+  ## exists (the macro has not compiled this file yet).
+  let sc = sidecarPath(uriToPath(uri))
+  if not fileExists(sc):
+    return nil
+  let (sheds, errMsg) = readShedSidecarEx(sc)
+  var diags = newJArray()
+  for s in sheds:
+    let rng = %*{
+      "start": {"line": s.nimLine - 1, "character": s.nimCol - 1},
+      "end": {"line": s.nimLine - 1, "character": s.nimCol}}
+    case s.status
+    of ssYellow:
+      diags.add(%*{
+        "range": rng,
+        "severity": 2,  # Warning
+        "message": "shed '" & s.name & "': stuck (yellow); goal: " & s.goal,
+        "source": "eponym"})
+    of ssBrown:
+      var msg = "shed '" & s.name & "': elaboration failed (brown)"
+      if errMsg != "":
+        msg &= ": " & errMsg
+      diags.add(%*{
+        "range": rng,
+        "severity": 1,  # Error
+        "message": msg,
+        "source": "eponym"})
+    of ssWhite:
+      discard  # white: no diagnostic
+  %*{"uri": uri, "diagnostics": diags}
+
+# --- issue #135: 2D box layout of a shed's proof state ----------------------
+
+proc shedLayout*(uri, shedName: string): JsonNode =
+  ## `eponym/shedLayout` (issue #135): the box tree for a shed with holes,
+  ## laid out Epigram deduction-style (context above the rule, the hole
+  ## below it). Returns nil when no sidecar exists or the shed is unknown;
+  ## `handleMessage` turns the latter into an error response.
+  let sc = sidecarPath(uriToPath(uri))
+  if not fileExists(sc):
+    return nil
+  for s in readShedSidecar(sc):
+    if s.name == shedName:
+      return %*{"box": boxToJson(layoutShed(s))}
+  nil
+
 proc publishDiagnostics(server: var LspServer, uri: string): JsonNode =
   ## Elaborate the document and build the publishDiagnostics notification.
   ## Returns nil only when the document is unknown (no notification sent).
   if uri notin server.documents:
     return nil
+  # Issue #134: `.nim` documents carry Epigram-style sheds; their status
+  # comes from the sidecar the shedsBlock macro wrote at compile time,
+  # re-read on every didOpen/didChange so the editor tracks status as the
+  # Nim compiler re-runs the macro. (A `.nim` file is not Eponym source,
+  # so elaborating its text directly would only yield a parse error.)
+  if uri.endsWith(".nim"):
+    let sd = shedDiagnostics(uri)
+    if not sd.isNil:
+      return %*{
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": sd
+      }
+    # No sidecar (yet): fall through to the Eponym-source path, which
+    # reports the document as unparseable -- same as before #134.
   let text = server.documents[uri]
   var params: JsonNode
   try:
@@ -243,7 +326,8 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
   except ParseError as e:
     (false, "parse error: " & e.msg, 0,0,0,0, "")
 
-proc fillHoleAt*(src: string, line, col: int, term: string):
+proc fillHoleAt*(src: string, line, col: int, term: string,
+                baseDir = ""):
     tuple[ok: bool, why: string, errLine, errCol: int,
           startLine, startChar, endLine, endChar: int, newSrc: string,
           holesInRegion: int] =
@@ -252,6 +336,10 @@ proc fillHoleAt*(src: string, line, col: int, term: string):
   ## filled region fails to elaborate (why carries the message, errLine/
   ## errCol its 0-based location). holesInRegion counts holes left inside
   ## the replaced span (refine tolerates them; give rejects them).
+  ## `baseDir` (issue #137): when non-empty, elaboration resolves
+  ## `import` declarations relative to it (elabCheckHolesDir semantics,
+  ## as the shedsBlock macro does); empty keeps the old elabCheckHoles
+  ## behavior for `.ep` documents.
   let lines = src.splitLines()
   if line < 0 or line >= lines.len or col < 0 or col >= lines[line].len or
      lines[line][col] != '_':
@@ -270,7 +358,9 @@ proc fillHoleAt*(src: string, line, col: int, term: string):
   let sLine = line + 1
   let sCol = col + 1
   try:
-    let (_, ms, errLoc, errMsg) = elabCheckHoles(newSrc)
+    let (_, ms, errLoc, errMsg) =
+      if baseDir == "": elabCheckHoles(newSrc)
+      else: elabCheckHolesDir(newSrc, baseDir)
     if errMsg != "":
       return (false, errMsg, errLoc.line - 1, errLoc.col - 1,
               0,0,0,0, "", 0)
@@ -365,6 +455,102 @@ proc codeActionsAt*(src, uri: string, line, col: int, variable, term: string,
       discard
   %*{"jsonrpc": "2.0", "id": id, "result": actions}
 
+# --- issue #137: server-owned refine round-trip for `.nim` sheds -------
+
+proc shedNames*(uri: string): seq[string] =
+  ## `eponym/shedNames`: shed names from the `.nim` document's sidecar, so
+  ## a client can offer a picker instead of a free-form name box. Empty
+  ## when no sidecar exists (the macro has not compiled this file yet).
+  let sc = sidecarPath(uriToPath(uri))
+  if not fileExists(sc):
+    return @[]
+  for s in readShedSidecar(sc):
+    result.add(s.name)
+
+proc refineShed*(nimFile, shedName, term: string):
+    tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
+          status: string, yellowCount: int] =
+  ## Issue #137: the server-owned refine round-trip for real `.nim` shed
+  ## documents -- the #136 gap. The #58 `textDocument/codeAction` path
+  ## elaborates document text as Eponym source, which a `.nim` file is
+  ## not; here the client sends only (shedName, term) and the server does
+  ## the whole loop: fill the hole in the macro-recorded generated source
+  ## (`ShedInfo.genSrc`), refresh statuses, rewrite the sidecar, and
+  ## return the term plus the `.nim` splice position (`nimLine`, `nimCol`:
+  ## 1-based start of the `![...]` node -- the client replaces that node,
+  ## a single-line span, with the term).
+  ##
+  ## Sheds from other shedsBlock expansions in the same file are
+  ## identified by sharing the block's `genSrc` string: their sources are
+  ## updated to the filled source and their hole lines shifted past a
+  ## multi-line fill, while sheds from other blocks are untouched.
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)",
+            "", 0, 0, "", 0)
+  let (sheds0, errMsg0) = readShedSidecarEx(sc)
+  var sheds = sheds0
+  var si = -1
+  for i in 0 ..< sheds.len:
+    if sheds[i].name == shedName:
+      si = i
+      break
+  if si < 0:
+    return (false, "unknown shed '" & shedName & "'", "", 0, 0, "", 0)
+  let oldSrc = sheds[si].genSrc
+  if oldSrc == "":
+    return (false, "shed '" & shedName &
+            "': no generated source recorded (sidecar predates #137; " &
+            "recompile)", "", 0, 0, "", 0)
+  if sheds[si].status != ssYellow:
+    return (false, "shed '" & shedName & "' is not refinable (status " &
+            shedStatusToStr(sheds[si].status) & ")", "", 0, 0, "", 0)
+  let baseDir = parentDir(nimFile)
+  # Locate the hole in the recorded source: exact (line, col) when the
+  # column is known, else the first line match (the #134 rule).
+  var holeLine1 = -1
+  var holeCol1 = -1
+  try:
+    let r = elabCheckHolesDir(oldSrc, baseDir)
+    var best = -1
+    for k, h in r.ms.holes:
+      if h.holeLoc.line != sheds[si].holeLine: continue
+      if best < 0: best = k  # first line match: the fallback
+      if sheds[si].holeCol > 0 and h.holeLoc.col == sheds[si].holeCol:
+        best = k
+        break  # exact match wins
+    if best < 0:
+      return (false, "shed '" & shedName &
+              "': hole no longer open in the recorded source " &
+              "(sidecar stale? recompile)", "", 0, 0, "", 0)
+    holeLine1 = r.ms.holes[best].holeLoc.line
+    holeCol1 = r.ms.holes[best].holeLoc.col
+  except ParseError as e:
+    return (false, "recorded source no longer parses: " & e.msg,
+            "", 0, 0, "", 0)
+  let f = fillHoleAt(oldSrc, holeLine1 - 1, holeCol1 - 1, term, baseDir)
+  if not f.ok:
+    return (false, "refine rejected: " & f.why, "", 0, 0, "", 0)
+  # A multi-line fill shifts later sheds' generated-source lines; the
+  # filled shed keeps its line (the fill starts there) and is re-matched
+  # by refreshShedStatuses below.
+  let newSrc = f.newSrc
+  let filledLine = sheds[si].holeLine
+  let linesAdded = term.count('\n')
+  for i in 0 ..< sheds.len:
+    if sheds[i].genSrc == oldSrc:
+      sheds[i].genSrc = newSrc
+      if sheds[i].holeLine > filledLine:
+        sheds[i].holeLine += linesAdded
+  refreshShedStatuses(sheds, newSrc, baseDir, onlyGenSrc = newSrc)
+  writeShedSidecar(nimFile, sheds, errMsg0)  # keep the doc-level message
+  var yellowCount = 0
+  for s in sheds:
+    if s.status == ssYellow: inc yellowCount
+  (true, "", term, sheds[si].nimLine, sheds[si].nimCol,
+   shedStatusToStr(sheds[si].status), yellowCount)
+
 proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
   ## Handle one incoming message; returns the outgoing message, or nil
   ## when there is no response (e.g. `initialized`, `exit` handled by caller).
@@ -433,6 +619,42 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
       term = msg["params"]["term"].getStr()
     return codeActionsAt(server.documents[uri], uri, line, col, variable,
                          term, id)
+  of "eponym/shedLayout":
+    let id = msg["id"]
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let shedName = msg["params"]["shedName"].getStr()
+    let res = shedLayout(uri, shedName)
+    if res.isNil:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "no layout: unknown shed '" & shedName &
+                            "' or no sheds sidecar for " & uri}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": res}
+  of "eponym/shedNames":
+    let id = msg["id"]
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    var arr = newJArray()
+    for nm in shedNames(uri): arr.add(%nm)
+    return %*{"jsonrpc": "2.0", "id": id, "result": arr}
+  of "eponym/refineShed":
+    let id = msg["id"]
+    if "textDocument" notin msg["params"] or "shedName" notin msg["params"] or
+       "term" notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "eponym/refineShed needs " &
+                            "textDocument.uri, shedName, term"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let shedName = msg["params"]["shedName"].getStr()
+    let term = msg["params"]["term"].getStr()
+    let r = refineShed(uriToPath(uri), shedName, term)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id,
+              "result": {"shedName": shedName, "term": r.term,
+                         "nimLine": r.nimLine, "nimCol": r.nimCol,
+                         "status": r.status, "yellowCount": r.yellowCount}}
   of "shutdown":
     let id = msg["id"]
     return %*{"jsonrpc": "2.0", "id": id, "result": nil}
