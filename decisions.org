@@ -2428,3 +2428,66 @@
   =map send xs= under =[Console]=); pegs are ignored by the core (like
   =impl=∕erased metadata). Runtime handler semantics remain out of scope
   (blocked on delimited continuations, per #41's note).
+
+* 2026-10-14 — Issue #55: elaboration wall-clock phase breakdown (kernel eval dominates)
+
+  Context: #47's temporary instrumentation showed conversion is only ~6%
+  of elaboration wall-clock on the bench_conv_cache corpus (0.45s NbE of
+  ~7.5s), leaving ~94% (parsing + checkTm/inferTm + unification + zonk)
+  unprofiled. #55 asked for permanent lightweight per-phase timers and
+  the breakdown.
+
+  What was built (branch =exp55-elab-profile=):
+  - =src/eponym/elab_prof.nim=: =ElabPhase= enum (parse, check, infer,
+    unify, zonk, conv, clause, data, usage, kernel, eval, other),
+    stack-based *exclusive* timers (child-phase time subtracted from the
+    enclosing phase; recursion-safe), =profilePhase= template, =reportPhases=.
+  - Gated on =-d:elabProfile= (=ElabProfile= booldefine); disabled build
+    expands =profilePhase= to exactly =body= — zero overhead, verified
+    warning-clean in both builds. Note: =import= inside =when= at module
+    scope does NOT bring symbols into scope (Nim quirk, 2.2.12), and
+    =MonoTime= lives in =std/monotimes=, not =std/times=.
+  - Instrumented: =parseProgram=, =checkTm=, =inferTm=, =unifyElab=,
+    =zonk=, =convElab=, =elabClausesDecl=, =elabDataDecl=, =checkUsage=,
+    kernel =check= and =eval=, and the =elabCheckStateG=/=elabDeclsDir=/
+    =elabCheckHoles= drivers (=epOther= catch-all).
+  - =bench/bench_elab_profile.nim=: runs both bench_conv_cache corpora
+    plus the 21 positive =examples/ep/*.ep= files, prints the breakdown.
+  - Drive-by fix: =bench/bench_conv_cache.nim='s =countingCache= no longer
+    compiled on main (stale =ConvDecide= signature from #177: now takes
+    =goalTy: Term= and returns =ConvResult=); updated.
+
+  Measured (exclusive % of tracked total; sum of phases ≈ wall clock):
+  - bench corpora (62/32 decls, unary-numeral-heavy, 7.8s/4.9s wall):
+    eval 83.7%, kernel-check 6–7%, zonk 4–6%, infer 2–2.5%, conv 1.2–1.3%,
+    parse/check/unify/clause/data/usage each ≤0.6%, other 0.2%.
+  - realistic corpus (21 positive .ep examples, 0.28s wall):
+    eval 33.4%, zonk 22.6%, kernel-check 11.7%, infer 10.5%, conv 9.5%,
+    parse 2.2%, check 3.5%, data 2.8%, clause 1.3%, unify 0.5%, other 2.0%.
+  - Refinement of #47: conversion *proper* (=epConv=, handler machinery +
+    probe) is only 1–10%; the NbE evaluation inside conversion goals was
+    the bulk of #47's "0.45s conversion" and is now correctly attributed
+    to =epEval=.
+
+  Decision / next steps (concrete proposals, not yet implemented):
+  1. Kernel =eval= is the top phase on every corpus (84% bench, 33%
+     realistic). The Andromeda-style core re-check (=elabDefDecl= step 3:
+     =check(supply, tyV, tmT)=) evaluates every definition's type and body
+     from scratch after the elaborator already evaluated them during
+     conversion. Follow-up: profile =eval='s hot path (whnf? spine
+     application? repeated evaluation of shared subterms with no
+     memoization?) and measure how much =epEval= is re-check-driven vs
+     conversion-NbE-driven (caller attribution not yet instrumented).
+  2. =epZonk= at 23% on realistic code is surprisingly high: zonk walks
+     whole terms substituting solved metas, and =elabDefDecl= zonks type
+     and body separately while =checkTm= zonks repeatedly. Candidate: a
+     dirty-flag so zonk is skipped when no meta was solved since the last
+     pass.
+  3. Longer-term: whether the elaborator can hand *evaluated* values to
+     the kernel re-check without extending the trusted base — a design
+     decision, not a quick hack; out of scope here.
+
+  Consequences: instrumentation stays (zero-cost when disabled); the
+  bench is the regression harness for future elaborator-performance
+  work. #55's acceptance criteria are met except the full-CI-matrix run,
+  which happens before merge.

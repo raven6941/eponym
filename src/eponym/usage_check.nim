@@ -10,6 +10,7 @@
 
 import eponym_init
 import preterm  # for Quantity
+import elab_prof  # Issue #55: phase timers
 
 type
   UsageError* = object of CatchableError
@@ -69,63 +70,64 @@ proc hasUnresolvedMetas*(tm: Term): bool =
   go(tm)
 
 proc checkUsage*(tm: Term): void =
-  ## Verify linear/erased usage in the elaborated term.
-  ## Raises UsageError on violation.
-  ##
-  ## Post-elaboration backstop (Issue #64). The primary enforcement is
-  ## in-judgment (elab.enforceBinderQty, Issue #66), which runs at each
-  ## lambda during elaboration. This pass re-verifies every binder in the
-  ## final term with the *same* term-position counting (countVarUses), so
-  ## the two can never disagree. In particular, occurrences inside binder
-  ## domains (type positions) are not uses: in QTT, types are checked in
-  ## the all-0 context.
-  proc verifyBinder(t: Term) =
-    if t.qty == qOmega: return
-    let n = countVarUses(t.scope.bdy)
-    case t.qty
-    of q1:
-      if n == 0:
-        raise newException(UsageError,
-          "linear variable not used (binder " & t.scope.adv & ")")
-      elif n > 1:
-        raise newException(UsageError,
-          "linear variable used " & $n & " times (binder " &
-          t.scope.adv & ")")
-    of q0:
-      if n > 0:
-        raise newException(UsageError,
-          "erased variable used (binder " & t.scope.adv & ")")
-    of qOmega: discard
+  profilePhase(epUsage):
+      ## Verify linear/erased usage in the elaborated term.
+      ## Raises UsageError on violation.
+      ##
+      ## Post-elaboration backstop (Issue #64). The primary enforcement is
+      ## in-judgment (elab.enforceBinderQty, Issue #66), which runs at each
+      ## lambda during elaboration. This pass re-verifies every binder in the
+      ## final term with the *same* term-position counting (countVarUses), so
+      ## the two can never disagree. In particular, occurrences inside binder
+      ## domains (type positions) are not uses: in QTT, types are checked in
+      ## the all-0 context.
+      proc verifyBinder(t: Term) =
+        if t.qty == qOmega: return
+        let n = countVarUses(t.scope.bdy)
+        case t.qty
+        of q1:
+          if n == 0:
+            raise newException(UsageError,
+              "linear variable not used (binder " & t.scope.adv & ")")
+          elif n > 1:
+            raise newException(UsageError,
+              "linear variable used " & $n & " times (binder " &
+              t.scope.adv & ")")
+        of q0:
+          if n > 0:
+            raise newException(UsageError,
+              "erased variable used (binder " & t.scope.adv & ")")
+        of qOmega: discard
 
-  proc go(t: Term) =
-    case t.kind
-    of tV, tR, tC, tMeta, tInt, tNatLit:
-      discard # no binders
-    of tLam, tPi:
-      verifyBinder(t)
-      go(t.dom)         # domains may nest binders; uses inside them are
-      go(t.scope.bdy)   # type positions, not counted against this binder
-    of tSi:
-      # Sigma binders: not linear-checked (they're types, not values)
-      go(t.dom)
-      go(t.scope.bdy)
-    of tApp:
-      go(t.fn)
-      go(t.arg)
-    of tPair:
-      go(t.pFst)
-      go(t.pSnd)
-      go(t.pScope.bdy)
-    of tFst, tSnd, tAbsurd:
-      go(t.sub)
-    of tLet:
-      go(t.letVal)
-      go(t.letTy)
-      go(t.letScope.bdy)
-    of tPrim:
-      go(t.primTy)
+      proc go(t: Term) =
+        case t.kind
+        of tV, tR, tC, tMeta, tInt, tNatLit:
+          discard # no binders
+        of tLam, tPi:
+          verifyBinder(t)
+          go(t.dom)         # domains may nest binders; uses inside them are
+          go(t.scope.bdy)   # type positions, not counted against this binder
+        of tSi:
+          # Sigma binders: not linear-checked (they're types, not values)
+          go(t.dom)
+          go(t.scope.bdy)
+        of tApp:
+          go(t.fn)
+          go(t.arg)
+        of tPair:
+          go(t.pFst)
+          go(t.pSnd)
+          go(t.pScope.bdy)
+        of tFst, tSnd, tAbsurd:
+          go(t.sub)
+        of tLet:
+          go(t.letVal)
+          go(t.letTy)
+          go(t.letScope.bdy)
+        of tPrim:
+          go(t.primTy)
 
-  go(tm)
+      go(tm)
 
 when isMainModule:
   echo "usage checker module loaded"

@@ -26,6 +26,7 @@ import tables
 import hashes
 import preterm  # for Quantity (Issue #64)
 import abilities # Issue #177: operator pegs on tPi
+import elab_prof  # Issue #55: phase timers
 
 type
   Const* = enum cStar, cOne, cVoid, cZero   # ?  1  hi  O
@@ -715,8 +716,9 @@ proc evalWhnf(t: Term, env: seq[Value]): Whnf =
       "cannot evaluate open metavariable ?m" & $t.metaId)
 
 proc eval*(t: Term, env: seq[Value]): Value =
-  ## eval t γ = close t γ ⇓ whnv t γ  (paper §6.6)
-  Value(syn: substEnv(t, env, 0), whnf: evalWhnf(t, env))
+  profilePhase(epEval):
+      ## eval t γ = close t γ ⇓ whnv t γ  (paper §6.6)
+      Value(syn: substEnv(t, env, 0), whnf: evalWhnf(t, env))
 
 ## --- smart value constructors (§6.5) ------------------------------------------
 
@@ -794,13 +796,14 @@ proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value] =
   (eval(t, @[]), ty)
 
 proc check*(s: var Supply, ty: Value, t: Term): Value =
-  # Experiment 11: primitives are trusted from the elaborator; the
-  # elaborator already assigned the correct type (Int or Int->Int->Int).
-  if t.kind == tInt or t.kind == tPrim or t.kind == tNatLit:
-    return eval(t, @[])
-  let r = synth(s, t)
-  areEqual(s, vStar(), ty, r.typ)
-  r.val
+  profilePhase(epKernel):
+      # Experiment 11: primitives are trusted from the elaborator; the
+      # elaborator already assigned the correct type (Int or Int->Int->Int).
+      if t.kind == tInt or t.kind == tPrim or t.kind == tNatLit:
+        return eval(t, @[])
+      let r = synth(s, t)
+      areEqual(s, vStar(), ty, r.typ)
+      r.val
 
 proc structuralEq(s: var Supply, a, b: Value) =
   ## structural equality on weak-head forms, with eta for lambdas vs neutrals

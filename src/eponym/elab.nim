@@ -34,6 +34,7 @@ import eponym_init
 import unify
 import egraph
 import usage_check  # Issue #64: linear usage verification
+import elab_prof      # Issue #55: phase timers (zero-cost when -d:elabProfile off)
 
 type
   ElabError* = object of CatchableError
@@ -46,11 +47,12 @@ proc elabErr(loc: Loc, msg: string): ref ElabError =
   e
 
 proc unifyElab(ms: var MetaStore, a, b: Term, loc: Loc) =
-  ## unify, translating UnifyError into ElabError (adds the source location).
-  try:
-    unify(ms, a, b, loc)
-  except UnifyError as e:
-    raise elabErr(loc, e.msg)
+  profilePhase(epUnify):
+      ## unify, translating UnifyError into ElabError (adds the source location).
+      try:
+        unify(ms, a, b, loc)
+      except UnifyError as e:
+        raise elabErr(loc, e.msg)
 
 type
   CtxEntry* = object
@@ -422,59 +424,60 @@ proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
 
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
               ctx: Ctx, globals: Globals, goalTy: Term = nil): Term =
-  ## Conversion for the inferred-vs-expected check (Experiment 5b):
-  ## compare up to full reduction — delta-unfolding of
-  ## definitions, beta, and the registered wRed rules — via the core
-  ## evaluator, then the core's type-directed conversion (areEqual).
-  ## Free variables become fresh neutral parameters, so open terms
-  ## evaluate soundly; both sides share one environment, so the same
-  ## variable is the same parameter on each side.
-  ## While unsolved metavariables remain, fall back to pattern
-  ## unification instead: evaluation cannot solve flex constraints,
-  ## and unify is the only thing that can.
-  ##
-  ## Experiment 41: the equality effect. Instead of running conversion
-  ## directly, convElab raises the goal `a === b` to the handler stack in
-  ## ms.convHandlers (top = most recently installed). Each handler either
-  ## discharges the goal (cvDischarged) or declines (cvDeclined) to the
-  ## next one down. The bottom of the stack is defaultConv above. The
-  ## choke points that raise the effect are exactly the old failure sites:
-  ## the infer-then-check boundary in checkTm and the `refl` tactic.
-  ##
-  ## Issue #93: reflexivity fast path. Pointer-identical terms are
-  ## trivially convertible (reflexivity holds in every handler extension),
-  ## so skip zonking, unification, handlers, and cache bookkeeping.
-  ## This fires e.g. when the elaborator checks a literal against the
-  ## canonical globals["Nat"].tm object it also used to build the type.
-  if a == b: return nil
-  let a1 = zonk(ms, a)
-  let b1 = zonk(ms, b)
-  if findUnsolved(ms, a1).found or findUnsolved(ms, b1).found:
-    unifyElab(ms, a1, b1, loc)
-    return nil
-  var i = ms.convHandlers.high
-  while i >= 0:
-    let h = ms.convHandlers[i]
-    let r = h.decide(ms, s, a1, b1, loc, ctx.len, goalTy)
-    case r.verdict
-    of cvDischarged:
-      if not h.coreValid:
-        # A domain handler extended conversion beyond the core: record it
-        # so elabDefDecl can relax the core re-check for this definition.
-        inc ms.extDischarges
-      return nil
-    of cvDischargedEv:
-      # Issue #45: evidence-returning discharge. The core revalidates the
-      # evidence with no handlers installed; trust is NOT extended, so
-      # extDischarges is untouched and elabDefDecl's bare-core re-check
-      # stays in force for this definition. The validated evidence is
-      # returned for splicing (tacRefl uses it as the tactic's proof term).
-      return validateEvidence(ms, s, a1, b1, goalTy, r.evidence, loc, ctx, globals)
-    of cvDeclined:
-      discard
-    dec i
-  defaultConv(ms, s, a1, b1, loc, ctx, globals)
-  nil
+  profilePhase(epConv):
+      ## Conversion for the inferred-vs-expected check (Experiment 5b):
+      ## compare up to full reduction — delta-unfolding of
+      ## definitions, beta, and the registered wRed rules — via the core
+      ## evaluator, then the core's type-directed conversion (areEqual).
+      ## Free variables become fresh neutral parameters, so open terms
+      ## evaluate soundly; both sides share one environment, so the same
+      ## variable is the same parameter on each side.
+      ## While unsolved metavariables remain, fall back to pattern
+      ## unification instead: evaluation cannot solve flex constraints,
+      ## and unify is the only thing that can.
+      ##
+      ## Experiment 41: the equality effect. Instead of running conversion
+      ## directly, convElab raises the goal `a === b` to the handler stack in
+      ## ms.convHandlers (top = most recently installed). Each handler either
+      ## discharges the goal (cvDischarged) or declines (cvDeclined) to the
+      ## next one down. The bottom of the stack is defaultConv above. The
+      ## choke points that raise the effect are exactly the old failure sites:
+      ## the infer-then-check boundary in checkTm and the `refl` tactic.
+      ##
+      ## Issue #93: reflexivity fast path. Pointer-identical terms are
+      ## trivially convertible (reflexivity holds in every handler extension),
+      ## so skip zonking, unification, handlers, and cache bookkeeping.
+      ## This fires e.g. when the elaborator checks a literal against the
+      ## canonical globals["Nat"].tm object it also used to build the type.
+      if a == b: return nil
+      let a1 = zonk(ms, a)
+      let b1 = zonk(ms, b)
+      if findUnsolved(ms, a1).found or findUnsolved(ms, b1).found:
+        unifyElab(ms, a1, b1, loc)
+        return nil
+      var i = ms.convHandlers.high
+      while i >= 0:
+        let h = ms.convHandlers[i]
+        let r = h.decide(ms, s, a1, b1, loc, ctx.len, goalTy)
+        case r.verdict
+        of cvDischarged:
+          if not h.coreValid:
+            # A domain handler extended conversion beyond the core: record it
+            # so elabDefDecl can relax the core re-check for this definition.
+            inc ms.extDischarges
+          return nil
+        of cvDischargedEv:
+          # Issue #45: evidence-returning discharge. The core revalidates the
+          # evidence with no handlers installed; trust is NOT extended, so
+          # extDischarges is untouched and elabDefDecl's bare-core re-check
+          # stays in force for this definition. The validated evidence is
+          # returned for splicing (tacRefl uses it as the tactic's proof term).
+          return validateEvidence(ms, s, a1, b1, goalTy, r.evidence, loc, ctx, globals)
+        of cvDeclined:
+          discard
+        dec i
+      defaultConv(ms, s, a1, b1, loc, ctx, globals)
+      nil
 
 proc cacheConvHandler*(): ConvHandler =
   ## Experiment 41: the Experiment 10 conversion cache as a scoped,
@@ -1350,104 +1353,105 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
 proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
               ms: var MetaStore, supply: var Supply,
               ab: Ability): tuple[tm, ty: Term] =
-  ## Synthesis mode.
-  case pre.kind
-  of pkVar:
-    let (tm, ty) = resolveVar(ctx, globals, pre.name, pre.loc, ab, ms)
-    insertImplicits(pre, tm, ty, ctx.len, ms)
-  of pkUniv: (tmC(cStar), tmC(cStar))
-  of pkUnitTy: (tmC(cOne), tmC(cStar))
-  of pkUnitV: (tmC(cVoid), tmC(cOne))
-  of pkEmptyTy: (tmC(cZero), tmC(cStar))
-  of pkHole:
-    let tyM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
-    let holeTm = freshMeta(ms, tyM, ctx.len, 0, pre.loc)
-    # Issue #58: record the hole for LSP hover — goal type + binder context.
-    var hctx: seq[tuple[name: string, ty: Term]] = @[]
-    for e in ctx: hctx.add((e.name, e.ty))
-    ms.holes.add(HoleInfo(holeLoc: pre.loc, holeGoal: tyM, holeCtx: hctx,
-                          holeAb: ab))  # Issue #177
-    (holeTm, tyM)
-  of pkInt:
-    # Experiment 11: integer literal; type is the postulated Int
-    if "Int" notin globals:
-      raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?'")
-    let intTy = globals["Int"].tm  # the R node for Int
-    (tmInt(pre.intVal), intTy)
-  of pkPi:
-    let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-    let c = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, tmC(cStar), ab)
-    (tmPi(d, pre.name, c, pre.impl, pre.erased, zonkQty(ms, pre.qty), ab), tmC(cStar))
-  of pkSigma:
-    let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-    let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar), ab)
-    (tmSi(d, pre.name, c), tmC(cStar))
-  of pkLam:
-    let d =
-      if pre.c1.isNil: freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
-      else: checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-    let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, ab)
-    enforceBinderQty(pre.qty, b, pre.loc, pre.name, ms)  # Issue #66
-    # zonkQty after enforcement: a variable is solved by now (or defaults).
-    let bq = zonkQty(ms, pre.qty)
-    (tmLam(d, pre.name, b, pre.impl, pre.erased, bq, ab), tmPi(d, pre.name, bty, pre.impl, pre.erased, bq, ab))
-  of pkApp:
-    var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
-    (f, fty) = insertImplicits(pre, f, fty, ctx.len, ms)
-    let (dom, codBdy, impl, _, qty, fpeg) = ensurePi(ms, pre.loc, fty, ctx.len, ab)
-    if impl:
-      raise elabErr(pre.loc,
-        "cannot apply explicitly to an implicit argument")
-    # Issue #177, App rule: the operator's peg must be compatible
-    # with the ambient (pure predicate).
-    checkPeg(fpeg, ab, pre.loc)
-    let a = checkTm(pre.c2, ctx, globals, ms, supply, dom, ab)
-    if qty == q0:
-      checkErasedArg(a, ctx, pre.loc, ms)  # Issue #66: no linear var into 0-param
-    (tmApp(f, a), subst(codBdy, 0, a))
-  of pkPair:
-    # Non-dependent Sigma with metavariable components (as the core's cPair).
-    let aM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
-    let bM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
-    let a = checkTm(pre.c1, ctx, globals, ms, supply, aM, ab)
-    let b = checkTm(pre.c2, ctx, globals, ms, supply, bM, ab)
-    (tmPair(a, b, "_", weaken(bM)), tmSi(aM, "_", weaken(bM)))
-  of pkFst:
-    let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
-    let (dom, _, _) = ensureSi(ms, pre.loc, pty, ctx.len)
-    (tmFst(p), dom)
-  of pkSnd:
-    let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
-    let (_, codBdy, _) = ensureSi(ms, pre.loc, pty, ctx.len)
-    (tmSnd(p), subst(codBdy, 0, tmFst(p)))
-  of pkLet:
-    let (v, vty) =
-      if pre.c1.isNil: inferTm(pre.c2, ctx, globals, ms, supply, ab)
-      elif pretermHasQtyVar(pre.c1):
-        # Issue #66: quantity variables in the annotation are solved from
-        # the value; infer the value first, then elaborate the annotation.
-        let (vi, vtyi) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
-        let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-        discard convElab(ms, supply, vtyi, aty, pre.loc, ctx, globals, tmC(cStar))
-        (vi, aty)
-      else:
-        let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-        (checkTm(pre.c2, ctx, globals, ms, supply, aty, ab), aty)
-    let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply, ab)
-    (tmLet(v, vty, pre.name, b), subst(bty, 0, v))
-  of pkAnn:
-    if pretermHasQtyVar(pre.c2):
-      # Issue #66: as for pkLet above — infer the term first so quantity
-      # variables in the ascribed type are solved before it elaborates.
-      let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
-      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
-      discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
-      (t, ty)
-    else:
-      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
-      (checkTm(pre.c1, ctx, globals, ms, supply, ty, ab), ty)
-  of pkBy:
-    raise elabErr(pre.loc, "'by' tactic requires an expected type (use in checking mode)")
+  profilePhase(epInfer):
+      ## Synthesis mode.
+      case pre.kind
+      of pkVar:
+        let (tm, ty) = resolveVar(ctx, globals, pre.name, pre.loc, ab, ms)
+        insertImplicits(pre, tm, ty, ctx.len, ms)
+      of pkUniv: (tmC(cStar), tmC(cStar))
+      of pkUnitTy: (tmC(cOne), tmC(cStar))
+      of pkUnitV: (tmC(cVoid), tmC(cOne))
+      of pkEmptyTy: (tmC(cZero), tmC(cStar))
+      of pkHole:
+        let tyM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
+        let holeTm = freshMeta(ms, tyM, ctx.len, 0, pre.loc)
+        # Issue #58: record the hole for LSP hover — goal type + binder context.
+        var hctx: seq[tuple[name: string, ty: Term]] = @[]
+        for e in ctx: hctx.add((e.name, e.ty))
+        ms.holes.add(HoleInfo(holeLoc: pre.loc, holeGoal: tyM, holeCtx: hctx,
+                              holeAb: ab))  # Issue #177
+        (holeTm, tyM)
+      of pkInt:
+        # Experiment 11: integer literal; type is the postulated Int
+        if "Int" notin globals:
+          raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?'")
+        let intTy = globals["Int"].tm  # the R node for Int
+        (tmInt(pre.intVal), intTy)
+      of pkPi:
+        let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+        let c = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, tmC(cStar), ab)
+        (tmPi(d, pre.name, c, pre.impl, pre.erased, zonkQty(ms, pre.qty), ab), tmC(cStar))
+      of pkSigma:
+        let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+        let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar), ab)
+        (tmSi(d, pre.name, c), tmC(cStar))
+      of pkLam:
+        let d =
+          if pre.c1.isNil: freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
+          else: checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+        let (b, bty) = inferTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, ab)
+        enforceBinderQty(pre.qty, b, pre.loc, pre.name, ms)  # Issue #66
+        # zonkQty after enforcement: a variable is solved by now (or defaults).
+        let bq = zonkQty(ms, pre.qty)
+        (tmLam(d, pre.name, b, pre.impl, pre.erased, bq, ab), tmPi(d, pre.name, bty, pre.impl, pre.erased, bq, ab))
+      of pkApp:
+        var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
+        (f, fty) = insertImplicits(pre, f, fty, ctx.len, ms)
+        let (dom, codBdy, impl, _, qty, fpeg) = ensurePi(ms, pre.loc, fty, ctx.len, ab)
+        if impl:
+          raise elabErr(pre.loc,
+            "cannot apply explicitly to an implicit argument")
+        # Issue #177, App rule: the operator's peg must be compatible
+        # with the ambient (pure predicate).
+        checkPeg(fpeg, ab, pre.loc)
+        let a = checkTm(pre.c2, ctx, globals, ms, supply, dom, ab)
+        if qty == q0:
+          checkErasedArg(a, ctx, pre.loc, ms)  # Issue #66: no linear var into 0-param
+        (tmApp(f, a), subst(codBdy, 0, a))
+      of pkPair:
+        # Non-dependent Sigma with metavariable components (as the core's cPair).
+        let aM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
+        let bM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
+        let a = checkTm(pre.c1, ctx, globals, ms, supply, aM, ab)
+        let b = checkTm(pre.c2, ctx, globals, ms, supply, bM, ab)
+        (tmPair(a, b, "_", weaken(bM)), tmSi(aM, "_", weaken(bM)))
+      of pkFst:
+        let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
+        let (dom, _, _) = ensureSi(ms, pre.loc, pty, ctx.len)
+        (tmFst(p), dom)
+      of pkSnd:
+        let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
+        let (_, codBdy, _) = ensureSi(ms, pre.loc, pty, ctx.len)
+        (tmSnd(p), subst(codBdy, 0, tmFst(p)))
+      of pkLet:
+        let (v, vty) =
+          if pre.c1.isNil: inferTm(pre.c2, ctx, globals, ms, supply, ab)
+          elif pretermHasQtyVar(pre.c1):
+            # Issue #66: quantity variables in the annotation are solved from
+            # the value; infer the value first, then elaborate the annotation.
+            let (vi, vtyi) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
+            let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+            discard convElab(ms, supply, vtyi, aty, pre.loc, ctx, globals, tmC(cStar))
+            (vi, aty)
+          else:
+            let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+            (checkTm(pre.c2, ctx, globals, ms, supply, aty, ab), aty)
+        let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply, ab)
+        (tmLet(v, vty, pre.name, b), subst(bty, 0, v))
+      of pkAnn:
+        if pretermHasQtyVar(pre.c2):
+          # Issue #66: as for pkLet above — infer the term first so quantity
+          # variables in the ascribed type are solved before it elaborates.
+          let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
+          let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
+          discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
+          (t, ty)
+        else:
+          let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
+          (checkTm(pre.c1, ctx, globals, ms, supply, ty, ab), ty)
+      of pkBy:
+        raise elabErr(pre.loc, "'by' tactic requires an expected type (use in checking mode)")
 
 proc mkNatLit(n: int, loc: Loc): Term =
   ## Build a primitive Nat literal tNatLit(n) for integer literal n
@@ -1462,135 +1466,136 @@ proc mkNatLit(n: int, loc: Loc): Term =
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
              ms: var MetaStore, supply: var Supply, expTy: Term,
              ab: Ability): Term =
-  ## Checking mode against an expected type.
-  case pre.kind
-  of pkInt:
-    # Literal overloading: integer literal adapts to expected type.
-    # Try Nat (inductive) first, then primitive Int.
-    # mkNatLit builds the O(1) primitive tNatLit; no manual reification needed.
-    block:
-      # Debug
-      # echo "pkInt in checkTm, intVal=", pre.intVal
-      var done = false
-      var resTm: Term = nil
-      if "Nat" in globals:
-        try:
-          let natTm = mkNatLit(pre.intVal, pre.loc)
-          let natTy = globals["Nat"].tm
-          discard convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals, tmC(cStar))
-          resTm = natTm
-          done = true
-        except ElabError:
-          discard  # Not Nat; try Int
-      if not done:
-        if "Int" notin globals:
-          raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?' or 'data Nat'")
-        let intTy = globals["Int"].tm
-        discard convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals, tmC(cStar))
-        resTm = tmInt(pre.intVal)
-      resTm
-  of pkLam:
-    let (dom, codBdy, _, _, piQty, _) = ensurePi(ms, pre.loc, expTy, ctx.len, ab)
-    let d =
-      if pre.c1.isNil: dom
+  profilePhase(epCheck):
+      ## Checking mode against an expected type.
+      case pre.kind
+      of pkInt:
+        # Literal overloading: integer literal adapts to expected type.
+        # Try Nat (inductive) first, then primitive Int.
+        # mkNatLit builds the O(1) primitive tNatLit; no manual reification needed.
+        block:
+          # Debug
+          # echo "pkInt in checkTm, intVal=", pre.intVal
+          var done = false
+          var resTm: Term = nil
+          if "Nat" in globals:
+            try:
+              let natTm = mkNatLit(pre.intVal, pre.loc)
+              let natTy = globals["Nat"].tm
+              discard convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals, tmC(cStar))
+              resTm = natTm
+              done = true
+            except ElabError:
+              discard  # Not Nat; try Int
+          if not done:
+            if "Int" notin globals:
+              raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?' or 'data Nat'")
+            let intTy = globals["Int"].tm
+            discard convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals, tmC(cStar))
+            resTm = tmInt(pre.intVal)
+          resTm
+      of pkLam:
+        let (dom, codBdy, _, _, piQty, _) = ensurePi(ms, pre.loc, expTy, ctx.len, ab)
+        let d =
+          if pre.c1.isNil: dom
+          else:
+            let ad = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+            unifyElab(ms, ad, dom, pre.loc)
+            ad
+        # Issue #66: subject-side quantity tracking (Γ ⊢ t :^q A). Reconcile
+        # the lambda's binder quantity with the expected Pi's before
+        # elaborating the body:
+        # - quantity variable: solve from the expected type (conflicting
+        #   solutions are an error); the body is then checked under it.
+        # - concrete and equal: fine.
+        # - concrete qOmega: the surface has no explicit-omega annotation, so
+        #   this means "unannotated" — inherit the expected quantity (the
+        #   Idris 2 behaviour for unannotated binders in checking mode).
+        # - concrete and different: an elaboration error.
+        var bQty: Qty
+        if pre.qty.isVar:
+          solveQVar(ms, pre.qty.vname, piQty, pre.loc)
+          flushQvarPending(ms, pre.qty.vname)
+          bQty = toQty(piQty)
+        elif pre.qty.q == piQty or pre.qty.q == qOmega:
+          bQty = toQty(if pre.qty.q == piQty: pre.qty.q else: piQty)
+        else:
+          raise elabErr(pre.loc, "lambda binder quantity " & $pre.qty.q &
+            " does not match the expected quantity " & $piQty &
+            " from the function type")
+        let b = checkTm(pre.c2, ctx.ext(pre.name, d, bQty), globals, ms, supply, codBdy, ab)
+        enforceBinderQty(bQty, b, pre.loc, pre.name, ms)  # Issue #66
+        # DEBUG
+        # echo "DEBUG checkTm pkLam: pre.qty=", pre.qty, " name=", pre.name
+        tmLam(d, pre.name, b, pre.impl, pre.erased, zonkQty(ms, bQty), ab)
+      of pkPair:
+        let h = headTy(ms, expTy)
+        if h.kind == tSi:
+          let a = checkTm(pre.c1, ctx, globals, ms, supply, h.dom, ab)
+          let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(h.scope.bdy, 0, a), ab)
+          tmPair(a, b, h.scope.adv, h.scope.bdy)
+        elif h.kind == tMeta:
+          let (dom, codBdy, adv) = ensureSi(ms, pre.loc, expTy, ctx.len)
+          let a = checkTm(pre.c1, ctx, globals, ms, supply, dom, ab)
+          let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(codBdy, 0, a), ab)
+          tmPair(a, b, adv, codBdy)
+        else:
+          raise elabErr(pre.loc, "pair " & $pre &
+            " checked against a non-Sigma type")
+      of pkLet:
+        if pre.c1.isNil:
+          let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
+          let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply, ab)
+          unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
+          tmLet(v, vty, pre.name, b)
+        elif pretermHasQtyVar(pre.c1):
+          # Issue #66: quantity variables in the annotation are solved from
+          # the value; infer the value first, then elaborate the annotation.
+          let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
+          let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+          discard convElab(ms, supply, vty, aty, pre.loc, ctx, globals, tmC(cStar))
+          let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply, ab)
+          unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
+          tmLet(v, aty, pre.name, b)
+        else:
+          let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
+          let v = checkTm(pre.c2, ctx, globals, ms, supply, aty, ab)
+          let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply, ab)
+          unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
+          tmLet(v, aty, pre.name, b)
+      of pkAnn:
+        if pretermHasQtyVar(pre.c2):
+          # Issue #66: as for pkLet above — infer the term first so quantity
+          # variables in the ascribed type are solved before it elaborates.
+          let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
+          let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
+          discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
+          unifyElab(ms, ty, expTy, pre.loc)
+          t
+        else:
+          let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
+          let t = checkTm(pre.c1, ctx, globals, ms, supply, ty, ab)
+          unifyElab(ms, ty, expTy, pre.loc)
+          t
+      of pkBy:
+        # Experiment 6: run a built-in tactic against the expected type.
+        # (Custom tactic registration removed; built-ins are sufficient
+        # for the macro embedding path.)
+        case pre.name
+        of "refl": tacRefl(expTy, ctx, globals, ms, supply, pre.loc)
+        of "assumption": tacAssumption(expTy, ctx, globals, ms, supply, pre.loc)
+        of "arith":
+          # Experiment 41: run the refl tactic with the Nat arithmetic
+          # decision procedure installed for the dynamic extent of the
+          # tactic *and* the subsequent inferred-vs-expected check — both
+          # raise conversion goals through convElab, so both see the handler.
+          withConvHandler(ms, natArithHandler(globals, supply),
+            tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
+        else: raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
       else:
-        let ad = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-        unifyElab(ms, ad, dom, pre.loc)
-        ad
-    # Issue #66: subject-side quantity tracking (Γ ⊢ t :^q A). Reconcile
-    # the lambda's binder quantity with the expected Pi's before
-    # elaborating the body:
-    # - quantity variable: solve from the expected type (conflicting
-    #   solutions are an error); the body is then checked under it.
-    # - concrete and equal: fine.
-    # - concrete qOmega: the surface has no explicit-omega annotation, so
-    #   this means "unannotated" — inherit the expected quantity (the
-    #   Idris 2 behaviour for unannotated binders in checking mode).
-    # - concrete and different: an elaboration error.
-    var bQty: Qty
-    if pre.qty.isVar:
-      solveQVar(ms, pre.qty.vname, piQty, pre.loc)
-      flushQvarPending(ms, pre.qty.vname)
-      bQty = toQty(piQty)
-    elif pre.qty.q == piQty or pre.qty.q == qOmega:
-      bQty = toQty(if pre.qty.q == piQty: pre.qty.q else: piQty)
-    else:
-      raise elabErr(pre.loc, "lambda binder quantity " & $pre.qty.q &
-        " does not match the expected quantity " & $piQty &
-        " from the function type")
-    let b = checkTm(pre.c2, ctx.ext(pre.name, d, bQty), globals, ms, supply, codBdy, ab)
-    enforceBinderQty(bQty, b, pre.loc, pre.name, ms)  # Issue #66
-    # DEBUG
-    # echo "DEBUG checkTm pkLam: pre.qty=", pre.qty, " name=", pre.name
-    tmLam(d, pre.name, b, pre.impl, pre.erased, zonkQty(ms, bQty), ab)
-  of pkPair:
-    let h = headTy(ms, expTy)
-    if h.kind == tSi:
-      let a = checkTm(pre.c1, ctx, globals, ms, supply, h.dom, ab)
-      let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(h.scope.bdy, 0, a), ab)
-      tmPair(a, b, h.scope.adv, h.scope.bdy)
-    elif h.kind == tMeta:
-      let (dom, codBdy, adv) = ensureSi(ms, pre.loc, expTy, ctx.len)
-      let a = checkTm(pre.c1, ctx, globals, ms, supply, dom, ab)
-      let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(codBdy, 0, a), ab)
-      tmPair(a, b, adv, codBdy)
-    else:
-      raise elabErr(pre.loc, "pair " & $pre &
-        " checked against a non-Sigma type")
-  of pkLet:
-    if pre.c1.isNil:
-      let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
-      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply, ab)
-      unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
-      tmLet(v, vty, pre.name, b)
-    elif pretermHasQtyVar(pre.c1):
-      # Issue #66: quantity variables in the annotation are solved from
-      # the value; infer the value first, then elaborate the annotation.
-      let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
-      let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-      discard convElab(ms, supply, vty, aty, pre.loc, ctx, globals, tmC(cStar))
-      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply, ab)
-      unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
-      tmLet(v, aty, pre.name, b)
-    else:
-      let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-      let v = checkTm(pre.c2, ctx, globals, ms, supply, aty, ab)
-      let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply, ab)
-      unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
-      tmLet(v, aty, pre.name, b)
-  of pkAnn:
-    if pretermHasQtyVar(pre.c2):
-      # Issue #66: as for pkLet above — infer the term first so quantity
-      # variables in the ascribed type are solved before it elaborates.
-      let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
-      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
-      discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
-      unifyElab(ms, ty, expTy, pre.loc)
-      t
-    else:
-      let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
-      let t = checkTm(pre.c1, ctx, globals, ms, supply, ty, ab)
-      unifyElab(ms, ty, expTy, pre.loc)
-      t
-  of pkBy:
-    # Experiment 6: run a built-in tactic against the expected type.
-    # (Custom tactic registration removed; built-ins are sufficient
-    # for the macro embedding path.)
-    case pre.name
-    of "refl": tacRefl(expTy, ctx, globals, ms, supply, pre.loc)
-    of "assumption": tacAssumption(expTy, ctx, globals, ms, supply, pre.loc)
-    of "arith":
-      # Experiment 41: run the refl tactic with the Nat arithmetic
-      # decision procedure installed for the dynamic extent of the
-      # tactic *and* the subsequent inferred-vs-expected check — both
-      # raise conversion goals through convElab, so both see the handler.
-      withConvHandler(ms, natArithHandler(globals, supply),
-        tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
-    else: raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
-  else:
-    let (t, ty) = inferTm(pre, ctx, globals, ms, supply, ab)
-    discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar))
-    t
+        let (t, ty) = inferTm(pre, ctx, globals, ms, supply, ab)
+        discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar))
+        t
 
 type
   ElabDef* = object
@@ -2224,56 +2229,57 @@ proc genRedDecls(d: SurfDecl, elimName: string, methodNames: seq[string],
 
 proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
                   ms: var MetaStore, dataInfos: var Table[string, SurfDecl]) =
-  ## Experiment 5: desugar `data` to postulate/elim/red.
-  ## Records the SurfDecl in dataInfos for coverage checking (issue #32).
-  let loc = d.daloc
-  # name clash check for the generated binders
-  for p in d.params:
-    if p.name == "C":
-      raise elabErr(loc, "data parameter may not be named 'C' (reserved for the motive)")
-  for ctor in d.ctors:
-    for t in ctor.tele:
-      if t.name == "C":
-        raise elabErr(ctor.cloc, "constructor binder may not be named 'C' (reserved)")
-  # type former
-  elabPostulateDecl(d.dname, mkPis(d.params, d.indexTy, loc), loc,
-                    globals, supply, ms, false)
-  # constructors
-  for ctor in d.ctors:
-    discard extractIndices(ctor.retTy, d.dname, d.params.len, ctor.cloc)
-    var fullTele = d.params & ctor.tele
-    elabPostulateDecl(ctor.name, mkPis(fullTele, ctor.retTy, ctor.cloc),
-                      ctor.cloc, globals, supply, ms, false)
-  # eliminator
-  let elimName = elimNameFor(d.dname)
-  let (elimTy, methodNames) = genElimTy(d, loc)
-  elabPostulateDecl(elimName, elimTy, loc, globals, supply, ms, true)
-  # reduction rules
-  for rd in genRedDecls(d, elimName, methodNames, loc):
-    elabRedDecl(rd.lhs, rd.rhs, rd.rloc, globals, supply, ms)
-  # record for coverage checking (issue #32)
-  dataInfos[d.dname] = d
-  # Issue #80: register the constructor disjointness facts (noConfusion /
-  # noCycle) for unification. The constructors were just postulated above,
-  # so each name resolves to a tR global.
-  var ctorIds: seq[(int, string)] = @[]
-  for ctor in d.ctors:
-    let ctm = globals[ctor.name].tm
-    if ctm.kind != tR:
-      raise elabErr(ctor.cloc, "internal: constructor '" & ctor.name &
-        "' did not elaborate to a global reference")
-    ctorIds.add((ctm.refId, ctor.name))
-  ms.registerDataCtors(globals[d.dname].tm.refId, d.dname, ctorIds)
-  # Issue #115: register Nat's constructor refIds on the supply so the
-  # core's conversion can equate wNatLit(k) with suc-chains
-  # (definitionally equal per Issue #93). Carried on the supply (not a
-  # module global) so it works under compile-time macro evaluation.
-  if d.dname == "Nat":
-    for ctor in d.ctors:
-      let ctm = globals[ctor.name].tm
-      if ctm.kind == tR:
-        if ctor.name == "zero": supply.natZeroRefId = ctm.refId
-        elif ctor.name == "suc": supply.natSucRefId = ctm.refId
+  profilePhase(epData):
+      ## Experiment 5: desugar `data` to postulate/elim/red.
+      ## Records the SurfDecl in dataInfos for coverage checking (issue #32).
+      let loc = d.daloc
+      # name clash check for the generated binders
+      for p in d.params:
+        if p.name == "C":
+          raise elabErr(loc, "data parameter may not be named 'C' (reserved for the motive)")
+      for ctor in d.ctors:
+        for t in ctor.tele:
+          if t.name == "C":
+            raise elabErr(ctor.cloc, "constructor binder may not be named 'C' (reserved)")
+      # type former
+      elabPostulateDecl(d.dname, mkPis(d.params, d.indexTy, loc), loc,
+                        globals, supply, ms, false)
+      # constructors
+      for ctor in d.ctors:
+        discard extractIndices(ctor.retTy, d.dname, d.params.len, ctor.cloc)
+        var fullTele = d.params & ctor.tele
+        elabPostulateDecl(ctor.name, mkPis(fullTele, ctor.retTy, ctor.cloc),
+                          ctor.cloc, globals, supply, ms, false)
+      # eliminator
+      let elimName = elimNameFor(d.dname)
+      let (elimTy, methodNames) = genElimTy(d, loc)
+      elabPostulateDecl(elimName, elimTy, loc, globals, supply, ms, true)
+      # reduction rules
+      for rd in genRedDecls(d, elimName, methodNames, loc):
+        elabRedDecl(rd.lhs, rd.rhs, rd.rloc, globals, supply, ms)
+      # record for coverage checking (issue #32)
+      dataInfos[d.dname] = d
+      # Issue #80: register the constructor disjointness facts (noConfusion /
+      # noCycle) for unification. The constructors were just postulated above,
+      # so each name resolves to a tR global.
+      var ctorIds: seq[(int, string)] = @[]
+      for ctor in d.ctors:
+        let ctm = globals[ctor.name].tm
+        if ctm.kind != tR:
+          raise elabErr(ctor.cloc, "internal: constructor '" & ctor.name &
+            "' did not elaborate to a global reference")
+        ctorIds.add((ctm.refId, ctor.name))
+      ms.registerDataCtors(globals[d.dname].tm.refId, d.dname, ctorIds)
+      # Issue #115: register Nat's constructor refIds on the supply so the
+      # core's conversion can equate wNatLit(k) with suc-chains
+      # (definitionally equal per Issue #93). Carried on the supply (not a
+      # module global) so it works under compile-time macro evaluation.
+      if d.dname == "Nat":
+        for ctor in d.ctors:
+          let ctm = globals[ctor.name].tm
+          if ctm.kind == tR:
+            if ctor.name == "zero": supply.natZeroRefId = ctm.refId
+            elif ctor.name == "suc": supply.natSucRefId = ctm.refId
 
 # --- Capture-avoiding PreTerm substitution ----------------------------------
 # Needed by issue #32 (indexed clause defs): instantiating the motive and
@@ -3257,271 +3263,272 @@ proc compileMatrixNode(ctx: ClauseCtx, cols: seq[MatrixCol],
 proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
                      ms: var MetaStore,
                      dataInfos: var Table[string, SurfDecl]): ElabDef =
-  let loc = cd.loc
-  resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
-  # 1. Find the scrutinee's data type from the type signature.
-  let dataName = scrutineeDataName(cd.ty, dataInfos)
-  if dataName == "":
-    raise elabErr(loc, "'def' clauses require the first explicit argument " &
-      "to have a data type; none found in the type signature")
-  let dataDecl = dataInfos[dataName]
-  # Issue #80: constructor -> datatype map for the impossible-clause check.
-  var ctorToData = initTable[string, string]()
-  for dn, dd in dataInfos:
-    for ctor in dd.ctors: ctorToData[ctor.name] = dn
-  let elimName = elimNameFor(dataName)
-  if not globals.hasKey(elimName):
-    raise elabErr(loc, "eliminator '" & elimName & "' not found for data '" &
-      dataName & "'")
-  # 2. Count explicit Pis in the type to validate clause arity.
-  var nExplicit = 0
-  var cur = cd.ty
-  while cur.kind == pkPi:
-    if not cur.impl: inc nExplicit
-    cur = cur.c2
-  # 3. Build the top-level clause matrix: coverage + overlap over the
-  #    first-pattern column. Issue #78: the first pattern may be a
-  #    constructor pattern (possibly nested), a variable, or a wildcard
-  #    `_`. A variable/wildcard covers every constructor not already
-  #    covered; a clause covering nothing new is redundant.
-  for cl in cd.clauses:
-    if cl.pats.len != nExplicit:
-      raise elabErr(cl.cloc, "clause has " & $cl.pats.len & " patterns but " &
-        "the type has " & $nExplicit & " explicit arguments")
-  var topRows: seq[MatrixRow] = @[]
-  for si, cl in cd.clauses:
-    topRows.add(MatrixRow(pats: @[copyPre(cl.pats[0])] & copyPres(cl.pats[1 .. ^1]),
-                          rhs: copyPre(cl.rhs), cloc: cl.cloc, src: si,
-                          catchVar: ""))
-  let perCtorTop = checkMatrixCoverage(topRows, dataDecl, dataInfos, ctorToData,
-                                  "", loc)
-  # 4. Build the eliminator application as a PreTerm, then elaborate as a def.
-  #    Supports indexed families: the scrutinee's type may be
-  #    `D params idxs...` with variable indices.
-  #    Motive C := lam (i0:Idx0)... . lam (_:D params i0..). Pi (rest...). Ret[i:=idx]
-  #    Def:  proc name ... =
-  #            elimD params C m_0 ... m_(k-1) idxs... x_s rest...
-  #    The motive's trailing Pi and the methods' rest lambdas are all
-  #    explicit (the elaborator rejects explicit application to an implicit
-  #    Pi); the user-facing proc type keeps the declared implicit flags.
-  var tele: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
-  var tcur = cd.ty
-  while tcur.kind == pkPi:
-    tele.add((tcur.name, tcur.c1, tcur.impl))
-    tcur = tcur.c2
-  let retTy = tcur
-  # Issue #80: telescope binder names for the impossible-clause check's
-  # shadowing guard (a binder named like a constructor is not one).
-  var teleNames = initHashSet[string]()
-  for b in tele:
-    if b.name.len > 0: teleNames.incl(b.name)
-  # Binder hygiene: the compiler generates references to telescope binders
-  # (scrutinee, rest args) by name, so duplicate names would misresolve.
-  # "_" binders (from `->`) are unreferenceable — `_` parses as a hole —
-  # so freshening them is semantics-preserving and needs no substitution.
-  # Any other duplicate is rejected with a clear error.
-  var seenTele = initHashSet[string]()
-  var freshTele = 0
-  for i in 0 ..< tele.len:
-    let bn = tele[i].name
-    if bn.len == 0 or bn == "_":
-      if bn in seenTele:
-        var nn = "_'c" & $freshTele
-        inc freshTele
-        while nn in seenTele:
-          nn = "_'c" & $freshTele
-          inc freshTele
-        tele[i].name = nn
-      seenTele.incl(tele[i].name)
-    else:
-      if bn in seenTele:
-        raise elabErr(loc, "'def' clauses: duplicate binder name '" & bn &
-          "' in the type; rename one of them")
-      seenTele.incl(bn)
-  # Find scrutinee position (first explicit argument)
-  var sPos = -1
-  for i, b in tele:
-    if not b.impl:
-      sPos = i
-      break
-  if sPos < 0:
-    raise elabErr(loc, "'def' clauses need at least one explicit argument " &
-      "(the scrutinee)")
-  # Issue #78: per-clause pattern validation. Patterns (scrutinee and
-  # rest columns, at any nesting depth) must be constructor patterns,
-  # variables, or wildcards; pattern variables must be unique per clause
-  # and must not shadow telescope binders (the method body rebinds rest
-  # implicits by their tele names, so a colliding pattern variable would
-  # be misread).
-  var allPatVars = initHashSet[string]()
-  for cl in cd.clauses:
-    var pvars: seq[string] = @[]
-    collectPatVarSeq(cl.pats[0], ctorToData, pvars)
-    var pi = 1
-    # Issue #32 (kept through the #165 rewrite): a rest-column variable
-    # pattern may reuse the name of the telescope binder it binds (an
-    # identity pattern, e.g. what the LSP case-split generates); it must
-    # not shadow any *other* telescope binder.
-    var identRest = initHashSet[string]()
-    for ti in sPos + 1 .. tele.high:
-      if not tele[ti].impl:
-        let rp = cl.pats[pi]
-        let (rpIsCtor, _, _) = patKindOf(rp, ctorToData)
-        if not rpIsCtor and rp.kind != pkVar and rp.kind != pkHole:
-          raise elabErr(cl.cloc, "'def' clauses: pattern must be a " &
-            "constructor pattern, a variable, or a wildcard `_`")
-        collectPatVarSeq(rp, ctorToData, pvars)
-        if rp.kind == pkVar and rp.name == tele[ti].name:
-          identRest.incl(rp.name)
-        inc pi
-    var seen = initHashSet[string]()
-    for v in pvars:
-      if v in seen:
-        raise elabErr(cl.cloc, "duplicate pattern variable '" & v & "'")
-      seen.incl(v)
-      allPatVars.incl(v)
-    for v in pvars:
-      if v in teleNames and v != tele[sPos].name and v notin identRest:
-        raise elabErr(cl.cloc, "pattern variable '" & v &
-          "' shadows argument '" & v & "'; rename the pattern variable")
-  # Scrutinee domain analysis: `D params... idxs...`
-  let domS = tele[sPos].ty
-  let domSpine = flattenAppSpine(domS)
-  if domSpine.len == 0 or domSpine[0].kind != pkVar or
-     domSpine[0].name != dataName:
-    raise elabErr(loc, "scrutinee type must be '" & dataName &
-      "' applied to parameters and indices")
-  let (indexTele, _) = flattenPiPre(dataDecl.indexTy)
-  let nParams = dataDecl.params.len
-  if domSpine.len - 1 != nParams + indexTele.len:
-    raise elabErr(loc, "scrutinee type must apply '" & dataName & "' to " &
-      $nParams & " parameter(s) and " & $indexTele.len & " index/indices")
-  var paramTerms: seq[PreTerm] = @[]
-  for i in 1 .. nParams:
-    paramTerms.add(domSpine[i])
-  var scrIdxTerms: seq[PreTerm] = @[]
-  var scrIdxVars: seq[string] = @[]
-  for i in 1 + nParams ..< domSpine.len:
-    let t = domSpine[i]
-    if t.kind != pkVar:
-      raise elabErr(loc, "'def' clauses: scrutinee index must be a " &
-        "variable (found '" & $t & "')")
-    if t.name in scrIdxVars:
-      raise elabErr(loc, "'def' clauses: duplicate scrutinee index " &
-        "variable '" & t.name & "'")
-    scrIdxTerms.add(t)
-    scrIdxVars.add(t.name)
-  # Parameter substitution: data-decl param names := actual param terms
-  # (from the scrutinee's type; identity in the common case where the
-  # def type binds the same names).
-  var paramSubst: seq[(string, PreTerm)] = @[]
-  for i, p in dataDecl.params:
-    paramSubst.add((p.name, paramTerms[i]))
-  var fresh = 0
-  # Fresh motive index binder names, avoiding every name in sight.
-  var usedNames = allNamesPre(cd.ty)
-  for cl0 in cd.clauses:
-    for p in cl0.pats: usedNames = usedNames + allNamesPre(p)
-    usedNames = usedNames + allNamesPre(cl0.rhs)
-  for ctor0 in dataDecl.ctors:
-    for t in ctor0.tele: usedNames = usedNames + allNamesPre(t.ty)
-    usedNames = usedNames + allNamesPre(ctor0.retTy)
-  var motiveIdxNames: seq[string] = @[]
-  for i in 0 ..< indexTele.len:
-    var nm = "midx" & $i
-    while nm in usedNames:
-      nm = "midx" & $i & "_" & $fresh
-      inc fresh
-    usedNames.incl(nm)
-    motiveIdxNames.add(nm)
-  # Build motive C := lam (i0:Idx0)... . lam (_:D params i0..). cBody
-  # where cBody = Pi (rest...). Ret with scrutinee index vars := i0...
-  var midxSubst: seq[(string, PreTerm)] = @[]
-  for j, v in scrIdxVars:
-    midxSubst.add((v, mkVar(motiveIdxNames[j], loc)))
-  var cBody = substPreN(retTy, midxSubst, fresh)
-  let cBodyRet = copyPre(cBody)  # cBody with the `Pi rest` prefix stripped
-  for ti in countdown(tele.high, sPos + 1):
-    let bn = if tele[ti].name.len > 0: tele[ti].name else: "x" & $ti
-    cBody = mkPi(bn, substPreN(tele[ti].ty, midxSubst, fresh), cBody, loc)
-  var scrTyMotive = mkVar(dataName, loc)
-  for pt in paramTerms: scrTyMotive = mkApp(scrTyMotive, pt, loc)
-  for mn in motiveIdxNames: scrTyMotive = mkApp(scrTyMotive, mkVar(mn, loc), loc)
-  var motive = mkLam("_motive", scrTyMotive, cBody, loc)
-  # Issue #112: later index domains may mention earlier index binders
-  # (dependent index telescopes); the motive binds midx0, midx1, ...,
-  # so substitute old->new across the telescope in dependency order
-  # (a no-op for non-dependent telescopes).
-  var idxSubst: seq[(string, PreTerm)] = @[]
-  var indexTysSub: seq[PreTerm] = @[]
-  for j in 0 ..< indexTele.len:
-    indexTysSub.add(substPreN(substPreN(indexTele[j].ty, paramSubst, fresh),
-                              idxSubst, fresh))
-    idxSubst.add((indexTele[j].name, mkVar(motiveIdxNames[j], loc)))
-  for j in countdown(motiveIdxNames.high, 0):
-    motive = mkLam(motiveIdxNames[j], indexTysSub[j], motive, loc)
-  # Build methods, one per constructor (in dataDecl order), via the
-  # recursive clause-matrix compiler (issue #78). Nested constructor
-  # patterns become nested eliminator applications inside method bodies.
-  let ctx = ClauseCtx(
-    cdName: cd.name, loc: loc, dataInfos: dataInfos, ctorToData: ctorToData,
-    tele: tele, teleNames: teleNames, sPos: sPos, paramSubst: paramSubst,
-    motiveIdxNames: motiveIdxNames, cBody: cBody, cBodyRet: cBodyRet,
-    scrIdxVars: scrIdxVars,
-    usedNames: usedNames, allPatVars: allPatVars, fresh: fresh, ihFresh: 0,
-    recPairs: @[])
-  let scrutBinder = if tele[sPos].name.len > 0: tele[sPos].name
-                    else: "x" & $sPos
-  let topCol = MatrixCol(term: mkVar(scrutBinder, loc), dataName: dataName,
-                         isData: true, params: paramTerms,
-                         idxTerms: scrIdxTerms, argTy: domS)
-  var methods: seq[PreTerm] = @[]
-  for ci, ctor in dataDecl.ctors:
-    ctx.recPairs = @[]
-    var body = compileBranch(ctx, dataDecl, ci, @[topCol], perCtorTop[ci],
-                             TailCtx(), false, "")
-    # Rewrite structural recursive calls on pattern binders (at any
-    # nesting depth) to IH applications.
-    for rp in ctx.recPairs:
-      body = replaceRecCalls(body, cd.name, rp.rv, rp.ihn, rp.nested)
-    # Issue #36: any self-reference surviving IH-rewriting is a
-    # non-structural recursive call — reject with a termination error.
-    let fc = if perCtorTop[ci].len > 0: perCtorTop[ci][0].cloc else: loc
-    checkClauseTermination(body, cd.name, fc)
-    methods.add(body)
-  # Write back the consumed fresh-name state.
-  fresh = ctx.fresh
-  usedNames = ctx.usedNames
+  profilePhase(epClause):
+      let loc = cd.loc
+      resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
+      # 1. Find the scrutinee's data type from the type signature.
+      let dataName = scrutineeDataName(cd.ty, dataInfos)
+      if dataName == "":
+        raise elabErr(loc, "'def' clauses require the first explicit argument " &
+          "to have a data type; none found in the type signature")
+      let dataDecl = dataInfos[dataName]
+      # Issue #80: constructor -> datatype map for the impossible-clause check.
+      var ctorToData = initTable[string, string]()
+      for dn, dd in dataInfos:
+        for ctor in dd.ctors: ctorToData[ctor.name] = dn
+      let elimName = elimNameFor(dataName)
+      if not globals.hasKey(elimName):
+        raise elabErr(loc, "eliminator '" & elimName & "' not found for data '" &
+          dataName & "'")
+      # 2. Count explicit Pis in the type to validate clause arity.
+      var nExplicit = 0
+      var cur = cd.ty
+      while cur.kind == pkPi:
+        if not cur.impl: inc nExplicit
+        cur = cur.c2
+      # 3. Build the top-level clause matrix: coverage + overlap over the
+      #    first-pattern column. Issue #78: the first pattern may be a
+      #    constructor pattern (possibly nested), a variable, or a wildcard
+      #    `_`. A variable/wildcard covers every constructor not already
+      #    covered; a clause covering nothing new is redundant.
+      for cl in cd.clauses:
+        if cl.pats.len != nExplicit:
+          raise elabErr(cl.cloc, "clause has " & $cl.pats.len & " patterns but " &
+            "the type has " & $nExplicit & " explicit arguments")
+      var topRows: seq[MatrixRow] = @[]
+      for si, cl in cd.clauses:
+        topRows.add(MatrixRow(pats: @[copyPre(cl.pats[0])] & copyPres(cl.pats[1 .. ^1]),
+                              rhs: copyPre(cl.rhs), cloc: cl.cloc, src: si,
+                              catchVar: ""))
+      let perCtorTop = checkMatrixCoverage(topRows, dataDecl, dataInfos, ctorToData,
+                                      "", loc)
+      # 4. Build the eliminator application as a PreTerm, then elaborate as a def.
+      #    Supports indexed families: the scrutinee's type may be
+      #    `D params idxs...` with variable indices.
+      #    Motive C := lam (i0:Idx0)... . lam (_:D params i0..). Pi (rest...). Ret[i:=idx]
+      #    Def:  proc name ... =
+      #            elimD params C m_0 ... m_(k-1) idxs... x_s rest...
+      #    The motive's trailing Pi and the methods' rest lambdas are all
+      #    explicit (the elaborator rejects explicit application to an implicit
+      #    Pi); the user-facing proc type keeps the declared implicit flags.
+      var tele: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
+      var tcur = cd.ty
+      while tcur.kind == pkPi:
+        tele.add((tcur.name, tcur.c1, tcur.impl))
+        tcur = tcur.c2
+      let retTy = tcur
+      # Issue #80: telescope binder names for the impossible-clause check's
+      # shadowing guard (a binder named like a constructor is not one).
+      var teleNames = initHashSet[string]()
+      for b in tele:
+        if b.name.len > 0: teleNames.incl(b.name)
+      # Binder hygiene: the compiler generates references to telescope binders
+      # (scrutinee, rest args) by name, so duplicate names would misresolve.
+      # "_" binders (from `->`) are unreferenceable — `_` parses as a hole —
+      # so freshening them is semantics-preserving and needs no substitution.
+      # Any other duplicate is rejected with a clear error.
+      var seenTele = initHashSet[string]()
+      var freshTele = 0
+      for i in 0 ..< tele.len:
+        let bn = tele[i].name
+        if bn.len == 0 or bn == "_":
+          if bn in seenTele:
+            var nn = "_'c" & $freshTele
+            inc freshTele
+            while nn in seenTele:
+              nn = "_'c" & $freshTele
+              inc freshTele
+            tele[i].name = nn
+          seenTele.incl(tele[i].name)
+        else:
+          if bn in seenTele:
+            raise elabErr(loc, "'def' clauses: duplicate binder name '" & bn &
+              "' in the type; rename one of them")
+          seenTele.incl(bn)
+      # Find scrutinee position (first explicit argument)
+      var sPos = -1
+      for i, b in tele:
+        if not b.impl:
+          sPos = i
+          break
+      if sPos < 0:
+        raise elabErr(loc, "'def' clauses need at least one explicit argument " &
+          "(the scrutinee)")
+      # Issue #78: per-clause pattern validation. Patterns (scrutinee and
+      # rest columns, at any nesting depth) must be constructor patterns,
+      # variables, or wildcards; pattern variables must be unique per clause
+      # and must not shadow telescope binders (the method body rebinds rest
+      # implicits by their tele names, so a colliding pattern variable would
+      # be misread).
+      var allPatVars = initHashSet[string]()
+      for cl in cd.clauses:
+        var pvars: seq[string] = @[]
+        collectPatVarSeq(cl.pats[0], ctorToData, pvars)
+        var pi = 1
+        # Issue #32 (kept through the #165 rewrite): a rest-column variable
+        # pattern may reuse the name of the telescope binder it binds (an
+        # identity pattern, e.g. what the LSP case-split generates); it must
+        # not shadow any *other* telescope binder.
+        var identRest = initHashSet[string]()
+        for ti in sPos + 1 .. tele.high:
+          if not tele[ti].impl:
+            let rp = cl.pats[pi]
+            let (rpIsCtor, _, _) = patKindOf(rp, ctorToData)
+            if not rpIsCtor and rp.kind != pkVar and rp.kind != pkHole:
+              raise elabErr(cl.cloc, "'def' clauses: pattern must be a " &
+                "constructor pattern, a variable, or a wildcard `_`")
+            collectPatVarSeq(rp, ctorToData, pvars)
+            if rp.kind == pkVar and rp.name == tele[ti].name:
+              identRest.incl(rp.name)
+            inc pi
+        var seen = initHashSet[string]()
+        for v in pvars:
+          if v in seen:
+            raise elabErr(cl.cloc, "duplicate pattern variable '" & v & "'")
+          seen.incl(v)
+          allPatVars.incl(v)
+        for v in pvars:
+          if v in teleNames and v != tele[sPos].name and v notin identRest:
+            raise elabErr(cl.cloc, "pattern variable '" & v &
+              "' shadows argument '" & v & "'; rename the pattern variable")
+      # Scrutinee domain analysis: `D params... idxs...`
+      let domS = tele[sPos].ty
+      let domSpine = flattenAppSpine(domS)
+      if domSpine.len == 0 or domSpine[0].kind != pkVar or
+         domSpine[0].name != dataName:
+        raise elabErr(loc, "scrutinee type must be '" & dataName &
+          "' applied to parameters and indices")
+      let (indexTele, _) = flattenPiPre(dataDecl.indexTy)
+      let nParams = dataDecl.params.len
+      if domSpine.len - 1 != nParams + indexTele.len:
+        raise elabErr(loc, "scrutinee type must apply '" & dataName & "' to " &
+          $nParams & " parameter(s) and " & $indexTele.len & " index/indices")
+      var paramTerms: seq[PreTerm] = @[]
+      for i in 1 .. nParams:
+        paramTerms.add(domSpine[i])
+      var scrIdxTerms: seq[PreTerm] = @[]
+      var scrIdxVars: seq[string] = @[]
+      for i in 1 + nParams ..< domSpine.len:
+        let t = domSpine[i]
+        if t.kind != pkVar:
+          raise elabErr(loc, "'def' clauses: scrutinee index must be a " &
+            "variable (found '" & $t & "')")
+        if t.name in scrIdxVars:
+          raise elabErr(loc, "'def' clauses: duplicate scrutinee index " &
+            "variable '" & t.name & "'")
+        scrIdxTerms.add(t)
+        scrIdxVars.add(t.name)
+      # Parameter substitution: data-decl param names := actual param terms
+      # (from the scrutinee's type; identity in the common case where the
+      # def type binds the same names).
+      var paramSubst: seq[(string, PreTerm)] = @[]
+      for i, p in dataDecl.params:
+        paramSubst.add((p.name, paramTerms[i]))
+      var fresh = 0
+      # Fresh motive index binder names, avoiding every name in sight.
+      var usedNames = allNamesPre(cd.ty)
+      for cl0 in cd.clauses:
+        for p in cl0.pats: usedNames = usedNames + allNamesPre(p)
+        usedNames = usedNames + allNamesPre(cl0.rhs)
+      for ctor0 in dataDecl.ctors:
+        for t in ctor0.tele: usedNames = usedNames + allNamesPre(t.ty)
+        usedNames = usedNames + allNamesPre(ctor0.retTy)
+      var motiveIdxNames: seq[string] = @[]
+      for i in 0 ..< indexTele.len:
+        var nm = "midx" & $i
+        while nm in usedNames:
+          nm = "midx" & $i & "_" & $fresh
+          inc fresh
+        usedNames.incl(nm)
+        motiveIdxNames.add(nm)
+      # Build motive C := lam (i0:Idx0)... . lam (_:D params i0..). cBody
+      # where cBody = Pi (rest...). Ret with scrutinee index vars := i0...
+      var midxSubst: seq[(string, PreTerm)] = @[]
+      for j, v in scrIdxVars:
+        midxSubst.add((v, mkVar(motiveIdxNames[j], loc)))
+      var cBody = substPreN(retTy, midxSubst, fresh)
+      let cBodyRet = copyPre(cBody)  # cBody with the `Pi rest` prefix stripped
+      for ti in countdown(tele.high, sPos + 1):
+        let bn = if tele[ti].name.len > 0: tele[ti].name else: "x" & $ti
+        cBody = mkPi(bn, substPreN(tele[ti].ty, midxSubst, fresh), cBody, loc)
+      var scrTyMotive = mkVar(dataName, loc)
+      for pt in paramTerms: scrTyMotive = mkApp(scrTyMotive, pt, loc)
+      for mn in motiveIdxNames: scrTyMotive = mkApp(scrTyMotive, mkVar(mn, loc), loc)
+      var motive = mkLam("_motive", scrTyMotive, cBody, loc)
+      # Issue #112: later index domains may mention earlier index binders
+      # (dependent index telescopes); the motive binds midx0, midx1, ...,
+      # so substitute old->new across the telescope in dependency order
+      # (a no-op for non-dependent telescopes).
+      var idxSubst: seq[(string, PreTerm)] = @[]
+      var indexTysSub: seq[PreTerm] = @[]
+      for j in 0 ..< indexTele.len:
+        indexTysSub.add(substPreN(substPreN(indexTele[j].ty, paramSubst, fresh),
+                                  idxSubst, fresh))
+        idxSubst.add((indexTele[j].name, mkVar(motiveIdxNames[j], loc)))
+      for j in countdown(motiveIdxNames.high, 0):
+        motive = mkLam(motiveIdxNames[j], indexTysSub[j], motive, loc)
+      # Build methods, one per constructor (in dataDecl order), via the
+      # recursive clause-matrix compiler (issue #78). Nested constructor
+      # patterns become nested eliminator applications inside method bodies.
+      let ctx = ClauseCtx(
+        cdName: cd.name, loc: loc, dataInfos: dataInfos, ctorToData: ctorToData,
+        tele: tele, teleNames: teleNames, sPos: sPos, paramSubst: paramSubst,
+        motiveIdxNames: motiveIdxNames, cBody: cBody, cBodyRet: cBodyRet,
+        scrIdxVars: scrIdxVars,
+        usedNames: usedNames, allPatVars: allPatVars, fresh: fresh, ihFresh: 0,
+        recPairs: @[])
+      let scrutBinder = if tele[sPos].name.len > 0: tele[sPos].name
+                        else: "x" & $sPos
+      let topCol = MatrixCol(term: mkVar(scrutBinder, loc), dataName: dataName,
+                             isData: true, params: paramTerms,
+                             idxTerms: scrIdxTerms, argTy: domS)
+      var methods: seq[PreTerm] = @[]
+      for ci, ctor in dataDecl.ctors:
+        ctx.recPairs = @[]
+        var body = compileBranch(ctx, dataDecl, ci, @[topCol], perCtorTop[ci],
+                                 TailCtx(), false, "")
+        # Rewrite structural recursive calls on pattern binders (at any
+        # nesting depth) to IH applications.
+        for rp in ctx.recPairs:
+          body = replaceRecCalls(body, cd.name, rp.rv, rp.ihn, rp.nested)
+        # Issue #36: any self-reference surviving IH-rewriting is a
+        # non-structural recursive call — reject with a termination error.
+        let fc = if perCtorTop[ci].len > 0: perCtorTop[ci][0].cloc else: loc
+        checkClauseTermination(body, cd.name, fc)
+        methods.add(body)
+      # Write back the consumed fresh-name state.
+      fresh = ctx.fresh
+      usedNames = ctx.usedNames
 
-  # Build the full application:
-  #   elimD params... C m_0 ... m_(k-1) idxs... x_s rest...
-  var app = mkVar(elimName, loc)
-  for i, p in dataDecl.params:
-    if not p.impl:
-      app = mkApp(app, paramTerms[i], loc)
-    # implicit params: the elaborator inserts metas, solved by unification
-    # against the motive/method types below
-  app = mkApp(app, motive, loc)
-  for m in methods: app = mkApp(app, m, loc)
-  for it in scrIdxTerms: app = mkApp(app, it, loc)
-  var procTele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]] = @[]
-  var restVars: seq[string] = @[]
-  for i, b in tele:
-    let bn = if b.name.len > 0: b.name else: "x" & $i
-    # The proc syntax supports implicits; keep them.
-    # Note: data tele doesn't carry qty yet; default to qOmega
-    procTele.add((bn, b.ty, b.impl, false, Qty(isVar: false, q: qOmega)))
-    if i > sPos:
-      restVars.add(bn)
-  # scrutinee first, then the remaining telescope in order
-  # (implicit rest args applied explicitly: the motive tail is all-explicit)
-  app = mkApp(app, mkVar(procTele[sPos].name, loc), loc)
-  for rv in restVars:
-    app = mkApp(app, mkVar(rv, loc), loc)
-  # Build the SurfDef and elaborate
-  let sdef = SurfDef(name: cd.name, tele: procTele, retTy: retTy, body: app,
-                     loc: loc)
-  elabDefDecl(sdef, globals, supply, ms)
+      # Build the full application:
+      #   elimD params... C m_0 ... m_(k-1) idxs... x_s rest...
+      var app = mkVar(elimName, loc)
+      for i, p in dataDecl.params:
+        if not p.impl:
+          app = mkApp(app, paramTerms[i], loc)
+        # implicit params: the elaborator inserts metas, solved by unification
+        # against the motive/method types below
+      app = mkApp(app, motive, loc)
+      for m in methods: app = mkApp(app, m, loc)
+      for it in scrIdxTerms: app = mkApp(app, it, loc)
+      var procTele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]] = @[]
+      var restVars: seq[string] = @[]
+      for i, b in tele:
+        let bn = if b.name.len > 0: b.name else: "x" & $i
+        # The proc syntax supports implicits; keep them.
+        # Note: data tele doesn't carry qty yet; default to qOmega
+        procTele.add((bn, b.ty, b.impl, false, Qty(isVar: false, q: qOmega)))
+        if i > sPos:
+          restVars.add(bn)
+      # scrutinee first, then the remaining telescope in order
+      # (implicit rest args applied explicitly: the motive tail is all-explicit)
+      app = mkApp(app, mkVar(procTele[sPos].name, loc), loc)
+      for rv in restVars:
+        app = mkApp(app, mkVar(rv, loc), loc)
+      # Build the SurfDef and elaborate
+      let sdef = SurfDef(name: cd.name, tele: procTele, retTy: retTy, body: app,
+                         loc: loc)
+      elabDefDecl(sdef, globals, supply, ms)
 
 proc elabInterfaceDecl(name: string, loc: Loc,
                        globals: var Globals, supply: var Supply,
@@ -3595,27 +3602,28 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
 
 proc elabCheckStateG*(src: string, handlers: seq[ConvHandler] = @[]):
     tuple[defs: seq[ElabDef], globals: Globals, ms: MetaStore] =
-  ## Issue #62: like elabCheckState, but also returns the elaborator's
-  ## global table (name -> GEntry with the tR node and zonked type) so the
-  ## independent audit kernel can build its own KernelGlobals over the
-  ## same refIds. Raises ParseError (carries loc) or ElabError (carries loc).
-  let decls = parseProgram(src)
-  var globals: Globals = initTable[string, GEntry]()
-  var supply = Supply()
-  var ms = initMetaStore()  # includes fresh convCache (Experiment 10)
-  for h in handlers: ms.convHandlers.add(h)
-  var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
-  var defs: seq[ElabDef] = @[]
-  for d in decls:
-    let eds = elabDecl(d, globals, supply, ms, dataInfos)
-    for ed in eds:
-      # Issue #64: verify linear/erased usage in the elaborated term
-      try:
-        checkUsage(ed.tmTm)
-      except UsageError as e:
-        raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
-      defs.add(ed)
-  (defs, globals, ms)
+  profilePhase(epOther):
+      ## Issue #62: like elabCheckState, but also returns the elaborator's
+      ## global table (name -> GEntry with the tR node and zonked type) so the
+      ## independent audit kernel can build its own KernelGlobals over the
+      ## same refIds. Raises ParseError (carries loc) or ElabError (carries loc).
+      let decls = parseProgram(src)
+      var globals: Globals = initTable[string, GEntry]()
+      var supply = Supply()
+      var ms = initMetaStore()  # includes fresh convCache (Experiment 10)
+      for h in handlers: ms.convHandlers.add(h)
+      var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
+      var defs: seq[ElabDef] = @[]
+      for d in decls:
+        let eds = elabDecl(d, globals, supply, ms, dataInfos)
+        for ed in eds:
+          # Issue #64: verify linear/erased usage in the elaborated term
+          try:
+            checkUsage(ed.tmTm)
+          except UsageError as e:
+            raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
+          defs.add(ed)
+      (defs, globals, ms)
 
 proc elabCheckState*(src: string, handlers: seq[ConvHandler] = @[]):
     tuple[defs: seq[ElabDef], ms: MetaStore] =
@@ -3635,42 +3643,43 @@ proc elabCheck*(src: string, handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
 
 proc elabCheckHoles*(src: string): tuple[defs: seq[ElabDef], ms: MetaStore,
     errLoc: Loc, errMsg: string] =
-  ## Issue #58: hole-tolerant elaboration for tooling (LSP hover).
-  ## Like elabCheckState, but unsolved metavariables (surface `_` holes)
-  ## do not fail the declaration: open defs are registered postulate-style
-  ## and the core re-check is skipped for them. Elaborates decl by decl
-  ## and stops at the first declaration that fails for any *other* reason,
-  ## returning the accumulated state so holes from the successful prefix
-  ## stay queryable; the first failure is reported via errLoc/errMsg
-  ## (both empty when the whole document elaborated). Raises ParseError
-  ## as usual (an unparseable document has no meaningful hole state).
-  let decls = parseProgram(src)
-  var globals: Globals = initTable[string, GEntry]()
-  var supply = Supply()
-  var ms = initMetaStore()
-  ms.allowHoles = true
-  var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
-  var defs: seq[ElabDef] = @[]
-  var errLoc = noLoc
-  var errMsg = ""
-  for d in decls:
-    try:
-      let eds = elabDecl(d, globals, supply, ms, dataInfos)
-      for ed in eds:
-        # checkUsage is meta-safe (tMeta is a no-op case); open defs keep
-        # their holes in tmTm.
+  profilePhase(epOther):
+      ## Issue #58: hole-tolerant elaboration for tooling (LSP hover).
+      ## Like elabCheckState, but unsolved metavariables (surface `_` holes)
+      ## do not fail the declaration: open defs are registered postulate-style
+      ## and the core re-check is skipped for them. Elaborates decl by decl
+      ## and stops at the first declaration that fails for any *other* reason,
+      ## returning the accumulated state so holes from the successful prefix
+      ## stay queryable; the first failure is reported via errLoc/errMsg
+      ## (both empty when the whole document elaborated). Raises ParseError
+      ## as usual (an unparseable document has no meaningful hole state).
+      let decls = parseProgram(src)
+      var globals: Globals = initTable[string, GEntry]()
+      var supply = Supply()
+      var ms = initMetaStore()
+      ms.allowHoles = true
+      var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
+      var defs: seq[ElabDef] = @[]
+      var errLoc = noLoc
+      var errMsg = ""
+      for d in decls:
         try:
-          checkUsage(ed.tmTm)
-        except UsageError as e:
-          raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
-        defs.add(ed)
-    except ElabError as e:
-      # A partially elaborated decl may have recorded holes before the
-      # failure; keep the successful prefix and stop.
-      errLoc = e.loc
-      errMsg = e.msg
-      break
-  (defs, ms, errLoc, errMsg)
+          let eds = elabDecl(d, globals, supply, ms, dataInfos)
+          for ed in eds:
+            # checkUsage is meta-safe (tMeta is a no-op case); open defs keep
+            # their holes in tmTm.
+            try:
+              checkUsage(ed.tmTm)
+            except UsageError as e:
+              raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
+            defs.add(ed)
+        except ElabError as e:
+          # A partially elaborated decl may have recorded holes before the
+          # failure; keep the successful prefix and stop.
+          errLoc = e.loc
+          errMsg = e.msg
+          break
+      (defs, ms, errLoc, errMsg)
 
 # --- Issue #49: multi-file programs via `import` ------------------------------
 
@@ -3707,31 +3716,32 @@ proc elabFile*(drv: var ModuleDriver, path: string,
 
 proc elabDeclsDir*(drv: var ModuleDriver, decls: seq[SurfDecl],
                    baseDir: string, srcLabel: string): seq[ElabDef] =
-  ## Elaborate `decls` into the driver's environment, recursively
-  ## elaborating `import` declarations first. Import paths resolve relative
-  ## to `baseDir` (the importing source's directory); `srcLabel` names the
-  ## importing source in error messages (a file path, or "<eponymBlock>").
-  ## Returns the defs declared by `decls` themselves; imported definitions
-  ## live in `drv.globals`. Raises ElabError on cycles, missing files, or
-  ## elaboration failures.
-  for d in decls:
-    if d.kind == dkImport:
-      let target = if isAbsolute(d.ipath): d.ipath
-                   else: baseDir / d.ipath
-      if not fileExists(target):
-        raise elabErr(d.iloc, "import \"" & d.ipath & "\": file not found " &
-          "(resolved to '" & target & "', imported from '" & srcLabel & "')")
-      discard drv.elabFile(target, d.iloc)
-    else:
-      let eds = elabDecl(d, drv.globals, drv.supply, drv.ms, drv.dataInfos)
-      for ed in eds:
-        # Issue #64: verify linear/erased usage in the elaborated term
-        try:
-          checkUsage(ed.tmTm)
-        except UsageError as e:
-          raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
-        result.add(ed)
-        drv.allDefs[ed.name] = ed  # issue #62: log imported defs too
+  profilePhase(epOther):
+      ## Elaborate `decls` into the driver's environment, recursively
+      ## elaborating `import` declarations first. Import paths resolve relative
+      ## to `baseDir` (the importing source's directory); `srcLabel` names the
+      ## importing source in error messages (a file path, or "<eponymBlock>").
+      ## Returns the defs declared by `decls` themselves; imported definitions
+      ## live in `drv.globals`. Raises ElabError on cycles, missing files, or
+      ## elaboration failures.
+      for d in decls:
+        if d.kind == dkImport:
+          let target = if isAbsolute(d.ipath): d.ipath
+                       else: baseDir / d.ipath
+          if not fileExists(target):
+            raise elabErr(d.iloc, "import \"" & d.ipath & "\": file not found " &
+              "(resolved to '" & target & "', imported from '" & srcLabel & "')")
+          discard drv.elabFile(target, d.iloc)
+        else:
+          let eds = elabDecl(d, drv.globals, drv.supply, drv.ms, drv.dataInfos)
+          for ed in eds:
+            # Issue #64: verify linear/erased usage in the elaborated term
+            try:
+              checkUsage(ed.tmTm)
+            except UsageError as e:
+              raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
+            result.add(ed)
+            drv.allDefs[ed.name] = ed  # issue #62: log imported defs too
 
 proc elabFile*(drv: var ModuleDriver, path: string,
                importLoc: Loc = noLoc): seq[ElabDef] =
