@@ -2522,10 +2522,23 @@
     statements; =nnkDotExpr= maps to =(p).x= (LHS parenthesized so the
     dot cannot rebind to a call argument).
 
-  Not yet done: name-aware pretty-printing (records still render as raw
-  =Sig=/pairs; issue step 4), record parameters (=record Vec (A : ?):=),
+  Not yet done: record parameters (=record Vec (A : ?):=),
   and the =Point.y= global name is internal-only (surface =.= always
   parses as projection).
+
+  Update (step 4, pretty-printing): =prettyTerm= now takes the record
+  table (=ms.recordFields=, default empty) and renders an iterated Sigma
+  whose binder names and =1= tail match a registered record skeleton as
+  =Point{x: Nat, y: Nat}=, including dependent fields
+  (=DepR{n: Nat, v: ((Vec n) Nat)}=). Recognition is purely syntactic —
+  records are *transparent* iterated Sigmas by design, so the skeleton
+  (binder names + unit tail) is the only identifier; =tR= references
+  already printed by name via =refNames=. Constructor applications and
+  projections were already named (=(mkPoint 3)=, =(Point.x p)=), so the
+  Sigma case was the last raw surface. Two records sharing an identical
+  field-name list are pathological; first registered wins. Threaded
+  through the convElab mismatch errors, LSP hover, and the REPL, with
+  tests in the elab suite (positive, dependent, and negative cases).
 
   Evidence: =examples/ep/26-records.ep= and
   =examples/embedded/records.nim= elaborate and run (projection

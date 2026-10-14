@@ -192,9 +192,33 @@ proc tacRefl(goal: Term, ctx: Ctx, globals: Globals,
 
 # (initTactics removed: built-ins are dispatched directly in pkBy case)
 
-proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
+proc recordSkeletonName(t: Term, records: Table[string, seq[string]]): string =
+  ## Issue #37, step 4: if `t` is an iterated Sigma whose binder names end
+  ## in the unit type and match a registered record declaration's field
+  ## list, return the record name; else "". Lets the pretty-printer render
+  ## record types with field names instead of raw `Si` nesting. (Records
+  ## are transparent iterated Sigmas by design, so only the skeleton —
+  ## binder names plus the `1` tail — identifies them. Two records sharing
+  ## an identical field-name list are pathological; the first registered
+  ## wins.)
+  if t.isNil or t.kind != tSi or records.len == 0: return ""
+  var names: seq[string] = @[]
+  var cur = t
+  while not cur.isNil and cur.kind == tSi:
+    names.add(cur.scope.adv)
+    cur = cur.scope.bdy
+  if cur.isNil or cur.kind != tC or cur.c != cOne: return ""
+  for rname, fields in records:
+    if fields == names: return rname
+  ""
+
+proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string],
+                records: Table[string, seq[string]] =
+                  initTable[string, seq[string]]()): string =
   ## User-facing pretty-printer: uses names from the context and globals
-  ## instead of internal IDs (R1, V6, ?m3).
+  ## instead of internal IDs (R1, V6, ?m3). `records` maps record names to
+  ## field names (MetaStore.recordFields); an iterated Sigma matching a
+  ## record skeleton prints as `R{f: T, ...}` rather than raw `Si`.
   if t == nil: return "<nil>"
   case t.kind
   of tR:
@@ -206,37 +230,57 @@ proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
   of tInt: $t.intVal
   of tNatLit: $t.natLitVal
   of tPrim: $t.primOp
-  of tPi, tSi, tLam:
+  of tSi:
+    # Issue #37, step 4: a Sigma matching a registered record skeleton
+    # prints with field names (`Point{x: Nat, y: Nat}`), never as raw `Si`.
+    let rname = recordSkeletonName(t, records)
+    if rname != "":
+      var parts: seq[string] = @[]
+      var cur = t
+      var ctx2 = ctx
+      while cur.kind == tSi:
+        let adv = if cur.scope.adv != "_": cur.scope.adv else: "_"
+        parts.add(adv & ": " &
+          prettyTerm(cur.dom, ctx2, refNames, records))
+        ctx2 = @[CtxEntry(name: adv, ty: cur.dom, qty: cur.qty)] & ctx2
+        cur = cur.scope.bdy
+      rname & "{" & parts.join(", ") & "}"
+    else:
+      let adv = if t.scope.adv != "_": t.scope.adv else: "_"
+      let kindStr =
+        if t.erased: "Si(0 "
+        elif t.impl: "Si{"
+        else: "Si("
+      let ctx2 = @[CtxEntry(name: adv, ty: t.dom, qty: t.qty)] & ctx
+      kindStr & prettyTerm(t.dom, ctx, refNames, records) & ", " & adv & ". " &
+        prettyTerm(t.scope.bdy, ctx2, refNames, records) & ")"
+  of tPi, tLam:
     let adv = if t.scope.adv != "_": t.scope.adv else: "_"
     let kindStr =
       if t.kind == tPi:
         if t.erased: "Pi(0 "
         elif t.impl: "Pi{"
         else: "Pi("
-      elif t.kind == tSi:
-        if t.erased: "Si(0 "
-        elif t.impl: "Si{"
-        else: "Si("
       else:
         if t.erased: "L(0 "
         elif t.impl: "L{"
         else: "L("
     let ctx2 = @[CtxEntry(name: adv, ty: t.dom, qty: t.qty)] & ctx
-    kindStr & prettyTerm(t.dom, ctx, refNames) & ", " & adv & ". " &
-      prettyTerm(t.scope.bdy, ctx2, refNames) & ")"
+    kindStr & prettyTerm(t.dom, ctx, refNames, records) & ", " & adv & ". " &
+      prettyTerm(t.scope.bdy, ctx2, refNames, records) & ")"
   of tMeta: "?_"
   of tPair:
-    "P(" & prettyTerm(t.pFst, ctx, refNames) & ", " &
-      prettyTerm(t.pSnd, ctx, refNames) & ")"
+    "P(" & prettyTerm(t.pFst, ctx, refNames, records) & ", " &
+      prettyTerm(t.pSnd, ctx, refNames, records) & ")"
   of tApp:
-    "(" & prettyTerm(t.fn, ctx, refNames) & " " &
-      prettyTerm(t.arg, ctx, refNames) & ")"
-  of tFst: "(" & prettyTerm(t.sub, ctx, refNames) & ".1)"
-  of tSnd: "(" & prettyTerm(t.sub, ctx, refNames) & ".2)"
-  of tAbsurd: "(absurd " & prettyTerm(t.sub, ctx, refNames) & ")"
+    "(" & prettyTerm(t.fn, ctx, refNames, records) & " " &
+      prettyTerm(t.arg, ctx, refNames, records) & ")"
+  of tFst: "(" & prettyTerm(t.sub, ctx, refNames, records) & ".1)"
+  of tSnd: "(" & prettyTerm(t.sub, ctx, refNames, records) & ".2)"
+  of tAbsurd: "(absurd " & prettyTerm(t.sub, ctx, refNames, records) & ")"
   of tLet:
-    "let " & prettyTerm(t.letVal, ctx, refNames) & " in " &
-      prettyTerm(t.letScope.bdy, @[CtxEntry(name: "_", ty: t.letTy, qty: qOmega)] & ctx, refNames)
+    "let " & prettyTerm(t.letVal, ctx, refNames, records) & " in " &
+      prettyTerm(t.letScope.bdy, @[CtxEntry(name: "_", ty: t.letTy, qty: qOmega)] & ctx, refNames, records)
 
 template withConvHandler*(ms: var MetaStore, h: ConvHandler,
                           body: untyped): untyped =
@@ -317,8 +361,8 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     var refNames = initTable[int, string]()
     for name, g in globals:
       if g.tm.kind == tR: refNames[g.tm.refId] = name
-    raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames) &
-      " does not match expected type " & prettyTerm(b, ctx, refNames) &
+    raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
+      " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
       ": " & noConfusionMsg(ms, nc.c1, nc.c2))
   var env = newSeq[Value](ctx.len)
   for i in 0 ..< ctx.len:
@@ -350,8 +394,8 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     var refNames = initTable[int, string]()
     for name, g in globals:
       if g.tm.kind == tR: refNames[g.tm.refId] = name
-    raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames) &
-      " does not match expected type " & prettyTerm(b, ctx, refNames) &
+    raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
+      " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
       ": not convertible (" & e.msg & ")")
 
 proc closeParams*(s: var Supply, ctx: Ctx): seq[Term] =
@@ -5304,5 +5348,43 @@ proc isTrue (b : Bool) : Bool = b
 
   removeDir(modDir)
   echo "ok: multi-file import (basic, diamond, cycle, missing, cache)"
+
+  # --- Issue #37, step 4: record-aware pretty-printing -----------------------
+  # An iterated Sigma whose binder names and unit tail match a registered
+  # record prints as `R{f: T, ...}`, never as raw `Si` nesting.
+  let rstate = elabCheckState("""
+postulate Nat : ?
+postulate zero : Nat
+postulate Vec : Nat -> ? -> ?
+record Point:
+| x : Nat
+| y : Nat
+record DepR:
+| n : Nat
+| v : Vec n Nat
+proc asSig : ? =
+  Sig (x : Nat). Sig (y : Nat). 1
+proc asSigDep : ? =
+  Sig (n : Nat). Sig (v : Vec n Nat). 1
+proc asSigOther : ? =
+  Sig (u : Nat). Sig (v : Nat). 1
+""")
+  proc findDef(ds: seq[ElabDef], name: string): ElabDef =
+    for d in ds:
+      if d.name == name: return d
+    assert false, "def not found: " & name
+  proc prettyRec(t: Term): string =
+    prettyTerm(zonk(rstate.ms, t), @[], rstate.ms.refNames,
+               rstate.ms.recordFields)
+  let pPoint = prettyRec(findDef(rstate.defs, "asSig").tmTm)
+  assert pPoint == "Point{x: Nat, y: Nat}", "got: " & pPoint
+  echo "ok: record skeleton prints with field names: ", pPoint
+  let pDep = prettyRec(findDef(rstate.defs, "asSigDep").tmTm)
+  assert pDep == "DepR{n: Nat, v: ((Vec n) Nat)}", "got: " & pDep
+  echo "ok: dependent record fields print with names: ", pDep
+  let pOther = prettyRec(findDef(rstate.defs, "asSigOther").tmTm)
+  assert pOther.startsWith("Si("), "got: " & pOther
+  assert "Point" notin pOther, "got: " & pOther
+  echo "ok: non-matching Sigma still prints raw: ", pOther
 
   echo "--- all elaborator tests passed ---"

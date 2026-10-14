@@ -98,7 +98,8 @@ type Session = object
 proc printDefs(s: Session, defs: seq[ElabDef]) =
   for d in defs:
     echo d.name, " : ",
-      prettyTerm(zonk(s.drv.ms, d.tyTm), @[], s.drv.ms.refNames)
+      prettyTerm(zonk(s.drv.ms, d.tyTm), @[], s.drv.ms.refNames,
+                 s.drv.ms.recordFields)
 
 proc elabSource(s: var Session, src: string) =
   ## Parse and elaborate surface source into the session's driver.
@@ -122,7 +123,8 @@ proc cmdType(s: var Session, arg: string) =
       return
   try:
     let (_, ty) = inferTm(pre, @[], s.drv.globals, s.drv.ms, s.drv.supply, nil)
-    echo prettyTerm(zonk(s.drv.ms, ty), @[], s.drv.ms.refNames)
+    echo prettyTerm(zonk(s.drv.ms, ty), @[], s.drv.ms.refNames,
+                    s.drv.ms.recordFields)
   except ElabError as e:
     echo "error: ", e.msg
 
