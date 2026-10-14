@@ -133,6 +133,41 @@ guarantees — and what is your problem: `? : ?` universes (#52), unchecked
 positivity of `data` declarations (#33), termination beyond single-function
 structural recursion (#42), and arbitrary type-level host programs.
 
+## Installation
+
+Prerequisites: Nim >= 2.0 (built with 2.2.12 via
+[choosenim](https://github.com/dom96/choosenim)) and nimble.
+
+```sh
+nimble install eponym        # from the nimble package directory (once published)
+# or, from a checkout of this repo:
+nimble install
+```
+
+This installs the production modules (`src/eponym/`, issue #189) and the
+Eponym prelude (`lib/*.ep`) into the nimble package directory. Experimental
+code under `src/experimental/` is deliberately not installed.
+
+To use Eponym in your own project:
+
+```nim
+import eponym_mac   # eponymBlock macro
+
+eponymBlock:
+  import "nat.ep"   # resolves relative to THIS Nim file
+  ...
+```
+
+`import "x.ep"` inside `eponymBlock` resolves relative to the Nim file
+containing the block, so vendor the prelude files you need next to your
+project — copy them from the installed package's `lib/` directory
+(`~/.nimble/pkgs2/eponym-*/lib/`). See `examples/embedded/` for complete
+examples of ordinary Nim programs using Eponym-checked definitions.
+
+Note: on first install nimble may prompt about a package-list download or
+about `src/eponym/lib` — answer yes / continue; the prelude is installed
+from the package root's `lib/` directory.
+
 ## Building
 
 Requires Nim 2.x (built with 2.2.12 via
