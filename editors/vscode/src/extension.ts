@@ -9,9 +9,19 @@
 
 import * as vscode from "vscode";
 import * as path from "path";
+import * as fs from "fs";
 import { LspClient } from "./protocol";
 import { pageHtml } from "./render";
-import { generateSidecar, hasShedBlocks, eponymRepoRoot } from "./sidecar";
+import {
+  generateSidecar,
+  hasShedBlocks,
+  eponymRepoRoot,
+  shedAtCursor,
+  blockShedsAtCursor,
+  sidecarPathFor,
+  sidecarFresh,
+  readSidecarShedNames,
+} from "./sidecar";
 
 function serverPath(): string {
   const cfg = vscode.workspace.getConfiguration("eponym").get<string>("lspServerPath", "");
@@ -28,14 +38,69 @@ function nimBin(): string {
 interface ShedPanel {
   panel: vscode.WebviewPanel;
   client: LspClient;
-  shedName: string;
+  shedName: string; // mutable: in-view switching (issue #190) updates it
+  shedNames: string[];
   refresh: () => Promise<void>;
 }
 
 const openPanels = new Map<string, ShedPanel>(); // docUri -> panel
 let out: vscode.OutputChannel;
 
+// Issue #190: pre-fetched layouts, keyed by docUri, tagged with the
+// sidecar mtime they were rendered from. Filled in the background when a
+// shed file is opened (sidecar fresh); consumed by the command so the
+// view opens without waiting on the LSP round-trip.
+const layoutCache = new Map<string, { mtime: number; layouts: Map<string, string> }>();
+
+function sidecarMtime(nimFile: string): number {
+  try {
+    return fs.statSync(sidecarPathFor(nimFile)).mtimeMs;
+  } catch {
+    return -1;
+  }
+}
+
+async function prefetchLayouts(doc: vscode.TextDocument): Promise<void> {
+  // Eager render, minus the expensive part: measured 2026-10-14, `nim c`
+  // (sidecar generation) costs ~9s cold, so we never eagerly *compile*.
+  // Pre-fetching layouts is ~0.3ms per shedLayout over stdio, but only
+  // trustworthy when the sidecar is already fresh.
+  const nimFile = doc.uri.fsPath;
+  if (!sidecarFresh(nimFile)) return;
+  let client: LspClient;
+  try {
+    client = new LspClient(serverPath());
+    await client.initialize(nimFile.replace(/\/[^/]+$/, ""));
+  } catch (e) {
+    out.appendLine(`[eponym] prefetch: no LSP server: ${String(e)}`);
+    return;
+  }
+  try {
+    const docUri = doc.uri.toString();
+    const names = await client.shedNames(docUri);
+    const layouts = new Map<string, string>();
+    for (const n of names) {
+      try {
+        layouts.set(n, JSON.stringify(await client.shedLayout(docUri, n)));
+      } catch (e) {
+        out.appendLine(`[eponym] prefetch: shedLayout(${n}) failed: ${String(e)}`);
+      }
+    }
+    layoutCache.set(docUri, { mtime: sidecarMtime(nimFile), layouts });
+    out.appendLine(`[eponym] prefetched ${layouts.size} shed layouts for ${nimFile}`);
+  } finally {
+    client.shutdown();
+  }
+}
+
 async function ensureSidecar(doc: vscode.TextDocument): Promise<boolean> {
+  // Issue #190: skip the `nim c` rerun when the sidecar is newer than the
+  // source — this was the visible pause on "Show shed layout" whenever
+  // the file had not changed since the last generation.
+  if (sidecarFresh(doc.uri.fsPath)) {
+    out.appendLine(`[eponym] sidecar fresh for ${doc.uri.fsPath}, skipping nim c`);
+    return true;
+  }
   const root = eponymRepoRoot(path.dirname(doc.uri.fsPath));
   if (!root) {
     vscode.window.showErrorMessage(
@@ -72,11 +137,27 @@ async function ensureSidecar(doc: vscode.TextDocument): Promise<boolean> {
 export function activate(ctx: vscode.ExtensionContext) {
   out = vscode.window.createOutputChannel("Eponym");
 
+  // Issue #190: eager pre-render. When a shed file is opened and its
+  // sidecar is already fresh, fetch the shed layouts in the background so
+  // "Show shed layout" opens without any round-trip. Fire-and-forget: a
+  // failure here just means the command takes the live path.
+  ctx.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((doc) => {
+      if (doc.languageId !== "nim" && !doc.fileName.endsWith(".nim")) return;
+      if (!hasShedBlocks(doc.getText())) return;
+      prefetchLayouts(doc).catch((e) =>
+        out.appendLine(`[eponym] prefetch failed: ${String(e)}`)
+      );
+    })
+  );
+
   // Issue #153: editing a shed block and saving refreshes the webview.
   // Only fires for documents that already have a shed panel open, so
   // ordinary Nim files are never compiled as a side effect of saving.
   ctx.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(async (doc) => {
+      // The sidecar was just regenerated; any prefetched layouts are stale.
+      layoutCache.delete(doc.uri.toString());
       const entry = openPanels.get(doc.uri.toString());
       if (!entry) return;
       if (!hasShedBlocks(doc.getText())) return;
@@ -110,11 +191,37 @@ export function activate(ctx: vscode.ExtensionContext) {
       }
       if (!(await ensureSidecar(editor.document))) return;
 
-      const shedName = await vscode.window.showInputBox({
-        prompt: "Shed name (from shedsBlock)",
-        placeHolder: "e.g. quadBody",
-      });
-      if (!shedName) return;
+      // Issue #190: cursor-aware default. With the cursor inside a shed
+      // node (`![ name ...]`), open that shed directly — no typing. With
+      // the cursor elsewhere in a single-shed block, that shed is the
+      // unambiguous choice. Otherwise offer a QuickPick of the file's
+      // sheds (read from the sidecar; no LSP round-trip needed), falling
+      // back to the free-text box only when the sidecar lists nothing.
+      const text = editor.document.getText();
+      const cursorOff = editor.document.offsetAt(editor.selection.active);
+      let shedName: string | undefined = shedAtCursor(text, cursorOff)?.name;
+      if (!shedName) {
+        const inBlock = blockShedsAtCursor(text, cursorOff);
+        if (inBlock.length === 1) shedName = inBlock[0].name;
+      }
+      const shedNames = readSidecarShedNames(sidecarPathFor(editor.document.uri.fsPath));
+      if (!shedName) {
+        if (shedNames.length > 0) {
+          const picked = await vscode.window.showQuickPick(shedNames, {
+            placeHolder: "Shed (from shedsBlock)",
+          });
+          if (!picked) return;
+          shedName = picked;
+        } else {
+          const typed = await vscode.window.showInputBox({
+            prompt: "Shed name (from shedsBlock)",
+            placeHolder: "e.g. quadBody",
+          });
+          if (!typed) return;
+          shedName = typed;
+        }
+      }
+      if (shedNames.length === 0) shedNames.push(shedName);
 
       let client: LspClient;
       try {
@@ -130,23 +237,44 @@ export function activate(ctx: vscode.ExtensionContext) {
         vscode.ViewColumn.Beside,
         { enableScripts: true }
       );
+      const entry: ShedPanel = {
+        panel,
+        client,
+        shedName,
+        shedNames,
+        refresh: async () => {},
+      };
       const refresh = async () => {
         try {
-          const layout = await client.shedLayout(docUri, shedName);
-          panel.webview.html = pageHtml(JSON.stringify(layout), shedName);
+          // Prefer a prefetched layout (issue #190) when it matches the
+          // current sidecar; otherwise ask the server live.
+          const cached = layoutCache.get(docUri);
+          const fresh = cached && cached.mtime === sidecarMtime(editor.document.uri.fsPath);
+          const layoutJson =
+            fresh && cached.layouts.has(entry.shedName)
+              ? cached.layouts.get(entry.shedName)!
+              : JSON.stringify(await client.shedLayout(docUri, entry.shedName));
+          panel.webview.html = pageHtml(layoutJson, entry.shedName, entry.shedNames);
         } catch (e) {
           panel.webview.postMessage({ cmd: "actionmsg", text: "layout error: " + String(e) });
         }
       };
+      entry.refresh = refresh;
       panel.webview.onDidReceiveMessage(async (m: any) => {
         try {
-          if (m.cmd === "refine" || m.cmd === "give") {
+          if (m.cmd === "switch-shed" && typeof m.shedName === "string") {
+            // Issue #190: in-view shed switching — no close/reopen.
+            entry.shedName = m.shedName;
+            if (!entry.shedNames.includes(m.shedName)) entry.shedNames.push(m.shedName);
+            entry.panel.title = `Shed: ${m.shedName}`;
+            await entry.refresh();
+          } else if (m.cmd === "refine" || m.cmd === "give") {
             // Issue #137: the server owns the whole refine round-trip --
             // it fills the hole in the macro-recorded generated source,
             // refreshes statuses, and rewrites the sidecar. The client
             // splices the returned term over the single-line `![...]`
             // node at (nimLine, nimCol) so the .nim source advances.
-            const res = await client.refineShed(docUri, shedName, m.term ?? "");
+            const res = await client.refineShed(docUri, entry.shedName, m.term ?? "");
             const line = res.nimLine - 1;
             const startCh = res.nimCol - 1;
             const text = editor.document.lineAt(line).text;
@@ -187,7 +315,7 @@ export function activate(ctx: vscode.ExtensionContext) {
         client.shutdown();
         openPanels.delete(docUri);
       });
-      openPanels.set(docUri, { panel, client, shedName, refresh });
+      openPanels.set(docUri, entry);
       await refresh();
     })
   );
