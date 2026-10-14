@@ -43,6 +43,127 @@ export interface GenerateResult {
   error?: string;
 }
 
+// Issue #190: cursor-aware shed detection. A *shed node* is one `![ name ]`
+// or `![ name, draft ]` occurrence; a *shed block* is a top-level
+// `shedsBlock:` statement plus its indented body. Offsets are absolute
+// character offsets into the document text.
+
+export interface ShedNode {
+  name: string;
+  start: number; // offset of the `![`
+  end: number; // offset just past the closing `]`
+}
+
+export interface ShedBlock {
+  start: number; // offset of the `shedsBlock:` line start
+  end: number; // offset of the first line past the indented body
+  sheds: ShedNode[];
+}
+
+const SHED_NODE_RE = /!\[\s*([A-Za-z_][\w']*)/g;
+const SHED_BLOCK_RE = /^([ \t]*)shedsBlock\s*:/;
+
+function lineStartOffsets(text: string): number[] {
+  const offs = [0];
+  for (let i = 0; i < text.length; i++) if (text[i] === "\n") offs.push(i + 1);
+  return offs;
+}
+
+function indentOf(line: string): number {
+  const m = /^[ \t]*/.exec(line);
+  return m ? m[0].length : 0;
+}
+
+export function shedBlocks(text: string): ShedBlock[] {
+  const lines = text.split("\n");
+  const offs = lineStartOffsets(text);
+  const blocks: ShedBlock[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = SHED_BLOCK_RE.exec(lines[i]);
+    if (!m) continue;
+    const headIndent = m[1].length;
+    // The body is the run of lines strictly more indented than the
+    // `shedsBlock:` line (blank lines ride along).
+    let j = i + 1;
+    while (j < lines.length && (lines[j].trim() === "" || indentOf(lines[j]) > headIndent)) j++;
+    const blockStart = offs[i];
+    const blockEnd = offs[j] ?? text.length;
+    const body = text.slice(blockStart, blockEnd);
+    const sheds: ShedNode[] = [];
+    SHED_NODE_RE.lastIndex = 0;
+    let nm: RegExpExecArray | null;
+    while ((nm = SHED_NODE_RE.exec(body)) !== null) {
+      // The node ends at the first `]` after the name. Drafts are
+      // single-line Nim expressions in practice; a bracket inside a
+      // draft would truncate the range, which only affects the
+      // generous cursor-containment check, not correctness.
+      const close = body.indexOf("]", nm.index);
+      if (close < 0) continue;
+      sheds.push({
+        name: nm[1],
+        start: blockStart + nm.index,
+        end: blockStart + close + 1,
+      });
+    }
+    blocks.push({ start: blockStart, end: blockEnd, sheds });
+  }
+  return blocks;
+}
+
+/** The shed node whose `![...]` contains the cursor, or null. */
+export function shedAtCursor(text: string, offset: number): ShedNode | null {
+  for (const b of shedBlocks(text)) {
+    for (const s of b.sheds) {
+      if (s.start <= offset && offset <= s.end) return s;
+    }
+  }
+  return null;
+}
+
+/** The sheds of the `shedsBlock:` block containing the cursor, or []. */
+export function blockShedsAtCursor(text: string, offset: number): ShedNode[] {
+  for (const b of shedBlocks(text)) {
+    if (b.start <= offset && offset < b.end) return b.sheds;
+  }
+  return [];
+}
+
+/** `<file>.sheds.json`, the sidecar the shedsBlock macro writes. */
+export function sidecarPathFor(nimFile: string): string {
+  return nimFile.replace(/\.nim$/, ".sheds.json");
+}
+
+/**
+ * Issue #190: a sidecar is *fresh* when it exists and is at least as new
+ * as the source. A fresh sidecar needs no `nim c` rerun, so the command
+ * path skips generation (and background pre-rendering can trust it).
+ */
+export function sidecarFresh(nimFile: string): boolean {
+  const sc = sidecarPathFor(nimFile);
+  try {
+    const src = fs.statSync(nimFile);
+    const side = fs.statSync(sc);
+    return side.mtimeMs >= src.mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+export interface SidecarShed {
+  name: string;
+}
+
+/** Shed names straight from the sidecar JSON (no LSP needed for the list). */
+export function readSidecarShedNames(sidecarPath: string): string[] {
+  try {
+    const raw = JSON.parse(fs.readFileSync(sidecarPath, "utf8"));
+    const sheds: any[] = Array.isArray(raw?.sheds) ? raw.sheds : [];
+    return sheds.map((s) => String(s?.name ?? "")).filter((n) => n.length > 0);
+  } catch {
+    return [];
+  }
+}
+
 export function generateSidecar(
   nimBin: string,
   repoRoot: string,

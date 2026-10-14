@@ -15,6 +15,12 @@ import {
   eponymRepoRoot,
   sidecarCompileArgs,
   generateSidecar,
+  shedBlocks,
+  shedAtCursor,
+  blockShedsAtCursor,
+  sidecarPathFor,
+  sidecarFresh,
+  readSidecarShedNames,
 } from "./sidecar";
 import * as path from "path";
 import * as fs from "fs";
@@ -81,10 +87,62 @@ async function main() {
   check(html.includes("?0"), "rendered HTML shows hole ?0");
   check(html.includes("data-goal"), "rendered HTML carries the hole goal");
 
-  const page = pageHtml(JSON.stringify(layout), "quadBody");
+  const page = pageHtml(JSON.stringify(layout), "quadBody", ["quadBody"]);
   check(page.includes("acquireVsCodeApi"), "webview page wires vscode api");
   check(page.includes("refine"), "webview page has refine button");
   check(page.includes("case-split"), "webview page has case-split button");
+  check(page.includes('id="shedpicker"') && page.includes("switchShed"),
+    "webview page has the in-view shed picker posting switch-shed");
+  check(page.includes('<option value="quadBody" selected>'),
+    "shed picker lists the current shed selected");
+
+  // Issue #190: cursor-aware shed detection over the source text.
+  const demoText = fs.readFileSync(demo, "utf8");
+  const blocks = shedBlocks(demoText);
+  check(blocks.length === 1 && blocks[0].sheds.length === 1 &&
+        blocks[0].sheds[0].name === "quadBody",
+    "shedBlocks finds the one shedsBlock with its quadBody node");
+  const nodeOff = demoText.indexOf("![ quadBody");
+  check(nodeOff >= 0 && shedAtCursor(demoText, nodeOff + 4)?.name === "quadBody",
+    "shedAtCursor: cursor inside the node resolves quadBody");
+  check(shedAtCursor(demoText, 0) === null,
+    "shedAtCursor: file top resolves nothing");
+  const midBlock = blocks[0].start + 5;
+  check(blockShedsAtCursor(demoText, midBlock).length === 1 &&
+        blockShedsAtCursor(demoText, midBlock)[0].name === "quadBody",
+    "blockShedsAtCursor: cursor in the block (outside the node) sees quadBody");
+  check(blockShedsAtCursor(demoText, 0).length === 0,
+    "blockShedsAtCursor: outside any block sees nothing");
+
+  // The walkthrough demo (issue #192): one block, three shed nodes.
+  const wt = path.resolve(path.dirname(demo), "sheds_walkthrough.nim");
+  if (fs.existsSync(wt)) {
+    const wtText = fs.readFileSync(wt, "utf8");
+    const wtBlocks = shedBlocks(wtText);
+    const wtNames = wtBlocks.flatMap((b) => b.sheds.map((s) => s.name));
+    check(wtBlocks.length === 1 && wtNames.join(",") === "quadBody,addThreeBody,shuffleBody",
+      "shedBlocks finds all three walkthrough sheds: " + wtNames.join(","));
+    const shuffleOff = wtText.indexOf("![shuffleBody");
+    check(shuffleOff >= 0 && shedAtCursor(wtText, shuffleOff + 2)?.name === "shuffleBody",
+      "shedAtCursor disambiguates the walkthrough's third shed");
+    // A cursor in the block but outside any node sees all three (ambiguous).
+    const inBody = wtBlocks[0].sheds[0].end + 2;
+    check(blockShedsAtCursor(wtText, inBody).length === 3,
+      "blockShedsAtCursor reports all three sheds when the block is ambiguous");
+  }
+
+  // Issue #190: sidecar freshness + name listing.
+  check(sidecarPathFor(demo) === demoSidecar,
+    "sidecarPathFor maps the demo to its sidecar path");
+  check(sidecarFresh(demo), "sidecarFresh: regenerated sidecar is fresh");
+  fs.utimesSync(demo, new Date(), new Date(Date.now() + 60_000));
+  check(!sidecarFresh(demo), "sidecarFresh: source newer than sidecar is stale");
+  fs.utimesSync(demo, new Date(), new Date(Date.now() - 60_000));
+  check(sidecarFresh(demo), "sidecarFresh: sidecar newer than source is fresh again");
+  check(JSON.stringify(readSidecarShedNames(demoSidecar)) === JSON.stringify(["quadBody"]),
+    "readSidecarShedNames lists the sidecar sheds");
+  check(readSidecarShedNames(path.join(os.tmpdir(), "no-such.sheds.json")).length === 0,
+    "readSidecarShedNames on a missing sidecar yields []");
 
   // Unknown shed -> server error (not a hang).
   let err = "";
