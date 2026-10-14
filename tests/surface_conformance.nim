@@ -58,7 +58,8 @@ proc sameDecl(a, b: SurfDecl): bool =
   case a.kind
   of dkDef:
     a.def.name == b.def.name and sameTele(a.def.tele, b.def.tele) and
-      sameTerm(a.def.retTy, b.def.retTy) and sameTerm(a.def.body, b.def.body)
+      sameTerm(a.def.retTy, b.def.retTy) and sameTerm(a.def.body, b.def.body) and
+      a.def.hasPeg == b.def.hasPeg and a.def.pegNames == b.def.pegNames
   of dkPostulate, dkElim:
     a.name == b.name and sameTerm(a.ty, b.ty)
   of dkRed:
@@ -74,6 +75,10 @@ proc sameDecl(a, b: SurfDecl): bool =
     sameClauses(a.clausesDef, b.clausesDef)
   of dkImport:
     a.ipath == b.ipath
+  of dkInterface:
+    a.ifname == b.ifname
+  of dkCommand:
+    a.cname == b.cname and a.ciface == b.ciface and sameTerm(a.cty, b.cty)
 
 macro conforms*(src: static string, blk: untyped): untyped =
   ## Assert `blockToEponym(blk)` parses to the same decls as `src`.

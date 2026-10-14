@@ -2385,3 +2385,46 @@
   (this is it) and the issue verdict — viable for the Vec fragment;
   the lattice over dependent terms stays structural (no explicit
   suc-edges), which is the open scaling question for full elaboration.
+
+* #177: ambient abilities (Frank-style) — prototype verdict (2026-10-13)
+
+  Threaded an ambient ability Σ through =checkTm=∕=inferTm= (51 call
+  sites, scripted), following Frank ("Do Be Do Be Do"): peg = checking-mode
+  input stamped on every elaborator-built =tPi=; Command rule as a
+  membership test in =resolveVar=; App rule as a peg-compatibility check;
+  one fresh =?aN= per signature (omitted brackets mean =[?aN]=, explicit
+  =[]= is closed). Surface: =interface I=, =command c : A -> B in I=,
+  =proc f : [I1, I2] Ret = body=. =tests/test_abilities.nim= (15 tests).
+
+  Verdicts:
+  - Pure programs elaborate with zero annotations; measured overhead on a
+    pure corpus (Nat∕Vec∕uses): 1.03x (6.65 → 6.84 ms∕iter, ±1.5% noise).
+  - Effectful programs get precise errors: wrong peg rejected
+    ("ability mismatch: operator requires peg [Console] but the ambient
+    ability is [?a6]"); unhandled command rejected; Frank's =bad=
+    (unannotated peg + =send= in body) rejected.
+  - No subeffecting, no row unification, no effect inference — Frank's
+    invariance held throughout; =[]= under a polymorphic ambient is
+    (deliberately) rejected.
+
+  Design finding (benchmark-driven): the first revision freshened =?aN=
+  per use and solved the copy to the ambient (Frank-literal
+  instantiation) — measured 1.19x on pure code. Profiling showed the
+  instantiation was *unobservable*: pegs only gate checks, never flow into
+  terms, so nothing ever read a solution. Replaced by a pure predicate
+  (=pegCompatible=: open peg compatible with anything; closed pegs need
+  syntactic equality) — no freshening, no solving, no per-use allocation.
+  Ability variables are now never solved during elaboration.
+
+  Metas∕holes (the issue's step-4 experiment): membership against an
+  ambient ending in an ability variable is *stuck* — and terminally so,
+  unlike Klister's resumable stuck tasks, because nothing in elaboration
+  ever solves an ability variable. So =proc bad : 1 = send msg= is
+  rejected with "not yet known (stuck on [?a5])": a clean, precise
+  rejection, needing no new deferral machinery. Holes record the ambient
+  (=HoleInfo.holeAb=) for future effectful-hole tooling.
+
+  Open: conversion unifies pegs by the same predicate (needed for
+  =map send xs= under =[Console]=); pegs are ignored by the core (like
+  =impl=∕erased metadata). Runtime handler semantics remain out of scope
+  (blocked on delimited continuations, per #41's note).
