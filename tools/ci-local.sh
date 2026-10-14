@@ -1,0 +1,87 @@
+#!/bin/sh
+# tools/ci-local.sh — the CI matrix, runnable locally.
+#
+# This script IS the CI: .github/workflows/ci.yml calls it after setting up
+# the toolchain. Run it locally before every merge:
+#   sh tools/ci-local.sh
+# It exits non-zero on the first failure. Requires: nim (>= 2.0) on PATH,
+# node + npm for the VSCode extension smoke test.
+#
+# Do not reconstruct CI from the YAML — edit this script, and CI follows.
+
+set -e
+cd "$(dirname "$0")/.."
+
+P="--path:src --path:src/eponym"
+XP="$P --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging"
+
+nim --version
+
+echo "### Build: production modules"
+for f in eponym_init preterm parse_surf elab unify eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout; do
+  echo "=== build $f ==="
+  nim c --hints:off $P "src/eponym/$f.nim"
+done
+echo "=== build repl (issue #50) ==="
+nim c --hints:off $P "src/repl.nim"
+echo "=== build experimental (issue #189: kept building, clearly labeled) ==="
+for f in eponym mac_surf heap qtt_proto; do
+  echo "=== build experimental/$f ==="
+  nim c --hints:off $XP "src/experimental/$f.nim"
+done
+
+echo "### Test: module suites"
+for f in eponym_init preterm parse_surf elab unify eponym_mac egraph eponym_embed kernel_check; do
+  echo "=== test $f ==="
+  nim c -r --hints:off $P "src/eponym/$f.nim"
+done
+echo "=== examples ==="
+nim c -r --hints:off $P "tests/run_examples.nim"
+echo "=== repl scripted session (issue #50) ==="
+sh tests/repl_session.sh
+echo "=== kernel audit (issue #62: independent re-check) ==="
+nim c -r --hints:off $P "tests/kernel_audit.nim"
+echo "=== embedded examples (issue #149) ==="
+nim c -r --hints:off $P "tests/run_embedded_examples.nim"
+echo "=== surface-syntax conformance (issue #144) ==="
+nim c -r --hints:off $P "tests/surface_conformance.nim"
+echo "=== elaboration adequacy properties (issue #38) ==="
+nim c -r --hints:off $P "tests/adequacy_props.nim"
+echo "=== embedded macro forms (issue #151) ==="
+nim c -r --hints:off $P "tests/test_embedded_macro_forms.nim"
+echo "=== staging soundness fuzz (issue #29, fixed seed; experimental paths) ==="
+nim c -r --hints:off $XP "tests/fuzz_soundness.nim" -- --seed 424242 -n 1000
+echo "=== egraph property tests (issue #163, fixed seed) ==="
+nim c -r --hints:off $P "tests/pbt_egraph.nim"
+echo "=== minikanren property tests (issue #163, fixed seed; experimental paths) ==="
+nim c -r --hints:off $XP "tests/pbt_minikanren.nim"
+echo "=== clause-matrix differential tests (issue #163, fixed seed) ==="
+nim c -r --hints:off $P "tests/pbt_clause_matrix.nim"
+echo "=== clause-matrix negative tests (issue #163, fixed seed) ==="
+nim c -r --hints:off $P "tests/pbt_clause_matrix_neg.nim"
+echo "=== QTT usage-checker property tests (issue #163, fixed seed) ==="
+nim c -r --hints:off $P "tests/pbt_usage.nim"
+echo "=== staged-residual vs relational differential tests (issue #163, fixed seed; experimental paths) ==="
+nim c -r --hints:off $XP "tests/pbt_staged_agreement.nim"
+echo "=== unifier property tests (issue #163, fixed seed) ==="
+nim c -r --hints:off $P "tests/pbt_unify.nim"
+# Note: lsp is built but not run — it's a server that blocks on stdin,
+# not a test suite. (Was hanging CI since Experiment 7.)
+echo "=== lsp hole-session tests (issue #58, headless mock-LSP) ==="
+nim c -r --hints:off $P "tests/test_lsp_holes.nim"
+nim c -r --hints:off $P "tests/test_lsp_actions.nim"
+echo "=== sheds tests (issues #133-135, #137) ==="
+nim c -r --hints:off $P "tests/test_sheds.nim"
+nim c -r --hints:off $P "tests/test_shed_layout.nim"
+nim c -r --hints:off $P "tests/test_shed_loop.nim"
+nim c -r --hints:off $P "tests/test_shed_refine_method.nim"
+echo "=== vscode extension smoke (issue #136 client path, real lsp binary) ==="
+# The smoke test self-provisions the shed sidecar: it exercises the
+# extension's own generateSidecar path (issue #153) on the demo before
+# reading layouts from it. The sidecar is gitignored (*.sheds.json),
+# so this also covers the fresh-checkout case (was issue #142's fix).
+(cd editors/vscode && npm install --no-audit --no-fund && npm run build)
+LSP=src/eponym/lsp DEMO=examples/embedded/sheds_demo.nim node editors/vscode/out/smoke.js
+# Note: bench/ contains expensive benchmarks, not run in CI.
+
+echo "### CI PASSED"
