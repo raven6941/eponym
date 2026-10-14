@@ -43,16 +43,26 @@ body { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 16p
 .ruleline { flex: 1; border-top: 2px solid #888; }
 .rulelabel { margin-left: 6px; color: #9cdcfe; font-size: 0.85em; }
 .header { color: #c586c0; }
-#goalpane { position: sticky; top: 0; background: #0e0e0e; border: 1px solid #444; padding: 8px; margin-bottom: 12px; min-height: 2em; }
+#shedbar { position: sticky; top: 0; background: #0e0e0e; border: 1px solid #444; padding: 8px; margin-bottom: 12px; display: flex; gap: 8px; align-items: center; }
+#goalpane { min-height: 2em; flex: 1; }
 #refinebar { margin-top: 12px; }
 button { margin-left: 6px; }
+select { background: #252526; color: #d4d4d4; border: 1px solid #555; padding: 2px 6px; }
 `;
 
-export function pageHtml(layoutJson: string, shedName: string): string {
+// Issue #190: the webview carries a shed picker so the user can switch
+// sheds in-view instead of closing the panel and re-running the command.
+// `shedNames` lists every shed in the file's sidecar; the extension
+// handles the `switch-shed` message by re-rendering with the new shed.
+export function pageHtml(layoutJson: string, shedName: string, shedNames: string[] = []): string {
   // layoutJson is the raw JSON string of {"box": ...} — parsed in-page so
   // the extension only has to forward the string.
+  const names = shedNames.length > 0 ? shedNames : [shedName];
+  const options = names
+    .map((n) => `<option value="${esc(n)}"${n === shedName ? " selected" : ""}>${esc(n)}</option>`)
+    .join("");
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style></head><body>
-<div id="goalpane">Click a hole (?n) to see its goal.</div>
+<div id="shedbar"><label for="shedpicker">shed:</label><select id="shedpicker" onchange="switchShed(this.value)">${options}</select><span id="goalpane">Click a hole (?n) to see its goal.</span></div>
 <div id="tree"></div>
 <div id="refinebar">
   <input id="term" placeholder="refine term (e.g. zero())" size="40"/>
@@ -88,6 +98,7 @@ document.querySelectorAll('.hole').forEach(el=>{
 function refine(){ const t=document.getElementById('term').value; vscode.postMessage({cmd:'refine', term:t, hole:selectedHole}); }
 function give(){ const t=document.getElementById('term').value; vscode.postMessage({cmd:'give', term:t, hole:selectedHole}); }
 function casesplit(){ const v=document.getElementById('term').value; vscode.postMessage({cmd:'case-split', variable:v, hole:selectedHole}); }
+function switchShed(name){ vscode.postMessage({cmd:'switch-shed', shedName:name}); }
 window.addEventListener('message', e=>{
   const m=e.data;
   if(m.cmd==='actionmsg') document.getElementById('actionmsg').textContent=m.text;
