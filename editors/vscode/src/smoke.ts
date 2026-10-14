@@ -114,21 +114,24 @@ async function main() {
   check(blockShedsAtCursor(demoText, 0).length === 0,
     "blockShedsAtCursor: outside any block sees nothing");
 
-  // The walkthrough demo (issue #192): one block, three shed nodes.
+  // The walkthrough demo (issue #192): one block, six shed nodes (the
+  // #192 extension: give, case-split, and deep-nesting sheds on top of
+  // the original three).
   const wt = path.resolve(path.dirname(demo), "sheds_walkthrough.nim");
   if (fs.existsSync(wt)) {
     const wtText = fs.readFileSync(wt, "utf8");
     const wtBlocks = shedBlocks(wtText);
     const wtNames = wtBlocks.flatMap((b) => b.sheds.map((s) => s.name));
-    check(wtBlocks.length === 1 && wtNames.join(",") === "quadBody,addThreeBody,shuffleBody",
-      "shedBlocks finds all three walkthrough sheds: " + wtNames.join(","));
+    check(wtBlocks.length === 1 &&
+          wtNames.join(",") === "quadBody,addThreeBody,shuffleBody,constABody,isZeroBody,constEndoBody",
+      "shedBlocks finds all six walkthrough sheds: " + wtNames.join(","));
     const shuffleOff = wtText.indexOf("![shuffleBody");
     check(shuffleOff >= 0 && shedAtCursor(wtText, shuffleOff + 2)?.name === "shuffleBody",
       "shedAtCursor disambiguates the walkthrough's third shed");
-    // A cursor in the block but outside any node sees all three (ambiguous).
+    // A cursor in the block but outside any node sees all six (ambiguous).
     const inBody = wtBlocks[0].sheds[0].end + 2;
-    check(blockShedsAtCursor(wtText, inBody).length === 3,
-      "blockShedsAtCursor reports all three sheds when the block is ambiguous");
+    check(blockShedsAtCursor(wtText, inBody).length === 6,
+      "blockShedsAtCursor reports all six sheds when the block is ambiguous");
   }
 
   // Issue #190: sidecar freshness + name listing.
