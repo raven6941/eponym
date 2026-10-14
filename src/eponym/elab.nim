@@ -192,9 +192,33 @@ proc tacRefl(goal: Term, ctx: Ctx, globals: Globals,
 
 # (initTactics removed: built-ins are dispatched directly in pkBy case)
 
-proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
+proc recordSkeletonName(t: Term, records: Table[string, seq[string]]): string =
+  ## Issue #37, step 4: if `t` is an iterated Sigma whose binder names end
+  ## in the unit type and match a registered record declaration's field
+  ## list, return the record name; else "". Lets the pretty-printer render
+  ## record types with field names instead of raw `Si` nesting. (Records
+  ## are transparent iterated Sigmas by design, so only the skeleton —
+  ## binder names plus the `1` tail — identifies them. Two records sharing
+  ## an identical field-name list are pathological; the first registered
+  ## wins.)
+  if t.isNil or t.kind != tSi or records.len == 0: return ""
+  var names: seq[string] = @[]
+  var cur = t
+  while not cur.isNil and cur.kind == tSi:
+    names.add(cur.scope.adv)
+    cur = cur.scope.bdy
+  if cur.isNil or cur.kind != tC or cur.c != cOne: return ""
+  for rname, fields in records:
+    if fields == names: return rname
+  ""
+
+proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string],
+                records: Table[string, seq[string]] =
+                  initTable[string, seq[string]]()): string =
   ## User-facing pretty-printer: uses names from the context and globals
-  ## instead of internal IDs (R1, V6, ?m3).
+  ## instead of internal IDs (R1, V6, ?m3). `records` maps record names to
+  ## field names (MetaStore.recordFields); an iterated Sigma matching a
+  ## record skeleton prints as `R{f: T, ...}` rather than raw `Si`.
   if t == nil: return "<nil>"
   case t.kind
   of tR:
@@ -206,37 +230,57 @@ proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string]): string =
   of tInt: $t.intVal
   of tNatLit: $t.natLitVal
   of tPrim: $t.primOp
-  of tPi, tSi, tLam:
+  of tSi:
+    # Issue #37, step 4: a Sigma matching a registered record skeleton
+    # prints with field names (`Point{x: Nat, y: Nat}`), never as raw `Si`.
+    let rname = recordSkeletonName(t, records)
+    if rname != "":
+      var parts: seq[string] = @[]
+      var cur = t
+      var ctx2 = ctx
+      while cur.kind == tSi:
+        let adv = if cur.scope.adv != "_": cur.scope.adv else: "_"
+        parts.add(adv & ": " &
+          prettyTerm(cur.dom, ctx2, refNames, records))
+        ctx2 = @[CtxEntry(name: adv, ty: cur.dom, qty: cur.qty)] & ctx2
+        cur = cur.scope.bdy
+      rname & "{" & parts.join(", ") & "}"
+    else:
+      let adv = if t.scope.adv != "_": t.scope.adv else: "_"
+      let kindStr =
+        if t.erased: "Si(0 "
+        elif t.impl: "Si{"
+        else: "Si("
+      let ctx2 = @[CtxEntry(name: adv, ty: t.dom, qty: t.qty)] & ctx
+      kindStr & prettyTerm(t.dom, ctx, refNames, records) & ", " & adv & ". " &
+        prettyTerm(t.scope.bdy, ctx2, refNames, records) & ")"
+  of tPi, tLam:
     let adv = if t.scope.adv != "_": t.scope.adv else: "_"
     let kindStr =
       if t.kind == tPi:
         if t.erased: "Pi(0 "
         elif t.impl: "Pi{"
         else: "Pi("
-      elif t.kind == tSi:
-        if t.erased: "Si(0 "
-        elif t.impl: "Si{"
-        else: "Si("
       else:
         if t.erased: "L(0 "
         elif t.impl: "L{"
         else: "L("
     let ctx2 = @[CtxEntry(name: adv, ty: t.dom, qty: t.qty)] & ctx
-    kindStr & prettyTerm(t.dom, ctx, refNames) & ", " & adv & ". " &
-      prettyTerm(t.scope.bdy, ctx2, refNames) & ")"
+    kindStr & prettyTerm(t.dom, ctx, refNames, records) & ", " & adv & ". " &
+      prettyTerm(t.scope.bdy, ctx2, refNames, records) & ")"
   of tMeta: "?_"
   of tPair:
-    "P(" & prettyTerm(t.pFst, ctx, refNames) & ", " &
-      prettyTerm(t.pSnd, ctx, refNames) & ")"
+    "P(" & prettyTerm(t.pFst, ctx, refNames, records) & ", " &
+      prettyTerm(t.pSnd, ctx, refNames, records) & ")"
   of tApp:
-    "(" & prettyTerm(t.fn, ctx, refNames) & " " &
-      prettyTerm(t.arg, ctx, refNames) & ")"
-  of tFst: "(" & prettyTerm(t.sub, ctx, refNames) & ".1)"
-  of tSnd: "(" & prettyTerm(t.sub, ctx, refNames) & ".2)"
-  of tAbsurd: "(absurd " & prettyTerm(t.sub, ctx, refNames) & ")"
+    "(" & prettyTerm(t.fn, ctx, refNames, records) & " " &
+      prettyTerm(t.arg, ctx, refNames, records) & ")"
+  of tFst: "(" & prettyTerm(t.sub, ctx, refNames, records) & ".1)"
+  of tSnd: "(" & prettyTerm(t.sub, ctx, refNames, records) & ".2)"
+  of tAbsurd: "(absurd " & prettyTerm(t.sub, ctx, refNames, records) & ")"
   of tLet:
-    "let " & prettyTerm(t.letVal, ctx, refNames) & " in " &
-      prettyTerm(t.letScope.bdy, @[CtxEntry(name: "_", ty: t.letTy, qty: qOmega)] & ctx, refNames)
+    "let " & prettyTerm(t.letVal, ctx, refNames, records) & " in " &
+      prettyTerm(t.letScope.bdy, @[CtxEntry(name: "_", ty: t.letTy, qty: qOmega)] & ctx, refNames, records)
 
 template withConvHandler*(ms: var MetaStore, h: ConvHandler,
                           body: untyped): untyped =
@@ -317,8 +361,8 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     var refNames = initTable[int, string]()
     for name, g in globals:
       if g.tm.kind == tR: refNames[g.tm.refId] = name
-    raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames) &
-      " does not match expected type " & prettyTerm(b, ctx, refNames) &
+    raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
+      " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
       ": " & noConfusionMsg(ms, nc.c1, nc.c2))
   var env = newSeq[Value](ctx.len)
   for i in 0 ..< ctx.len:
@@ -350,8 +394,8 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     var refNames = initTable[int, string]()
     for name, g in globals:
       if g.tm.kind == tR: refNames[g.tm.refId] = name
-    raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames) &
-      " does not match expected type " & prettyTerm(b, ctx, refNames) &
+    raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
+      " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
       ": not convertible (" & e.msg & ")")
 
 proc closeParams*(s: var Supply, ctx: Ctx): seq[Term] =
@@ -1424,6 +1468,30 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
         let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
         let (_, codBdy, _) = ensureSi(ms, pre.loc, pty, ctx.len)
         (tmSnd(p), subst(codBdy, 0, tmFst(p)))
+      of pkProj:
+        # Issue #37: `e.f` — resolve against the record table via the
+        # un-unfolded head of the scrutinee's type.
+        let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
+        var head = pty
+        while head.kind == tApp: head = head.fn
+        let rname =
+          if head.kind == tR and ms.refNames.hasKey(head.refId):
+            ms.refNames[head.refId]
+          else: ""
+        if rname == "" or not ms.recordFields.hasKey(rname):
+          raise elabErr(pre.loc, "projection '." & pre.name &
+            "' on non-record type")
+        let pname = rname & "." & pre.name
+        if pname notin globals:
+          raise elabErr(pre.loc, "record '" & rname & "' has no field '" &
+            pre.name & "'")
+        let ge = globals[pname]
+        let (dom, pcodBdy, _, _, _, fpeg) = ensurePi(ms, pre.loc, ge.ty,
+                                                    ctx.len, ab)
+        discard convElab(ms, supply, pty, dom, pre.loc, ctx, globals,
+                         tmC(cStar))
+        checkPeg(fpeg, ab, pre.loc)
+        (tmApp(ge.tm, p), subst(pcodBdy, 0, p))
       of pkLet:
         let (v, vty) =
           if pre.c1.isNil: inferTm(pre.c2, ctx, globals, ms, supply, ab)
@@ -1978,7 +2046,7 @@ proc mentionsFam(pre: PreTerm, famName: string): bool =
   of pkSigma: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
   of pkLam: mentionsFam(pre.c2, famName)
   of pkPair: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
-  of pkFst, pkSnd: mentionsFam(pre.c1, famName)
+  of pkFst, pkSnd, pkProj: mentionsFam(pre.c1, famName)
   of pkLet: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName) or
              mentionsFam(pre.c3, famName)
   of pkAnn: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
@@ -1986,6 +2054,8 @@ proc mentionsFam(pre: PreTerm, famName: string): bool =
 
 proc substPreN(t: PreTerm, subs: seq[(string, PreTerm)],
                fresh: var int): PreTerm
+proc substPre*(t: PreTerm, name: string, repl: PreTerm,
+              fresh: var int): PreTerm
 proc substPreSeq(ts: seq[PreTerm], subs: seq[(string, PreTerm)],
                  fresh: var int): seq[PreTerm]
 
@@ -2281,6 +2351,65 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
             if ctor.name == "zero": supply.natZeroRefId = ctm.refId
             elif ctor.name == "suc": supply.natSucRefId = ctm.refId
 
+proc elabRecordDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
+                    ms: var MetaStore) =
+  profilePhase(epData):
+      ## Issue #37: desugar `record R:` with `| f : T` fields to:
+      ##   def R : ? = Sig (f0:T0). ... . 1          (transparent Sigma)
+      ##   def mkR (f0:T0) ... : R = (f0, (..., <>)) (positional constructor)
+      ##   def R.fi (p : R) : Ti[...] = <accessor>   (named projections)
+      ## `e.f` (pkProj) resolves through ms.recordFields at elaboration.
+      ## Constructor syntax decision (issue step 3): positional tuple
+      ## lifting (`mkPoint x y`); named `(x := ...)` construction is left
+      ## for a follow-up if the positional form proves awkward.
+      let loc = d.recloc
+      let rname = d.rname
+      # the iterated Sigma type, right-nested over the unit type
+      var sigTy = mkUnitTy(loc)
+      for i in countdown(d.fields.high, 0):
+        sigTy = mkSigma(d.fields[i].name, d.fields[i].ty, sigTy,
+                        d.fields[i].floc)
+      discard elabDefDecl(SurfDef(name: rname, tele: @[], retTy: mkUniv(loc),
+                                  body: sigTy, loc: loc),
+                          globals, supply, ms)
+      # positional constructor
+      var ctorBody: PreTerm = mkUnitV(loc)
+      for i in countdown(d.fields.high, 0):
+        ctorBody = mkPair(mkVar(d.fields[i].name, d.fields[i].floc),
+                          ctorBody, loc)
+      var tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool,
+                           qty: Qty]] = @[]
+      for f in d.fields:
+        tele.add((f.name, f.ty, false, false, toQty(qOmega)))
+      discard elabDefDecl(SurfDef(name: "mk" & rname, tele: tele,
+                                  retTy: mkVar(rname, loc), body: ctorBody,
+                                  loc: loc),
+                          globals, supply, ms)
+      # named projections; earlier field types are substituted with their
+      # projections of `p` so dependent fields get dependent types.
+      # The record is registered before the projections elaborate: a
+      # later field's type may itself project an earlier field (`p.n`).
+      var pnames: seq[string] = @[]
+      for f in d.fields: pnames.add(f.name)
+      ms.registerRecord(rname, pnames)
+      for i, f in d.fields:
+        let pname = rname & "." & f.name
+        var retTy = f.ty
+        var fresh = 0
+        for j in 0 ..< i:
+          retTy = substPre(retTy, d.fields[j].name,
+                           mkProj(mkVar("p", loc), d.fields[j].name, loc),
+                           fresh)
+        var acc: PreTerm = mkVar("p", loc)
+        for _ in 0 ..< i: acc = mkSnd(acc, loc)
+        acc = mkFst(acc, loc)
+        let ptele: seq[tuple[name: string, ty: PreTerm, impl: bool,
+                              erased: bool, qty: Qty]] =
+          @[("p", mkVar(rname, loc), false, false, toQty(qOmega))]
+        discard elabDefDecl(SurfDef(name: pname, tele: ptele, retTy: retTy,
+                                    body: acc, loc: f.floc),
+                            globals, supply, ms)
+
 # --- Capture-avoiding PreTerm substitution ----------------------------------
 # Needed by issue #32 (indexed clause defs): instantiating the motive and
 # refining scrutinee index variables per constructor must not capture
@@ -2300,7 +2429,7 @@ proc freeVarsPreAux(t: PreTerm, bound: var HashSet[string],
     bound.incl(t.name)
     freeVarsPreAux(t.c2, bound, acc)
     if not shadowed: bound.excl(t.name)
-  of pkFst, pkSnd:
+  of pkFst, pkSnd, pkProj:
     freeVarsPreAux(t.c1, bound, acc)
   of pkLet:
     if not t.c1.isNil: freeVarsPreAux(t.c1, bound, acc)
@@ -2330,7 +2459,7 @@ proc allNamesPreAux(t: PreTerm, acc: var HashSet[string]) =
   of pkApp, pkPair, pkAnn:
     allNamesPreAux(t.c1, acc)
     allNamesPreAux(t.c2, acc)
-  of pkFst, pkSnd:
+  of pkFst, pkSnd, pkProj:
     allNamesPreAux(t.c1, acc)
   else: discard
 
@@ -2377,6 +2506,8 @@ proc substPre*(t: PreTerm, name: string, repl: PreTerm,
     mkFst(substPre(t.c1, name, repl, fresh), t.loc)
   of pkSnd:
     mkSnd(substPre(t.c1, name, repl, fresh), t.loc)
+  of pkProj:
+    mkProj(substPre(t.c1, name, repl, fresh), t.name, t.loc)
   of pkLet:
     let ann = if t.c1.isNil: nil else: substPre(t.c1, name, repl, fresh)
     let v = substPre(t.c2, name, repl, fresh)
@@ -2567,7 +2698,7 @@ proc checkClauseTermination(rhs: PreTerm, fname: string, loc: Loc) =
     of pkPair:
       walk(t.c1)
       walk(t.c2)
-    of pkFst, pkSnd:
+    of pkFst, pkSnd, pkProj:
       walk(t.c1)
     of pkAnn:
       walk(t.c1)
@@ -3587,6 +3718,8 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
     elabRedDecl(d.lhs, d.rhs, d.rloc, globals, supply, ms)
   of dkData:
     elabDataDecl(d, globals, supply, ms, dataInfos)
+  of dkRecord:
+    elabRecordDecl(d, globals, supply, ms)
   of dkClauses:
     result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
   of dkInterface:
@@ -5215,5 +5348,43 @@ proc isTrue (b : Bool) : Bool = b
 
   removeDir(modDir)
   echo "ok: multi-file import (basic, diamond, cycle, missing, cache)"
+
+  # --- Issue #37, step 4: record-aware pretty-printing -----------------------
+  # An iterated Sigma whose binder names and unit tail match a registered
+  # record prints as `R{f: T, ...}`, never as raw `Si` nesting.
+  let rstate = elabCheckState("""
+postulate Nat : ?
+postulate zero : Nat
+postulate Vec : Nat -> ? -> ?
+record Point:
+| x : Nat
+| y : Nat
+record DepR:
+| n : Nat
+| v : Vec n Nat
+proc asSig : ? =
+  Sig (x : Nat). Sig (y : Nat). 1
+proc asSigDep : ? =
+  Sig (n : Nat). Sig (v : Vec n Nat). 1
+proc asSigOther : ? =
+  Sig (u : Nat). Sig (v : Nat). 1
+""")
+  proc findDef(ds: seq[ElabDef], name: string): ElabDef =
+    for d in ds:
+      if d.name == name: return d
+    assert false, "def not found: " & name
+  proc prettyRec(t: Term): string =
+    prettyTerm(zonk(rstate.ms, t), @[], rstate.ms.refNames,
+               rstate.ms.recordFields)
+  let pPoint = prettyRec(findDef(rstate.defs, "asSig").tmTm)
+  assert pPoint == "Point{x: Nat, y: Nat}", "got: " & pPoint
+  echo "ok: record skeleton prints with field names: ", pPoint
+  let pDep = prettyRec(findDef(rstate.defs, "asSigDep").tmTm)
+  assert pDep == "DepR{n: Nat, v: ((Vec n) Nat)}", "got: " & pDep
+  echo "ok: dependent record fields print with names: ", pDep
+  let pOther = prettyRec(findDef(rstate.defs, "asSigOther").tmTm)
+  assert pOther.startsWith("Si("), "got: " & pOther
+  assert "Point" notin pOther, "got: " & pOther
+  echo "ok: non-matching Sigma still prints raw: ", pOther
 
   echo "--- all elaborator tests passed ---"

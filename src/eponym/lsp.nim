@@ -113,13 +113,13 @@ proc hoverAt*(src: string, line, col: int): string =
       var ctx: Ctx = @[]
       for (n, t) in h.holeCtx:
         ctx.add(CtxEntry(name: n, ty: zonk(ms, t), qty: qOmega))
-      let goal = prettyTerm(zonk(ms, h.holeGoal), ctx, ms.refNames)
+      let goal = prettyTerm(zonk(ms, h.holeGoal), ctx, ms.refNames, ms.recordFields)
       var lines: seq[string] = @["```", "goal : " & goal, "```"]
       if h.holeCtx.len > 0:
         lines.add("**context**")
         for (n, t) in h.holeCtx:  # innermost-first
           lines.add("- `" & n & " : " &
-            prettyTerm(zonk(ms, t), ctx, ms.refNames) & "`")
+            prettyTerm(zonk(ms, t), ctx, ms.refNames, ms.recordFields) & "`")
       return lines.join("\n")
   except ParseError, ElabError:
     discard
@@ -234,6 +234,7 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
         of dkImport: decls[i].iloc.line  # issue #49: import decls have no body to split
         of dkInterface: decls[i].ifloc.line  # issue #177
         of dkCommand: decls[i].cloc.line      # issue #177
+        of dkRecord: decls[i].recloc.line    # issue #37
       if dl > procLine1:
         endLine0 = dl - 2
         break

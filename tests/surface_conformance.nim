@@ -79,6 +79,13 @@ proc sameDecl(a, b: SurfDecl): bool =
     a.ifname == b.ifname
   of dkCommand:
     a.cname == b.cname and a.ciface == b.ciface and sameTerm(a.cty, b.cty)
+  of dkRecord:
+    if a.rname != b.rname or a.fields.len != b.fields.len: return false
+    for i in 0 ..< a.fields.len:
+      if a.fields[i].name != b.fields[i].name or
+         not sameTerm(a.fields[i].ty, b.fields[i].ty):
+        return false
+    true
 
 macro conforms*(src: static string, blk: untyped): untyped =
   ## Assert `blockToEponym(blk)` parses to the same decls as `src`.
@@ -227,5 +234,16 @@ proc linLam : ? = lam (1 x : ?). x
     let y: A = x
     y
   proc linLam(): Univ = lam(x {.linear.}, Univ, x)
+
+# record declaration + dot projection (issue #37)
+conforms """record Point:
+| x : ?
+| y : ?
+proc getX (p : Point) : ? = p.x
+""":
+  record(Point):
+    field(x, Univ)
+    field(y, Univ)
+  proc getX(p: Point): Univ = p.x
 
 echo "surface_conformance: all tests passed"
