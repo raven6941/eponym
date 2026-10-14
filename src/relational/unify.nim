@@ -113,6 +113,12 @@ type
     # the entry when the variable is solved (a q1 solution rejects).
     qvarPending*: Table[string, seq[tuple[varName: string, loc: Loc]]]
     ctorTable*: CtorTable  # Issue #80: constructor disjointness facts
+    # Issue #37: record declarations (record name -> ordered field names),
+    # for resolving `e.f` dot-projections at elaboration time. Keyed by
+    # surface name (records elaborate to plain defs, so refIds alone do
+    # not identify them after delta-unfolding; the name is checked
+    # against the un-unfolded head of the scrutinee's type).
+    recordFields*: Table[string, seq[string]]
     # Issue #139: surface name of every registered global (refId -> name),
     # for the name-resolving pretty-printer (elab.prettyTerm) used by LSP
     # hover and shed goal display. Populated by the elaborator at global
@@ -159,8 +165,7 @@ proc initCtorTable*(): CtorTable =
             dataNames: initTable[int, string]())
 
 proc registerDataCtors*(ms: var MetaStore, dataRefId: int, dataName: string,
-                        ctors: seq[(int, string)]) =
-  ## Issue #80: record one `data` declaration's constructor set.
+                        ctors: seq[(int, string)]) =  ## Issue #80: record one `data` declaration's constructor set.
   ms.ctorTable.dataNames[dataRefId] = dataName
   var ids: seq[int] = @[]
   for (cid, cname) in ctors:
@@ -168,6 +173,11 @@ proc registerDataCtors*(ms: var MetaStore, dataRefId: int, dataName: string,
     ms.ctorTable.ctorNames[cid] = cname
     ids.add(cid)
   ms.ctorTable.dataCtors[dataRefId] = ids
+
+proc registerRecord*(ms: var MetaStore, recName: string,
+                     fields: seq[string]) =
+  ## Issue #37: record one `record` declaration's ordered field names.
+  ms.recordFields[recName] = fields
 
 proc ctorHeadOf*(ms: MetaStore, t: Term): int =
   ## The constructor refId at the head of t's application spine, or -1

@@ -11,7 +11,9 @@
 #
 # Surface syntax (Nim-consistent):
 #   program = decl*
-#   decl    = proc | def | postulate | elim | red | data | import
+#   decl    = proc | def | postulate | elim | red | data | record | import
+#   record  = "record" name ":" "|" field ( "|" field )*   -- issue #37
+#   field   = name ":" term
 #   import  = "import" string        -- multi-file programs (issue #49)
 #   proc    = "proc" name tele ":" term "=" term
 #   tele    = (binder)*
@@ -79,6 +81,7 @@ type
   TokKind = enum
     tkEof, tkIdent, tkInt, tkString,
     tkDef, tkClauses, tkPostulate, tkElim, tkRed, tkData, tkWhere, tkBy,
+    tkRecord,
     tkImport, tkInterface, tkCommand,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
@@ -105,6 +108,7 @@ const keywords = [
   ("proc", tkDef), ("def", tkClauses),
   ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
   ("data", tkData), ("where", tkWhere), ("by", tkBy),
+  ("record", tkRecord),
   ("import", tkImport), ("interface", tkInterface), ("command", tkCommand),
   ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
@@ -338,11 +342,23 @@ proc parseAtom(p: var Parser): PreTerm =
   else:
     raise fail(t.loc, "expected a term, got '" & t.lexeme & "'")
 
+proc parseProjTail(p: var Parser, e: PreTerm): PreTerm =
+  ## Issue #37: postfix dot-projection `e.f` (also chains: `e.f.g`).
+  ## The `lam x. body` / `Pi/Sig (x:T). body` dots are consumed inside
+  ## parseAtom, so a dot here always starts a projection.
+  result = e
+  while p.peek().kind == tkDot:
+    let dloc = p.next().loc
+    let f = p.expect(tkIdent, "field name after '.'")
+    result = mkProj(result, f.lexeme, dloc)
+
 proc parseApp(p: var Parser): PreTerm =
-  result = p.parseAtom()
+  ## Issue #37: `.f` binds tighter than application: `g x.f` is `g (x.f)`.
+  ## The tail applies to each argument atom, never to an application node.
+  result = p.parseProjTail(p.parseAtom())
   while p.peek().kind.isAtomStart():
     let loc = result.loc
-    result = mkApp(result, p.parseAtom(), loc)
+    result = mkApp(result, p.parseProjTail(p.parseAtom()), loc)
 
 proc atBinderArrow(p: Parser): bool =
   ## Issue #65: token lookahead for a binder in arrow position:
@@ -490,6 +506,29 @@ proc parseData(p: var Parser): SurfDecl =
   SurfDecl(kind: dkData, dname: nm.lexeme, params: params, indexTy: indexTy,
            ctors: ctors, daloc: t.loc)
 
+proc parseRecord(p: var Parser): SurfDecl =
+  ## Issue #37:
+  ## record Point:
+  ## | x : Int
+  ## | y : Int
+  let t = p.expect(tkRecord, "'record'")
+  let nm = p.expect(tkIdent, "record name")
+  discard p.expect(tkColon, "':'")
+  var fields: seq[RecordField] = @[]
+  while p.peek().kind == tkPipe:
+    discard p.next()
+    let fnm = p.expect(tkIdent, "field name")
+    discard p.expect(tkColon, "':'")
+    let fty = p.parseTerm()
+    for f in fields:
+      if f.name == fnm.lexeme:
+        raise fail(fnm.loc, "duplicate field '" & fnm.lexeme &
+          "' in record '" & nm.lexeme & "'")
+    fields.add RecordField(name: fnm.lexeme, ty: fty, floc: fnm.loc)
+  if fields.len == 0:
+    raise fail(t.loc, "record declaration needs at least one field")
+  SurfDecl(kind: dkRecord, rname: nm.lexeme, fields: fields, recloc: t.loc)
+
 proc parseClauses(p: var Parser): SurfDecl =
   ## `def name : Ty` followed by `| pat1 .. patn = rhs` clauses.
   ## Each pattern is an atom; constructor applications need parens: `(suc m)`.
@@ -530,10 +569,11 @@ proc parseDecl(p: var Parser): SurfDecl =
   of tkElim: p.parseElim()
   of tkRed: p.parseRed()
   of tkData: p.parseData()
+  of tkRecord: p.parseRecord()
   of tkImport: p.parseImport()
   of tkInterface: p.parseInterface()
   of tkCommand: p.parseCommand()
-  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'import', 'interface' or 'command'")
+  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'record', 'import', 'interface' or 'command'")
 
 proc parseProgram*(src: string): seq[SurfDecl] =
   profilePhase(epParse):

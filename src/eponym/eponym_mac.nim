@@ -155,6 +155,12 @@ proc nimExprToEponym(n: NimNode): string =
     # (x) -> x (parenthesized)
     if n.len == 1: nimExprToEponym(n[0])
     else: "(" & n.mapIt(nimExprToEponym(it)).join(", ") & ")"
+  of nnkDotExpr:
+    # p.x -> (p).x (record projection, issue #37; the surface parser
+    # resolves it against the record table at elaboration time).
+    # The LHS is parenthesized: in `mkPt(x, y).x` the dot must not
+    # rebind to `y`.
+    "(" & nimExprToEponym(n[0]) & ")." & nimExprToEponym(n[1])
   of nnkTupleConstr:
     # (t : T) ascription (Nim parses it as a 1-tuple of ExprColonExpr);
     # (a, b) -> (a, b) [Eponym pair syntax]
@@ -420,6 +426,22 @@ proc blockToEponym*(body: NimNode): string =
               let q = qtyPrefix(p[j])
               cparamStrs.add("(" & q & binderName(p[j]) & " : " & ty2 & ")")
           result.add("| " & cname & " " & cparamStrs.join(" ") & " : " & cretTy & "\n")
+      elif head == "record":
+        # record(Point): block -> record Point: | ...
+        # block statements are field(name, Type) calls (issue #37)
+        if st.len != 3 or st[1].kind != nnkIdent:
+          error("record expects (name) with a block of field(name, type)", st)
+        let name = $st[1]
+        result.add("record " & name & ":\n")
+        let blk = st[2]
+        if blk.kind != nnkStmtList:
+          error("record expects a block of field(name, type) statements", st)
+        for f in blk:
+          if f.kind != nnkCall or f[0].kind != nnkIdent or $f[0] != "field":
+            error("record block expects field(name, type) statements", f)
+          if f.len != 3 or f[1].kind != nnkIdent:
+            error("field expects (name, type)", f)
+          result.add("| " & $f[1] & " : " & nimTypeToEponym(f[2]) & "\n")
       else:
         error("eponymBlock: unsupported call: " & head, st)
     else:

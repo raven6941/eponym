@@ -2491,3 +2491,43 @@
   bench is the regression harness for future elaborator-performance
   work. #55's acceptance criteria are met except the full-CI-matrix run,
   which happens before merge.
+
+* 2026-10-14 — #37: records desugar to transparent Sigma defs (in progress)
+  Goal: named records for "a useful dependently typed system anyone would
+  want to use", following the Experiment 5 =data= precedent (desugar to
+  existing machinery, no new core constructs).
+
+  Design (implemented on =exp37-records=):
+  - =record R:= with =| f : T= lines elaborates to three kinds of defs:
+    =def R : ? = Sig (f0:T0). ... . 1= (a *transparent* def, so the
+    projections compute by delta+iota with no new reduction rules),
+    =def mkR (f0:T0) ... : R= (positional constructor, nested pairs over
+    =<>=), and =def R.fi (p : R) : Ti[p.f0..p.f(i-1)]= (named projections
+    as =fst (snd ...)= accessors; earlier fields substituted by their
+    projections so dependent fields get dependent types).
+  - =e.f= parses to a new =pkProj= node and resolves at elaboration time
+    against =ms.recordFields= (record name -> ordered field names), keyed
+    by the *un-unfolded* head of the scrutinee's type. A projection on a
+    bare (unfolded) Sigma is rejected — v1 only resolves named records.
+  - Constructor syntax (issue step 3): positional tuple lifting
+    (=mkPoint x y=). Named =(x := ...)= construction deferred; revisit if
+    positional proves awkward in larger examples.
+  - Dot binds tighter than application: =f x.y= is =f (x.y)=. (First
+    implementation attached the tail to the whole application, parsing
+    =mkPoint p.y= as =(mkPoint p).y=; caught by the swap test.)
+  - =ms.recordFields= is populated *before* the projections elaborate:
+    a later field's type may project an earlier one (=Vec r.n Nat=
+    elaborates =p.n= in =R.v='s type).
+  - Embedded (=eponymBlock=): =record(Pt):= block with =field(x, Int)=
+    statements; =nnkDotExpr= maps to =(p).x= (LHS parenthesized so the
+    dot cannot rebind to a call argument).
+
+  Not yet done: name-aware pretty-printing (records still render as raw
+  =Sig=/pairs; issue step 4), record parameters (=record Vec (A : ?):=),
+  and the =Point.y= global name is internal-only (surface =.= always
+  parses as projection).
+
+  Evidence: =examples/ep/26-records.ep= and
+  =examples/embedded/records.nim= elaborate and run (projection
+  computation verified at runtime: =normSum(3,4) = 7= etc.); full CI
+  build matrix + elab/parse/conformance/example suites green.

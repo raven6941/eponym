@@ -41,6 +41,7 @@ type
     pkUnitTy, pkUnitV, pkEmptyTy,  # 1, <>, O
     pkPi, pkLam, pkApp,            # Pi, lam, application
     pkSigma, pkPair, pkFst, pkSnd, # Sig, pairs, projections
+    pkProj,                       # e.f (issue #37: record projection)
     pkLet, pkAnn,                  # let, ascription
     pkHole,                       # _ (Experiment 3: elaborator hole)
     pkInt,                        # integer literal (Experiment 11)
@@ -118,6 +119,10 @@ proc mkFst*(p: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkFst, c1: p)
 proc mkSnd*(p: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkSnd, c1: p)
+proc mkProj*(scrut: PreTerm, field: string, loc = noLoc): PreTerm =
+  ## Issue #37: `scrut.field` — resolved against the record table at
+  ## elaboration time. `name` carries the field name (not a variable).
+  PreTerm(loc: loc, kind: pkProj, name: field, c1: scrut)
 proc mkLet*(name: string, ann, val, body: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkLet, name: name, c1: ann, c2: val, c3: body)
 proc mkAnn*(e, ty: PreTerm, loc = noLoc): PreTerm =
@@ -191,6 +196,8 @@ proc render(p: PreTerm, prec: int): string =
   of pkFst, pkSnd:
     let s = (if p.kind == pkFst: "fst " else: "snd ") & render(p.c1, 3)
     if prec > 2: par(s) else: s
+  of pkProj:
+    render(p.c1, 3) & "." & p.name
   of pkLet:
     let a = if p.c1.isNil: "" else: " : " & render(p.c1, 0)
     let s = "let " & p.name & a & " = " & render(p.c2, 0) &
@@ -219,7 +226,12 @@ type
     pegNames*: seq[string]
 
   DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData, dkClauses,
-                   dkImport, dkInterface, dkCommand
+                   dkImport, dkInterface, dkCommand, dkRecord
+  RecordField* = object
+    ## One field in a `record` declaration (issue #37).
+    name*: string
+    ty*: PreTerm
+    floc*: Loc
   DataCtor* = object
     ## One constructor in a `data` declaration.
     name*: string
@@ -275,6 +287,13 @@ type
     of dkImport:
       ipath*: string  # as written, e.g. "lib/nat.ep" (issue #49)
       iloc*: Loc
+    of dkRecord:
+      ## Issue #37: `record Name:` with `| field : Ty` lines. Desugars to
+      ## a def of the iterated Sigma type, a positional constructor
+      ## `mkName`, and named projections `Name.field` + dot notation.
+      rname*: string
+      fields*: seq[RecordField]
+      recloc*: Loc
 
 proc desugarTy*(d: SurfDef): PreTerm =
   ## Telescope to nested Pis (implicit entries to implicit Pis).

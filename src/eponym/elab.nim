@@ -1424,6 +1424,30 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
         let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
         let (_, codBdy, _) = ensureSi(ms, pre.loc, pty, ctx.len)
         (tmSnd(p), subst(codBdy, 0, tmFst(p)))
+      of pkProj:
+        # Issue #37: `e.f` — resolve against the record table via the
+        # un-unfolded head of the scrutinee's type.
+        let (p, pty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
+        var head = pty
+        while head.kind == tApp: head = head.fn
+        let rname =
+          if head.kind == tR and ms.refNames.hasKey(head.refId):
+            ms.refNames[head.refId]
+          else: ""
+        if rname == "" or not ms.recordFields.hasKey(rname):
+          raise elabErr(pre.loc, "projection '." & pre.name &
+            "' on non-record type")
+        let pname = rname & "." & pre.name
+        if pname notin globals:
+          raise elabErr(pre.loc, "record '" & rname & "' has no field '" &
+            pre.name & "'")
+        let ge = globals[pname]
+        let (dom, pcodBdy, _, _, _, fpeg) = ensurePi(ms, pre.loc, ge.ty,
+                                                    ctx.len, ab)
+        discard convElab(ms, supply, pty, dom, pre.loc, ctx, globals,
+                         tmC(cStar))
+        checkPeg(fpeg, ab, pre.loc)
+        (tmApp(ge.tm, p), subst(pcodBdy, 0, p))
       of pkLet:
         let (v, vty) =
           if pre.c1.isNil: inferTm(pre.c2, ctx, globals, ms, supply, ab)
@@ -1978,7 +2002,7 @@ proc mentionsFam(pre: PreTerm, famName: string): bool =
   of pkSigma: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
   of pkLam: mentionsFam(pre.c2, famName)
   of pkPair: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
-  of pkFst, pkSnd: mentionsFam(pre.c1, famName)
+  of pkFst, pkSnd, pkProj: mentionsFam(pre.c1, famName)
   of pkLet: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName) or
              mentionsFam(pre.c3, famName)
   of pkAnn: mentionsFam(pre.c1, famName) or mentionsFam(pre.c2, famName)
@@ -1986,6 +2010,8 @@ proc mentionsFam(pre: PreTerm, famName: string): bool =
 
 proc substPreN(t: PreTerm, subs: seq[(string, PreTerm)],
                fresh: var int): PreTerm
+proc substPre*(t: PreTerm, name: string, repl: PreTerm,
+              fresh: var int): PreTerm
 proc substPreSeq(ts: seq[PreTerm], subs: seq[(string, PreTerm)],
                  fresh: var int): seq[PreTerm]
 
@@ -2281,6 +2307,65 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
             if ctor.name == "zero": supply.natZeroRefId = ctm.refId
             elif ctor.name == "suc": supply.natSucRefId = ctm.refId
 
+proc elabRecordDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
+                    ms: var MetaStore) =
+  profilePhase(epData):
+      ## Issue #37: desugar `record R:` with `| f : T` fields to:
+      ##   def R : ? = Sig (f0:T0). ... . 1          (transparent Sigma)
+      ##   def mkR (f0:T0) ... : R = (f0, (..., <>)) (positional constructor)
+      ##   def R.fi (p : R) : Ti[...] = <accessor>   (named projections)
+      ## `e.f` (pkProj) resolves through ms.recordFields at elaboration.
+      ## Constructor syntax decision (issue step 3): positional tuple
+      ## lifting (`mkPoint x y`); named `(x := ...)` construction is left
+      ## for a follow-up if the positional form proves awkward.
+      let loc = d.recloc
+      let rname = d.rname
+      # the iterated Sigma type, right-nested over the unit type
+      var sigTy = mkUnitTy(loc)
+      for i in countdown(d.fields.high, 0):
+        sigTy = mkSigma(d.fields[i].name, d.fields[i].ty, sigTy,
+                        d.fields[i].floc)
+      discard elabDefDecl(SurfDef(name: rname, tele: @[], retTy: mkUniv(loc),
+                                  body: sigTy, loc: loc),
+                          globals, supply, ms)
+      # positional constructor
+      var ctorBody: PreTerm = mkUnitV(loc)
+      for i in countdown(d.fields.high, 0):
+        ctorBody = mkPair(mkVar(d.fields[i].name, d.fields[i].floc),
+                          ctorBody, loc)
+      var tele: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool,
+                           qty: Qty]] = @[]
+      for f in d.fields:
+        tele.add((f.name, f.ty, false, false, toQty(qOmega)))
+      discard elabDefDecl(SurfDef(name: "mk" & rname, tele: tele,
+                                  retTy: mkVar(rname, loc), body: ctorBody,
+                                  loc: loc),
+                          globals, supply, ms)
+      # named projections; earlier field types are substituted with their
+      # projections of `p` so dependent fields get dependent types.
+      # The record is registered before the projections elaborate: a
+      # later field's type may itself project an earlier field (`p.n`).
+      var pnames: seq[string] = @[]
+      for f in d.fields: pnames.add(f.name)
+      ms.registerRecord(rname, pnames)
+      for i, f in d.fields:
+        let pname = rname & "." & f.name
+        var retTy = f.ty
+        var fresh = 0
+        for j in 0 ..< i:
+          retTy = substPre(retTy, d.fields[j].name,
+                           mkProj(mkVar("p", loc), d.fields[j].name, loc),
+                           fresh)
+        var acc: PreTerm = mkVar("p", loc)
+        for _ in 0 ..< i: acc = mkSnd(acc, loc)
+        acc = mkFst(acc, loc)
+        let ptele: seq[tuple[name: string, ty: PreTerm, impl: bool,
+                              erased: bool, qty: Qty]] =
+          @[("p", mkVar(rname, loc), false, false, toQty(qOmega))]
+        discard elabDefDecl(SurfDef(name: pname, tele: ptele, retTy: retTy,
+                                    body: acc, loc: f.floc),
+                            globals, supply, ms)
+
 # --- Capture-avoiding PreTerm substitution ----------------------------------
 # Needed by issue #32 (indexed clause defs): instantiating the motive and
 # refining scrutinee index variables per constructor must not capture
@@ -2300,7 +2385,7 @@ proc freeVarsPreAux(t: PreTerm, bound: var HashSet[string],
     bound.incl(t.name)
     freeVarsPreAux(t.c2, bound, acc)
     if not shadowed: bound.excl(t.name)
-  of pkFst, pkSnd:
+  of pkFst, pkSnd, pkProj:
     freeVarsPreAux(t.c1, bound, acc)
   of pkLet:
     if not t.c1.isNil: freeVarsPreAux(t.c1, bound, acc)
@@ -2330,7 +2415,7 @@ proc allNamesPreAux(t: PreTerm, acc: var HashSet[string]) =
   of pkApp, pkPair, pkAnn:
     allNamesPreAux(t.c1, acc)
     allNamesPreAux(t.c2, acc)
-  of pkFst, pkSnd:
+  of pkFst, pkSnd, pkProj:
     allNamesPreAux(t.c1, acc)
   else: discard
 
@@ -2377,6 +2462,8 @@ proc substPre*(t: PreTerm, name: string, repl: PreTerm,
     mkFst(substPre(t.c1, name, repl, fresh), t.loc)
   of pkSnd:
     mkSnd(substPre(t.c1, name, repl, fresh), t.loc)
+  of pkProj:
+    mkProj(substPre(t.c1, name, repl, fresh), t.name, t.loc)
   of pkLet:
     let ann = if t.c1.isNil: nil else: substPre(t.c1, name, repl, fresh)
     let v = substPre(t.c2, name, repl, fresh)
@@ -2567,7 +2654,7 @@ proc checkClauseTermination(rhs: PreTerm, fname: string, loc: Loc) =
     of pkPair:
       walk(t.c1)
       walk(t.c2)
-    of pkFst, pkSnd:
+    of pkFst, pkSnd, pkProj:
       walk(t.c1)
     of pkAnn:
       walk(t.c1)
@@ -3587,6 +3674,8 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
     elabRedDecl(d.lhs, d.rhs, d.rloc, globals, supply, ms)
   of dkData:
     elabDataDecl(d, globals, supply, ms, dataInfos)
+  of dkRecord:
+    elabRecordDecl(d, globals, supply, ms)
   of dkClauses:
     result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
   of dkInterface:
