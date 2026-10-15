@@ -62,7 +62,7 @@ proc qtyPrefix(n: NimNode): string =
 proc nimTypeToEponym(n: NimNode): string
 proc nimExprToEponym(n: NimNode): string
 
-proc phoasLamToEponym(lam: NimNode): string =
+proc phoasLamToEponym*(lam: NimNode): string =
   ## Convert an nnkLambda to `lam (qx : T). body` surface source (issue #40:
   ## PHOAS surface — the binder is a host lambda, so nesting/shadowing are
   ## handled by the host; the macro emits the named-binder form and the

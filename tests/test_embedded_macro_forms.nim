@@ -11,6 +11,9 @@
 
 import eponym_mac
 import eponym_embed
+import elab
+import macros
+import strutils
 
 eponymBlock:
   # --- smoke 07 embedded: Bool via postulate/elim/red ---
@@ -105,3 +108,42 @@ eponymBlock:
 
 when isMainModule:
   echo "test_embedded_macro_forms: embedded 07/08/14 + def/qvar/unit elaborated at compile time"
+
+  # --- PHOAS error parity (issue #40, acceptance criterion 3) -----------------
+  # An ill-typed phoasLam term must fail with the same *located* error as its
+  # string-surface twin: the macro attaches elaboration errors to the host
+  # block (error(msg, body) in eponymBlock), and the message itself carries a
+  # "line L, col C" location in the elaborator's standard format — not an
+  # unlocated crash and not a message class the string surface never emits.
+  # Run at compile time (static:) so `quote do:` can build the host AST.
+  static:
+    # parseStmt (not `quote do:`): quote hygienically gensyms the binder and
+    # the Eponym lexer rejects backticks; the real macro path never sees
+    # gensyms, so build the AST the way the compiler does.
+    let node = parseStmt("phoasLam(proc (x: Nat): Bool = x)")
+    let gen = phoasLamToEponym(node[0][1])  # parseStmt wraps in nnkStmtList
+    # Pin the generator output exactly, plus binder consistency.
+    doAssert gen == "(lam (x : Nat). (x : Bool))",
+      "phoasLam generator output changed: " & gen
+    let prog = "postulate Nat : ?\npostulate Bool : ?\nproc bad : Nat = " &
+      gen & "\n"
+    var msg1 = ""
+    try:
+      discard elabCheckDir(prog, ".")
+    except ElabError as e:
+      msg1 = e.msg
+    doAssert msg1.len > 0, "expected ElabError from ill-typed PHOAS program"
+    doAssert "line " in msg1,
+      "PHOAS elaboration error lacks a source location: " & msg1
+    # Hand-written string-surface twin: byte-identical elaboration input
+    # must give a byte-identical error.
+    let twin = "postulate Nat : ?\npostulate Bool : ?\n" &
+      "proc bad : Nat = (lam (x : Nat). (x : Bool))\n"
+    var msg2 = ""
+    try:
+      discard elabCheckDir(twin, ".")
+    except ElabError as e:
+      msg2 = e.msg
+    doAssert msg1 == msg2, "PHOAS error differs from string-surface twin:\n" &
+      msg1 & "\nvs\n" & msg2
+  echo "ok: phoasLam error parity — located error identical to string twin"
