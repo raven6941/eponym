@@ -83,6 +83,8 @@ nim c -r --hints:off $P "tests/test_sheds.nim"
 nim c -r --hints:off $P "tests/test_shed_layout.nim"
 nim c -r --hints:off $P "tests/test_shed_loop.nim"
 nim c -r --hints:off $P "tests/test_shed_refine_method.nim"
+echo "=== mutual termination graph tests (issue #42) ==="
+nim c -r --hints:off $P "tests/test_mutual_termination.nim"
 echo "=== vscode extension smoke (issue #136 client path, real lsp binary) ==="
 # The smoke test self-provisions the shed sidecar: it exercises the
 # extension's own generateSidecar path (issue #153) on the demo before
