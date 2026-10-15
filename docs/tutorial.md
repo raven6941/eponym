@@ -64,7 +64,11 @@ What just happened:
   Nim's VM), and generates a wrapper proc per definition. Ordinary Nim
   code then calls `double` like any other proc.
 - `postulate(Int, Univ)` takes `Int` as given (`Univ`, also written `?`,
-  is the universe of types). `addInt` is a primitive integer operation.
+  is the legacy top sort — the universe of types). There is also an
+  explicit hierarchy, `Type 0 : Type 1 : ...` (issue #52); `?` still works
+  everywhere it used to, and bridges both ways. The full story is in
+  [the surface-syntax reference](surface-syntax-reference.md). `addInt`
+  is a primitive integer operation.
   The prelude (`lib/nat.ep`) defines `Nat` inductively instead — we will
   use it in the next section.
 - A call like `double(21)` re-elaborates the block at runtime (cached
@@ -209,6 +213,14 @@ Notes:
   must be used exactly once in the body`; use it twice and you get
   `linear variable 'ch' used 2 times (expected exactly once): use the
   variable exactly once in the body`.
+- Quantity inference (issue #84): you only need to *write* an annotation
+  when you want quantity 1. An unannotated binder gets its quantity
+  inferred from usage — zero relevant uses becomes erased (`0`), any use
+  becomes unrestricted (`ω`). Linearity is never inferred, so
+  `{.linear.}` (`.ep` files: `(1 x : T)`) stays required wherever you
+  need it, and explicit annotations always override inference. Only
+  *term* positions count as uses: a mention inside a type does not
+  consume a linear variable or violate erasure.
 - `postulate` declares an operation without defining it — here a mock
   backend. A real library binds these to socket code; the types are the
   contract the backend must uphold (the typed-API-over-untrusted-backend

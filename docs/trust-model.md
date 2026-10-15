@@ -5,9 +5,10 @@ acceptable even if they may not terminate — a looping type-level program is
 the author's problem, like a bad build script; a successful compile still
 carries high certainty. This document states that position publicly: what
 the system guarantees, what it checks for you, and the known soundness gaps
-(#42, #52) we have chosen to *document rather than fix* for now. Positivity of
-`data` declarations (#33) was in that set until 2026-10-15; it is now
-checked at elaboration time (see below).
+we have chosen to *document rather than fix* for now. Strict positivity of
+`data` declarations (#33), mutual-recursion termination (#42), and the
+universe hierarchy (#52) were in that set; all three are now checked at
+elaboration time (see below).
 
 ## What the kernel checks and guarantees
 
@@ -57,6 +58,20 @@ Known wart: the post-pass attributes domain (type-annotation) occurrences to
 the innermost binder — an off-by-one the in-judgment check does not have.
 Conversion respects binder quantities (#66), and erased parameters are
 enforced at application sites.
+
+**Inference** (issue #84). Unannotated binders do not default to
+unrestricted: each becomes a quantity variable solved from observed usage —
+zero relevant uses becomes erased (`0`), any use becomes unrestricted
+(`ω`); quantity `1` is never inferred. Explicit annotations override.
+Only term positions count as uses (domains, annotations, and motives do
+not), and a body that still mentions unsolved metavariables keeps the
+conservative `ω` (sound: only precision is lost, never correctness).
+
+**Singleton types** (issue #74). Nat literals carry singleton types in
+type position (`(d : 2)` demands exactly `2`); the one-directional
+subsumption `tNatSing(k) <: Nat` lives in the elaborator's conversion and
+is mirrored in both kernels (`eponym_init.check` and
+`kernel_check.kCheck`), with 0 disagreements on the audit harness.
 
 **Elaboration-time effects** (#41, #177). Conversion-handler effects
 (`convElab` as the single effect-raising site) and ambient abilities
@@ -128,16 +143,21 @@ paradoxes and non-termination; the check closes that hole for the
 and mutual-recursion termination #42 remain the author's problem, as
 documented above.)
 
-## Universes (#52, open — documented, not fixed)
+## Universes (#52, implemented 2026-10-15)
 
-The core is `? : ?` — Type-in-Type, known-inconsistent. `Nat : ?`, `? : ?`;
-the kernel itself checks against `cStar` (kernel_check.nim:462,748). The
-honest policy: **don't write Girard's paradox**. Epigram itself treated
-stratification as out of scope ("Epigram Reloaded" calls it orthogonal to the
-paper), but we do not claim the original's scope as cover — #52 is the
-explicit, tracked deferral (explicit levels vs level inference vs constraint-
-based remains undecided, decisions.org #52 reserved). If you need universe
-discipline from Eponym, it does not exist yet.
+The core has an explicit hierarchy, `Type l : Type (l+1)`. `Pi`/`Sig`
+formation takes the maximum of the domain and codomain levels, and
+cumulativity is directional: `Type i` checks against `Type j` for `i <= j`
+at ascription points, while conversion itself stays level-strict (so
+equality-handler extensions never see subtyping as an equality goal).
+
+The legacy `?` keeps its Type-in-Type behaviour — it bridges both ways
+(convertible with `Type 0`, the top sort in "is a type" positions), so
+every existing `?` program elaborates exactly as before. The honest
+remainder: `?` is still `? : ?`, so "don't write Girard's paradox" still
+applies to `?`-classified code. Full retirement of `?` is future work; if
+you need universe discipline from Eponym today, write `Type l`
+explicitly.
 
 ## Host code, postulates, and the phase distinction
 
@@ -170,14 +190,17 @@ time.
 
 | Checked for you | Your responsibility |
 |---|---|
-| Bidirectional elaboration + conversion (kernel re-checks, LCF-style) | Termination beyond single-function structural recursion (#42) |
-| Eliminator iota rules (motive-validated by the kernel) | Universe discipline — `? : ?`, don't write paradoxes (#52) |
-| QTT quantity discipline (linear used once, erased unused) | Termination of type-level computation (author's problem) |
-| Structural recursion for `red` rules and clause defs (#36) | Soundness of `postulate`d primops (host `Int` ops) |
+| Bidirectional elaboration + conversion (kernel re-checks, LCF-style) | Termination beyond structural recursion + size-change (#36, #42) |
+| Eliminator iota rules (motive-validated by the kernel) | Girard's paradox in legacy `?` code — `?` is still `? : ?`; write `Type l` for discipline (#52) |
+| QTT quantity discipline (linear used once, erased unused; inference for unannotated binders, #84) | Termination of type-level computation (author's problem) |
+| Structural recursion for `red` rules and clause defs (#36); mutual recursion via size-change termination (#42) | Soundness of `postulate`d primops (host `Int` ops) |
 | Strict positivity of `data` declarations (#33) | Anything your own metaprogramming computes |
+| Universe hierarchy `Type l` + directional cumulativity (#52) | |
+| Nat singleton types, one-directional subsumption `tNatSing(k) <: Nat` (#74) | |
 | Handler evidence revalidated LCF-style (#41) | |
 
 Eponym's guarantee: a term that elaborates *and* passes the kernel was
 checked by a small independent checker against QTT's judgments, with
-quantities enforced, eliminators motive-validated, and recursion
-structurally guarded — modulo the three documented deferrals above.
+quantities enforced, eliminators motive-validated, recursion structurally
+guarded, and universes stratified — modulo the documented deferrals above
+(legacy-`?` Type-in-Type, type-level termination, postulate soundness).
