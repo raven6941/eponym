@@ -1,1 +1,1 @@
-line 4, col 3: unsolved metavariable ?m2 in the definition of 'bad'
+line 4, col 3: unsolved metavariable ?m2 in the definition of 'bad'; nothing in the program determines this hole's value — add a type annotation or fill in the hole explicitly

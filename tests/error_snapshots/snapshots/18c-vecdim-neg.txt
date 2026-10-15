@@ -1,1 +1,1 @@
-line 29, col 8: inferred type ((VAffine (suc zero)) (vVar (suc zero))) does not match expected type ((VAffine (suc zero)) (((vMul (suc zero)) (vVar (suc zero))) (vVar (suc zero)))): noConfusion: distinct constructors 'vVar' and 'vMul' of datatype 'VExpr' cannot be equal
+line 29, col 8: inferred type (VAffine (suc zero) (vVar (suc zero))) does not match expected type (VAffine (suc zero) (vMul (suc zero) (vVar (suc zero)) (vVar (suc zero)))): noConfusion: distinct constructors 'vVar' and 'vMul' of datatype 'VExpr' cannot be equal

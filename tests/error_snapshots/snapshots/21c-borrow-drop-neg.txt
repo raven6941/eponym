@@ -1,1 +1,1 @@
-line 14, col 17: linear variable 'b' not used
+line 14, col 17: linear variable 'b' not used (expected exactly once): a linear binder must be used exactly once in the body

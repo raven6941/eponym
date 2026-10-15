@@ -1,1 +1,1 @@
-line 8, col 37: inferred type (((Eq Nat) zero) zero) does not match expected type (((Eq Nat) zero) (suc zero)): noConfusion: distinct constructors 'zero' and 'suc' of datatype 'Nat' cannot be equal
+line 8, col 37: inferred type (Eq Nat zero zero) does not match expected type (Eq Nat zero (suc zero)): noConfusion: distinct constructors 'zero' and 'suc' of datatype 'Nat' cannot be equal

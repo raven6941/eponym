@@ -1,0 +1,1 @@
+line 5, col 29: assumption: no hypothesis matches the goal Bool

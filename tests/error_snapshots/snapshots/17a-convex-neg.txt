@@ -1,1 +1,1 @@
-line 15, col 47: inferred type (Convex (eSq eVar)) does not match expected type (Convex ((eMul eVar) eVar)): noConfusion: distinct constructors 'eSq' and 'eMul' of datatype 'CExpr' cannot be equal
+line 15, col 47: inferred type (Convex (eSq eVar)) does not match expected type (Convex (eMul eVar eVar)): noConfusion: distinct constructors 'eSq' and 'eMul' of datatype 'CExpr' cannot be equal
