@@ -2943,3 +2943,33 @@
   stderr. Verified: `EPON_TRACE=unify` on the `eponym`-macro path emits
   the trace at compile time; native suite still green.
   Status: OPEN (branch =exp83-elab-trace=).
+
+* 2026-10-15 — #56: pre-unification — suspend non-pattern goals instead of failing
+
+  Context: the unifier implemented only the Miller pattern fragment; a
+  non-pattern spine (`?m[V0,V0]`, non-variable spine entries) or an
+  escaping variable raised immediately — a completeness cliff for real
+  programs (flex-flex goals with unsolved heads, non-linear spines from
+  implicit insertion).
+  Decision: Agda/Norell/McBride-style pre-unification. `solveMeta`
+  suspends (rather than raising) on the two non-pattern cases; each
+  `DeferredGoal` holds the zonked goal pair plus the unsolved meta ids
+  it is blocked on. `retryDeferred` wakes goals when a blocking meta is
+  assigned; `flushDeferred` (wired into the declaration-final zonk
+  points in `elabDefDecl`/`elabPostulateDecl`/red-contractum/command
+  decls) re-runs leftovers once and reports them as an ambiguity error
+  showing the stuck constraint. The occurs check stays a hard failure
+  (a cycle can never resolve); rigid-rigid mismatches stay hard
+  (positive evidence of inequality). Hole-tolerant tooling mode leaves
+  suspended goals pending.
+  Consequences: new `DeferredGoal` on `MetaStore`; `spinePerm` /
+  `tryRenameAt` replace the raising `invertSpine` in `solveMeta`
+  (non-raising variants, so no message-sniffing control flow);
+  `pbt_unify` P5 now pins suspend-then-flush-ambiguity and `tryUnify`
+  flushes (a mere suspension is not success); P1/P3 unaffected (flush
+  preserves solve-then-zonk agreement and symmetry on the generator's
+  pattern-spine cases). Overhead is pay-as-you-go: the pattern path is
+  unchanged (one extra tuple return), deferral work happens only on
+  goals that previously raised.
+  Status: OPEN (branch =exp56-preunif=; corpus + elab wiring landed
+  2026-10-15; full CI + PR still to do).
