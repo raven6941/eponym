@@ -2968,9 +2968,18 @@
   `pbt_unify` P5 now pins suspend-then-flush-ambiguity and `tryUnify`
   flushes (a mere suspension is not success); P1/P3 unaffected (flush
   preserves solve-then-zonk agreement and symmetry on the generator's
-  pattern-spine cases). Overhead is pay-as-you-go: the pattern path is
-  unchanged (one extra tuple return), deferral work happens only on
-  goals that previously raised.
+  pattern-spine cases). Overhead is pay-as-you-go by mechanism: the
+  pattern path is unchanged (one extra tuple return), `retryDeferred`
+  scans an empty seq per meta assignment when nothing is suspended,
+  and deferral work happens only on goals that previously raised.
+  Measured on `tests/run_examples` (examples/.ep corpus, 5 interleaved
+  runs each, prebuilt CI binaries): branch median 5603ms vs main
+  median 5250ms (~6.7% slower). Caveat: within-config spread is
+  ~300-400ms and parallel worker runs were compiling on the same
+  machine during the measurement, so this number is noisy — the
+  mechanism analysis (no new work on the pattern path) is the stronger
+  claim. Recorded 2026-10-15; re-measure on a quiet machine before
+  treating the 6.7% as real.
   Status: OPEN (branch =exp56-preunif=; corpus + elab wiring landed
   2026-10-15; full CI + PR still to do).
 * 2026-10-15 — Universe hierarchy: explicit `Type l` + cumulativity lands as an experiment; `?` stays (issue #52)
