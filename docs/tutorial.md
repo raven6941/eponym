@@ -143,8 +143,9 @@ Now ascribe a 2-element vector the type of 1-element vectors:
 ```
 vec_bad.nim(5, 3) Error: eponymBlock elaboration error: line 2, col 56:
   inferred type (Vec Nat (suc (suc zero))) does not match expected type
-  (Vec Nat (suc zero)): noConfusion: distinct constructors 'suc' and
-  'zero' of datatype 'Nat' cannot be equal
+  (Vec Nat (suc zero)) (expected type written at line 2, col 1):
+  noConfusion: distinct constructors 'suc' and 'zero' of datatype 'Nat'
+  cannot be equal
 ```
 
 The checker proved `2 ≠ 1` and refused the program. That is the whole
