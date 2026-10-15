@@ -528,7 +528,7 @@ proc collectMetaIds(t: Term, acc: var HashSet[int]) =
   of tMeta:
     acc.incl(t.metaId)
     for s in t.metaSpine: collectMetaIds(s, acc)
-  of tV, tR, tC, tInt, tPrim, tNatLit: discard
+  of tV, tR, tC, tType, tInt, tPrim, tNatLit: discard
   of tPi, tSi, tLam:
     collectMetaIds(t.dom, acc)
     collectMetaIds(t.scope.bdy, acc)
