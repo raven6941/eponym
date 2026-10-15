@@ -88,15 +88,20 @@ proc checkUsage*(tm: Term): void =
         of q1:
           if n == 0:
             raise newException(UsageError,
-              "linear variable not used (binder " & t.scope.adv & ")")
+              "linear variable '" & t.scope.adv &
+              "' not used (expected exactly once): a linear binder must be " &
+              "used exactly once in the body")
           elif n > 1:
             raise newException(UsageError,
-              "linear variable used " & $n & " times (binder " &
-              t.scope.adv & ")")
+              "linear variable '" & t.scope.adv & "' used " & $n &
+              " times (expected exactly once): use the variable exactly " &
+              "once in the body")
         of q0:
           if n > 0:
             raise newException(UsageError,
-              "erased variable used (binder " & t.scope.adv & ")")
+              "erased variable '" & t.scope.adv &
+              "' used in term position: erased (quantity-0) variables may " &
+              "only be used in types")
         of qOmega: discard
 
       proc go(t: Term) =

@@ -46,6 +46,13 @@ proc elabErr(loc: Loc, msg: string): ref ElabError =
   e.loc = loc
   e
 
+proc unsolvedMetaHint(): string =
+  ## Issue #186: actionable hint appended to every unsolved-metavariable
+  ## error. The hole's site is reported by the caller; the hint tells the
+  ## user what to do about it.
+  "; nothing in the program determines this hole's value — " &
+    "add a type annotation or fill in the hole explicitly"
+
 proc sanitizeKernelMsg*(msg: string): string =
   ## Issue #34: the kernel evaluator's conversion errors embed raw
   ## `$`-rendered terms (R123 refIds, `:$` application syntax, de Bruijn
@@ -146,6 +153,12 @@ proc sigAmbient(d: SurfDef, globals: Globals, ms: var MetaStore): Ability =
 
 # --- Basic tactics (Experiment 6) ------------------------------------
 
+# Forward declaration (issue #186): defined below; used by tactic-failure
+# messages to render the goal the tactic was run against.
+proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string],
+                records: Table[string, seq[string]] =
+                  initTable[string, seq[string]]()): string
+
 proc tacAssumption(goal: Term, ctx: Ctx, globals: Globals,
                    ms: var MetaStore, supply: var Supply,
                    loc: Loc): Term =
@@ -159,7 +172,13 @@ proc tacAssumption(goal: Term, ctx: Ctx, globals: Globals,
       return vv(i)
     except:
       continue
-  raise elabErr(loc, "assumption: no hypothesis matches the goal")
+  # Issue #186: name the goal so the user can compare it against the
+  # hypotheses actually in scope.
+  var refNames = initTable[int, string]()
+  for name, g in globals:
+    if g.tm.kind == tR: refNames[g.tm.refId] = name
+  raise elabErr(loc, "assumption: no hypothesis matches the goal " &
+    prettyTerm(goal, ctx, refNames))
 
 proc tacRefl(goal: Term, ctx: Ctx, globals: Globals,
              ms: var MetaStore, supply: var Supply,
@@ -175,8 +194,11 @@ proc tacRefl(goal: Term, ctx: Ctx, globals: Globals,
   spine.add(cur)
   # spine is now [y, x, A, Eq] (reversed); we need 4 elements
   if spine.len != 4:
-    raise elabErr(loc, "refl: goal is not an equality (spine length " &
-      $spine.len & ")")
+    var refNames = initTable[int, string]()
+    for name, g in globals:
+      if g.tm.kind == tR: refNames[g.tm.refId] = name
+    raise elabErr(loc, "refl: goal is not an equality (got " &
+      prettyTerm(goal, ctx, refNames) & ")")
   let eqHead = spine[3]
   let aTy = spine[2]
   let x = spine[1]
@@ -285,8 +307,18 @@ proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string],
     "P(" & prettyTerm(t.pFst, ctx, refNames, records) & ", " &
       prettyTerm(t.pSnd, ctx, refNames, records) & ")"
   of tApp:
-    "(" & prettyTerm(t.fn, ctx, refNames, records) & " " &
-      prettyTerm(t.arg, ctx, refNames, records) & ")"
+    # Issue #186: flatten application spines so types read like the surface
+    # syntax (`(Vec Nat (suc zero))`) instead of nested binary applications
+    # (`(((Vec Nat) (suc zero)))`). A lone tApp still parenthesizes once.
+    var args: seq[Term] = @[]
+    var head = t
+    while head.kind == tApp:
+      args.add(head.arg)
+      head = head.fn
+    var parts: seq[string] = @[prettyTerm(head, ctx, refNames, records)]
+    for i in countdown(args.high, 0):
+      parts.add(prettyTerm(args[i], ctx, refNames, records))
+    "(" & parts.join(" ") & ")"
   of tFst: "(" & prettyTerm(t.sub, ctx, refNames, records) & ".1)"
   of tSnd: "(" & prettyTerm(t.sub, ctx, refNames, records) & ".2)"
   of tAbsurd: "(absurd " & prettyTerm(t.sub, ctx, refNames, records) & ")"
@@ -1196,13 +1228,17 @@ proc enforceQtyCount(q: Quantity, body: Term, loc: Loc, name: string,
   of q0:
     if n > 0:
       raise elabErr(loc, "erased variable '" & name & "' used " & $n &
-        " time(s) in term position")
+        " time(s) in term position: erased (quantity-0) variables may only " &
+        "be used in types")
   of q1:
     if n == 0:
-      raise elabErr(loc, "linear variable '" & name & "' not used")
+      raise elabErr(loc, "linear variable '" & name &
+        "' not used (expected exactly once): a linear binder must be used " &
+        "exactly once in the body")
     elif n > 1:
       raise elabErr(loc, "linear variable '" & name & "' used " & $n &
-        " times (expected exactly once)")
+        " times (expected exactly once): use the variable exactly once in " &
+        "the body")
   of qOmega: discard
 
 proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
@@ -1744,7 +1780,8 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           # raise conversion goals through convElab, so both see the handler.
           withConvHandler(ms, natArithHandler(globals, supply),
             tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
-        else: raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
+        else: raise elabErr(pre.loc, "unknown tactic '" & pre.name &
+          "'; known tactics: refl, assumption, arith")
       else:
         var (t, ty) = inferTm(pre, ctx, globals, ms, supply, ab)
         # Issue #201: the insertion inferTm's pkVar used to do now lives
@@ -1798,7 +1835,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   let ru = findUnsolved(ms, tyT)
   if ru.found and not ms.allowHoles:
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
-      " in the type of '" & d.name & "'")
+      " in the type of '" & d.name & "'" & unsolvedMetaHint())
   let tyV =
     if ru.found:
       # allowHoles (issue #58): the type mentions holes, so the core
@@ -1819,7 +1856,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   let ru2 = findUnsolved(ms, tmT)
   if ru2.found and not ms.allowHoles:
     raise elabErr(ru2.loc, "unsolved metavariable ?m" & $ru2.id &
-      " in the definition of '" & d.name & "'")
+      " in the definition of '" & d.name & "'" & unsolvedMetaHint())
   if d.name in globals:
     raise elabErr(d.loc, "duplicate definition '" & d.name & "'")
   if ms.allowHoles and (ru.found or ru2.found):
@@ -1871,7 +1908,7 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
   let ru = findUnsolved(ms, tyT)
   if ru.found and not ms.allowHoles:
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
-      " in the type of '" & name & "'")
+      " in the type of '" & name & "'" & unsolvedMetaHint())
   let tyV =
     if ru.found:
       # allowHoles (issue #58): the type mentions holes; the core cannot
@@ -2084,7 +2121,8 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
   let ru = findUnsolved(ms, rhsTm)
   if ru.found and not ms.allowHoles:
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
-      " in the contractum of a red rule")
+      " in the contractum of a red rule" &
+      unsolvedMetaHint())
   try:
     attachRedCase(g.tm, cg.tm.refId, rhsTm, nParams)
   except ValueError as e:
@@ -3802,7 +3840,7 @@ proc elabCommandDecl(name: string, ty: PreTerm, iface: string, loc: Loc,
   let ru = findUnsolved(ms, tyT)
   if ru.found and not ms.allowHoles:
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
-      " in the type of command '" & name & "'")
+      " in the type of command '" & name & "'" & unsolvedMetaHint())
   if headTy(ms, tyT).kind != tPi:
     raise elabErr(loc, "command '" & name & "' must have a function type")
   let tyV =
@@ -5558,7 +5596,7 @@ proc asSigOther : ? =
   assert pPoint == "Point{x: Nat, y: Nat}", "got: " & pPoint
   echo "ok: record skeleton prints with field names: ", pPoint
   let pDep = prettyRec(findDef(rstate.defs, "asSigDep").tmTm)
-  assert pDep == "DepR{n: Nat, v: ((Vec n) Nat)}", "got: " & pDep
+  assert pDep == "DepR{n: Nat, v: (Vec n Nat)}", "got: " & pDep
   echo "ok: dependent record fields print with names: ", pDep
   let pOther = prettyRec(findDef(rstate.defs, "asSigOther").tmTm)
   assert pOther.startsWith("Si("), "got: " & pOther

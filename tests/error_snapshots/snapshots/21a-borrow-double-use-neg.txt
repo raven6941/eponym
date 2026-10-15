@@ -1,1 +1,1 @@
-line 14, col 29: linear variable 'b2' used 2 times (expected exactly once)
+line 14, col 29: linear variable 'b2' used 2 times (expected exactly once): use the variable exactly once in the body

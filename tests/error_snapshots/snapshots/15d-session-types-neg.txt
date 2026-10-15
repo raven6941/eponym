@@ -1,1 +1,1 @@
-line 12, col 16: inferred type (Chan endS) does not match expected type (Chan ((sendS Nat) endS)): noConfusion: distinct constructors 'endS' and 'sendS' of datatype 'Session' cannot be equal
+line 12, col 16: inferred type (Chan endS) does not match expected type (Chan (sendS Nat endS)): noConfusion: distinct constructors 'endS' and 'sendS' of datatype 'Session' cannot be equal

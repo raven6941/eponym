@@ -24,7 +24,7 @@ quality fail CI like any other regression.
 4. The message matches the blessed snapshot byte-for-byte, so any
    wording change fails CI until deliberately re-blessed.
 
-## Failure modes covered (26 cases)
+## Failure modes covered (28 cases)
 
 | Area | Modes |
 |---|---|
@@ -34,7 +34,7 @@ quality fail CI like any other regression.
 | Metavariables | unsolved hole |
 | `red` rules | unknown eliminator in pattern |
 | `data` | constructor return not the family; non-strictly-positive domain |
-| Tactics | unknown tactic name |
+| Tactics | unknown tactic name (lists known tactics); `assumption` with no matching hypothesis (names the goal); `refl` on a non-equality goal (names the goal) |
 | Quantities | linear used twice / dropped; erased used |
 | Clauses | redundant, nested overlap, missing case |
 | Modules | missing import (path normalized) |

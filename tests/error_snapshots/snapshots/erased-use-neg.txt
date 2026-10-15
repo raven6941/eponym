@@ -1,1 +1,1 @@
-line 4, col 3: erased variable 'x' used 1 time(s) in term position
+line 4, col 3: erased variable 'x' used 1 time(s) in term position: erased (quantity-0) variables may only be used in types

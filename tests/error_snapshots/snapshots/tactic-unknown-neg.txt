@@ -1,1 +1,1 @@
-line 3, col 18: unknown tactic 'nosuchtac'
+line 3, col 18: unknown tactic 'nosuchtac'; known tactics: refl, assumption, arith
