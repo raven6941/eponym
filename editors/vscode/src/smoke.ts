@@ -213,6 +213,75 @@ async function main() {
 
   fs.rmSync(tmp, { recursive: true, force: true });
 
+  // Issue #208: the webview case-split path (textDocument/codeAction with
+  // `variable`) needs the document opened first. Before didOpen the server
+  // answers "unknown document"; after didOpen the codeAction path reaches
+  // case-split; didChange refreshes the buffer the server reasons about.
+  const epLines = [
+    "data Nat : ? where",
+    "| zero : Nat",
+    "| suc (n : Nat) : Nat",
+    "def add : Nat -> Nat -> Nat",
+    "| zero n = n",
+    "| (suc m) n = suc (add m n)",
+    "data Vec (A : ?) : Nat -> ? where",
+    "| nil : Vec A zero",
+    "| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)",
+    "proc append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =",
+    "  _",
+    "",
+  ];
+  const epSrc1 = epLines.join("\n");
+  // Same text with the explicit arguments swapped: ys is now the first
+  // explicit argument, so case-split applies to it instead of xs.
+  const epSrc2 = epSrc1.replace(
+    "proc append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =",
+    "proc append {A : ?} {m : Nat} {n : Nat} (ys : Vec A n) (xs : Vec A m) : Vec A (add n m) ="
+  );
+  const epUri = "file:///tmp/shed-smoke-case-split.ep";
+  const holePos = { line: 10, character: 2 }; // 0-based: the `  _` line
+  const caseSplitReq = (variable: string) => ({
+    textDocument: { uri: epUri },
+    range: { start: holePos, end: holePos },
+    context: { diagnostics: [] },
+    variable,
+  });
+  let preOpenErr = "";
+  try {
+    await client.request("textDocument/codeAction", caseSplitReq("xs"));
+  } catch (e) {
+    preOpenErr = String(e);
+  }
+  check(preOpenErr.includes("unknown document"),
+    "codeAction before didOpen fails as 'unknown document': " + preOpenErr);
+  client.didOpen(epUri, epSrc1);
+  const cs1 = await client.request("textDocument/codeAction", caseSplitReq("xs"));
+  check(Array.isArray(cs1) && cs1.some((a: any) => a.title === "case-split xs"),
+    "codeAction after didOpen offers 'case-split xs': " +
+      JSON.stringify(cs1 && cs1.map((a: any) => a.title)));
+  let ysFirstErr = "";
+  try {
+    await client.request("textDocument/codeAction", caseSplitReq("ys"));
+  } catch (e) {
+    ysFirstErr = String(e);
+  }
+  check(ysFirstErr.includes("first explicit argument"),
+    "case-split on the second argument is rejected, as designed: " + ysFirstErr);
+  // didChange swaps the buffer: the server must now split on ys, not xs.
+  client.didChange(epUri, epSrc2);
+  const cs2 = await client.request("textDocument/codeAction", caseSplitReq("ys"));
+  check(Array.isArray(cs2) && cs2.some((a: any) => a.title === "case-split ys"),
+    "codeAction after didChange offers 'case-split ys': " +
+      JSON.stringify(cs2 && cs2.map((a: any) => a.title)));
+  let xsNowErr = "";
+  try {
+    await client.request("textDocument/codeAction", caseSplitReq("xs"));
+  } catch (e) {
+    xsNowErr = String(e);
+  }
+  check(xsNowErr.includes("first explicit argument"),
+    "xs is now the second argument and is rejected: " + xsNowErr);
+
   client.shutdown();
   console.log("--- shed webview smoke passed ---");
 }
