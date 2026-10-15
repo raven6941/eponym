@@ -28,17 +28,19 @@
 ## a compile-time const. Rationale: the elaborator runs at Nim compile
 ## time (inside the compiler VM on the macro path), where a runtime bool
 ## in the VM process is settable from the driver's EPON_TRACE read — no
-## toolchain rebuild is needed to debug a failing program. The disabled
-## path is a single boolean branch per event site (measured <2% overhead
-## on the elaboration corpus; see issue #83). Compiling with
-## `-d:elabTraceStrip` removes the hooks entirely for the paranoid.
+## toolchain rebuild is needed to debug a failing program. Two wrinkles
+## found during implementation: the VM cannot evaluate ordinary mutable
+## globals from another module at all, and `{.compileTime.}` vars are
+## VM-visible but silently lose runtime writes — so the state lives in
+## two instances (one per context) selected by `when nimvm` in the
+## accessor procs. The disabled path is a single boolean branch per event
+## site (measured <2% overhead on the elaboration corpus; see issue #83).
+## Compiling with `-d:elabTraceStrip` removes the hooks entirely for the
+## paranoid.
 ##
 ## Trace output is implementer-facing by design (unlike ElabError text,
 ## which #34 keeps user-facing): payloads may use the kernel's `$`
 ## rendering with internal R123/V6 ids.
-
-import std/os
-import std/strutils
 
 const ElabTraceStrip* {.booldefine.} = false
   ## Compile with `-d:elabTraceStrip` to remove all trace hooks.
@@ -68,34 +70,83 @@ proc trunc*(s: string, n: int = 200): string =
   else: s[0 ..< n] & "…"
 
 when not ElabTraceStrip:
-  var traceOn = false
-  var traceCats: set[TraceCat] = allTraceCats
-  var traceDepth = 0
-  var traceMaxDepth* = 40
-    ## Events deeper than this are still elaborated, just not logged.
-  var traceSink: File = nil  # nil = stderr
+  import std/os       # getEnv for EPON_TRACE
+  import std/strutils # spaces/split/strip for rendering and parsing
+
+  # The elaborator runs at Nim compile time inside the compiler VM on the
+  # `eponym`/`eponymBlock` macro path, and the VM cannot evaluate ordinary
+  # mutable globals from another module ("cannot evaluate at compile
+  # time"). `{.compileTime.}` vars are VM-visible, but their runtime
+  # reads/writes are silently lost (separate compile-time storage). So the
+  # state lives in two instances — one per context — selected by
+  # `when nimvm`, which the VM evaluates at interpretation time. The
+  # `when` must be literal in each accessor proc's body (a template would
+  # expand at the caller's host-sem time and pick the wrong instance).
+  type TraceState = object
+    on: bool
+    cats: set[TraceCat]
+    depth: int
+    maxDepth: int
+    explicit: bool  # setElabTrace / env already applied; explicit beats env
+    # NOTE: no `seq` fields here — a `{.compileTime.}` object with a seq
+    # field crashes the compiler when returned by value from a proc
+    # ("field 'sym' is not accessible ... nkWhenStmt"). The capture log is
+    # test-only and never touched on the VM path, so it stays a plain
+    # runtime global below.
+
+  var traceRt = TraceState(on: false, cats: allTraceCats, maxDepth: 40)
+  var traceCt {.compileTime.} = TraceState(on: false, cats: allTraceCats,
+                                           maxDepth: 40)
+
+  # Capture log for tests (issue #83): runtime-only. Macro expansion
+  # always renders to the sink; capture is never enabled in the VM.
   var traceCapture: seq[TraceEvent] = @[]
   var traceCapturing = false
-  var traceExplicit = false  # setElabTrace / env already applied
+
+  proc getTraceState(): TraceState =
+    when nimvm: traceCt
+    else: traceRt
+
+  proc setTraceState(s: TraceState) =
+    when nimvm: traceCt = s
+    else: traceRt = s
+
+  proc logEvent(s: var TraceState, cat: TraceCat, kind: string, depth: int,
+                payload: string) =
+    ## Render one event: into the capture log, or to the sink. The only
+    ## globals touched are the runtime-only capture pair (never in the VM).
+    let line = spaces(depth * 2) & kind & ": " & payload
+    when nimvm:
+      # The VM cannot evaluate `stderr`; echo goes to the compiler's
+      # stdout, which is where a macro-expansion trace belongs anyway.
+      echo line
+    else:
+      if traceCapturing:
+        traceCapture.add((cat, kind, depth, payload))
+      else:
+        stderr.writeLine(line)
 
   proc setElabTrace*(on: bool, cats: set[TraceCat] = allTraceCats,
                      maxDepth: int = 40) =
     ## Enable or disable tracing; `cats` is an allow-list filter.
     ## Disabling resets the nesting depth, so an aborted traced
     ## elaboration cannot unbalance later output.
-    traceOn = on
-    traceCats = cats
-    traceMaxDepth = maxDepth
-    traceExplicit = true
+    var s = getTraceState()
+    s.on = on
+    s.cats = cats
+    s.maxDepth = maxDepth
+    s.explicit = true
     if not on:
-      traceDepth = 0
+      s.depth = 0
+    setTraceState(s)
 
   proc elabTraceEnabled*(): bool =
     ## True while tracing is on.
-    traceOn
+    getTraceState().on
 
   proc startTraceCapture*() =
     ## Route events into an in-memory log instead of the sink (for tests).
+    ## Runtime-only; the VM path never captures.
     traceCapture.setLen(0)
     traceCapturing = true
 
@@ -124,40 +175,47 @@ when not ElabTraceStrip:
     ## Called at elaborator driver entry (elabCheck*, ModuleDriver).
     ## EPON_TRACE=<cats> enables tracing for the run; unset means off.
     ## No-op once tracing was set explicitly (explicit beats env).
-    if traceExplicit:
+    var s = getTraceState()
+    if s.explicit:
       return
     let v = getEnv("EPON_TRACE")
     if v == "":
       return
-    traceExplicit = true  # env counts as explicit; read once per process
-    traceOn = true
-    traceCats = parseTraceCats(v)
-
-  proc emitTrace(cat: TraceCat, kind: string, depth: int, payload: string) =
-    if traceCapturing:
-      traceCapture.add((cat, kind, depth, payload))
-    else:
-      let sink = if traceSink == nil: stderr else: traceSink
-      sink.writeLine(spaces(depth * 2) & kind & ": " & payload)
+    s.explicit = true  # env counts as explicit; read once per process
+    s.on = true
+    s.cats = parseTraceCats(v)
+    setTraceState(s)
 
   proc traceCatActive*(cat: TraceCat): bool =
     ## Fast path check: is tracing on for this category?
-    traceOn and cat in traceCats
+    let s = getTraceState()
+    s.on and cat in s.cats
+
+  proc traceLog*(cat: TraceCat, kind: string, payload: string) =
+    ## One event at the current depth (respects the depth limit).
+    var s = getTraceState()
+    if s.depth <= s.maxDepth:
+      logEvent(s, cat, kind, s.depth, payload)
+    setTraceState(s)
 
   proc traceEnter*(cat: TraceCat, kind: string, payload: string): int =
     ## Log `kind.in` at the current depth, bump the depth, return the
     ## entry depth for `traceExit` pairing. Caller must have checked
     ## `traceCatActive` (so `payload` was worth building).
-    let d = traceDepth
-    if d <= traceMaxDepth:
-      emitTrace(cat, kind & ".in", d, payload)
-    inc traceDepth
+    var s = getTraceState()
+    let d = s.depth
+    if d <= s.maxDepth:
+      logEvent(s, cat, kind & ".in", d, payload)
+    inc s.depth
+    setTraceState(s)
     d
 
   proc traceExit*(cat: TraceCat, kind: string, entryDepth: int) =
-    dec traceDepth
-    if entryDepth <= traceMaxDepth:
-      emitTrace(cat, kind & ".out", entryDepth, "")
+    var s = getTraceState()
+    dec s.depth
+    if entryDepth <= s.maxDepth:
+      logEvent(s, cat, kind & ".out", entryDepth, "")
+    setTraceState(s)
 
 else:
   ## -d:elabTraceStrip: the whole facility compiles away. The public API
@@ -170,16 +228,17 @@ else:
   proc parseTraceCats*(s: string): set[TraceCat] = {}
   proc maybeEnableTraceFromEnv*() = discard
   proc traceCatActive*(cat: TraceCat): bool = false
+  proc traceLog*(cat: TraceCat, kind: string, payload: string) = discard
   proc traceEnter*(cat: TraceCat, kind: string, payload: string): int = -1
   proc traceExit*(cat: TraceCat, kind: string, entryDepth: int) = discard
 
 template traceEvt*(cat: TraceCat, kind: string, payload: string) =
   ## One structured event. `payload` is *not* evaluated when tracing is
   ## off or the category is filtered out (template laziness). Events
-  ## deeper than `traceMaxDepth` are not logged (same rule as scopes).
+  ## deeper than the depth limit are not logged (same rule as scopes).
   when not ElabTraceStrip:
-    if traceOn and cat in traceCats and traceDepth <= traceMaxDepth:
-      emitTrace(cat, kind, traceDepth, payload)
+    if traceCatActive(cat):
+      traceLog(cat, kind, payload)
 
 template traceGuard*(cat: TraceCat, kind: string, payload: string) =
   ## Entry/exit pair (`kind.in` now, `kind.out` at scope exit via defer,
