@@ -825,8 +825,10 @@ proc subsumes*(s: var Supply, inf, exp: Value): bool =
   let iw = inf.whnf
   let ew = exp.whnf
   if iw.kind == wNatSing:
-    return s.natTypeRefId >= 0 and ew.kind == wRef and
-      ew.refId == s.natTypeRefId and ew.spine.len == 0
+    if s.natTypeRefId >= 0 and ew.kind == wRef and
+        ew.refId == s.natTypeRefId and ew.spine.len == 0:
+      return true
+    # else fall through to definitional equality below
   if iw.kind == wPi and ew.kind == wPi:
     try:
       areEqual(s, vStar(), iw.dom, ew.dom)  # domains invariant

@@ -1752,8 +1752,17 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           if "Nat" in globals and not done:
             try:
               let natTm = mkNatLit(pre.intVal, pre.loc)
-              let singTy = tmNatSing(pre.intVal)
-              discard convElab(ms, supply, singTy, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
+              # Issue #74: the literal's inferred type is the singleton
+              # tNatSing(n) — except when the expected type still has
+              # unsolved metas (infer-mode positions, e.g. pair
+              # components checked against fresh metas): there we widen
+              # eagerly to Nat, preserving the old behavior and the
+              # P2c compositionality contract. Precision applies when
+              # the expected type is known.
+              let infTy =
+                if findUnsolved(ms, zonk(ms, expTy)).found: globals["Nat"].tm
+                else: tmNatSing(pre.intVal)
+              discard convElab(ms, supply, infTy, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
               resTm = natTm
               done = true
             except ElabError as e:
