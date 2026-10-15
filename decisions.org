@@ -3558,3 +3558,41 @@
   Eq goals, so the inequality half waits on a NatLe data type plus a
   goal-shape case in the tactic.
   Status: CLOSED (merged to =exp-longlived=).
+* 2026-10-15 — Issue #2: erasure beyond metadata — binder-dropping prototype (exp2-erasure)
+
+  Context: Experiment 9's success criterion was "Vec length indices and
+  equality proofs erase; the emitted/evaluated code carries no proof
+  overhead". Usage checking (#64/#66/#88) made erasure a checking-time
+  discipline, but the core ignored the `erased` flag: erased subterms were
+  still carried and — worse — eagerly evaluated by `evalWhnf`'s
+  call-by-value `tApp` case.
+  What was built (=src/eponym/erase.nim=, new module on =exp2-erasure=):
+  `eraseTerm` drops every quantity-0 binder (tLam/tPi/tSi) with de Bruijn
+  shifting; `eraseDef` erases a def's type and body after asserting the Pi
+  telescope and body lambdas agree on erased positions (fail loudly on
+  mismatch). Occurrence kinds: term positions must not mention the dropped
+  binder (usage-checking invariant — raise, don't corrupt); type positions
+  (domains, Pi/Si bodies — mirroring usage_check.countVarUses, which does
+  not descend into domains) become a closed placeholder (unit type).
+  Erasure predicate is `qty == q0`, not the `erased` flag: the flag is
+  cleared by elaboration (see bug below) while the quantity survives, and
+  q0 also covers inferred-erased binders (e.g. `proc k (A : ?) (x : A)`
+  elaborates both binders q0).
+  Latent bug found (NOT fixed; follow-up): `mkBinder` (eponym_init.nim)
+  hardcodes `erased = false`, so `substEnv`, `weakenAt`, `absGo` (and
+  hence zonk) silently clear the flag on every substitution/weakening.
+  `erase.nim` never uses `mkBinder` (tmPi/tmLam/tmSi directly) and keys
+  off quantities instead.
+  Deliberate non-goals: call-site argument dropping needs the callee's Pi
+  type (type-directed erasure) — design is a mask table over the def
+  sequence at `getDefs` emission time, skipping eliminator refs (their
+  `RedRule.nargs` counting would break); no re-checking of erased terms
+  against erased types yet (erasure is type-preserving by standard QTT
+  metatheory; the audit pipeline is future work).
+  Tests (module `when isMainModule`, 6/6 passing): binder drop, shadowing,
+  loud failure on term-position occurrence, Pi-telescope erasure with
+  placeholder, end-to-end `eraseDef` on an elaborated
+  `proc constErased (0 ign : Int) (x : Int) : Int` (evaluation agrees, one
+  fewer argument), inferred-q0 def becomes nullary.
+  Status: PROTOTYPE on =exp2-erasure= (branched from =exp-longlived=);
+  not merged anywhere yet.

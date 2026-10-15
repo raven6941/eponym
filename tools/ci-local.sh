@@ -22,7 +22,9 @@ echo "### Build: production modules"
 # and `installFiles` (the installed set; issue #183). These are the full
 # import closure of the public entry points (issue #189): every module a
 # user compile pulls in must also build standalone in CI.
-for f in abilities eponym_init preterm parse_surf elab elab_prof unify usage_check eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout mutual_termination; do
+for f in abilities eponym_init preterm parse_surf elab elab_prof unify usage_check eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout mutual_termination erase; do
+  # Note: `erase` is the issue #2 erasure prototype (exp-longlived only);
+  # not yet in eponym.nimble's buildall/installFiles pending graduation.
   echo "=== build $f ==="
   nim c --hints:off $P "src/eponym/$f.nim"
 done
@@ -39,6 +41,8 @@ for f in eponym_init preterm parse_surf elab unify eponym_mac egraph eponym_embe
   echo "=== test $f ==="
   nim c -r --hints:off $P "src/eponym/$f.nim"
 done
+echo "=== erasure prototype (issue #2, exp-longlived only) ==="
+nim c -r --hints:off $P "src/eponym/erase.nim"
 echo "=== examples ==="
 nim c -r --hints:off $P "tests/run_examples.nim"
 echo "=== error-message snapshots (issue #34) ==="
