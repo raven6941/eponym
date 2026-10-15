@@ -82,6 +82,25 @@ export class LspClient {
     });
   }
 
+  /** Issue #209: shed-aware case-split (term-level via eliminators). */
+  caseSplitShed(
+    docUri: string,
+    shedName: string,
+    variable: string
+  ): Promise<{
+    shedName: string;
+    term: string;
+    nimLine: number;
+    nimCol: number;
+    subSheds: string[];
+  }> {
+    return this.request("eponym/caseSplitShed", {
+      textDocument: { uri: docUri },
+      shedName,
+      variable,
+    });
+  }
+
   /** Issue #208: the server's codeAction path requires an open document. */
   didOpen(docUri: string, text: string): void {
     this.notify("textDocument/didOpen", {

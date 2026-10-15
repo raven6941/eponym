@@ -104,15 +104,24 @@ macro shedsBlock*(body: untyped): untyped =
 
   # Match each shed to its hole by generated-source line; record the
   # (zonked) goal type and binder context for the LSP server.
+  # Match each shed to its hole by generated-source line *and column*
+  # (issue #209: case-split produces multiple sheds on one line, so
+  # line-only matching misattributes goals -- cf. refineShed's matcher
+  # in lsp.nim, which already does line+column).
   for i in 0 ..< sheds.len:
+    var best = -1
     for j in 0 ..< ms.holes.len:
-      if ms.holes[j].holeLoc.line == sheds[i].holeLine:
-        sheds[i].holeIdx = j
-        let (g, c, pi) = shedGoalAndCtx(ms, ms.holes[j])
-        sheds[i].goal = g
-        sheds[i].ctx = c
-        sheds[i].goalPi = pi
-        break
+      if ms.holes[j].holeLoc.line != sheds[i].holeLine: continue
+      if best < 0: best = j  # first line match: the fallback
+      if sheds[i].holeCol > 0 and ms.holes[j].holeLoc.col == sheds[i].holeCol:
+        best = j
+        break  # exact match wins
+    if best >= 0:
+      sheds[i].holeIdx = best
+      let (g, c, pi) = shedGoalAndCtx(ms, ms.holes[best])
+      sheds[i].goal = g
+      sheds[i].ctx = c
+      sheds[i].goalPi = pi
 
   # Issue #134: per-shed status (white/yellow/brown). On failure the
   # sidecar is written *before* raising the compile error, so the LSP

@@ -551,6 +551,130 @@ proc refineShed*(nimFile, shedName, term: string):
   (true, "", term, sheds[si].nimLine, sheds[si].nimCol,
    shedStatusToStr(sheds[si].status), yellowCount)
 
+proc caseSplitShed*(nimFile, shedName, variable: string):
+    tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
+          subSheds: seq[string]] =
+  ## Issue #209: shed-aware case-split (term-level via eliminators).
+  ##
+  ## The `.ep` `textDocument/codeAction` path rewrites a `proc` into a
+  ## clause-style `def`, which cannot round-trip through the nim `![...]`
+  ## node (an expression position; a clause-def is not a term and not
+  ## valid Nim). Instead, fill the shed's hole with an eliminator
+  ## application whose method holes become fresh sub-sheds:
+  ##   `![isZeroBody]` --case-split n--> `natElim(lam(u, Nat, Bool),
+  ##    ![isZeroBody_zero], ![isZeroBody_suc], n)`
+  ## The returned `term` is nim-syntax text for the client to splice over
+  ## the `![shedName]` node; `subSheds` are the fresh sub-shed names.
+  ## Only non-parameterized, non-indexed datatypes are supported for now.
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)",
+            "", 0, 0, @[])
+  let (sheds0, errMsg0) = readShedSidecarEx(sc)
+  var si = -1
+  for i in 0 ..< sheds0.len:
+    if sheds0[i].name == shedName:
+      si = i
+      break
+  if si < 0:
+    return (false, "unknown shed '" & shedName & "'", "", 0, 0, @[])
+  let oldSrc = sheds0[si].genSrc
+  if oldSrc == "":
+    return (false, "shed '" & shedName &
+            "': no generated source recorded (sidecar predates #137; " &
+            "recompile)",
+            "", 0, 0, @[])
+  if sheds0[si].status != ssYellow:
+    return (false, "shed '" & shedName & "' is not open (status " &
+            shedStatusToStr(sheds0[si].status) & ")", "", 0, 0, @[])
+  let baseDir = parentDir(nimFile)
+  # Locate the hole and get its context.
+  var ms: MetaStore
+  var holeIdx = -1
+  try:
+    let r = elabCheckHolesDir(oldSrc, baseDir)
+    ms = r.ms
+    var best = -1
+    for k, h in r.ms.holes:
+      if h.holeLoc.line != sheds0[si].holeLine: continue
+      if best < 0: best = k
+      if sheds0[si].holeCol > 0 and h.holeLoc.col == sheds0[si].holeCol:
+        best = k
+        break
+    if best < 0:
+      return (false, "shed '" & shedName &
+              "': hole no longer open in the recorded source " &
+              "(sidecar stale? recompile)", "", 0, 0, @[])
+    holeIdx = best
+  except ParseError as e:
+    return (false, "recorded source no longer parses: " & e.msg,
+            "", 0, 0, @[])
+  let h = ms.holes[holeIdx]
+  var varTy: Term = nil
+  for (nm, ty) in h.holeCtx:
+    if nm == variable: varTy = ty
+  if varTy.isNil:
+    return (false, "'" & variable & "' is not in scope at the hole",
+            "", 0, 0, @[])
+  # The variable's type must be a plain datatype (tR, no params/indices).
+  var ty = zonk(ms, varTy)
+  if ty == nil or ty.kind != tR:
+    return (false, "'" & variable &
+            "' does not have a simple datatype type " &
+            "(parameterized/indexed datatypes not yet supported)",
+            "", 0, 0, @[])
+  let dataRef = ty.refId
+  if dataRef notin ms.ctorTable.dataNames:
+    return (false, "'" & variable & "' does not have a datatype type",
+            "", 0, 0, @[])
+  let dataName = ms.ctorTable.dataNames[dataRef]
+  let elimName = elimNameFor(dataName)
+  # Constructor names for the sub-sheds.
+  var ctorNames: seq[string] = @[]
+  if dataRef in ms.ctorTable.dataCtors:
+    for cid in ms.ctorTable.dataCtors[dataRef]:
+      ctorNames.add(ms.ctorTable.ctorNames[cid])
+  if ctorNames.len == 0:
+    return (false, "datatype '" & dataName & "' has no constructors",
+            "", 0, 0, @[])
+  # Fresh sub-shed names.
+  var used: seq[string] = @[]
+  for s in sheds0: used.add(s.name)
+  var subSheds: seq[string] = @[]
+  for cn in ctorNames:
+    var nm = shedName & "_" & cn
+    var k = 1
+    while nm in used:
+      nm = shedName & "_" & cn & $k
+      inc k
+    used.add(nm)
+    subSheds.add(nm)
+  # Build the terms. The Eponym term (for validation) uses `_` holes;
+  # the nim term uses `![sub]` shed nodes so recompile discovers them.
+  let goalStr = sheds0[si].goal
+  if goalStr == "":
+    return (false, "shed '" & shedName & "': no goal recorded",
+            "", 0, 0, @[])
+  let motiveEp = "(lam (u : " & dataName & "). " & goalStr & ")"
+  let motiveNim = "lam(u, " & dataName & ", " & goalStr & ")"
+  var epArgs: seq[string] = @[motiveEp]
+  var nimArgs: seq[string] = @[motiveNim]
+  for ss in subSheds:
+    epArgs.add("_")
+    nimArgs.add("![" & ss & "]")
+  epArgs.add(variable)
+  nimArgs.add(variable)
+  let epTerm = elimName & " " & epArgs.join(" ")
+  let nimTerm = elimName & "(" & nimArgs.join(", ") & ")"
+  # Validate: fill the hole in a copy of the source and re-elaborate.
+  # (Catches unparseable motives/goals before touching the nim file.)
+  let f = fillHoleAt(oldSrc, sheds0[si].holeLine - 1, sheds0[si].holeCol - 1,
+                     epTerm, baseDir)
+  if not f.ok:
+    return (false, "case-split rejected: " & f.why, "", 0, 0, @[])
+  (true, "", nimTerm, sheds0[si].nimLine, sheds0[si].nimCol, subSheds)
+
 proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
   ## Handle one incoming message; returns the outgoing message, or nil
   ## when there is no response (e.g. `initialized`, `exit` handled by caller).
@@ -655,6 +779,25 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
               "result": {"shedName": shedName, "term": r.term,
                          "nimLine": r.nimLine, "nimCol": r.nimCol,
                          "status": r.status, "yellowCount": r.yellowCount}}
+  of "eponym/caseSplitShed":
+    let id = msg["id"]
+    if "textDocument" notin msg["params"] or "shedName" notin msg["params"] or
+       "variable" notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "eponym/caseSplitShed needs " &
+                            "textDocument.uri, shedName, variable"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let shedName = msg["params"]["shedName"].getStr()
+    let variable = msg["params"]["variable"].getStr()
+    let r = caseSplitShed(uriToPath(uri), shedName, variable)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id,
+              "result": {"shedName": shedName, "term": r.term,
+                         "nimLine": r.nimLine, "nimCol": r.nimCol,
+                         "subSheds": r.subSheds}}
   of "shutdown":
     let id = msg["id"]
     return %*{"jsonrpc": "2.0", "id": id, "result": nil}

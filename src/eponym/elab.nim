@@ -2301,7 +2301,7 @@ proc freshenHoTele(tele: seq[tuple[name: string, ty: PreTerm]],
   (outTele, names, subs)
 
 
-proc elimNameFor(dname: string): string =
+proc elimNameFor*(dname: string): string =
   result = dname
   if result.len > 0:
     result[0] = result[0].toLowerAscii()
