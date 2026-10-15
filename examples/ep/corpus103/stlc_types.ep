@@ -1,0 +1,10 @@
+# Issue #103 annotation-burden corpus, file 2/4: STLC types.
+#
+# A minimal type language: Nat and arrows. Self-contained; no `data`
+# features beyond plain (unindexed) constructors.
+
+import "stlc_syntax.ep"
+
+data Ty : ? where
+| tNat : Ty
+| tArr (a : Ty) (b : Ty) : Ty

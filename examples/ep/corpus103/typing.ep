@@ -1,0 +1,28 @@
+# Issue #103 annotation-burden corpus, file 3/4: the typing judgement.
+#
+# `HasType : Ctx -> Tm -> Ty -> ?` as an indexed inductive family, where
+# `Ctx = List Ty`. Variable lookup is its own judgement `Lookup`,
+# reifying de Bruijn context membership (the `here`/`there` pair is the
+# Agda `here`/`there` for `_∈_`).
+#
+# This is the file that exercises indexed families with index *terms*
+# (`cons Ty A G`, `suc i`) in constructor return types.
+
+import "stlc_syntax.ep"
+import "stlc_types.ep"
+import "../../../lib/list.ep"
+
+data Lookup : List Ty -> Nat -> Ty -> ? where
+| here (G : List Ty) (A : Ty) : Lookup (cons Ty A G) zero A
+| there (G : List Ty) (B : Ty) (i : Nat) (A : Ty) (p : Lookup G i A)
+    : Lookup (cons Ty B G) (suc i) A
+
+data HasType : List Ty -> Tm -> Ty -> ? where
+| tLit (G : List Ty) (n : Nat) : HasType G (lit n) tNat
+| tVar (G : List Ty) (i : Nat) (A : Ty) (p : Lookup G i A)
+    : HasType G (var i) A
+| tApp (G : List Ty) (f : Tm) (x : Tm) (a : Ty) (b : Ty)
+    (p : HasType G f (tArr a b)) (q : HasType G x a)
+    : HasType G (app f x) b
+| tAbs (G : List Ty) (b : Tm) (a : Ty) (c : Ty)
+    (p : HasType (cons Ty a G) b c) : HasType G (abs b) (tArr a c)
