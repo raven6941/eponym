@@ -38,7 +38,30 @@ function serverPath(): string {
 }
 
 function nimBin(): string {
-  return vscode.workspace.getConfiguration("eponym").get<string>("nimPath", "nim") || "nim";
+  const cfg = vscode.workspace.getConfiguration("eponym").get<string>("nimPath", "");
+  if (cfg) return cfg;
+  // Issue #221: try common Nim locations if not on PATH (e.g. VS Code
+  // launched from Finder/Dock without shell PATH).
+  const home = process.env.HOME ?? "";
+  const candidates = [
+    "nim", // PATH
+    `${home}/.nimble/bin/nim`, // choosenim default
+    "/opt/nim/bin/nim",
+    "/usr/local/bin/nim",
+  ];
+  for (const c of candidates) {
+    try {
+      // execFileSync throws on ENOENT; we only need existence here.
+      require("child_process").execFileSync(c, ["--version"], { stdio: "ignore" });
+      if (c !== "nim") {
+        out.appendLine(`[eponym] using Nim at ${c} (not on PATH)`);
+      }
+      return c;
+    } catch {
+      // try next
+    }
+  }
+  return "nim"; // fallback; generateSidecar will report the ENOENT clearly
 }
 
 interface ShedPanel {
@@ -399,12 +422,26 @@ export function activate(ctx: vscode.ExtensionContext) {
 
   // Issue #221: inline shed view — CodeLens + expandable 2D display.
   const lensProvider = new ShedCodeLensProvider();
+  // Match by language ID "nim" OR by .nim file extension, since the
+  // extension does not contribute the Nim language definition itself.
+  const nimSelector: vscode.DocumentSelector = [
+    { language: "nim" },
+    { pattern: "**/*.nim" },
+  ];
   ctx.subscriptions.push(
-    vscode.languages.registerCodeLensProvider({ language: "nim" }, lensProvider)
+    vscode.languages.registerCodeLensProvider(nimSelector, lensProvider)
   );
   // Refresh CodeLens goals when a shed file is saved (sidecar regenerated).
   ctx.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (doc.languageId !== "nim" && !doc.fileName.endsWith(".nim")) return;
+      if (!hasShedBlocks(doc.getText())) return;
+      lensProvider.refreshDoc(doc);
+    })
+  );
+  // Refresh CodeLens when a shed file is opened (so goals show without save).
+  ctx.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((doc) => {
       if (doc.languageId !== "nim" && !doc.fileName.endsWith(".nim")) return;
       if (!hasShedBlocks(doc.getText())) return;
       lensProvider.refreshDoc(doc);
