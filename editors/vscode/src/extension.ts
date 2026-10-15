@@ -161,6 +161,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       const entry = openPanels.get(doc.uri.toString());
       if (!entry) return;
       if (!hasShedBlocks(doc.getText())) return;
+      // Issue #208: keep the server's open-document buffer fresh so
+      // webview code actions (case-split) see the saved text.
+      entry.client.didChange(doc.uri.toString(), doc.getText());
       if (await ensureSidecar(doc)) await entry.refresh();
     })
   );
@@ -247,6 +250,10 @@ export function activate(ctx: vscode.ExtensionContext) {
         vscode.window.showErrorMessage("Eponym: could not start LSP server: " + String(e));
         return;
       }
+      // Issue #208: the server's textDocument/codeAction path ("case-split"
+      // in the webview) requires an open document; shedLayout/refineShed
+      // work from disk and never needed this.
+      client.didOpen(docUri, editor.document.getText());
       const panel = vscode.window.createWebviewPanel(
         "eponymShed",
         `Shed: ${shedName}`,

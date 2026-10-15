@@ -82,6 +82,21 @@ export class LspClient {
     });
   }
 
+  /** Issue #208: the server's codeAction path requires an open document. */
+  didOpen(docUri: string, text: string): void {
+    this.notify("textDocument/didOpen", {
+      textDocument: { uri: docUri, text },
+    });
+  }
+
+  /** Issue #208: keep the server's buffer fresh for code actions. */
+  didChange(docUri: string, text: string): void {
+    this.notify("textDocument/didChange", {
+      textDocument: { uri: docUri },
+      contentChanges: [{ text }],
+    });
+  }
+
   codeAction(docUri: string, line: number, character: number, term: string): Promise<any> {
     return this.request("textDocument/codeAction", {
       textDocument: { uri: docUri },
