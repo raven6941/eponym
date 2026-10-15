@@ -5,7 +5,9 @@ acceptable even if they may not terminate — a looping type-level program is
 the author's problem, like a bad build script; a successful compile still
 carries high certainty. This document states that position publicly: what
 the system guarantees, what it checks for you, and the known soundness gaps
-(#33, #42, #52) we have chosen to *document rather than fix* for now.
+(#42, #52) we have chosen to *document rather than fix* for now. Positivity of
+`data` declarations (#33) was in that set until 2026-10-15; it is now
+checked at elaboration time (see below).
 
 ## What the kernel checks and guarantees
 
@@ -92,16 +94,30 @@ name-aware elaboration errors.
   author's problem, not the system's. A successful compile carries the
   guarantees in this document; getting to a successful compile is yours.
 
-## Positivity (#33, open — documented, not fixed)
+## Positivity (#33, implemented 2026-10-15)
 
-`data` declarations are accepted with **no positivity check**. A constructor
-argument like `bad : (Bad -> Void) -> Bad` puts the type being defined in a
-negative position; combined with propositional equality (#66-era core) this
-can encode paradoxes and non-termination, quietly undermining everything
-above. The fix (syntactic strict-positivity at `data` elaboration time) is
-issue #33 and is not yet implemented. Until then: do not write negative
-occurrences of a `data` type in its own constructors — if you do, the
-soundness story no longer holds and the system will not warn you.
+`data` declarations are checked for **strict positivity** at elaboration
+time (`elabDataDecl`, via `checkFamIndices`/`splitCtorArg` in
+`src/eponym/elab.nim`). A constructor argument like
+`bad (k : (Bad -> O) -> Bad) : Bad` puts the type being defined in a
+negative position and is rejected with a located error naming the
+constructor and the offending argument. The check covers:
+
+- the domains of leading Pi telescopes in constructor argument types
+  (the type being defined may not occur there — the #113 eliminator
+  requirement, now enforced for every `data` declaration);
+- the head of a family occurrence, which must be a direct application of
+  the family to indices (nested occurrences through other type formers,
+  e.g. `Box Nest`, are rejected — conservative, see decisions.org #33);
+- the family occurring inside its own *index terms*, whether in the
+  constructor's return-type indices or in the indices of a family-headed
+  argument type (also rejected conservatively).
+
+Combined with propositional equality, negative occurrences could encode
+paradoxes and non-termination; the check closes that hole for the
+`data` declarations the system itself accepts. (Universe discipline #52
+and mutual-recursion termination #42 remain the author's problem, as
+documented above.)
 
 ## Universes (#52, open — documented, not fixed)
 
@@ -145,12 +161,12 @@ time.
 
 | Checked for you | Your responsibility |
 |---|---|
-| Bidirectional elaboration + conversion (kernel re-checks, LCF-style) | Positivity of `data` declarations (#33) |
-| Eliminator iota rules (motive-validated by the kernel) | Termination beyond single-function structural recursion (#42) |
-| QTT quantity discipline (linear used once, erased unused) | Universe discipline — `? : ?`, don't write paradoxes (#52) |
-| Structural recursion for `red` rules and clause defs (#36) | Termination of type-level computation (author's problem) |
-| Handler evidence revalidated LCF-style (#41) | Soundness of `postulate`d primops (host `Int` ops) |
-| | Anything your own metaprogramming computes |
+| Bidirectional elaboration + conversion (kernel re-checks, LCF-style) | Termination beyond single-function structural recursion (#42) |
+| Eliminator iota rules (motive-validated by the kernel) | Universe discipline — `? : ?`, don't write paradoxes (#52) |
+| QTT quantity discipline (linear used once, erased unused) | Termination of type-level computation (author's problem) |
+| Structural recursion for `red` rules and clause defs (#36) | Soundness of `postulate`d primops (host `Int` ops) |
+| Strict positivity of `data` declarations (#33) | Anything your own metaprogramming computes |
+| Handler evidence revalidated LCF-style (#41) | |
 
 Eponym's guarantee: a term that elaborates *and* passes the kernel was
 checked by a small independent checker against QTT's judgments, with

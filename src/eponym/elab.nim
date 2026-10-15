@@ -2135,6 +2135,20 @@ proc substPre*(t: PreTerm, name: string, repl: PreTerm,
 proc substPreSeq(ts: seq[PreTerm], subs: seq[(string, PreTerm)],
                  fresh: var int): seq[PreTerm]
 
+proc checkFamIndices(idxs: seq[PreTerm], famName, ctorName, where: string,
+                     loc: Loc) =
+  ## Issue #33: the family may not occur inside its own index terms —
+  ## neither in a constructor's return-type indices nor in the indices of
+  ## a family-headed argument type. An occurrence there is not strictly
+  ## positive: it smuggles the family into a term position of its own
+  ## defining equation (cf. the domain-position check in splitCtorArg).
+  ## Rejected conservatively; a full nested-inductive-through-indices
+  ## analysis is left for a follow-up (see decisions.org).
+  for idx in idxs:
+    if mentionsFam(idx, famName):
+      raise elabErr(loc, "constructor '" & ctorName & "': the family '" &
+        famName & "' occurs in " & where & " (not strictly positive)")
+
 proc splitCtorArg(argTy: PreTerm, famName, ctorName, argName: string,
                   nParams: int, loc: Loc):
     tuple[tele: seq[tuple[name: string, ty: PreTerm]],
@@ -2166,6 +2180,10 @@ proc splitCtorArg(argTy: PreTerm, famName, ctorName, argName: string,
   if spine.len < 1 + nParams:
     raise elabErr(loc, "constructor '" & ctorName & "' argument '" &
       argName & "': family application is missing parameters")
+  # Issue #33: the family may not occur inside the indices of a
+  # family-headed argument type either (not strictly positive).
+  checkFamIndices(spine[1 + nParams .. ^1], famName, ctorName,
+                  "an index of argument '" & argName & "'", loc)
   (tele, spine[1 + nParams .. ^1])
 
 proc freshenHoTele(tele: seq[tuple[name: string, ty: PreTerm]],
@@ -2392,7 +2410,12 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
                         globals, supply, ms, false)
       # constructors
       for ctor in d.ctors:
-        discard extractIndices(ctor.retTy, d.dname, d.params.len, ctor.cloc)
+        let retIdxs = extractIndices(ctor.retTy, d.dname, d.params.len,
+                                     ctor.cloc)
+        # Issue #33: reject family occurrences in the return-type indices
+        # (not strictly positive; see checkFamIndices).
+        checkFamIndices(retIdxs, d.dname, ctor.name,
+                        "an index of the return type", ctor.cloc)
         var fullTele = d.params & ctor.tele
         elabPostulateDecl(ctor.name, mkPis(fullTele, ctor.retTy, ctor.cloc),
                           ctor.cloc, globals, supply, ms, false)
@@ -4369,6 +4392,27 @@ data Nest : ? where
 | ncons (b : Box113 Nest) : Nest
 """, "direct application to indices")
   echo "ok: positivity violations rejected with accurate messages (#113)"
+
+  # --- Issue #33: family occurrences in index positions ---------------------
+  # Return-type index mentioning the family (otherwise well-formed).
+  expectElabErr("""
+proc idPoly33 (A : ?) (x : A) : A = x
+data U33 : ? -> ? where
+| umk33 (A : ?) (x : U33 A) : U33 (idPoly33 ? (U33 A))
+""", "an index of the return type")
+  # Family-headed argument type with the family inside an index.
+  expectElabErr("""
+proc idPoly33b (A : ?) (x : A) : A = x
+data T33 : ? -> ? where
+| tmk33 (A : ?) (x : T33 (idPoly33b ? (T33 A))) : T33 A
+""", "an index of argument 'x'")
+  # The acceptance example shape: negative occurrence, located, naming the
+  # constructor and the offending argument.
+  expectElabErr("""
+data Bad33 : ? where
+| bad33 (k : (Bad33 -> O) -> Bad33) : Bad33
+""", "constructor 'bad33' argument 'k'")
+  echo "ok: family occurrences in index positions rejected (#33)"
 
   # --- Experiment 5b: conversion in checkTm -------------------------
   # The inferred-vs-expected check now compares up to reduction: `add`

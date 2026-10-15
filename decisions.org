@@ -2792,3 +2792,50 @@
   =examples/embedded/records.nim= elaborate and run (projection
   computation verified at runtime: =normSum(3,4) = 7= etc.); full CI
   build matrix + elab/parse/conformance/example suites green.
+
+* 2026-10-15 — #33: strict positivity for `data` declarations (implemented, PR pending)
+  Goal: close the soundness hole the trust model documented ("no positivity
+  check; do not write negative occurrences"): a constructor argument like
+  =bad (k : (Bad -> O) -> Bad) : Bad= must be rejected at elaboration time
+  with a located error naming the constructor and the offending argument.
+
+  What existed (#113): =splitCtorArg= already enforced two of the three
+  conditions, but only as a side effect of eliminator generation
+  (=genElimTy=/=genRedDecls=): (1) the family may not occur in the domains
+  of a constructor argument's leading Pi telescope, and (2) a family
+  occurrence must be a *direct* application to indices (nested occurrences
+  through other type formers, e.g. =Box Nest=, rejected). Missing: (3) the
+  family occurring inside its own *index terms* — in the constructor's
+  return-type indices and in the indices of family-headed argument types —
+  was never checked.
+
+  Design (implemented on =exp-33-positivity=, =src/eponym/elab.nim=):
+  - New =checkFamIndices(idxs, famName, ctorName, where, loc)= reuses the
+    existing =mentionsFam= occurrence test; called from =splitCtorArg= (covers
+    family-headed argument indices at all three call sites: eliminator
+    generation, computation rules, clause elaboration) and from
+    =elabDataDecl='s constructor loop on the =extractIndices= result
+    (covers return-type indices). Because =elabDataDecl= is the single entry
+    point for =data=, every declaration is checked once, up front.
+  - The check is syntactic and conservative: any occurrence of the family
+    inside an index term is rejected, including occurrences that a full
+    nested-inductive analysis might accept (e.g. =T (id (T A))=, which is
+    =T (T A)= up to reduction). This matches the existing #113 stance on
+    nested occurrences ("not supported"). A nested-inductive-through-indices
+    analysis is left for a follow-up; no in-repo declaration needs it
+    (=Nat=, =Bool=, =Vec=, binary naturals, and the whole test corpus still
+    elaborate — verified by the full elab suite).
+  - Known boundary, same as #113: =mentionsFam= is not scope-aware (a binder
+    shadowing the family name inside an index would be a false positive);
+    in practice constructors never do this.
+  - Error style kept consistent with #113 so the error-message snapshot
+    work (#34) can pin it: "constructor 'bad33' argument 'k': the family
+    'Bad33' occurs in the domain of a higher-order argument (not strictly
+    positive)"; new: "constructor 'umk33': the family 'U33' occurs in an
+    index of the return type (not strictly positive)".
+
+  Evidence: three new =expectElabErr= cases in the elab suite (return-type
+  index, argument index, the acceptance-shaped negative example) plus the
+  two pre-existing #113 rejection tests; full elab suite green. The trust
+  model (=docs/trust-model.md=) moves positivity from "documented, not
+  fixed" to checked, and #33's entry is updated accordingly.
