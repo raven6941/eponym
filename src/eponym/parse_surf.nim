@@ -282,6 +282,16 @@ proc parseAtom(p: var Parser): PreTerm =
   case t.kind
   of tkIdent:
     if t.lexeme == "_": mkHole(t.loc)  # hole (Experiment 3)
+    elif t.lexeme == "Type" and p.peek().kind in {tkInt, tkUnitTy} and
+         (p.peek().kind == tkInt or p.peek().lexeme == "1"):
+      # Issue #52: `Type l` — the level-annotated universe. `Type` stays a
+      # plain identifier unless directly followed by an integer literal
+      # (`Type0` still lexes as one identifier; `Type` alone is a variable).
+      # Note: `1` lexes as tkUnitTy (unit type), not tkInt, so accept both —
+      # the same escape hatch the quantity annotations use.
+      let lvl = if p.peek().kind == tkInt: parseInt(p.peek().lexeme) else: 1
+      discard p.next()  # consume the level literal
+      mkUnivN(lvl, t.loc)
     else: mkVar(t.lexeme, t.loc)
   of tkUniv: mkUniv(t.loc)
   of tkUnitTy: mkUnitTy(t.loc)

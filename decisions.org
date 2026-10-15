@@ -2973,3 +2973,57 @@
   goals that previously raised.
   Status: OPEN (branch =exp56-preunif=; corpus + elab wiring landed
   2026-10-15; full CI + PR still to do).
+* 2026-10-15 — Universe hierarchy: explicit `Type l` + cumulativity lands as an experiment; `?` stays (issue #52)
+
+  Context: the core was `? : ?` (Type-in-Type, known-inconsistent). Issue
+  #185's trust-model doc states this publicly as a *documented deferral*
+  ("don't write Girard's paradox") and is the release story; #52 stays
+  open as the tracked experiment measuring what a hierarchy costs. The
+  #52 issue body asks for explicit level literals first (level inference
+  is a follow-up), Pi/Sigma formation at max levels, cumulativity in
+  conversion, a corpus, and this decision record.
+  Options considered: (a) explicit level literals `Type l` — chosen for
+  the experiment: no inference machinery, the level discipline is fully
+  visible, and the cost measured is the hierarchy's, not the solver's;
+  (b) Agda-style level inference / metavariable levels — deferred: it
+  needs a constraint solver over levels interacting with the existing
+  term metavariables, a separate experiment; (c) Coq-style typical
+  ambiguity with constraint generation — deferred for the same reason,
+  plus it would hide the very levels the experiment wants to observe.
+  Decision: (a). Core (=eponym_init=): new `tType`/`wType` nodes,
+  `Type l : Type (l+1)`, Pi/Sigma formation at
+  `max(univIdx(infer dom), univIdx(infer cod))`, cumulativity directional
+  in `check` (`Type i <= Type j` for `i <= j` at ascription points;
+  conversion itself stays level-strict). The legacy `?` keeps its
+  Type-in-Type behaviour and bridges both ways: convertible with
+  `Type 0` (bottom universe) in `structuralEq`, and the top sort in
+  "is a type" positions. Full retirement of `?` is a follow-up decision,
+  not this issue. Surface: `Type` is a *contextual* keyword — `Type l`
+  parses to `pkUnivN` only when directly followed by an integer literal
+  (`1` lexes as the unit type, so the parser accepts `tkUnitTy("1")` as
+  level 1, the same escape hatch as #158); bare `Type` stays an ordinary
+  identifier. Elaborator: `pkUnivN` infers `(Type l, Type (l+1))`;
+  Pi/Sigma formation computes levels via `univLevelOfTy` (close the
+  elaborated domain/codomain over the context with rigid refs, ask the
+  core `infer` — now exported — for the classifier, `univIdx` it;
+  unclassifiable terms stay 0); `convElab` has a cumulativity fast path
+  before the handler stack (subtyping, not an equality handlers should
+  see); the three "ascribed type must be a type" sites
+  (`elabDefDecl`/`elabPostulateDecl`/`elabCommandDecl`) accept any
+  universe via `ensureIsUniverse` instead of unifying the classifier
+  with `?` (holes keep the legacy unify path).
+  Consequences: the hierarchy is *additive* — every existing `?` program
+  elaborates exactly as before (the `?`/Type-0 bridge keeps
+  `?`-classified Pis definitionally at level 0). Cost measured: one
+  core `infer` per Pi/Sigma domain+codomain at elaboration time
+  (syntax-directed, no search); cumulativity is O(1) level comparison in
+  `convElab`. Corpus in the `elab` module suite: `data Nat : Type 0`,
+  `polyId` over `Type 0`, `Nat -> Nat : Type 0`, `Type 0 : Type 1`
+  (cumulativity), `Pi (A : Type 0). A -> A : Type 1` (formation level);
+  rejections: `Type 0` against `Type 0`, `Type 1` against `Type 0`,
+  level-1 Pi against `Type 0`. Two Nim gotchas hit while threading:
+  (1) `Whnf.c` (the `wConst` payload) was not exported, so the
+  elaborator couldn't read it — fixed by exporting the field;
+  (2) `Type 1` didn't parse because `1` lexes as the unit type
+  (`tkUnitTy`), not `tkInt` — the parser now accepts both, mirroring
+  the quantity-annotation site. Status: OPEN (branch =exp52-universe=).

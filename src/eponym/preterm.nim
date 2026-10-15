@@ -37,7 +37,7 @@ proc qtyVar*(name: string): Qty =
 
 type
   PreKind* = enum
-    pkVar, pkUniv,                 # x, ?
+    pkVar, pkUniv, pkUnivN,        # x, ?, Type l (Issue #52)
     pkUnitTy, pkUnitV, pkEmptyTy,  # 1, <>, O
     pkPi, pkLam, pkApp,            # Pi, lam, application
     pkSigma, pkPair, pkFst, pkSnd, # Sig, pairs, projections
@@ -91,6 +91,10 @@ proc mkVar*(name: string, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkVar, name: name)
 proc mkUniv*(loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkUniv)
+proc mkUnivN*(lvl: int, loc = noLoc): PreTerm =
+  ## Issue #52: the level-annotated universe `Type l` (surface syntax);
+  ## the level rides in `intVal` like pkInt's literal.
+  PreTerm(loc: loc, kind: pkUnivN, intVal: lvl)
 proc mkUnitTy*(loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkUnitTy)
 proc mkUnitV*(loc = noLoc): PreTerm =
@@ -170,6 +174,7 @@ proc render(p: PreTerm, prec: int): string =
     if p.intVal == 1: "01" else: $p.intVal
   of pkBy: "by " & p.name
   of pkUniv: "?"
+  of pkUnivN: "Type " & $p.intVal  # Issue #52
   of pkUnitTy: "1"
   of pkUnitV: "<>"
   of pkEmptyTy: "O"

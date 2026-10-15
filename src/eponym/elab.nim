@@ -276,6 +276,7 @@ proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string],
     if t.idx < ctx.len and ctx[t.idx].name != "_": ctx[t.idx].name
     else: "V" & $t.idx
   of tC: $t.c
+  of tType: "Type " & $t.lvl  # Issue #52
   of tInt: $t.intVal
   of tNatLit: $t.natLitVal
   of tPrim: $t.primOp
@@ -359,7 +360,7 @@ proc containsNatLit(t: Term): bool =
   if t.isNil: return false
   case t.kind
   of tNatLit: true
-  of tR, tV, tC, tInt, tPrim, tMeta: false
+  of tR, tV, tC, tType, tInt, tPrim, tMeta: false
   of tPi, tSi, tLam: containsNatLit(t.dom) or containsNatLit(t.scope.bdy)
   of tPair: containsNatLit(t.pFst) or containsNatLit(t.pSnd) or
               containsNatLit(t.pScope.bdy)
@@ -379,7 +380,7 @@ proc expandNatLit(t: Term, zeroTm, sucTm: Term): Term =
     var res = zeroTm
     for _ in 1 .. t.natLitVal: res = tmApp(sucTm, res)
     res
-  of tR, tV, tC, tInt, tPrim, tMeta: t
+  of tR, tV, tC, tType, tInt, tPrim, tMeta: t
   of tPi, tSi, tLam:
     mkBinder(t.kind, expandNatLit(t.dom, zeroTm, sucTm),
              Scope(adv: t.scope.adv,
@@ -499,6 +500,39 @@ proc closeOverCtx*(t: Term, ctx: Ctx, params: seq[Term]): Term =
     result = subst(result, i, params[i])
     dec i
 
+proc univLevelOfTy(s: var Supply, ms: var MetaStore, t: Term, ctx: Ctx): int =
+  ## Issue #52: the universe level classifying the elaborated type-term `t`
+  ## (a term whose type is definitionally a universe). Closes `t` over the
+  ## context with fresh rigid refs and asks the core for its type —
+  ## mirroring the core's own Pi/Sigma formation rule
+  ## (`max(univIdx(infer dom), univIdx(infer cod))`). Legacy `?`-classified
+  ## types stay at level 0, as do terms the core cannot classify (an
+  ## unsolved hole under allowHoles, or a non-universe): the elaborator
+  ## never invents levels.
+  try:
+    univIdx(infer(s, closeOverCtx(zonk(ms, t), ctx, closeParams(s, ctx))))
+  except ValueError:
+    0
+
+proc ensureIsUniverse(ms: var MetaStore, s: var Supply, tyTy: Term, loc: Loc,
+                      what: string) =
+  ## Issue #52: the classifier of an ascribed type must be a universe —
+  ## `?` or any `Type l`. (The old `unifyElab(tyTy, ?)` only admitted
+  ## level 0, so `Type l` — whose classifier is `Type (l+1)` — would be
+  ## wrongly rejected.) A classifier with unsolved metas keeps the legacy
+  ## unify path: a hole there is solved to `?` exactly as before.
+  let tyTyZ = zonk(ms, tyTy)
+  if findUnsolved(ms, tyTyZ).found:
+    unifyElab(ms, tyTyZ, tmC(cStar), loc)
+    return
+  let v =
+    try: eval(tyTyZ, @[])
+    except ValueError as e:
+      raise elabErr(loc, what & " is not a type (" & sanitizeKernelMsg(e.msg) & ")")
+  if v.whnf.kind == wType or (v.whnf.kind == wConst and v.whnf.c == cStar):
+    return
+  raise elabErr(loc, what & " is not a type")
+
 proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
                       ev: Term, loc: Loc, ctx: Ctx, globals: Globals): Term =
   ## Issue #45: validate a handler's evidence with the bare core.
@@ -581,6 +615,35 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
         traceEvt(tcConv, "conv.unify", "unsolved metas: unify instead of convert")
         unifyElab(ms, a1, b1, loc)
         return nil
+      # Issue #52: cumulativity fast path (subtyping, not equality). A term
+      # whose type is `Type i` checks against an expected `Type j` when
+      # i <= j; the legacy `?` is the bottom universe on the inferred side
+      # and the top sort on the expected side ("is a type" positions admit
+      # any universe) — mirroring the core's directional rule in `check`.
+      # Handlers never see these goals, exactly as the core's `check`
+      # applies cumulativity without consulting them.
+      block cumul:
+        var env = newSeq[Value](ctx.len)
+        for i in 0 ..< ctx.len: env[i] = freshPara(s, nil)
+        let va = eval(a1, env)
+        let vb = eval(b1, env)
+        let aLvl =
+          try: univIdx(va)
+          except ValueError: -1  # inferred side is not a universe: not ours
+        if aLvl < 0: break cumul
+        let bIsStar = vb.whnf.kind == wConst and vb.whnf.c == cStar
+        if bIsStar:
+          # `?` stays the top sort for "is a type" positions: any universe checks.
+          traceEvt(tcConv, "conv.cumul", "Type " & $aLvl & " <= ?")
+          return nil
+        let bLvl =
+          try: univIdx(vb)
+          except ValueError: -1
+        if bLvl >= 0 and aLvl <= bLvl:
+          traceEvt(tcConv, "conv.cumul", "Type " & $aLvl & " <= Type " & $bLvl)
+          return nil
+        # Level violation (aLvl > bLvl): fall through to the handler
+        # stack and defaultConv for the standard "not convertible" error.
       var i = ms.convHandlers.high
       while i >= 0:
         let h = ms.convHandlers[i]
@@ -1354,7 +1417,7 @@ proc checkErasedArgWalk(t: Term, depth: int, ctx: Ctx, loc: Loc,
     checkErasedArgWalk(t.letScope.bdy, depth + 1, ctx, loc, ms, pending)
   of tPrim:
     discard
-  of tR, tC, tMeta, tInt, tNatLit:
+  of tR, tC, tType, tMeta, tInt, tNatLit:
     discard
 
 proc checkErasedArg(arg: Term, ctx: Ctx, loc: Loc, ms: var MetaStore) =
@@ -1543,6 +1606,9 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
         # not), and checkTm's fallthrough inserts before converting.
         resolveVar(ctx, globals, pre.name, pre.loc, ab, ms)
       of pkUniv: (tmC(cStar), tmC(cStar))
+      of pkUnivN:
+        # Issue #52: `Type l : Type (l+1)` (the core rule, eponym_init.infer).
+        (tmType(pre.intVal), tmType(pre.intVal + 1))
       of pkUnitTy: (tmC(cOne), tmC(cStar))
       of pkUnitV: (tmC(cVoid), tmC(cOne))
       of pkEmptyTy: (tmC(cZero), tmC(cStar))
@@ -1564,11 +1630,20 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
       of pkPi:
         let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
         let c = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, tmC(cStar), ab)
-        (tmPi(d, pre.name, c, pre.impl, pre.erased, zonkQty(ms, pre.qty), ab), tmC(cStar))
+        # Issue #52: Pi formation takes the max of the domain/codomain
+        # universe levels (the core rule); legacy `?`-classified types
+        # contribute level 0.
+        let lvl = max(univLevelOfTy(supply, ms, d, ctx),
+                      univLevelOfTy(supply, ms, c, ctx.ext(pre.name, d, pre.qty)))
+        (tmPi(d, pre.name, c, pre.impl, pre.erased, zonkQty(ms, pre.qty), ab), tmType(lvl))
       of pkSigma:
         let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
         let c = checkTm(pre.c2, ctx.ext(pre.name, d), globals, ms, supply, tmC(cStar), ab)
-        (tmSi(d, pre.name, c), tmC(cStar))
+        # Issue #52: Sigma formation takes the max of the domain/codomain
+        # universe levels (the core rule), like Pi.
+        let lvl = max(univLevelOfTy(supply, ms, d, ctx),
+                      univLevelOfTy(supply, ms, c, ctx.ext(pre.name, d)))
+        (tmSi(d, pre.name, c), tmType(lvl))
       of pkLam:
         let d =
           if pre.c1.isNil: freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
@@ -1896,7 +1971,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
     tmT0 = inferred.tm
     tmTy0 = zonk(ms, inferred.ty)
   let (tyTm0, tyTy) = inferTm(tyPre, @[], globals, ms, supply, ab)
-  unifyElab(ms, tyTy, tmC(cStar), d.loc)
+  ensureIsUniverse(ms, supply, tyTy, d.loc, "the type of '" & d.name & "'")
   let tyT = zonk(ms, tyTm0)
   let ru = findUnsolved(ms, tyT)
   if ru.found and not ms.allowHoles:
@@ -1974,7 +2049,7 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
     raise elabErr(loc, "duplicate declaration '" & name & "'")
   let ab = freshAbMeta(ms)  # Issue #177: signatures freshen one ?aN
   let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms, supply, ab)
-  unifyElab(ms, tyTy, tmC(cStar), loc)
+  ensureIsUniverse(ms, supply, tyTy, loc, "the type of postulate '" & name & "'")
   let tyT = zonk(ms, tyTm0)
   flushDeferredElab(ms, loc)  # Issue #56: report stuck pre-unification goals
   let ru = findUnsolved(ms, tyT)
@@ -3914,7 +3989,7 @@ proc elabCommandDecl(name: string, ty: PreTerm, iface: string, loc: Loc,
     raise elabErr(loc, "unknown interface '" & iface & "'")
   let ab: Ability = nil  # the command's *type* elaborates purely
   let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms, supply, ab)
-  unifyElab(ms, tyTy, tmC(cStar), loc)
+  ensureIsUniverse(ms, supply, tyTy, loc, "the type of command '" & name & "'")
   let tyT = zonk(ms, tyTm0)
   flushDeferredElab(ms, loc)  # Issue #56: report stuck pre-unification goals
   let ru = findUnsolved(ms, tyT)
@@ -5685,5 +5760,58 @@ proc asSigOther : ? =
   assert pOther.startsWith("Si("), "got: " & pOther
   assert "Point" notin pOther, "got: " & pOther
   echo "ok: non-matching Sigma still prints raw: ", pOther
+
+  # --- Issue #52: level-annotated universes ---------------------------------
+  # Surface syntax `Type l`, Pi/Sigma formation levels, and cumulativity.
+  # Positive: three level-annotated programs check (a datatype at Type 0,
+  # polymorphic identity over Type 0, a Pi whose formation level is
+  # computed as the max of the domain/codomain levels). Cumulativity: a
+  # `Type 0` is accepted where `Type 1` is expected. Negative: `Type 0`
+  # is rejected where `Type 0` is expected (its type is `Type 1`), and a
+  # Pi at formation level 1 is rejected against `Type 0`.
+  let udefs = elabCheck("""
+data Nat : Type 0 where
+| zero : Nat
+| suc (n : Nat) : Nat
+proc polyId (A : Type 0) (x : A) : A =
+  x
+proc natArr : Type 0 =
+  Nat -> Nat
+proc typeZero : Type 1 =
+  Type 0
+proc polyTy : Type 1 =
+  Pi (A : Type 0). A -> A
+""")
+  assert udefs.len == 4  # data desugars to postulates; 4 procs
+  echo "ok: #52 level-annotated corpus elaborates (Nat : Type 0, polyId, Pi levels, cumulativity)"
+  # The Pi `Pi (A : Type 0). A -> A` really lives at Type 1, not Type 0:
+  # its formation level is max(classifier(Type 0) = 1, classifier(A -> A) = 0).
+  expectElabErr("proc badPiTy : Type 0 =\n  Pi (A : Type 0). A -> A\n",
+    "not convertible")
+  echo "ok: #52 Pi formation level enforced (level-1 Pi rejected at Type 0)"
+  # `Type 0 : Type 1`, so it is rejected where `Type 0` is expected.
+  expectElabErr("proc badSelf : Type 0 =\n  Type 0\n", "not convertible")
+  echo "ok: #52 level violation rejected (Type 0 does not check against Type 0)"
+  # Anti-cumulativity direction: `Type 1` is not accepted where `Type 0`
+  # is expected.
+  expectElabErr("proc badDown : Type 0 =\n  Type 1\n", "not convertible")
+  echo "ok: #52 cumulativity is directional (Type 1 rejected at Type 0)"
+  # `Type` without a level is still an ordinary identifier.
+  let uidef = elabCheck("""
+postulate Nat : Type 0
+postulate zero : Nat
+proc Type : Nat =
+  zero
+""")
+  assert uidef.len == 1  # postulates yield no ElabDef; one proc
+  echo "ok: #52 `Type` alone remains a plain identifier (contextual keyword)"
+  # Legacy `?` programs are unaffected: `?`-classified Pis stay level-0
+  # definitionally (the `?`/Type-0 bridge) and keep elaborating.
+  let ulegacy = elabCheck("""
+proc legacyId (A : ?) (x : A) : A =
+  x
+""")
+  assert ulegacy.len == 1
+  echo "ok: #52 legacy `?` programs unaffected"
 
   echo "--- all elaborator tests passed ---"
