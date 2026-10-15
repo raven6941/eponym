@@ -2839,3 +2839,51 @@
   two pre-existing #113 rejection tests; full elab suite green. The trust
   model (=docs/trust-model.md=) moves positivity from "documented, not
   fixed" to checked, and #33's entry is updated accordingly.
+
+* 2026-10-15 — #46: expected-type origin locations on conversion failure (first slice)
+
+  Problem: conversion failures reported one location (the term's site) and
+  two bare types — "inferred type X does not match expected type Y" — with
+  no indication of where the expected type was written.
+
+  Design (implemented on =exp-46-error-provenance=, =src/eponym/elab.nim=):
+  - Every =PreTerm= already carries a =Loc= and the parser records one per
+    node, so #46's step 1 (span-annotated surface AST) needed no work.
+  - =convElab= and =defaultConv= take =expLoc: Loc = noLoc= (the source
+    location where the expected type was written; =noLoc= = unknown). The
+    handler protocol (=ConvDecide=) is unchanged: handlers don't build
+    these messages; =expLoc= flows only =convElab= -> =defaultConv=.
+  - On failure, =defaultConv= appends =" (expected type written at line L,
+    col C)"= when =expLoc= is known; unknown origins keep the old message
+    byte-identical (defaulted parameter, =expLocSuffix= returns ="").
+  - =checkTm= takes =expLoc= too and propagates it through recursive calls
+    whose expected type derives from the ambient =expTy= (Pi/Sigma
+    domain/codomain, the infer-then-convert fallback, literal overloads);
+    nearer ascriptions supply better origins: =pkAnn= passes =pre.c2.loc=,
+    =pkLet= passes =pre.c1.loc=, =elabDefDecl= passes =tyPre.loc=.
+  - Corpus: new fixture =tests/error_snapshots/cases/ann-mismatch-neg.ep=
+    pins the two-location message; =refl-fail-neg.txt= re-blessed (the
+    =refl= tactic's conversion check now names the ascribed type's site).
+
+  Evidence: 27/27 error snapshots green, elab unit suite green (98 ok),
+  warning-clean compile. Example:
+  =line 5, col 4: inferred type 1 does not match expected type O (expected
+  type written at line 5, col 9): not convertible (constant mismatch)=.
+
+  Known boundary (for the follow-up slice): this threads the *expected
+  type's* origin at the check boundary only. Spans are NOT threaded
+  through =subst=/=weaken=/=unify=, and core =Term= nodes carry no
+  locations — so unification failures (=unifyElab=) still report one
+  location, and desugared/tele-derived expected types report the def's
+  type-preterm loc rather than the exact binder (e.g. "line 1, col 1" for
+  a return-type ascription). Full provenance through unification's
+  equivalence-class merging remains the open research half of #46; the
+  SuperF-style constraint provenance would need locations on core terms
+  or a side table keyed by term identity — both touch the evaluator hot
+  path, so that slice needs the #55 phase timers to show it's free before
+  it lands.
+
+  Performance: =expLoc= is a two-int value threaded as an extra argument;
+  no allocation, no hot-path work. No benchmark run: nothing here is on a
+  measured hot path (the parameter rides alongside =loc=, which already
+  flows everywhere).

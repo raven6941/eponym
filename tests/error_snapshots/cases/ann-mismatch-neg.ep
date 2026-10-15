@@ -1,0 +1,5 @@
+# Negative test (issue #46): a conversion failure names both program
+# points — the inferred term's site (the ElabError location) and the
+# expected type's origin ("expected type written at ...").
+proc bad : ? =
+  (<> : O)

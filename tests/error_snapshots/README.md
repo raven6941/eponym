@@ -30,7 +30,7 @@ quality fail CI like any other regression.
 |---|---|
 | Scope | unbound variable |
 | Application | too many arguments; `refl` on unequal terms |
-| Conversion | dimension/constructor confusion (`noConfusion`), neutral mismatch, DCP, session-type, vector/matrix |
+| Conversion | dimension/constructor confusion (`noConfusion`), neutral mismatch, DCP, session-type, vector/matrix; ascription mismatch names both program points (issue #46: the inferred term's site plus "expected type written at ...") |
 | Metavariables | unsolved hole |
 | `red` rules | unknown eliminator in pattern |
 | `data` | constructor return not the family; non-strictly-positive domain |

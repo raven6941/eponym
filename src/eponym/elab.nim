@@ -95,7 +95,8 @@ type
 # Term when an evidence-returning handler (issue #45) discharged the goal,
 # nil otherwise.
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-              ctx: Ctx, globals: Globals, goalTy: Term = nil): Term
+              ctx: Ctx, globals: Globals, goalTy: Term = nil,
+              expLoc: Loc = noLoc): Term
 
 # --- Issue #177: ambient abilities (Frank-style) ---------------------------
 #
@@ -384,8 +385,18 @@ proc expandNatLit(t: Term, zeroTm, sucTm: Term): Term =
           expandNatLit(t.letTy, zeroTm, sucTm), t.letScope.adv,
           expandNatLit(t.letScope.bdy, zeroTm, sucTm))
 
+proc expLocSuffix(expLoc: Loc): string =
+  ## Issue #46: when the call site knows where the expected type was
+  ## written, name that program point in the conversion-failure message,
+  ## so the error carries two source locations (the inferred term's site
+  ## is the ElabError's own loc). noLoc = unknown: suffix omitted and
+  ## the message is byte-identical to before.
+  if expLoc == noLoc: ""
+  else: " (expected type written at line " & $expLoc.line &
+    ", col " & $expLoc.col & ")"
+
 proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-                 ctx: Ctx, globals: Globals) =
+                 ctx: Ctx, globals: Globals, expLoc: Loc = noLoc) =
   ## Experiment 41: the bottom of the handler stack — the Experiment 5b
   ## conversion (full reduction via the core evaluator, then the core's
   ## type-directed conversion areEqual). Raises ElabError("not
@@ -407,7 +418,7 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
       if g.tm.kind == tR: refNames[g.tm.refId] = name
     raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
       " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
-      ": " & noConfusionMsg(ms, nc.c1, nc.c2))
+      expLocSuffix(expLoc) & ": " & noConfusionMsg(ms, nc.c1, nc.c2))
   var env = newSeq[Value](ctx.len)
   for i in 0 ..< ctx.len:
     env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
@@ -440,7 +451,7 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
       if g.tm.kind == tR: refNames[g.tm.refId] = name
     raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
       " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
-      ": not convertible (" & sanitizeKernelMsg(e.msg) & ")")
+      expLocSuffix(expLoc) & ": not convertible (" & sanitizeKernelMsg(e.msg) & ")")
 
 proc closeParams*(s: var Supply, ctx: Ctx): seq[Term] =
   ## Issue #45: the fresh rigid postulate refs closing a context. The goal
@@ -512,7 +523,8 @@ proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
   ev1
 
 proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
-              ctx: Ctx, globals: Globals, goalTy: Term = nil): Term =
+              ctx: Ctx, globals: Globals, goalTy: Term = nil,
+              expLoc: Loc = noLoc): Term =
   profilePhase(epConv):
       ## Conversion for the inferred-vs-expected check (Experiment 5b):
       ## compare up to full reduction — delta-unfolding of
@@ -524,6 +536,12 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
       ## While unsolved metavariables remain, fall back to pattern
       ## unification instead: evaluation cannot solve flex constraints,
       ## and unify is the only thing that can.
+      ##
+      ## Issue #46: `expLoc` is the source location where the expected
+      ## type was written, when the call site knows it (noLoc = unknown).
+      ## It flows only to defaultConv's failure message; the handler
+      ## protocol is unchanged, and unknown origins keep the old message
+      ## byte-identical.
       ##
       ## Experiment 41: the equality effect. Instead of running conversion
       ## directly, convElab raises the goal `a === b` to the handler stack in
@@ -565,7 +583,7 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
         of cvDeclined:
           discard
         dec i
-      defaultConv(ms, s, a1, b1, loc, ctx, globals)
+      defaultConv(ms, s, a1, b1, loc, ctx, globals, expLoc)
       nil
 
 proc cacheConvHandler*(): ConvHandler =
@@ -1473,7 +1491,7 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
               ab: Ability): tuple[tm, ty: Term]
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
              ms: var MetaStore, supply: var Supply, expTy: Term,
-             ab: Ability): Term
+             ab: Ability, expLoc: Loc = noLoc): Term
 
 proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
               ms: var MetaStore, supply: var Supply,
@@ -1634,7 +1652,9 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
           # variables in the ascribed type are solved before it elaborates.
           let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
           let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
-          discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
+          # Issue #46: the expected type is the elaboration of pre.c2, so its
+          # source location is the expected-type origin for the error message.
+          discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar), pre.c2.loc)
           (t, ty)
         else:
           let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
@@ -1654,9 +1674,13 @@ proc mkNatLit(n: int, loc: Loc): Term =
 
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
              ms: var MetaStore, supply: var Supply, expTy: Term,
-             ab: Ability): Term =
+             ab: Ability, expLoc: Loc = noLoc): Term =
   profilePhase(epCheck):
       ## Checking mode against an expected type.
+      ## Issue #46: expLoc is the source location where expTy was written,
+      ## when known (noLoc = unknown). It is threaded to convElab so a
+      ## conversion failure names both program points; recursive calls
+      ## propagate it unless a nearer ascription supplies a better origin.
       case pre.kind
       of pkInt:
         # Literal overloading: integer literal adapts to expected type.
@@ -1671,7 +1695,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
             try:
               let natTm = mkNatLit(pre.intVal, pre.loc)
               let natTy = globals["Nat"].tm
-              discard convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals, tmC(cStar))
+              discard convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
               resTm = natTm
               done = true
             except ElabError:
@@ -1680,7 +1704,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
             if "Int" notin globals:
               raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?' or 'data Nat'")
             let intTy = globals["Int"].tm
-            discard convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals, tmC(cStar))
+            discard convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
             resTm = tmInt(pre.intVal)
           resTm
       of pkLam:
@@ -1712,7 +1736,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           raise elabErr(pre.loc, "lambda binder quantity " & $pre.qty.q &
             " does not match the expected quantity " & $piQty &
             " from the function type")
-        let b = checkTm(pre.c2, ctx.ext(pre.name, d, bQty), globals, ms, supply, codBdy, ab)
+        let b = checkTm(pre.c2, ctx.ext(pre.name, d, bQty), globals, ms, supply, codBdy, ab, expLoc)
         enforceBinderQty(bQty, b, pre.loc, pre.name, ms)  # Issue #66
         # DEBUG
         # echo "DEBUG checkTm pkLam: pre.qty=", pre.qty, " name=", pre.name
@@ -1720,13 +1744,13 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       of pkPair:
         let h = headTy(ms, expTy)
         if h.kind == tSi:
-          let a = checkTm(pre.c1, ctx, globals, ms, supply, h.dom, ab)
-          let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(h.scope.bdy, 0, a), ab)
+          let a = checkTm(pre.c1, ctx, globals, ms, supply, h.dom, ab, expLoc)
+          let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(h.scope.bdy, 0, a), ab, expLoc)
           tmPair(a, b, h.scope.adv, h.scope.bdy)
         elif h.kind == tMeta:
           let (dom, codBdy, adv) = ensureSi(ms, pre.loc, expTy, ctx.len)
-          let a = checkTm(pre.c1, ctx, globals, ms, supply, dom, ab)
-          let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(codBdy, 0, a), ab)
+          let a = checkTm(pre.c1, ctx, globals, ms, supply, dom, ab, expLoc)
+          let b = checkTm(pre.c2, ctx, globals, ms, supply, subst(codBdy, 0, a), ab, expLoc)
           tmPair(a, b, adv, codBdy)
         else:
           raise elabErr(pre.loc, "pair " & $pre &
@@ -1742,13 +1766,13 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           # the value; infer the value first, then elaborate the annotation.
           let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
           let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-          discard convElab(ms, supply, vty, aty, pre.loc, ctx, globals, tmC(cStar))
+          discard convElab(ms, supply, vty, aty, pre.loc, ctx, globals, tmC(cStar), pre.c1.loc)
           let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply, ab)
           unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
           tmLet(v, aty, pre.name, b)
         else:
           let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-          let v = checkTm(pre.c2, ctx, globals, ms, supply, aty, ab)
+          let v = checkTm(pre.c2, ctx, globals, ms, supply, aty, ab, pre.c1.loc)
           let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, aty), globals, ms, supply, ab)
           unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
           tmLet(v, aty, pre.name, b)
@@ -1758,12 +1782,14 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           # variables in the ascribed type are solved before it elaborates.
           let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
           let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
-          discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar))
+          # Issue #46: the expected type is the elaboration of pre.c2, so its
+          # source location is the expected-type origin for the error message.
+          discard convElab(ms, supply, tty, ty, pre.loc, ctx, globals, tmC(cStar), pre.c2.loc)
           unifyElab(ms, ty, expTy, pre.loc)
           t
         else:
           let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
-          let t = checkTm(pre.c1, ctx, globals, ms, supply, ty, ab)
+          let t = checkTm(pre.c1, ctx, globals, ms, supply, ty, ab, pre.c2.loc)
           unifyElab(ms, ty, expTy, pre.loc)
           t
       of pkBy:
@@ -1788,7 +1814,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         # at the infer-then-convert boundary, so check-mode uses of bare
         # implicits-headed variables keep their old behaviour.
         (t, ty) = insertImplicits(pre, t, ty, ctx.len, ms)
-        discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar))
+        discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
         t
 
 type
@@ -1849,9 +1875,13 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
           "ill-formed type of '" & d.name & "': " & sanitizeKernelMsg(e.msg))
   # 2. elaborate the body against the type; zonk; reject leftovers
   if qtyFirst:
-    discard convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals, tmC(cStar))
+    # Issue #46: the expected type is the elaboration of tyPre, so its
+    # source location is the expected-type origin for the error message.
+    discard convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals, tmC(cStar), tyPre.loc)
   else:
-    tmT0 = checkTm(tmPre, @[], globals, ms, supply, tyT, ab)
+    # Issue #46: the expected type is the elaboration of tyPre, so its
+    # source location is the expected-type origin for the error message.
+    tmT0 = checkTm(tmPre, @[], globals, ms, supply, tyT, ab, tyPre.loc)
   let tmT = zonk(ms, tmT0)
   let ru2 = findUnsolved(ms, tmT)
   if ru2.found and not ms.allowHoles:
