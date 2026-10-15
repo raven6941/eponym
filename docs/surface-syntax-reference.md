@@ -160,10 +160,24 @@ elaboration time only — they never appear in the object program.
 
 ## Types and terms
 
-### The universe: `?` (spelled `Univ`)
+### The universe: `Type l` (and the legacy `?`)
 
-Type-in-Type, known-inconsistent; the honest policy is "don't write
-Girard's paradox" (issue #52, trust model). `Nat : ?`, `? : ?`.
+Explicit universe hierarchy (issue #52): `Type 0 : Type 1 : Type 2 : ...`.
+`Pi`/`Sig` formation takes the maximum of the domain and codomain levels,
+and `Type i` checks against `Type j` when `i <= j` at ascription points
+(cumulativity is directional — conversion itself stays level-strict, so
+handlers never see it as an equality goal). `Type` is a *contextual*
+keyword: `Type l` parses as a universe only when directly followed by an
+integer literal (`Type 0`, `Type 1`, …); a bare `Type` is an ordinary
+identifier. (Note: `1` lexes as the unit type, so `Type 1` uses the same
+escape hatch as numeric literals — see below.)
+
+The legacy `?` (spelled `Univ` in `eponymBlock`) keeps its Type-in-Type
+behaviour and bridges both ways: it is convertible with `Type 0` and acts
+as the top sort in "is a type" positions. Every existing `?` program
+elaborates exactly as before. Full retirement of `?` is future work —
+"don't write Girard's paradox" still applies to `?`-classified code
+(trust model).
 
 ### Dependent functions: `Pi`
 
@@ -227,6 +241,16 @@ context, so a type-level mention of a linear variable does not consume it.
 In canonical surface text the spellings are `(1 x : T)` (linear),
 `(0 x : T)` (erased), `(q x : T)` (quantity variable, issue #66).
 
+**Inference (issue #84).** An unannotated binder gets its quantity inferred
+from usage: zero relevant uses becomes erased (`0`), any use becomes
+unrestricted (`ω`). Linearity (`1`) is never inferred — write
+`{.linear.}` / `(1 x : T)` wherever you need it — and explicit annotations
+always override inference. Only *term* positions count as uses: mentions in
+binder domains, type annotations, and eliminator motives neither consume a
+linear variable nor violate erasure. If the body still has unsolved
+metavariables when the count runs, the binder conservatively keeps `ω`
+(sound — only erasure/linearity *precision* is lost, never correctness).
+
 ### Natural numbers
 
 Integer literals are overloaded by the expected type. In checking mode
@@ -236,6 +260,19 @@ inference mode a literal requires `Int` in scope. `1` in *type* position
 lexes as the unit type — write `01` for the literal one (the renderer
 emits `01` for `pkInt(1)` so render→parse stays faithful, issue #158).
 The unit value is `<>` (Nim side: `unitv`).
+
+**Singleton types (issue #74).** In type position, a literal *is* its
+singleton type: `(d : 2)` demands exactly `2`, Scala-3 literal-type style,
+so `divBy2 : Nat -> (d : 2) -> Nat` is writable, and `divBy2 4 3` is
+rejected with `inferred type 3 does not match expected type 2`. A
+singleton widens to `Nat` at the top level of a conversion goal —
+argument positions (`divBy2 4 d` for `d : 2`), ascriptions (`(d : Nat)`) —
+one direction only (`tNatSing(k) <: Nat`; there is no narrowing). Known gap (#223): the widening does not apply through enclosing type formers in the
+elaborator's conversion, so returning a singleton-typed variable where
+`Nat` is ascribed (`proc f (d : 2) : Nat = d`) is rejected at the
+definition check, even though the kernel's `check` implements the
+covariant rule. When the expected type still has unsolved metavariables
+(inference-mode positions), the literal widens eagerly to `Nat` instead.
 
 ### Tactics: `by`
 
@@ -262,9 +299,9 @@ uninstalled (issue #41, trust model).
 
 ## What's deliberately missing
 
-- No universe hierarchy (#52) — `? : ?`.
-- Termination: single-function structural recursion only (#36); mutual
-  recursion (#42) and looping type-level programs are the author's problem.
+- Termination: single-function structural recursion (#36) plus mutual
+  recursion via size-change termination (#42); anything beyond that, and
+  looping type-level programs in general, are the author's problem.
 - Implicit-binder *lambdas* have no Nim-side spelling (parser note,
   issue #151): `{x : T}` in expression position would collide with the
   Pi-implicit table syntax, and no corpus code needs it.
