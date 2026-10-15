@@ -60,10 +60,52 @@ proc qtyPrefix(n: NimNode): string =
   return ""
 
 proc nimTypeToEponym(n: NimNode): string
+proc nimExprToEponym(n: NimNode): string
+
+proc phoasLamToEponym(lam: NimNode): string =
+  ## Convert an nnkLambda to `lam (qx : T). body` surface source (issue #40:
+  ## PHOAS surface — the binder is a host lambda, so nesting/shadowing are
+  ## handled by the host; the macro emits the named-binder form and the
+  ## parser/elaborator does the de Bruijn conversion).
+  ## Layout: lam[3] = nnkFormalParams [returnType, param1, ...],
+  ## lam[6] = body; param1 is nnkIdentDefs [name, type, default].
+  let params = lam[3]
+  if params.len != 2:
+    error("phoasLam: exactly one binder expected", lam)
+  let p = params[1]
+  if p.kind != nnkIdentDefs or p.len != 3 or
+     p[0].kind notin {nnkIdent, nnkPragmaExpr}:
+    error("phoasLam binder must have form (name: type)", lam)
+  let q = qtyPrefix(p[0])
+  let nm = binderName(p[0])
+  let dom = nimTypeToEponym(p[1])
+  var body = nimExprToEponym(lam[6])
+  if params[0].kind != nnkEmpty:
+    # Keep the host return annotation as a term ascription so a wrong
+    # annotation fails elaboration instead of being silently dropped.
+    body = "(" & body & " : " & nimTypeToEponym(params[0]) & ")"
+  # Parenthesized: a bare `lam ... . body` applied to arguments would let
+  # the application parse inside the body (the existing lam(x,T,body)
+  # form has this wart; the PHOAS surface does not inherit it).
+  "(lam (" & q & nm & " : " & dom & "). " & body & ")"
 
 proc nimExprToEponym(n: NimNode): string =
   ## Convert a Nim expression AST to Eponym source string.
   case n.kind
+  of nnkCommand:
+    # f a b (command syntax) -> f a b. The natural application form
+    # inside host lambdas (issue #40: `f f x` in a phoasLam body parses
+    # as nested nnkCommand). Same parenthesization rule as nnkCall.
+    let head = nimExprToEponym(n[0])
+    var args: seq[string] = @[]
+    for i in 1 ..< n.len:
+      let a = n[i]
+      if a.kind in {nnkCall, nnkCommand, nnkObjConstr, nnkPar}:
+        args.add("(" & nimExprToEponym(a) & ")")
+      else:
+        args.add(nimExprToEponym(a))
+    if args.len == 0: head
+    else: head & " " & args.join(" ")
   of nnkIdent:
     var s = $n
     # Map Nim-safe names to Eponym names
@@ -138,14 +180,22 @@ proc nimExprToEponym(n: NimNode): string =
         error("lam expects (binder, type, body)", n)
       return "lam (" & qtyPrefix(n[1]) & binderName(n[1]) & " : " &
              nimTypeToEponym(n[2]) & "). " & nimExprToEponym(n[3])
+    # phoasLam(proc (x {.linear.}: T): U = body) -> lam (qx : T). (body : U)
+    # (issue #40: PHOAS surface — the binder is a host lambda).
+    if n[0].kind == nnkIdent and $n[0] == "phoasLam":
+      if n.len != 2 or n[1].kind != nnkLambda:
+        error("phoasLam expects a host lambda: phoasLam(proc (x: T): U = body)", n)
+      return phoasLamToEponym(n[1])
     # f(a, b) -> f a b (with parens for nested calls to preserve grouping)
     let head = nimExprToEponym(n[0])
     var args: seq[string] = @[]
     for i in 1 ..< n.len:
       let a = n[i]
       # Parenthesize if arg is a call or obj-constr (Pi/Sig type args
-      # parse as nnkObjConstr in expression position and need grouping too)
-      if a.kind in {nnkCall, nnkObjConstr}:
+      # parse as nnkObjConstr in expression position and need grouping too),
+      # or an explicit nnkPar (issue #40: `(g x)` inside a command parses
+      # as Par(Command) and the grouping must survive).
+      if a.kind in {nnkCall, nnkObjConstr, nnkPar}:
         args.add("(" & nimExprToEponym(a) & ")")
       else:
         args.add(nimExprToEponym(a))
@@ -489,6 +539,9 @@ macro eponymBlock*(body: untyped): untyped =
   ## clause-style definitions; constructor-application patterns are
   ## parenthesized automatically.
   ## `byTac(name)` (Issue #151): tactic term (`by refl`, smoke test 14).
+  ## `phoasLam(proc (x: T): U = body)` (Issue #40): PHOAS surface — the
+  ##   binder is a host lambda, so nesting/shadowing use the host's scope;
+  ##   elaborates to the same PreTerm as `lam (x : T). (body : U)`.
   ## `x {.qvar(q).}` (Issue #151): quantity-variable binder `(q x : T)`.
   ## Nim-safe name mappings: `vecnil` -> `nil`, `unitv` -> `<>`,
   ## `unitTy` -> `1` (unit type), `emptyTy` -> `O` (empty type).

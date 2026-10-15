@@ -3451,3 +3451,45 @@
   =exp-longlived= (canonical) on 2026-10-15; it splits from main at
   the freeze point and merges back after the release; future
   experiments target it.
+
+* 2026-10-15 — Issue #40: PHOAS surface — host lambdas as binders (OPEN, branch =exp-longlived=)
+
+  Surface form (eponymBlock only; the string front end already has named
+  binders): =phoasLam(proc (x {.linear.}: T): U = body)=. The macro takes
+  the nnkLambda's parameter name/quantity/domain and emits
+  =(lam (qx : T). (body : U))= — the named-binder surface the parser
+  already converts to de Bruijn, so nesting/shadowing ride on the
+  existing resolver and host alpha is free. The host return annotation
+  is kept as a term ascription so a wrong annotation fails elaboration
+  instead of being silently dropped; absent annotation = no ascription.
+  Adequacy pin: six =conforms= cases in tests/surface_conformance.nim
+  assert the generated source parses to the structurally identical
+  PreTerm as the named-binder twin (identity, no-annotation, nested
+  lambdas, shadowing, linear binder, Vec-append skeleton). Elaboration
+  smoke tests in tests/test_embedded_macro_forms.nim (=twiceP= closing
+  over the enclosing proc scope, =shadowP= shadowing a proc parameter)
+  compile through the real =eponymBlock= macro.
+
+  Breakdown cases / gotchas found (all in the Nim-AST layer, none in the
+  core — no Term representation changes):
+  - Nim command parsing is right-nested: =f a b= parses as =f(a(b))=,
+    not Eponym's left-assoc =((f a) b)=. Multi-argument application in
+    a phoasLam body must use call syntax =f(a, b)=; =nnkCommand= is now
+    handled (was: hard error) but only the nested shape is meaningful.
+  - =nnkPar= grouping was dropped unconditionally: =(g x)= inside a
+    command parses as =Par(Command)= and the old case stripped the
+    parens, producing =g g x=. Fixed by parenthesizing =nnkPar=
+    arguments in both the =nnkCall= and =nnkCommand= loops (this also
+    fixes the latent =f((g x))= case in =nnkCall=).
+  - Immediate application: the emission is parenthesized
+    =(lam ...). body= so an applied =(lam ...) arg= does not let the
+    argument parse into the lambda body — a wart the existing
+    =lam(x,T,body)= form still has.
+  - Error locations point at the enclosing =eponymBlock= block, not the
+    individual lambda — same as every other =eponymBlock= form; no
+    per-lambda source mapping (would need position tracking through the
+    string round-trip).
+  Status: OPEN (branch =exp-longlived=). Remaining per the issue: port a
+  larger corpus sample (clause-def examples, erased binders) and record
+  any further breakdowns (patterns under binders, metavariables escaping
+  scope — not yet exercised).

@@ -272,4 +272,51 @@ def odd : Nat -> Bool
       clause([zero], false)
       clause([suc(n)], even(n))
 
+# PHOAS surface (issue #40): host lambdas as binders. Each case pins that
+# phoasLam(proc (x: T): U = body) parses to the identical PreTerm as the
+# named-binder twin `lam (x : T). (body : U)` — the adequacy pin.
+conforms """proc applyLam (A : ?) : A -> A =
+  (lam (x : A). (x : A))
+""":
+  proc applyLam(A: Univ): A -> A =
+    phoasLam(proc (x: A): A = x)
+
+# no return annotation -> no ascription
+conforms """proc noAnn (A : ?) : A -> A =
+  (lam (x : A). x)
+""":
+  proc noAnn(A: Univ): A -> A =
+    phoasLam(proc (x: A) = x)
+
+# nested lambdas; `f f x` is nnkCommand (Nim parses `f f x` as f(f(x)))
+conforms """proc twiceP (A : ?) : (A -> A) -> A -> A =
+  (lam (f : A -> A). ((lam (x : A). (f (f x) : A)) : A -> A))
+""":
+  proc twiceP(A: Univ): (A -> A) -> A -> A =
+    phoasLam(proc (f: A -> A): A -> A =
+      phoasLam(proc (x: A): A = f f x))
+
+# shadowing: the inner binder wins, by host scoping
+conforms """proc shadow (A : ?) (B : ?) : A -> B -> B =
+  (lam (x : A). ((lam (x : B). (x : B)) : B -> B))
+""":
+  proc shadow(A: Univ, B: Univ): A -> B -> B =
+    phoasLam(proc (x: A): B -> B =
+      phoasLam(proc (x: B): B = x))
+
+# quantity pragma on the host-lambda binder
+conforms """proc linId (A : ?) : A -> A =
+  (lam (1 x : A). (x : A))
+""":
+  proc linId(A: Univ): A -> A =
+    phoasLam(proc (x {.linear.}: A): A = x)
+
+# non-trivial program: Vec append skeleton (parse-level pin)
+conforms """proc vappendP (A : ?) (n : Nat) (m : Nat) : Vec A n -> Vec A m -> Vec A (add n m) =
+  (lam (xs : Vec A n). ((lam (ys : Vec A m). (vappend xs ys : Vec A (add n m))) : Vec A m -> Vec A (add n m)))
+""":
+  proc vappendP(A: Univ, n: Nat, m: Nat): Vec(A, n) -> Vec(A, m) -> Vec(A, add(n, m)) =
+    phoasLam(proc (xs: Vec(A, n)): Vec(A, m) -> Vec(A, add(n, m)) =
+      phoasLam(proc (ys: Vec(A, m)): Vec(A, add(n, m)) = vappend(xs, ys)))
+
 echo "surface_conformance: all tests passed"

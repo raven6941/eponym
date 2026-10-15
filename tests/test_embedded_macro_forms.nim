@@ -59,5 +59,18 @@ eponymBlock:
   proc unitVal(): unitTy = unitv
   proc absurd(x: emptyTy): emptyTy = x
 
+eponymBlock:
+  # --- PHOAS surface (issue #40): host lambdas as binders ---
+  # The lambda closes over the enclosing proc scope (host scoping); the
+  # parenthesized emission keeps immediate application outside the body.
+  postulate(NatP, Univ)
+  postulate(zeroP, NatP)
+  postulate(sucP, NatP -> NatP)
+  proc twiceP(f: NatP -> NatP, x: NatP): NatP =
+    phoasLam(proc (g: NatP -> NatP): NatP = g (g x))(f)
+  proc shadowP(x: NatP): (NatP -> NatP) -> NatP -> NatP =
+    phoasLam(proc (x: NatP -> NatP): NatP -> NatP =
+      phoasLam(proc (y: NatP): NatP = x y))
+
 when isMainModule:
   echo "test_embedded_macro_forms: embedded 07/08/14 + def/qvar/unit elaborated at compile time"
