@@ -49,7 +49,8 @@ installFiles  = @["abilities.nim",
                   "kernel_check.nim",
                   "sheds.nim",
                   "sheds_mac.nim",
-                  "shed_layout.nim"]
+                  "shed_layout.nim",
+                  "mutual_termination.nim"]
 
 # Tasks
 #
@@ -65,7 +66,7 @@ task test, "Run the full CI matrix (same matrix GitHub CI runs)":
 # by a custom task -- `nimble build` runs the built-in and reports
 # "Nothing to build" for a library with no `bin`.)
 task buildall, "Build all production modules":
-  for f in ["abilities", "eponym_init", "preterm", "parse_surf", "elab", "elab_prof", "unify", "usage_check", "eponym_mac", "lsp", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout"]:
+  for f in ["abilities", "eponym_init", "preterm", "parse_surf", "elab", "elab_prof", "unify", "usage_check", "eponym_mac", "lsp", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout", "mutual_termination"]:
     echo "=== build " & f & " ==="
     exec "nim c --hints:off --path:src --path:src/eponym src/eponym/" & f & ".nim"
   echo "=== build repl (issue #50) ==="

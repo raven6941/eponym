@@ -34,6 +34,7 @@ import eponym_init
 import unify
 import egraph
 import usage_check  # Issue #64: linear usage verification
+import mutual_termination  # Issue #42: mutual-block call-graph termination check
 import elab_prof      # Issue #55: phase timers (zero-cost when -d:elabProfile off)
 import elab_trace     # Issue #83: structured elaboration trace (runtime flag)
 
@@ -3681,9 +3682,14 @@ proc compileMatrixNode(ctx: ClauseCtx, cols: seq[MatrixCol],
 
 
 
-proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
-                     ms: var MetaStore,
-                     dataInfos: var Table[string, SurfDecl]): ElabDef =
+proc compileClausesToSurfDef(cd: ClausesDef, globals: var Globals,
+                             supply: var Supply, ms: var MetaStore,
+                             dataInfos: var Table[string, SurfDecl]): SurfDef =
+  ## Issue #42: the clause-matrix compilation half of elabClausesDecl:
+  ## compile `def name : Ty` + `|` clauses to the eliminator-application
+  ## SurfDef, without elaborating or registering it. The caller elaborates
+  ## the SurfDef (single: elabDefDecl; mutual: elabMutualDecl's knot-tying
+  ## finalization).
   profilePhase(epClause):
       let loc = cd.loc
       resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
@@ -3947,9 +3953,224 @@ proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
       for rv in restVars:
         app = mkApp(app, mkVar(rv, loc), loc)
       # Build the SurfDef and elaborate
-      let sdef = SurfDef(name: cd.name, tele: procTele, retTy: retTy, body: app,
-                         loc: loc)
-      elabDefDecl(sdef, globals, supply, ms)
+      result = SurfDef(name: cd.name, tele: procTele, retTy: retTy, body: app,
+                       loc: loc)
+
+proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
+                     ms: var MetaStore,
+                     dataInfos: var Table[string, SurfDecl]): ElabDef =
+  ## Single (non-mutual) clause def: compile then elaborate as a plain def.
+  let sdef = compileClausesToSurfDef(cd, globals, supply, ms, dataInfos)
+  elabDefDecl(sdef, globals, supply, ms)
+
+# --- Issue #42: mutual blocks -------------------------------------------
+
+proc explicitFormalNames(ty: PreTerm): seq[string] =
+  ## Explicit formal names of a clause-def type (index 0 = scrutinee).
+  var cur = ty
+  while cur.kind == pkPi:
+    if not cur.impl:
+      result.add(cur.name)
+    cur = cur.c2
+
+proc strictSubtermVars(pat: PreTerm,
+                       ctorToData: Table[string, string]): seq[string] =
+  ## Variables bound *strictly inside* a constructor pattern (not the head,
+  ## not a bare-variable pattern itself).
+  let (isCtor, _, args) = patKindOf(pat, ctorToData)
+  if isCtor:
+    for a in args:
+      var vs: seq[string] = @[]
+      collectPatVarSeq(a, ctorToData, vs)
+      result.add(vs)
+
+proc sctArcsForCall(args: seq[PreTerm], nTgt: int,
+                    ltVars, leVars: seq[seq[string]]): seq[SctArc] =
+  ## Size-change arcs for one call: arg i against the caller's formals.
+  ## Strict when the argument is a strict subterm of the formal's pattern;
+  ## non-strict when it is the formal itself (or a bare-variable alias).
+  for i, a in args:
+    if i >= nTgt: break  # over-applied: extra args are not formals
+    if a.kind != pkVar: continue
+    for j in 0 ..< ltVars.len:
+      if a.name in ltVars[j]:
+        result.add((src: j, strict: true, tgt: i))
+      elif a.name in leVars[j]:
+        result.add((src: j, strict: false, tgt: i))
+
+proc collectSctCalls(rhs: PreTerm, caller: string, group: HashSet[string],
+                     ltVars, leVars: seq[seq[string]],
+                     nTgtOf: Table[string, int],
+                     bound: seq[string],
+                     calls: var seq[SctCall]) =
+  ## Walk a clause RHS, recording one SctCall per application headed by a
+  ## group member. `bound` tracks shadowing binders (a shadowed head is not
+  ## a global call — recording it would add spurious arcs).
+  case rhs.kind
+  of pkApp:
+    var spine: seq[PreTerm] = @[]
+    var h = rhs
+    while h.kind == pkApp:
+      spine.add(h.c2)
+      h = h.c1
+    if h.kind == pkVar and h.name in group and h.name notin bound:
+      var args: seq[PreTerm] = @[]
+      for i in countdown(spine.high, 0): args.add(spine[i])
+      calls.add(SctCall(caller: caller, callee: h.name,
+                      nSrc: ltVars.len, nTgt: nTgtOf[h.name],
+                      arcs: sctArcsForCall(args, nTgtOf[h.name], ltVars, leVars),
+                      loc: rhs.loc))
+    collectSctCalls(h, caller, group, ltVars, leVars, nTgtOf, bound, calls)
+    for s in spine:
+      collectSctCalls(s, caller, group, ltVars, leVars, nTgtOf, bound, calls)
+  of pkLam, pkPi:
+    if rhs.c1 != nil:
+      collectSctCalls(rhs.c1, caller, group, ltVars, leVars, nTgtOf, bound, calls)
+    collectSctCalls(rhs.c2, caller, group, ltVars, leVars, nTgtOf,
+                    bound & @[rhs.name], calls)
+  of pkSigma, pkPair, pkLet, pkAnn:
+    if rhs.c1 != nil:
+      collectSctCalls(rhs.c1, caller, group, ltVars, leVars, nTgtOf, bound, calls)
+    if rhs.c2 != nil:
+      let bound2 = if rhs.kind == pkLet: bound & @[rhs.name] else: bound
+      collectSctCalls(rhs.c2, caller, group, ltVars, leVars, nTgtOf, bound2, calls)
+    if rhs.c3 != nil:
+      collectSctCalls(rhs.c3, caller, group, ltVars, leVars, nTgtOf, bound, calls)
+  of pkFst, pkSnd, pkProj:
+    collectSctCalls(rhs.c1, caller, group, ltVars, leVars, nTgtOf, bound, calls)
+  else:
+    discard
+
+proc elabMutualDecl(cds: seq[ClausesDef], blocLoc: Loc, globals: var Globals,
+                    supply: var Supply, ms: var MetaStore,
+                    dataInfos: var Table[string, SurfDecl]): seq[ElabDef] =
+  ## Issue #42: elaborate a `mutual` block of clause-style defs.
+  ##
+  ## 1. Compile each def's clauses to a SurfDef (pure PreTerm work; also
+  ##    validates arity/coverage per def).
+  ## 2. Size-change termination check over the group's call sites (fail
+  ##    fast: no elaboration is wasted on a non-terminating group).
+  ## 3. Forward-declare every name as an opaque R node (postulate-like).
+  ## 4. Elaborate each body with all siblings in scope, kernel-check it,
+  ##    then *tie the knot*: flip the forward R node into a real definition
+  ##    (refIsDefn=true, refVal filled). Sound: bodies were checked with
+  ##    siblings opaque (conservative — opacity only removes reductions),
+  ##    and clause-def bodies are lambda nests, so filling needs no
+  ##    unfolding of siblings.
+  ##
+  ## Limitation (MVP): a def's *type* may only reference earlier siblings
+  ## or globals (forward declarations are sequential); bodies may reference
+  ## any sibling.
+  for cd in cds:
+    if cd.name in globals:
+      raise elabErr(cd.loc, "duplicate definition '" & cd.name & "'")
+  # 1. compile clauses
+  var sdefs: seq[SurfDef] = @[]
+  for cd in cds:
+    sdefs.add(compileClausesToSurfDef(cd, globals, supply, ms, dataInfos))
+  # 2. size-change termination check
+  var ctorToData = initTable[string, string]()
+  for dn, dd in dataInfos:
+    for ctor in dd.ctors: ctorToData[ctor.name] = dn
+  var group = initHashSet[string]()
+  var nTgtOf = initTable[string, int]()
+  var formalNamesOf = initTable[string, seq[string]]()
+  for cd in cds:
+    group.incl(cd.name)
+    let fnames = explicitFormalNames(cd.ty)
+    formalNamesOf[cd.name] = fnames
+    nTgtOf[cd.name] = fnames.len
+  var sctCalls: seq[SctCall] = @[]
+  for cd in cds:
+    let fnames = formalNamesOf[cd.name]
+    for cl in cd.clauses:
+      var ltVars, leVars: seq[seq[string]] = @[]
+      for j in 0 ..< fnames.len:
+        ltVars.add(strictSubtermVars(cl.pats[j], ctorToData))
+        var le: seq[string] = @[]
+        if fnames[j].len > 0: le.add(fnames[j])
+        if cl.pats[j].kind == pkVar and cl.pats[j].name notin le:
+          # bare-variable pattern aliases the formal
+          le.add(cl.pats[j].name)
+        leVars.add(le)
+      collectSctCalls(cl.rhs, cd.name, group, ltVars, leVars, nTgtOf, @[],
+                      sctCalls)
+  try:
+    checkSct(sctCalls)
+  except SctError as e:
+    raise elabErr(e.loc, e.msg)
+  # 3. forward declarations (opaque R nodes)
+  for sdef in sdefs:
+    elabPostulateDecl(sdef.name, sdef.desugarTy(), sdef.loc,
+                      globals, supply, ms, false)
+  # 4. elaborate bodies; tie the knot
+  for sdef in sdefs:
+    let extBefore = ms.extDischarges  # Experiment 41: see elabDefDecl
+    resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
+    let g = globals[sdef.name]
+    let tyT = g.ty
+    let tyV = g.tm.refTyp
+    let ab = g.peg
+    let tyPre = sdef.desugarTy()
+    let tmPre = sdef.desugarTm()
+    # Issue #66: quantity-first order when the type mentions qty vars.
+    # The forward type was elaborated type-first; here we mirror
+    # elabDefDecl exactly (infer body, re-elaborate type, convert) and
+    # update the forward entry — inference quality for qty-var types in
+    # mutual blocks is best-effort (documented limitation).
+    let qtyFirst = pretermHasQtyVar(tyPre)
+    var tmT0: Term
+    var tmTy0: Term
+    var tyT2 = tyT
+    var tyV2 = tyV
+    if qtyFirst:
+      let inferred = inferTm(tmPre, @[], globals, ms, supply, ab)
+      tmT0 = inferred.tm
+      tmTy0 = zonk(ms, inferred.ty)
+      let (tyTm0, tyTy) = inferTm(tyPre, @[], globals, ms, supply, ab)
+      unifyElab(ms, tyTy, tmC(cStar), sdef.loc)
+      tyT2 = zonk(ms, tyTm0)
+      let ru = findUnsolved(ms, tyT2)
+      if ru.found and not ms.allowHoles:
+        raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
+          " in the type of '" & sdef.name & "'" & unsolvedMetaHint())
+      tyV2 =
+        if ru.found: vStar()
+        else:
+          try: check(supply, vStar(), tyT2)
+          except ValueError as e:
+            raise elabErr(sdef.loc, "ill-formed type of '" & sdef.name &
+              "': " & sanitizeKernelMsg(e.msg))
+      discard convElab(ms, supply, tmTy0, tyT2, sdef.loc, @[], globals,
+                       tmC(cStar), tyPre.loc)
+    else:
+      tmT0 = checkTm(tmPre, @[], globals, ms, supply, tyT, ab, tyPre.loc)
+    let tmT = zonk(ms, tmT0)
+    let ru2 = findUnsolved(ms, tmT)
+    if ru2.found and not ms.allowHoles:
+      raise elabErr(ru2.loc, "unsolved metavariable ?m" & $ru2.id &
+        " in the definition of '" & sdef.name & "'" & unsolvedMetaHint())
+    if ms.allowHoles and ru2.found:
+      # Issue #58: keep the opaque forward declaration; skip the fill.
+      result.add(ElabDef(name: sdef.name, tyTm: tyT2, tmTm: tmT, loc: sdef.loc))
+      continue
+    let tmV =
+      if ms.extDischarges != extBefore:
+        eval(tmT, @[])
+      else:
+        try: check(supply, tyV2, tmT)
+        except ValueError as e:
+          raise elabErr(sdef.loc, "definition '" & sdef.name &
+            "' does not check against its declared type: " &
+            sanitizeKernelMsg(e.msg))
+    # Tie the knot: the forward R node becomes a real definition. All
+    # previously elaborated references (same refId) see the filled value.
+    let rNode = globals[sdef.name].tm
+    rNode.refTyp = tyV2
+    rNode.refIsDefn = true
+    rNode.refVal = tmV
+    globals[sdef.name] = GEntry(tm: rNode, ty: tyT2, peg: ab)
+    result.add(ElabDef(name: sdef.name, tyTm: tyT2, tmTm: tmT, loc: sdef.loc))
 
 proc elabInterfaceDecl(name: string, loc: Loc,
                        globals: var Globals, supply: var Supply,
@@ -4012,6 +4233,10 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
     elabRecordDecl(d, globals, supply, ms)
   of dkClauses:
     result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
+  of dkMutual:
+    for ed in elabMutualDecl(d.mutualDefs, d.mutualLoc, globals, supply, ms,
+                             dataInfos):
+      result.add(ed)
   of dkInterface:
     elabInterfaceDecl(d.ifname, d.ifloc, globals, supply, ms)
   of dkCommand:
@@ -5618,6 +5843,119 @@ def badm : Nat -> Nat -> Nat
   assert termRejected >= 5, "need >= 5 rejected, got " & $termRejected
   echo "ok: termination corpus (", termAccepted, " accepted, ",
     termRejected, " rejected)"
+
+  # --- Issue #42: mutual termination (size-change) ----------------------
+  # Corpus: terminating mutual blocks accepted (and compute), looping ones
+  # rejected with a named cycle. Uses the same acc/rej template style.
+  let mutStart = cpuTime()
+  var mutAccepted = 0
+  var mutRejected = 0
+  template acc42(name, src: string) =
+    try:
+      discard elabCheck(src)
+      inc mutAccepted
+    except ElabError as e:
+      assert false, "mutual corpus: " & name & " should be accepted: " & e.msg
+  template rej42(name, src: string, frag: string) =
+    try:
+      discard elabCheck(src)
+      assert false, "mutual corpus: " & name & " should be rejected"
+    except ElabError as e:
+      if frag.len > 0:
+        assert frag in e.msg, "mutual corpus: " & name &
+          " rejected without naming the cycle: " & e.msg
+      inc mutRejected
+  let natBoolPre = """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Bool : ? where
+| true : Bool
+| false : Bool
+"""
+  acc42("mutual even/odd", natBoolPre & """
+mutual
+def even : Nat -> Bool
+| zero = true
+| (suc n) = odd n
+def odd : Nat -> Bool
+| zero = false
+| (suc n) = even n
+""")
+  acc42("mutual even/odd computes", natBoolPre & """
+mutual
+def even : Nat -> Bool
+| zero = true
+| (suc n) = odd n
+def odd : Nat -> Bool
+| zero = false
+| (suc n) = even n
+proc four : Nat = suc (suc (suc (suc zero)))
+proc testEven : Bool = even four
+proc testOdd : Bool = odd four
+""")
+  # even 4 / odd 4 must evaluate (knot-tying is sound)
+  block:
+    let st42 = elabCheckState(natBoolPre & """
+mutual
+def even : Nat -> Bool
+| zero = true
+| (suc n) = odd n
+def odd : Nat -> Bool
+| zero = false
+| (suc n) = even n
+proc testEven : Bool = even (suc (suc (suc (suc zero))))
+proc testOdd : Bool = odd (suc (suc (suc (suc zero))))
+""")
+    var gotEven, gotOdd = ""
+    for d in st42.defs:
+      if d.name == "testEven" or d.name == "testOdd":
+        let v = eval(d.tmTm, @[])
+        let nm = if v.whnf.kind == wRef: st42.ms.refNames.getOrDefault(whnfRefId(v), "?")
+                 else: $v.whnf.kind
+        if d.name == "testEven": gotEven = nm else: gotOdd = nm
+    assert gotEven == "true", "even 4 should be true, got " & gotEven
+    assert gotOdd == "false", "odd 4 should be false, got " & gotOdd
+    inc mutAccepted
+  acc42("one direction decreases, other passes through", natBoolPre & """
+mutual
+def a : Nat -> Bool
+| zero = true
+| (suc m) = b m
+def b : Nat -> Bool
+| n = a n
+""")
+  rej42("non-decreasing ping-pong", natBoolPre & """
+mutual
+def ping : Nat -> Bool
+| zero = true
+| (suc n) = pong (suc (suc n))
+def pong : Nat -> Bool
+| zero = false
+| (suc m) = ping (suc (suc m))
+""", "ping -> pong -> ping")
+  rej42("decrease-then-constant loop (SCT soundness)", natBoolPre & """
+mutual
+def f : Nat -> Bool
+| zero = true
+| (suc n) = g n
+def g : Nat -> Bool
+| zero = false
+| (suc m) = f (suc (suc zero))
+""", "f -> g -> f")
+  rej42("self-loop in mutual block (caught by #36 check)", natBoolPre & """
+mutual
+def loop : Nat -> Bool
+| zero = true
+| (suc n) = loop (suc (suc n))
+def ok : Nat -> Bool
+| zero = true
+| (suc k) = ok k
+""", "")
+  assert mutAccepted >= 4, "need >= 4 accepted, got " & $mutAccepted
+  assert mutRejected >= 3, "need >= 3 rejected, got " & $mutRejected
+  echo "ok: mutual termination corpus (", mutAccepted, " accepted, ",
+    mutRejected, " rejected) in ", formatFloat(cpuTime() - mutStart, ffDecimal, 3), "s"
 
   # --- Issue #49: multi-file programs via `import` ---------------------------
   let modDir = getTempDir() / "eponym_import_test"

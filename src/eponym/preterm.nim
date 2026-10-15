@@ -231,7 +231,7 @@ type
     pegNames*: seq[string]
 
   DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData, dkClauses,
-                   dkImport, dkInterface, dkCommand, dkRecord
+                   dkImport, dkInterface, dkCommand, dkRecord, dkMutual
   RecordField* = object
     ## One field in a `record` declaration (issue #37).
     name*: string
@@ -278,6 +278,12 @@ type
       daloc*: Loc
     of dkClauses:
       clausesDef*: ClausesDef
+    of dkMutual:
+      ## Issue #42: `mutual` block of clause-style defs whose bodies may
+      ## reference each other. Elaborated as a group with forward
+      ## declarations + a call-graph termination check.
+      mutualDefs*: seq[ClausesDef]
+      mutualLoc*: Loc
     of dkInterface:
       ## Issue #177: `interface Name` — declares an ability interface.
       ifname*: string
