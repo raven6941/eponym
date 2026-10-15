@@ -1,137 +1,155 @@
-## Issue #42: termination checking for mutually recursive declaration groups.
+## Issue #42: size-change termination for mutually recursive declaration groups.
 ##
-## Size-change-flavored criterion over PreTerm, reusing #36's walk style:
-## build the call graph of a declaration group, record for each call edge
-## which argument positions are structurally smaller (a bare variable bound
-## by the caller's pattern — the same "direct subterm" notion as
-## checkStructuralRec), and accept the group iff every directed cycle
-## contains at least one decreasing edge.
+## For each call site the elaborator supplies a *size-change graph*: arcs from
+## the caller's formals (index 0 = scrutinee) to the callee's formals, labeled
+## strict (`<`) when the argument is a strict subterm of the caller's formal
+## and non-strict (`<=`) when it is the formal itself. The checker computes the
+## closure under graph composition and requires every composed self-loop graph
+## to contain a strict self-arc — the Lee/Jones/Ben-Amram criterion. An
+## infinite call path would repeat some function with an idempotent composed
+## graph; a strict self-arc makes infinite strict decrease impossible.
 ##
-## NOTE (scope of this first chunk): pure graph machinery plus the cycle
-## check over hand-supplied MutDecl inputs. Wiring into the elaborator's
-## declaration processing (group detection across defs in one block and
-## extracting patVars from clause patterns) is the next chunk.
+## NOTE on an earlier, unsound revision: "every directed cycle contains a
+## decreasing edge" does NOT suffice. Counterexample:
+##   f (suc (suc zero)) = g (suc zero);  g (suc m) = f (suc (suc zero))
+## loops forever (`f (suc (suc zero)) -> g (suc zero) -> f (suc (suc zero))`),
+## yet the f->g edge decreases (n is a subterm). The decrease must *thread
+## through* the cycle — g discards its decreased argument and calls f on a
+## constant — so composition along the cycle is required, not a per-edge test.
 ##
 ## Public API:
-##   buildCallGraph(decls) -> seq[CallEdge]
-##   checkMutualBlock(decls)  # raises MutualTerminationError on a
-##                            # decrease-free cycle, naming the cycle.
+##   checkSct(calls: seq[SctCall])  # raises SctError on violation, naming a
+##                                  # witness cycle.
 
-import std/[tables, strutils]
+import std/[tables, strutils, sets, hashes, algorithm, deques]
 import preterm
 
 type
-  MutualTerminationError* = object of CatchableError
+  SctError* = object of CatchableError
     loc*: Loc
 
-  CallEdge* = object
+  SctArc* = tuple[src: int, strict: bool, tgt: int]
+    ## An arc from the caller's formal `src` (0 = scrutinee) to the callee's
+    ## formal `tgt`; `strict` = the argument is a *strict* subterm of the
+    ## caller's formal (vs `<=`, the formal itself).
+
+  SctCall* = object
     caller*, callee*: string
-    decArgs*: seq[int]  ## 0-based argument positions that are structurally smaller
+    nSrc*, nTgt*: int   ## formal counts (for documentation; arcs carry indices)
+    arcs*: seq[SctArc]
     loc*: Loc
 
-  MutDecl* = object
-    name*: string
-    body*: PreTerm
-    patVars*: seq[string]  ## pattern-bound vars eligible as "structurally smaller"
+proc mkSctErr(loc: Loc, msg: string): ref SctError =
+  (ref SctError)(msg: msg, loc: loc)
 
-proc mkMutErr(loc: Loc, msg: string): ref MutualTerminationError =
-  (ref MutualTerminationError)(msg: msg, loc: loc)
+proc normArcs(arcs: seq[SctArc]): seq[SctArc] =
+  ## Sorted, deduplicated; a strict arc subsumes a non-strict one on the
+  ## same (src, tgt) pair.
+  var strictSeen = initHashSet[(int, int)]()
+  for (s, st, t) in arcs:
+    if st: strictSeen.incl((s, t))
+  var seen = initHashSet[(int, int)]()
+  for (s, _, t) in arcs:
+    if (s, t) notin seen:
+      seen.incl((s, t))
+      result.add((s, (s, t) in strictSeen, t))
+  result.sort(proc(a, b: SctArc): int =
+    if a.src != b.src: cmp(a.src, b.src)
+    elif a.tgt != b.tgt: cmp(a.tgt, b.tgt)
+    else: cmp(a.strict, b.strict))
 
-proc flattenSpine(t: PreTerm): seq[PreTerm] =
-  ## Application spine, function first.
-  var h = t
-  var rev: seq[PreTerm] = @[]
-  while h.kind == pkApp:
-    rev.add(h.c2)
-    h = h.c1
-  result.add(h)
-  for i in countdown(rev.high, 0):
-    result.add(rev[i])
+proc compose*(a, b: seq[SctArc]): seq[SctArc] =
+  ## Compose size-change graphs: a is f->g, b is g->h; result is f->h.
+  ## An arc is strict if either leg is strict.
+  var raw: seq[SctArc] = @[]
+  for (x, s1, y) in a:
+    for (y2, s2, z) in b:
+      if y == y2:
+        raw.add((x, s1 or s2, z))
+  normArcs(raw)
 
-proc walkBody(t: PreTerm, d: MutDecl, names: seq[string],
-              edges: var seq[CallEdge]) =
-  if t == nil: return
-  case t.kind
-  of pkApp:
-    let sp = flattenSpine(t)
-    if sp[0].kind == pkVar and sp[0].name in names:
-      var dec: seq[int] = @[]
-      for i in 1 ..< sp.len:
-        if sp[i].kind == pkVar and sp[i].name in d.patVars:
-          dec.add(i - 1)
-      edges.add(CallEdge(caller: d.name, callee: sp[0].name,
-                         decArgs: dec, loc: t.loc))
-    for s in sp:
-      walkBody(s, d, names, edges)
-  of pkLam, pkPi, pkSigma, pkPair, pkLet, pkAnn:
-    if t.c1 != nil: walkBody(t.c1, d, names, edges)
-    if t.c2 != nil: walkBody(t.c2, d, names, edges)
-    if t.c3 != nil: walkBody(t.c3, d, names, edges)
-  of pkFst, pkSnd, pkProj:
-    walkBody(t.c1, d, names, edges)
-  else:
-    discard
+proc witnessCycle(caller: string,
+                  adj: Table[string, seq[(string, Loc)]]): seq[string] =
+  ## Shortest directed cycle through `caller` (BFS); empty if none.
+  ## Returns [caller, ..., caller].
+  var prev = initTable[string, string]()
+  var q = initDeque[string]()
+  q.addLast(caller)
+  prev[caller] = ""
+  while q.len > 0:
+    let u = q.popFirst()
+    for (v, _) in adj.getOrDefault(u, @[]):
+      if v == caller and u != caller:
+        # cycle: caller -> ... -> u -> caller; prev-chain gives u -> caller
+        var rev: seq[string] = @[]
+        var cur = u
+        while cur != caller:
+          rev.add(cur)
+          cur = prev[cur]
+        rev.reverse()
+        return @[caller] & rev & @[caller]
+      if v notin prev:
+        prev[v] = u
+        q.addLast(v)
+  @[]
 
-proc buildCallGraph*(decls: seq[MutDecl]): seq[CallEdge] =
-  ## Collect one edge per call to a group member in every body.
-  var names: seq[string] = @[]
-  for d in decls: names.add(d.name)
-  for d in decls:
-    walkBody(d.body, d, names, result)
+proc checkSct*(calls: seq[SctCall]) =
+  ## Size-change termination over the call-site graphs. Raises SctError
+  ## (naming a witness cycle) if some function admits a composed self-loop
+  ## with no strict self-arc.
+  type EKey = tuple[caller, callee: string]
+  var closure = initTable[EKey, seq[seq[SctArc]]]()
+  var adj = initTable[string, seq[(string, Loc)]]()
+  var edgeLoc = initTable[EKey, Loc]()
 
-proc checkCycles(edges: seq[CallEdge]) =
-  ## Reject any directed cycle with no decreasing edge. Naive per-start DFS:
-  ## declaration groups are tiny, so no visited-set pruning is needed (and
-  ## pruning would risk missing cycles through already-visited nodes).
-  var adj = initTable[string, seq[int]]()
-  for i, e in edges:
-    adj.mgetOrPut(e.caller, @[]).add(i)
-  for start in adj.keys:
-    var onStack: seq[string] = @[start]
-    var edgePath: seq[int] = @[]
-    var itStack: seq[(string, int)] = @[(start, 0)]
-    while itStack.len > 0:
-      let (node, ni) = itStack[^1]
-      let nbrs = adj.getOrDefault(node, @[])
-      if ni >= nbrs.len:
-        discard itStack.pop()
-        if edgePath.len > 0: discard edgePath.pop()
-        discard onStack.pop()
-        continue
-      itStack[^1] = (node, ni + 1)
-      let e = edges[nbrs[ni]]
-      let pos = onStack.find(e.callee)
-      if pos >= 0:
-        let cyc = edgePath[pos .. ^1] & @[nbrs[ni]]
-        var hasDec = false
-        for ci in cyc:
-          if edges[ci].decArgs.len > 0:
-            hasDec = true
-            break
-        if not hasDec:
-          var names: seq[string] = @[]
-          for ci in cyc: names.add(edges[ci].caller)
-          names.add(e.callee)
-          # Deterministic rotation: start at the lexicographically
-          # smallest name so the message is stable regardless of DFS
-          # start order.
-          let cycle = names[0 .. ^2]  # drop the closing repeat
-          var startPos = 0
-          for i in 1 ..< cycle.len:
-            if cycle[i] < cycle[startPos]: startPos = i
-          var ordered = cycle[startPos .. ^1] & cycle[0 ..< startPos]
-          ordered.add(ordered[0])
-          raise mkMutErr(e.loc,
-            "mutually recursive group has a cycle with no decreasing " &
-            "argument: " & ordered.join(" -> ") &
-            "; every cycle must contain a call on a structurally smaller " &
-            "argument (issue #42)")
-      else:
-        onStack.add(e.callee)
-        edgePath.add(nbrs[ni])
-        itStack.add((e.callee, 0))
+  proc addEdge(closure: var Table[EKey, seq[seq[SctArc]]],
+               adj: Table[string, seq[(string, Loc)]],
+               caller, callee: string, arcs: seq[SctArc], loc: Loc) =
+    let k: EKey = (caller, callee)
+    let g = normArcs(arcs)
+    if g notin closure.getOrDefault(k, @[]):
+      closure.mgetOrPut(k, @[]).add(g)
+      if k notin edgeLoc: edgeLoc[k] = loc
+      # extend right: (caller->callee);(callee->h)
+      for (h, _) in adj.getOrDefault(callee, @[]):
+        let kh: EKey = (callee, h)
+        for hh in closure.getOrDefault(kh, @[]):
+          addEdge(closure, adj, caller, h, compose(g, hh), loc)
+      # extend left: (h->caller);(caller->callee)
+      for h in adj.keys:
+        let kh: EKey = (h, caller)
+        if kh == k: continue
+        for hh in closure.getOrDefault(kh, @[]):
+          addEdge(closure, adj, h, callee, compose(hh, g), loc)
 
-proc checkMutualBlock*(decls: seq[MutDecl]) =
-  ## Accept iff every directed cycle in the group's call graph contains a
-  ## decreasing edge. Raises MutualTerminationError otherwise.
-  checkCycles(buildCallGraph(decls))
+  for c in calls:
+    # adjacency first, so extensions see the full graph
+    adj.mgetOrPut(c.caller, @[]).add((c.callee, c.loc))
+  for c in calls:
+    addEdge(closure, adj, c.caller, c.callee, c.arcs, c.loc)
+
+  # Deterministic failure order: collect all violating functions, sort.
+  var violators: seq[string] = @[]
+  for k in closure.keys:
+    if k.caller != k.callee: continue
+    for h in closure[k]:
+      var ok = false
+      for (x, st, y) in h:
+        if x == y and st:
+          ok = true
+          break
+      if not ok:
+        violators.add(k.caller)
+        break
+  violators.sort()
+  if violators.len > 0:
+    let f = violators[0]
+    let cyc = witnessCycle(f, adj)
+    let cycStr = if cyc.len > 0: cyc.join(" -> ")
+                 else: f & " -> " & f
+    raise mkSctErr(edgeLoc.getOrDefault((f, f), noLoc),
+      "mutually recursive group may not terminate: no strictly " &
+      "decreasing argument threads through the cycle " & cycStr &
+      " (every composed call cycle through '" & f &
+      "' needs an argument that is a strict subterm of the caller's " &
+      "formal; issue #42)")
