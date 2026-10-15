@@ -3072,4 +3072,28 @@
   collectBinderUseLocs, mirroring countVarUses's term positions with
   shadowing by binder-node identity), replacing the generic conversion
   "quantity mismatch" whose printed types do not even show quantities.
+  Part 3 (resumed run): the directional q0 ≤ ω subsumption is the
+  elaborator's inferred-vs-expected conversion relation (defaultConv and
+  eponym_init.check with the flag), so every kernel check auditing
+  elaborator output implements the same relation — otherwise the
+  elaborator accepts programs the audit rejects (the paxos_session
+  failure: propAfterAccept's inferred Pi[q0] against recvD's Pi[qOmega]
+  continuation, both at the use site and nested inside postulate
+  ascriptions like Chan(recvD(Nat, propAfterAccept))). The flag threads
+  through check/infer/synth/areEqual/structuralEq (default false);
+  well-formedness checks (against ?) thread it too — inert at their top
+  level (universes have no binder quantities) but required for nested
+  term-against-type checks inside elaborated types. Handler-evidence
+  (LCF) and checkLemma audits stay exact: they audit untrusted/generated
+  output, and strictness is the point there. Soundness: only
+  inferred-q0 vs expected-qOmega is subsumed; q1 and the reverse stay
+  rejected; quantities are elaboration-time usage tags (kernel checking
+  ignores them; erasure is the separate erased flag); the linearity
+  enforcement that matters (application-site checkErasedArg,
+  enforceBinderQty) runs on inferred types and is unaffected. Known
+  limitation: the flag propagates into contravariant (Pi-domain)
+  positions without flipping — consistent with the elaborator's
+  conversion, and harmless under the system's shallow linearity, but
+  not a fully principled subtyping relation; revisit if the conversion
+  relation is ever generalized.
   Status: OPEN (branch =exp84-qty-infer=).
