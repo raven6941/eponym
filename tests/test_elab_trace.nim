@@ -1,0 +1,125 @@
+## Elaboration trace tests (issue #83).
+##
+## Drives elaboration directly (like error_snapshots.nim) with tracing
+## enabled, capturing structured events in memory. Assertions are on
+## event (category, kind) pairs and nesting depth — never on rendered
+## text, which is allowed to change freely.
+##
+## Run from the repo root:
+##   nim c -r --hints:off --path:src --path:src/eponym tests/elab_trace.nim
+import os
+import sequtils
+import elab
+import elab_trace
+
+const srcOk = """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+proc polyId {A : ?} (x : A) : A =
+  x
+proc usePolyId : Nat =
+  polyId (suc zero)
+proc useBare : Pi (x : ?). ? =
+  polyId
+proc applyLam : Nat =
+  (lam (x : Nat). x) (suc zero)
+"""
+
+const srcBad = """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+proc bad : Pi (x : Nat). Nat =
+  lam (x : ?). x
+"""
+
+proc kindsOf(evs: seq[TraceEvent]): seq[string] =
+  evs.mapIt(it.kind)
+
+proc countKind(evs: seq[TraceEvent], k: string): int =
+  evs.countIt(it.kind == k)
+
+var failed = 0
+proc check(cond: bool, label: string) =
+  if cond: echo "ok: ", label
+  else:
+    echo "FAIL: ", label
+    inc failed
+
+# 1. EPON_TRACE env var enables tracing at driver entry (before any
+#    explicit setElabTrace call, which would take precedence).
+putEnv("EPON_TRACE", "unify,meta")
+maybeEnableTraceFromEnv()
+check(elabTraceEnabled(), "env EPON_TRACE enables tracing")
+check(parseTraceCats("unify,meta") == {tcUnify, tcMeta}, "parseTraceCats list")
+check(parseTraceCats("1") == allTraceCats, "parseTraceCats 1 = all")
+check(parseTraceCats("bogus") == {}, "parseTraceCats unknown = empty")
+delEnv("EPON_TRACE")
+setElabTrace(false)
+
+# 2. Disabled by default: no events captured.
+check(not elabTraceEnabled(), "tracing disabled by default")
+startTraceCapture()
+discard elabCheck(srcOk)
+check(stopTraceCapture().len == 0, "disabled: no events captured")
+
+# 3. All categories: the expected event kinds fire, scopes pair up,
+#    and nesting produces depth > 0.
+setElabTrace(true)
+startTraceCapture()
+discard elabCheck(srcOk)
+let evs = stopTraceCapture()
+let kinds = kindsOf(evs)
+check("check.in" in kinds, "check.in fires")
+check("check.out" in kinds, "check.out fires")
+check("infer.in" in kinds, "infer.in fires")
+check("unify.in" in kinds, "unify fires")
+check("meta.assign" in kinds, "meta.assign fires")
+check("implicit.insert" in kinds, "implicit.insert fires")
+check("conv.goal" in kinds, "conv.goal fires")
+check("conv.default" in kinds, "conv.default fires")
+check("qty.check" in kinds, "qty.check fires")
+check(countKind(evs, "check.in") == countKind(evs, "check.out"),
+      "check scopes pair up")
+check(countKind(evs, "infer.in") == countKind(evs, "infer.out"),
+      "infer scopes pair up")
+check(countKind(evs, "unify.in") == countKind(evs, "unify.out"),
+      "unify scopes pair up")
+check(evs.anyIt(it.depth > 0), "nesting produces depth > 0")
+
+# 4. Category allow-list filtering.
+setElabTrace(true, {tcUnify})
+startTraceCapture()
+discard elabCheck(srcOk)
+let fevs = stopTraceCapture()
+check(fevs.len > 0, "filtered run still emits unify events")
+check(fevs.allIt(it.cat == tcUnify), "filter: only tcUnify events")
+check("check.in" notin kindsOf(fevs), "filter: no check events")
+
+# 5. Depth limit.
+setElabTrace(true, allTraceCats, maxDepth = 1)
+startTraceCapture()
+discard elabCheck(srcOk)
+let devs = stopTraceCapture()
+check(devs.len > 0, "depth-limited run still emits events")
+check(devs.allIt(it.depth <= 1), "depth limit respected")
+
+# 6. Failure path: a unification failure logs unify.fail, and the
+#    enclosing scope still logs its .out (unwind is visible).
+setElabTrace(true)
+startTraceCapture()
+try:
+  discard elabCheck(srcBad)
+  check(false, "srcBad elaborated cleanly (expected ElabError)")
+except ElabError:
+  discard
+let bevs = stopTraceCapture()
+let bkinds = kindsOf(bevs)
+check("unify.fail" in bkinds, "unify.fail fires on unification failure")
+check(countKind(bevs, "unify.in") == countKind(bevs, "unify.out"),
+      "unify scopes pair up even on failure")
+
+setElabTrace(false)
+echo "--- ", 6 - failed, "/6 trace groups ok ---"
+if failed > 0: quit(1)
