@@ -3110,12 +3110,21 @@
   applies the cover to parameter-then-scrutinee, verified by a `refl`
   computation check.
 
-  Open: the BoundCheck demo. McBride's trichotomy
-  (`data Cmp : Nat -> Nat -> ?` with `lt`/`eq`/`gt`, cover
-  `(b m : Nat) -> Cmp m b`) needs the cover to rewrite with
-  `addSucR`/`addZeroR` (lib `add` recurses on its first argument, so
-  `add m (suc d)` vs `suc (add m d)` is propositional) — a local `subst`
-  via `eqElim` suffices.
+  Done 2026-10-15: the BoundCheck demo (`examples/ep/44h-boundcheck.ep`).
+  Design change vs the plan above: no propositional rewriting was needed.
+  The family is indexed `lt (d m : Nat) : BCheck m (suc (add m d))`,
+  `gt (d n : Nat) : BCheck (suc (add n d)) n` — the variable difference
+  sits in `add`'s *second* argument, so every step-case index unfolds
+  definitionally (`add (suc x) d` reduces; `add x d` with variable `x`
+  would stay stuck). The cover is a double elimination (outer on the
+  scrutinee `m`, inner on the bound `b`); the `(suc p, suc q)` case
+  re-eliminates the view of `(p, q)` with the motive shifting both
+  indices (`BCheck (suc mm) (suc bb)`), peeling one `suc` off each side.
+  A function defined by view, `isLe : Nat -> Nat -> Bool` (`m <= b` via
+  the trichotomy), computes on all three paths — verified by `refl`
+  checks (`isLe 1 0 = true`, `isLe 2 2 = true`, `isLe 0 1 = false`).
+  Eliminator naming note: only the first character is lowercased, so
+  `BCheck`'s eliminator is `bCheckElim`, not `bcheckElim`.
 
   Scope note (2026-10-15 main freeze): views are a new user-facing
   capability, so this lands on the long-lived post-freeze
