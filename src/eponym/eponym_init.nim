@@ -140,7 +140,7 @@ type
     of wPair:
       fstV, sndV: Value
     of wConst:
-      c: Const
+      c*: Const
     of wType:
       lvl*: int  # Issue #52: universe level of `Type l`
     of wRed:
@@ -788,7 +788,7 @@ proc numeralChainEq(k: int, v: Value, zeroId, sucId: int): bool =
     else:
       return false
 
-proc infer(s: var Supply, t: Term): Value
+proc infer*(s: var Supply, t: Term): Value
 proc check*(s: var Supply, ty: Value, t: Term): Value
 proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value]
 proc areEqual*(s: var Supply, ty, a, b: Value)
@@ -936,9 +936,10 @@ proc areEqual*(s: var Supply, ty, a, b: Value) =
   else:
     structuralEq(s, a, b)
 
-proc univIdx(u: Value): int =
+proc univIdx*(u: Value): int =
   ## Issue #52: the level index of a universe *value*: `Type l` -> l,
-  ## legacy `?` -> 0. Raises if `u` is not a universe.
+  ## legacy `?` -> 0. Raises if `u` is not a universe. Exported for the
+  ## elaborator's cumulativity fast path and Pi/Sigma formation levels.
   case u.whnf.kind
   of wType: u.whnf.lvl
   of wConst:
@@ -946,10 +947,12 @@ proc univIdx(u: Value): int =
     else: raise newException(ValueError, "not a universe: " & $u.syn)
   else: raise newException(ValueError, "not a universe: " & $u.syn)
 
-proc infer(s: var Supply, t: Term): Value =
+proc infer*(s: var Supply, t: Term): Value =
   ## infer implements the typing rules of Fig. 6.2, syntax-directed (§6.5.1).
   ## Terms are always closed here: binders are instantiated with fresh
   ## parameters on entry, so the V case never arises.
+  ## Issue #52: exported so the elaborator can read off the universe
+  ## classifying an elaborated type-term (Pi/Sigma formation levels).
   case t.kind
   of tR: t.refTyp
   of tV:
