@@ -76,6 +76,17 @@ proc unifyElab(ms: var MetaStore, a, b: Term, loc: Loc) =
         traceEvt(tcUnify, "unify.fail", e.msg)
         raise elabErr(loc, e.msg)
 
+proc flushDeferredElab(ms: var MetaStore, loc: Loc) =
+  ## Issue #56: declaration-final pre-unification pass. Suspended goals
+  ## are retried once more; leftovers become an ambiguity error showing
+  ## the stuck constraint. Hole-tolerant tooling mode leaves them
+  ## pending (flushDeferred checks allowHoles itself).
+  try:
+    flushDeferred(ms, loc)
+  except UnifyError as e:
+    traceEvt(tcUnify, "unify.flush-fail", e.msg)
+    raise elabErr(loc, e.msg)
+
 type
   CtxEntry* = object
     name*: string
@@ -1912,6 +1923,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
     # source location is the expected-type origin for the error message.
     tmT0 = checkTm(tmPre, @[], globals, ms, supply, tyT, ab, tyPre.loc)
   let tmT = zonk(ms, tmT0)
+  flushDeferredElab(ms, d.loc)  # Issue #56: report stuck pre-unification goals
   let ru2 = findUnsolved(ms, tmT)
   if ru2.found and not ms.allowHoles:
     raise elabErr(ru2.loc, "unsolved metavariable ?m" & $ru2.id &
@@ -1964,6 +1976,7 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
   let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms, supply, ab)
   unifyElab(ms, tyTy, tmC(cStar), loc)
   let tyT = zonk(ms, tyTm0)
+  flushDeferredElab(ms, loc)  # Issue #56: report stuck pre-unification goals
   let ru = findUnsolved(ms, tyT)
   if ru.found and not ms.allowHoles:
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
@@ -2177,6 +2190,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
   # an axiom; a production system would check it against the motive)
   let (rhsTm0, _) = inferTm(rhs, ctx, globals, ms, supply, ab)
   let rhsTm = zonk(ms, rhsTm0)
+  flushDeferredElab(ms, loc)  # Issue #56: report stuck pre-unification goals
   let ru = findUnsolved(ms, rhsTm)
   if ru.found and not ms.allowHoles:
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
@@ -3902,6 +3916,7 @@ proc elabCommandDecl(name: string, ty: PreTerm, iface: string, loc: Loc,
   let (tyTm0, tyTy) = inferTm(ty, @[], globals, ms, supply, ab)
   unifyElab(ms, tyTy, tmC(cStar), loc)
   let tyT = zonk(ms, tyTm0)
+  flushDeferredElab(ms, loc)  # Issue #56: report stuck pre-unification goals
   let ru = findUnsolved(ms, tyT)
   if ru.found and not ms.allowHoles:
     raise elabErr(ru.loc, "unsolved metavariable ?m" & $ru.id &
