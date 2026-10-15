@@ -2975,4 +2975,11 @@
   not match expected type 2". Explicitly out of scope (per the issue):
   the `Nat ∩ ¬0` fall-through refinement — Eponym has no negation types
   and no `case` surface syntax yet.
-  Status: OPEN (branch =exp74-singleton=).
+  Measurement (examples-corpus wall-clock, before/after): a driver
+  elaborating all 52 .ep files (lib/, examples/, examples/ep/) built
+  from base commit 04a0904 vs this branch, -d:release, 7 fresh-process
+  runs each. Base cpu median 0.506s (spread 0.488–0.551s); branch cpu
+  median 0.508s (spread 0.483–0.570s). Spreads overlap fully; singleton
+  precision costs nothing measurable in unification on this corpus (all
+  52 files elaborate cleanly on both sides, failed=0).
+  Status: CLOSED via #217.
