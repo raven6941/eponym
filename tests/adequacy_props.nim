@@ -97,6 +97,7 @@ proc alphaEq(a, b: Term): bool =
   of tR: a.refId == b.refId
   of tV: a.idx == b.idx
   of tC: a.c == b.c
+  of tType: a.lvl == b.lvl  # Issue #52: level-annotated universes
   of tInt: a.intVal == b.intVal
   of tNatLit: a.natLitVal == b.natLitVal
   of tNatSing: a.natSingVal == b.natSingVal

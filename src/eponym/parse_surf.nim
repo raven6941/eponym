@@ -11,7 +11,7 @@
 #
 # Surface syntax (Nim-consistent):
 #   program = decl*
-#   decl    = proc | def | postulate | elim | red | data | record | import
+#   decl    = proc | def | mutual | postulate | elim | red | data | record | import
 #   record  = "record" name ":" "|" field ( "|" field )*   -- issue #37
 #   field   = name ":" term
 #   import  = "import" string        -- multi-file programs (issue #49)
@@ -74,14 +74,14 @@
 # documented reason it cannot be emitted) must be added here in the same
 # commit.
 
-import preterm, strutils
+import preterm, strutils, sets
 import elab_prof  # Issue #55: phase timers
 
 type
   TokKind = enum
     tkEof, tkIdent, tkInt, tkString,
     tkDef, tkClauses, tkPostulate, tkElim, tkRed, tkData, tkWhere, tkBy,
-    tkRecord,
+    tkRecord, tkMutual,
     tkImport, tkInterface, tkCommand,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
@@ -108,7 +108,7 @@ const keywords = [
   ("proc", tkDef), ("def", tkClauses),
   ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
   ("data", tkData), ("where", tkWhere), ("by", tkBy),
-  ("record", tkRecord),
+  ("record", tkRecord), ("mutual", tkMutual),
   ("import", tkImport), ("interface", tkInterface), ("command", tkCommand),
   ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
@@ -282,6 +282,16 @@ proc parseAtom(p: var Parser): PreTerm =
   case t.kind
   of tkIdent:
     if t.lexeme == "_": mkHole(t.loc)  # hole (Experiment 3)
+    elif t.lexeme == "Type" and p.peek().kind in {tkInt, tkUnitTy} and
+         (p.peek().kind == tkInt or p.peek().lexeme == "1"):
+      # Issue #52: `Type l` — the level-annotated universe. `Type` stays a
+      # plain identifier unless directly followed by an integer literal
+      # (`Type0` still lexes as one identifier; `Type` alone is a variable).
+      # Note: `1` lexes as tkUnitTy (unit type), not tkInt, so accept both —
+      # the same escape hatch the quantity annotations use.
+      let lvl = if p.peek().kind == tkInt: parseInt(p.peek().lexeme) else: 1
+      discard p.next()  # consume the level literal
+      mkUnivN(lvl, t.loc)
     else: mkVar(t.lexeme, t.loc)
   of tkUniv: mkUniv(t.loc)
   of tkUnitTy: mkUnitTy(t.loc)
@@ -529,7 +539,7 @@ proc parseRecord(p: var Parser): SurfDecl =
     raise fail(t.loc, "record declaration needs at least one field")
   SurfDecl(kind: dkRecord, rname: nm.lexeme, fields: fields, recloc: t.loc)
 
-proc parseClauses(p: var Parser): SurfDecl =
+proc parseClausesDef(p: var Parser): ClausesDef =
   ## `def name : Ty` followed by `| pat1 .. patn = rhs` clauses.
   ## Each pattern is an atom; constructor applications need parens: `(suc m)`.
   let t = p.expect(tkClauses, "'def'")
@@ -551,9 +561,27 @@ proc parseClauses(p: var Parser): SurfDecl =
     clauses.add Clause(pats: pats, rhs: rhs, cloc: ploc)
   if clauses.len == 0:
     raise fail(t.loc, "'def' needs at least one '|'-clause")
-  SurfDecl(kind: dkClauses,
-           clausesDef: ClausesDef(name: nm.lexeme, ty: ty, clauses: clauses,
-                                  loc: t.loc))
+  ClausesDef(name: nm.lexeme, ty: ty, clauses: clauses, loc: t.loc)
+
+proc parseClauses(p: var Parser): SurfDecl =
+  SurfDecl(kind: dkClauses, clausesDef: p.parseClausesDef())
+
+proc parseMutual(p: var Parser): SurfDecl =
+  ## Issue #42: `mutual` block of clause-style `def`s. Each `def` starts
+  ## a new group; the block ends at the first non-`def` token.
+  let t = p.expect(tkMutual, "'mutual'")
+  var defs: seq[ClausesDef] = @[]
+  while p.peek().kind == tkClauses:
+    defs.add p.parseClausesDef()
+  if defs.len == 0:
+    raise fail(t.loc, "'mutual' needs at least one 'def' group")
+  var seen = initHashSet[string]()
+  for cd in defs:
+    if cd.name in seen:
+      raise fail(cd.loc, "duplicate definition '" & cd.name &
+        "' in mutual block")
+    seen.incl(cd.name)
+  SurfDecl(kind: dkMutual, mutualDefs: defs, mutualLoc: t.loc)
 
 proc parseImport(p: var Parser): SurfDecl =
   ## Issue #49: `import "path"` — multi-file programs.
@@ -570,10 +598,11 @@ proc parseDecl(p: var Parser): SurfDecl =
   of tkRed: p.parseRed()
   of tkData: p.parseData()
   of tkRecord: p.parseRecord()
+  of tkMutual: p.parseMutual()
   of tkImport: p.parseImport()
   of tkInterface: p.parseInterface()
   of tkCommand: p.parseCommand()
-  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'record', 'import', 'interface' or 'command'")
+  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'record', 'mutual', 'import', 'interface' or 'command'")
 
 proc parseProgram*(src: string): seq[SurfDecl] =
   profilePhase(epParse):

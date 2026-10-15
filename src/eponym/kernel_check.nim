@@ -109,7 +109,7 @@ proc kshift(tm: Term, cutoff, amt: int): Term =
   of tV:
     if tm.idx >= cutoff: Term(kind: tV, idx: tm.idx + amt)
     else: tm
-  of tR, tC, tInt, tNatLit, tNatSing:
+  of tR, tC, tType, tInt, tNatLit, tNatSing:
     tm
   of tMeta:
     raise kerr("out of kernel fragment: tMeta in kernel term (zonk invariant violated)")
@@ -157,7 +157,7 @@ proc ksubst(tm: Term, s: Term, cutoff: int, shrink: static bool = true): Term =
       when shrink: Term(kind: tV, idx: tm.idx - 1)
       else: tm
     else: tm
-  of tR, tC, tInt, tNatLit, tNatSing:
+  of tR, tC, tType, tInt, tNatLit, tNatSing:
     tm
   of tMeta:
     raise kerr("out of kernel fragment: tMeta in kernel term (zonk invariant violated)")
@@ -230,6 +230,7 @@ proc ksynEq(a, b: Term): bool =
   of tV: a.idx == b.idx
   of tR: a.refId == b.refId
   of tC: a.c == b.c
+  of tType: a.lvl == b.lvl
   of tInt: a.intVal == b.intVal
   of tNatLit: a.natLitVal == b.natLitVal
   of tNatSing: a.natSingVal == b.natSingVal
@@ -422,7 +423,14 @@ proc kconv(a, b: Term, g: KernelGlobals, depth: int = 0): bool =
     return kconv(Term(kind: tApp, fn: kshift(wa, 0, 1),
                       arg: Term(kind: tV, idx: 0)),
                  wb.scope.bdy, g, depth+1)
-  if wa.kind != wb.kind: return false
+  if wa.kind != wb.kind:
+    ## Issue #52: the legacy `?` is convertible with `Type 0` (both the
+    ## bottom universe); the stratified hierarchy above stays strict.
+    if wa.kind == tC and wa.c == cStar and wb.kind == tType and wb.lvl == 0:
+      return true
+    if wb.kind == tC and wb.c == cStar and wa.kind == tType and wa.lvl == 0:
+      return true
+    return false
   case wa.kind
   of tV: return wa.idx == wb.idx
   of tC: return wa.c == wb.c
@@ -462,6 +470,28 @@ type KCtx* = seq[Term]  # innermost-first types
 proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term
 proc kCheck(tm: Term, ty: Term, ctx: KCtx, g: KernelGlobals)
 
+proc kunivIdx(u: Term): int =
+  ## Issue #52: the level index of a universe *term*: `Type l` -> l,
+  ## legacy `?` -> 0. Raises KernelError if `u` is not a universe.
+  case u.kind
+  of tType: u.lvl
+  of tC:
+    if u.c == cStar: 0
+    else: raise kerr("not a universe: " & $u)
+  else: raise kerr("not a universe: " & $u)
+
+proc kcumul(inferred, expected: Term, g: KernelGlobals): bool =
+  ## Issue #52: directional universe cumulativity for kCheck's ascription
+  ## point. `Type i` checks against `Type j` iff i <= j; the legacy `?`
+  ## admits any universe (it stays the top sort for "is a type" positions).
+  ## Everything else falls back to kconv.
+  let wi = kwhnf(inferred, g)
+  let we = kwhnf(expected, g)
+  if wi.kind == tType:
+    if we.kind == tType: return wi.lvl <= we.lvl
+    if we.kind == tC and we.c == cStar: return true
+  false
+
 proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term =
   let star = Term(kind: tC, c: cStar)
   case tm.kind
@@ -477,10 +507,16 @@ proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term =
     # ? : ?, 1 : ?, O : ? -- but the unit value <> : 1 (elab: pkUnitV).
     if tm.c == cVoid: Term(kind: tC, c: cOne)
     else: star
+  of tType:
+    ## Issue #52: `Type l : Type (l+1)`.
+    Term(kind: tType, lvl: tm.lvl + 1)
   of tPi, tSi:
     kCheck(tm.dom, star, ctx, g)
     kCheck(tm.scope.bdy, star, tm.dom & ctx, g)
-    star
+    ## Issue #52: Pi/Sigma formation takes the max of the domain and
+    ## codomain universe levels (legacy `?`-based types stay at level 0).
+    Term(kind: tType, lvl: max(kunivIdx(kInfer(tm.dom, ctx, g)),
+                              kunivIdx(kInfer(tm.scope.bdy, tm.dom & ctx, g))))
   of tApp:
     let fty = kwhnf(kInfer(tm.fn, ctx, g), g)
     if fty.kind != tPi:
@@ -563,8 +599,12 @@ proc ksubsumes(inf, exp: Term, g: KernelGlobals): bool =
   ## Issue #74: audit-kernel twin of eponym_init.subsumes — definitional
   ## subsumption (inf <: exp): singleton base rule, covariant through Pi
   ## codomains and Sigma components, definitional equality elsewhere.
+  ## Issue #52: universe cumulativity (`Type i` <: `Type j` for i <= j) is
+  ## also a subsumption rule; kcumul handles it (and returns false for
+  ## non-universe shapes, so it is safe to try first).
   ## Open codomains are compared under the same de Bruijn convention on
   ## both sides (one binder each), which ksynEq handles structurally.
+  if kcumul(inf, exp, g): return true
   let wi = kwhnf(inf, g)
   let we = kwhnf(exp, g)
   if wi.kind == tNatSing:

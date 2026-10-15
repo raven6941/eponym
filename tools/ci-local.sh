@@ -22,7 +22,7 @@ echo "### Build: production modules"
 # and `installFiles` (the installed set; issue #183). These are the full
 # import closure of the public entry points (issue #189): every module a
 # user compile pulls in must also build standalone in CI.
-for f in abilities eponym_init preterm parse_surf elab elab_prof unify usage_check eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout; do
+for f in abilities eponym_init preterm parse_surf elab elab_prof unify usage_check eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout mutual_termination; do
   echo "=== build $f ==="
   nim c --hints:off $P "src/eponym/$f.nim"
 done
@@ -85,6 +85,8 @@ nim c -r --hints:off $P "tests/test_sheds.nim"
 nim c -r --hints:off $P "tests/test_shed_layout.nim"
 nim c -r --hints:off $P "tests/test_shed_loop.nim"
 nim c -r --hints:off $P "tests/test_shed_refine_method.nim"
+echo "=== mutual termination graph tests (issue #42) ==="
+nim c -r --hints:off $P "tests/test_mutual_termination.nim"
 echo "=== vscode extension smoke (issue #136 client path, real lsp binary) ==="
 # The smoke test self-provisions the shed sidecar: it exercises the
 # extension's own generateSidecar path (issue #153) on the demo before

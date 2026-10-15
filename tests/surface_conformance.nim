@@ -73,6 +73,11 @@ proc sameDecl(a, b: SurfDecl): bool =
     true
   of dkClauses:
     sameClauses(a.clausesDef, b.clausesDef)
+  of dkMutual:
+    if a.mutualDefs.len != b.mutualDefs.len: return false
+    for i in 0 ..< a.mutualDefs.len:
+      if not sameClauses(a.mutualDefs[i], b.mutualDefs[i]): return false
+    true
   of dkImport:
     a.ipath == b.ipath
   of dkInterface:
@@ -245,5 +250,22 @@ proc getX (p : Point) : ? = p.x
     field(x, Univ)
     field(y, Univ)
   proc getX(p: Point): Univ = p.x
+
+# mutual block of clause defs (issue #42)
+conforms """mutual
+def even : Nat -> Bool
+| zero = true
+| (suc n) = odd n
+def odd : Nat -> Bool
+| zero = false
+| (suc n) = even n
+""":
+  mutual:
+    def(even, Nat -> Bool):
+      clause([zero], true)
+      clause([suc(n)], odd(n))
+    def(odd, Nat -> Bool):
+      clause([zero], false)
+      clause([suc(n)], even(n))
 
 echo "surface_conformance: all tests passed"

@@ -80,10 +80,19 @@ variables). Corpus: 10 terminating definitions accepted, 8 non-terminating
 rejected, all under test timeout — no hangs. Rejections are located,
 name-aware elaboration errors.
 
+**Checked (#42).** Mutual blocks of clause-style `def`s are checked by
+size-change termination (Lee/Jones/Ben-Amram) over per-call-site graphs:
+each call site records strict (`<`, strict subterm) and non-strict (`<=`)
+arcs from caller formals to callee formals; a block is accepted iff every
+composed self-loop carries a strict self-arc (per-edge "a decrease
+somewhere in the cycle" is unsound — see decisions.org #42). Corpus: 4
+mutual blocks accepted (including even/odd elaborated and evaluated:
+`even 4 = true`, `odd 4 = false`), 3 rejected; rejections name the cycle
+(e.g. `ping -> pong -> ping`). The full mutual corpus elaborates in
+0.029s. Limitation (MVP): mutual blocks must be clause-style defs.
+
 **Unchecked, and the author's problem:**
 
-- Mutual recursion (#42, open). Only single-function self-recursion is
-  checked. A mutual block (`even`/`odd` style) can encode non-termination.
 - Anything beyond syntactic structural recursion (course-of-values / BelowD
   was considered and deferred, decisions.org #36).
 - Type-level computation in general. Eponym elaborates at Nim compile time

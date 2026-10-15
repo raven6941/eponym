@@ -86,6 +86,9 @@ proc prettyWhnfVal(v: Value, lvl: int, varNames: var seq[string],
     for a in whnfRedArgs(v):
       s &= " " & prettyWhnfVal(a, lvl, varNames, refNames)
     "(" & s & ")"
+  of wType:
+    # Issue #52: level-annotated universe value.
+    "Type " & $univIdx(v)
 
 proc prettyWhnf*(v: Value, refNames: Table[int, string]): string =
   ## Issue #50: user-facing WHNF printer (entry point for `:eval`).
