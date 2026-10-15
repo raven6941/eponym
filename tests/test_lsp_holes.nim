@@ -40,7 +40,7 @@ check(hoverAt("proc broken = = =", 0, 0) == "",
 # --- issue #139: name-resolving pretty-printer -----------------------------
 # Globals render as source names, not `R<n>` rigids.
 check(md.contains("goal : A"), "hover goal resolves to `A`")
-check(md.contains("`xs : ((Vec A) (suc n))`"),
+check(md.contains("`xs : (Vec A (suc n))`"),
   "hover ctx resolves `Vec` and `suc`")
 check(md.contains("`n : Nat`"), "hover ctx resolves `Nat`")
 check(md.contains("`A : ?`"), "hover ctx renders the universe as `?`")
