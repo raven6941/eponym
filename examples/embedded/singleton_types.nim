@@ -36,6 +36,13 @@ eponymBlock:
   # ... and a singleton-typed variable widens to Nat on demand.
   proc useIt(d: 2): Nat = divBy2(4, d)
 
+  # Singleton widening is covariant through Pi codomains (issue #223):
+  # the inferred Pi(d:2).2 checks against the ascribed Pi(d:2).Nat.
+  proc widenPi(d: 2): Nat = d
+
+  # ... and through Sigma components: Sig(d:2).2 <: Sig(d:2).Nat.
+  proc widenSig(p: Sig(d: 2, 2)): Sig(d: 2, Nat) = p
+
   # Ordinary Nat code is unaffected: literals still check against Nat.
   proc idNat(n: Nat): Nat = n
   proc seven(): Nat = idNat(7)

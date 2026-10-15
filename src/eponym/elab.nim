@@ -443,24 +443,19 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
   let va = eval(a, env)
   let vb = eval(b, env)
-  # Issue #74: singleton subsumption — the elaborator's only subtyping,
-  # and it is directional (inferred <: expected), so it lives here, not
-  # in the kernel's symmetric conversion. tNatSing(k) widens to Nat and
-  # is equal only to tNatSing(k).
-  if va.whnf.kind == wNatSing:
-    if vb.whnf.kind == wNatSing and
-        va.whnf.natSingVal == vb.whnf.natSingVal:
-      merge(ms.convCache, convKey(ctx.len, a, b))
-      return
-    if "Nat" in globals:
-      try:
-        areEqual(s, vStar(), eval(globals["Nat"].tm, env), vb)
-        merge(ms.convCache, convKey(ctx.len, a, b))
-        return
-      except ValueError:
-        discard
-    # Otherwise fall through: the areEqual below fails with the
-    # standard "not convertible" message.
+  # Issue #74/#223: singleton subsumption — the elaborator's only
+  # subtyping, and it is directional (inferred <: expected), so it lives
+  # here, not in the kernel's symmetric conversion. tNatSing(k) widens
+  # to Nat, covariant through Pi codomains and Sigma components
+  # (mirroring the singleton part of `subsumes`), and is equal only to
+  # tNatSing(k). When no singleton rule fires, fall through to the
+  # areEqual below, which fails with the standard "not convertible"
+  # message.
+  let natVal = if "Nat" in globals: eval(globals["Nat"].tm, env)
+               else: nil
+  if subsumeSing(s, va, vb, natVal):
+    merge(ms.convCache, convKey(ctx.len, a, b))
+    return
   try:
     # Issue #84: the inferred-vs-expected check uses the directional q0
     # ≤ ω subsumption (an inferred-erased binder is usable where an
