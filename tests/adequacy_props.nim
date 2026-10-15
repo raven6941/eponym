@@ -29,9 +29,12 @@
 ## fixed seed. Fresh-seed runs can be done locally by changing Seed.
 ##
 ## Fragment: Nat with zero/suc (as `data`), integer literals (tNatLit),
-## explicit lambdas/applications, pairs with fst/snd. All binders are
-## explicit with default quantities, so the `$` surface render is faithful
-## (the renderer drops quantity annotations; the generator never uses any).
+## explicit lambdas/applications, pairs with fst/snd. Generated binders use
+## quantity *variables* (Issue #84): the `$` renderer drops quantity
+## annotations, so only unannotated binders — which parse to qvars —
+## round-trip faithfully. A concrete qOmega has no surface representation;
+## generating one would make P4 fail by construction (re-parse yields a
+## qvar, which #84 infers to q0 when unused).
 
 import elab
 import preterm
@@ -130,6 +133,16 @@ proc elabO(pre: PreTerm, ctx: Ctx, expTy: Term): Term =
   var ms = initMetaStore(); var supply = Supply()
   zonk(ms, checkTermElab(pre, ctx, globals, ms, supply, expTy))
 
+proc elabI(pre: PreTerm): Term =
+  ## Inference mode (Issue #84): elaborates without an expected type.
+  ## Used where the property under test infers (e.g. P2b's function
+  ## position): checking against piNatNat would inherit qOmega for an
+  ## unannotated binder, while inference infers q0 for unused binders —
+  ## a mode difference, not a compositionality failure.
+  var ms = initMetaStore(); var supply = Supply()
+  let r = inferTm(pre, @[], globals, ms, supply, nil)
+  zonk(ms, r.tm)
+
 # --- generators: well-scoped PreTerms by construction ------------------------
 #
 # Mode discipline: integer literals are checking-only constructs (like
@@ -138,6 +151,18 @@ proc elabO(pre: PreTerm, ctx: Ctx, expTy: Term): Term =
 # Application infers its function, so anything in function position must
 # be literal-free *transitively*. genArr (function-position terms) is
 # therefore literal-free; genNat keeps literals for checked positions.
+
+var genQvarCount = 0
+proc genQtyVar(): Qty =
+  ## Issue #84: generated binders use quantity *variables* (like the surface
+  ## syntax's unannotated binders), not concrete qOmega. A concrete qOmega
+  ## has no surface representation (the printer renders binders without
+  ## quantities), so a qOmega-bearing PreTerm can never round-trip through
+  ## parse (P4): re-parsing yields a qvar, which #84 infers to q0 when
+  ## unused — a different core. Generating qvars keeps the generator
+  ## surface-faithful.
+  inc genQvarCount
+  qtyVar("#qgen" & $genQvarCount)
 
 proc genNat(r: var Rng, depth: int, nvars: int, noLit = false): PreTerm
 proc genArr(r: var Rng, depth: int, nvars: int): PreTerm
@@ -175,7 +200,8 @@ proc genArr(r: var Rng, depth: int, nvars: int): PreTerm =
   ## Well-scoped PreTerm of type Nat -> Nat for *function position*
   ## (application infers the function): literal-free, transitively.
   if depth <= 0 or r.below(3) == 0: mkVar("suc")
-  else: mkLam("x" & $nvars, natV, genNat(r, depth - 1, nvars + 1, noLit = true))
+  else: mkLam("x" & $nvars, natV, genNat(r, depth - 1, nvars + 1, noLit = true),
+               qty = genQtyVar())
 
 # --- property driver --------------------------------------------------------
 
@@ -214,7 +240,7 @@ block:
   var r = initRng(Seed + 1)
   for i in 0 ..< N:
     let t = genNat(r, 3, 2)
-    let lam = mkLam("x2", natV, t)
+    let lam = mkLam("x2", natV, t, qty = genQtyVar())
     elabOk "P2a case " & $i & ": " & $lam:
       let core1 = elabO(lam, ctx2, piNatNat)
       let core2 = elabO(t, ctxOf("x2", "x0", "x1"), natTm)
@@ -226,13 +252,17 @@ block:
   echo "ok: P2a lambda compositionality"
 
 # P2b: compositionality — application.
+# Issue #84: the function position is inferred, so the reference
+# elaboration of `f` uses inference mode too (elabI). Checking `f`
+# against piNatNat would inherit qOmega for the binder while inference
+# infers q0 — a mode difference, not a compositionality failure.
 block:
   var r = initRng(Seed + 2)
   for i in 0 ..< N:
     let f = genArr(r, 3, 0)
     let x = genNat(r, 3, 0)
     elabOk "P2b case " & $i:
-      let coreF = elabC(f, piNatNat)
+      let coreF = elabI(f)
       let coreX = elabC(x, natTm)
       let core1 = elabC(mkApp(f, x), natTm)
       checkProp(alphaEq(core1, tmApp(coreF, coreX)),
@@ -331,7 +361,7 @@ block:
   for i in 0 ..< 100:
     # Literal in a lambda body; the lambda is applied, so the body is
     # inferred and the literal has no expected type.
-    let f = mkLam("x9", natV, mkInt(r.below(10)))
+    let f = mkLam("x9", natV, mkInt(r.below(10)), qty = genQtyVar())
     let x = genNatLit(r, 5, noLit = false)
     var ms = initMetaStore(); var supply = Supply()
     try:

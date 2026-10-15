@@ -22,6 +22,14 @@ partial — see P6.)
 - `elab(app(f,x))` is α-equal to `app(elab(f), elab(x))`;
 - `elab(fst(p))` is α-equal to `fst(elab(p))`.
 
+  Issue #84 (quantity inference) mode discipline: `elab` above is
+  mode-consistent. An application infers its function, so P2b elaborates
+  `f` in inference mode on both sides — checking `f` against a qOmega
+  Pi would inherit qOmega for an unannotated binder while inference
+  infers q0 for unused binders, a mode difference rather than a
+  compositionality failure. (The directional q0 ≤ ω subsumption bridges
+  the two at use sites.)
+
 **P3 — Substitution commutation.** For open `t` (over `x`) and closed `u`:
 `elab(substPre(t,x,u))` is α-equal to `subst(elab(t), 0, elab(u))`.
 

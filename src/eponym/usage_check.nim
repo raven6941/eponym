@@ -69,6 +69,56 @@ proc hasUnresolvedMetas*(tm: Term): bool =
     of tPrim: go(t.primTy)
   go(tm)
 
+proc collectUseLocsWalk(p: PreTerm, binder: PreTerm, stack: var seq[PreTerm],
+                       acc: var seq[Loc]) =
+  ## Walker for collectBinderUseLocs (Issue #84). Module-level so it can
+  ## take the accumulator as a var parameter — a nested proc may not
+  ## capture it.
+  if p.isNil: return
+  case p.kind
+  of pkVar:
+    var i = stack.high
+    while i >= 0 and stack[i].name != p.name: dec i
+    if i >= 0 and cast[pointer](stack[i]) == cast[pointer](binder):
+      acc.add(p.loc)
+  of pkLam:
+    # c1 is the binder type annotation: not a term position, skip it
+    stack.add(p); collectUseLocsWalk(p.c2, binder, stack, acc)
+    discard stack.pop()
+  of pkPi, pkSigma:
+    # dom is a type annotation: skip; the codomain can carry term uses
+    # (mirrors countVarUses, which descends into tPi/tSi scopes)
+    stack.add(p); collectUseLocsWalk(p.c2, binder, stack, acc)
+    discard stack.pop()
+  of pkApp:
+    collectUseLocsWalk(p.c1, binder, stack, acc)
+    collectUseLocsWalk(p.c2, binder, stack, acc)
+  of pkPair:
+    collectUseLocsWalk(p.c1, binder, stack, acc)
+    collectUseLocsWalk(p.c2, binder, stack, acc)
+  of pkFst, pkSnd, pkProj:
+    collectUseLocsWalk(p.c1, binder, stack, acc)
+  of pkLet:
+    collectUseLocsWalk(p.c2, binder, stack, acc)  # value: binder not in scope
+    stack.add(p); collectUseLocsWalk(p.c3, binder, stack, acc)
+    discard stack.pop()
+  of pkAnn:
+    collectUseLocsWalk(p.c1, binder, stack, acc)  # c2 is the type: skip
+  of pkHole, pkInt, pkBy, pkUniv, pkUnivN, pkUnitTy, pkUnitV, pkEmptyTy:
+    discard
+
+proc collectBinderUseLocs*(body: PreTerm, binder: PreTerm): seq[Loc] =
+  ## Source locations where the variable bound by `binder` (a pkLam node)
+  ## occurs in *term positions* of the surface `body` (Issue #84). Mirrors
+  ## countVarUses: binder domains and type annotations are not term
+  ## positions (in QTT, types are checked in the all-0 context), so they
+  ## are not descended into. Shadowing is handled by binder-node identity:
+  ## an occurrence resolves to the innermost binder node carrying its name,
+  ## and only counts when that node is `binder` itself.
+  result = @[]
+  var stack: seq[PreTerm] = @[binder]  # the binder scopes over `body`
+  collectUseLocsWalk(body, binder, stack, result)
+
 proc checkUsage*(tm: Term): void =
   profilePhase(epUsage):
       ## Verify linear/erased usage in the elaborated term.

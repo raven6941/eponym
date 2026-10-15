@@ -146,6 +146,39 @@ proc pretermHasQtyVar*(p: PreTerm): bool =
   if p.kind in {pkPi, pkLam} and p.qty.isVar: return true
   pretermHasQtyVar(p.c1) or pretermHasQtyVar(p.c2) or pretermHasQtyVar(p.c3)
 
+proc qtyVarNames*(p: PreTerm): seq[string] =
+  ## Names of the quantity variables on Pi/Lambda binders in `p` (Issue #84).
+  if p.isNil: return @[]
+  result = qtyVarNames(p.c1) & qtyVarNames(p.c2) & qtyVarNames(p.c3)
+  if p.kind in {pkPi, pkLam} and p.qty.isVar:
+    result.add(p.qty.vname)
+
+proc sharesQtyVar*(tyPre, tmPre: PreTerm): bool =
+  ## True if the ascribed type and the body mention a common quantity
+  ## variable (Issue #84). That is exactly the proc-telescope case:
+  ## desugarTy/desugarTm build both from the same tele entries, so each
+  ## Pi binder shares its variable with the corresponding lambda binder,
+  ## and solving the body's variables from usage also solves the type's.
+  ## With disjoint variables (an explicitly written type and term, whose
+  ## binders were parsed separately) quantity-first inference is
+  ## meaningless: the type's variables would never be solved, and checking
+  ## mode already inherits quantities from the expected type.
+  let tyVars = qtyVarNames(tyPre)
+  if tyVars.len == 0: return false
+  for v in qtyVarNames(tmPre):
+    if v in tyVars: return true
+  false
+
+proc bodyNeedsCheck*(tmPre: PreTerm): bool =
+  ## True if the desugared body cannot be inferred and needs checking
+  ## mode (Issue #84): a `by` tactic or an integer literal under the
+  ## telescope lambdas requires an expected type (cf. the #66 comment on
+  ## the quantity-first order). Quantity-first inference falls back to
+  ## the checking order for these, preserving today's behavior.
+  var p = tmPre
+  while not p.isNil and p.kind == pkLam: p = p.c2
+  not p.isNil and p.kind in {pkBy, pkInt}
+
 # --- structural equality (ignores source locations) ------------------
 
 proc `==`*(a, b: PreTerm): bool =
