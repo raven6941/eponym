@@ -1,0 +1,28 @@
+# Explicit positional application to user-written `{ }` implicit binders.
+# Issue #201: `f x` used to fail when `x` was meant for an implicit binder
+# declared with `{ }` on a plain proc ("expected a function type"), while the
+# same spelling worked for constructor/eliminator telescope implicits.
+# The elaborator now trial-checks the argument against each leading implicit
+# domain: it consumes the binder explicitly when the check succeeds and
+# inserts a fresh meta (as before) when it does not.
+import "../../lib/nat.ep"
+import "../../lib/vec.ep"
+
+proc oneImpl {A : ?} (x : A) : A =
+  x
+proc use1 (y : Nat) : Nat =
+  oneImpl Nat y
+proc use1b : 1 =
+  oneImpl <>
+
+# Multiple leading implicits, all given explicitly (the #201 vec repro).
+proc vappExp (A : ?) (m : Nat) (n : Nat) (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =
+  vappend A m n xs ys
+
+# Mixed: some implicits explicit, the rest inserted.
+proc vappMix (m : Nat) (n : Nat) (xs : Vec Nat m) (ys : Vec Nat n) : Vec Nat (add m n) =
+  vappend Nat m n xs ys
+
+# Insertion still works where no explicit arg is given.
+proc useIns (xs : Vec Nat (suc zero)) (ys : Vec Nat (suc zero)) : Vec Nat (add (suc zero) (suc zero)) =
+  vappend xs ys

@@ -1387,6 +1387,38 @@ proc insertImplicits(pre: PreTerm, tm, ty: Term, ctxLen: int,
       break
   (f, fty)
 
+type MetaSnapshot = object
+  ## The mutable elaboration state a trial check may disturb (Issue #201).
+  entries: Table[int, MetaEntry]
+  nextId: int
+  holesLen: int
+  qvarNames: Table[string, int]
+  qvarSols: seq[QtySol]
+  qvarPending: Table[string, seq[tuple[varName: string, loc: Loc]]]
+  extDischarges: int
+
+proc snapshotMeta(ms: MetaStore): MetaSnapshot =
+  ## Capture the mutable state. The qvarPending table is deep-copied: a
+  ## shallow table copy would share the pending-entry seqs, so a trial
+  ## append would leak into the snapshot.
+  var pending = initTable[string, seq[tuple[varName: string, loc: Loc]]]()
+  for k, v in ms.qvarPending: pending[k] = @v
+  MetaSnapshot(entries: ms.entries, nextId: ms.nextId, holesLen: ms.holes.len,
+               qvarNames: ms.qvarNames, qvarSols: ms.qvarSols,
+               qvarPending: pending, extDischarges: ms.extDischarges)
+
+proc restoreMeta(ms: var MetaStore, snap: MetaSnapshot) =
+  ## Roll back to a snapshot. Abandoned trial metas vanish (their ids are
+  ## recycled via nextId) so they can never surface as spurious
+  ## "unsolved metavariable" errors; trial hole records are truncated.
+  ms.entries = snap.entries
+  ms.nextId = snap.nextId
+  ms.holes.setLen(snap.holesLen)
+  ms.qvarNames = snap.qvarNames
+  ms.qvarSols = snap.qvarSols
+  ms.qvarPending = snap.qvarPending
+  ms.extDischarges = snap.extDischarges
+
 proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
               ms: var MetaStore, supply: var Supply,
               ab: Ability): tuple[tm, ty: Term]
@@ -1401,8 +1433,11 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
       ## Synthesis mode.
       case pre.kind
       of pkVar:
-        let (tm, ty) = resolveVar(ctx, globals, pre.name, pre.loc, ab, ms)
-        insertImplicits(pre, tm, ty, ctx.len, ms)
+        # Issue #201: no eager implicit insertion here. A bare variable
+        # keeps its implicit Pis; application sites (pkApp) resolve them
+        # against each argument (explicit when it checks, inserted when
+        # not), and checkTm's fallthrough inserts before converting.
+        resolveVar(ctx, globals, pre.name, pre.loc, ab, ms)
       of pkUniv: (tmC(cStar), tmC(cStar))
       of pkUnitTy: (tmC(cOne), tmC(cStar))
       of pkUnitV: (tmC(cVoid), tmC(cOne))
@@ -1441,18 +1476,55 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
         (tmLam(d, pre.name, b, pre.impl, pre.erased, bq, ab), tmPi(d, pre.name, bty, pre.impl, pre.erased, bq, ab))
       of pkApp:
         var (f, fty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
-        (f, fty) = insertImplicits(pre, f, fty, ctx.len, ms)
-        let (dom, codBdy, impl, _, qty, fpeg) = ensurePi(ms, pre.loc, fty, ctx.len, ab)
-        if impl:
-          raise elabErr(pre.loc,
-            "cannot apply explicitly to an implicit argument")
-        # Issue #177, App rule: the operator's peg must be compatible
-        # with the ambient (pure predicate).
-        checkPeg(fpeg, ab, pre.loc)
-        let a = checkTm(pre.c2, ctx, globals, ms, supply, dom, ab)
-        if qty == q0:
-          checkErasedArg(a, ctx, pre.loc, ms)  # Issue #66: no linear var into 0-param
-        (tmApp(f, a), subst(codBdy, 0, a))
+        # Issue #201: leading `{ }` implicit binders accept explicit
+        # positional arguments. Resolve them against this argument one at
+        # a time: if the argument checks against an implicit domain it is
+        # consumed explicitly (no insertion); otherwise a fresh meta is
+        # inserted for that binder and the argument is retried against the
+        # next binder. A failed trial is rolled back so insertion (and the
+        # eventual real check) sees clean state; genuine argument errors
+        # resurface when the argument is checked against the next binder.
+        var a: Term = nil
+        var aPeg: Ability = ab
+        var consumed = false
+        while not consumed:
+          let h = headTy(ms, fty)
+          if h.kind != tPi or not h.impl: break
+          let snap = snapshotMeta(ms)
+          var ok = false
+          try:
+            a = checkTm(pre.c2, ctx, globals, ms, supply, h.dom, ab)
+            ok = true
+          except ElabError:
+            restoreMeta(ms, snap)
+          if ok:
+            aPeg = h.peg
+            if h.qty == q0:
+              checkErasedArg(a, ctx, pre.loc, ms)  # Issue #66
+            f = tmApp(f, a)
+            fty = subst(h.scope.bdy, 0, a)
+            consumed = true
+          else:
+            let m = freshMeta(ms, h.dom, ctx.len, 0, pre.loc)
+            f = tmApp(f, m)
+            fty = subst(h.scope.bdy, 0, m)
+        if consumed:
+          # Issue #177, App rule: the operator's peg must be compatible
+          # with the ambient (pure predicate).
+          checkPeg(aPeg, ab, pre.loc)
+          (f, fty)
+        else:
+          let (dom, codBdy, impl, _, qty, fpeg) = ensurePi(ms, pre.loc, fty, ctx.len, ab)
+          if impl:
+            raise elabErr(pre.loc,
+              "cannot apply explicitly to an implicit argument")
+          # Issue #177, App rule: the operator's peg must be compatible
+          # with the ambient (pure predicate).
+          checkPeg(fpeg, ab, pre.loc)
+          let a2 = checkTm(pre.c2, ctx, globals, ms, supply, dom, ab)
+          if qty == q0:
+            checkErasedArg(a2, ctx, pre.loc, ms)  # Issue #66: no linear var into 0-param
+          (tmApp(f, a2), subst(codBdy, 0, a2))
       of pkPair:
         # Non-dependent Sigma with metavariable components (as the core's cPair).
         let aM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
@@ -1661,7 +1733,11 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
             tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
         else: raise elabErr(pre.loc, "unknown tactic '" & pre.name & "'")
       else:
-        let (t, ty) = inferTm(pre, ctx, globals, ms, supply, ab)
+        var (t, ty) = inferTm(pre, ctx, globals, ms, supply, ab)
+        # Issue #201: the insertion inferTm's pkVar used to do now lives
+        # at the infer-then-convert boundary, so check-mode uses of bare
+        # implicits-headed variables keep their old behaviour.
+        (t, ty) = insertImplicits(pre, t, ty, ctx.len, ms)
         discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar))
         t
 
