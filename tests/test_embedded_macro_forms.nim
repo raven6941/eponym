@@ -76,5 +76,32 @@ eponymBlock:
   proc erasedConst(): NatP =
     phoasLam(proc (e {.erased.}: NatP): NatP = zeroP)(zeroP)
 
+eponymBlock:
+  # --- PHOAS breakdown cases (issue #40): all benign ---
+  # (each eponymBlock is scope-independent, hence the local postulates)
+  postulate(BoolB, Univ)
+  postulate(trueB, BoolB)
+  postulate(falseB, BoolB)
+  elim(boolElimB, Pi(C: BoolB -> Univ, C(trueB) -> C(falseB) -> Pi(b: BoolB, C(b))))
+  red(boolElimB(C, t, f, trueB), t)
+  red(boolElimB(C, t, f, falseB), f)
+  # 1. Pattern analysis under a host binder: the bound variable is
+  #    scrutinized by an eliminator (patterns-as-elim under lam).
+  proc notPH(b: BoolB): BoolB =
+    phoasLam(proc (x: BoolB): BoolB =
+      boolElimB(lam(u, BoolB, BoolB), falseB, trueB, x))(b)
+  # 2. phoasLam in a clause RHS, capturing the pattern variable: the
+  #    pattern binder is textually in scope in the emitted source.
+  data(NatQ, Univ):
+    proc zeroQ(): NatQ
+    proc sucQ(n: NatQ): NatQ
+  def(capQ, NatQ -> NatQ):
+    clause([zeroQ], zeroQ)
+    clause([sucQ(n)], phoasLam(proc (f: NatQ -> NatQ): NatQ = f n)(sucQ))
+  # 3. A hole `_` in a phoasLam body is a real elaborator hole: it fails
+  #    with the standard located "unsolved metavariable" error (verified
+  #    in scratch; same message class as the string surface), so it
+  #    cannot live in this compile-time test. Recorded in decisions.org.
+
 when isMainModule:
   echo "test_embedded_macro_forms: embedded 07/08/14 + def/qvar/unit elaborated at compile time"

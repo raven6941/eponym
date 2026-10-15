@@ -3489,10 +3489,34 @@
     individual lambda — same as every other =eponymBlock= form; no
     per-lambda source mapping (would need position tracking through the
     string round-trip).
+  Breakdown cases exercised 2026-10-15 (all benign — the PHOAS surface
+  is a pure Nim-AST-to-text layer, so every case reduces to what the
+  named-binder surface already does; no core/Term changes anywhere):
+  - Patterns under binders: an eliminator scrutinizing the bound variable
+    (=boolElimB(lam(u, BoolB, BoolB), falseB, trueB, x)= inside the host
+    lambda) elaborates exactly like its named twin. Clause-style
+    patterns under binders are not expressible inside a lambda body
+    (definitions are block-level statements; a =def= inside a body
+    would parse as an application) — same restriction as the existing
+    =lam(x,T,body)= form, not a PHOAS regression.
+  - phoasLam inside a clause RHS capturing the pattern variable
+    (=clause([sucQ(n)], phoasLam(proc (f: NatQ -> NatQ): NatQ = f n)(sucQ))=):
+    the pattern binder is textually in scope in the emitted source, so
+    capture works; pinned in test_embedded_macro_forms.nim.
+  - Metavariable escaping scope: a =_= hole in a phoasLam body is a real
+    elaborator hole — the elaborator rejects it with the standard located
+    "unsolved metavariable ?m2 in the definition of 'holeP'" error, the
+    same message class as the string surface's =unsolved-meta-neg.ep=
+    case (issue #34 snapshots). No scope escape, no crash, no silent
+    acceptance; the error names the definition and points at the
+    enclosing =eponymBlock=, consistent with the per-lambda location
+    limitation above.
+  Overall: every breakdown found so far lives in the Nim-AST conversion
+  (command parsing, par grouping, application parenthesization); the
+  de Bruijn core and the elaborator never see anything PHOAS-specific.
   Status: OPEN (branch =exp-longlived=). Remaining per the issue: port a
-  larger corpus sample (clause-def examples, erased binders) and record
-  any further breakdowns (patterns under binders, metavariables escaping
-  scope — not yet exercised).
+  larger corpus sample (clause-def examples from #32, Vec append full
+  version beyond the adequacy skeleton).
 * 2026-10-15 — External solver oracle for proof obligations: `by smt` (issue #51)
 
   Context: per notes/solver-backed-elaboration.org, the tactic framework
