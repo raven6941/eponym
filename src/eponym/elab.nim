@@ -431,7 +431,13 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
   let va = eval(a, env)
   let vb = eval(b, env)
   try:
-    areEqual(s, vStar(), va, vb)
+    # Issue #84: the inferred-vs-expected check uses the directional q0
+    # ≤ ω subsumption (an inferred-erased binder is usable where an
+    # unrestricted one is expected), so inferred-precise types
+    # interoperate with ω-annotated code. The def-declaration re-check
+    # (elabDefDecl step 3) passes the same flag — it audits this check,
+    # so it must implement the same relation.
+    areEqual(s, vStar(), va, vb, qtySubsumption = true)
     # Success: record in the cache for scoped cache handlers to probe.
     merge(ms.convCache, convKey(ctx.len, a, b))
   except ValueError as e:
@@ -447,7 +453,8 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
       let a2 = expandNatLit(a, globals["zero"].tm, globals["suc"].tm)
       let b2 = expandNatLit(b, globals["zero"].tm, globals["suc"].tm)
       try:
-        areEqual(s, vStar(), eval(a2, env), eval(b2, env))
+        areEqual(s, vStar(), eval(a2, env), eval(b2, env),
+                 qtySubsumption = true)
         merge(ms.convCache, convKey(ctx.len, a2, b2))
         return
       except ValueError:
@@ -499,7 +506,12 @@ proc univLevelOfTy(s: var Supply, ms: var MetaStore, t: Term, ctx: Ctx): int =
   ## unsolved hole under allowHoles, or a non-universe): the elaborator
   ## never invents levels.
   try:
-    univIdx(infer(s, closeOverCtx(zonk(ms, t), ctx, closeParams(s, ctx))))
+    # Issue #84: `t` is elaborator output; classify with the same
+    # conversion relation the elaborator used (directional q0 ≤ ω), so a
+    # nested inferred-q0/expected-qOmega application does not spuriously
+    # fall back to level 0.
+    univIdx(infer(s, closeOverCtx(zonk(ms, t), ctx, closeParams(s, ctx)),
+                 qtySubsumption = true))
   except ValueError:
     0
 
@@ -2057,7 +2069,10 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
       # is never read.
       vStar()
     else:
-      try: check(supply, vStar(), tyT)
+      # Issue #84: the ascribed type is elaborator output (its nested
+      # applications were validated with the directional q0 ≤ ω
+      # subsumption), so the well-formedness audit uses the same relation.
+      try: check(supply, vStar(), tyT, qtySubsumption = true)
       except ValueError as e:
         raise elabErr(d.loc,
           "ill-formed type of '" & d.name & "': " & sanitizeKernelMsg(e.msg))
@@ -2087,7 +2102,9 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
     # their own location.
     if not ru.found:
       let tyV =
-        try: check(supply, vStar(), tyT)
+        # Issue #84: as above — the type is elaborator output, so the
+        # well-formedness audit uses the subsumption relation.
+        try: check(supply, vStar(), tyT, qtySubsumption = true)
         except ValueError as e:
           raise elabErr(d.loc,
             "ill-formed type of '" & d.name & "': " & sanitizeKernelMsg(e.msg))
@@ -2097,11 +2114,16 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
     return ElabDef(name: d.name, tyTm: tyT, tmTm: tmT, loc: d.loc)
   # 3. the core verifies the zonked (meta-free) terms — unless a
   # domain handler extended conversion for this definition (see above).
+  # Issue #84: the re-check audits the elaborator, so it implements the
+  # same inferred-vs-expected relation — including the directional q0 ≤ ω
+  # subsumption (an inferred-erased binder is usable where an
+  # unrestricted one is expected). Without the flag the elaborator would
+  # accept programs the audit then rejects.
   let tmV =
     if ms.extDischarges != extBefore:
       eval(tmT, @[])
     else:
-      try: check(supply, tyV, tmT)
+      try: check(supply, tyV, tmT, qtySubsumption = true)
       except ValueError as e:
         raise elabErr(d.loc, "definition '" & d.name &
           "' does not check against its declared type: " & sanitizeKernelMsg(e.msg) &
@@ -2135,7 +2157,10 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
       # value it and registration is skipped below — dummy never read.
       vStar()
     else:
-      try: check(supply, vStar(), tyT)
+      # Issue #84: the postulate's type is elaborator output (nested
+      # applications were validated with the directional q0 ≤ ω
+      # subsumption), so the well-formedness audit uses the same relation.
+      try: check(supply, vStar(), tyT, qtySubsumption = true)
       except ValueError as e:
         raise elabErr(loc, "ill-formed type of '" & name & "': " & sanitizeKernelMsg(e.msg))
   if ru.found:
@@ -4070,7 +4095,9 @@ proc elabCommandDecl(name: string, ty: PreTerm, iface: string, loc: Loc,
   if headTy(ms, tyT).kind != tPi:
     raise elabErr(loc, "command '" & name & "' must have a function type")
   let tyV =
-    try: check(supply, vStar(), tyT)
+    # Issue #84: the command's type is elaborator output, so the
+    # well-formedness audit uses the subsumption relation.
+    try: check(supply, vStar(), tyT, qtySubsumption = true)
     except ValueError as e:
       raise elabErr(loc, "ill-formed type of command '" & name & "': " & sanitizeKernelMsg(e.msg))
   let tm = newPostulateRef(supply, tyV)
@@ -4893,12 +4920,25 @@ postulate N : ?
 proc idN (x : N) : N = x
 proc qtyMismatch : Pi (1 x : N). N = idN
 """, "quantity mismatch")
-  expectElabErr("""
+  # Issue #84 refines the rule above: the directional q0 ≤ ω subsumption
+  # holds in the inferred-vs-expected check, so an erasing function is
+  # usable where an unrestricted one is expected (this is what lets
+  # inferred-precise types interoperate with ω-annotated code).
+  let qttSubOk = elabCheck("""
 postulate N : ?
 postulate idN0 : Pi (0 x : N). N
-proc qtyMismatch0 : Pi (x : N). N = idN0
+proc subOk : Pi (x : N). N = idN0
+""")
+  assert qttSubOk.len == 1
+  echo "ok: q0 ≤ ω subsumption in conversion (#84)"
+  # The reverse direction stays rejected: an unrestricted function is not
+  # usable where an erasing one is expected.
+  expectElabErr("""
+postulate N : ?
+postulate idNW : Pi (x : N). N
+proc revMismatch : Pi (0 x : N). N = idNW
 """, "quantity mismatch")
-  echo "ok: Pi conversion rejects mismatched quantities (#66)"
+  echo "ok: Pi conversion rejects mismatched quantities (#66); q0 ≤ ω subsumed (#84)"
 
   # --- Issue #66: application-site quantity enforcement ------------------
   # A linear variable must not be passed to an erased (q0) parameter: the

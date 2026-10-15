@@ -788,11 +788,12 @@ proc numeralChainEq(k: int, v: Value, zeroId, sucId: int): bool =
     else:
       return false
 
-proc infer*(s: var Supply, t: Term): Value
-proc check*(s: var Supply, ty: Value, t: Term): Value
-proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value]
-proc areEqual*(s: var Supply, ty, a, b: Value)
-proc structuralEq(s: var Supply, a, b: Value)
+proc infer*(s: var Supply, t: Term, qtySubsumption = false): Value
+proc check*(s: var Supply, ty: Value, t: Term, qtySubsumption = false): Value
+proc synth(s: var Supply, t: Term,
+           qtySubsumption = false): tuple[val: Value, typ: Value]
+proc areEqual*(s: var Supply, ty, a, b: Value, qtySubsumption = false)
+proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false)
 proc isPi(v: Value): tuple[dom: Value, sc: ScoVal]
 proc isSi(v: Value): tuple[dom: Value, sc: ScoVal]
 proc isZero(v: Value)
@@ -809,17 +810,18 @@ proc isZero(v: Value) =
   if not (v.whnf.kind == wConst and v.whnf.c == cZero):
     raise newException(ValueError, "not the empty type: " & $v.syn)
 
-proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value] =
-  let ty = infer(s, t)
+proc synth(s: var Supply, t: Term,
+           qtySubsumption = false): tuple[val: Value, typ: Value] =
+  let ty = infer(s, t, qtySubsumption)
   (eval(t, @[]), ty)
 
-proc check*(s: var Supply, ty: Value, t: Term): Value =
+proc check*(s: var Supply, ty: Value, t: Term, qtySubsumption = false): Value =
   profilePhase(epKernel):
       # Experiment 11: primitives are trusted from the elaborator; the
       # elaborator already assigned the correct type (Int or Int->Int->Int).
       if t.kind == tInt or t.kind == tPrim or t.kind == tNatLit:
         return eval(t, @[])
-      let r = synth(s, t)
+      let r = synth(s, t, qtySubsumption)
       # Issue #52: cumulativity is directional and applies at the
       # ascription point. A term whose inferred type is `Type i` checks
       # against an expected `Type j` when i <= j; the legacy `?` admits
@@ -829,16 +831,36 @@ proc check*(s: var Supply, ty: Value, t: Term): Value =
           return r.val
         if ty.whnf.kind == wConst and ty.whnf.c == cStar:
           return r.val
-      areEqual(s, vStar(), ty, r.typ)
+      # Issue #84: with qtySubsumption, compare in (inferred, expected)
+      # order so the directional q0 ≤ ω rule fires in the sound
+      # direction (a synthesized-erased binder against an unrestricted
+      # ascription). Without the flag the comparison stays exact.
+      if qtySubsumption:
+        areEqual(s, vStar(), r.typ, ty, qtySubsumption = true)
+      else:
+        areEqual(s, vStar(), ty, r.typ)
       r.val
 
-proc structuralEq(s: var Supply, a, b: Value) =
+proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
   ## structural equality on weak-head forms, with eta for lambdas vs neutrals
   ## Issue #115: a wNatLit(k) is definitionally suc^k(zero) (Issue #93), so
   ## when one side is a literal and the other is a suc-chain, compare as
   ## numerals via the Nat constructors registered on the supply (see the
   ## Supply type). The refIds are verified, so no well-typedness
   ## assumption is needed. While unset, comparison stays strict.
+  ##
+  ## Issue #84: `qtySubsumption` enables the directional q0 ≤ ω rule
+  ## for the elaborator's inferred-vs-expected check: a Pi/Sigma binder
+  ## with quantity q0 on the inferred side (`a`) is accepted against
+  ## qOmega on the expected side (`b`). A function that ignores its
+  ## argument is usable where an unrestricted function is expected;
+  ## the reverse (and anything involving q1) stays rejected. This is
+  ## what lets inferred-precise types (unused binders infer q0)
+  ## interoperate with ω-annotated code. The def-declaration re-check
+  ## (elabDefDecl step 3) passes the flag too — it audits the
+  ## elaborator's conversion, so it implements the same relation.
+  ## Well-formedness checks (against ?) keep the flag off: exact
+  ## matching there is unaffected.
   if a.whnf.kind == wNatLit and b.whnf.kind != wNatLit and
       s.natSucRefId >= 0 and s.natZeroRefId >= 0:
     if numeralChainEq(a.whnf.natLitVal, b, s.natZeroRefId, s.natSucRefId): return
@@ -856,11 +878,11 @@ proc structuralEq(s: var Supply, a, b: Value) =
         a.whnf.kind == wType and a.whnf.lvl == 0: return
     if a.whnf.kind == wLam and b.whnf.kind == wRef:
       let x = freshPara(s, nil)
-      structuralEq(s, a.whnf.lscope.fn(x), vApp(b, x))
+      structuralEq(s, a.whnf.lscope.fn(x), vApp(b, x), qtySubsumption)
       return
     if a.whnf.kind == wRef and b.whnf.kind == wLam:
       let x = freshPara(s, nil)
-      structuralEq(s, vApp(a, x), b.whnf.lscope.fn(x))
+      structuralEq(s, vApp(a, x), b.whnf.lscope.fn(x), qtySubsumption)
       return
     raise newException(ValueError, "mismatch: " & $a.syn & " vs " & $b.syn)
   case a.whnf.kind
@@ -874,20 +896,24 @@ proc structuralEq(s: var Supply, a, b: Value) =
       raise newException(ValueError, "universe level mismatch: Type " &
         $a.whnf.lvl & " vs Type " & $b.whnf.lvl)
   of wPi, wSi:
-    if a.whnf.qty != b.whnf.qty:
+    if a.whnf.qty != b.whnf.qty and
+        not (qtySubsumption and a.whnf.qty == q0 and
+             b.whnf.qty == qOmega):
       raise newException(ValueError, "quantity mismatch: " & $a.whnf.qty &
         " vs " & $b.whnf.qty)  # Issue #66: Pi/Sigma binder quantities are
                                # part of the type; (1 x : A) -> B is not
-                               # convertible with (ω x : A) -> B
-    structuralEq(s, a.whnf.dom, b.whnf.dom)
+                               # convertible with (ω x : A) -> B. Issue #84
+                               # adds the directional q0 ≤ ω subsumption
+                               # (see qtySubsumption above).
+    structuralEq(s, a.whnf.dom, b.whnf.dom, qtySubsumption)
     let x = freshPara(s, a.whnf.dom)
-    structuralEq(s, a.whnf.tscope.fn(x), b.whnf.tscope.fn(x))
+    structuralEq(s, a.whnf.tscope.fn(x), b.whnf.tscope.fn(x), qtySubsumption)
   of wLam:
     let x = freshPara(s, nil)
-    structuralEq(s, a.whnf.lscope.fn(x), b.whnf.lscope.fn(x))
+    structuralEq(s, a.whnf.lscope.fn(x), b.whnf.lscope.fn(x), qtySubsumption)
   of wPair:
-    structuralEq(s, a.whnf.fstV, b.whnf.fstV)
-    structuralEq(s, a.whnf.sndV, b.whnf.sndV)
+    structuralEq(s, a.whnf.fstV, b.whnf.fstV, qtySubsumption)
+    structuralEq(s, a.whnf.sndV, b.whnf.sndV, qtySubsumption)
   of wRef:
     if a.whnf.refId != b.whnf.refId or a.whnf.spine.len != b.whnf.spine.len:
       raise newException(ValueError, "neutral mismatch: " & $a.syn & " vs " & $b.syn)
@@ -897,14 +923,14 @@ proc structuralEq(s: var Supply, a, b: Value) =
       if ea.kind != eb.kind:
         raise newException(ValueError, "spine mismatch")
       if ea.kind == eApp:
-        structuralEq(s, ea.arg, eb.arg)
+        structuralEq(s, ea.arg, eb.arg, qtySubsumption)
   of wRed:
     ## partially applied eliminators: same eliminator, same accumulated args
     ## (fully applied stuck eliminators are rebuilt as wRef by applyWhnf)
     if a.whnf.elimId != b.whnf.elimId or a.whnf.args.len != b.whnf.args.len:
       raise newException(ValueError, "eliminator mismatch")
     for i in 0 ..< a.whnf.args.len:
-      structuralEq(s, a.whnf.args[i], b.whnf.args[i])
+      structuralEq(s, a.whnf.args[i], b.whnf.args[i], qtySubsumption)
   of wInt:
     if a.whnf.intVal != b.whnf.intVal:
       raise newException(ValueError, "integer mismatch")
@@ -915,9 +941,9 @@ proc structuralEq(s: var Supply, a, b: Value) =
     if a.whnf.op != b.whnf.op or a.whnf.pargs.len != b.whnf.pargs.len:
       raise newException(ValueError, "primitive op mismatch")
     for i in 0 ..< a.whnf.pargs.len:
-      structuralEq(s, a.whnf.pargs[i], b.whnf.pargs[i])
+      structuralEq(s, a.whnf.pargs[i], b.whnf.pargs[i], qtySubsumption)
 
-proc areEqual*(s: var Supply, ty, a, b: Value) =
+proc areEqual*(s: var Supply, ty, a, b: Value, qtySubsumption = false) =
   ## type-directed conversion (§6.7). Exported for the elaborator's
   ## conversion check (Experiment 5b); raises ValueError
   ## on mismatch, like the rest of the core.
@@ -926,15 +952,15 @@ proc areEqual*(s: var Supply, ty, a, b: Value) =
     let c = ty.whnf.c
     if c == cOne or c == cZero:
       return  # proof-irrelevant: no need to look
-    structuralEq(s, a, b)
+    structuralEq(s, a, b, qtySubsumption)
   of wPi:
     let x = freshPara(s, ty.whnf.dom)
-    areEqual(s, ty.whnf.tscope.fn(x), vApp(a, x), vApp(b, x))
+    areEqual(s, ty.whnf.tscope.fn(x), vApp(a, x), vApp(b, x), qtySubsumption)
   of wSi:
-    areEqual(s, ty.whnf.dom, vFst(a), vFst(b))
-    areEqual(s, ty.whnf.tscope.fn(vFst(a)), vSnd(a), vSnd(b))
+    areEqual(s, ty.whnf.dom, vFst(a), vFst(b), qtySubsumption)
+    areEqual(s, ty.whnf.tscope.fn(vFst(a)), vSnd(a), vSnd(b), qtySubsumption)
   else:
-    structuralEq(s, a, b)
+    structuralEq(s, a, b, qtySubsumption)
 
 proc univIdx*(u: Value): int =
   ## Issue #52: the level index of a universe *value*: `Type l` -> l,
@@ -947,7 +973,16 @@ proc univIdx*(u: Value): int =
     else: raise newException(ValueError, "not a universe: " & $u.syn)
   else: raise newException(ValueError, "not a universe: " & $u.syn)
 
-proc infer*(s: var Supply, t: Term): Value =
+proc infer*(s: var Supply, t: Term, qtySubsumption = false): Value =
+  ## Issue #84: `qtySubsumption` threads the elaborator's inferred-vs-expected
+  ## conversion relation through the kernel re-check. The flag is passed to
+  ## every nested `check`/`infer`/`synth`, so all positions use the same
+  ## directional q0 ≤ ω rule as the top-level comparison in `check`.
+  ## (At the top level of a well-formedness check — against `?` — the flag
+  ## is inert: universes have no binder quantities. It matters for the
+  ## nested term-against-type checks inside the inferred type, e.g. an
+  ## application in an ascribed type whose argument was validated with
+  ## subsumption during elaboration.)
   ## infer implements the typing rules of Fig. 6.2, syntax-directed (§6.5.1).
   ## Terms are always closed here: binders are instantiated with fresh
   ## parameters on entry, so the V case never arises.
@@ -975,56 +1010,59 @@ proc infer*(s: var Supply, t: Term): Value =
   of tPrim:
     eval(t.primTy, @[])
   of tPi, tSi:
-    let domV = check(s, vStar(), t.dom)
+    let domV = check(s, vStar(), t.dom, qtySubsumption)
     let x = freshPara(s, domV)
-    let bodyTyV = infer(s, instantiate(t.scope, x))
-    discard check(s, vStar(), bodyTyV.syn)
+    let bodyTyV = infer(s, instantiate(t.scope, x), qtySubsumption)
+    discard check(s, vStar(), bodyTyV.syn, qtySubsumption)
     ## Issue #52: Pi/Sigma formation takes the max of the domain and
     ## codomain universe levels. The domain contributes the level of the
     ## universe classifying it (infer domV.syn); the codomain contributes
     ## the index of its inferred type directly. Legacy `?`-based types
     ## stay at level 0.
-    vType(max(univIdx(infer(s, domV.syn)), univIdx(bodyTyV)))
+    vType(max(univIdx(infer(s, domV.syn, qtySubsumption)), univIdx(bodyTyV)))
   of tLam:
-    let domV = check(s, vStar(), t.dom)
+    let domV = check(s, vStar(), t.dom, qtySubsumption)
     let x = freshPara(s, domV)
-    let ranV = infer(s, instantiate(t.scope, x))
+    let ranV = infer(s, instantiate(t.scope, x), qtySubsumption)
     let asc = abstractR(x.syn.refId, t.scope.adv, ranV.syn)
     vPi(domV, ScoVal(syn: asc,
                      fn: proc(v: Value): Value = eval(asc.bdy, @[v])), t.qty)
   of tApp:
-    let fty = infer(s, t.fn)
+    let fty = infer(s, t.fn, qtySubsumption)
     let (dom, sc) = isPi(fty)
-    let av = check(s, dom, t.arg)
+    # Issue #84: the argument is checked against the function's (synthesized)
+    # domain — an inferred-vs-expected position, so it uses the same
+    # conversion relation as the top-level check.
+    let av = check(s, dom, t.arg, qtySubsumption)
     sc.fn(av)
   of tPair:
     let pScope = t.pScope
     let pSnd = t.pSnd
-    let r = synth(s, t.pFst)
+    let r = synth(s, t.pFst, qtySubsumption)
     let x = freshPara(s, r.typ)
-    discard check(s, vStar(), instantiate(pScope, x))
+    discard check(s, vStar(), instantiate(pScope, x), qtySubsumption)
     let rsc = ScoVal(syn: pScope,
                      fn: proc(v: Value): Value = eval(pScope.bdy, @[v]))
-    discard check(s, rsc.fn(r.val), pSnd)
+    discard check(s, rsc.fn(r.val), pSnd, qtySubsumption)
     vSi(r.typ, rsc)
   of tFst:
-    let (dom, _) = isSi(infer(s, t.sub))
+    let (dom, _) = isSi(infer(s, t.sub, qtySubsumption))
     dom
   of tSnd:
-    let r = synth(s, t.sub)
+    let r = synth(s, t.sub, qtySubsumption)
     let (_, sc) = isSi(r.typ)
     sc.fn(vFst(r.val))
   of tAbsurd:
-    isZero(infer(s, t.sub))
+    isZero(infer(s, t.sub, qtySubsumption))
     vAbsurd()
   of tMeta:
     raise newException(ValueError,
       "metavariable ?m" & $t.metaId & " escaped into core inference")
   of tLet:
-    let styv = check(s, vStar(), t.letTy)
-    let sv = check(s, styv, t.letVal)
+    let styv = check(s, vStar(), t.letTy, qtySubsumption)
+    let sv = check(s, styv, t.letVal, qtySubsumption)
     let x = freshDefn(s, sv, styv)
-    let ttyv = infer(s, instantiate(t.letScope, x))
+    let ttyv = infer(s, instantiate(t.letScope, x), qtySubsumption)
     let asc = abstractR(x.syn.refId, t.letScope.adv, ttyv.syn)
     ScoVal(syn: asc, fn: proc(v: Value): Value = eval(asc.bdy, @[v])).fn(sv)
 
