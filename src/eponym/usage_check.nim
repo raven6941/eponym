@@ -104,8 +104,12 @@ proc collectUseLocsWalk(p: PreTerm, binder: PreTerm, stack: var seq[PreTerm],
     discard stack.pop()
   of pkAnn:
     collectUseLocsWalk(p.c1, binder, stack, acc)  # c2 is the type: skip
-  of pkHole, pkInt, pkBy, pkUniv, pkUnivN, pkUnitTy, pkUnitV, pkEmptyTy:
+  of pkHole, pkInt, pkUniv, pkUnivN, pkUnitTy, pkUnitV, pkEmptyTy:
     discard
+  of pkBy:
+    # Issue #3: `by apply f` stores its argument in c1 — a term position,
+    # so variable uses inside it must be counted like any other term.
+    if not p.c1.isNil: collectUseLocsWalk(p.c1, binder, stack, acc)
 
 proc collectBinderUseLocs*(body: PreTerm, binder: PreTerm): seq[Loc] =
   ## Source locations where the variable bound by `binder` (a pkLam node)

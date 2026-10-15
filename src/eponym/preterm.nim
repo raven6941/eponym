@@ -205,7 +205,11 @@ proc render(p: PreTerm, prec: int): string =
     # `01` (the lexer's documented escape hatch); the renderer must honor it
     # to keep render->parse faithful.
     if p.intVal == 1: "01" else: $p.intVal
-  of pkBy: "by " & p.name
+  of pkBy:
+    # Issue #3: `by apply f` renders its argument at atom precedence so the
+    # render->parse roundtrip (Issue #144) keeps it grouped with the tactic.
+    if p.name == "apply" and not p.c1.isNil: "by apply " & render(p.c1, 3)
+    else: "by " & p.name
   of pkUniv: "?"
   of pkUnivN: "Type " & $p.intVal  # Issue #52
   of pkUnitTy: "1"

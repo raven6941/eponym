@@ -242,6 +242,7 @@ proc isAtomStart(k: TokKind): bool =
         tkLam, tkPi, tkSig, tkFst, tkSnd, tkBy}
 
 proc parseTerm(p: var Parser): PreTerm  # forward
+proc parseApp(p: var Parser): PreTerm  # forward (Issue #3: `by apply f`)
 
 proc parseBinder(p: var Parser): tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty] =
   ## "(" name ":" term ")" | "{" name ":" term "}"  (braces = implicit)
@@ -310,7 +311,18 @@ proc parseAtom(p: var Parser): PreTerm =
   of tkInt: mkInt(parseInt(t.lexeme), t.loc)
   of tkBy:
     let tac = p.expect(tkIdent, "tactic name after 'by'")
-    PreTerm(loc: t.loc, kind: pkBy, name: tac.lexeme)
+    if tac.lexeme == "apply":
+      # Issue #3: `by apply f` — backward application against the goal.
+      # The function term is parsed at application level (so `by apply f x`
+      # applies f x); pkBy.c1 — unused by every other tactic — carries it.
+      # A missing argument is a parse error at the `by`, not a downstream
+      # "expected a term" at whatever follows.
+      if not p.peek().kind.isAtomStart():
+        raise fail(t.loc, "'by apply' expects a function term")
+      let arg = p.parseApp()
+      PreTerm(loc: t.loc, kind: pkBy, name: "apply", c1: arg)
+    else:
+      PreTerm(loc: t.loc, kind: pkBy, name: tac.lexeme)
   of tkLParen:
     let e = p.parseTerm()
     let t2 = p.next()

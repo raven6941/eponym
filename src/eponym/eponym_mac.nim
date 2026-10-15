@@ -164,12 +164,15 @@ proc nimExprToEponym(n: NimNode): string =
   of nnkCall:
     # byTac(refl) -> by refl (surface tactic term; smoke test 14, issue #151)
     if n[0].kind == nnkIdent and $n[0] == "byTac":
-      if n.len != 2:
-        error("byTac expects (tacticName)", n)
-      let t = n[1]
-      if t.kind == nnkIdent: return "by " & $t
-      elif t.kind == nnkStrLit: return "by " & t.strVal
-      else: error("byTac expects a tactic name (ident or string)", n)
+      if n.len == 2:
+        let t = n[1]
+        if t.kind == nnkIdent: return "by " & $t
+        elif t.kind == nnkStrLit: return "by " & t.strVal
+        else: error("byTac expects a tactic name (ident or string)", n)
+      elif n.len == 3 and n[1].kind == nnkIdent and $n[1] == "apply":
+        # Issue #3: byTac(apply, f) -> by apply f
+        return "by apply " & nimExprToEponym(n[2])
+      else: error("byTac expects (tacticName) or (apply, term)", n)
     # Pi/Sig in expression position, positional form Sig(name, Dom, Body):
     # Nim parses it as a call, not an obj-constr. Route to the type converter.
     if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:

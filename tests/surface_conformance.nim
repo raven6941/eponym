@@ -211,6 +211,12 @@ proc pid (x : Int) : Int = by assumption
   proc pf1(): Eq(Int, 42, 42) = byTac(refl)
   proc pid(x: Int): Int = byTac("assumption")
 
+# by apply with a function argument (issue #3): the argument rides in
+# pkBy.c1 on both surfaces, so the two parses must agree structurally.
+conforms """proc pf : Eq Int 42 42 = by apply refl
+""":
+  proc pf(): Eq(Int, 42, 42) = byTac(apply, refl)
+
 # def clause-style definitions (issue #151)
 conforms """def isZero : Nat -> Bool
 | zero = true

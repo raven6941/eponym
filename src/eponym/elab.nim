@@ -1915,6 +1915,29 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
              ms: var MetaStore, supply: var Supply, expTy: Term,
              ab: Ability, expLoc: Loc = noLoc): Term
 
+proc tacApply(goal: Term, fnPre: PreTerm, ctx: Ctx, globals: Globals,
+              ms: var MetaStore, supply: var Supply, ab: Ability,
+              loc: Loc): Term =
+  ## Issue #3: `by apply f` — backward application against the goal.
+  ## Elaborate `f`, consume its implicit prefix (Issue #201 order), peel
+  ## the remaining leading Pi spine applying fresh metavariables, and
+  ## unify the instantiated codomain with the goal. Metas solved by that
+  ## unification fill in the arguments; leftovers stay as open subgoals
+  ## (the elaborator's ordinary unsolved-metavariable mechanism).
+  var (f, fty) = inferTm(fnPre, ctx, globals, ms, supply, ab)
+  (f, fty) = insertImplicits(fnPre, f, fty, ctx.len, ms)
+  var res = f
+  var ftyH = headTy(ms, fty)
+  while ftyH.kind == tPi:
+    let m = freshMeta(ms, ftyH.dom, ctx.len, 0, loc)
+    res = tmApp(res, m)
+    ftyH = headTy(ms, subst(ftyH.scope.bdy, 0, m))
+  try:
+    unifyElab(ms, ftyH, goal, loc)
+  except ElabError as e:
+    raise elabErr(loc, "apply: function result does not match goal: " & e.msg)
+  res
+
 proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
               ms: var MetaStore, supply: var Supply,
               ab: Ability): tuple[tm, ty: Term] =
@@ -2300,8 +2323,15 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           # extent of the tactic and the inferred-vs-expected check.
           withConvHandler(ms, smtHandler(globals, supply, loc = pre.loc),
             tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
+        of "apply":
+          # Issue #3: backward application; the argument lives in pkBy.c1
+          # (the parser requires it, but be defensive against hand-built
+          # PreTerms).
+          if pre.c1.isNil:
+            raise elabErr(pre.loc, "apply: expected a function term (by apply <term>)")
+          tacApply(expTy, pre.c1, ctx, globals, ms, supply, ab, pre.loc)
         else: raise elabErr(pre.loc, "unknown tactic '" & pre.name &
-          "'; known tactics: refl, assumption, arith, smt")
+          "'; known tactics: refl, assumption, arith, smt, apply")
       else:
         var (t, ty) = inferTm(pre, ctx, globals, ms, supply, ab)
         # Issue #201: the insertion inferTm's pkVar used to do now lives
@@ -5720,6 +5750,52 @@ proc pf2 : Eq Int (addInt 20 22) 42 = by refl
 postulate Int : ?
 proc bad : Int = by nosuchtac
 """, "unknown tactic")
+
+  # --- Issue #3: `by apply` backward-application tactic ----------------
+  # apply elaborates its argument, peels the Pi spine with fresh metas,
+  # and unifies the codomain with the goal; the unification solves the
+  # argument metas (here: refl's A and x).
+  let applyDefs = elabCheck("""
+postulate Int : ?
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+proc pf : Eq Int 42 42 = by apply refl
+""")
+  assert applyDefs.len == 1
+  echo "ok: by apply refl discharges an Eq goal (Issue #3)"
+  # the argument can itself be an application: by apply (f x)
+  # (via a helper def — direct explicit application to an implicit-headed
+  # function, `refl (suc zero)`, is a pre-existing elaborator limitation
+  # independent of apply: the explicit arg is checked against the still-
+  # unsolved implicit meta and conversion refuses to solve it there)
+  let applyAppDefs = elabCheck("""
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def reflN : Pi (x : Nat). Eq Nat x x
+| x = by apply refl
+proc pf2 (n : Nat) : Eq Nat n n = by apply reflN
+""")
+  assert applyAppDefs.len == 2
+  echo "ok: by apply f elaborates a non-trivial function argument (Issue #3)"
+  # codomain/goal mismatch is a located error naming apply
+  expectElabErr("""
+postulate Int : ?
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+proc bad : Eq Int 42 43 = by apply refl
+""", "apply")
+  # `by apply` with no argument is a located parse error at the `by`
+  block:
+    var sawParseErr = false
+    try:
+      discard elabCheck("postulate Int : ?\nproc bad2 : Int = by apply\n")
+    except ParseError:
+      sawParseErr = true
+    assert sawParseErr, "expected a ParseError for `by apply` with no argument"
+    echo "ok: `by apply` with no argument is a located parse error (Issue #3)"
 
   # --- Experiment 9: QTT-lite erasure (basic) ------------------------
   # (0 x : T) marks an erased binder. The flag threads through to the
