@@ -174,11 +174,27 @@ export function activate(ctx: vscode.ExtensionContext) {
       }
       const docUri = editor.document.uri.toString();
 
-      // A panel is already open for this document: reveal and refresh it
-      // (its sidecar may have changed since it was last rendered).
+      // A panel is already open for this document: reveal it, then follow
+      // the cursor (issue #203). The #190 cursor-aware default only ran on
+      // first open; re-invoking the command with the cursor on a different
+      // shed re-rendered the old shed. Re-resolve unambiguously from the
+      // cursor; otherwise keep the current shed and just refresh.
       const existing = openPanels.get(docUri);
       if (existing) {
         existing.panel.reveal(vscode.ViewColumn.Beside);
+        const reText = editor.document.getText();
+        const reCursorOff = editor.document.offsetAt(editor.selection.active);
+        const reAtCursor = shedAtCursor(reText, reCursorOff)?.name;
+        const reInBlock = reAtCursor
+          ? []
+          : blockShedsAtCursor(reText, reCursorOff);
+        const reTarget =
+          reAtCursor ?? (reInBlock.length === 1 ? reInBlock[0].name : undefined);
+        if (reTarget && reTarget !== existing.shedName) {
+          existing.shedName = reTarget;
+          if (!existing.shedNames.includes(reTarget)) existing.shedNames.push(reTarget);
+          existing.panel.title = `Shed: ${reTarget}`;
+        }
         await existing.refresh();
         return;
       }
