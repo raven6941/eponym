@@ -384,6 +384,11 @@ proc whnfNatLitVal*(v: Value): int =
   assert v.whnf.kind == wNatLit, "whnfNatLitVal of non-natlit"
   v.whnf.natLitVal
 
+proc whnfNatSingVal*(v: Value): int =
+  ## Issue #74: the literal of a wNatSing singleton-type value (REPL printer).
+  assert v.whnf.kind == wNatSing, "whnfNatSingVal of non-natsing"
+  v.whnf.natSingVal
+
 proc whnfPrimOp*(v: Value): PrimOp =
   ## Issue #50: operator of a wPrim value (REPL printer).
   assert v.whnf.kind == wPrim, "whnfPrimOp of non-prim"
