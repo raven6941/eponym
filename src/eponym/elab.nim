@@ -3880,7 +3880,11 @@ proc elabDeclsDirInner(drv: var ModuleDriver, decls: seq[SurfDecl],
           drv.allDefs[ed.name] = ed  # issue #62: log imported defs too
     except ElabError as e:
       if not holeTolerant:
-        raise
+        # Issue #199: explicit `raise e`, NOT bare `raise`. A bare re-raise
+        # here segfaults the Nim VM at compile time (exit 139) instead of
+        # propagating the exception, turning every user type error inside
+        # eponymBlock into a compiler crash.
+        raise e
       errLoc = e.loc
       errMsg = e.msg
       break

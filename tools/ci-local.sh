@@ -53,6 +53,8 @@ echo "=== elaboration adequacy properties (issue #38) ==="
 nim c -r --hints:off $P "tests/adequacy_props.nim"
 echo "=== embedded macro forms (issue #151) ==="
 nim c -r --hints:off $P "tests/test_embedded_macro_forms.nim"
+echo "=== embedded error paths (issue #199) ==="
+nim c -r --hints:off $P "tests/test_embedded_error_path.nim"
 echo "=== staging soundness fuzz (issue #29, fixed seed; experimental paths) ==="
 nim c -r --hints:off $XP "tests/fuzz_soundness.nim" -- --seed 424242 -n 1000
 echo "=== egraph property tests (issue #163, fixed seed) ==="
