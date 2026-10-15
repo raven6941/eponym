@@ -269,6 +269,7 @@ proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string],
   of tType: "Type " & $t.lvl  # Issue #52
   of tInt: $t.intVal
   of tNatLit: $t.natLitVal
+  of tNatSing: $t.natSingVal  # Issue #74
   of tPrim: $t.primOp
   of tSi:
     # Issue #37, step 4: a Sigma matching a registered record skeleton
@@ -350,7 +351,7 @@ proc containsNatLit(t: Term): bool =
   if t.isNil: return false
   case t.kind
   of tNatLit: true
-  of tR, tV, tC, tType, tInt, tPrim, tMeta: false
+  of tR, tV, tC, tType, tInt, tPrim, tMeta, tNatSing: false
   of tPi, tSi, tLam: containsNatLit(t.dom) or containsNatLit(t.scope.bdy)
   of tPair: containsNatLit(t.pFst) or containsNatLit(t.pSnd) or
               containsNatLit(t.pScope.bdy)
@@ -370,7 +371,7 @@ proc expandNatLit(t: Term, zeroTm, sucTm: Term): Term =
     var res = zeroTm
     for _ in 1 .. t.natLitVal: res = tmApp(sucTm, res)
     res
-  of tR, tV, tC, tType, tInt, tPrim, tMeta: t
+  of tR, tV, tC, tType, tInt, tPrim, tMeta, tNatSing: t
   of tPi, tSi, tLam:
     mkBinder(t.kind, expandNatLit(t.dom, zeroTm, sucTm),
              Scope(adv: t.scope.adv,
@@ -431,6 +432,24 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
   let va = eval(a, env)
   let vb = eval(b, env)
+  # Issue #74: singleton subsumption — the elaborator's only subtyping,
+  # and it is directional (inferred <: expected), so it lives here, not
+  # in the kernel's symmetric conversion. tNatSing(k) widens to Nat and
+  # is equal only to tNatSing(k).
+  if va.whnf.kind == wNatSing:
+    if vb.whnf.kind == wNatSing and
+        va.whnf.natSingVal == vb.whnf.natSingVal:
+      merge(ms.convCache, convKey(ctx.len, a, b))
+      return
+    if "Nat" in globals:
+      try:
+        areEqual(s, vStar(), eval(globals["Nat"].tm, env), vb)
+        merge(ms.convCache, convKey(ctx.len, a, b))
+        return
+      except ValueError:
+        discard
+    # Otherwise fall through: the areEqual below fails with the
+    # standard "not convertible" message.
   try:
     areEqual(s, vStar(), va, vb)
     # Success: record in the cache for scoped cache handlers to probe.
@@ -1407,7 +1426,7 @@ proc checkErasedArgWalk(t: Term, depth: int, ctx: Ctx, loc: Loc,
     checkErasedArgWalk(t.letScope.bdy, depth + 1, ctx, loc, ms, pending)
   of tPrim:
     discard
-  of tR, tC, tType, tMeta, tInt, tNatLit:
+  of tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
     discard
 
 proc checkErasedArg(arg: Term, ctx: Ctx, loc: Loc, ms: var MetaStore) =
@@ -1790,21 +1809,55 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       of pkInt:
         # Literal overloading: integer literal adapts to expected type.
         # Try Nat (inductive) first, then primitive Int.
+        # Issue #74: a Nat literal's *inferred* type is the singleton
+        # tNatSing(n); check-mode subsumption (defaultConv) widens it to
+        # Nat on demand, or matches it against a singleton exactly.
+        # In type position (expected ?), the literal *is* the singleton
+        # type (Scala 3 literal-type style): `def f : (d : 2) -> Nat`.
         # mkNatLit builds the O(1) primitive tNatLit; no manual reification needed.
         block:
           # Debug
           # echo "pkInt in checkTm, intVal=", pre.intVal
           var done = false
           var resTm: Term = nil
-          if "Nat" in globals:
+          if expTy.kind == tC and expTy.c == cStar and "Nat" in globals:
+            if pre.intVal < 0:
+              raise elabErr(pre.loc, "negative integer literal in Nat position")
+            resTm = tmNatSing(pre.intVal)
+            done = true
+          if "Nat" in globals and not done:
             try:
               let natTm = mkNatLit(pre.intVal, pre.loc)
-              let natTy = globals["Nat"].tm
-              discard convElab(ms, supply, natTy, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
+              # Issue #74: the literal's inferred type is the singleton
+              # tNatSing(n) — except when the expected type still has
+              # unsolved metas (infer-mode positions, e.g. pair
+              # components checked against fresh metas): there we widen
+              # eagerly to Nat, preserving the old behavior and the
+              # P2c compositionality contract. Precision applies when
+              # the expected type is known.
+              let infTy =
+                if findUnsolved(ms, zonk(ms, expTy)).found: globals["Nat"].tm
+                else: tmNatSing(pre.intVal)
+              discard convElab(ms, supply, infTy, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
               resTm = natTm
               done = true
-            except ElabError:
-              discard  # Not Nat; try Int
+            except ElabError as e:
+              # Issue #74: keep the Nat-path error: when the expected type
+              # is Nat-like (a singleton or Nat itself), the mismatch (e.g.
+              # "inferred type 3 does not match expected type 2") is the
+              # honest message — the Int fallback below would otherwise
+              # claim Nat is missing when it is not.
+              if "Int" notin globals:
+                raise e
+              # else: fall through to the Int attempt; if that also fails
+              # its error is raised, otherwise the Nat error is moot.
+              try:
+                let intTy = globals["Int"].tm
+                discard convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
+                resTm = tmInt(pre.intVal)
+                done = true
+              except ElabError:
+                raise e
           if not done:
             if "Int" notin globals:
               raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?' or 'data Nat'")
@@ -2636,6 +2689,7 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
       # (definitionally equal per Issue #93). Carried on the supply (not a
       # module global) so it works under compile-time macro evaluation.
       if d.dname == "Nat":
+        supply.natTypeRefId = globals[d.dname].tm.refId
         for ctor in d.ctors:
           let ctm = globals[ctor.name].tm
           if ctm.kind == tR:

@@ -33,7 +33,7 @@ type
   PrimOp* = enum opAdd, opSub, opMul  # primitive Int operations (Exp 11)
   TermKind* = enum
     tR, tV, tPi, tSi, tLam, tPair, tApp, tFst, tSnd, tAbsurd, tC, tLet,
-    tMeta, tInt, tPrim, tNatLit, tType
+    tMeta, tInt, tPrim, tNatLit, tNatSing, tType
     ## tType: a level-annotated universe `Type l` (Issue #52). The legacy
     ## `?` (tC cStar) keeps its Type-in-Type behaviour; `Type l` is the
     ## stratified hierarchy: `Type l : Type (l+1)`, Pi/Sigma formation
@@ -51,14 +51,22 @@ type
     ##   to suc^n(zero); the elaborator always emits this form for numerals
     ##   (O(1) construction), and conversion expands literals when comparing
     ##   against hand-written suc-chains (see defaultConv in elab.nim).
+    ## tNatSing: the singleton *type* of a Nat literal (Issue #74). The
+    ##   literal n elaborates with inferred type tNatSing(n); the only
+    ##   canonical inhabitant is tNatLit(n). tNatSing(n) is definitionally
+    ##   equal only to itself; the one-directional widening tNatSing(n)
+    ##   <: Nat lives in the elaborator's conversion (defaultConv), not in
+    ##   the kernel's symmetric conversion.
   WhnfKind* = enum wRef, wPi, wSi, wLam, wPair, wConst, wRed, wInt, wPrim,
-                     wNatLit, wType
+                     wNatLit, wNatSing, wType
   ## wType: a level-annotated universe value `Type l` (Issue #52).
   ## wInt: a primitive integer value (Experiment 11).
   ## wNatLit: a primitive Nat literal value (Issue #93); definitionally
   ## suc^n(zero). Compared by int equality; hand-written suc-chains
   ## evaluate to wRef spines and are handled by the elaborator's
   ## literal-expansion fallback in defaultConv.
+  ## wNatSing: a singleton Nat-literal *type* value (Issue #74); compared
+  ## by int equality. Never unfolds; widening to Nat is elaborator-side.
   ## wPrim: a primitive operation (addInt, subInt, mulInt) accumulating
   ## args; fires when fully applied to wInt args (Experiment 11).
   ## A registered reduction rule (Experiment 4): an eliminator applied to
@@ -114,6 +122,8 @@ type
       intVal*: int
     of tNatLit:
       natLitVal*: int
+    of tNatSing:
+      natSingVal*: int
     of tPrim:
       primOp*: PrimOp
       primTy*: Term  # the Pi type (Int -> Int -> Int), for infer
@@ -152,6 +162,8 @@ type
       intVal*: int
     of wNatLit:
       natLitVal*: int
+    of wNatSing:
+      natSingVal*: int
     of wPrim:
       op: PrimOp
       pargs: seq[Value]  # accumulated so far (function position order)
@@ -202,6 +214,7 @@ proc tmType*(lvl: int): Term = Term(kind: tType, lvl: lvl)
   ## Issue #52: the level-annotated universe `Type l`.
 proc tmInt*(n: int): Term = Term(kind: tInt, intVal: n)
 proc tmNatLit*(n: int): Term = Term(kind: tNatLit, natLitVal: n)
+proc tmNatSing*(n: int): Term = Term(kind: tNatSing, natSingVal: n)
 proc tmPrim*(op: PrimOp, ty: Term): Term = Term(kind: tPrim, primOp: op, primTy: ty)
 
 proc tStar(): Term = Term(kind: tC, c: cStar)
@@ -234,6 +247,7 @@ proc `$`*(t: Term): string =
   of tType: "Type " & $t.lvl
   of tInt: $t.intVal
   of tNatLit: $t.natLitVal
+  of tNatSing: $t.natSingVal  # Issue #74: singleton type prints as the literal
   of tPrim: $t.primOp
   of tPi: (if t.impl: "Pi{" else: "Pi(") & $t.dom & ", " & $t.scope & ")" &
     (if t.peg.isNil or abIsEmpty(t.peg): "" else: $t.peg)
@@ -263,6 +277,7 @@ proc hashTerm*(t: Term): Hash =
   of tC: result = result !& hash(t.c.ord)
   of tInt: result = result !& hash(t.intVal)
   of tNatLit: result = result !& hash(t.natLitVal)
+  of tNatSing: result = result !& hash(t.natSingVal)
   of tType: result = result !& hash(t.lvl)
   of tPrim:
     result = result !& hash(t.primOp.ord)
@@ -311,6 +326,11 @@ type Supply* = object
   ## (literal-to-literal only).
   natZeroRefId*: int = -1
   natSucRefId*: int = -1
+  ## Issue #74: refId of the Nat datatype itself (-1 if unknown). The
+  ## elaborator sets it when `data Nat` is declared. `check` uses it for
+  ## the singleton base rule (tNatSing(k) <: Nat); the elaborator's
+  ## conversion reads it via globals instead.
+  natTypeRefId*: int = -1
 
 proc freshId*(s: var Supply): int =
   inc s.n
@@ -377,6 +397,11 @@ proc whnfNatLitVal*(v: Value): int =
   ## Issue #50: the literal of a wNatLit value (REPL printer).
   assert v.whnf.kind == wNatLit, "whnfNatLitVal of non-natlit"
   v.whnf.natLitVal
+
+proc whnfNatSingVal*(v: Value): int =
+  ## Issue #74: the literal of a wNatSing singleton-type value (REPL printer).
+  assert v.whnf.kind == wNatSing, "whnfNatSingVal of non-natsing"
+  v.whnf.natSingVal
 
 proc whnfPrimOp*(v: Value): PrimOp =
   ## Issue #50: operator of a wPrim value (REPL printer).
@@ -475,7 +500,7 @@ proc subst*(t: Term, depth: int, s: Term): Term =
     if t.idx == depth: s
     elif t.idx > depth: vv(t.idx - 1)
     else: t
-  of tR, tC, tType, tInt, tPrim, tNatLit: t
+  of tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(subst(it, depth, s)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, subst(t.dom, depth, s),
@@ -504,7 +529,7 @@ proc absGo(t: Term, id: int, depth: int): Term =
     if t.refId == id: vv(depth) else: t
   of tV:
     if t.idx >= depth: vv(t.idx + 1) else: t
-  of tC, tType, tInt, tPrim, tNatLit: t
+  of tC, tType, tInt, tPrim, tNatLit, tNatSing: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(absGo(it, id, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, absGo(t.dom, id, depth),
@@ -533,7 +558,7 @@ proc substEnv(t: Term, env: seq[Value], depth: int): Term =
     if j < depth: t
     elif j < depth + env.len: env[j - depth].syn
     else: vv(j - env.len)
-  of tR, tC, tType, tInt, tPrim, tNatLit: t
+  of tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(substEnv(it, env, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, substEnv(t.dom, env, depth),
@@ -560,7 +585,7 @@ proc weakenAt(t: Term, depth: int): Term =
   case t.kind
   of tV:
     if t.idx >= depth: vv(t.idx + 1) else: t
-  of tR, tC, tType, tInt, tPrim, tNatLit: t
+  of tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(weakenAt(it, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, weakenAt(t.dom, depth),
@@ -590,7 +615,7 @@ proc substSpine*(t: Term, spine: seq[Term]): Term =
   of tV:
     if t.idx < spine.len: spine[t.idx]
     else: vv(t.idx - spine.len)
-  of tR, tC, tType, tInt, tPrim, tNatLit: t
+  of tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(substSpine(it, spine)))
   of tPi, tSi, tLam:
     let sp = @[vv(0)] & spine.mapIt(weaken(it))
@@ -714,6 +739,7 @@ proc evalWhnf(t: Term, env: seq[Value]): Whnf =
   of tInt: Whnf(kind: wInt, intVal: t.intVal)
   of tType: Whnf(kind: wType, lvl: t.lvl)
   of tNatLit: Whnf(kind: wNatLit, natLitVal: t.natLitVal)
+  of tNatSing: Whnf(kind: wNatSing, natSingVal: t.natSingVal)
   of tPrim: Whnf(kind: wPrim, op: t.primOp, pargs: @[])
   of tPi: Whnf(kind: wPi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env), qty: t.qty)
   of tSi: Whnf(kind: wSi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env), qty: t.qty)
@@ -813,6 +839,45 @@ proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value] =
   let ty = infer(s, t)
   (eval(t, @[]), ty)
 
+proc subsumes*(s: var Supply, inf, exp: Value): bool =
+  ## Issue #74: definitional subsumption — the core's only subtyping.
+  ## inf <: exp: the singleton base rule (tNatSing(k) <: Nat), covariant
+  ## through Pi codomains and Sigma components, definitional equality
+  ## everywhere else. Decidable and structural; directional (inferred <:
+  ## expected), unlike the symmetric areEqual.
+  ## Issue #52: universe cumulativity is also a subsumption rule:
+  ## `Type i` <: `Type j` iff i <= j; the legacy `?` (wConst cStar)
+  ## admits any universe.
+  let iw = inf.whnf
+  let ew = exp.whnf
+  if iw.kind == wType:
+    if ew.kind == wType: return iw.lvl <= ew.lvl
+    if ew.kind == wConst and ew.c == cStar: return true
+  if iw.kind == wNatSing:
+    if s.natTypeRefId >= 0 and ew.kind == wRef and
+        ew.refId == s.natTypeRefId and ew.spine.len == 0:
+      return true
+    # else fall through to definitional equality below
+  if iw.kind == wPi and ew.kind == wPi:
+    try:
+      areEqual(s, vStar(), iw.dom, ew.dom)  # domains invariant
+    except ValueError:
+      return false
+    let x = freshPara(s, ew.dom)
+    return subsumes(s, iw.tscope.fn(x), ew.tscope.fn(x))
+  if iw.kind == wSi and ew.kind == wSi:
+    try:
+      areEqual(s, vStar(), iw.dom, ew.dom)
+    except ValueError:
+      return false
+    let x = freshPara(s, ew.dom)
+    return subsumes(s, iw.tscope.fn(x), ew.tscope.fn(x))
+  try:
+    areEqual(s, vStar(), exp, inf)
+    return true
+  except ValueError:
+    return false
+
 proc check*(s: var Supply, ty: Value, t: Term): Value =
   profilePhase(epKernel):
       # Experiment 11: primitives are trusted from the elaborator; the
@@ -820,16 +885,15 @@ proc check*(s: var Supply, ty: Value, t: Term): Value =
       if t.kind == tInt or t.kind == tPrim or t.kind == tNatLit:
         return eval(t, @[])
       let r = synth(s, t)
-      # Issue #52: cumulativity is directional and applies at the
-      # ascription point. A term whose inferred type is `Type i` checks
-      # against an expected `Type j` when i <= j; the legacy `?` admits
-      # any universe (it stays the top sort for "is a type" positions).
-      if r.typ.whnf.kind == wType:
-        if ty.whnf.kind == wType and r.typ.whnf.lvl <= ty.whnf.lvl:
-          return r.val
-        if ty.whnf.kind == wConst and ty.whnf.c == cStar:
-          return r.val
-      areEqual(s, vStar(), ty, r.typ)
+      # Issues #74/#52: definitional subsumption (subsumes) in place of
+      # the bare symmetric check. #74: a term whose inferred type is a
+      # singleton (or a Pi/Sigma built over one) checks against the
+      # widened expected type. #52: universe cumulativity (`Type i` <:
+      # `Type j` for i <= j; the legacy `?` admits any universe) is a
+      # subsumption rule too. When subsumption fails, areEqual raises the
+      # standard mismatch error, so failure behavior is unchanged.
+      if not subsumes(s, r.typ, ty):
+        areEqual(s, vStar(), ty, r.typ)
       r.val
 
 proc structuralEq(s: var Supply, a, b: Value) =
@@ -911,6 +975,9 @@ proc structuralEq(s: var Supply, a, b: Value) =
   of wNatLit:
     if a.whnf.natLitVal != b.whnf.natLitVal:
       raise newException(ValueError, "nat literal mismatch")
+  of wNatSing:
+    if a.whnf.natSingVal != b.whnf.natSingVal:
+      raise newException(ValueError, "nat singleton mismatch")
   of wPrim:
     if a.whnf.op != b.whnf.op or a.whnf.pargs.len != b.whnf.pargs.len:
       raise newException(ValueError, "primitive op mismatch")
@@ -972,6 +1039,8 @@ proc infer*(s: var Supply, t: Term): Value =
   of tNatLit:
     raise newException(ValueError,
       "cannot infer type of nat literal (elaborator must assign Nat type)")
+  of tNatSing:
+    vStar()  # Issue #74: a singleton is a type; its type is ?
   of tPrim:
     eval(t.primTy, @[])
   of tPi, tSi:

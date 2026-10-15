@@ -2944,6 +2944,46 @@
   the trace at compile time; native suite still green.
   Status: OPEN (branch =exp83-elab-trace=).
 
+* 2026-10-15 — Singleton types for Nat literals: rigid former + directional subsumption (issue #74)
+
+  Context: literals need precise types so argument positions can demand
+  exact values (`divBy2 : Nat -> (d : 2) -> Nat`). notes/singleton-types.org
+  encodes singletons as nominal subclasses of builtin classes (MLstruct);
+  Eponym's core has no class/subclass substrate.
+  Options considered: (a) new type former with subtyping in the kernel's
+  symmetric conversion — rejected: subtyping is directional, the kernel's
+  areEqual is symmetric; (b) phantom/data-encoding of singletons —
+  rejected: no user-visible data-decl machinery for it, and the
+  elaborator would have to invent declarations; (c) dedicated rigid
+  former `tNatSing(n)` with a one-directional subsumption rule living in
+  the elaborator's conversion and mirrored in the kernel's `check`.
+  Decision: (c). `tNatSing(n) : ?`, inhabited definitionally only by
+  `tNatLit(n)`; `tNatSing(k) <: Nat` (widening) and `tNatSing(k) =
+  tNatSing(k)` by int equality; covariant through Pi codomains and
+  Sigma components, definitional equality elsewhere. The elaborator
+  infers the singleton for a literal checked against a *known* type and
+  widens on demand; in type position a literal *is* its singleton type
+  (`(d : 2)` is writable, Scala-3 literal-type style). When the expected
+  type still has unsolved metas (infer-mode positions, e.g. pair
+  components), the literal widens eagerly to Nat — this preserves the
+  P2c compositionality contract and heeds the notes' own warning that
+  singleton precision becomes noise without aggressive widening.
+  Consequences: elaborator and both kernels (eponym_init.check,
+  kernel_check.kCheck via KernelGlobals.natTypeId) implement the same
+  fragment; the audit harness sets natTypeId and reports 0
+  disagreements. `exactly2(3)` is rejected with "inferred type 3 does
+  not match expected type 2". Explicitly out of scope (per the issue):
+  the `Nat ∩ ¬0` fall-through refinement — Eponym has no negation types
+  and no `case` surface syntax yet.
+  Measurement (examples-corpus wall-clock, before/after): a driver
+  elaborating all 52 .ep files (lib/, examples/, examples/ep/) built
+  from base commit 04a0904 vs this branch, -d:release, 7 fresh-process
+  runs each. Base cpu median 0.506s (spread 0.488–0.551s); branch cpu
+  median 0.508s (spread 0.483–0.570s). Spreads overlap fully; singleton
+  precision costs nothing measurable in unification on this corpus (all
+  52 files elaborate cleanly on both sides, failed=0).
+  Status: CLOSED via #219.
+
 * 2026-10-15 — Universe hierarchy: explicit `Type l` + cumulativity lands as an experiment; `?` stays (issue #52)
 
   Context: the core was `? : ?` (Type-in-Type, known-inconsistent). Issue

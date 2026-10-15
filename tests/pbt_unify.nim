@@ -56,6 +56,7 @@ proc structEq*(a, b: Term): bool =
   of tType: a.lvl == b.lvl  # Issue #52: level-annotated universes
   of tInt: a.intVal == b.intVal
   of tNatLit: a.natLitVal == b.natLitVal
+  of tNatSing: a.natSingVal == b.natSingVal
   of tPrim: a.primOp == b.primOp and structEq(a.primTy, b.primTy)
   of tMeta:
     if a.metaId != b.metaId or a.metaSpine.len != b.metaSpine.len:

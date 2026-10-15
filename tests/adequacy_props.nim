@@ -100,6 +100,7 @@ proc alphaEq(a, b: Term): bool =
   of tType: a.lvl == b.lvl  # Issue #52: level-annotated universes
   of tInt: a.intVal == b.intVal
   of tNatLit: a.natLitVal == b.natLitVal
+  of tNatSing: a.natSingVal == b.natSingVal
   of tPrim: a.primOp == b.primOp and alphaEq(a.primTy, b.primTy)
   of tPi, tSi, tLam:
     a.impl == b.impl and a.erased == b.erased and a.qty == b.qty and
