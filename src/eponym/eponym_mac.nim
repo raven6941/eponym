@@ -321,6 +321,28 @@ proc procDefToEponym(n: NimNode): string =
   let body = nimExprToEponym(n[6])
   "proc " & name & " " & paramStrs.join(" ") & " : " & retTy & " = " & body & "\n"
 
+proc defCallToEponym(st: NimNode): string =
+  ## def(isZero, Nat -> Bool):
+  ##   clause([zero], true)
+  ##   clause([suc(n)], false)
+  ## -> def isZero : Nat -> Bool / | zero = true / | (suc n) = false
+  ## (issue #151: clause-style definitions embedded; issue #42: reused
+  ## for defs inside a mutual block).
+  if st.len < 4 or st[1].kind != nnkIdent:
+    error("def expects (name, type) with a block of clause([pats], rhs)", st)
+  result = "def " & $st[1] & " : " & nimTypeToEponym(st[2]) & "\n"
+  let blk = st[st.len - 1]
+  if blk.kind != nnkStmtList:
+    error("def expects a block of clause([pats], rhs) statements", st)
+  for c in blk:
+    if c.kind != nnkCall or c[0].kind != nnkIdent or $c[0] != "clause":
+      error("def block expects clause([pattern, ...], rhs) statements", c)
+    if c.len != 3 or c[1].kind != nnkBracket:
+      error("clause expects ([pattern, ...], rhs)", c)
+    var pats: seq[string] = @[]
+    for p in c[1]: pats.add(patToEponym(p))
+    result.add("| " & pats.join(" ") & " = " & nimExprToEponym(c[2]) & "\n")
+
 proc blockToEponym*(body: NimNode): string =
   ## Convert a block of Nim AST to Eponym source program.
   result = ""
@@ -356,25 +378,27 @@ proc blockToEponym*(body: NimNode): string =
         result.add("red " & nimExprToEponym(st[1]) & " = " &
                    nimExprToEponym(st[2]) & "\n")
       elif head == "def":
-        # def(isZero, Nat -> Bool):
-        #   clause([zero], true)
-        #   clause([suc(n)], false)
-        # -> def isZero : Nat -> Bool / | zero = true / | (suc n) = false
-        # (issue #151: clause-style definitions embedded)
-        if st.len < 4 or st[1].kind != nnkIdent:
-          error("def expects (name, type) with a block of clause([pats], rhs)", st)
-        result.add("def " & $st[1] & " : " & nimTypeToEponym(st[2]) & "\n")
-        let blk = st[st.len - 1]
-        if blk.kind != nnkStmtList:
-          error("def expects a block of clause([pats], rhs) statements", st)
-        for c in blk:
-          if c.kind != nnkCall or c[0].kind != nnkIdent or $c[0] != "clause":
-            error("def block expects clause([pattern, ...], rhs) statements", c)
-          if c.len != 3 or c[1].kind != nnkBracket:
-            error("clause expects ([pattern, ...], rhs)", c)
-          var pats: seq[string] = @[]
-          for p in c[1]: pats.add(patToEponym(p))
-          result.add("| " & pats.join(" ") & " = " & nimExprToEponym(c[2]) & "\n")
+        result.add(defCallToEponym(st))
+      elif head == "mutual":
+        # mutual:
+        #   def(even, Nat -> Bool): clause([zero], true) ...
+        #   def(odd, Nat -> Bool): ...
+        # -> mutual / def even : ... / | ... / def odd : ... / | ...
+        # (issue #42: mutual blocks embedded)
+        if st.len != 2:
+          error("mutual expects a block of def(name, type) groups", st)
+        let mblk = st[1]
+        if mblk.kind != nnkStmtList:
+          error("mutual expects a block of def(name, type) groups", st)
+        result.add("mutual\n")
+        var ndefs = 0
+        for d in mblk:
+          if d.kind != nnkCall or d[0].kind != nnkIdent or $d[0] != "def":
+            error("mutual block expects def(name, type) groups", d)
+          result.add(defCallToEponym(d))
+          inc ndefs
+        if ndefs == 0:
+          error("mutual needs at least one def group", st)
       elif head == "data":
         # data(Nat, Univ): block -> data Nat : ? where | ...
         # data(Vec, [A: Univ], Nat -> Univ): block -> data Vec (A : ?) : Nat -> ? where | ...
