@@ -711,9 +711,13 @@ proc cacheConvHandler*(): ConvHandler =
   let decide: ConvDecide =
     proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
          ctxLen: int, goalTy: Term): ConvResult {.closure.} =
+      # Issue #4: count every probe and every hit (never affects verdicts).
+      ms.convCacheProbes.inc
       let (hit, _) = areEqualCached(ms.convCache,
                                     convKey(ctxLen, a, b))
-      if hit: ConvResult(verdict: cvDischarged)
+      if hit:
+        ms.convCacheHits.inc
+        ConvResult(verdict: cvDischarged)
       else: ConvResult(verdict: cvDeclined)
   ConvHandler(decide: decide, coreValid: true)
 
@@ -5452,6 +5456,16 @@ proc v4 : Vec Nat (suc (suc (suc (suc zero)))) =
   echo "ok: cache handler identical results (" & $cacheDefs.len & " decls); " &
     "default=" & formatFloat(tCache1 - tCache0, ffDecimal, 3) & "s " &
     "cache=" & formatFloat(tCache2 - tCache1, ffDecimal, 3) & "s"
+  # Issue #4: honest cache measurement — report probes/hits/hit-rate so
+  # the wall-clock numbers above can be interpreted (a 1.0x with 0 hits
+  # and a 1.0x with 90% hits are very different findings).
+  let (cachedDefs2, cachedMs) = elabCheckState(vecCorpus, @[cacheConvHandler()])
+  assert cachedDefs2.len == cacheDefs.len
+  let probes = cachedMs.convCacheProbes
+  let hits = cachedMs.convCacheHits
+  let hitRate = if probes > 0: 100.0 * hits.float / probes.float else: 0.0
+  echo "cache stats: probes=" & $probes & " hits=" & $hits &
+    " hit-rate=" & formatFloat(hitRate, ffDecimal, 1) & "%"
 
   # --- Experiment 41: Nat arithmetic as a scoped decision procedure --
   # `by arith` installs natArithHandler for the dynamic extent of the
