@@ -142,8 +142,8 @@ Now ascribe a 2-element vector the type of 1-element vectors:
 
 ```
 vec_bad.nim(5, 3) Error: eponymBlock elaboration error: line 2, col 56:
-  inferred type ((Vec Nat) (suc (suc zero))) does not match expected type
-  ((Vec Nat) (suc zero)): noConfusion: distinct constructors 'suc' and
+  inferred type (Vec Nat (suc (suc zero))) does not match expected type
+  (Vec Nat (suc zero)): noConfusion: distinct constructors 'suc' and
   'zero' of datatype 'Nat' cannot be equal
 ```
 
@@ -204,8 +204,10 @@ Notes:
   which state it requires and which it produces.
 - `ch {.linear.}` is a quantity-1 binder: the elaborator rejects using
   a linear variable zero times or twice. Drop `ch` and you get
-  `linear variable 'ch' not used`; use it twice and you get
-  `linear variable 'ch' used 2 times (expected exactly once)`.
+  `linear variable 'ch' not used (expected exactly once): a linear binder
+  must be used exactly once in the body`; use it twice and you get
+  `linear variable 'ch' used 2 times (expected exactly once): use the
+  variable exactly once in the body`.
 - `postulate` declares an operation without defining it — here a mock
   backend. A real library binds these to socket code; the types are the
   contract the backend must uphold (the typed-API-over-untrusted-backend
@@ -223,8 +225,8 @@ Try to receive on a channel whose protocol says "send first":
 
 ```
 session_bad.nim(5, 3) Error: eponymBlock elaboration error: line 11, col 77:
-  inferred type (Chan ((sendS Nat) endS)) does not match expected type
-  (Chan ((recvS Nat) endS)): noConfusion: distinct constructors 'sendS'
+  inferred type (Chan (sendS Nat endS)) does not match expected type
+  (Chan (recvS Nat endS)): noConfusion: distinct constructors 'sendS'
   and 'recvS' of datatype 'Session' cannot be equal
 ```
 
