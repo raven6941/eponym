@@ -321,14 +321,62 @@ export function activate(ctx: vscode.ExtensionContext) {
             });
             await refresh();
           } else if (m.cmd === "case-split") {
-            const res = await client.request("textDocument/codeAction", {
-              textDocument: { uri: docUri },
-              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
-              context: { diagnostics: [] },
-              variable: m.variable ?? "",
+            // Issue #209: shed-aware case-split via eponym/caseSplitShed
+            // (term-level eliminator application; the old codeAction path
+            // rewrote .ep procs into clause-defs, which cannot round-trip
+            // through the nim ![...] node).
+            const variable = m.variable ?? "";
+            if (variable === "") {
+              panel.webview.postMessage({
+                cmd: "actionmsg",
+                text: "case-split: type a variable name first",
+              });
+              return;
+            }
+            const res = await client.caseSplitShed(
+              docUri,
+              entry.shedName,
+              variable
+            );
+            // Splice the eliminator term over the ![shedName] node
+            // (same single-line span logic as refine).
+            const line = res.nimLine - 1;
+            const startCh = res.nimCol - 1;
+            const text = editor.document.lineAt(line).text;
+            let depth = 0;
+            let endCh = -1;
+            for (let i = startCh; i < text.length; i++) {
+              if (text[i] === "[") depth++;
+              else if (text[i] === "]") {
+                depth--;
+                if (depth === 0) {
+                  endCh = i + 1;
+                  break;
+                }
+              }
+            }
+            if (endCh < 0) {
+              throw new Error(
+                `case-split: could not find the end of the ![...] node for '${entry.shedName}'`
+              );
+            }
+            await editor.edit((b) =>
+              b.replace(
+                new vscode.Range(line, startCh, line, endCh),
+                res.term
+              )
+            );
+            // Save so the recompile discovers the sub-shed nodes, then
+            // refresh onto the first sub-shed.
+            await editor.document.save();
+            if (await ensureSidecar(editor.document)) {
+              entry.shedName = res.subSheds[0];
+              await refresh();
+            }
+            panel.webview.postMessage({
+              cmd: "actionmsg",
+              text: `case-split ${variable}: ${res.subSheds.length} new sheds (${res.subSheds.join(", ")})`,
             });
-            await applyCodeActions(res, editor);
-            await refresh();
           }
         } catch (e) {
           panel.webview.postMessage({ cmd: "actionmsg", text: "action failed: " + String(e) });
