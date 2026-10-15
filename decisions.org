@@ -3263,3 +3263,27 @@
   at 0 disagreements; docs/surface-syntax-reference.md documents the
   closed gap.
   Status: OPEN (branch =exp223-singleton-widening=).
+* 2026-10-15 — #4: honest conversion-cache measurement — fires, doesn't pay (negative)
+  Value category: (f) pure knowledge (closes a performance thread with numbers).
+  Instrumented the scoped conversion cache with honest counters
+  (MetaStore.convCacheProbes/Hits, incremented in cacheConvHandler's decide
+  proc; tests/bench_conv_cache.nim elaborates with/without the handler,
+  best-of-3, warmup, asserting identical elaborated output):
+  - lib/nat_lemmas.ep (realistic heavy corpus, #55's ~88% case): 94 probes,
+    52 hits (55.3% hit rate), speedup 0.97x.
+  - Vec conversion-heavy toy corpus: 51 probes, 12 hits (23.5%), 1.02x.
+  Mechanism (per the benchmarking discipline, ask why): the cache fires on
+  real repeats — 55% of probed goals were previously proven — but the goals
+  it skips are the cheap tail. The corpus cost lives in `by arith` lemma
+  synthesis and the core re-check (#55's finding), not in repeated NbE
+  conversion goals; convKey hashing + e-graph lookup on every probe costs
+  roughly what the skipped full-reduction conversions saved. A high hit
+  rate with ~1.0x is the signature of caching the wrong work, not of a
+  broken cache.
+  Verdict: the cache is a correct, working scoped mechanism (identical
+  results, coreValid backstop, recorded successes only), but it is not a
+  performance lever. Keep as opt-in machinery; do not pursue as a speedup.
+  The "true e-graph" disjunct of #4 was already implemented (egraph.nim,
+  per-elabCheck EGraph in MetaStore); with the measurement done, #4 closes.
+  Status: branch =exp4-convcache-measure= (instrumentation + bench driver
+  + self-test cache-stats reporting).

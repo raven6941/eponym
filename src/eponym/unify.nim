@@ -118,6 +118,10 @@ type
                          # (holes) do not fail the declaration; the
                          # core re-check is skipped for open defs
     convCache*: EGraph  # Experiment 10: conversion cache (per elabCheck)
+    # Issue #4: honest cache measurement — probes/hits of the scoped
+    # cacheConvHandler (elab.nim). Counters, never consulted for verdicts.
+    convCacheProbes*: int
+    convCacheHits*: int
     convHandlers*: seq[ConvHandler]  # Experiment 41: handler stack (top = last)
     extDischarges*: int  # Experiment 41: discharges by coreValid=false handlers
     # Issue #66: quantity variables. Declaration-scoped: the elaborator
