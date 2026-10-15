@@ -1,0 +1,1 @@
+{"customizations":{"vscode":{"extensions":["ms-vscode.vscode-typescript-next"]}},"features":{"ghcr.io/devcontainers/features/node:1":{"version":"20"}},"image":"mcr.microsoft.com/devcontainers/base:ubuntu","name":"Eponym","postCreateCommand":"bash .devcontainer/setup.sh"}
