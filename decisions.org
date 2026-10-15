@@ -3231,3 +3231,35 @@
   not a fully principled subtyping relation; revisit if the conversion
   relation is ever generalized.
   Status: OPEN (branch =exp84-qty-infer=).
+
+* 2026-10-15 — Elaborator conversion gains covariant singleton widening (issue #223)
+
+  Context: #74 put the full covariant rule (tNatSing(k) <: Nat through
+  Pi codomains and Sigma components) in the kernel's `check`
+  (`subsumes`), but the elaborator's `defaultConv` only widened a
+  *top-level* singleton. The elaborator therefore rejected programs the
+  kernel accepts (`proc f (d : 2) : Nat = d` failed with "inferred type
+  Pi(2, d. 2) does not match expected type Pi(2, d. Nat)"), and the
+  surface-syntax reference documented this as a known gap.
+  Options considered: (a) keep the elaborator stricter and document the
+  boundary as intentional — rejected: a conversion relation that
+  disagrees with the kernel's audit on programs it already accepts is a
+  gratuitous false-rejection, not a principled strictness; (b) reuse
+  `subsumes` wholesale in `defaultConv` — rejected: it would also admit
+  universe cumulativity (`Type i <: Type j`) into elaborator positions
+  whose #52 level machinery is deliberately separate; (c) mirror only
+  the singleton part of `subsumes` as a directional
+  `subsumeSing(s, inf, exp, natVal)` in eponym_init, called from
+  `defaultConv` with a false fallback to ordinary symmetric conversion.
+  Decision: (c). Pi/Sigma domains stay invariant via plain areEqual
+  (mirroring the kernel exactly, not the quantity-lenient relation), so
+  the elaborator accepts only what the kernel's audit accepts.
+  Consequences: `proc f (d : 2) : Nat = d` and the Sigma analogue
+  `proc g(p: Sig(d: 2, 2)): Sig(d: 2, Nat) = p` now elaborate (positive
+  corpus cases in examples/embedded/singleton_types.nim); the
+  `embedded_err_singleton_mismatch` fixture still fails, now pinned to
+  the application site (`exactly2(3)`: "inferred type 3 does not match
+  expected type 2") rather than the definition; the kernel audit stays
+  at 0 disagreements; docs/surface-syntax-reference.md documents the
+  closed gap.
+  Status: OPEN (branch =exp223-singleton-widening=).

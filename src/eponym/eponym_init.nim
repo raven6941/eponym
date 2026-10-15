@@ -880,6 +880,45 @@ proc subsumes*(s: var Supply, inf, exp: Value): bool =
   except ValueError:
     return false
 
+proc subsumeSing*(s: var Supply, inf, exp: Value, natVal: Value): bool =
+  ## Issue #223: the elaborator's directional singleton subsumption —
+  ## mirrors the singleton part of `subsumes` above (which the kernel's
+  ## `check` implements): tNatSing(k) <: Nat, covariant through Pi
+  ## codomains and Sigma components. `natVal` is the evaluated `Nat`
+  ## type (nil when the elaborator's globals lack it); the universe
+  ## cumulativity part of `subsumes` is deliberately NOT mirrored — the
+  ## elaborator keeps its own #52 level machinery.
+  ## Returns false when no singleton rule fires, so the caller falls
+  ## through to ordinary symmetric conversion. Domains stay invariant
+  ## (plain areEqual, as the kernel demands), so the elaborator accepts
+  ## only what the kernel's audit accepts.
+  let iw = inf.whnf
+  let ew = exp.whnf
+  if iw.kind == wNatSing:
+    if ew.kind == wNatSing: return iw.natSingVal == ew.natSingVal
+    if not natVal.isNil:
+      try:
+        areEqual(s, vStar(), natVal, exp)
+        return true
+      except ValueError:
+        discard
+    return false
+  if iw.kind == wPi and ew.kind == wPi:
+    try:
+      areEqual(s, vStar(), iw.dom, ew.dom)  # domains invariant
+    except ValueError:
+      return false
+    let x = freshPara(s, ew.dom)
+    return subsumeSing(s, iw.tscope.fn(x), ew.tscope.fn(x), natVal)
+  if iw.kind == wSi and ew.kind == wSi:
+    try:
+      areEqual(s, vStar(), iw.dom, ew.dom)  # domains invariant
+    except ValueError:
+      return false
+    let x = freshPara(s, ew.dom)
+    return subsumeSing(s, iw.tscope.fn(x), ew.tscope.fn(x), natVal)
+  false
+
 proc check*(s: var Supply, ty: Value, t: Term, qtySubsumption = false): Value =
   profilePhase(epKernel):
       # Experiment 11: primitives are trusted from the elaborator; the

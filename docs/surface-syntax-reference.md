@@ -265,13 +265,12 @@ The unit value is `<>` (Nim side: `unitv`).
 singleton type: `(d : 2)` demands exactly `2`, Scala-3 literal-type style,
 so `divBy2 : Nat -> (d : 2) -> Nat` is writable, and `divBy2 4 3` is
 rejected with `inferred type 3 does not match expected type 2`. A
-singleton widens to `Nat` at the top level of a conversion goal —
-argument positions (`divBy2 4 d` for `d : 2`), ascriptions (`(d : Nat)`) —
-one direction only (`tNatSing(k) <: Nat`; there is no narrowing). Known gap (#223): the widening does not apply through enclosing type formers in the
-elaborator's conversion, so returning a singleton-typed variable where
-`Nat` is ascribed (`proc f (d : 2) : Nat = d`) is rejected at the
-definition check, even though the kernel's `check` implements the
-covariant rule. When the expected type still has unsolved metavariables
+singleton widens to `Nat` at conversion goals — argument positions
+(`divBy2 4 d` for `d : 2`), ascriptions (`(d : Nat)`), and, covariantly,
+through Pi codomains and Sigma components (`proc f (d : 2) : Nat = d`
+checks: the inferred `Pi(d:2).2` is accepted against the ascribed
+`Pi(d:2).Nat`, mirroring the kernel's `check`, issue #223) — one
+direction only (`tNatSing(k) <: Nat`; there is no narrowing). When the expected type still has unsolved metavariables
 (inference-mode positions), the literal widens eagerly to `Nat` instead.
 
 ### Tactics: `by`
