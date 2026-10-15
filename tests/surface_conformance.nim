@@ -91,6 +91,10 @@ proc sameDecl(a, b: SurfDecl): bool =
          not sameTerm(a.fields[i].ty, b.fields[i].ty):
         return false
     true
+  of dkView:  # issue #44: `view Fam over T with cover`
+    a.viewDecl.vname == b.viewDecl.vname and
+      sameTerm(a.viewDecl.scrutTy, b.viewDecl.scrutTy) and
+      a.viewDecl.coverName == b.viewDecl.coverName
 
 macro conforms*(src: static string, blk: untyped): untyped =
   ## Assert `blockToEponym(blk)` parses to the same decls as `src`.
