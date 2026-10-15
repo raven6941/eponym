@@ -3270,8 +3270,10 @@
   proc; tests/bench_conv_cache.nim elaborates with/without the handler,
   best-of-3, warmup, asserting identical elaborated output):
   - lib/nat_lemmas.ep (realistic heavy corpus, #55's ~88% case): 94 probes,
-    52 hits (55.3% hit rate), speedup 0.97x.
-  - Vec conversion-heavy toy corpus: 51 probes, 12 hits (23.5%), 1.02x.
+    52 hits (55.3% hit rate), speedup 0.98x (re-verified post-rebase;
+    identical probes/hits, was 0.97x).
+  - Vec conversion-heavy toy corpus: 51 probes, 12 hits (23.5%), 0.99x
+    (was 1.02x).
   Mechanism (per the benchmarking discipline, ask why): the cache fires on
   real repeats — 55% of probed goals were previously proven — but the goals
   it skips are the cheap tail. The corpus cost lives in `by arith` lemma
