@@ -5734,6 +5734,7 @@ def badm : Nat -> Nat -> Nat
   # --- Issue #42: mutual termination (size-change) ----------------------
   # Corpus: terminating mutual blocks accepted (and compute), looping ones
   # rejected with a named cycle. Uses the same acc/rej template style.
+  let mutStart = cpuTime()
   var mutAccepted = 0
   var mutRejected = 0
   template acc42(name, src: string) =
@@ -5841,7 +5842,7 @@ def ok : Nat -> Bool
   assert mutAccepted >= 4, "need >= 4 accepted, got " & $mutAccepted
   assert mutRejected >= 3, "need >= 3 rejected, got " & $mutRejected
   echo "ok: mutual termination corpus (", mutAccepted, " accepted, ",
-    mutRejected, " rejected)"
+    mutRejected, " rejected) in ", formatFloat(cpuTime() - mutStart, ffDecimal, 3), "s"
 
   # --- Issue #49: multi-file programs via `import` ---------------------------
   let modDir = getTempDir() / "eponym_import_test"
