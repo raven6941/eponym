@@ -133,25 +133,36 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
   provideCodeLenses(
     doc: vscode.TextDocument
   ): vscode.CodeLens[] {
+    // Debug: log to Eponym output channel via console (visible in devtools)
+    // For now, we rely on the caller to check.
     const lenses: vscode.CodeLens[] = [];
-    const text = doc.getText();
-    const goalMap = this.goals.get(doc.uri.toString()) ?? new Map();
-    // Find `![shedName]` occurrences
-    const re = /!\[([A-Za-z_][A-Za-z0-9_]*)(?:\s*,[^\]]*)?\]/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null) {
-      const name = m[1];
-      const start = doc.positionAt(m.index);
-      const line = doc.lineAt(start.line);
-      const goal = goalMap.get(name) ?? "";
-      const title = goal ? `shed ${name} : ${goal}` : `shed ${name}`;
-      lenses.push(
-        new vscode.CodeLens(line.range, {
-          title,
-          command: "eponym.expandShed",
-          tooltip: `Expand inline shed view for ${name}`,
-        })
-      );
+    try {
+      const text = doc.getText();
+      const goalMap = this.goals.get(doc.uri.toString()) ?? new Map();
+      // Find `![shedName]` occurrences
+      const re = /!\[([A-Za-z_][A-Za-z0-9_]*)(?:\s*,[^\]]*)?\]/g;
+      let m: RegExpExecArray | null;
+      let count = 0;
+      while ((m = re.exec(text)) !== null) {
+        count++;
+        const name = m[1];
+        const start = doc.positionAt(m.index);
+        const line = doc.lineAt(start.line);
+        const goal = goalMap.get(name) ?? "";
+        const title = goal ? `shed ${name} : ${goal}` : `shed ${name}`;
+        lenses.push(
+          new vscode.CodeLens(line.range, {
+            title,
+            command: "eponym.expandShed",
+            tooltip: `Expand inline shed view for ${name}`,
+          })
+        );
+      }
+      // Store count for debugging (accessible via a command if needed)
+      (globalThis as any).__eponymLastLensCount = count;
+      (globalThis as any).__eponymLastLensDoc = doc.uri.fsPath;
+    } catch (e) {
+      (globalThis as any).__eponymLensError = String(e);
     }
     return lenses;
   }
