@@ -3084,23 +3084,38 @@
   structural termination argument does not transfer; (b) nested
   clause-matrix splits on indexed rest arguments hit a pre-existing
   #32 limitation (reproduced on main; the demo cover avoids it by
-  eliminating the view family directly); (c) single-index families
-  only — see below.
+  eliminating the view family directly); (c) the family must be indexed
+  exactly by scrutinee-then-parameters — no extra indices, no family
+  parameters (data-level `|->`, not just indices).
 
-  Open: parameterized views. McBride's BoundCheck ("match Nat on less
-  than n") needs a family with indices beyond the scrutinee
-  (=Cmp m n=, cover =(b m : Nat) -> Cmp m b=). The current
-  =ViewInfo=/desugar applies the family to the scrutinee alone.
-  Planned shape: cover type =(params...) -> (s : S) -> Fam s params...=
-  (scrutinee last; validate the codomain applies the family to the
-  last binder then the parameter binders in order), wrapper applies
-  the cover to the =nParams= explicit telescope arguments preceding
-  the scrutinee, inner =(v : Fam s p1..pn)= inserted after the
-  scrutinee (params already in scope). Demo sketch: =minView= via a
-  =Cmp= trichotomy view; the cover needs =addSucR=/=addZeroR=
-  rewrites (lib add recurses on its first argument, so =add m (suc d)=
-  vs =suc (add m d)= is propositional) — a local =subst= via =eqElim=
-  suffices.
+  Parameterized views implemented (same day, still on exp44-views): the
+  `view` decl now validates the full cover shape
+  `(p1 : P1) -> ... -> (s : S) -> Fam s p1..pn` — all cover binders
+  explicit, the last binder's domain head is the `over` type, and the
+  codomain applies the family to the scrutinee first then the parameters
+  in order (checked as de Bruijn variables, so a cover that drops,
+  swaps, or computes an index is rejected at the `view` decl with a
+  located error; 44f negative test). `ViewInfo` carries `nParams`; the
+  scrutinee is now the explicit argument carrying the `[Fam]` annotation
+  (was: hardcoded to the first explicit argument — parameters must be able
+  to precede it). The desugar takes the nParams explicit telescope
+  binders immediately
+  before the scrutinee as the parameters, inserts
+  `(v : Fam s p1..pn)` after the scrutinee in the inner def, and the
+  wrapper applies the cover to `p1..pn` then the scrutinee. The inner
+  telescope now uses the freshened wrapper binder names throughout (was:
+  raw `e.name` for non-scrutinee binders), so wrapper applications line
+  up even with `_`-named binders. 44g is a positive plumbing test
+  (nParams=1, degenerate single-constructor family): the wrapper really
+  applies the cover to parameter-then-scrutinee, verified by a `refl`
+  computation check.
+
+  Open: the BoundCheck demo. McBride's trichotomy
+  (`data Cmp : Nat -> Nat -> ?` with `lt`/`eq`/`gt`, cover
+  `(b m : Nat) -> Cmp m b`) needs the cover to rewrite with
+  `addSucR`/`addZeroR` (lib `add` recurses on its first argument, so
+  `add m (suc d)` vs `suc (add m d)` is propositional) — a local `subst`
+  via `eqElim` suffices.
 
   Scope note (2026-10-15 main freeze): views are a new user-facing
   capability, so this lands on the long-lived post-freeze

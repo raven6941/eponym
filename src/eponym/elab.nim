@@ -4029,12 +4029,14 @@ proc elabViewClausesDecl(cd: ClausesDef, vi: ViewInfo, globals: var Globals,
                          supply: var Supply, ms: var MetaStore,
                          dataInfos: var Table[string, SurfDecl]): seq[ElabDef] =
   ## Issue #44: elaborate `def f : Ty` whose clauses carry `| x [Fam] pat`
-  ## view annotations. Desugar into two declarations:
-  ##   def f_viewInner : (x : T) -> (v : Fam x) -> R   (clauses on the
-  ##     covered value v, compiled by #32's machinery with the scrutinee
-  ##     at telescope position sPos+1)
-  ##     | x pat = rhs ...
-  ##   proc f (x : T) : R = f_viewInner x (cover x) rest...
+  ## view annotations. The scrutinee is the explicit argument carrying the
+  ## `[Fam]` annotation (parameters, if any, precede it). Desugar into two
+  ## declarations:
+  ##   def f_viewInner : (p1 : P1) -> (x : T) -> (v : Fam x p1..pn) -> R
+  ##     (clauses on the covered value v, compiled by #32's machinery with
+  ##     the scrutinee at telescope position sPos+1)
+  ##     | p1.. x pat = rhs ...
+  ##   proc f (p1 : P1) (x : T) : R = f_viewInner p1.. x (cover p1..pn x) rest...
   ## Constructor clauses are the identity-covering special case of this
   ## scheme. Note: recursive calls in rhs go through the wrapper, so #32's
   ## structural termination checking does not transfer through views —
@@ -4047,18 +4049,35 @@ proc elabViewClausesDecl(cd: ClausesDef, vi: ViewInfo, globals: var Globals,
     piList.add((tcur.name, tcur.c1, tcur.impl, tcur.erased, tcur.qty))
     tcur = tcur.c2
   let retTy = tcur
-  var sPos = -1
-  for i, b in piList:
-    if not b.impl: sPos = i; break
-  if sPos < 0:
-    raise elabErr(loc, "'def' with view clauses needs an explicit argument")
+  # The scrutinee is the explicit argument carrying the `[Fam]` annotation:
+  # its explicit position is the first clause's viewPos (the annotation
+  # follows the scrutinee pattern, so viewPos counts only explicit patterns
+  # before it). All clauses must annotate the same argument. Parameterized
+  # views (#44) put their parameters before the scrutinee.
   var nExplicit = 0
-  var sExp = -1
+  var explicitIdx: seq[int] = @[]
   for i, b in piList:
     if b.impl: continue
-    if i == sPos: sExp = nExplicit
+    explicitIdx.add(i)
     inc nExplicit
-  # Every clause agrees on the view; the annotation sits on the scrutinee.
+  if nExplicit == 0:
+    raise elabErr(loc, "'def' with view clauses needs an explicit argument")
+  let sExp = cd.clauses[0].viewPos
+  if sExp < 0 or sExp >= nExplicit:
+    raise elabErr(cd.clauses[0].cloc, "the view annotation '[" & vi.vname &
+      "]' must follow an explicit argument pattern")
+  let sPos = explicitIdx[sExp]
+  # Issue #44 (parameterized views): the view's nParams explicit arguments
+  # immediately preceding the scrutinee are the view parameters.
+  if sExp < vi.nParams:
+    raise elabErr(loc, "view '" & vi.vname & "' takes " & $vi.nParams &
+      " parameter(s) before the scrutinee, but '" & cd.name &
+      "' has only " & $sExp & " explicit argument(s) before it")
+  var paramPi: seq[int] = @[]
+  for j in 0 ..< vi.nParams:
+    paramPi.add(explicitIdx[sExp - vi.nParams + j])
+  # Every clause agrees on the view and the annotated position; the
+  # annotation sits on the scrutinee.
   for cl in cd.clauses:
     if cl.viewName == "":
       raise elabErr(cl.cloc, "view clauses ('[" & vi.vname &
@@ -4068,7 +4087,7 @@ proc elabViewClausesDecl(cd: ClausesDef, vi: ViewInfo, globals: var Globals,
         "' (expected '[" & vi.vname & "]')")
     if cl.viewPos != sExp:
       raise elabErr(cl.cloc, "the view annotation '[" & cl.viewName &
-        "]' must follow the scrutinee pattern")
+        "]' must follow the same argument in every clause")
     if cl.pats.len != nExplicit + 1:
       raise elabErr(cl.cloc, "view clause has " & $cl.pats.len &
         " patterns but the type has " & $nExplicit &
@@ -4105,28 +4124,8 @@ proc elabViewClausesDecl(cd: ClausesDef, vi: ViewInfo, globals: var Globals,
   if globals.hasKey(innerName):
     raise elabErr(loc, "generated name '" & innerName &
       "' clashes with an existing definition")
-  # Inner type: (tele...) with (v : Fam scrutName) inserted after the
-  # scrutinee Pi, preserving impl/erased/qty flags.
-  let famApp = mkApp(mkVar(vi.vname, loc), mkVar(scrutName, loc), loc)
-  var innerTy = retTy
-  for i in countdown(piList.high, 0):
-    let e = piList[i]
-    if i == sPos:
-      # The covered-value binder goes *inside* the scrutinee Pi:
-      # (n : Nat) -> (v : Parity n) -> ...
-      innerTy = mkPi(vName, famApp, innerTy, loc)
-    let bn = if i == sPos: scrutName else: e.name
-    innerTy = mkPi(bn, e.ty, innerTy, loc, e.impl, e.erased, e.qty)
-  var innerClauses: seq[Clause] = @[]
-  for cl in cd.clauses:
-    innerClauses.add(Clause(pats: cl.pats, rhs: cl.rhs, cloc: cl.cloc))
-  let innerCd = ClausesDef(name: innerName, ty: innerTy,
-                           clauses: innerClauses, loc: loc)
-  let innerSdef = compileClausesToSurfDef(innerCd, globals, supply, ms,
-                                         dataInfos, scrutPos = sPos + 1)
-  result.add(elabDefDecl(innerSdef, globals, supply, ms))
-  # Wrapper: proc f tele : Ret = f_viewInner x.. (cover x_s) rest...
-  # (explicit args only; the elaborator inserts metas for implicits).
+  # Freshened telescope, shared by the inner def and the wrapper so the
+  # wrapper's applications line up with the inner binders.
   var wrapTele: seq[tuple[name: string, ty: PreTerm, impl: bool,
                           erased: bool, qty: Qty]] = @[]
   var seenW = initHashSet[string]()
@@ -4144,14 +4143,43 @@ proc elabViewClausesDecl(cd: ClausesDef, vi: ViewInfo, globals: var Globals,
         bn & "' in the type; rename one of them")
     seenW.incl(bn)
     wrapTele.add((bn, e.ty, e.impl, e.erased, e.qty))
+  # Inner type: (tele...) with (v : Fam s p1..pn) inserted after the
+  # scrutinee Pi, preserving impl/erased/qty flags. The parameters are
+  # already in scope before the scrutinee.
+  var famApp: PreTerm = mkVar(vi.vname, loc)
+  famApp = mkApp(famApp, mkVar(wrapTele[sPos].name, loc), loc)
+  for pj in paramPi:
+    famApp = mkApp(famApp, mkVar(wrapTele[pj].name, loc), loc)
+  var innerTy = retTy
+  for i in countdown(piList.high, 0):
+    let e = piList[i]
+    if i == sPos:
+      # The covered-value binder goes *inside* the scrutinee Pi:
+      # (n : Nat) -> (v : Parity n) -> ...
+      innerTy = mkPi(vName, famApp, innerTy, loc)
+    innerTy = mkPi(wrapTele[i].name, e.ty, innerTy, loc, e.impl, e.erased,
+                   e.qty)
+  var innerClauses: seq[Clause] = @[]
+  for cl in cd.clauses:
+    innerClauses.add(Clause(pats: cl.pats, rhs: cl.rhs, cloc: cl.cloc))
+  let innerCd = ClausesDef(name: innerName, ty: innerTy,
+                           clauses: innerClauses, loc: loc)
+  let innerSdef = compileClausesToSurfDef(innerCd, globals, supply, ms,
+                                         dataInfos, scrutPos = sPos + 1)
+  result.add(elabDefDecl(innerSdef, globals, supply, ms))
+  # Wrapper: proc f tele : Ret = f_viewInner x.. (cover p1..pn x_s) rest...
+  # (explicit args only; the elaborator inserts metas for implicits).
   var app: PreTerm = mkVar(innerName, loc)
   for i, e in piList:
     if e.impl: continue
     let an = wrapTele[i].name
     app = mkApp(app, mkVar(an, loc), loc)
     if i == sPos:
-      app = mkApp(app, mkApp(mkVar(vi.coverName, loc), mkVar(an, loc), loc),
-                  loc)
+      var coverApp: PreTerm = mkVar(vi.coverName, loc)
+      for pj in paramPi:
+        coverApp = mkApp(coverApp, mkVar(wrapTele[pj].name, loc), loc)
+      coverApp = mkApp(coverApp, mkVar(an, loc), loc)
+      app = mkApp(app, coverApp, loc)
   let wrapSdef = SurfDef(name: cd.name, tele: wrapTele, retTy: retTy,
                          body: app, loc: loc)
   result.add(elabDefDecl(wrapSdef, globals, supply, ms))
@@ -4418,36 +4446,79 @@ proc elabViewDecl(vd: ViewDecl, globals: var Globals, supply: var Supply,
                   viewInfos: var Table[string, ViewInfo]) =
   ## Issue #44 (step 2 of 3): validate and register a `view` declaration.
   ## The covering obligation is checked here, so an ill-typed covering
-  ## function is rejected with a located error at the `view` declaration:
-  ## `coverName` must be a global whose type is a Pi whose codomain head is
-  ## the view family. (Deeper mismatches, e.g. the index not mentioning the
-  ## scrutinee, surface when the generated wrapper `f x = f_inner x (cover x)`
-  ## is elaborated.)
+  ## function is rejected with a located error at the `view` declaration.
+  ## The cover type must be
+  ##   (p1 : P1) -> ... -> (pn : Pn) -> (s : S) -> Fam s p1..pn
+  ## i.e. a Pi prefix of explicit binders whose last binder is the
+  ## scrutinee, and whose codomain applies the view family to the scrutinee
+  ## first and then the parameter binders in order. (Deeper mismatches,
+  ## e.g. the index not mentioning the scrutinee, surface when the
+  ## generated wrapper `f x = f_inner x (cover params.. x)` is elaborated.)
+  ## Parameterized covers (McBride's BoundCheck) are the nParams > 0 case;
+  ## plain covers are nParams = 0.
   if not dataInfos.hasKey(vd.vname):
     raise elabErr(vd.vloc, "'view': '" & vd.vname &
       "' is not a data declaration (the view family must be a `data` type)")
   if not globals.hasKey(vd.coverName):
     raise elabErr(vd.vloc, "'view': covering function '" & vd.coverName &
       "' not found")
-  let coverTy = globals[vd.coverName].ty
-  if coverTy.kind != tPi:
-    raise elabErr(vd.vloc, "'view': covering function '" & vd.coverName &
-      "' must have type (x : T) -> " & vd.vname & " x")
-  var h = coverTy.scope.bdy
-  while h.kind == tApp: h = h.fn
-  let hn = if h.kind == tR: ms.refNames.getOrDefault(h.refId, "") else: ""
-  if hn != vd.vname:
-    raise elabErr(vd.vloc, "'view': covering function '" & vd.coverName &
-      "' must return the view family '" & vd.vname & "' (the covering " &
-      "obligation: cover maps each scrutinee to its view)")
   var oh = vd.scrutTy
   while oh.kind == pkApp: oh = oh.c1
   let scrutHead = if oh.kind == pkVar: oh.name else: ""
   if scrutHead == "":
     raise elabErr(vd.vloc, "'view': the 'over' type must have a rigid head " &
       "(e.g. `Nat`, not a computed type)")
+  let coverTy = globals[vd.coverName].ty
+  var binderAdvs: seq[string] = @[]
+  var binderDoms: seq[Term] = @[]
+  var ccur = coverTy
+  while ccur.kind == tPi:
+    if ccur.impl:
+      raise elabErr(vd.vloc, "'view': covering function '" & vd.coverName &
+        "' must take all its arguments explicitly (parameter '" &
+        ccur.scope.adv & "' is implicit)")
+    binderAdvs.add(ccur.scope.adv)
+    binderDoms.add(ccur.dom)
+    ccur = ccur.scope.bdy
+  if binderAdvs.len == 0:
+    raise elabErr(vd.vloc, "'view': covering function '" & vd.coverName &
+      "' must have type (x : T) -> " & vd.vname & " x")
+  # The scrutinee binder's domain must have the `over` type's head.
+  var dh = binderDoms[^1]
+  while dh.kind == tApp: dh = dh.fn
+  let dhn = if dh.kind == tR: ms.refNames.getOrDefault(dh.refId, "") else: ""
+  if dhn != scrutHead:
+    raise elabErr(vd.vloc, "'view': the covering function's scrutinee " &
+      "argument does not have the 'over' type '" & scrutHead & "'")
+  # The codomain must be `Fam s p1..pn`: head is the view family and the
+  # arguments are exactly the binders — the scrutinee (innermost binder,
+  # de Bruijn index 0) first, then the parameter binders outermost-first.
+  var cargs: seq[Term] = @[]
+  var ch = ccur
+  while ch.kind == tApp:
+    cargs.add(ch.arg)
+    ch = ch.fn
+  let k = binderAdvs.len
+  let hn = if ch.kind == tR: ms.refNames.getOrDefault(ch.refId, "") else: ""
+  # cargs collects innermost-first, so the i-th applied argument is
+  # cargs[k-1-i]; it must be the binder of de Bruijn index
+  # (0 for i = 0, else k-i).
+  var shapeOk = hn == vd.vname and cargs.len == k
+  if shapeOk:
+    for i in 0 ..< k:
+      let a = cargs[k - 1 - i]
+      let wantIdx = if i == 0: 0 else: k - i
+      if a.kind != tV or a.idx != wantIdx:
+        shapeOk = false
+        break
+  if not shapeOk:
+    raise elabErr(vd.vloc, "'view': covering function '" & vd.coverName &
+      "' must have type (p1 : P1) -> ... -> (s : S) -> " & vd.vname &
+      " s p1 ... pn — the view family applied to the scrutinee, then the " &
+      "parameters in order (the covering obligation: cover maps each " &
+      "scrutinee to its view)")
   viewInfos[vd.vname] = ViewInfo(vname: vd.vname, scrutHead: scrutHead,
-                                 coverName: vd.coverName)
+                                 coverName: vd.coverName, nParams: k - 1)
 
 proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
               ms: var MetaStore,

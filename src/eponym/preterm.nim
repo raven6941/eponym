@@ -269,7 +269,9 @@ type
     ## family `Fam` (a `data` declaration indexed by the forgetful
     ## operation's result) as a faithful discrimination principle for the
     ## scrutinee type `T`, with `coverFn : (x : T) -> Fam x` the covering
-    ## function. View-pattern clauses (`| x [Fam] pat = rhs`) elaborate by
+    ## function. Parameterized views take parameters before the scrutinee:
+    ## `coverFn : (p1 : P1) -> ... -> (x : T) -> Fam x p1..pn` (McBride's
+    ## BoundCheck). View-pattern clauses (`| x [Fam] pat = rhs`) elaborate by
     ## covering the scrutinee and eliminating the view family with #32's
     ## clause-matrix machinery, of which constructor clauses are the
     ## identity-covering special case.
@@ -280,10 +282,14 @@ type
   ViewInfo* = object
     ## Issue #44: a registered `view` declaration, kept in a `viewInfos`
     ## table carried alongside `dataInfos`. The clause compiler consults it
-    ## to desugar `| x [Fam] pat = rhs` view clauses.
+    ## to desugar `| x [Fam] pat = rhs` view clauses. Parameterized views
+    ## (McBride's BoundCheck): the cover takes `nParams` parameters before
+    ## the scrutinee, `(p1 : P1) -> ... -> (s : S) -> Fam s p1..pn`;
+    ## `nParams` is 0 for the unparameterized case.
     vname*: string     # the view family (a data decl in dataInfos)
     scrutHead*: string # head name of the `over` type (e.g. "Nat")
     coverName*: string # the covering function (a global)
+    nParams*: int      # cover parameters preceding the scrutinee (#44)
   SurfDecl* = object
     ## A top-level declaration (Experiment 4 adds postulate/elim/red;
     ## Experiment 5 adds data; issue #32 adds clauses; issue #49 adds import).

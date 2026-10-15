@@ -1,0 +1,24 @@
+# Issue #44: parameterized view plumbing (nParams = 1). A degenerate
+# single-constructor family indexed by scrutinee-then-parameter; the cover
+# takes the parameter before the scrutinee. The real demo is the BoundCheck
+# trichotomy (open); this guards the desugar path: the inner def gets
+# (v : Fam s p1..pn) after the scrutinee, and the wrapper applies the cover
+# to the parameter then the scrutinee.
+import "../../lib/nat.ep"
+
+data Triv : Nat -> Nat -> ? where
+| triv (m : Nat) (b : Nat) : Triv m b
+
+proc trivCover (b : Nat) (m : Nat) : Triv m b = triv m b
+
+view Triv over Nat with trivCover
+
+def constVia : Nat -> Nat -> Nat
+| b m [Triv] (triv m' b') = b
+
+import "../../lib/eq.ep"
+
+# Computation: the wrapper really applies the cover to (b, m).
+proc t1 : Nat = constVia (suc zero) (suc (suc zero))
+proc constViaComp : Eq Nat (constVia (suc zero) zero) (suc zero) =
+  refl Nat (suc zero)
