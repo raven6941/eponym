@@ -2984,111 +2984,40 @@
   52 files elaborate cleanly on both sides, failed=0).
   Status: CLOSED via #219.
 
-* 2026-10-15 — Universe hierarchy: explicit `Type l` + cumulativity lands as an experiment; `?` stays (issue #52)
+* 2026-10-15 — #56: pre-unification — suspend non-pattern goals instead of failing
 
-  Context: the core was `? : ?` (Type-in-Type, known-inconsistent). Issue
-  #185's trust-model doc states this publicly as a *documented deferral*
-  ("don't write Girard's paradox") and is the release story; #52 stays
-  open as the tracked experiment measuring what a hierarchy costs. The
-  #52 issue body asks for explicit level literals first (level inference
-  is a follow-up), Pi/Sigma formation at max levels, cumulativity in
-  conversion, a corpus, and this decision record.
-  Options considered: (a) explicit level literals `Type l` — chosen for
-  the experiment: no inference machinery, the level discipline is fully
-  visible, and the cost measured is the hierarchy's, not the solver's;
-  (b) Agda-style level inference / metavariable levels — deferred: it
-  needs a constraint solver over levels interacting with the existing
-  term metavariables, a separate experiment; (c) Coq-style typical
-  ambiguity with constraint generation — deferred for the same reason,
-  plus it would hide the very levels the experiment wants to observe.
-  Decision: (a). Core (=eponym_init=): new `tType`/`wType` nodes,
-  `Type l : Type (l+1)`, Pi/Sigma formation at
-  `max(univIdx(infer dom), univIdx(infer cod))`, cumulativity directional
-  in `check` (`Type i <= Type j` for `i <= j` at ascription points;
-  conversion itself stays level-strict). The legacy `?` keeps its
-  Type-in-Type behaviour and bridges both ways: convertible with
-  `Type 0` (bottom universe) in `structuralEq`, and the top sort in
-  "is a type" positions. Full retirement of `?` is a follow-up decision,
-  not this issue. Surface: `Type` is a *contextual* keyword — `Type l`
-  parses to `pkUnivN` only when directly followed by an integer literal
-  (`1` lexes as the unit type, so the parser accepts `tkUnitTy("1")` as
-  level 1, the same escape hatch as #158); bare `Type` stays an ordinary
-  identifier. Elaborator: `pkUnivN` infers `(Type l, Type (l+1))`;
-  Pi/Sigma formation computes levels via `univLevelOfTy` (close the
-  elaborated domain/codomain over the context with rigid refs, ask the
-  core `infer` — now exported — for the classifier, `univIdx` it;
-  unclassifiable terms stay 0); `convElab` has a cumulativity fast path
-  before the handler stack (subtyping, not an equality handlers should
-  see); the three "ascribed type must be a type" sites
-  (`elabDefDecl`/`elabPostulateDecl`/`elabCommandDecl`) accept any
-  universe via `ensureIsUniverse` instead of unifying the classifier
-  with `?` (holes keep the legacy unify path).
-  Consequences: the hierarchy is *additive* — every existing `?` program
-  elaborates exactly as before (the `?`/Type-0 bridge keeps
-  `?`-classified Pis definitionally at level 0). Cost measured: one
-  core `infer` per Pi/Sigma domain+codomain at elaboration time
-  (syntax-directed, no search); cumulativity is O(1) level comparison in
-  `convElab`. Corpus in the `elab` module suite: `data Nat : Type 0`,
-  `polyId` over `Type 0`, `Nat -> Nat : Type 0`, `Type 0 : Type 1`
-  (cumulativity), `Pi (A : Type 0). A -> A : Type 1` (formation level);
-  rejections: `Type 0` against `Type 0`, `Type 1` against `Type 0`,
-  level-1 Pi against `Type 0`. Two Nim gotchas hit while threading:
-  (1) `Whnf.c` (the `wConst` payload) was not exported, so the
-  elaborator couldn't read it — fixed by exporting the field;
-  (2) `Type 1` didn't parse because `1` lexes as the unit type
-  (`tkUnitTy`), not `tkInt` — the parser now accepts both, mirroring
-  the quantity-annotation site. Status: OPEN (branch =exp52-universe=).
-
-* 2026-10-15 — Issue #42: mutual recursion via size-change termination (SCT)
-
-  The issue proposed "accept iff every cycle in the call graph contains a
-  decreasing edge". That criterion is UNSOUND. Counterexample:
-    mutual
-    def f : Nat -> Bool | (suc n) = g n
-    def g : Nat -> Bool | (suc m) = f (suc (suc zero))
-  loops forever (f (suc (suc zero)) -> g (suc zero) -> f (suc (suc zero))),
-  yet the f->g edge "decreases" (n is a subterm). The decrease must
-  *thread through* the cycle — g discards its decreased argument and calls
-  f on a constant — so a per-edge test cannot work. The mechanism was
-  replaced by proper size-change termination (Lee/Jones/Ben-Amram):
-  per-call-site graphs with arcs from caller formals (0 = scrutinee) to
-  callee formals, strict (<) for strict-subterm args, non-strict (<=) for
-  the formal itself; closure under composition; every composed self-loop
-  needs a strict self-arc. The counterexample is rejected; the
-  decrease-then-pass-through shape (a->b strict, b->a <=) is accepted.
-
-  Surface syntax: a =mutual= block of clause-style =def=s. Elaboration:
-  (1) compile each def's clauses to a SurfDef (pure PreTerm work);
-  (2) SCT check over call sites, fail-fast before any elaboration;
-  (3) forward-declare every name as an opaque R node (postulate-like);
-  (4) elaborate each body with all siblings in scope, kernel-check it,
-  then *tie the knot* by flipping the R node (refIsDefn=true, refVal
-  filled). Soundness: bodies check with siblings opaque (conservative —
-  opacity only removes reductions), and clause-def bodies are lambda
-  nests so filling needs no unfolding. even/odd computes: even 4 = true,
-  odd 4 = false, even 3 = false, odd 3 = true.
-
-  Design points: (a) arcs track strict subterms per formal (scrutinee and
-  rest formals), not just the scrutinee column — a rest-column variable is
-  NOT a subterm (would be unsound, cf. the badm m n shape); (b) shadowing
-  binders are tracked in the call-site walk so a shadowed head is not
-  recorded as a global call; (c) self-calls in a mutual block still go
-  through the #36 per-def check (IH rewriting + checkClauseTermination),
-  which fires before SCT with the more precise error — SCT's self-loop
-  detection is subsumed there but kept in the core and unit-tested;
-  (d) =mutual= block types may reference earlier siblings or globals
-  only (forward declarations are sequential); bodies may reference any
-  sibling. Limitation (MVP): clause-style defs only.
-
-  Corpus (in elab.nim self-test): 4 accepted (even/odd, even/odd computes,
-  mixed strict/<= pair), 3 rejected (ping-pong with named cycle
-  "ping -> pong -> ping", decrease-then-constant with "f -> g -> f",
-  growing self-loop via the #36 check). #36 corpus unchanged
-  (10 accepted, 8 rejected). Unit tests: 10 SCT graph cases in
-  tests/test_mutual_termination.nim (in the CI matrix).
-
-  Performance: the SCT closure is over tiny graphs (functions x formals);
-  measured: the whole mutual corpus (4 accepted — including even/odd
-  elaborated and evaluated to even 4 = true — 3 rejected) elaborates in
-  0.029s wall-clock (2026-10-15, this VM). The check runs once per mutual
-  block at elaboration time, far off any hot path; elaboration dominates.
+  Context: the unifier implemented only the Miller pattern fragment; a
+  non-pattern spine (`?m[V0,V0]`, non-variable spine entries) or an
+  escaping variable raised immediately — a completeness cliff for real
+  programs (flex-flex goals with unsolved heads, non-linear spines from
+  implicit insertion).
+  Decision: Agda/Norell/McBride-style pre-unification. `solveMeta`
+  suspends (rather than raising) on the two non-pattern cases; each
+  `DeferredGoal` holds the zonked goal pair plus the unsolved meta ids
+  it is blocked on. `retryDeferred` wakes goals when a blocking meta is
+  assigned; `flushDeferred` (wired into the declaration-final zonk
+  points in `elabDefDecl`/`elabPostulateDecl`/red-contractum/command
+  decls) re-runs leftovers once and reports them as an ambiguity error
+  showing the stuck constraint. The occurs check stays a hard failure
+  (a cycle can never resolve); rigid-rigid mismatches stay hard
+  (positive evidence of inequality). Hole-tolerant tooling mode leaves
+  suspended goals pending.
+  Consequences: new `DeferredGoal` on `MetaStore`; `spinePerm` /
+  `tryRenameAt` replace the raising `invertSpine` in `solveMeta`
+  (non-raising variants, so no message-sniffing control flow);
+  `pbt_unify` P5 now pins suspend-then-flush-ambiguity and `tryUnify`
+  flushes (a mere suspension is not success); P1/P3 unaffected (flush
+  preserves solve-then-zonk agreement and symmetry on the generator's
+  pattern-spine cases). Overhead is pay-as-you-go by mechanism: the
+  pattern path is unchanged (one extra tuple return), `retryDeferred`
+  scans an empty seq per meta assignment when nothing is suspended,
+  and deferral work happens only on goals that previously raised.
+  Measured on `tests/run_examples` (examples/.ep corpus, 5 interleaved
+  runs each, prebuilt CI binaries): branch median 5603ms vs main
+  median 5250ms (~6.7% slower). Caveat: within-config spread is
+  ~300-400ms and parallel worker runs were compiling on the same
+  machine during the measurement, so this number is noisy — the
+  mechanism analysis (no new work on the pattern path) is the stronger
+  claim. Recorded 2026-10-15; re-measure on a quiet machine before
+  treating the 6.7% as real.
+  Status: CLOSED via #217 (squash-merge 2026-10-15).
