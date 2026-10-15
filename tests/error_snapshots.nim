@@ -44,6 +44,7 @@ const cases: seq[Case] = @[
   ("examples/ep/25c-clause-nested-overlap-neg.ep", "clauses: nested overlap"),
   ("examples/ep/25d-clause-nested-missing-neg.ep", "clauses: missing case"),
   # Dedicated fixtures for failure modes the example set did not cover.
+  ("tests/error_snapshots/cases/ann-mismatch-neg.ep", "conversion: ascription mismatch names both program points"),
   ("tests/error_snapshots/cases/scope-unbound-neg.ep", "scope: unbound variable"),
   ("tests/error_snapshots/cases/arity-mismatch-neg.ep", "application: too many arguments"),
   ("tests/error_snapshots/cases/unsolved-meta-neg.ep", "metavariable: unsolved hole"),

@@ -1,0 +1,1 @@
+line 5, col 4: inferred type 1 does not match expected type O (expected type written at line 5, col 9): not convertible (constant mismatch)
