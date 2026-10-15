@@ -2998,3 +2998,78 @@
   (2) `Type 1` didn't parse because `1` lexes as the unit type
   (`tkUnitTy`), not `tkInt` — the parser now accepts both, mirroring
   the quantity-annotation site. Status: OPEN (branch =exp52-universe=).
+
+* 2026-10-15 — Issue #84: quantity inference for unannotated binders (usage-driven 0/ω, never 1)
+
+  Context: #66 made QTT the core theory but quantities were hand-annotated
+  (`(0 x : T)`); unannotated binders defaulted to blanket qOmega. Idris 2
+  infers quantities by usage analysis — Eponym should too: infer the most
+  general (principal) quantity consistent with observed usage, with explicit
+  annotations overriding. Interacts with #64 (affinity hole) — usage
+  analysis is the shared mechanism.
+  Decision: unannotated binders parse to fresh quantity variables
+  (`#q<N>`, `#` is not an identifier char so they cannot collide with
+  user-written names); `enforceBinderQty` solves them from the use count —
+  0 relevant uses -> q0 (erasure), otherwise -> qOmega — and never q1.
+  Explicit annotations (0/1/named qvar) override; user-written qvars keep
+  the full 0/1/many rule.
+  Usage-counting rules (usage_check.countVarUses, mirrors the #64
+  post-pass): count free occurrences of de Bruijn index 0 in *term
+  positions*. Binder domains and type annotations (tLam/tPi/tSi doms,
+  tLet letTy) are not descended into — in QTT, types are checked in the
+  all-0 context, so a type-level mention neither consumes a linear
+  variable nor violates erasure. Under binders: depth-tracked, so an
+  occurrence under an inner binder counts only for the innermost one.
+  Eliminator motives: motives are types elaborated in the all-0 context;
+  occurrences inside them are type positions and do not count (same rule
+  as domains). Unsolved metas: a body that still mentions metas after
+  zonking cannot be counted reliably (a hole may later solve to a use),
+  so the variable is left unsolved and keeps the conservative qOmega
+  default via zonkQty — the post-pass cannot re-check it either (its
+  binder carries qOmega), which is sound: qOmega admits any usage; only
+  erasure/linearity *precision* is lost, never correctness.
+  Meta-deferral rule: solve eagerly when the zonked body is meta-free;
+  otherwise conservatively default qOmega and do NOT re-check after
+  solving. "Inferred 0 but a relevant occurrence appears after solving"
+  is unreachable by construction: q0 is only solved from a meta-free
+  body, and a meta-free body cannot gain occurrences later (substitution
+  and unification never introduce new occurrences of the binder).
+  Why inferred qvars never infer q1: the kernel (#66) converts Pi binder
+  quantities *exactly*, so an inferred q1 would not convert against the
+  qOmega positions the existing corpus was written with (e.g. an inferred
+  `Pi (x:A)[q1]. A` against `vmap`'s `Pi (x:A)[qOmega]. A` domain).
+  Linearity inference is future work, pending either kernel quantity
+  subsumption or a quantity-precise corpus. Consequence, measured on the
+  corpus: all 20 manual quantity annotations are `(1 ...)` (9 in
+  examples/ep, 11 in lib/ postulates) and stay required — linearity is
+  never inferred, and postulates have no bodies to infer from. Stripping
+  the example-level `(1 ...)` annotations breaks 3 of 7 neg-example
+  rejection contracts outright (the rest still fail on types or via lib
+  postulate linearity). Zero `(0 ...)`/`(ω ...)` annotations exist or are
+  needed: inference covers them, and previously-blanket-ω unused binders
+  now properly infer q0 (e.g. `proc k (A : ?) (x : A) : N = n0` elaborates
+  with type `Pi[q0](A). Pi[q0](x). N`).
+  Quantity-first elaboration order (elabDefDecl): when the ascribed type
+  and body share a quantity variable — the proc-telescope case, where
+  desugarTy/desugarTm build both from the same tele entries — infer the
+  body first (solving the shared variables from usage), then elaborate
+  the type, then convert. Checking-mode-first would leave the type's
+  qvars unsolved (nothing to inherit from). `by`-tactic and
+  integer-literal bodies fall back to the checking order (they need an
+  expected type). Reconciliation (reconcileInferredQty, before zonking)
+  walks the ascribed/inferred/body-surface/body-term spines in parallel:
+  (a) ascribed qvar — solveQVar from the inference (shared telescope
+  variables agree by construction; an unshared one, i.e. an unannotated
+  binder written only in the ascribed type, is solved positionally:
+  "unannotated" means "infer" wherever written); (b) ascribed qOmega —
+  never conflicts (it is the don't-care quantity; `A -> B` desugars to an
+  omega Pi), so an inferred q0 widens to qOmega in term and type — this
+  keeps `N -> N` accepting ignoring bodies exactly as on main (the
+  kernel's checking rule ignores lambda/Pi quantities; only the
+  elaborator's exact conversion needs agreement); (c) ascribed explicit
+  0/1 disagreeing with the inference — an error naming the binder and
+  the usage sites (source locations collected from the surface body by
+  collectBinderUseLocs, mirroring countVarUses's term positions with
+  shadowing by binder-node identity), replacing the generic conversion
+  "quantity mismatch" whose printed types do not even show quantities.
+  Status: OPEN (branch =exp84-qty-infer=).

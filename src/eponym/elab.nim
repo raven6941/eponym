@@ -1385,6 +1385,65 @@ proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
     return
   enforceQtyCount(qty.q, body, loc, name, ms)
 
+proc reconcileInferredQty(tyPre, tmPre: PreTerm, tmT0, tmTy: Term,
+                          ms: var MetaStore) =
+  ## Issue #84: reconcile the quantity-first inference with the ascribed
+  ## type before either is zonked. Walks four spines in parallel — the
+  ## ascribed type (pkPi), the inferred type (tPi), the body surface
+  ## (pkLam, for usage-site locations) and the elaborated body (tLam) —
+  ## which mirror each other while the walk advances; anything else (arity
+  ## or non-quantity mismatch) falls through to the generic conversion
+  ## check.
+  ## - Ascribed quantity variable: solve it from the inference
+  ##   (solveQVar). A variable the body's inference already solved
+  ##   (telescope binders share theirs with the body) agrees by
+  ##   construction, so this is a no-op; an unsolved one — an unannotated
+  ##   binder written only in the ascribed type — is solved positionally
+  ##   ("unannotated" means "infer", wherever the binder is written). A
+  ##   genuine conflict raises solveQVar's error.
+  ## - Ascribed qOmega: never conflicts — it is the "don't care" quantity
+  ##   (`A -> B` desugars to an omega Pi). An inferred q0 is widened to
+  ##   qOmega in both the term and the inferred type, so `N -> N` keeps
+  ##   accepting bodies that ignore the argument, exactly as on main (the
+  ##   kernel's checking rule ignores lambda/Pi quantities; only the
+  ##   elaborator's exact conversion needs them to agree).
+  ## - Ascribed explicit 0/1 disagreeing with the inference: an error naming
+  ##   the binder and the usage sites that forced the inference — instead
+  ##   of the generic conversion "quantity mismatch", whose printed types
+  ##   do not even show binder quantities.
+  var tp = tyPre
+  var tt = tmTy
+  var bp = tmPre
+  var bt = tmT0
+  while tp.kind == pkPi and tt.kind == tPi and
+        bp.kind == pkLam and bt.kind == tLam:
+    if tp.qty.isVar:
+      solveQVar(ms, tp.qty.vname, tt.qty, tp.loc)
+    elif tp.qty.q == qOmega:
+      if tt.qty == q0:
+        bt.qty = qOmega
+        tt.qty = qOmega
+    elif tp.qty.q != tt.qty:
+      let uses = collectBinderUseLocs(bp.c2, bp)
+      let useMsg =
+        if uses.len == 0: "the body never uses '" & bp.name & "'"
+        else: "the body uses '" & bp.name & "' " & $uses.len & " time(s) at " &
+          uses[0 ..< min(uses.len, 5)].mapIt("line " & $it.line &
+            ", col " & $it.col).join("; ") &
+          (if uses.len > 5: "; and " & $(uses.len - 5) & " more" else: "")
+      raise elabErr(tp.loc,
+        "quantity mismatch for binder '" & bp.name & "': the ascribed type " &
+        "requires quantity " & $tp.qty.q & ", but " & useMsg &
+        ", inferring quantity " & $tt.qty &
+        " (unannotated binders infer 0 when unused, \u03c9 otherwise; " &
+        "quantity 1 is never inferred \u2014 to demand linearity, annotate " &
+        "the body's binder explicitly, e.g. `lam (1 " & bp.name &
+        " : T). \u2026`)")
+    tp = tp.c2
+    tt = tt.scope.bdy
+    bp = bp.c2
+    bt = bt.scope.bdy
+
 proc checkErasedArgWalk(t: Term, depth: int, ctx: Ctx, loc: Loc,
                         ms: var MetaStore,
                         pending: var seq[tuple[vname, varName: string, loc: Loc]]) =
@@ -1977,6 +2036,12 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   if qtyFirst:
     let inferred = inferTm(tmPre, @[], globals, ms, supply, ab)
     tmT0 = inferred.tm
+    # Issue #84: reconcile the inference with the ascribed type before
+    # zonking (zonk rebuilds binder nodes, so widening must happen here):
+    # solve unshared ascribed quantity variables positionally, widen
+    # inferred q0 to an ascribed qOmega, and report explicit-quantity
+    # conflicts with the binder named and the usage sites.
+    reconcileInferredQty(tyPre, tmPre, tmT0, inferred.ty, ms)
     tmTy0 = zonk(ms, inferred.ty)
   let (tyTm0, tyTy) = inferTm(tyPre, @[], globals, ms, supply, ab)
   ensureIsUniverse(ms, supply, tyTy, d.loc, "the type of '" & d.name & "'")
@@ -2000,6 +2065,8 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   if qtyFirst:
     # Issue #46: the expected type is the elaboration of tyPre, so its
     # source location is the expected-type origin for the error message.
+    # (Issue #84: inferred/ascribed quantity reconciliation already ran
+    # above, before zonking.)
     discard convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals, tmC(cStar), tyPre.loc)
   else:
     # Issue #46: the expected type is the elaboration of tyPre, so its
@@ -4951,6 +5018,66 @@ proc qconfTy : N =
   f (g n0)
 """, "requires quantity")
   echo "ok: checking-mode quantity mismatches rejected (#66)"
+
+  # --- Issue #84: quantity-first reconciliation ------------------------
+  # Unannotated binders parse to fresh quantity variables; in the
+  # quantity-first order the body's inference solves them (0 uses -> q0,
+  # otherwise -> qOmega, never q1) and the ascribed type is reconciled
+  # against the inference before the generic conversion check.
+  # An unshared ascribed quantity variable (unannotated binder written only
+  # in the ascribed type) is solved positionally from the inference.
+  let q84Pos = elabCheck("""
+postulate N : ?
+postulate n0 : N
+proc p (A : ?) : Pi (x : A). N = lam (x : A). n0
+""")
+  let pTy = q84Pos[^1].tyTm
+  assert pTy.kind == tPi and pTy.scope.bdy.kind == tPi
+  assert pTy.scope.bdy.qty == q0
+  echo "ok: unshared ascribed quantity variable solved positionally (#84)"
+  # Ascribed qOmega never conflicts: `A -> B` desugars to an omega Pi, and
+  # an inferred q0 widens to it (no regression vs main, where the body
+  # inherited omega in checking mode).
+  discard elabCheck("""
+postulate N : ?
+postulate n0 : N
+proc w (A : ?) : N -> N = lam (x : N). n0
+""")
+  echo "ok: inferred q0 widens to ascribed qOmega (#84)"
+  # Plain inference: unused binders infer q0, used binders qOmega.
+  let q84Inf = elabCheck("""
+postulate N : ?
+postulate n0 : N
+proc k (A : ?) (x : A) : N = n0
+proc u (A : ?) (x : A) : A = x
+""")
+  let kTy = q84Inf[^2].tyTm
+  assert kTy.kind == tPi and kTy.qty == q0
+  assert kTy.scope.bdy.kind == tPi and kTy.scope.bdy.qty == q0
+  let uTy = q84Inf[^1].tyTm
+  assert uTy.kind == tPi and uTy.qty == q0
+  assert uTy.scope.bdy.kind == tPi and uTy.scope.bdy.qty == qOmega
+  echo "ok: unannotated binders infer 0 when unused, omega otherwise (#84)"
+  # An explicit ascribed 0/1 disagreeing with the inference is an error
+  # naming the binder and the usage sites that forced the inference.
+  expectElabErr("""
+postulate N : ?
+proc h2 (A : ?) : Pi (0 x : A). A = lam (x : A). x
+""", "quantity mismatch for binder 'x'")
+  expectElabErr("""
+postulate N : ?
+proc h2 (A : ?) : Pi (0 x : A). A = lam (x : A). x
+""", "the body uses 'x' 1 time(s) at line 2")
+  expectElabErr("""
+postulate N : ?
+postulate n0 : N
+proc g2 (A : ?) : Pi (1 x : A). N = lam (x : A). n0
+""", "the body never uses 'x', inferring quantity q0")
+  expectElabErr("""
+postulate N : ?
+proc g (A : ?) : Pi (1 x : A). A = lam (x : A). x
+""", "quantity 1 is never inferred")
+  echo "ok: inferred/ascribed quantity conflicts name binder and use sites (#84)"
 
   # --- Experiment 41: conversion cache as a scoped handler ---------
   # The Experiment 10 cache is no longer a global switch: it is probed
