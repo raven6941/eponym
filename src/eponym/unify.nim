@@ -371,7 +371,7 @@ proc zonk*(ms: MetaStore, t: Term): Term =
         let sp = t.metaSpine.mapIt(zonk(ms, it))
         if e.solution.isNil: tmMeta(t.metaId, sp)
         else: zonk(ms, substSpine(e.solution, sp))
-      of tV, tR, tC, tInt, tPrim, tNatLit: t
+      of tV, tR, tC, tType, tInt, tPrim, tNatLit: t
       of tPi, tSi, tLam:
         # Issue #177: pegs are NOT zonked here. The core ignores pegs, and
         # use sites (instPeg/unifyAbilitiesSym) zonk them on demand; zonking
@@ -403,7 +403,7 @@ proc findUnsolved*(ms: MetaStore, t: Term): tuple[found: bool, id: int, loc: Loc
       let r = findUnsolved(ms, s)
       if r.found: return r
     (false, 0, noLoc)
-  of tV, tR, tC, tInt, tPrim, tNatLit: (false, 0, noLoc)
+  of tV, tR, tC, tType, tInt, tPrim, tNatLit: (false, 0, noLoc)
   of tPi, tSi, tLam:
     let r = findUnsolved(ms, t.dom)
     if r.found: r else: findUnsolved(ms, t.scope.bdy)
@@ -432,7 +432,7 @@ proc occursSyn(id: int, t: Term): bool =
   of tMeta:
     if t.metaId == id: return true
     t.metaSpine.anyIt(occursSyn(id, it))
-  of tV, tR, tC, tInt, tPrim, tNatLit: false
+  of tV, tR, tC, tType, tInt, tPrim, tNatLit: false
   of tPi, tSi, tLam:
     occursSyn(id, t.dom) or occursSyn(id, t.scope.bdy)
   of tPair:
@@ -466,7 +466,7 @@ proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
       if j < inv.len and inv[j] >= 0: vv(inv[j] + depth)
       else: raise uerr(loc,
         "cannot solve metavariable: variable V" & $t.idx & " escapes the spine")
-  of tR, tC, tInt, tPrim, tNatLit: t
+  of tR, tC, tType, tInt, tPrim, tNatLit: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(renameAt(it, inv, depth, n, loc)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, renameAt(t.dom, inv, depth, n, loc),
@@ -545,6 +545,12 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
     if b1.kind == tLam and a1.kind in {tR, tV, tApp, tFst, tSnd}:
       unify(ms, tmApp(weaken(a1), vv(0)), b1.scope.bdy, loc)
       return
+    ## Issue #52: the legacy `?` unifies with `Type 0` (both the bottom
+    ## universe); the stratified hierarchy above stays strict.
+    if a1.kind == tC and a1.c == cStar and b1.kind == tType and b1.lvl == 0:
+      return
+    if b1.kind == tC and b1.c == cStar and a1.kind == tType and a1.lvl == 0:
+      return
     # Issue #80: named noConfusion — distinct constructors of one datatype
     # (e.g. `zero =?= suc n`, which used to report "cannot unify tR with
     # tApp") fail fast with the constructors named.
@@ -556,6 +562,10 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
   case a1.kind
   of tC:
     if a1.c != b1.c: raise uerr(loc, "constant mismatch")
+  of tType:
+    ## Issue #52: universes unify by level (cumulativity is directional
+    ## and lives in check/convElab, not in unification).
+    if a1.lvl != b1.lvl: raise uerr(loc, "universe level mismatch")
   of tInt:
     if a1.intVal != b1.intVal: raise uerr(loc, "integer mismatch")
   of tNatLit:
