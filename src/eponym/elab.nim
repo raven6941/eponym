@@ -1366,7 +1366,21 @@ proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
     # then keeps its default (qOmega, see zonkQty).
     if hasUnresolvedMetas(zb): return
     let n = countVarUses(zb)
-    solveQVar(ms, qty.vname, (if n == 0: q0 elif n == 1: q1 else: qOmega), loc)
+    # Issue #84 (conservative inference): a `#q`-prefixed variable is an
+    # *inferred default* (unannotated binder, see parse_surf.parseBinder),
+    # not a user-written `(q x : A)`. Inferred defaults solve 0 -> q0
+    # (erasure) and otherwise -> qOmega. They never solve to q1: the
+    # kernel (#66) converts Pi binder quantities exactly, so an inferred
+    # q1 would not convert against the qOmega positions the existing
+    # corpus was written with (e.g. `myid A : Pi (x:A)[q1]. A` against
+    # `vmap`'s `Pi (x:A)[qOmega]. A` domain). Linearity inference (q1) is
+    # future work, pending either kernel quantity subsumption or a
+    # quantity-precise corpus. User-written qvars keep the full rule.
+    let inferred = if n == 0: q0
+                   elif qty.vname.len > 2 and qty.vname[0 .. 1] == "#q": qOmega
+                   elif n == 1: q1
+                   else: qOmega
+    solveQVar(ms, qty.vname, inferred, loc)
     flushQvarPending(ms, qty.vname)
     return
   enforceQtyCount(qty.q, body, loc, name, ms)
@@ -1735,9 +1749,11 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
       of pkLet:
         let (v, vty) =
           if pre.c1.isNil: inferTm(pre.c2, ctx, globals, ms, supply, ab)
-          elif pretermHasQtyVar(pre.c1):
-            # Issue #66: quantity variables in the annotation are solved from
-            # the value; infer the value first, then elaborate the annotation.
+          elif sharesQtyVar(pre.c1, pre.c2):
+            # Issue #66/#84: quantity variables in the annotation are solved
+            # from the value (shared variable names); infer the value first,
+            # then elaborate the annotation. With disjoint variables there
+            # is nothing to solve, so keep the normal order.
             let (vi, vtyi) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
             let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
             discard convElab(ms, supply, vtyi, aty, pre.loc, ctx, globals, tmC(cStar))
@@ -1748,9 +1764,10 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
         let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply, ab)
         (tmLet(v, vty, pre.name, b), subst(bty, 0, v))
       of pkAnn:
-        if pretermHasQtyVar(pre.c2):
-          # Issue #66: as for pkLet above — infer the term first so quantity
-          # variables in the ascribed type are solved before it elaborates.
+        if sharesQtyVar(pre.c2, pre.c1):
+          # Issue #66/#84: as for pkLet above — infer the term first so
+          # quantity variables shared with the ascribed type are solved
+          # before it elaborates.
           let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
           let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
           # Issue #46: the expected type is the elaboration of pre.c2, so its
@@ -1865,9 +1882,9 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply, ab)
           unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
           tmLet(v, vty, pre.name, b)
-        elif pretermHasQtyVar(pre.c1):
-          # Issue #66: quantity variables in the annotation are solved from
-          # the value; infer the value first, then elaborate the annotation.
+        elif sharesQtyVar(pre.c1, pre.c2):
+          # Issue #66/#84: quantity variables shared with the annotation
+          # are solved from the value; infer the value first.
           let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
           let aty = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
           discard convElab(ms, supply, vty, aty, pre.loc, ctx, globals, tmC(cStar), pre.c1.loc)
@@ -1881,9 +1898,10 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
           tmLet(v, aty, pre.name, b)
       of pkAnn:
-        if pretermHasQtyVar(pre.c2):
-          # Issue #66: as for pkLet above — infer the term first so quantity
-          # variables in the ascribed type are solved before it elaborates.
+        if sharesQtyVar(pre.c2, pre.c1):
+          # Issue #66/#84: as for pkLet above — infer the term first so
+          # quantity variables shared with the ascribed type are solved
+          # before it elaborates.
           let (t, tty) = inferTm(pre.c1, ctx, globals, ms, supply, ab)
           let ty = checkTm(pre.c2, ctx, globals, ms, supply, tmC(cStar), ab)
           # Issue #46: the expected type is the elaboration of pre.c2, so its
@@ -1944,15 +1962,16 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   # 1. elaborate the type; it must be a type and contain no metas
   let tyPre = d.desugarTy()
   let tmPre = d.desugarTm()
-  # Issue #66: quantity variables in the ascribed type are solved from the
-  # body's binders, so when the type mentions one, elaborate the body first
-  # (inference), then the type (variables solved by then), then check the
-  # inferred body type against the ascribed type. Otherwise the usual
-  # order: elaborate the type, then check the body against it.
+  # Issue #84: quantity-first elaboration (infer the body, solving shared
+  # quantity variables from usage, then elaborate the type) applies only
+  # when the type and body share a variable — the proc-telescope case —
+  # and the body is inferrable. Otherwise the usual order: elaborate the
+  # type, then check the body against it (unannotated binders inherit
+  # quantities from the expected type; `by`/literal bodies need checking).
   # (The quantity-first order cannot use checking-only constructs: a `by`
   # tactic body or an integer literal needing Nat from the expected type
   # raises the usual "requires an expected type" error.)
-  let qtyFirst = pretermHasQtyVar(tyPre)
+  let qtyFirst = sharesQtyVar(tyPre, tmPre) and not bodyNeedsCheck(tmPre)
   var tmT0: Term
   var tmTy0: Term
   if qtyFirst:

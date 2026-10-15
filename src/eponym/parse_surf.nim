@@ -94,6 +94,8 @@ type
   Parser = object
     toks: seq[Token]
     pos: int
+    qvarCount: int  # Issue #84: fresh quantity-variable supply for
+                    # unannotated binders (default is inference, not qOmega)
   ParseError* = object of CatchableError
     loc*: Loc
 
@@ -250,7 +252,14 @@ proc parseBinder(p: var Parser): tuple[name: string, ty: PreTerm, impl: bool, er
   if not impl and t.kind != tkLParen:
     raise fail(t.loc, "expected '(' or '{', got '" & t.lexeme & "'")
   var erased = false
-  var qty: Qty = qOmega
+  # Issue #84: an unannotated binder defaults to quantity *inference* (a
+  # fresh quantity variable, solved from the bound variable's uses:
+  # 0 -> q0, 1 -> q1, 2+ -> qOmega), not to concrete qOmega. Explicit
+  # annotations (`0` / `1` / a named quantity variable) override. The `#`
+  # prefix is not a legal identifier character (see isIdentChar), so a
+  # generated name can never collide with a user-written quantity variable.
+  var qty: Qty = qtyVar("#q" & $p.qvarCount)
+  inc p.qvarCount
   # Note: "1" lexes as tkUnitTy (unit type), not tkInt; "0" lexes as tkInt.
   # Accept both for quantity annotations.
   let pk = p.peek()
