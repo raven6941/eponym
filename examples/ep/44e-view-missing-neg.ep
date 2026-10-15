@@ -1,0 +1,32 @@
+# Issue #44, negative test: coverage checking for view patterns.
+# `half` covers only the `even` view constructor; the inner def matches on
+# the Parity view family, so #32's missing-constructor check must fire for
+# the missing `odd` case (view coverage reuses the clause-matrix machinery).
+#
+# This file must FAIL to elaborate.
+
+import "../../lib/nat.ep"
+
+def double : Nat -> Nat
+| zero = zero
+| (suc k) = suc (suc (double k))
+
+data Parity : Nat -> ? where
+| even (k : Nat) : Parity (double k)
+| odd (k : Nat) : Parity (suc (double k))
+
+proc parityCover (n : Nat) : Parity n =
+  natElim (lam (u : Nat). Parity u)
+    (even zero)
+    (lam (p : Nat). lam (ih : Parity p).
+      parityElim (lam (m : Nat). lam (q : Parity m). Parity (suc m))
+        (lam (k : Nat). odd k)
+        (lam (k : Nat). even (suc k))
+        p ih)
+    n
+
+view Parity over Nat with parityCover
+
+# BUG: the `odd` view pattern is missing — elaboration must reject this.
+def halfBad : Nat -> Nat
+| n [Parity] (even k) = k
