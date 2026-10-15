@@ -2921,3 +2921,25 @@
   sanitizer. Tests assert (category, kind) pairs and depth, never
   rendered text.
   Status: OPEN (branch =exp83-elab-trace=).
+
+* 2026-10-15 — #83 follow-up: VM-safe trace state needs dual storage
+
+  Context: the #83 entry chose a runtime flag, verified `getEnv` works
+  in the Nim VM. Implementation found three further VM restrictions,
+  each verified with a minimal repro:
+  1. The VM cannot evaluate ordinary mutable globals from another
+     module at macro-expansion time ("cannot evaluate at compile time").
+  2. `{.compileTime.}` vars are VM-visible but their *runtime*
+     reads/writes are silently lost (separate compile-time storage).
+  3. A `{.compileTime.}` object with a `seq` field crashes the compiler
+     when returned by value from a proc ("field 'sym' is not accessible
+     ... nkWhenStmt"); also `stderr` is not VM-evaluable.
+  Decision: trace state lives in two `TraceState` instances (runtime var
+  + `{.compileTime.}` var, no seq fields) selected by `when nimvm`
+  *literal in each accessor proc's body* — a template would expand at
+  the caller's host-sem time and pick the wrong instance. The capture
+  log stays a plain runtime global (test-only; macro expansion always
+  renders). VM sink is `echo` (compile-time stdout); runtime sink is
+  stderr. Verified: `EPON_TRACE=unify` on the `eponym`-macro path emits
+  the trace at compile time; native suite still green.
+  Status: OPEN (branch =exp83-elab-trace=).
