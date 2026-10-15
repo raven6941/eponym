@@ -4212,6 +4212,20 @@ proc elabCommandDecl(name: string, ty: PreTerm, iface: string, loc: Loc,
   globals[name] = GEntry(tm: tm, ty: tyT, cmdIface: iface)
   ms.refNames[tm.refId] = name
 
+proc elabViewDecl(vd: ViewDecl, globals: var Globals, supply: var Supply,
+                  ms: var MetaStore,
+                  dataInfos: var Table[string, SurfDecl]) =
+  ## Issue #44 (step 1 of 3): surface + registration.
+  ## Next steps: (a) check `vname` names a `data` decl and `coverName` an
+  ## ordinary def of type `(x : T) -> Fam x` — the covering obligation is
+  ## just typing, so an ill-typed cover is rejected with a located error
+  ## for free; (b) record the view in a `viewInfos` table carried alongside
+  ## `dataInfos`; (c) extend the clause compiler so `| x [Fam] pat = rhs`
+  ## covers the scrutinee and eliminates the view family. This stub raises
+  ## until (a)-(c) land, so a `view` decl never silently does nothing.
+  raise elabErr(vd.vloc, "'view' declarations are not yet elaborated " &
+    "(issue #44: surface parses; elaboration is the next step)")
+
 proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
               ms: var MetaStore,
               dataInfos: var Table[string, SurfDecl]): seq[ElabDef] =
@@ -4237,6 +4251,8 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
     for ed in elabMutualDecl(d.mutualDefs, d.mutualLoc, globals, supply, ms,
                              dataInfos):
       result.add(ed)
+  of dkView:
+    elabViewDecl(d.viewDecl, globals, supply, ms, dataInfos)
   of dkInterface:
     elabInterfaceDecl(d.ifname, d.ifloc, globals, supply, ms)
   of dkCommand:

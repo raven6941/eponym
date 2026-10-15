@@ -319,6 +319,7 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
         of dkCommand: decls[i].cloc.line      # issue #177
         of dkRecord: decls[i].recloc.line    # issue #37
         of dkMutual: decls[i].mutualLoc.line  # issue #42
+        of dkView: decls[i].viewDecl.vloc.line  # issue #44
       if dl > procLine1:
         endLine0 = dl - 2
         break
