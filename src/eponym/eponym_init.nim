@@ -312,6 +312,11 @@ type Supply* = object
   ## (literal-to-literal only).
   natZeroRefId*: int = -1
   natSucRefId*: int = -1
+  ## Issue #74: refId of the Nat datatype itself (-1 if unknown). The
+  ## elaborator sets it when `data Nat` is declared. `check` uses it for
+  ## the singleton base rule (tNatSing(k) <: Nat); the elaborator's
+  ## conversion reads it via globals instead.
+  natTypeRefId*: int = -1
 
 proc freshId*(s: var Supply): int =
   inc s.n
@@ -811,6 +816,37 @@ proc synth(s: var Supply, t: Term): tuple[val: Value, typ: Value] =
   let ty = infer(s, t)
   (eval(t, @[]), ty)
 
+proc subsumes*(s: var Supply, inf, exp: Value): bool =
+  ## Issue #74: definitional subsumption — the core's only subtyping.
+  ## inf <: exp: the singleton base rule (tNatSing(k) <: Nat), covariant
+  ## through Pi codomains and Sigma components, definitional equality
+  ## everywhere else. Decidable and structural; directional (inferred <:
+  ## expected), unlike the symmetric areEqual.
+  let iw = inf.whnf
+  let ew = exp.whnf
+  if iw.kind == wNatSing:
+    return s.natTypeRefId >= 0 and ew.kind == wRef and
+      ew.refId == s.natTypeRefId and ew.spine.len == 0
+  if iw.kind == wPi and ew.kind == wPi:
+    try:
+      areEqual(s, vStar(), iw.dom, ew.dom)  # domains invariant
+    except ValueError:
+      return false
+    let x = freshPara(s, ew.dom)
+    return subsumes(s, iw.tscope.fn(x), ew.tscope.fn(x))
+  if iw.kind == wSi and ew.kind == wSi:
+    try:
+      areEqual(s, vStar(), iw.dom, ew.dom)
+    except ValueError:
+      return false
+    let x = freshPara(s, ew.dom)
+    return subsumes(s, iw.tscope.fn(x), ew.tscope.fn(x))
+  try:
+    areEqual(s, vStar(), exp, inf)
+    return true
+  except ValueError:
+    return false
+
 proc check*(s: var Supply, ty: Value, t: Term): Value =
   profilePhase(epKernel):
       # Experiment 11: primitives are trusted from the elaborator; the
@@ -818,7 +854,13 @@ proc check*(s: var Supply, ty: Value, t: Term): Value =
       if t.kind == tInt or t.kind == tPrim or t.kind == tNatLit:
         return eval(t, @[])
       let r = synth(s, t)
-      areEqual(s, vStar(), ty, r.typ)
+      # Issue #74: definitional subsumption (subsumes) in place of the
+      # bare symmetric check: a term whose inferred type is a singleton
+      # (or a Pi/Sigma built over one) checks against the widened
+      # expected type. When subsumption fails, areEqual raises the
+      # standard mismatch error, so failure behavior is unchanged.
+      if not subsumes(s, r.typ, ty):
+        areEqual(s, vStar(), ty, r.typ)
       r.val
 
 proc structuralEq(s: var Supply, a, b: Value) =

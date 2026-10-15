@@ -75,12 +75,14 @@ type
     elimRules*: Table[int, KElimRuleSet]  ## eliminator refId -> rule set
     natZeroId*: int  ## refId of the Nat `zero` constructor, -1 if unknown
     natSucId*: int   ## refId of the Nat `suc` constructor, -1 if unknown
+    natTypeId*: int  ## refId of the Nat datatype itself, -1 if unknown
+                     ## (Issue #74: singleton base rule tNatSing(k) <: Nat)
     intId*: int      ## refId of the `Int` postulate, -1 if unknown
 
 proc initKernelGlobals*(): KernelGlobals =
   KernelGlobals(entries: initTable[int, KGEntry](),
                 elimRules: initTable[int, KElimRuleSet](),
-                natZeroId: -1, natSucId: -1, intId: -1)
+                natZeroId: -1, natSucId: -1, natTypeId: -1, intId: -1)
 
 proc kerr(msg: string): ref KernelError =
   newException(KernelError, msg)
@@ -556,6 +558,24 @@ proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term =
     # Issue #74: a singleton is a type; its type is ?.
     star
 
+proc ksubsumes(inf, exp: Term, g: KernelGlobals): bool =
+  ## Issue #74: audit-kernel twin of eponym_init.subsumes — definitional
+  ## subsumption (inf <: exp): singleton base rule, covariant through Pi
+  ## codomains and Sigma components, definitional equality elsewhere.
+  ## Open codomains are compared under the same de Bruijn convention on
+  ## both sides (one binder each), which ksynEq handles structurally.
+  let wi = kwhnf(inf, g)
+  let we = kwhnf(exp, g)
+  if wi.kind == tNatSing:
+    return g.natTypeId >= 0 and we.kind == tR and we.refId == g.natTypeId
+  if wi.kind == tPi and we.kind == tPi:
+    if not kconv(wi.dom, we.dom, g): return false  # domains invariant
+    return ksubsumes(wi.scope.bdy, we.scope.bdy, g)
+  if wi.kind == tSi and we.kind == tSi:
+    if not kconv(wi.dom, we.dom, g): return false
+    return ksubsumes(wi.scope.bdy, we.scope.bdy, g)
+  kconv(inf, exp, g)
+
 proc kCheck(tm: Term, ty: Term, ctx: KCtx, g: KernelGlobals) =
   let wty = kwhnf(ty, g)
   case tm.kind
@@ -582,13 +602,11 @@ proc kCheck(tm: Term, ty: Term, ctx: KCtx, g: KernelGlobals) =
       if tm.natLitVal != wty.natSingVal:
         raise kerr("nat literal " & $tm.natLitVal &
           " does not inhabit singleton type " & $wty.natSingVal)
-    else:
-      let inferred = kInfer(tm, ctx, g)
-      if not kconv(inferred, ty, g):
-        raise kerr("type mismatch")
+    elif not ksubsumes(kInfer(tm, ctx, g), ty, g):
+      raise kerr("type mismatch")
   else:
     let inferred = kInfer(tm, ctx, g)
-    if not kconv(inferred, ty, g):
+    if not ksubsumes(inferred, ty, g):
       raise kerr("type mismatch")
 
 # --- iota rule validation: the motive check ----------------------------------
