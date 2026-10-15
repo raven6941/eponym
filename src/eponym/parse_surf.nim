@@ -81,7 +81,7 @@ type
   TokKind = enum
     tkEof, tkIdent, tkInt, tkString,
     tkDef, tkClauses, tkPostulate, tkElim, tkRed, tkData, tkWhere, tkBy,
-    tkRecord, tkMutual,
+    tkRecord, tkMutual, tkView, tkWith,
     tkImport, tkInterface, tkCommand,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
@@ -110,7 +110,8 @@ const keywords = [
   ("proc", tkDef), ("def", tkClauses),
   ("postulate", tkPostulate), ("elim", tkElim), ("red", tkRed),
   ("data", tkData), ("where", tkWhere), ("by", tkBy),
-  ("record", tkRecord), ("mutual", tkMutual),
+  ("record", tkRecord), ("mutual", tkMutual), ("view", tkView),
+  ("with", tkWith),
   ("import", tkImport), ("interface", tkInterface), ("command", tkCommand),
   ("lam", tkLam), ("Pi", tkPi), ("Sig", tkSig),
   ("let", tkLet), ("in", tkIn), ("fst", tkFst), ("snd", tkSnd)]
@@ -559,15 +560,28 @@ proc parseClausesDef(p: var Parser): ClausesDef =
   while p.peek().kind == tkPipe:
     let ploc = p.next().loc
     var pats: seq[PreTerm] = @[]
+    var viewName = ""
+    var viewPos = -1
     while p.peek().kind != tkEq:
       if p.peek().kind == tkEof:
         raise fail(ploc, "unterminated clause: expected '='")
       pats.add p.parseAtom()
+      if p.peek().kind == tkLBracket:
+        ## Issue #44: view annotation `[Fam]` follows the scrutinee pattern:
+        ## `| x [Fam] pat = rhs`. The next pattern matches the covered value.
+        if viewName != "":
+          raise fail(ploc, "duplicate view annotation in one clause")
+        discard p.next()  # [
+        let vn = p.expect(tkIdent, "view name in '[...]'")
+        discard p.expect(tkRBracket, "']'")
+        viewName = vn.lexeme
+        viewPos = pats.high
     discard p.expect(tkEq, "'='")
     let rhs = p.parseTerm()
     if pats.len == 0:
       raise fail(ploc, "clause needs at least one pattern")
-    clauses.add Clause(pats: pats, rhs: rhs, cloc: ploc)
+    clauses.add Clause(pats: pats, rhs: rhs, cloc: ploc,
+                       viewName: viewName, viewPos: viewPos)
   if clauses.len == 0:
     raise fail(t.loc, "'def' needs at least one '|'-clause")
   ClausesDef(name: nm.lexeme, ty: ty, clauses: clauses, loc: t.loc)
@@ -592,6 +606,22 @@ proc parseMutual(p: var Parser): SurfDecl =
     seen.incl(cd.name)
   SurfDecl(kind: dkMutual, mutualDefs: defs, mutualLoc: t.loc)
 
+proc parseView(p: var Parser): ViewDecl =
+  ## Issue #44: `view Fam over T with coverFn` — registers a view family.
+  ## `with` is a keyword so the scrutinee type `T` (which may itself be an
+  ## application, e.g. `Vec n`) terminates at it; `over` stays a contextual
+  ## identifier since it immediately follows the family name.
+  let t = p.expect(tkView, "'view'")
+  let fam = p.expect(tkIdent, "view family name")
+  let over = p.expect(tkIdent, "'over'")
+  if over.lexeme != "over":
+    raise fail(over.loc, "expected 'over' after the view family name")
+  let scrutTy = p.parseTerm()
+  discard p.expect(tkWith, "'with'")
+  let cover = p.expect(tkIdent, "covering function name")
+  ViewDecl(vname: fam.lexeme, scrutTy: scrutTy, coverName: cover.lexeme,
+           vloc: t.loc)
+
 proc parseImport(p: var Parser): SurfDecl =
   ## Issue #49: `import "path"` — multi-file programs.
   let t = p.expect(tkImport, "'import'")
@@ -608,10 +638,11 @@ proc parseDecl(p: var Parser): SurfDecl =
   of tkData: p.parseData()
   of tkRecord: p.parseRecord()
   of tkMutual: p.parseMutual()
+  of tkView: SurfDecl(kind: dkView, viewDecl: p.parseView())
   of tkImport: p.parseImport()
   of tkInterface: p.parseInterface()
   of tkCommand: p.parseCommand()
-  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'record', 'mutual', 'import', 'interface' or 'command'")
+  else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'record', 'mutual', 'view', 'import', 'interface' or 'command'")
 
 proc parseProgram*(src: string): seq[SurfDecl] =
   profilePhase(epParse):

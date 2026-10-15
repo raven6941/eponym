@@ -3730,9 +3730,19 @@ proc compileBranch(ctx: ClauseCtx, dd: SurfDecl, ci: int,
   var idxSubst: seq[(string, PreTerm)] = @[]
   if not hasTail:
     for j, v in ctx.scrIdxVars: idxSubst.add((v, retIdx[j]))
-    # Explicit argument positions after the scrutinee: the match columns.
+    # Issue #44: method-level rest arguments: every non-scrutinee argument
+    # the methods take explicitly — all post-scrutinee args (implicits made
+    # explicit, as before) plus explicit pre-scrutinee args (the view
+    # desugar's original scrutinee) — in telescope order. For the default
+    # scrutinee position this is exactly sPos+1..tele.high.
+    var restTis: seq[int] = @[]
+    for ti in 0 .. ctx.tele.high:
+      if ti == ctx.sPos: continue
+      if ti < ctx.sPos and ctx.tele[ti].impl: continue
+      restTis.add(ti)
+    # Explicit rest positions: the match columns.
     var expTis: seq[int] = @[]
-    for ti in ctx.sPos + 1 .. ctx.tele.high:
+    for ti in restTis:
       if not ctx.tele[ti].impl: expTis.add(ti)
     # Canonical rest binders, freshened against every name in sight. Base
     # name: this constructor's first row's variable pattern for the column
@@ -3759,7 +3769,7 @@ proc compileBranch(ctx: ClauseCtx, dd: SurfDecl, ci: int,
     var restTys: seq[PreTerm] = @[]
     var teleToCanon: seq[(string, PreTerm)] = @[]
     var ep_i = 0
-    for ti in ctx.sPos + 1 .. ctx.tele.high:
+    for ti in restTis:
       var bn: string
       if ctx.tele[ti].impl:
         bn = if ctx.tele[ti].name.len > 0: ctx.tele[ti].name else: "x" & $ti
@@ -3773,14 +3783,14 @@ proc compileBranch(ctx: ClauseCtx, dd: SurfDecl, ci: int,
                             teleToCanon, ctx.fresh))
       if ctx.tele[ti].name.len > 0 and ctx.tele[ti].name != bn:
         teleToCanon.add((ctx.tele[ti].name, mkVar(bn, ctx.loc)))
-    # Build the match columns (one per explicit post-scrutinee argument):
+    # Build the match columns (one per explicit rest argument):
     # their terms are the canonical rest binders, bound by this method's
     # lambda nest below, so nested splits on them are well-scoped. The
     # rows' pattern vectors already carry the rest patterns (merged at
     # the top level), aligned with `newCols & matchCols`.
     ep_i = 0
     var ri = 0
-    for ti in ctx.sPos + 1 .. ctx.tele.high:
+    for ti in restTis:
       if not ctx.tele[ti].impl:
         var h = restTys[ri]
         while h.kind == pkApp: h = h.c1
@@ -3939,29 +3949,37 @@ proc compileMatrixNode(ctx: ClauseCtx, cols: seq[MatrixCol],
 
 proc compileClausesToSurfDef(cd: ClausesDef, globals: var Globals,
                              supply: var Supply, ms: var MetaStore,
-                             dataInfos: var Table[string, SurfDecl]): SurfDef =
+                             dataInfos: var Table[string, SurfDecl],
+                             scrutPos: int = -1): SurfDef =
   ## Issue #42: the clause-matrix compilation half of elabClausesDecl:
   ## compile `def name : Ty` + `|` clauses to the eliminator-application
   ## SurfDef, without elaborating or registering it. The caller elaborates
   ## the SurfDef (single: elabDefDecl; mutual: elabMutualDecl's knot-tying
   ## finalization).
+  ## Issue #44: `scrutPos` overrides the scrutinee position (a telescope
+  ## index; -1 = the first explicit argument, the #32 default). The view
+  ## desugar uses it: the covered value sits after the original scrutinee.
+  ## Everything is stated in terms of "the scrutinee column vs the rest
+  ## columns", so scrutPos = -1 behaves exactly as before.
   profilePhase(epClause):
       let loc = cd.loc
       resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
+      # Issue #44: view clauses must go through the view desugar
+      # (elabViewClausesDecl), which strips the annotations before calling
+      # back here with scrutPos >= 0. A view clause reaching this proc
+      # directly (e.g. inside a `mutual` block) is rejected, never silently
+      # miscompiled.
+      if scrutPos < 0:
+        for cl in cd.clauses:
+          if cl.viewName != "":
+            raise elabErr(cl.cloc, "view clauses ('[" & cl.viewName &
+              "]') are not supported in 'mutual' blocks yet (issue #44)")
       # 1. Find the scrutinee's data type from the type signature.
-      let dataName = scrutineeDataName(cd.ty, dataInfos)
-      if dataName == "":
-        raise elabErr(loc, "'def' clauses require the first explicit argument " &
-          "to have a data type; none found in the type signature")
-      let dataDecl = dataInfos[dataName]
+      # (Computed from the telescope below, once sPos is known.)
       # Issue #80: constructor -> datatype map for the impossible-clause check.
       var ctorToData = initTable[string, string]()
       for dn, dd in dataInfos:
         for ctor in dd.ctors: ctorToData[ctor.name] = dn
-      let elimName = elimNameFor(dataName)
-      if not globals.hasKey(elimName):
-        raise elabErr(loc, "eliminator '" & elimName & "' not found for data '" &
-          dataName & "'")
       # 2. Count explicit Pis in the type to validate clause arity.
       var nExplicit = 0
       var cur = cd.ty
@@ -3969,21 +3987,17 @@ proc compileClausesToSurfDef(cd: ClausesDef, globals: var Globals,
         if not cur.impl: inc nExplicit
         cur = cur.c2
       # 3. Build the top-level clause matrix: coverage + overlap over the
-      #    first-pattern column. Issue #78: the first pattern may be a
-      #    constructor pattern (possibly nested), a variable, or a wildcard
-      #    `_`. A variable/wildcard covers every constructor not already
-      #    covered; a clause covering nothing new is redundant.
+      #    scrutinee-pattern column. Issue #78: the scrutinee pattern may be
+      #    a constructor pattern (possibly nested), a variable, or a
+      #    wildcard `_`. A variable/wildcard covers every constructor not
+      #    already covered; a clause covering nothing new is redundant.
+      #    Issue #44: the scrutinee column is pats[sExp] (sExp = the
+      #    scrutinee's index among explicit patterns); the matrix rows put
+      #    it first so the downstream splitting code is unchanged.
       for cl in cd.clauses:
         if cl.pats.len != nExplicit:
           raise elabErr(cl.cloc, "clause has " & $cl.pats.len & " patterns but " &
             "the type has " & $nExplicit & " explicit arguments")
-      var topRows: seq[MatrixRow] = @[]
-      for si, cl in cd.clauses:
-        topRows.add(MatrixRow(pats: @[copyPre(cl.pats[0])] & copyPres(cl.pats[1 .. ^1]),
-                              rhs: copyPre(cl.rhs), cloc: cl.cloc, src: si,
-                              catchVar: ""))
-      let perCtorTop = checkMatrixCoverage(topRows, dataDecl, dataInfos, ctorToData,
-                                      "", loc)
       # 4. Build the eliminator application as a PreTerm, then elaborate as a def.
       #    Supports indexed families: the scrutinee's type may be
       #    `D params idxs...` with variable indices.
@@ -4027,15 +4041,59 @@ proc compileClausesToSurfDef(cd: ClausesDef, globals: var Globals,
             raise elabErr(loc, "'def' clauses: duplicate binder name '" & bn &
               "' in the type; rename one of them")
           seenTele.incl(bn)
-      # Find scrutinee position (first explicit argument)
+      # Find scrutinee position: issue #44's override, else the first
+      # explicit argument.
       var sPos = -1
-      for i, b in tele:
-        if not b.impl:
-          sPos = i
-          break
+      if scrutPos >= 0:
+        if scrutPos >= tele.len:
+          raise elabErr(loc, "'def' clauses: scrutinee position " & $scrutPos &
+            " out of range")
+        if tele[scrutPos].impl:
+          raise elabErr(loc, "'def' clauses: the scrutinee cannot be an " &
+            "implicit argument")
+        sPos = scrutPos
+      else:
+        for i, b in tele:
+          if not b.impl:
+            sPos = i
+            break
       if sPos < 0:
         raise elabErr(loc, "'def' clauses need at least one explicit argument " &
           "(the scrutinee)")
+      # Explicit-argument telescope indices in order; pats[j] is the pattern
+      # for expTis[j]. sExp = the scrutinee's index among explicit patterns.
+      var expTis: seq[int] = @[]
+      for ti in 0 .. tele.high:
+        if not tele[ti].impl: expTis.add(ti)
+      var sExp = -1
+      for j, ti in expTis:
+        if ti == sPos: sExp = j
+      # 1 (continued). The scrutinee's data type: head of tele[sPos].ty.
+      var dnHead = tele[sPos].ty
+      while dnHead.kind == pkApp: dnHead = dnHead.c1
+      let dataName =
+        if dnHead.kind == pkVar and dataInfos.hasKey(dnHead.name): dnHead.name
+        else: ""
+      if dataName == "":
+        raise elabErr(loc, "'def' clauses require the scrutinee argument " &
+          "to have a data type; none found in the type signature")
+      let dataDecl = dataInfos[dataName]
+      let elimName = elimNameFor(dataName)
+      if not globals.hasKey(elimName):
+        raise elabErr(loc, "eliminator '" & elimName & "' not found for data '" &
+          dataName & "'")
+      # 3 (continued). Build the top-level clause matrix with the scrutinee
+      # column first.
+      var topRows: seq[MatrixRow] = @[]
+      for si, cl in cd.clauses:
+        var rpats: seq[PreTerm] = @[copyPre(cl.pats[sExp])]
+        for j, p in cl.pats:
+          if j != sExp: rpats.add(copyPre(p))
+        topRows.add(MatrixRow(pats: rpats,
+                              rhs: copyPre(cl.rhs), cloc: cl.cloc, src: si,
+                              catchVar: ""))
+      let perCtorTop = checkMatrixCoverage(topRows, dataDecl, dataInfos, ctorToData,
+                                      "", loc)
       # Issue #78: per-clause pattern validation. Patterns (scrutinee and
       # rest columns, at any nesting depth) must be constructor patterns,
       # variables, or wildcards; pattern variables must be unique per clause
@@ -4045,24 +4103,24 @@ proc compileClausesToSurfDef(cd: ClausesDef, globals: var Globals,
       var allPatVars = initHashSet[string]()
       for cl in cd.clauses:
         var pvars: seq[string] = @[]
-        collectPatVarSeq(cl.pats[0], ctorToData, pvars)
-        var pi = 1
-        # Issue #32 (kept through the #165 rewrite): a rest-column variable
-        # pattern may reuse the name of the telescope binder it binds (an
-        # identity pattern, e.g. what the LSP case-split generates); it must
-        # not shadow any *other* telescope binder.
+        collectPatVarSeq(cl.pats[sExp], ctorToData, pvars)
+        # Issue #32 (kept through the #165 rewrite): a non-scrutinee-column
+        # variable pattern may reuse the name of the telescope binder it
+        # binds (an identity pattern, e.g. what the LSP case-split
+        # generates); it must not shadow any *other* telescope binder.
+        # Issue #44: this covers pre-scrutinee columns too (the view
+        # desugar's original-scrutinee pattern).
         var identRest = initHashSet[string]()
-        for ti in sPos + 1 .. tele.high:
-          if not tele[ti].impl:
-            let rp = cl.pats[pi]
-            let (rpIsCtor, _, _) = patKindOf(rp, ctorToData)
-            if not rpIsCtor and rp.kind != pkVar and rp.kind != pkHole:
-              raise elabErr(cl.cloc, "'def' clauses: pattern must be a " &
-                "constructor pattern, a variable, or a wildcard `_`")
-            collectPatVarSeq(rp, ctorToData, pvars)
-            if rp.kind == pkVar and rp.name == tele[ti].name:
-              identRest.incl(rp.name)
-            inc pi
+        for j, ti in expTis:
+          if j == sExp: continue
+          let rp = cl.pats[j]
+          let (rpIsCtor, _, _) = patKindOf(rp, ctorToData)
+          if not rpIsCtor and rp.kind != pkVar and rp.kind != pkHole:
+            raise elabErr(cl.cloc, "'def' clauses: pattern must be a " &
+              "constructor pattern, a variable, or a wildcard `_`")
+          collectPatVarSeq(rp, ctorToData, pvars)
+          if rp.kind == pkVar and rp.name == tele[ti].name:
+            identRest.incl(rp.name)
         var seen = initHashSet[string]()
         for v in pvars:
           if v in seen:
@@ -4130,7 +4188,14 @@ proc compileClausesToSurfDef(cd: ClausesDef, globals: var Globals,
         midxSubst.add((v, mkVar(motiveIdxNames[j], loc)))
       var cBody = substPreN(retTy, midxSubst, fresh)
       let cBodyRet = copyPre(cBody)  # cBody with the `Pi rest` prefix stripped
-      for ti in countdown(tele.high, sPos + 1):
+      # Issue #44: the motive's trailing Pi abstracts every non-scrutinee
+      # argument that the methods take explicitly: all post-scrutinee args
+      # (implicits made explicit, as before) plus explicit pre-scrutinee
+      # args (the view desugar's original scrutinee). Implicit pre-scrutinee
+      # args stay outer binders, as before. Reverse telescope order.
+      for ti in countdown(tele.high, 0):
+        if ti == sPos: continue
+        if ti < sPos and tele[ti].impl: continue
         let bn = if tele[ti].name.len > 0: tele[ti].name else: "x" & $ti
         cBody = mkPi(bn, substPreN(tele[ti].ty, midxSubst, fresh), cBody, loc)
       var scrTyMotive = mkVar(dataName, loc)
@@ -4200,9 +4265,13 @@ proc compileClausesToSurfDef(cd: ClausesDef, globals: var Globals,
         # The proc syntax supports implicits; keep them.
         # Note: data tele doesn't carry qty yet; default to qOmega
         procTele.add((bn, b.ty, b.impl, false, Qty(isVar: false, q: qOmega)))
-        if i > sPos:
+        # Issue #44: every non-scrutinee argument the methods take
+        # explicitly (all post-scrutinee args + explicit pre-scrutinee
+        # args), in telescope order.
+        if i != sPos and (i > sPos or not tele[i].impl):
           restVars.add(bn)
-      # scrutinee first, then the remaining telescope in order
+      # scrutinee applied right after the indices, then the rest arguments
+      # in telescope order
       # (implicit rest args applied explicitly: the motive tail is all-explicit)
       app = mkApp(app, mkVar(procTele[sPos].name, loc), loc)
       for rv in restVars:
@@ -4210,6 +4279,165 @@ proc compileClausesToSurfDef(cd: ClausesDef, globals: var Globals,
       # Build the SurfDef and elaborate
       result = SurfDef(name: cd.name, tele: procTele, retTy: retTy, body: app,
                        loc: loc)
+
+proc elabViewClausesDecl(cd: ClausesDef, vi: ViewInfo, globals: var Globals,
+                         supply: var Supply, ms: var MetaStore,
+                         dataInfos: var Table[string, SurfDecl]): seq[ElabDef] =
+  ## Issue #44: elaborate `def f : Ty` whose clauses carry `| x [Fam] pat`
+  ## view annotations. The scrutinee is the explicit argument carrying the
+  ## `[Fam]` annotation (parameters, if any, precede it). Desugar into two
+  ## declarations:
+  ##   def f_viewInner : (p1 : P1) -> (x : T) -> (v : Fam x p1..pn) -> R
+  ##     (clauses on the covered value v, compiled by #32's machinery with
+  ##     the scrutinee at telescope position sPos+1)
+  ##     | p1.. x pat = rhs ...
+  ##   proc f (p1 : P1) (x : T) : R = f_viewInner p1.. x (cover p1..pn x) rest...
+  ## Constructor clauses are the identity-covering special case of this
+  ## scheme. Note: recursive calls in rhs go through the wrapper, so #32's
+  ## structural termination checking does not transfer through views —
+  ## view recursion is currently unchecked (documented limitation).
+  let loc = cd.loc
+  var piList: seq[tuple[name: string, ty: PreTerm, impl: bool,
+                        erased: bool, qty: Qty]] = @[]
+  var tcur = cd.ty
+  while tcur.kind == pkPi:
+    piList.add((tcur.name, tcur.c1, tcur.impl, tcur.erased, tcur.qty))
+    tcur = tcur.c2
+  let retTy = tcur
+  # The scrutinee is the explicit argument carrying the `[Fam]` annotation:
+  # its explicit position is the first clause's viewPos (the annotation
+  # follows the scrutinee pattern, so viewPos counts only explicit patterns
+  # before it). All clauses must annotate the same argument. Parameterized
+  # views (#44) put their parameters before the scrutinee.
+  var nExplicit = 0
+  var explicitIdx: seq[int] = @[]
+  for i, b in piList:
+    if b.impl: continue
+    explicitIdx.add(i)
+    inc nExplicit
+  if nExplicit == 0:
+    raise elabErr(loc, "'def' with view clauses needs an explicit argument")
+  let sExp = cd.clauses[0].viewPos
+  if sExp < 0 or sExp >= nExplicit:
+    raise elabErr(cd.clauses[0].cloc, "the view annotation '[" & vi.vname &
+      "]' must follow an explicit argument pattern")
+  let sPos = explicitIdx[sExp]
+  # Issue #44 (parameterized views): the view's nParams explicit arguments
+  # immediately preceding the scrutinee are the view parameters.
+  if sExp < vi.nParams:
+    raise elabErr(loc, "view '" & vi.vname & "' takes " & $vi.nParams &
+      " parameter(s) before the scrutinee, but '" & cd.name &
+      "' has only " & $sExp & " explicit argument(s) before it")
+  var paramPi: seq[int] = @[]
+  for j in 0 ..< vi.nParams:
+    paramPi.add(explicitIdx[sExp - vi.nParams + j])
+  # Every clause agrees on the view and the annotated position; the
+  # annotation sits on the scrutinee.
+  for cl in cd.clauses:
+    if cl.viewName == "":
+      raise elabErr(cl.cloc, "view clauses ('[" & vi.vname &
+        "]') cannot be mixed with plain clauses in one 'def'")
+    if cl.viewName != vi.vname:
+      raise elabErr(cl.cloc, "unknown view '" & cl.viewName &
+        "' (expected '[" & vi.vname & "]')")
+    if cl.viewPos != sExp:
+      raise elabErr(cl.cloc, "the view annotation '[" & cl.viewName &
+        "]' must follow the same argument in every clause")
+    if cl.pats.len != nExplicit + 1:
+      raise elabErr(cl.cloc, "view clause has " & $cl.pats.len &
+        " patterns but the type has " & $nExplicit &
+        " explicit arguments (plus one view pattern)")
+    let xp = cl.pats[cl.viewPos]
+    if xp.kind != pkVar and xp.kind != pkHole:
+      raise elabErr(cl.cloc, "the pattern before '[" & cl.viewName &
+        "]' must be a variable binding the scrutinee")
+  # The scrutinee's type must be the view's `over` type (head check).
+  var sh = piList[sPos].ty
+  while sh.kind == pkApp: sh = sh.c1
+  if sh.kind != pkVar or sh.name != vi.scrutHead:
+    raise elabErr(loc, "view '" & vi.vname & "' is over '" & vi.scrutHead &
+      "' but the scrutinee has a different type head")
+  # Freshen unreferenceable binder names ("_" / "") — semantics-preserving,
+  # mirroring the clause compiler's own hygiene.
+  var used = allNamesPre(cd.ty)
+  for cl in cd.clauses:
+    for p in cl.pats: used = used + allNamesPre(p)
+    used = used + allNamesPre(cl.rhs)
+  var scrutName = piList[sPos].name
+  if scrutName.len == 0 or scrutName == "_":
+    scrutName = "x'view"
+    var k = 0
+    while scrutName in used:
+      scrutName = "x'view" & $k; inc k
+  used.incl(scrutName)
+  var vName = "v'view"
+  var k2 = 0
+  while vName in used:
+    vName = "v'view" & $k2; inc k2
+  used.incl(vName)
+  let innerName = cd.name & "_viewInner"
+  if globals.hasKey(innerName):
+    raise elabErr(loc, "generated name '" & innerName &
+      "' clashes with an existing definition")
+  # Freshened telescope, shared by the inner def and the wrapper so the
+  # wrapper's applications line up with the inner binders.
+  var wrapTele: seq[tuple[name: string, ty: PreTerm, impl: bool,
+                          erased: bool, qty: Qty]] = @[]
+  var seenW = initHashSet[string]()
+  var freshW = 0
+  for i, e in piList:
+    var bn = if i == sPos: scrutName else: e.name
+    if bn.len == 0 or bn == "_":
+      bn = "_'c" & $freshW
+      inc freshW
+      while bn in seenW:
+        bn = "_'c" & $freshW
+        inc freshW
+    elif bn in seenW:
+      raise elabErr(loc, "'def' with view clauses: duplicate binder name '" &
+        bn & "' in the type; rename one of them")
+    seenW.incl(bn)
+    wrapTele.add((bn, e.ty, e.impl, e.erased, e.qty))
+  # Inner type: (tele...) with (v : Fam s p1..pn) inserted after the
+  # scrutinee Pi, preserving impl/erased/qty flags. The parameters are
+  # already in scope before the scrutinee.
+  var famApp: PreTerm = mkVar(vi.vname, loc)
+  famApp = mkApp(famApp, mkVar(wrapTele[sPos].name, loc), loc)
+  for pj in paramPi:
+    famApp = mkApp(famApp, mkVar(wrapTele[pj].name, loc), loc)
+  var innerTy = retTy
+  for i in countdown(piList.high, 0):
+    let e = piList[i]
+    if i == sPos:
+      # The covered-value binder goes *inside* the scrutinee Pi:
+      # (n : Nat) -> (v : Parity n) -> ...
+      innerTy = mkPi(vName, famApp, innerTy, loc)
+    innerTy = mkPi(wrapTele[i].name, e.ty, innerTy, loc, e.impl, e.erased,
+                   e.qty)
+  var innerClauses: seq[Clause] = @[]
+  for cl in cd.clauses:
+    innerClauses.add(Clause(pats: cl.pats, rhs: cl.rhs, cloc: cl.cloc))
+  let innerCd = ClausesDef(name: innerName, ty: innerTy,
+                           clauses: innerClauses, loc: loc)
+  let innerSdef = compileClausesToSurfDef(innerCd, globals, supply, ms,
+                                         dataInfos, scrutPos = sPos + 1)
+  result.add(elabDefDecl(innerSdef, globals, supply, ms))
+  # Wrapper: proc f tele : Ret = f_viewInner x.. (cover p1..pn x_s) rest...
+  # (explicit args only; the elaborator inserts metas for implicits).
+  var app: PreTerm = mkVar(innerName, loc)
+  for i, e in piList:
+    if e.impl: continue
+    let an = wrapTele[i].name
+    app = mkApp(app, mkVar(an, loc), loc)
+    if i == sPos:
+      var coverApp: PreTerm = mkVar(vi.coverName, loc)
+      for pj in paramPi:
+        coverApp = mkApp(coverApp, mkVar(wrapTele[pj].name, loc), loc)
+      coverApp = mkApp(coverApp, mkVar(an, loc), loc)
+      app = mkApp(app, coverApp, loc)
+  let wrapSdef = SurfDef(name: cd.name, tele: wrapTele, retTy: retTy,
+                         body: app, loc: loc)
+  result.add(elabDefDecl(wrapSdef, globals, supply, ms))
 
 proc elabClausesDecl(cd: ClausesDef, globals: var Globals, supply: var Supply,
                      ms: var MetaStore,
@@ -4470,9 +4698,90 @@ proc elabCommandDecl(name: string, ty: PreTerm, iface: string, loc: Loc,
   globals[name] = GEntry(tm: tm, ty: tyT, cmdIface: iface)
   ms.refNames[tm.refId] = name
 
+proc elabViewDecl(vd: ViewDecl, globals: var Globals, supply: var Supply,
+                  ms: var MetaStore,
+                  dataInfos: var Table[string, SurfDecl],
+                  viewInfos: var Table[string, ViewInfo]) =
+  ## Issue #44 (step 2 of 3): validate and register a `view` declaration.
+  ## The covering obligation is checked here, so an ill-typed covering
+  ## function is rejected with a located error at the `view` declaration.
+  ## The cover type must be
+  ##   (p1 : P1) -> ... -> (pn : Pn) -> (s : S) -> Fam s p1..pn
+  ## i.e. a Pi prefix of explicit binders whose last binder is the
+  ## scrutinee, and whose codomain applies the view family to the scrutinee
+  ## first and then the parameter binders in order. (Deeper mismatches,
+  ## e.g. the index not mentioning the scrutinee, surface when the
+  ## generated wrapper `f x = f_inner x (cover params.. x)` is elaborated.)
+  ## Parameterized covers (McBride's BoundCheck) are the nParams > 0 case;
+  ## plain covers are nParams = 0.
+  if not dataInfos.hasKey(vd.vname):
+    raise elabErr(vd.vloc, "'view': '" & vd.vname &
+      "' is not a data declaration (the view family must be a `data` type)")
+  if not globals.hasKey(vd.coverName):
+    raise elabErr(vd.vloc, "'view': covering function '" & vd.coverName &
+      "' not found")
+  var oh = vd.scrutTy
+  while oh.kind == pkApp: oh = oh.c1
+  let scrutHead = if oh.kind == pkVar: oh.name else: ""
+  if scrutHead == "":
+    raise elabErr(vd.vloc, "'view': the 'over' type must have a rigid head " &
+      "(e.g. `Nat`, not a computed type)")
+  let coverTy = globals[vd.coverName].ty
+  var binderAdvs: seq[string] = @[]
+  var binderDoms: seq[Term] = @[]
+  var ccur = coverTy
+  while ccur.kind == tPi:
+    if ccur.impl:
+      raise elabErr(vd.vloc, "'view': covering function '" & vd.coverName &
+        "' must take all its arguments explicitly (parameter '" &
+        ccur.scope.adv & "' is implicit)")
+    binderAdvs.add(ccur.scope.adv)
+    binderDoms.add(ccur.dom)
+    ccur = ccur.scope.bdy
+  if binderAdvs.len == 0:
+    raise elabErr(vd.vloc, "'view': covering function '" & vd.coverName &
+      "' must have type (x : T) -> " & vd.vname & " x")
+  # The scrutinee binder's domain must have the `over` type's head.
+  var dh = binderDoms[^1]
+  while dh.kind == tApp: dh = dh.fn
+  let dhn = if dh.kind == tR: ms.refNames.getOrDefault(dh.refId, "") else: ""
+  if dhn != scrutHead:
+    raise elabErr(vd.vloc, "'view': the covering function's scrutinee " &
+      "argument does not have the 'over' type '" & scrutHead & "'")
+  # The codomain must be `Fam s p1..pn`: head is the view family and the
+  # arguments are exactly the binders — the scrutinee (innermost binder,
+  # de Bruijn index 0) first, then the parameter binders outermost-first.
+  var cargs: seq[Term] = @[]
+  var ch = ccur
+  while ch.kind == tApp:
+    cargs.add(ch.arg)
+    ch = ch.fn
+  let k = binderAdvs.len
+  let hn = if ch.kind == tR: ms.refNames.getOrDefault(ch.refId, "") else: ""
+  # cargs collects innermost-first, so the i-th applied argument is
+  # cargs[k-1-i]; it must be the binder of de Bruijn index
+  # (0 for i = 0, else k-i).
+  var shapeOk = hn == vd.vname and cargs.len == k
+  if shapeOk:
+    for i in 0 ..< k:
+      let a = cargs[k - 1 - i]
+      let wantIdx = if i == 0: 0 else: k - i
+      if a.kind != tV or a.idx != wantIdx:
+        shapeOk = false
+        break
+  if not shapeOk:
+    raise elabErr(vd.vloc, "'view': covering function '" & vd.coverName &
+      "' must have type (p1 : P1) -> ... -> (s : S) -> " & vd.vname &
+      " s p1 ... pn — the view family applied to the scrutinee, then the " &
+      "parameters in order (the covering obligation: cover maps each " &
+      "scrutinee to its view)")
+  viewInfos[vd.vname] = ViewInfo(vname: vd.vname, scrutHead: scrutHead,
+                                 coverName: vd.coverName, nParams: k - 1)
+
 proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
               ms: var MetaStore,
-              dataInfos: var Table[string, SurfDecl]): seq[ElabDef] =
+              dataInfos: var Table[string, SurfDecl],
+              viewInfos: var Table[string, ViewInfo]): seq[ElabDef] =
   ## Elaborate one top-level declaration (Experiment 5: data desugars
   ## to postulate/elim/red and goes through the same path).
   ## Returns the defs it produced (only dkDef yields one directly).
@@ -4490,11 +4799,29 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
   of dkRecord:
     elabRecordDecl(d, globals, supply, ms)
   of dkClauses:
-    result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
+    # Issue #44: view-annotated clauses go through the view desugar.
+    var vws = initHashSet[string]()
+    for cl in d.clausesDef.clauses:
+      if cl.viewName != "": vws.incl(cl.viewName)
+    if vws.len > 1:
+      raise elabErr(d.clausesDef.loc,
+        "clauses of one 'def' must use the same view")
+    if vws.len == 1:
+      let vw = toSeq(vws)[0]
+      if not viewInfos.hasKey(vw):
+        raise elabErr(d.clausesDef.loc, "unknown view '" & vw &
+          "' (no `view " & vw & " over ... with ...` declaration)")
+      for ed in elabViewClausesDecl(d.clausesDef, viewInfos[vw], globals,
+                                   supply, ms, dataInfos):
+        result.add(ed)
+    else:
+      result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
   of dkMutual:
     for ed in elabMutualDecl(d.mutualDefs, d.mutualLoc, globals, supply, ms,
                              dataInfos):
       result.add(ed)
+  of dkView:
+    elabViewDecl(d.viewDecl, globals, supply, ms, dataInfos, viewInfos)
   of dkInterface:
     elabInterfaceDecl(d.ifname, d.ifloc, globals, supply, ms)
   of dkCommand:
@@ -4520,9 +4847,10 @@ proc elabCheckStateG*(src: string, handlers: seq[ConvHandler] = @[]):
       var ms = initMetaStore()  # includes fresh convCache (Experiment 10)
       for h in handlers: ms.convHandlers.add(h)
       var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
+      var viewInfos: Table[string, ViewInfo] = initTable[string, ViewInfo]()
       var defs: seq[ElabDef] = @[]
       for d in decls:
-        let eds = elabDecl(d, globals, supply, ms, dataInfos)
+        let eds = elabDecl(d, globals, supply, ms, dataInfos, viewInfos)
         for ed in eds:
           # Issue #64: verify linear/erased usage in the elaborated term
           try:
@@ -4566,12 +4894,13 @@ proc elabCheckHoles*(src: string): tuple[defs: seq[ElabDef], ms: MetaStore,
       var ms = initMetaStore()
       ms.allowHoles = true
       var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
+      var viewInfos: Table[string, ViewInfo] = initTable[string, ViewInfo]()
       var defs: seq[ElabDef] = @[]
       var errLoc = noLoc
       var errMsg = ""
       for d in decls:
         try:
-          let eds = elabDecl(d, globals, supply, ms, dataInfos)
+          let eds = elabDecl(d, globals, supply, ms, dataInfos, viewInfos)
           for ed in eds:
             # checkUsage is meta-safe (tMeta is a no-op case); open defs keep
             # their holes in tmTm.
@@ -4600,6 +4929,7 @@ type
     supply*: Supply
     ms*: MetaStore
     dataInfos*: Table[string, SurfDecl]
+    viewInfos*: Table[string, ViewInfo]  # Issue #44: registered views
     loading*: seq[string]        # canonical paths on the import stack
     modHash*: Table[string, Hash] # canonical path -> content hash (skip unchanged)
     elabCount*: Table[string, int] # canonical path -> times elaborated
@@ -4643,7 +4973,7 @@ proc elabDeclsDirInner(drv: var ModuleDriver, decls: seq[SurfDecl],
             "(resolved to '" & target & "', imported from '" & srcLabel & "')")
         discard drv.elabFile(target, d.iloc)
       else:
-        let eds = elabDecl(d, drv.globals, drv.supply, drv.ms, drv.dataInfos)
+        let eds = elabDecl(d, drv.globals, drv.supply, drv.ms, drv.dataInfos, drv.viewInfos)
         for ed in eds:
           # Issue #64: verify linear/erased usage in the elaborated term
           try:
@@ -4770,8 +5100,9 @@ proc elabPrelude*(src: string): tuple[globals: Globals, ms: MetaStore,
   var supply = Supply()
   var ms = initMetaStore()  # includes fresh convCache (Experiment 10)
   var dataInfos: Table[string, SurfDecl] = initTable[string, SurfDecl]()
+  var viewInfos: Table[string, ViewInfo] = initTable[string, ViewInfo]()
   for d in decls:
-    discard elabDecl(d, globals, supply, ms, dataInfos)
+    discard elabDecl(d, globals, supply, ms, dataInfos, viewInfos)
   (globals, ms, supply)
 
 proc checkTermElab*(pre: PreTerm, ctx: Ctx, globals: Globals,

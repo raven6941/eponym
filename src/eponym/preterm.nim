@@ -264,7 +264,8 @@ type
     pegNames*: seq[string]
 
   DeclKind* = enum dkDef, dkPostulate, dkElim, dkRed, dkData, dkClauses,
-                   dkImport, dkInterface, dkCommand, dkRecord, dkMutual
+                   dkImport, dkInterface, dkCommand, dkRecord, dkMutual,
+                   dkView
   RecordField* = object
     ## One field in a `record` declaration (issue #37).
     name*: string
@@ -283,6 +284,12 @@ type
     pats*: seq[PreTerm]
     rhs*: PreTerm
     cloc*: Loc
+    ## Issue #44: view annotation. `| x [Fam] pat = rhs` records
+    ## viewName = "Fam", viewPos = the index (into `pats`) of the pattern
+    ## the `[Fam]` follows (the scrutinee pattern `x`); the next pattern
+    ## `pat` matches the *covered* value. "" / -1 = no view annotation.
+    viewName*: string = ""
+    viewPos*: int = -1
   ClausesDef* = object
     ## `def name : Ty` followed by `| pat1 .. patn = rhs` clauses.
     ## Elaborated to an eliminator application (issue #32).
@@ -290,6 +297,32 @@ type
     ty*: PreTerm
     clauses*: seq[Clause]
     loc*: Loc
+  ViewDecl* = object
+    ## Issue #44: `view Fam over T with coverFn` — registers the view
+    ## family `Fam` (a `data` declaration indexed by the forgetful
+    ## operation's result) as a faithful discrimination principle for the
+    ## scrutinee type `T`, with `coverFn : (x : T) -> Fam x` the covering
+    ## function. Parameterized views take parameters before the scrutinee:
+    ## `coverFn : (p1 : P1) -> ... -> (x : T) -> Fam x p1..pn` (McBride's
+    ## BoundCheck). View-pattern clauses (`| x [Fam] pat = rhs`) elaborate by
+    ## covering the scrutinee and eliminating the view family with #32's
+    ## clause-matrix machinery, of which constructor clauses are the
+    ## identity-covering special case.
+    vname*: string    # the view family (a data decl)
+    scrutTy*: PreTerm # the scrutinee type T (the `over` type)
+    coverName*: string # the covering function (an ordinary def)
+    vloc*: Loc
+  ViewInfo* = object
+    ## Issue #44: a registered `view` declaration, kept in a `viewInfos`
+    ## table carried alongside `dataInfos`. The clause compiler consults it
+    ## to desugar `| x [Fam] pat = rhs` view clauses. Parameterized views
+    ## (McBride's BoundCheck): the cover takes `nParams` parameters before
+    ## the scrutinee, `(p1 : P1) -> ... -> (s : S) -> Fam s p1..pn`;
+    ## `nParams` is 0 for the unparameterized case.
+    vname*: string     # the view family (a data decl in dataInfos)
+    scrutHead*: string # head name of the `over` type (e.g. "Nat")
+    coverName*: string # the covering function (a global)
+    nParams*: int      # cover parameters preceding the scrutinee (#44)
   SurfDecl* = object
     ## A top-level declaration (Experiment 4 adds postulate/elim/red;
     ## Experiment 5 adds data; issue #32 adds clauses; issue #49 adds import).
@@ -311,6 +344,9 @@ type
       daloc*: Loc
     of dkClauses:
       clausesDef*: ClausesDef
+    of dkView:
+      ## Issue #44: view registration (family + covering function).
+      viewDecl*: ViewDecl
     of dkMutual:
       ## Issue #42: `mutual` block of clause-style defs whose bodies may
       ## reference each other. Elaborated as a group with forward

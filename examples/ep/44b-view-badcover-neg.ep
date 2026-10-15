@@ -1,0 +1,11 @@
+# Issue #44 (negative): the covering obligation. A covering function whose
+# type does not return the view family is rejected with a located error at
+# the `view` declaration.
+import "../../lib/nat.ep"
+
+data Parity : Nat -> ? where
+| even : Parity zero
+
+proc badCover (n : Nat) : Nat = n
+
+view Parity over Nat with badCover
