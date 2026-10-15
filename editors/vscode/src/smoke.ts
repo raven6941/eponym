@@ -105,6 +105,9 @@ async function main() {
   const nodeOff = demoText.indexOf("![ quadBody");
   check(nodeOff >= 0 && shedAtCursor(demoText, nodeOff + 4)?.name === "quadBody",
     "shedAtCursor: cursor inside the node resolves quadBody");
+  const procLineOff = demoText.indexOf("proc quad");
+  check(procLineOff >= 0 && shedAtCursor(demoText, procLineOff + 2)?.name === "quadBody",
+    "shedAtCursor: cursor on the proc line (outside the node) resolves quadBody");
   check(shedAtCursor(demoText, 0) === null,
     "shedAtCursor: file top resolves nothing");
   const midBlock = blocks[0].start + 5;

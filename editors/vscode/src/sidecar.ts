@@ -110,11 +110,28 @@ export function shedBlocks(text: string): ShedBlock[] {
   return blocks;
 }
 
-/** The shed node whose `![...]` contains the cursor, or null. */
+/**
+ * The shed node at the cursor, or null. Matches when the cursor is inside
+ * the `![...]` node itself, or anywhere else on the node's line (issue
+ * #203): in practice each shed lives on its proc's line
+ * (`proc quad(n: Int): Int = ![quadBody, ...]`), and requiring the cursor
+ * to sit inside the brackets made the cursor-aware default almost
+ * undiscoverable -- every other cursor position fell through to the
+ * name picker.
+ */
 export function shedAtCursor(text: string, offset: number): ShedNode | null {
+  const offs = lineStartOffsets(text);
+  let lineIdx = 0;
+  for (let i = 0; i < offs.length; i++) {
+    if (offs[i] <= offset) lineIdx = i;
+    else break;
+  }
+  const lineStart = offs[lineIdx];
+  const lineEnd = lineIdx + 1 < offs.length ? offs[lineIdx + 1] : text.length;
   for (const b of shedBlocks(text)) {
     for (const s of b.sheds) {
       if (s.start <= offset && offset <= s.end) return s;
+      if (s.start >= lineStart && s.start < lineEnd) return s;
     }
   }
   return null;
