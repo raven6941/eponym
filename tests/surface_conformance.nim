@@ -311,6 +311,13 @@ conforms """proc linId (A : ?) : A -> A =
   proc linId(A: Univ): A -> A =
     phoasLam(proc (x {.linear.}: A): A = x)
 
+# erased pragma on the host-lambda binder: round-trips as (0 x : A)
+conforms """proc erasedK (A : ?) : A -> A =
+  (lam (0 x : A). (x : A))
+""":
+  proc erasedK(A: Univ): A -> A =
+    phoasLam(proc (x {.erased.}: A): A = x)
+
 # non-trivial program: Vec append skeleton (parse-level pin)
 conforms """proc vappendP (A : ?) (n : Nat) (m : Nat) : Vec A n -> Vec A m -> Vec A (add n m) =
   (lam (xs : Vec A n). ((lam (ys : Vec A m). (vappend xs ys : Vec A (add n m))) : Vec A m -> Vec A (add n m)))

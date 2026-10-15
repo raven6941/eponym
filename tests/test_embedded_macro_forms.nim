@@ -72,5 +72,9 @@ eponymBlock:
     phoasLam(proc (x: NatP -> NatP): NatP -> NatP =
       phoasLam(proc (y: NatP): NatP = x y))
 
+  # --- erased binder on phoasLam (issue #40): round-trips as (0e : NatP) ---
+  proc erasedConst(): NatP =
+    phoasLam(proc (e {.erased.}: NatP): NatP = zeroP)(zeroP)
+
 when isMainModule:
   echo "test_embedded_macro_forms: embedded 07/08/14 + def/qvar/unit elaborated at compile time"
