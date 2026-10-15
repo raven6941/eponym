@@ -551,15 +551,28 @@ proc parseClausesDef(p: var Parser): ClausesDef =
   while p.peek().kind == tkPipe:
     let ploc = p.next().loc
     var pats: seq[PreTerm] = @[]
+    var viewName = ""
+    var viewPos = -1
     while p.peek().kind != tkEq:
       if p.peek().kind == tkEof:
         raise fail(ploc, "unterminated clause: expected '='")
       pats.add p.parseAtom()
+      if p.peek().kind == tkLBracket:
+        ## Issue #44: view annotation `[Fam]` follows the scrutinee pattern:
+        ## `| x [Fam] pat = rhs`. The next pattern matches the covered value.
+        if viewName != "":
+          raise fail(ploc, "duplicate view annotation in one clause")
+        discard p.next()  # [
+        let vn = p.expect(tkIdent, "view name in '[...]'")
+        discard p.expect(tkRBracket, "']'")
+        viewName = vn.lexeme
+        viewPos = pats.high
     discard p.expect(tkEq, "'='")
     let rhs = p.parseTerm()
     if pats.len == 0:
       raise fail(ploc, "clause needs at least one pattern")
-    clauses.add Clause(pats: pats, rhs: rhs, cloc: ploc)
+    clauses.add Clause(pats: pats, rhs: rhs, cloc: ploc,
+                       viewName: viewName, viewPos: viewPos)
   if clauses.len == 0:
     raise fail(t.loc, "'def' needs at least one '|'-clause")
   ClausesDef(name: nm.lexeme, ty: ty, clauses: clauses, loc: t.loc)

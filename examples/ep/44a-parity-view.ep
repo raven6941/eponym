@@ -1,0 +1,52 @@
+# Issue #44: Epigram-style views — faithful pattern matching on computed
+# properties. The Parity view matches Nat on even/odd via a view family
+# indexed by the scrutinee plus a covering function (the faithfulness proof).
+
+import "../../lib/nat.ep"
+
+# Doubling by structural recursion (double (suc k) reduces definitionally
+# to suc (suc (double k)) — needed for the cover's step case below).
+def double : Nat -> Nat
+| zero = zero
+| (suc k) = suc (suc (double k))
+
+# The view family: Parity n discriminates n as even or odd.
+data Parity : Nat -> ? where
+| even (k : Nat) : Parity (double k)
+| odd (k : Nat) : Parity (suc (double k))
+
+# The covering function: every Nat is even or odd. The step case eliminates
+# the view family directly (the index refines definitionally in each
+# method), so no nested clause-matrix split is needed.
+proc parityCover (n : Nat) : Parity n =
+  natElim (lam (u : Nat). Parity u)
+    (even zero)
+    (lam (p : Nat). lam (ih : Parity p).
+      parityElim (lam (m : Nat). lam (q : Parity m). Parity (suc m))
+        (lam (k : Nat). odd k)
+        (lam (k : Nat). even (suc k))
+        p ih)
+    n
+
+# Register the view: match Nat through Parity, faithfully.
+view Parity over Nat with parityCover
+
+# View-pattern clauses: cover the scrutinee, eliminate the view family.
+def half : Nat -> Nat
+| n [Parity] (even k) = k
+| n [Parity] (odd k) = k
+
+# The view computes.
+proc t1 : Nat = half zero
+proc t2 : Nat = half (suc zero)
+proc t3 : Nat = half (suc (suc zero))
+proc t4 : Nat = half (suc (suc (suc (suc zero))))
+
+import "../../lib/eq.ep"
+
+# Computation: the view really evaluates (refl checks up to conversion).
+proc halfComp0 : Eq Nat (half zero) zero = refl Nat zero
+proc halfComp1 : Eq Nat (half (suc zero)) zero = refl Nat zero
+proc halfComp2 : Eq Nat (half (suc (suc zero))) (suc zero) = refl Nat (suc zero)
+proc halfComp4 : Eq Nat (half (suc (suc (suc (suc zero))))) (suc (suc zero)) =
+  refl Nat (suc (suc zero))

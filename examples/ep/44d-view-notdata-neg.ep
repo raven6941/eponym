@@ -1,0 +1,7 @@
+# Issue #44 (negative): the view family must be a `data` declaration.
+import "../../lib/nat.ep"
+
+proc notData : Nat = zero
+proc cover2 (n : Nat) : Nat = n
+
+view notData over Nat with cover2
