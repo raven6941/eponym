@@ -419,9 +419,11 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     var refNames = initTable[int, string]()
     for name, g in globals:
       if g.tm.kind == tR: refNames[g.tm.refId] = name
+    let reason = noConfusionMsg(ms, nc.c1, nc.c2)
+    traceEvt(tcConv, "conv.noconfusion", reason)  # Issue #83: the fast-fail point
     raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
       " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
-      expLocSuffix(expLoc) & ": " & noConfusionMsg(ms, nc.c1, nc.c2))
+      expLocSuffix(expLoc) & ": " & reason)
   var env = newSeq[Value](ctx.len)
   for i in 0 ..< ctx.len:
     env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
@@ -452,6 +454,7 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     var refNames = initTable[int, string]()
     for name, g in globals:
       if g.tm.kind == tR: refNames[g.tm.refId] = name
+    traceEvt(tcConv, "conv.fail", sanitizeKernelMsg(e.msg))  # Issue #83
     raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
       " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
       expLocSuffix(expLoc) & ": not convertible (" & sanitizeKernelMsg(e.msg) & ")")

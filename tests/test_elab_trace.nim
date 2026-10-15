@@ -121,5 +121,34 @@ check(countKind(bevs, "unify.in") == countKind(bevs, "unify.out"),
       "unify scopes pair up even on failure")
 
 setElabTrace(false)
-echo "--- ", 6 - failed, "/6 trace groups ok ---"
+echo "--- trace groups 1-6 done ---"
+
+# 7. Conversion fast-fail: a constructor mismatch logs conv.noconfusion
+#    at the failure point (the #80 noConfusion pre-check in defaultConv).
+const srcNoConf = """
+data Bit : ? where
+| b0 : Bit
+| b1 : Bit
+data Wrap : Bit -> ? where
+| wrap (b : Bit) : Wrap b
+proc bad : Wrap b1 =
+  wrap b0
+"""
+setElabTrace(true, {tcConv})
+startTraceCapture()
+try:
+  discard elabCheck(srcNoConf)
+  check(false, "srcNoConf elaborated cleanly (expected ElabError)")
+except ElabError:
+  discard
+let nevs = stopTraceCapture()
+let nkinds = kindsOf(nevs)
+check("conv.goal" in nkinds, "conv.goal fires before the failure")
+check("conv.noconfusion" in nkinds,
+      "conv.noconfusion fires on constructor mismatch")
+check("conv.fail" notin nkinds,
+      "no conv.fail: the fast-fail pre-empts the NbE path")
+
+setElabTrace(false)
+echo "--- ", 7 - failed, "/7 trace groups ok ---"
 if failed > 0: quit(1)
