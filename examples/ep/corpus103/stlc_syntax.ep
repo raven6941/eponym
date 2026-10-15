@@ -1,0 +1,12 @@
+# Issue #103 annotation-burden corpus, file 1/4: untyped lambda-calculus terms.
+#
+# De Bruijn indices (no names on binders), with numeric literals as a base
+# type's values. This file exercises `data` declarations only.
+
+import "../../../lib/nat.ep"
+
+data Tm : ? where
+| var (i : Nat) : Tm
+| lit (n : Nat) : Tm
+| app (f : Tm) (a : Tm) : Tm
+| abs (b : Tm) : Tm
