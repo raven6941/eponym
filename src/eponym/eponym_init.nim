@@ -33,7 +33,12 @@ type
   PrimOp* = enum opAdd, opSub, opMul  # primitive Int operations (Exp 11)
   TermKind* = enum
     tR, tV, tPi, tSi, tLam, tPair, tApp, tFst, tSnd, tAbsurd, tC, tLet,
-    tMeta, tInt, tPrim, tNatLit
+    tMeta, tInt, tPrim, tNatLit, tType
+    ## tType: a level-annotated universe `Type l` (Issue #52). The legacy
+    ## `?` (tC cStar) keeps its Type-in-Type behaviour; `Type l` is the
+    ## stratified hierarchy: `Type l : Type (l+1)`, Pi/Sigma formation
+    ## takes max levels, and conversion is cumulative (`Type i <= Type j`
+    ## for i <= j, applied directionally in `check`).
     ## tMeta: an elaborator metavariable (Experiment 3). The core never
     ## assigns or evaluates them: the elaborator zonks (substitutes all
     ## solutions) before calling check/infer, and every core operation
@@ -47,7 +52,8 @@ type
     ##   (O(1) construction), and conversion expands literals when comparing
     ##   against hand-written suc-chains (see defaultConv in elab.nim).
   WhnfKind* = enum wRef, wPi, wSi, wLam, wPair, wConst, wRed, wInt, wPrim,
-                     wNatLit
+                     wNatLit, wType
+  ## wType: a level-annotated universe value `Type l` (Issue #52).
   ## wInt: a primitive integer value (Experiment 11).
   ## wNatLit: a primitive Nat literal value (Issue #93); definitionally
   ## suc^n(zero). Compared by int equality; hand-written suc-chains
@@ -99,6 +105,8 @@ type
       sub*: Term
     of tC:
       c*: Const
+    of tType:
+      lvl*: int  # Issue #52: universe level of `Type l`
     of tLet:
       letVal*, letTy*: Term
       letScope*: Scope
@@ -133,6 +141,8 @@ type
       fstV, sndV: Value
     of wConst:
       c: Const
+    of wType:
+      lvl*: int  # Issue #52: universe level of `Type l`
     of wRed:
       ## an eliminator with registered reduction rules, accumulating args
       elimId: int
@@ -188,6 +198,8 @@ proc tmAbsurd*(z: Term): Term = Term(kind: tAbsurd, sub: z)
 proc tmLet*(v, ty: Term, adv: string, bdy: Term): Term =
   Term(kind: tLet, letVal: v, letTy: ty, letScope: Scope(adv: adv, bdy: bdy))
 proc tmC*(c: Const): Term = Term(kind: tC, c: c)
+proc tmType*(lvl: int): Term = Term(kind: tType, lvl: lvl)
+  ## Issue #52: the level-annotated universe `Type l`.
 proc tmInt*(n: int): Term = Term(kind: tInt, intVal: n)
 proc tmNatLit*(n: int): Term = Term(kind: tNatLit, natLitVal: n)
 proc tmPrim*(op: PrimOp, ty: Term): Term = Term(kind: tPrim, primOp: op, primTy: ty)
@@ -219,6 +231,7 @@ proc `$`*(t: Term): string =
   of tR: "R" & $t.refId
   of tV: "V" & $t.idx
   of tC: $t.c
+  of tType: "Type " & $t.lvl
   of tInt: $t.intVal
   of tNatLit: $t.natLitVal
   of tPrim: $t.primOp
@@ -250,6 +263,7 @@ proc hashTerm*(t: Term): Hash =
   of tC: result = result !& hash(t.c.ord)
   of tInt: result = result !& hash(t.intVal)
   of tNatLit: result = result !& hash(t.natLitVal)
+  of tType: result = result !& hash(t.lvl)
   of tPrim:
     result = result !& hash(t.primOp.ord)
     result = result !& hashTerm(t.primTy)
@@ -461,7 +475,7 @@ proc subst*(t: Term, depth: int, s: Term): Term =
     if t.idx == depth: s
     elif t.idx > depth: vv(t.idx - 1)
     else: t
-  of tR, tC, tInt, tPrim, tNatLit: t
+  of tR, tC, tType, tInt, tPrim, tNatLit: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(subst(it, depth, s)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, subst(t.dom, depth, s),
@@ -490,7 +504,7 @@ proc absGo(t: Term, id: int, depth: int): Term =
     if t.refId == id: vv(depth) else: t
   of tV:
     if t.idx >= depth: vv(t.idx + 1) else: t
-  of tC, tInt, tPrim, tNatLit: t
+  of tC, tType, tInt, tPrim, tNatLit: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(absGo(it, id, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, absGo(t.dom, id, depth),
@@ -519,7 +533,7 @@ proc substEnv(t: Term, env: seq[Value], depth: int): Term =
     if j < depth: t
     elif j < depth + env.len: env[j - depth].syn
     else: vv(j - env.len)
-  of tR, tC, tInt, tPrim, tNatLit: t
+  of tR, tC, tType, tInt, tPrim, tNatLit: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(substEnv(it, env, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, substEnv(t.dom, env, depth),
@@ -546,7 +560,7 @@ proc weakenAt(t: Term, depth: int): Term =
   case t.kind
   of tV:
     if t.idx >= depth: vv(t.idx + 1) else: t
-  of tR, tC, tInt, tPrim, tNatLit: t
+  of tR, tC, tType, tInt, tPrim, tNatLit: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(weakenAt(it, depth)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, weakenAt(t.dom, depth),
@@ -576,7 +590,7 @@ proc substSpine*(t: Term, spine: seq[Term]): Term =
   of tV:
     if t.idx < spine.len: spine[t.idx]
     else: vv(t.idx - spine.len)
-  of tR, tC, tInt, tPrim, tNatLit: t
+  of tR, tC, tType, tInt, tPrim, tNatLit: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(substSpine(it, spine)))
   of tPi, tSi, tLam:
     let sp = @[vv(0)] & spine.mapIt(weaken(it))
@@ -698,6 +712,7 @@ proc evalWhnf(t: Term, env: seq[Value]): Whnf =
   of tV: env[t.idx].whnf
   of tC: Whnf(kind: wConst, c: t.c)
   of tInt: Whnf(kind: wInt, intVal: t.intVal)
+  of tType: Whnf(kind: wType, lvl: t.lvl)
   of tNatLit: Whnf(kind: wNatLit, natLitVal: t.natLitVal)
   of tPrim: Whnf(kind: wPrim, op: t.primOp, pargs: @[])
   of tPi: Whnf(kind: wPi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env), qty: t.qty)
@@ -724,6 +739,9 @@ proc eval*(t: Term, env: seq[Value]): Value =
 
 proc vStar*(): Value =
   Value(syn: tStar(), whnf: Whnf(kind: wConst, c: cStar))
+proc vType*(lvl: int): Value =
+  ## Issue #52: the universe value `Type l`.
+  Value(syn: tmType(lvl), whnf: Whnf(kind: wType, lvl: lvl))
 proc vOne(): Value =
   Value(syn: tOne(), whnf: Whnf(kind: wConst, c: cOne))
 
@@ -802,6 +820,15 @@ proc check*(s: var Supply, ty: Value, t: Term): Value =
       if t.kind == tInt or t.kind == tPrim or t.kind == tNatLit:
         return eval(t, @[])
       let r = synth(s, t)
+      # Issue #52: cumulativity is directional and applies at the
+      # ascription point. A term whose inferred type is `Type i` checks
+      # against an expected `Type j` when i <= j; the legacy `?` admits
+      # any universe (it stays the top sort for "is a type" positions).
+      if r.typ.whnf.kind == wType:
+        if ty.whnf.kind == wType and r.typ.whnf.lvl <= ty.whnf.lvl:
+          return r.val
+        if ty.whnf.kind == wConst and ty.whnf.c == cStar:
+          return r.val
       areEqual(s, vStar(), ty, r.typ)
       r.val
 
@@ -819,6 +846,14 @@ proc structuralEq(s: var Supply, a, b: Value) =
       s.natSucRefId >= 0 and s.natZeroRefId >= 0:
     if numeralChainEq(b.whnf.natLitVal, a, s.natZeroRefId, s.natSucRefId): return
   if a.whnf.kind != b.whnf.kind:
+    ## Issue #52: the legacy `?` is convertible with `Type 0` -- both are
+    ## the bottom universe, so the elaborator's `?`-classified types and
+    ## the kernel's level-0 Pis/Sigmas agree. The stratified hierarchy
+    ## above stays strict (`Type 0` =/= `Type 1`).
+    if a.whnf.kind == wConst and a.whnf.c == cStar and
+        b.whnf.kind == wType and b.whnf.lvl == 0: return
+    if b.whnf.kind == wConst and b.whnf.c == cStar and
+        a.whnf.kind == wType and a.whnf.lvl == 0: return
     if a.whnf.kind == wLam and b.whnf.kind == wRef:
       let x = freshPara(s, nil)
       structuralEq(s, a.whnf.lscope.fn(x), vApp(b, x))
@@ -832,6 +867,12 @@ proc structuralEq(s: var Supply, a, b: Value) =
   of wConst:
     if a.whnf.c != b.whnf.c:
       raise newException(ValueError, "constant mismatch")
+  of wType:
+    ## Issue #52: universes compare by level; cumulativity is directional
+    ## and lives in `check`, not here.
+    if a.whnf.lvl != b.whnf.lvl:
+      raise newException(ValueError, "universe level mismatch: Type " &
+        $a.whnf.lvl & " vs Type " & $b.whnf.lvl)
   of wPi, wSi:
     if a.whnf.qty != b.whnf.qty:
       raise newException(ValueError, "quantity mismatch: " & $a.whnf.qty &
@@ -895,6 +936,16 @@ proc areEqual*(s: var Supply, ty, a, b: Value) =
   else:
     structuralEq(s, a, b)
 
+proc univIdx(u: Value): int =
+  ## Issue #52: the level index of a universe *value*: `Type l` -> l,
+  ## legacy `?` -> 0. Raises if `u` is not a universe.
+  case u.whnf.kind
+  of wType: u.whnf.lvl
+  of wConst:
+    if u.whnf.c == cStar: 0
+    else: raise newException(ValueError, "not a universe: " & $u.syn)
+  else: raise newException(ValueError, "not a universe: " & $u.syn)
+
 proc infer(s: var Supply, t: Term): Value =
   ## infer implements the typing rules of Fig. 6.2, syntax-directed (§6.5.1).
   ## Terms are always closed here: binders are instantiated with fresh
@@ -909,6 +960,9 @@ proc infer(s: var Supply, t: Term): Value =
     of cOne: vStar()
     of cVoid: vOne()
     of cZero: vStar()
+  of tType:
+    ## Issue #52: `Type l : Type (l+1)`.
+    vType(t.lvl + 1)
   of tInt:
     raise newException(ValueError,
       "cannot infer type of integer literal (elaborator must assign Int type)")
@@ -920,8 +974,14 @@ proc infer(s: var Supply, t: Term): Value =
   of tPi, tSi:
     let domV = check(s, vStar(), t.dom)
     let x = freshPara(s, domV)
-    discard check(s, vStar(), instantiate(t.scope, x))
-    vStar()
+    let bodyTyV = infer(s, instantiate(t.scope, x))
+    discard check(s, vStar(), bodyTyV.syn)
+    ## Issue #52: Pi/Sigma formation takes the max of the domain and
+    ## codomain universe levels. The domain contributes the level of the
+    ## universe classifying it (infer domV.syn); the codomain contributes
+    ## the index of its inferred type directly. Legacy `?`-based types
+    ## stay at level 0.
+    vType(max(univIdx(infer(s, domV.syn)), univIdx(bodyTyV)))
   of tLam:
     let domV = check(s, vStar(), t.dom)
     let x = freshPara(s, domV)
@@ -1092,5 +1152,61 @@ when isMainModule:
                   tmPi(vv(2), "b", vv(3)))))
   areEqual(tcSupply, vStar(), cTy, eval(expCT, @[]))
   echo "ok: const checks"
+
+  echo "--- Issue #52: universe hierarchy tests ---"
+
+  proc isTypeLvl(v: Value, l: int): bool =
+    v.whnf.kind == wType and v.whnf.lvl == l
+
+  # Type l : Type (l+1)
+  assert isTypeLvl(infer(tcSupply, tmType(0)), 1)
+  assert isTypeLvl(infer(tcSupply, tmType(3)), 4)
+  echo "ok: Type l : Type (l+1)"
+
+  # Pi/Sigma formation takes max levels: Pi(T: Type 0). T : Type 1
+  let piT0 = tmPi(tmType(0), "T", vv(0))
+  assert isTypeLvl(infer(tcSupply, piT0), 1)
+  echo "ok: Pi(T: Type 0). T : Type 1 (max formation)"
+  # Pi(A: Type 1). Pi(B: Type 0). A : Type 2
+  let piNest = tmPi(tmType(1), "A", tmPi(tmType(0), "B", vv(1)))
+  assert isTypeLvl(infer(tcSupply, piNest), 2)
+  echo "ok: nested Pi takes max level 2"
+  # Sigma agrees
+  assert isTypeLvl(infer(tcSupply, tmSi(tmType(2), "T", vv(0))), 3)
+  echo "ok: Sigma(T: Type 2). T : Type 3"
+
+  # legacy `?`-based Pis stay at level 0
+  assert isTypeLvl(infer(tcSupply, tmPi(tStar(), "T", vv(0))), 0)
+  echo "ok: legacy Pi(T: ?). T : Type 0"
+
+  # cumulativity: Type 0 checks against Type 1; Type 1 does not check
+  # against Type 0; Type 0 does not check against itself-as-type
+  discard check(tcSupply, vType(1), tmType(0))
+  echo "ok: cumulativity Type 0 <= Type 1"
+  var cumulFailed = false
+  try: discard check(tcSupply, vType(0), tmType(1))
+  except ValueError: cumulFailed = true
+  assert cumulFailed, "Type 1 <= Type 0 must fail"
+  echo "ok: Type 1 not <= Type 0"
+  var selfFailed = false
+  try: discard check(tcSupply, vType(0), tmType(0))
+  except ValueError: selfFailed = true
+  assert selfFailed, "Type 0 : Type 0 must fail"
+  echo "ok: Type 0 : Type 0 rejected (no Type-in-Type)"
+
+  # legacy `?` admits any universe in "is a type" positions
+  discard check(tcSupply, vStar(), tmType(5))
+  echo "ok: legacy ? admits Type 5"
+
+  # universes are values: eval is the identity on them
+  assert isTypeLvl(eval(tmType(2), @[]), 2)
+  echo "ok: Type 2 evaluates to a universe value"
+
+  # conversion stays symmetric: Type 0 =/= Type 1 definitionally
+  var convFailed = false
+  try: areEqual(tcSupply, vStar(), vType(0), vType(1))
+  except ValueError: convFailed = true
+  assert convFailed, "Type 0 =/= Type 1 must fail"
+  echo "ok: Type 0 =/= Type 1 (equality is not cumulative)"
 
   echo "--- all tests passed ---"

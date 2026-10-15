@@ -265,6 +265,7 @@ proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string],
     if t.idx < ctx.len and ctx[t.idx].name != "_": ctx[t.idx].name
     else: "V" & $t.idx
   of tC: $t.c
+  of tType: "Type " & $t.lvl  # Issue #52
   of tInt: $t.intVal
   of tNatLit: $t.natLitVal
   of tPrim: $t.primOp
@@ -348,7 +349,7 @@ proc containsNatLit(t: Term): bool =
   if t.isNil: return false
   case t.kind
   of tNatLit: true
-  of tR, tV, tC, tInt, tPrim, tMeta: false
+  of tR, tV, tC, tType, tInt, tPrim, tMeta: false
   of tPi, tSi, tLam: containsNatLit(t.dom) or containsNatLit(t.scope.bdy)
   of tPair: containsNatLit(t.pFst) or containsNatLit(t.pSnd) or
               containsNatLit(t.pScope.bdy)
@@ -368,7 +369,7 @@ proc expandNatLit(t: Term, zeroTm, sucTm: Term): Term =
     var res = zeroTm
     for _ in 1 .. t.natLitVal: res = tmApp(sucTm, res)
     res
-  of tR, tV, tC, tInt, tPrim, tMeta: t
+  of tR, tV, tC, tType, tInt, tPrim, tMeta: t
   of tPi, tSi, tLam:
     mkBinder(t.kind, expandNatLit(t.dom, zeroTm, sucTm),
              Scope(adv: t.scope.adv,
@@ -1343,7 +1344,7 @@ proc checkErasedArgWalk(t: Term, depth: int, ctx: Ctx, loc: Loc,
     checkErasedArgWalk(t.letScope.bdy, depth + 1, ctx, loc, ms, pending)
   of tPrim:
     discard
-  of tR, tC, tMeta, tInt, tNatLit:
+  of tR, tC, tType, tMeta, tInt, tNatLit:
     discard
 
 proc checkErasedArg(arg: Term, ctx: Ctx, loc: Loc, ms: var MetaStore) =
