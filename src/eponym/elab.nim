@@ -2508,6 +2508,12 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
       ## Records the SurfDecl in dataInfos for coverage checking (issue #32).
       let loc = d.daloc
       # name clash check for the generated binders
+      # Issue #213: the family name itself must be checked too, not just
+      # parameters and constructor binders — `data C` collides with the
+      # generated motive binder `C` and otherwise fails later with a
+      # confusing conversion error far from the real cause.
+      if d.dname == "C":
+        raise elabErr(loc, "data family may not be named 'C' (reserved for the motive)")
       for p in d.params:
         if p.name == "C":
           raise elabErr(loc, "data parameter may not be named 'C' (reserved for the motive)")
