@@ -106,6 +106,8 @@ export function renderInlineShed(
 export class ShedCodeLensProvider implements vscode.CodeLensProvider {
   // Maps document URI -> shed name -> goal (from sidecar, refreshed on save)
   private goals = new Map<string, Map<string, string>>();
+  private _onDidChange = new vscode.EventEmitter<void>();
+  readonly onDidChangeCodeLenses = this._onDidChange.event;
 
   /** Refresh goals from the sidecar JSON (no LSP round-trip needed). */
   refreshDoc(doc: vscode.TextDocument): void {
@@ -124,6 +126,8 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
     // Ensure every name from the picker has an entry
     for (const n of names) if (!m.has(n)) m.set(n, "");
     this.goals.set(doc.uri.toString(), m);
+    // Tell VS Code to re-query provideCodeLenses
+    this._onDidChange.fire();
   }
 
   provideCodeLenses(
