@@ -1,0 +1,63 @@
+# Issue #44: McBride's BoundCheck view — match Nat on "less than b".
+# A parameterized view (nParams = 1): the bound b is the parameter, the
+# scrutinee m comes last in the cover. The trichotomy: m < b (lt), m = b
+# (eq), m > b (gt), with the difference d carried as data so view clients
+# can compute with it.
+#
+# Index arithmetic is arranged so every step unfolds definitionally:
+# `add` recurses on its first argument, so `add (suc x) d` is
+# definitionally `suc (add x d)` while `add x d` with variable x stays
+# stuck — hence `lt`/`gt` put the variable difference in add's *second*
+# argument position.
+
+import "../../lib/nat.ep"
+import "../../lib/bool.ep"
+
+# The view family, indexed by scrutinee first, then the bound parameter.
+data BCheck : Nat -> Nat -> ? where
+| lt (d : Nat) (m : Nat) : BCheck m (suc (add m d))
+| eq (m : Nat) : BCheck m m
+| gt (d : Nat) (n : Nat) : BCheck (suc (add n d)) n
+
+# The covering function: every (b, m) pair is comparable. Double
+# elimination — outer on the scrutinee m, inner on the bound b — with the
+# (suc p, suc q) case re-eliminating the view of (p, q) and peeling one
+# `suc` off both sides (the motive shifts both indices).
+proc bcheckCover (b : Nat) (m : Nat) : BCheck m b =
+  natElim (lam (mm : Nat). (b : Nat) -> BCheck mm b)
+    (lam (b : Nat).
+      natElim (lam (bb : Nat). BCheck zero bb)
+        (eq zero)
+        (lam (q : Nat). lam (ihb : BCheck zero q). lt q zero)
+        b)
+    (lam (p : Nat). lam (ih : (b : Nat) -> BCheck p b). lam (b : Nat).
+      natElim (lam (bb : Nat). BCheck (suc p) bb)
+        (gt p zero)
+        (lam (q : Nat). lam (ihb : BCheck (suc p) q).
+          bCheckElim
+            (lam (mm : Nat). lam (bb : Nat). lam (w : BCheck mm bb).
+              BCheck (suc mm) (suc bb))
+            (lam (d : Nat). lam (m0 : Nat). lt d (suc m0))
+            (lam (m0 : Nat). eq (suc m0))
+            (lam (d : Nat). lam (n0 : Nat). gt d (suc n0))
+            p q (ih q))
+        b)
+    m b
+
+# Register the view: match Nat through BCheck, faithfully.
+view BCheck over Nat with bcheckCover
+
+# A function defined *by view*: less-or-equal via the trichotomy.
+def isLe : Nat -> Nat -> Bool
+| b m [BCheck] (lt d m0) = true
+| b m [BCheck] (eq m0) = true
+| b m [BCheck] (gt d n0) = false
+
+import "../../lib/eq.ep"
+
+# Computation: the view really evaluates (refl checks up to conversion).
+# isLe b m decides m <= b via the trichotomy.
+proc isLeCompLT : Eq Bool (isLe (suc zero) zero) true = refl Bool true
+proc isLeCompEQ : Eq Bool (isLe (suc (suc zero)) (suc (suc zero))) true =
+  refl Bool true
+proc isLeCompGT : Eq Bool (isLe zero (suc zero)) false = refl Bool false

@@ -1,0 +1,13 @@
+# Issue #44: a cover whose codomain applies the view family to the
+# parameters in the wrong order is rejected at the `view` declaration —
+# the family must be applied to the scrutinee first, then the parameters.
+import "../../lib/nat.ep"
+
+data P2 : Nat -> Nat -> ? where
+| c0 (m : Nat) (b : Nat) : P2 m b
+
+# Elaborates fine as a proc, but the cover shape is wrong: `P2 b n`
+# instead of `P2 n b` (scrutinee first).
+proc swapCover (b : Nat) (n : Nat) : P2 b n = c0 b n
+
+view P2 over Nat with swapCover

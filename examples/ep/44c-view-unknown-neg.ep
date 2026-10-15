@@ -1,0 +1,5 @@
+# Issue #44 (negative): a clause naming an undeclared view is rejected.
+import "../../lib/nat.ep"
+
+def f : Nat -> Nat
+| n [NoSuchView] (even k) = k

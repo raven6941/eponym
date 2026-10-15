@@ -3289,3 +3289,81 @@
   per-elabCheck EGraph in MetaStore); with the measurement done, #4 closes.
   Status: branch =exp4-convcache-measure= (instrumentation + bench driver
   + self-test cache-stats reporting).
+* 2026-10-15 — Issue #44: Epigram-style views (merged to exp-long-lived; CLOSED)
+
+  A view is a data family indexed by the scrutinee plus a covering
+  function mapping each scrutinee to its view; the covering function is
+  the faithfulness proof (Epigram views cannot lie, unlike Wadler's).
+  Surface: =view Parity over Nat with parityCover=; clauses
+  =| n [Parity] (even k) = rhs= annotate the scrutinee pattern.
+
+  Elaboration desugars into two declarations: an inner def
+  =f_viewInner : (x : T) -> (v : Fam x) -> R= whose clauses match the
+  covered value (compiled by #32's clause-matrix machinery, with the
+  scrutinee allowed at any telescope position via a new =scrutPos=
+  override on =compileClausesToSurfDef=), plus a wrapper
+  =f x.. = f_viewInner x.. (cover x_s) rest...=. Constructor clauses
+  are the identity-covering special case of this scheme. The covering
+  obligation is enforced at the =view= declaration: the cover must be
+  a global whose type is a Pi returning the view family; an ill-typed
+  cover is rejected with a located error there (44b negative test),
+  as are unknown views (44c) and non-data families (44d).
+
+  Coverage checking for view patterns reuses #32 directly: the inner
+  def matches on the view family, so missing/duplicate view
+  constructors report as missing/duplicate cases of the family
+  (44e: omitting the =odd= pattern gives "missing case for
+  constructor 'odd' of 'Parity'"). No view-specific coverage code.
+
+  Limitations (documented): (a) recursion through a view is
+  unchecked — recursive calls go through the wrapper, so #32/#36's
+  structural termination argument does not transfer; (b) nested
+  clause-matrix splits on indexed rest arguments hit a pre-existing
+  #32 limitation (reproduced on main; the demo cover avoids it by
+  eliminating the view family directly); (c) the family must be indexed
+  exactly by scrutinee-then-parameters — no extra indices, no family
+  parameters (data-level `|->`, not just indices).
+
+  Parameterized views implemented (same day, still on exp44-views): the
+  `view` decl now validates the full cover shape
+  `(p1 : P1) -> ... -> (s : S) -> Fam s p1..pn` — all cover binders
+  explicit, the last binder's domain head is the `over` type, and the
+  codomain applies the family to the scrutinee first then the parameters
+  in order (checked as de Bruijn variables, so a cover that drops,
+  swaps, or computes an index is rejected at the `view` decl with a
+  located error; 44f negative test). `ViewInfo` carries `nParams`; the
+  scrutinee is now the explicit argument carrying the `[Fam]` annotation
+  (was: hardcoded to the first explicit argument — parameters must be able
+  to precede it). The desugar takes the nParams explicit telescope
+  binders immediately
+  before the scrutinee as the parameters, inserts
+  `(v : Fam s p1..pn)` after the scrutinee in the inner def, and the
+  wrapper applies the cover to `p1..pn` then the scrutinee. The inner
+  telescope now uses the freshened wrapper binder names throughout (was:
+  raw `e.name` for non-scrutinee binders), so wrapper applications line
+  up even with `_`-named binders. 44g is a positive plumbing test
+  (nParams=1, degenerate single-constructor family): the wrapper really
+  applies the cover to parameter-then-scrutinee, verified by a `refl`
+  computation check.
+
+  Done 2026-10-15: the BoundCheck demo (`examples/ep/44h-boundcheck.ep`).
+  Design change vs the plan above: no propositional rewriting was needed.
+  The family is indexed `lt (d m : Nat) : BCheck m (suc (add m d))`,
+  `gt (d n : Nat) : BCheck (suc (add n d)) n` — the variable difference
+  sits in `add`'s *second* argument, so every step-case index unfolds
+  definitionally (`add (suc x) d` reduces; `add x d` with variable `x`
+  would stay stuck). The cover is a double elimination (outer on the
+  scrutinee `m`, inner on the bound `b`); the `(suc p, suc q)` case
+  re-eliminates the view of `(p, q)` with the motive shifting both
+  indices (`BCheck (suc mm) (suc bb)`), peeling one `suc` off each side.
+  A function defined by view, `isLe : Nat -> Nat -> Bool` (`m <= b` via
+  the trichotomy), computes on all three paths — verified by `refl`
+  checks (`isLe 1 0 = true`, `isLe 2 2 = true`, `isLe 0 1 = false`).
+  Eliminator naming note: only the first character is lowercased, so
+  `BCheck`'s eliminator is `bCheckElim`, not `bcheckElim`.
+
+  Scope note (2026-10-15 main freeze): views are a new user-facing
+  capability, so this landed on the new long-lived post-freeze
+  experimental branch =exp-long-lived= (merge commit, same day), not
+  main. =exp-long-lived= splits from main at the freeze point and
+  merges back after the release; future experiments target it.
