@@ -75,7 +75,7 @@ What just happened:
 Now break it. Change the body to `addInt(x, y)` and recompile:
 
 ```
-hello_bad.nim(5, 3) Error: eponymBlock elaboration error: line 2, col 37: unbound variable 'y'
+hello_bad.nim(5, 3) Error: eponymBlock elaboration error: line 2, col 40: unbound variable 'y'
 ```
 
 Type errors inside the block are Nim compiler errors pointing at your
@@ -89,7 +89,7 @@ is vectors indexed by their length: `Vec(A, n)` is the type of vectors
 with elements in `A` and length exactly `n`. It lives in the prelude —
 no need to define it yourself.
 
-`vecs.nim` (with `lib/vec.ep` and `lib/nat.ep` vendored next to it):
+`vecs.nim` (with `lib/vec.ep` and `lib/nat.ep` vendored under `lib/`):
 
 ```nim
 import eponym_mac
@@ -129,9 +129,9 @@ A few notes on the syntax (the full story is in
   `i` and vector `w`, produce a `Nat`"), the nil case, the cons case,
   and the vector to eliminate. The cons case gets an induction
   hypothesis `ih` for the tail.
-- `{A}`, `{m}`, `{n}` in the prelude are *implicit* binders: you never
-  write them at call sites, the elaborator fills them in. (Inside a
-  `proc` definition, parameters are always written explicitly.)
+- `{A}`, `{m}`, `{n}` in the prelude are *implicit* binders: a definition
+  declares them with braces (`proc vappend {A : ?} {m : Nat} ...`), but you
+  never write them at call sites — the elaborator fills them in.
 
 Now ascribe a 2-element vector the type of 1-element vectors:
 
