@@ -22,6 +22,12 @@ import {
   sidecarFresh,
   readSidecarShedNames,
 } from "./sidecar";
+import {
+  ShedCodeLensProvider,
+  expandShed,
+  collapseShed,
+  currentExpanded,
+} from "./inlineShed";
 
 function serverPath(): string {
   const cfg = vscode.workspace.getConfiguration("eponym").get<string>("lspServerPath", "");
@@ -32,7 +38,30 @@ function serverPath(): string {
 }
 
 function nimBin(): string {
-  return vscode.workspace.getConfiguration("eponym").get<string>("nimPath", "nim") || "nim";
+  const cfg = vscode.workspace.getConfiguration("eponym").get<string>("nimPath", "");
+  if (cfg) return cfg;
+  // Issue #221: try common Nim locations if not on PATH (e.g. VS Code
+  // launched from Finder/Dock without shell PATH).
+  const home = process.env.HOME ?? "";
+  const candidates = [
+    "nim", // PATH
+    `${home}/.nimble/bin/nim`, // choosenim default
+    "/opt/nim/bin/nim",
+    "/usr/local/bin/nim",
+  ];
+  for (const c of candidates) {
+    try {
+      // execFileSync throws on ENOENT; we only need existence here.
+      require("child_process").execFileSync(c, ["--version"], { stdio: "ignore" });
+      if (c !== "nim") {
+        out.appendLine(`[eponym] using Nim at ${c} (not on PATH)`);
+      }
+      return c;
+    } catch {
+      // try next
+    }
+  }
+  return "nim"; // fallback; generateSidecar will report the ENOENT clearly
 }
 
 interface ShedPanel {
@@ -388,6 +417,125 @@ export function activate(ctx: vscode.ExtensionContext) {
       });
       openPanels.set(docUri, entry);
       await refresh();
+    })
+  );
+
+  // Issue #221: inline shed view — CodeLens + expandable 2D display.
+  const lensProvider = new ShedCodeLensProvider();
+  // Match by language ID "nim" OR by .nim file extension, since the
+  // extension does not contribute the Nim language definition itself.
+  const nimSelector: vscode.DocumentSelector = [
+    { language: "nim" },
+    { pattern: "**/*.nim" },
+  ];
+  ctx.subscriptions.push(
+    vscode.languages.registerCodeLensProvider(nimSelector, lensProvider)
+  );
+  // Refresh CodeLens goals when a shed file is saved (sidecar regenerated).
+  ctx.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (doc.languageId !== "nim" && !doc.fileName.endsWith(".nim")) return;
+      if (!hasShedBlocks(doc.getText())) return;
+      lensProvider.refreshDoc(doc);
+    })
+  );
+  // Refresh CodeLens when a shed file is opened (so goals show without save).
+  ctx.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((doc) => {
+      if (doc.languageId !== "nim" && !doc.fileName.endsWith(".nim")) return;
+      if (!hasShedBlocks(doc.getText())) return;
+      lensProvider.refreshDoc(doc);
+    })
+  );
+
+  // Lazily create an LSP client for inline-shed actions.
+  async function inlineClient(doc: vscode.TextDocument): Promise<LspClient> {
+    const c = new LspClient(serverPath());
+    await c.initialize(path.dirname(doc.uri.fsPath));
+    c.didOpen(doc.uri.toString(), doc.getText());
+    return c;
+  }
+  function inlineShowButtons(): boolean {
+    return vscode.workspace
+      .getConfiguration("eponym")
+      .get<boolean>("inlineShed.showButtons", true);
+  }
+
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("eponym.expandShed", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) return;
+      await expandShed(editor, inlineClient, { showButtons: inlineShowButtons() });
+    })
+  );
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("eponym.collapseShed", () => collapseShed())
+  );
+  // Keyboard-bound shed actions (r/c/g) operate on the expanded shed.
+  // They reuse the webview's refine/case-split flows via a transient client.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("eponym.shedRefine", async () => {
+      const cur = currentExpanded();
+      const editor = vscode.window.activeTextEditor;
+      if (!cur || !editor) return;
+      const term = await vscode.window.showInputBox({
+        prompt: `Refine shed ${cur.shedName} with term`,
+        placeHolder: "e.g. zero()",
+      });
+      if (term === undefined) return;
+      const client = await inlineClient(editor.document);
+      try {
+        const res = await client.refineShed(cur.docUri, cur.shedName, term);
+        vscode.window.showInformationMessage(`Refined ${cur.shedName}: ${res.status}`);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Refine failed: ${String(e)}`);
+      } finally {
+        client.shutdown();
+      }
+    })
+  );
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("eponym.shedCaseSplit", async () => {
+      const cur = currentExpanded();
+      const editor = vscode.window.activeTextEditor;
+      if (!cur || !editor) return;
+      const variable = await vscode.window.showInputBox({
+        prompt: `Case-split shed ${cur.shedName} on variable`,
+        placeHolder: "e.g. n",
+      });
+      if (!variable) return;
+      const client = await inlineClient(editor.document);
+      try {
+        const res = await client.caseSplitShed(cur.docUri, cur.shedName, variable);
+        vscode.window.showInformationMessage(
+          `Case-split: ${res.subSheds.length} new sheds (${res.subSheds.join(", ")})`
+        );
+      } catch (e) {
+        vscode.window.showErrorMessage(`Case-split failed: ${String(e)}`);
+      } finally {
+        client.shutdown();
+      }
+    })
+  );
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("eponym.shedGive", async () => {
+      const cur = currentExpanded();
+      const editor = vscode.window.activeTextEditor;
+      if (!cur || !editor) return;
+      const term = await vscode.window.showInputBox({
+        prompt: `Give term for shed ${cur.shedName}`,
+        placeHolder: "e.g. suc(zero())",
+      });
+      if (term === undefined) return;
+      const client = await inlineClient(editor.document);
+      try {
+        const res = await client.refineShed(cur.docUri, cur.shedName, term);
+        vscode.window.showInformationMessage(`Gave ${cur.shedName}: ${res.status}`);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Give failed: ${String(e)}`);
+      } finally {
+        client.shutdown();
+      }
     })
   );
 }

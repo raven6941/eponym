@@ -10,6 +10,7 @@
 
 import { LspClient } from "./protocol";
 import { boxToHtml, pageHtml } from "./render";
+import { renderInlineShed } from "./inlineRender";
 import {
   hasShedBlocks,
   eponymRepoRoot,
@@ -135,6 +136,39 @@ async function main() {
     const inBody = wtBlocks[0].sheds[0].end + 2;
     check(blockShedsAtCursor(wtText, inBody).length === 6,
       "blockShedsAtCursor reports all six sheds when the block is ambiguous");
+
+    // Issue #221: the inline view path against the real server — shedLayout
+    // for each walkthrough shed, rendered by renderInlineShed exactly as the
+    // expansion decoration would show it in the editor region.
+    const wtUri = "file://" + wt;
+    const keyHints = "r: refine  c: case-split  g: give  (Esc: collapse)";
+    for (const name of wtNames) {
+      const wl = await client.shedLayout(wtUri, name);
+      check(!!wl && !!wl.box,
+        `eponym/shedLayout returns a box tree for walkthrough shed ${name}`);
+      // Deep-nesting sheds (constEndoBody) decompose the Pi goal into nested
+      // binder boxes: the hole goal lives on the innermost box, not the top.
+      const goals: string[] = [];
+      const walk = (b: any): void => {
+        if (b.holeGoal) goals.push(String(b.holeGoal));
+        for (const p of b.premises ?? []) walk(p);
+        if (b.conclusion) walk(b.conclusion);
+        for (const c of b.children ?? []) walk(c);
+      };
+      walk(wl.box);
+      check(goals.length > 0,
+        `box tree for ${name} carries at least one hole goal`);
+      const view = renderInlineShed(name, wl.box, { showButtons: true, keyHints });
+      check(view.includes(name) && goals.some((g) => view.includes(g)),
+        `inline view for ${name} shows the shed name and its goal`);
+      check(view.includes("?") && view.includes(keyHints),
+        `inline view for ${name} draws the hole box and the advisory keybinding line`);
+      check(view.includes("[refine] [case-split] [give]"),
+        `inline view for ${name} shows action buttons when enabled`);
+      const viewNoBtn = renderInlineShed(name, wl.box, { showButtons: false, keyHints });
+      check(!viewNoBtn.includes("[refine]") && viewNoBtn.includes(keyHints),
+        `inline view for ${name}: buttons hideable via config, advisory line always shown`);
+    }
   }
 
   // Issue #190: sidecar freshness + name listing.

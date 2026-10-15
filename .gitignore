@@ -33,3 +33,4 @@ examples/**
 # VSCode extension build (issue #136)
 editors/vscode/node_modules/
 editors/vscode/out/
+editors/vscode/*.vsix
