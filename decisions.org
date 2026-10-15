@@ -3511,6 +3511,16 @@
     acceptance; the error names the definition and points at the
     enclosing =eponymBlock=, consistent with the per-lambda location
     limitation above.
+  - Error parity (2026-10-15, later same day): an ill-typed phoasLam term
+    fails with the standard located ElabError, byte-identical to the
+    hand-written string-surface twin's error (pinned in
+    test_embedded_macro_forms.nim via =phoasLamToEponym= on a =parseStmt=
+    AST — =quote do:= gensyms the binder and the lexer rejects backticks,
+    while the real macro path never sees gensyms). The macro attaches
+    elaboration errors to the host =eponymBlock= node, so the compiler
+    diagnostic is at a host position; the message body's locations are in
+    generated-source coordinates — same behavior as every other
+    eponymBlock form, not a PHOAS-specific limitation.
   Overall: every breakdown found so far lives in the Nim-AST conversion
   (command parsing, par grouping, application parenthesization); the
   de Bruijn core and the elaborator never see anything PHOAS-specific.
