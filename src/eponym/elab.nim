@@ -26,6 +26,8 @@ import sequtils
 import strutils
 import sets
 import os        # issue #49: module file loading
+import osproc    # issue #51: shell out to the SMT solver
+import streams   # issue #51: solver stdin/stdout pipes
 import hashes    # issue #49: content-hash module cache
 import preterm
 import parse_surf
@@ -1270,6 +1272,158 @@ proc natArithHandler*(globals: Globals, s: var Supply): ConvHandler =
         ConvResult(verdict: cvDischarged)
       else: ConvResult(verdict: cvDeclined)
 
+# --- Issue #51: `by smt` — external solver oracle ---------------------------
+#
+# Per notes/solver-backed-elaboration.org (curated 2026-10-08): the tactic
+# framework is the most expensive part of a proof assistant to build and
+# maintain — F* outsourced the boring 90% of proof obligations to Z3.
+# `by smt` is that outsourcing for Eponym: goals `by arith` declines
+# (nonlinear Nat equations over {zero, suc, add, mul}) are serialized to
+# SMT-LIB and discharged on a literal `unsat` from an external solver.
+# Distinct from #45 (evidence-returning handlers validate internally
+# produced proofs): this handler *trusts* the solver, F*-style — the
+# bought failure mode is solver brittleness (timeouts, version
+# sensitivity), documented in docs/trust-model.md.
+#
+# z3 is an optional dependency: the handler resolves its binary from the
+# `solverCmd` parameter (default "z3", `EPONYM_SMT_SOLVER` env override),
+# checks it with findExe at construction (missing binary is a clear
+# "solver not found" error, not a silent decline), and bounds every query
+# with a configurable timeout (default 5s). Solver failure, timeout, a
+# non-`unsat` verdict, or a goal outside the fragment all decline the goal
+# to the next handler — the elaborator never hangs.
+#
+# Deferred with a documented boundary: inequalities. There is no `NatLe`
+# / `<=` surface form in the prelude, and `by smt` (like `by arith`)
+# runs through tacRefl, which only accepts `Eq` goals. Nonlinear `Eq`
+# goals are the corpus; inequality support would need a `NatLe` data type
+# plus a goal-shape case in the tactic.
+
+type ExoticSmtShape = object of CatchableError
+
+proc smtOfTerm(t: Term, zeroId, sucId, addId, mulId: int,
+               vars: var OrderedSet[int]): string =
+  ## Serialize a Nat term to SMT-LIB Int arithmetic. Variables become
+  ## `v<deBruijn-idx>` (consistent across both sides of one goal, since
+  ## both share the context). Raises ExoticSmtShape for anything outside
+  ## {zero, suc, add, mul, Nat literals, variables} — the caller declines.
+  let (head, args) = spineOf(t)
+  if head.kind == tR and head.refId == zeroId and args.len == 0:
+    return "0"
+  if head.kind == tR and head.refId == sucId and args.len == 1:
+    return "(+ " & smtOfTerm(args[0], zeroId, sucId, addId, mulId, vars) & " 1)"
+  if head.kind == tR and head.refId == addId and args.len == 2:
+    # args innermost-first: args[1] is the first argument.
+    return "(+ " & smtOfTerm(args[1], zeroId, sucId, addId, mulId, vars) &
+           " " & smtOfTerm(args[0], zeroId, sucId, addId, mulId, vars) & ")"
+  if mulId >= 0 and head.kind == tR and head.refId == mulId and args.len == 2:
+    return "(* " & smtOfTerm(args[1], zeroId, sucId, addId, mulId, vars) &
+           " " & smtOfTerm(args[0], zeroId, sucId, addId, mulId, vars) & ")"
+  if t.kind == tNatLit:
+    return $t.natLitVal
+  if t.kind == tV:
+    vars.incl(t.idx)
+    return "v" & $t.idx
+  raise newException(ExoticSmtShape, "non-Nat-fragment term in SMT goal")
+
+proc smtLibOfGoal(a, b: Term, zeroId, sucId, addId, mulId: int): string =
+  ## Emit a QF_NIA query for `a === b`: Nat maps to Int with `(>= x 0)`
+  ## per variable; the assertion is the *negation* of the equation, so a
+  ## literal `unsat` verdict means the equation holds on all Nats.
+  var vars = initOrderedSet[int]()
+  let sa = smtOfTerm(a, zeroId, sucId, addId, mulId, vars)
+  let sb = smtOfTerm(b, zeroId, sucId, addId, mulId, vars)
+  var q = "(set-logic QF_NIA)\n"
+  for v in vars:
+    q &= "(declare-const v" & $v & " Int)\n(assert (>= v" & $v & " 0))\n"
+  q & "(assert (not (= " & sa & " " & sb & ")))\n(check-sat)\n"
+
+proc querySolver(solverCmd, query: string, timeoutMs: int): string =
+  ## Run the solver with `query` on stdin; return the first non-empty
+  ## stdout line (lowercased), or "" on timeout / solver failure.
+  ## Never raises and never hangs: the polling loop bounds the run at
+  ## timeoutMs, and every OSError becomes a decline.
+  try:
+    let p = startProcess(solverCmd, options = {poUsePath, poStdErrToStdOut})
+    p.inputStream.write(query)
+    p.inputStream.close()
+    var waited = 0
+    while p.running():
+      if waited >= timeoutMs:
+        p.kill()
+        p.close()
+        return ""
+      sleep(25)
+      waited += 25
+    let outp = p.outputStream.readAll()
+    p.close()
+    for line in outp.splitLines():
+      let s = line.strip().toLowerAscii()
+      if s.len > 0: return s
+    return ""
+  except OSError:
+    return ""
+
+proc smtHandler*(globals: Globals, s: var Supply, solverCmd = "",
+                 timeoutMs = 5000, loc = noLoc): ConvHandler =
+  ## Build the `by smt` oracle handler. Resolves the solver binary from
+  ## `solverCmd` ("" → EPONYM_SMT_SOLVER env → "z3"); a missing binary is
+  ## an immediate, located "solver not found" error so a broken setup is
+  ## loud, not silently declining.
+  var zeroId = -1
+  var sucId = -1
+  var addId = -1
+  var mulId = -1
+  var eqId = -1
+  if "zero" in globals and globals["zero"].tm.kind == tR:
+    zeroId = globals["zero"].tm.refId
+  if "suc" in globals and globals["suc"].tm.kind == tR:
+    sucId = globals["suc"].tm.refId
+  if "add" in globals and globals["add"].tm.kind == tR:
+    addId = globals["add"].tm.refId
+  if "mul" in globals and globals["mul"].tm.kind == tR:
+    mulId = globals["mul"].tm.refId
+  if "Eq" in globals and globals["Eq"].tm.kind == tR:
+    eqId = globals["Eq"].tm.refId
+  var cmd = solverCmd
+  if cmd == "": cmd = getEnv("EPONYM_SMT_SOLVER", "z3")
+  if findExe(cmd) == "":
+    raise elabErr(loc, "solver not found: '" & cmd &
+      "' (install z3 or set EPONYM_SMT_SOLVER to a solver binary)")
+  let tm = if timeoutMs > 0: timeoutMs else: 5000
+  result.coreValid = false  # trusted oracle: extends conversion, no evidence
+  result.decide =
+    proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
+         ctxLen: int, goalTy: Term): ConvResult {.closure.} =
+      if addId < 0 or zeroId < 0 or sucId < 0:
+        return ConvResult(verdict: cvDeclined)  # no Nat in scope: nothing to decide
+      # The Nat-equality pairs to prove: the bare sides, or — for the
+      # inferred-vs-expected check, which compares `Eq Nat x x` against
+      # `Eq Nat x y` — the differing Eq-spine arguments (congruence,
+      # mirroring natConv's Eq case).
+      var pairs: seq[(Term, Term)] = @[]
+      if eqId >= 0 and isEqSpineGoal(a, b, eqId):
+        let (_, aa) = spineOf(a)
+        let (_, bb) = spineOf(b)
+        for i in 0 ..< aa.len:
+          if aa[i] != bb[i]: pairs.add((aa[i], bb[i]))
+        if pairs.len == 0:
+          return ConvResult(verdict: cvDischarged)  # identical spines
+      else:
+        pairs.add((a, b))
+      try:
+        for (x, y) in pairs:
+          # Soundness note: nonlinear Int arithmetic is undecidable in
+          # general; the goal is passed as-is and the solver decides.
+          # Discharge happens ONLY on a literal `unsat` — `sat`,
+          # `unknown`, timeout, and solver failure all decline.
+          let q = smtLibOfGoal(x, y, zeroId, sucId, addId, mulId)
+          if querySolver(cmd, q, tm) != "unsat":
+            return ConvResult(verdict: cvDeclined)
+        ConvResult(verdict: cvDischarged)
+      except ExoticSmtShape:
+        ConvResult(verdict: cvDeclined)
+
 proc ext(ctx: Ctx, name: string, ty: Term, qty: Qty = qOmega): Ctx =
   ## Extend the context: every stored type is weakened into the new frame.
   ## (Types are Terms in the frame of the context that stores them; going
@@ -2140,8 +2294,14 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           # raise conversion goals through convElab, so both see the handler.
           withConvHandler(ms, natArithHandler(globals, supply),
             tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
+        of "smt":
+          # Issue #51: run the refl tactic with the external SMT solver
+          # installed as a trusted conversion oracle for the dynamic
+          # extent of the tactic and the inferred-vs-expected check.
+          withConvHandler(ms, smtHandler(globals, supply, loc = pre.loc),
+            tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
         else: raise elabErr(pre.loc, "unknown tactic '" & pre.name &
-          "'; known tactics: refl, assumption, arith")
+          "'; known tactics: refl, assumption, arith, smt")
       else:
         var (t, ty) = inferTm(pre, ctx, globals, ms, supply, ab)
         # Issue #201: the insertion inferTm's pkVar used to do now lives
@@ -5953,6 +6113,165 @@ proc bad : Eq Nat zero (suc zero) =
   by arith
 """, "not convertible")
   echo "ok: arith handler is scoped (default still rejects; false goals rejected)"
+
+  # --- Issue #51: `by smt` external solver oracle -----------------------------
+  # z3 is not installed on this VM and CI must not require it, so the
+  # corpus runs against injected fake solvers: a random-testing oracle
+  # (decides the emitted QF_NIA queries by sampling assignments — sound
+  # for the "sat" direction, which is what the negative tests need) and
+  # a sleeper (exercises the timeout path). `by smt` resolves the binary
+  # from EPONYM_SMT_SOLVER (default "z3").
+  let smtFakeDir = getTempDir() / "eponym-smt-fake"
+  createDir(smtFakeDir)
+  let oraclePath = smtFakeDir / "fake-smt-oracle.py"
+  writeFile(oraclePath, """#!/usr/bin/env python3
+# Test fake for the `by smt` handler: decides the exact SMT-LIB shape the
+# serializer emits by random testing. Prints 'sat' if an assignment making
+# the negated equation true is found, else 'unsat'. NOT a real solver.
+import sys, random
+
+def parse(s):
+    toks = []
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c.isspace(): i += 1
+        elif c == '(': toks.append('('); i += 1
+        elif c == ')': toks.append(')'); i += 1
+        else:
+            j = i
+            while j < len(s) and not s[j].isspace() and s[j] not in '()': j += 1
+            toks.append(s[i:j]); i = j
+    def rd(p):
+        t = toks[p[0]]; p[0] += 1
+        if t == '(':
+            xs = []
+            while toks[p[0]] != ')': xs.append(rd(p))
+            p[0] += 1
+            return xs
+        return t
+    p = [0]; out = []
+    while p[0] < len(toks): out.append(rd(p))
+    return out
+
+def ev(e, env):
+    if isinstance(e, list):
+        op = e[0]
+        if op == '+': return ev(e[1], env) + ev(e[2], env)
+        if op == '-': return ev(e[1], env) - ev(e[2], env)
+        if op == '*': return ev(e[1], env) * ev(e[2], env)
+        if op == '=': return ev(e[1], env) == ev(e[2], env)
+        if op == 'not': return not ev(e[1], env)
+        if op == '>=': return ev(e[1], env) >= ev(e[2], env)
+        if op == '<=': return ev(e[1], env) <= ev(e[2], env)
+        if op == '>': return ev(e[1], env) > ev(e[2], env)
+        if op == '<': return ev(e[1], env) < ev(e[2], env)
+        if op == 'and': return all(ev(x, env) for x in e[1:])
+        if op == 'or': return any(ev(x, env) for x in e[1:])
+        raise ValueError(op)
+    if e.lstrip('-').isdigit(): return int(e)
+    return env[e]
+
+def main():
+    goal = None
+    for s in parse(sys.stdin.read()):
+        if isinstance(s, list) and s and s[0] == 'assert':
+            goal = s[1]
+    vars = set()
+    def walk(e):
+        if isinstance(e, list):
+            for x in e[1:]: walk(x)
+        elif isinstance(e, str) and not e.lstrip('-').isdigit():
+            vars.add(e)
+    walk(goal)
+    vars = sorted(vars)
+    rng = random.Random(12345)
+    for _ in range(3000):
+        env = {v: rng.randint(0, 12) for v in vars}
+        if ev(goal, env):
+            print("sat"); return
+    print("unsat")
+
+main()
+""")
+  inclFilePermissions(oraclePath, {fpUserExec})
+  let sleeperPath = smtFakeDir / "fake-smt-sleeper.sh"
+  writeFile(sleeperPath, "#!/bin/sh\nsleep 30\n")
+  inclFilePermissions(sleeperPath, {fpUserExec})
+  let smtPrelude = """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+def add : Nat -> Nat -> Nat
+| zero n = n
+| (suc m) n = suc (add m n)
+def mul : Nat -> Nat -> Nat
+| zero n = zero
+| (suc m) n = add n (mul m n)
+"""
+  putEnv("EPONYM_SMT_SOLVER", oraclePath)
+  # Corpus: nonlinear goals `by arith` declines (mul is an opaque atom to
+  # natConv) but the solver proves. Each is elaborated separately so the
+  # per-goal wall-clock is recorded.
+  let smtGoals = [
+    ("mulDist", """proc mulDist (n : Nat) (m : Nat) (k : Nat)
+    : Eq Nat (mul n (add m k)) (add (mul n m) (mul n k)) =
+  by smt
+"""),
+    ("mulComm", """proc mulComm (n : Nat) (m : Nat)
+    : Eq Nat (mul n m) (mul m n) =
+  by smt
+"""),
+    ("mulSuc", """proc mulSuc (n : Nat) (m : Nat)
+    : Eq Nat (mul n (suc m)) (add (mul n m) n) =
+  by smt
+"""),
+  ]
+  for (nm, gsrc) in smtGoals:
+    # The gap is real: `by arith` declines each corpus goal.
+    expectElabErr(smtPrelude & gsrc.replace("by smt", "by arith"),
+      "not convertible")
+    let t0 = epochTime()
+    let (gdefs, gms) = elabCheckState(smtPrelude & gsrc)
+    let dt = epochTime() - t0
+    assert gdefs.len == 3, "expected 3 defs (add, mul, " & nm & ")"
+    assert gdefs[2].name == nm
+    assert gms.extDischarges > 0,
+      "by smt must extend trust via extDischarges for " & nm
+    echo "ok: by smt discharges " & nm & " (declined by arith) in " &
+      formatFloat(dt, ffDecimal, 3) & "s; extDischarges=" & $gms.extDischarges
+  # Negative tests: false goals are rejected (the oracle finds a
+  # counterexample, so the handler declines and defaultConv fails).
+  expectElabErr(smtPrelude & """proc bad : Eq Nat zero (suc zero) =
+  by smt
+""", "not convertible")
+  expectElabErr(smtPrelude & """proc bad (n : Nat) (m : Nat)
+    : Eq Nat (mul n m) (suc (mul n m)) =
+  by smt
+""", "not convertible")
+  echo "ok: by smt rejects false goals"
+  # Timeout: the sleeper never answers; the handler must decline after
+  # its 5s default timeout instead of hanging the elaborator.
+  putEnv("EPONYM_SMT_SOLVER", sleeperPath)
+  let tSlow0 = epochTime()
+  expectElabErr(smtPrelude & """proc slow (n : Nat) (m : Nat)
+    : Eq Nat (mul n m) (mul m n) =
+  by smt
+""", "not convertible")
+  let dtSlow = epochTime() - tSlow0
+  assert dtSlow < 20.0, "solver timeout hung the elaborator: " & $dtSlow & "s"
+  echo "ok: solver timeout declines cleanly (" &
+    formatFloat(dtSlow, ffDecimal, 2) & "s, budget 5s)"
+  # Missing binary: a clear, located "solver not found" error — loud, not
+  # a silent decline.
+  putEnv("EPONYM_SMT_SOLVER", "/nonexistent/eponym-no-solver-xyz")
+  expectElabErr(smtPrelude & """proc bad (n : Nat) : Eq Nat (add n zero) n =
+  by smt
+""", "solver not found")
+  delEnv("EPONYM_SMT_SOLVER")
+  echo "ok: missing solver binary is a clear error"
 
   # --- Issue #45: evidence-returning handlers ---------------------------
   # A mock handler returning `refl`-evidence for one closed goal, built

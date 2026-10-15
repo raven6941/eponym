@@ -3493,3 +3493,34 @@
   larger corpus sample (clause-def examples, erased binders) and record
   any further breakdowns (patterns under binders, metavariables escaping
   scope — not yet exercised).
+* 2026-10-15 — External solver oracle for proof obligations: `by smt` (issue #51)
+
+  Context: per notes/solver-backed-elaboration.org, the tactic framework
+  is the most expensive part of a proof assistant to build — F*
+  outsourced the boring 90% to Z3. #41 proved the Andromeda-style
+  handler architecture; `by smt` is the external-oracle counterpart to
+  `by arith`'s internal decision procedure.
+  Decision: `smtHandler` (coreValid=false, trusted) serializes open Nat
+  goals over {zero, suc, add, mul} to SMT-LIB QF_NIA (Nat→Int with
+  (>= x 0) per variable, negated goal) and discharges ONLY on a literal
+  `unsat`; sat/unknown/timeout/failure/exotic shape all decline, and the
+  elaborator never hangs (polling loop bounds every query at timeoutMs,
+  default 5s). Missing binary is a located "solver not found" error at
+  tactic construction (EPONYM_SMT_SOLVER, default "z3") — loud, not a
+  silent decline. z3 is NOT installed on this VM and CI must not require
+  it: the test corpus injects fake solvers (a random-testing oracle and a
+  sleeper), so the corpus always runs. Trust policy: the solver's verdict
+  is taken on faith (F*-style); the bought failure mode is solver
+  brittleness — timeouts, version sensitivity, nonlinear-Int
+  undecidability (undecided goals decline, never discharge) — documented
+  in docs/trust-model.md. Distinct from #45 (evidence-returning handlers
+  extend automation without trust); `by smt` extends trust, and
+  extDischarges records each trusted discharge.
+  Corpus (each declined by `by arith` first, proving the gap is real):
+  mulDist 0.116s, mulComm 0.111s, mulSuc 0.064s (fake oracle; includes
+  process spawn). False goals rejected; timeout declines cleanly at
+  5.04s. Deferred with a documented boundary: inequalities — no
+  NatLe/<= surface form exists in the prelude and tacRefl only accepts
+  Eq goals, so the inequality half waits on a NatLe data type plus a
+  goal-shape case in the tactic.
+  Status: CLOSED (merged to =exp-longlived=).
