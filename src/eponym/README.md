@@ -48,6 +48,8 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
 - `unify.nim` — Miller pattern unification for metavariables
 - `elab.nim` — the elaborator: context, metas, `inferTm`/`checkTm`,
   `elabDefDecl`, `elabCheck`
+- `elab_trace.nim` — structured elaboration trace for debugging (issue
+  #83); see "Debugging: the elaboration trace" below
 - `eponym_init.nim` — core `Term`, `tmPi`/`tmLam`/`tmLet` constructors,
   evaluator, `check`/`infer`/`areEqual`
 - `abilities.nim` — ambient abilities (Frank-style), issue #177
@@ -59,8 +61,85 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
 - `qtt_proto.nim` — standalone QTT prototype (Issue #64 experiment)
 - `usage_check.nim` — linear/erased usage verification (Issue #64)
 
-## Design notes
+## Debugging: the elaboration trace (Issue #83)
 
+When elaboration fails on a real program, the `ElabError` is only the
+final verdict — it doesn't show what the elaborator tried. The trace
+facility (`elab_trace.nim`) logs the decision process:
+`check`/`infer` entry and exit (indentation tracks nesting),
+unification attempts and failures, metavariable assignments,
+implicit-argument insertions, conversion goals and handler discharges,
+and quantity checks. It is the dynamic complement to issue #46, which
+threads provenance into the errors themselves.
+
+Enable it without code changes via the `EPON_TRACE` environment
+variable — a comma-separated category allow-list, or `1`/`all`:
+
+```sh
+EPON_TRACE=check,unify nim c -r myprogram.nim
+```
+
+or programmatically:
+
+```nim
+import elab_trace
+setElabTrace(true)                    # all categories, stderr
+setElabTrace(true, {tcUnify, tcMeta})  # allow-list filter
+```
+
+This works on the `eponym`/`eponymBlock` macro path too: the macro
+elaborates at compile time, and the driver reads the variable at
+elaboration entry. Trace output is implementer-facing by design
+(unlike `ElabError` text, which issue #34 keeps user-facing): payloads
+may contain kernel-rendered terms with internal ids.
+
+Categories: `check`, `infer`, `unify`, `meta`, `implicit`, `conv`,
+`qty`. Event kinds are dotted (`check.in`, `unify.fail`, ...);
+`setElabTrace(true, cats, maxDepth)` also bounds the logged nesting
+depth. Tests capture structured events with `startTraceCapture` /
+`stopTraceCapture` and assert on (category, kind) pairs, never on
+rendered text.
+
+Annotated example — this program fails:
+
+```text
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+proc bad : Pi (x : Nat). Nat =
+  lam (x : ?). x
+```
+
+```sh
+$ EPON_TRACE=check,unify nim c -r bad.nim
+...
+check.in: pkLam <= tPi @5:3
+  check.in: pkUniv <= tC @5:12
+  check.out:
+  unify.in: ?  ~  R1
+    unify.fail: cannot unify tC with tR
+  unify.out:
+check.out:
+ELABORATION FAILED: line 5, col 3: cannot unify tC with tR
+```
+
+The bare error (`cannot unify tC with tR` at 5:3) doesn't say *which*
+unification failed. The trace shows it: under the lambda check at 5:3,
+the domain annotation `?` (elaborated at 5:12) is unified against the
+expected domain `R1` (`Nat`) — the user wrote the wrong domain
+annotation. A second example: on the quantity-violation fixture
+`tests/error_snapshots/cases/erased-use-neg.ep`,
+`EPON_TRACE=check,qty` shows `check.in: pkVar <= tV @4:18` (the body
+occurrence of `x`) immediately before `qty.check: x :^q0` inside
+`check.in: pkLam <= tPi @4:3` — the offending use is named and located,
+where the error alone only points at the lambda.
+
+Cost: tracing disabled adds <1% on the `.ep` example corpus
+(measured; `-d:elabTraceStrip` removes the hooks entirely). Enabled
+tracing costs ~1.4x, dominated by rendering the trace itself — it is a
+debugging tool, not a production mode.
+
+## Design notes
 - **Quantities** (Issue #64): `q0` (erased), `q1` (linear), `qOmega`
   (unrestricted, default). Present on `PreTerm` and `Term` binders,
   propagated through elaboration and preserved by `zonk`. The usage

@@ -29,6 +29,11 @@ Surface text → `PreTerm` (named) → de Bruijn core terms → elaborated
 - **`unify.nim`** — Miller pattern unification for metavariables.
 - **`elab.nim`** — bidirectional elaborator: `inferTm`/`checkTm`,
   implicit insertion, `data` desugaring, conversion checking.
+- **`elab_trace.nim`** — structured elaboration trace for debugging
+  (issue #83): `check`/`infer` entry/exit, unification attempts,
+  metavariable assignments, implicit insertions, conversion-handler
+  invocations, quantity checks. Enabled via the `EPON_TRACE` env var;
+  see `src/eponym/README.md` for an annotated example.
 
 All live in `src/eponym/`; experimental code (the old `mac_surf` Nim-AST
 front end, the relational/staging work) lives in `src/experimental/`. the per-module notes are in

@@ -26,6 +26,7 @@ import eponym_init
 import egraph
 import abilities # Issue #177: ambient abilities (Frank-style)
 import elab_prof   # Issue #55: phase timers
+import elab_trace  # Issue #83: elaboration trace (meta.assign events)
 
 type
   UnifyError* = object of CatchableError
@@ -516,6 +517,7 @@ proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) 
   let sol = renameAt(zt, inv, 0, e.metaCtxLen, loc)
   ms.entries[id] = MetaEntry(metaTy: e.metaTy, metaCtxLen: e.metaCtxLen,
                              metaLoc: e.metaLoc, solution: sol)
+  traceEvt(tcMeta, "meta.assign", "?m" & $id & " := " & trunc($sol))
 
 # --- unification ---------------------------------------------------------------
 

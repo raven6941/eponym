@@ -2887,3 +2887,59 @@
   no allocation, no hot-path work. No benchmark run: nothing here is on a
   measured hot path (the parameter rides alongside =loc=, which already
   flows everywhere).
+* 2026-10-15 — Elaboration trace mode: runtime flag, not compile-time const (issue #83)
+
+  Context: #83 asks for a structured trace of elaboration decisions
+  (check/infer/unify/meta/implicit/conv/qty) as a debugging tool, and
+  explicitly asks to decide compile-time const vs runtime flag, given the
+  `ett`/`eponymBlock` macro path runs elaboration at Nim compile time
+  inside the compiler VM.
+  Options considered: (a) compile-time const (a `-d:elabTrace` booldefine,
+  à la `elab_prof`'s `-d:elabProfile`) — zero-cost when off, but debugging
+  a failing program would need a rebuild of whatever hosts the
+  elaborator, and a compile-time const is awkward to toggle per run;
+  (b) runtime flag (bool var, default off) with an `EPON_TRACE` env var
+  read at driver entry — toggleable per run with no rebuild. Verified
+  `getEnv` works in the Nim VM, so the macro path honors the variable.
+  Decision: (b), with `-d:elabTraceStrip` as the escape hatch compiling
+  the hooks out entirely (the public API stays callable as no-ops, so
+  instrumented modules need no `when` guards).
+  Measurement (34 positive `.ep` files × 5 iterations, `-d:release`):
+  strip build 2.462s mean vs hooks-present-but-disabled 2.482s mean →
+  +0.8%, under the 2% target. Enabled tracing costs ~1.4x on the same
+  corpus, dominated by rendering ~350k trace lines — a debugging tool,
+  not a production mode.
+  Consequences: new `src/eponym/elab_trace.nim` (`TraceCat` categories,
+  dotted event kinds like `check.in`/`unify.fail`, nesting depth for
+  indentation, category allow-list, depth limit, in-memory capture for
+  tests); `traceGuard` on `checkTm`/`inferTm`/`unifyElab` (entry/exit via
+  `defer`, so failures log the unwind point); leaf events on
+  `solveMeta`, `insertImplicits`, `convElab`, `enforceBinderQty` /
+  `solveQVar`; payloads are lazy (not built when tracing is off). Trace
+  output is deliberately implementer-facing (kernel `$` rendering with
+  internal ids is allowed); user-facing error text stays under #34's
+  sanitizer. Tests assert (category, kind) pairs and depth, never
+  rendered text.
+  Status: OPEN (branch =exp83-elab-trace=).
+
+* 2026-10-15 — #83 follow-up: VM-safe trace state needs dual storage
+
+  Context: the #83 entry chose a runtime flag, verified `getEnv` works
+  in the Nim VM. Implementation found three further VM restrictions,
+  each verified with a minimal repro:
+  1. The VM cannot evaluate ordinary mutable globals from another
+     module at macro-expansion time ("cannot evaluate at compile time").
+  2. `{.compileTime.}` vars are VM-visible but their *runtime*
+     reads/writes are silently lost (separate compile-time storage).
+  3. A `{.compileTime.}` object with a `seq` field crashes the compiler
+     when returned by value from a proc ("field 'sym' is not accessible
+     ... nkWhenStmt"); also `stderr` is not VM-evaluable.
+  Decision: trace state lives in two `TraceState` instances (runtime var
+  + `{.compileTime.}` var, no seq fields) selected by `when nimvm`
+  *literal in each accessor proc's body* — a template would expand at
+  the caller's host-sem time and pick the wrong instance. The capture
+  log stays a plain runtime global (test-only; macro expansion always
+  renders). VM sink is `echo` (compile-time stdout); runtime sink is
+  stderr. Verified: `EPON_TRACE=unify` on the `eponym`-macro path emits
+  the trace at compile time; native suite still green.
+  Status: OPEN (branch =exp83-elab-trace=).

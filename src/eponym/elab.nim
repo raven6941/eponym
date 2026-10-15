@@ -35,6 +35,7 @@ import unify
 import egraph
 import usage_check  # Issue #64: linear usage verification
 import elab_prof      # Issue #55: phase timers (zero-cost when -d:elabProfile off)
+import elab_trace     # Issue #83: structured elaboration trace (runtime flag)
 
 type
   ElabError* = object of CatchableError
@@ -68,9 +69,11 @@ proc sanitizeKernelMsg*(msg: string): string =
 proc unifyElab(ms: var MetaStore, a, b: Term, loc: Loc) =
   profilePhase(epUnify):
       ## unify, translating UnifyError into ElabError (adds the source location).
+      traceGuard(tcUnify, "unify", trunc($a) & "  ~  " & trunc($b))
       try:
         unify(ms, a, b, loc)
       except UnifyError as e:
+        traceEvt(tcUnify, "unify.fail", e.msg)
         raise elabErr(loc, e.msg)
 
 type
@@ -416,9 +419,11 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     var refNames = initTable[int, string]()
     for name, g in globals:
       if g.tm.kind == tR: refNames[g.tm.refId] = name
+    let reason = noConfusionMsg(ms, nc.c1, nc.c2)
+    traceEvt(tcConv, "conv.noconfusion", reason)  # Issue #83: the fast-fail point
     raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
       " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
-      expLocSuffix(expLoc) & ": " & noConfusionMsg(ms, nc.c1, nc.c2))
+      expLocSuffix(expLoc) & ": " & reason)
   var env = newSeq[Value](ctx.len)
   for i in 0 ..< ctx.len:
     env[i] = freshPara(s, nil)  # types unused by conversion; identity suffices
@@ -449,6 +454,7 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
     var refNames = initTable[int, string]()
     for name, g in globals:
       if g.tm.kind == tR: refNames[g.tm.refId] = name
+    traceEvt(tcConv, "conv.fail", sanitizeKernelMsg(e.msg))  # Issue #83
     raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
       " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
       expLocSuffix(expLoc) & ": not convertible (" & sanitizeKernelMsg(e.msg) & ")")
@@ -557,9 +563,11 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
       ## This fires e.g. when the elaborator checks a literal against the
       ## canonical globals["Nat"].tm object it also used to build the type.
       if a == b: return nil
+      traceEvt(tcConv, "conv.goal", trunc($a) & "  ~  " & trunc($b))
       let a1 = zonk(ms, a)
       let b1 = zonk(ms, b)
       if findUnsolved(ms, a1).found or findUnsolved(ms, b1).found:
+        traceEvt(tcConv, "conv.unify", "unsolved metas: unify instead of convert")
         unifyElab(ms, a1, b1, loc)
         return nil
       var i = ms.convHandlers.high
@@ -568,6 +576,8 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
         let r = h.decide(ms, s, a1, b1, loc, ctx.len, goalTy)
         case r.verdict
         of cvDischarged:
+          traceEvt(tcConv, "conv.handler",
+                   "convHandlers[" & $i & "] discharged")
           if not h.coreValid:
             # A domain handler extended conversion beyond the core: record it
             # so elabDefDecl can relax the core re-check for this definition.
@@ -579,10 +589,13 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
           # extDischarges is untouched and elabDefDecl's bare-core re-check
           # stays in force for this definition. The validated evidence is
           # returned for splicing (tacRefl uses it as the tactic's proof term).
+          traceEvt(tcConv, "conv.handler",
+                   "convHandlers[" & $i & "] discharged-with-evidence")
           return validateEvidence(ms, s, a1, b1, goalTy, r.evidence, loc, ctx, globals)
         of cvDeclined:
           discard
         dec i
+      traceEvt(tcConv, "conv.default", "no handler discharged")
       defaultConv(ms, s, a1, b1, loc, ctx, globals, expLoc)
       nil
 
@@ -1187,6 +1200,7 @@ proc qvarIdOpt(ms: MetaStore, vname: string): int =
 
 proc solveQVar(ms: var MetaStore, vname: string, q: Quantity, loc: Loc) =
   ## Solve a quantity variable; conflicting solutions are an error.
+  traceEvt(tcQty, "qty.solve", vname & " := " & $q)
   let vid = qvarId(ms, vname)
   case ms.qvarSols[vid].kind
   of qsUnknown:
@@ -1278,6 +1292,9 @@ proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
   ## continues with the concrete quantity, so a variable reaching this
   ## branch is either unsolved or was solved from a use count — never
   ## silently from an expected type.)
+  traceEvt(tcQty, "qty.check",
+           name & " :^" & (if qty.isVar: "qvar(" & qty.vname & ")"
+                           else: $qty.q))
   if qty.isVar:
     let zb = zonk(ms, body)
     # A body that still mentions unsolved metas can't be counted reliably
@@ -1444,14 +1461,21 @@ proc insertImplicits(pre: PreTerm, tm, ty: Term, ctxLen: int,
   ## While the type's head is an implicit Pi, apply a fresh metavariable.
   var f = tm
   var fty = ty
+  var inserted = 0
   while true:
     let h = headTy(ms, fty)
     if h.kind == tPi and h.impl:
       let m = freshMeta(ms, h.dom, ctxLen, 0, pre.loc)
       f = tmApp(f, m)
       fty = subst(h.scope.bdy, 0, m)
+      inc inserted
     else:
       break
+  if inserted > 0:
+    # Issue #83: only insertions are events; a no-op walk is not interesting.
+    traceEvt(tcImplicit, "implicit.insert",
+             $inserted & " for " & $pre.kind & " @" &
+             $pre.loc.line & ":" & $pre.loc.col)
   (f, fty)
 
 type MetaSnapshot = object
@@ -1498,6 +1522,8 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
               ab: Ability): tuple[tm, ty: Term] =
   profilePhase(epInfer):
       ## Synthesis mode.
+      traceGuard(tcInfer, "infer",
+                 $pre.kind & " @" & $pre.loc.line & ":" & $pre.loc.col)
       case pre.kind
       of pkVar:
         # Issue #201: no eager implicit insertion here. A bare variable
@@ -1681,6 +1707,9 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
       ## when known (noLoc = unknown). It is threaded to convElab so a
       ## conversion failure names both program points; recursive calls
       ## propagate it unless a nearer ascription supplies a better origin.
+      traceGuard(tcCheck, "check",
+                 $pre.kind & " <= " & $expTy.kind &
+                 " @" & $pre.loc.line & ":" & $pre.loc.col)
       case pre.kind
       of pkInt:
         # Literal overloading: integer literal adapts to expected type.
@@ -3920,6 +3949,7 @@ proc elabCheckStateG*(src: string, handlers: seq[ConvHandler] = @[]):
       ## global table (name -> GEntry with the tR node and zonked type) so the
       ## independent audit kernel can build its own KernelGlobals over the
       ## same refIds. Raises ParseError (carries loc) or ElabError (carries loc).
+      maybeEnableTraceFromEnv()  # Issue #83: EPON_TRACE env var
       let decls = parseProgram(src)
       var globals: Globals = initTable[string, GEntry]()
       var supply = Supply()
@@ -4080,6 +4110,7 @@ proc elabDeclsDir*(drv: var ModuleDriver, decls: seq[SurfDecl],
     ## Returns the defs declared by `decls` themselves; imported definitions
     ## live in `drv.globals`. Raises ElabError on cycles, missing files, or
     ## elaboration failures.
+    maybeEnableTraceFromEnv()  # Issue #83: EPON_TRACE env var
     let (defs, _, errMsg) = drv.elabDeclsDirInner(decls, baseDir, srcLabel, false)
     assert errMsg == "",
       "elabDeclsDirInner(holeTolerant=false) raises instead of reporting"
@@ -4109,6 +4140,7 @@ proc elabFile*(drv: var ModuleDriver, path: string,
   ## Raises ElabError (located) on import cycles, missing files, parse
   ## errors, or elaboration failures. Files already elaborated with
   ## identical content are skipped via the content-hash cache.
+  maybeEnableTraceFromEnv()  # Issue #83: EPON_TRACE env var
   let cpath =
     try:
       when nimvm:
