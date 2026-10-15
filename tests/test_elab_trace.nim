@@ -105,8 +105,11 @@ let devs = stopTraceCapture()
 check(devs.len > 0, "depth-limited run still emits events")
 check(devs.allIt(it.depth <= 1), "depth limit respected")
 
-# 6. Failure path: a unification failure logs unify.fail, and the
+# 6. Failure paths: each check logs its own .fail event, and the
 #    enclosing scope still logs its .out (unwind is visible).
+#    6a. Ascribed-lambda domain mismatch: since #88 the ascription site
+#        is a *conversion* check (convElab), so a definitionally-unequal
+#        domain logs conv.fail, not unify.fail.
 setElabTrace(true)
 startTraceCapture()
 try:
@@ -116,8 +119,31 @@ except ElabError:
   discard
 let bevs = stopTraceCapture()
 let bkinds = kindsOf(bevs)
-check("unify.fail" in bkinds, "unify.fail fires on unification failure")
-check(countKind(bevs, "unify.in") == countKind(bevs, "unify.out"),
+check("conv.fail" in bkinds,
+      "conv.fail fires on ascribed-domain mismatch (#88: conversion site)")
+check(countKind(bevs, "check.in") == countKind(bevs, "check.out"),
+      "check scopes pair up even on failure")
+
+#    6b. A genuine unification failure still logs unify.fail: the pkLet
+#        result check goes through unifyElab directly.
+const srcBadLet = """
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+proc badLet : ? =
+  let x : Nat = zero in x
+"""
+setElabTrace(true)
+startTraceCapture()
+try:
+  discard elabCheck(srcBadLet)
+  check(false, "srcBadLet elaborated cleanly (expected ElabError)")
+except ElabError:
+  discard
+let levs = stopTraceCapture()
+let lkinds = kindsOf(levs)
+check("unify.fail" in lkinds, "unify.fail fires on unification failure")
+check(countKind(levs, "unify.in") == countKind(levs, "unify.out"),
       "unify scopes pair up even on failure")
 
 setElabTrace(false)

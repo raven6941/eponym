@@ -3289,3 +3289,84 @@
   per-elabCheck EGraph in MetaStore); with the measurement done, #4 closes.
   Status: branch =exp4-convcache-measure= (instrumentation + bench driver
   + self-test cache-stats reporting).
+* 2026-10-15 — Issue #88: Usage-indexed operators (quantity-polymorphism workaround)
+
+  Context: QTT has no quantity polymorphism (Brady 2021) — a function
+  cannot abstract over its argument's quantity, so library code is written
+  once per quantity (map0/map1/mapW). The workaround: reify quantities as
+  *values* of a =data Usage= type (U0/U1/UOmega, lib/usage.ep) and compute
+  types from them by elimination; one operator indexed by a Usage value
+  covers all quantities (examples/ep/usage-poly-map.ep: =mapU= over List,
+  via the computing function =mapCont : Usage -> ? -> ? -> ?=).
+
+  Decision 1 — separate value type, not reused annotations (issue step 1):
+  quantities live on binders in the core (preterm.Quantity on tPi/tLam),
+  not in the term language, so they cannot be abstracted over or computed
+  with. The =Usage= data type is the reification; the bridge is an
+  ordinary function =Usage -> ?= whose cases select the literal binder
+  quantity. This is Brady's Usage-indexed L-monad pattern, minus the
+  monad: the motive computes the operator's type from the value.
+
+  Decision 2 — post-pass no longer usage-verifies Pi binders
+  (usage_check.checkUsage): the in-judgment check (enforceBinderQty, #66)
+  *deliberately* enforces only lambdas — "a postulate like
+  =Pi (1 ch : Chan s). ...= declares linearity to be enforced at use
+  sites, and its codomain need not mention the binder" — but the
+  post-pass verified tPi too. That made Pi-types-as-terms ill-formed
+  depending on where they were written: =Pi (1 x : A). A= as a return
+  annotation passed, the same Pi computed in a body (exactly what
+  =mapCont='s cases build) failed with "linear variable 'x' not used".
+  Pi formation does not require the binder to occur in the codomain, so
+  the post-pass now exempts tPi (tSi already was). Linearity enforcement
+  still runs at lambdas (in-judgment + post-pass) and application sites.
+
+  Decision 3 — ascribed lambda domains checked by conversion, not
+  syntactic unification (checkTm pkLam): the ascription-vs-expected check
+  used unifyElab, whose unifyHead deliberately does no delta-unfolding,
+  so =lam (f0 : Pi (0 x : A). B)= against motive-computed
+  =mapCont U0 A B= failed with "cannot unify tPi with tApp" although
+  definitionally equal (delta + iota). The ascription site is an
+  infer-then-check boundary, and conversion (convElab, Experiment 5b) is
+  the established mechanism at those boundaries; it falls back to
+  unification while metas remain unsolved, so meta-solving behavior is
+  unchanged. The reflexivity fast path keeps the common identical-type
+  case cheap.
+
+  When to reach for the pattern vs duplicating: reach for Usage-indexed
+  when one operator name and signature shape serves all quantities and
+  the per-quantity work differs only in binder annotations — the
+  computing function (=mapCont=, one case per quantity) is then the
+  single place the quantities are pinned, and call sites write =mapU u=
+  once. Duplicate (map0/map1/mapW) when the quantities demand genuinely
+  different algorithms, not just different annotations. Honest limit
+  (per the concept note): the boilerplate moves into the computing
+  function rather than disappearing — measured on the =map= demo:
+  baseline 3 definitions / 15 code lines, indexed 2 definitions
+  (=mapCont= 6 lines + =mapU= with its 3 branch bodies); the line count
+  does not shrink. What shrinks is the API surface (3 operator names ->
+  1) and the documentation/maintenance burden. Full quantity
+  polymorphism (Granule-style graded modalities) is the general
+  solution but a far larger theory cost; the indexed pattern covers the
+  library-scaling need.
+
+  Decision 4 — headTy: no unfolding of RedRefs; head-iota for
+  constructor-headed eliminator redexes (found while resuming this
+  branch: the use sites hung). =headTy= (elab.nim) is the elaborator's
+  syntactic head-normalizer (zonk, delta, head-beta; the core's eval is
+  never involved). Its =tR= case unfolded any =refIsDefn= reference via
+  =refVal.syn= — but =newRedRef= sets =syn= to the reference *itself*,
+  so any type whose head reduction passed through an eliminator looped
+  forever (use sites check lambdas against =mapCont U0/U1/UOmega A B=,
+  forcing =ensurePi= -> =headTy= through =usageElim=). Worse, even
+  without the loop =headTy= could not do iota, so the computed type
+  would never expose its Pi head. Fix: =headTy= treats a =wRed=
+  reference as neutral (no unfolding), and its =tApp= case flattens the
+  spine and fires one head-iota step via =fireRedTerm=, a Term-level
+  mirror of core =fireRed= (same nargs/scrutinee/case-template/spine
+  conventions, via =substSpine=), when fully applied to a
+  constructor-headed scrutinee; otherwise the application stays neutral.
+  This is a pre-existing elaborator bug, not a #88 regression — #88's
+  pattern (types computed by elimination, used as function types) is
+  simply the first client. =RedRule= and =Whnf.rule= are now exported
+  from eponym_init for the mirror.
+  Status: OPEN (branch =exp88-qty-poly=).

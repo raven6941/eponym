@@ -1,0 +1,20 @@
+# Term-level usage values (issue #88).
+#
+# QTT binder quantities (0/1/ω) are *annotations* on binders, not terms, so a
+# function cannot abstract over them directly (Brady 2021: "QTT does not yet
+# support quantity polymorphism"). The workaround: reify quantities as
+# *values* of this data type and compute types from them by elimination
+# (cf. the Usage-indexed L monad in Brady's thesis). A single operator
+# indexed by a Usage value then covers all quantities; the per-case
+# boilerplate moves into the computing function rather than disappearing.
+#
+# Decision (recorded in decisions.org under #88): a separate value type is
+# needed — the existing quantity annotations cannot be reused as values
+# because they live on binders in the core (preterm.Quantity), not in the
+# term language. The bridge is a computing function `Usage -> ?` whose
+# cases select the literal binder quantity.
+
+data Usage : ? where
+| U0 : Usage
+| U1 : Usage
+| UOmega : Usage

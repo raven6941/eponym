@@ -74,10 +74,10 @@ type
   ## when the scrutinee's head is a registered constructor. Each case maps
   ## a constructor refId to a contractum *template*: a Term in the context
   ## [elim args except scrutinee (nargs-1 vars), ctor args (m vars)].
-  RedRule = object
-    nargs: int
-    cases: Table[int, Term]
-    nParams: int  # leading scrutinee spine args that are (already-bound)
+  RedRule* = object
+    nargs*: int
+    cases*: Table[int, Term]
+    nParams*: int  # leading scrutinee spine args that are (already-bound)
                   # params, not fresh ctor vars (Experiment 5: data)
   ElimVKind* = enum eApp, eFst, eSnd, eAbsurd
   Scope* = object
@@ -156,7 +156,7 @@ type
     of wRed:
       ## an eliminator with registered reduction rules, accumulating args
       elimId: int
-      rule: RedRule
+      rule*: RedRule
       args: seq[Value]   # accumulated so far (function position order)
     of wInt:
       intVal*: int
