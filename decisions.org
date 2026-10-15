@@ -2982,4 +2982,4 @@
   median 0.508s (spread 0.483–0.570s). Spreads overlap fully; singleton
   precision costs nothing measurable in unification on this corpus (all
   52 files elaborate cleanly on both sides, failed=0).
-  Status: CLOSED via #217.
+  Status: CLOSED via #219.
