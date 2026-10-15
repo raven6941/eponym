@@ -186,6 +186,32 @@ time.
   with your own bugs — the guarantees in this document cover what the
   elaborator and kernel check, not what your metaprogramming computes.
 
+## External solver oracle (#51, implemented 2026-10-15)
+
+The `by smt` tactic installs an external SMT solver (z3, optional
+dependency) as a **trusted** conversion oracle for the dynamic extent of
+the tactic, following the #41 handler pattern (`smtHandler`,
+`coreValid = false`). Nonlinear Nat goals `by arith` declines (equalities
+over `{zero, suc, add, mul}`) are serialized to SMT-LIB (`QF_NIA`; Nat
+maps to `Int` with `(>= x 0)` per variable; the goal is negated) and
+discharged **only** on a literal `unsat` verdict. `sat`, `unknown`,
+solver failure, timeout (default 5s, configurable), and goals outside the
+fragment all *decline* to the next handler — the elaborator never hangs on
+the solver. A missing solver binary is a located "solver not found" error
+at tactic construction (via `EPONYM_SMT_SOLVER`, default `z3`), loud rather
+than silently declining. Trust accounting: each trusted discharge
+increments `extDischarges`, and `elabDefDecl` relaxes the bare-core
+re-check for the definition exactly as with #41's trusted path — the
+solver's verdict is taken on faith, F*-style. The bought failure mode is
+solver brittleness: timeouts, version sensitivity, and the undecidability
+of nonlinear integer arithmetic (a goal the solver cannot decide is a
+decline, never a discharge). Distinct from #45 (evidence-returning
+handlers, which extend automation without trust): `by smt` extends trust
+to the external solver, and the corpus records per-goal wall-clock so the
+cost of that trust is visible. Deferred with a documented boundary:
+inequalities — there is no `NatLe`/`<=` surface form in the prelude, and
+`by smt` runs through `tacRefl`, which only accepts `Eq` goals.
+
 ## Summary of the trust boundary
 
 | Checked for you | Your responsibility |
@@ -198,6 +224,7 @@ time.
 | Universe hierarchy `Type l` + directional cumulativity (#52) | |
 | Nat singleton types, one-directional subsumption `tNatSing(k) <: Nat` (#74) | |
 | Handler evidence revalidated LCF-style (#41) | |
+| | Trusted external solver oracle (`by smt`, #51) — solver brittleness (timeouts, version sensitivity) |
 
 Eponym's guarantee: a term that elaborates *and* passes the kernel was
 checked by a small independent checker against QTT's judgments, with
