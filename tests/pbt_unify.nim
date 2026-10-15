@@ -16,8 +16,10 @@
 ##      characterization case, not a universal property.)
 ##   P4 occurs check: ?m = t[?m] raises UnifyError; a constructor-headed
 ##      t names noCycle (issue #80).
-##   P5 non-pattern spines rejected: duplicate-var spines, non-var spines,
-##      and escaping variables all raise.
+##   P5 non-pattern spines suspend (pre-unification, issue #56):
+##      duplicate-var spines, non-var spines, and escaping variables
+##      defer instead of raising; flushDeferred reports leftovers as an
+##      ambiguity error showing the stuck constraint.
 ##   P6 zonk idempotence: zonk(zonk(t)) == zonk(t), even mid-elaboration.
 ##   P7 eta: lam(x). r x =?= r succeeds for neutral r; lam(x). x =/= r fails.
 ##   P8 noConfusion differential: on ground constructor terms, unify
@@ -56,6 +58,7 @@ proc structEq*(a, b: Term): bool =
   of tType: a.lvl == b.lvl  # Issue #52: level-annotated universes
   of tInt: a.intVal == b.intVal
   of tNatLit: a.natLitVal == b.natLitVal
+  of tNatSing: a.natSingVal == b.natSingVal
   of tPrim: a.primOp == b.primOp and structEq(a.primTy, b.primTy)
   of tMeta:
     if a.metaId != b.metaId or a.metaSpine.len != b.metaSpine.len:
@@ -166,8 +169,11 @@ proc genPair*(r: var Rng): PairCase =
   (ms, a, b)
 
 proc tryUnify(ms: var MetaStore, a, b: Term): bool =
+  ## Issue #56: a unify that only suspends (pre-unification) is not a
+  ## success — flush so deferred goals must resolve for `true`.
   try:
     unify(ms, a, b, noLoc)
+    flushDeferred(ms, noLoc)
     true
   except UnifyError:
     false
@@ -278,7 +284,17 @@ proc propP4noCycle(): bool =
   except UnifyError as e:
     return "occurs check" in e.msg and "noCycle" in e.msg
 
-# --- P5: non-pattern spines -------------------------------------------------------
+# --- P5: non-pattern spines suspend (issue #56) ------------------------------------
+# Each case: unify must NOT raise (the goal suspends); exactly one goal
+# must be pending; the declaration-final flush must report it as an
+# ambiguity error showing the stuck constraint.
+
+proc flushedAsAmbiguity(ms: var MetaStore): bool =
+  try:
+    flushDeferred(ms, noLoc)
+    false
+  except UnifyError as e:
+    "ambiguous" in e.msg and "stuck" in e.msg
 
 proc propP5dup(): bool =
   var ms = initMetaStore()
@@ -286,9 +302,9 @@ proc propP5dup(): bool =
   let bad = tmMeta(m.metaId, @[vv(0), vv(0)])
   try:
     unify(ms, bad, tmC(cOne), noLoc)
-    return false
-  except UnifyError as e:
-    return "pattern spine" in e.msg
+  except UnifyError:
+    return false  # must suspend, not raise
+  ms.deferred.len == 1 and flushedAsAmbiguity(ms)
 
 proc propP5nonVar(): bool =
   var ms = initMetaStore()
@@ -296,18 +312,18 @@ proc propP5nonVar(): bool =
   let bad = tmMeta(m.metaId, @[tmC(cOne)])
   try:
     unify(ms, bad, tmC(cOne), noLoc)
-    return false
-  except UnifyError as e:
-    return "pattern spine" in e.msg
+  except UnifyError:
+    return false  # must suspend, not raise
+  ms.deferred.len == 1 and flushedAsAmbiguity(ms)
 
 proc propP5escape(): bool =
   var ms = initMetaStore()
   let m = freshMeta(ms, tmC(cStar), 1, 0, noLoc)  # spine [V0]
   try:
     unify(ms, m, vv(5), noLoc)  # V5 not in the spine
-    return false
-  except UnifyError as e:
-    return "escapes the spine" in e.msg
+  except UnifyError:
+    return false  # must suspend, not raise
+  ms.deferred.len == 1 and flushedAsAmbiguity(ms)
 
 # --- P7: eta -----------------------------------------------------------------------
 
@@ -404,21 +420,22 @@ proc propP9meta(): bool =
   tryUnify(ms, m, m)
 
 # --- flex-flex order characterization --------------------------------------------
-# Documents the head-commitment: unify(?m1[dup-spine], ?m2[pat]) fails
-# (non-pattern spine), while the reverse order succeeds by solving ?m2.
-# The unifier does not backtrack to the other side — incomplete, but sound.
+# Documents the head-commitment under pre-unification (issue #56):
+# unify(?m1[dup-spine], ?m2[pat]) suspends (was: "pattern spine" failure),
+# while the reverse order succeeds by solving ?m2. The unifier does not
+# backtrack to the other side — incomplete, but sound.
 
 proc propFlexOrder(): bool =
   var ms1 = initMetaStore()
   let m1 = freshMeta(ms1, tmC(cStar), 1, 0, noLoc)
   let m2 = freshMeta(ms1, tmC(cStar), 1, 0, noLoc)
   let dup = tmMeta(m1.metaId, @[vv(0), vv(0)])
-  let fwdFails =
+  let fwdDefers =
     try:
       unify(ms1, dup, m2, noLoc)
+      ms1.deferred.len == 1 and flushedAsAmbiguity(ms1)
+    except UnifyError:
       false
-    except UnifyError as e:
-      "pattern spine" in e.msg
   var ms2 = initMetaStore()
   let n1 = freshMeta(ms2, tmC(cStar), 1, 0, noLoc)
   let n2 = freshMeta(ms2, tmC(cStar), 1, 0, noLoc)
@@ -428,7 +445,7 @@ proc propFlexOrder(): bool =
       structEq(zonk(ms2, n2), tmMeta(n1.metaId, @[vv(0), vv(0)]))
     except UnifyError:
       false
-  fwdFails and revOk
+  fwdDefers and revOk
 
 # --- main --------------------------------------------------------------------------
 
@@ -461,9 +478,9 @@ when isMainModule:
                proc(r: var Rng): int = 0,
                proc(x: int): bool = propP4(r)))
   check("P4 occurs check names noCycle under constructors", propP4noCycle())
-  check("P5 duplicate-var spine rejected", propP5dup())
-  check("P5 non-var spine rejected", propP5nonVar())
-  check("P5 escaping variable rejected", propP5escape())
+  check("P5 duplicate-var spine suspends (+flush ambiguity)", propP5dup())
+  check("P5 non-var spine suspends (+flush ambiguity)", propP5nonVar())
+  check("P5 escaping variable suspends (+flush ambiguity)", propP5escape())
   check("P7 eta-positive: lam(x). r x =?= r",
         forAll("p7p", r, Cases,
                proc(r: var Rng): int = 0,

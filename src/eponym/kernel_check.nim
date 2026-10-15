@@ -75,12 +75,14 @@ type
     elimRules*: Table[int, KElimRuleSet]  ## eliminator refId -> rule set
     natZeroId*: int  ## refId of the Nat `zero` constructor, -1 if unknown
     natSucId*: int   ## refId of the Nat `suc` constructor, -1 if unknown
+    natTypeId*: int  ## refId of the Nat datatype itself, -1 if unknown
+                     ## (Issue #74: singleton base rule tNatSing(k) <: Nat)
     intId*: int      ## refId of the `Int` postulate, -1 if unknown
 
 proc initKernelGlobals*(): KernelGlobals =
   KernelGlobals(entries: initTable[int, KGEntry](),
                 elimRules: initTable[int, KElimRuleSet](),
-                natZeroId: -1, natSucId: -1, intId: -1)
+                natZeroId: -1, natSucId: -1, natTypeId: -1, intId: -1)
 
 proc kerr(msg: string): ref KernelError =
   newException(KernelError, msg)
@@ -107,7 +109,7 @@ proc kshift(tm: Term, cutoff, amt: int): Term =
   of tV:
     if tm.idx >= cutoff: Term(kind: tV, idx: tm.idx + amt)
     else: tm
-  of tR, tC, tType, tInt, tNatLit:
+  of tR, tC, tType, tInt, tNatLit, tNatSing:
     tm
   of tMeta:
     raise kerr("out of kernel fragment: tMeta in kernel term (zonk invariant violated)")
@@ -155,7 +157,7 @@ proc ksubst(tm: Term, s: Term, cutoff: int, shrink: static bool = true): Term =
       when shrink: Term(kind: tV, idx: tm.idx - 1)
       else: tm
     else: tm
-  of tR, tC, tType, tInt, tNatLit:
+  of tR, tC, tType, tInt, tNatLit, tNatSing:
     tm
   of tMeta:
     raise kerr("out of kernel fragment: tMeta in kernel term (zonk invariant violated)")
@@ -231,6 +233,7 @@ proc ksynEq(a, b: Term): bool =
   of tType: a.lvl == b.lvl
   of tInt: a.intVal == b.intVal
   of tNatLit: a.natLitVal == b.natLitVal
+  of tNatSing: a.natSingVal == b.natSingVal
   of tPrim: a.primOp == b.primOp
   of tPi, tSi, tLam:
     ksynEq(a.dom, b.dom) and ksynEq(a.scope.bdy, b.scope.bdy)
@@ -433,6 +436,7 @@ proc kconv(a, b: Term, g: KernelGlobals, depth: int = 0): bool =
   of tC: return wa.c == wb.c
   of tR: return wa.refId == wb.refId
   of tInt: return wa.intVal == wb.intVal
+  of tNatSing: return wa.natSingVal == wb.natSingVal  # Issue #74
   of tPrim:
     # primTy is validated at infer time against the kernel's axiom;
     # compare it too, defensively (nil-safe: the elaborator always sets it).
@@ -587,6 +591,33 @@ proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term =
       raise kerr("out of kernel fragment: tNatLit literal " &
         "(no Nat constructors registered)")
     kInfer(kExpandNatLit(tm.natLitVal, g), ctx, g)
+  of tNatSing:
+    # Issue #74: a singleton is a type; its type is ?.
+    star
+
+proc ksubsumes(inf, exp: Term, g: KernelGlobals): bool =
+  ## Issue #74: audit-kernel twin of eponym_init.subsumes — definitional
+  ## subsumption (inf <: exp): singleton base rule, covariant through Pi
+  ## codomains and Sigma components, definitional equality elsewhere.
+  ## Issue #52: universe cumulativity (`Type i` <: `Type j` for i <= j) is
+  ## also a subsumption rule; kcumul handles it (and returns false for
+  ## non-universe shapes, so it is safe to try first).
+  ## Open codomains are compared under the same de Bruijn convention on
+  ## both sides (one binder each), which ksynEq handles structurally.
+  if kcumul(inf, exp, g): return true
+  let wi = kwhnf(inf, g)
+  let we = kwhnf(exp, g)
+  if wi.kind == tNatSing:
+    if g.natTypeId >= 0 and we.kind == tR and we.refId == g.natTypeId:
+      return true
+    # else fall through to definitional equality below
+  if wi.kind == tPi and we.kind == tPi:
+    if not kconv(wi.dom, we.dom, g): return false  # domains invariant
+    return ksubsumes(wi.scope.bdy, we.scope.bdy, g)
+  if wi.kind == tSi and we.kind == tSi:
+    if not kconv(wi.dom, we.dom, g): return false
+    return ksubsumes(wi.scope.bdy, we.scope.bdy, g)
+  kconv(inf, exp, g)
 
 proc kCheck(tm: Term, ty: Term, ctx: KCtx, g: KernelGlobals) =
   let wty = kwhnf(ty, g)
@@ -607,11 +638,18 @@ proc kCheck(tm: Term, ty: Term, ctx: KCtx, g: KernelGlobals) =
     let sty = kwhnf(kInfer(tm.sub, ctx, g), g)
     if sty.kind != tC or sty.c != cVoid:
       raise kerr("absurd requires a proof of O")
+  of tNatLit:
+    # Issue #74: a literal checks against a singleton type iff the values
+    # match; against any other type it must have the inferred (Nat) type.
+    if wty.kind == tNatSing:
+      if tm.natLitVal != wty.natSingVal:
+        raise kerr("nat literal " & $tm.natLitVal &
+          " does not inhabit singleton type " & $wty.natSingVal)
+    elif not ksubsumes(kInfer(tm, ctx, g), ty, g):
+      raise kerr("type mismatch")
   else:
     let inferred = kInfer(tm, ctx, g)
-    ## Issue #52: cumulativity is directional; try it before symmetric
-    ## conversion fails on `Type i` vs `Type j`.
-    if not kconv(inferred, ty, g) and not kcumul(inferred, ty, g):
+    if not ksubsumes(inferred, ty, g):
       raise kerr("type mismatch")
 
 # --- iota rule validation: the motive check ----------------------------------
@@ -911,6 +949,30 @@ when isMainModule:
     "tNatLit 2 should equal suc (suc zero)"
   assert kconv(kInfer(Term(kind: tNatLit, natLitVal: 2), @[], g),
                kref(natId), g), "tNatLit 2 should infer Nat"
+  # Issue #74: singleton types. The kernel self-test globals register
+  # natId above; point natTypeId at it for the subsumption base rule.
+  g.natTypeId = natId
+  let sing2 = Term(kind: tNatSing, natSingVal: 2)
+  let sing3 = Term(kind: tNatSing, natSingVal: 3)
+  assert kconv(kInfer(sing2, @[], g), star, g),
+    "tNatSing 2 should infer ?"
+  kCheck(Term(kind: tNatLit, natLitVal: 2), sing2, @[], g)
+  var singMismatch = false
+  try:
+    kCheck(Term(kind: tNatLit, natLitVal: 3), sing2, @[], g)
+  except KernelError:
+    singMismatch = true
+  assert singMismatch, "tNatLit 3 must not check against singleton 2"
+  assert ksubsumes(sing2, kref(natId), g),
+    "tNatSing 2 should subsume to Nat"
+  assert ksubsumes(sing2, sing2, g), "tNatSing 2 should subsume to itself"
+  assert not ksubsumes(sing2, sing3, g),
+    "tNatSing 2 must not subsume to tNatSing 3"
+  assert not ksubsumes(kref(natId), sing2, g),
+    "Nat must not subsume to tNatSing 2"
+  # Pi covariance: (d:2) -> 2 subsumes to (d:2) -> Nat.
+  assert ksubsumes(pi(sing2, sing2), pi(sing2, kref(natId)), g),
+    "Pi codomain should be covariant in the singleton rule"
   # tInt/tPrim: kernel axiom Int -> Int -> Int; fires on literals
   let intId = 200
   g.entries[intId] = KGEntry(ty: star, def: nil)

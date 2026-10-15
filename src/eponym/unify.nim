@@ -94,6 +94,22 @@ type
     holeCtx*: seq[tuple[name: string, ty: Term]]
     holeAb*: Ability  # Issue #177: the ambient ability at the hole
 
+  # Issue #56: pre-unification — suspended unification goals.
+  #
+  # The unifier implements the Miller pattern fragment; a goal whose
+  # spine is not a pattern spine (duplicate or non-variable entries) or
+  # whose right-hand side mentions a variable outside the spine used to
+  # fail immediately. Agda/Norell/McBride-style pre-unification instead
+  # suspends such goals: each entry holds the stuck goal pair (zonked at
+  # suspend time) plus the set of unsolved metavariables it is blocked
+  # on. retryDeferred wakes entries when a blocking meta is assigned;
+  # the declaration-final flushDeferred re-runs whatever is left and
+  # reports leftovers as an ambiguity error showing the stuck constraint.
+  DeferredGoal* = object
+    ga*, gb*: Term       # the stuck goal pair, zonked at suspend time
+    blockedOn*: HashSet[int]  # unsolved meta ids occurring in ga/gb
+    gloc*: Loc           # source location of the original goal
+
   MetaStore* = object
     nextId*: int
     entries*: Table[int, MetaEntry]
@@ -133,6 +149,7 @@ type
     # unnecessary — an earlier revision freshened+solved per use at ~1.2x
     # pure-code overhead for an instantiation nothing ever observed.
     abNext*: int
+    deferred*: seq[DeferredGoal]  # Issue #56: suspended pre-unification goals
 
   QtySolKind* = enum qsUnknown, qsSolved
   QtySol* = object
@@ -224,7 +241,8 @@ proc initMetaStore*(): MetaStore =
             qvarPending: initTable[string, seq[tuple[varName: string, loc: Loc]]](),
             ctorTable: initCtorTable(),
             refNames: initTable[int, string](),
-            abNext: 0)
+            abNext: 0,
+            deferred: @[])
 
 proc uerr(loc: Loc, msg: string): ref UnifyError =
   # No location prefix here: the elaborator catches UnifyError and re-raises
@@ -308,7 +326,7 @@ proc rigidHead(t: Term): bool =
   ## defined `f` could map distinct arguments to equal values).
   case t.kind
   of tR: not t.refIsDefn
-  of tV, tC, tInt, tNatLit: true
+  of tV, tC, tInt, tNatLit, tNatSing: true
   else: false
 
 proc sameRigidHead(a, b: Term): bool =
@@ -325,6 +343,7 @@ proc sameRigidHead(a, b: Term): bool =
   of tC: fa.c == fb.c
   of tInt: fa.intVal == fb.intVal
   of tNatLit: fa.natLitVal == fb.natLitVal
+  of tNatSing: fa.natSingVal == fb.natSingVal
   else: false
 
 proc argsConflict(ms: MetaStore, a, b: Term): tuple[bad: bool, c1, c2: int] =
@@ -371,7 +390,7 @@ proc zonk*(ms: MetaStore, t: Term): Term =
         let sp = t.metaSpine.mapIt(zonk(ms, it))
         if e.solution.isNil: tmMeta(t.metaId, sp)
         else: zonk(ms, substSpine(e.solution, sp))
-      of tV, tR, tC, tType, tInt, tPrim, tNatLit: t
+      of tV, tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: t
       of tPi, tSi, tLam:
         # Issue #177: pegs are NOT zonked here. The core ignores pegs, and
         # use sites (instPeg/unifyAbilitiesSym) zonk them on demand; zonking
@@ -403,7 +422,7 @@ proc findUnsolved*(ms: MetaStore, t: Term): tuple[found: bool, id: int, loc: Loc
       let r = findUnsolved(ms, s)
       if r.found: return r
     (false, 0, noLoc)
-  of tV, tR, tC, tType, tInt, tPrim, tNatLit: (false, 0, noLoc)
+  of tV, tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: (false, 0, noLoc)
   of tPi, tSi, tLam:
     let r = findUnsolved(ms, t.dom)
     if r.found: r else: findUnsolved(ms, t.scope.bdy)
@@ -432,7 +451,7 @@ proc occursSyn(id: int, t: Term): bool =
   of tMeta:
     if t.metaId == id: return true
     t.metaSpine.anyIt(occursSyn(id, it))
-  of tV, tR, tC, tType, tInt, tPrim, tNatLit: false
+  of tV, tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: false
   of tPi, tSi, tLam:
     occursSyn(id, t.dom) or occursSyn(id, t.scope.bdy)
   of tPair:
@@ -444,16 +463,19 @@ proc occursSyn(id: int, t: Term): bool =
     occursSyn(id, t.letVal) or occursSyn(id, t.letTy) or
       occursSyn(id, t.letScope.bdy)
 
-proc invertSpine(spine: seq[Term], loc: Loc): seq[int] =
-  ## spine (innermost-first) must be distinct bound variables.
-  ## Returns perm with perm[i] = the current-context var for creation var i.
-  result = newSeq[int](spine.len)
+proc spinePerm(spine: seq[Term]): tuple[ok: bool, perm: seq[int]] =
+  ## Non-raising spine inversion (Issue #56): ok=false when the spine is
+  ## not a distinct-variable pattern spine; the caller suspends the goal
+  ## for pre-unification instead of failing. perm[i] = the
+  ## current-context var for creation var i.
+  var perm = newSeq[int](spine.len)
   var seen = initHashSet[int]()
   for i, s in spine:
     if s.kind != tV or s.idx in seen:
-      raise uerr(loc, "cannot solve metavariable: not a pattern spine")
+      return (false, @[])
     seen.incl(s.idx)
-    result[i] = s.idx
+    perm[i] = s.idx
+  (true, perm)
 
 proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
   ## Rename current-context vars back to creation-context vars.
@@ -466,7 +488,7 @@ proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
       if j < inv.len and inv[j] >= 0: vv(inv[j] + depth)
       else: raise uerr(loc,
         "cannot solve metavariable: variable V" & $t.idx & " escapes the spine")
-  of tR, tC, tType, tInt, tPrim, tNatLit: t
+  of tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: t
   of tMeta: tmMeta(t.metaId, t.metaSpine.mapIt(renameAt(it, inv, depth, n, loc)))
   of tPi, tSi, tLam:
     mkBinder(t.kind, renameAt(t.dom, inv, depth, n, loc),
@@ -487,10 +509,77 @@ proc renameAt(t: Term, inv: seq[int], depth, n: int, loc: Loc): Term =
           renameAt(t.letTy, inv, depth, n, loc), t.letScope.adv,
           renameAt(t.letScope.bdy, inv, depth + 1, n, loc))
 
+proc tryRenameAt(t: Term, inv: seq[int], depth, n: int): tuple[ok: bool,
+    t: Term] =
+  ## Non-raising renameAt (Issue #56): ok=false when a variable escapes
+  ## the spine; the caller suspends the goal instead of failing. The only
+  ## UnifyError renameAt raises is the escape case, so catching it here is
+  ## precise (no message sniffing).
+  try: (true, renameAt(t, inv, depth, n, noLoc))
+  except UnifyError: (false, nil)
+
 proc unify*(ms: var MetaStore, a, b: Term, loc: Loc)  # forward (mutual with solveMeta)
+
+# --- Issue #56: pre-unification ------------------------------------------------
+
+proc collectMetaIds(t: Term, acc: var HashSet[int]) =
+  ## Every metavariable id occurring in t. Call on zonked terms: anything
+  ## still a tMeta is unsolved (or unknown to this store).
+  case t.kind
+  of tMeta:
+    acc.incl(t.metaId)
+    for s in t.metaSpine: collectMetaIds(s, acc)
+  of tV, tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: discard
+  of tPi, tSi, tLam:
+    collectMetaIds(t.dom, acc)
+    collectMetaIds(t.scope.bdy, acc)
+  of tPair:
+    collectMetaIds(t.pFst, acc)
+    collectMetaIds(t.pSnd, acc)
+    collectMetaIds(t.pScope.bdy, acc)
+  of tApp:
+    collectMetaIds(t.fn, acc)
+    collectMetaIds(t.arg, acc)
+  of tFst, tSnd, tAbsurd: collectMetaIds(t.sub, acc)
+  of tLet:
+    collectMetaIds(t.letVal, acc)
+    collectMetaIds(t.letTy, acc)
+    collectMetaIds(t.letScope.bdy, acc)
+
+proc deferGoal(ms: var MetaStore, a, b: Term, loc: Loc) =
+  ## Suspend a non-pattern goal for pre-unification.
+  let za = zonk(ms, a)
+  let zb = zonk(ms, b)
+  var blocked = initHashSet[int]()
+  collectMetaIds(za, blocked)
+  collectMetaIds(zb, blocked)
+  ms.deferred.add(DeferredGoal(ga: za, gb: zb, blockedOn: blocked, gloc: loc))
+  traceEvt(tcUnify, "unify.defer",
+           trunc($za) & "  =?=  " & trunc($zb) &
+           " (blocked on " & $blocked.len & " metas)")
+
+proc retryDeferred(ms: var MetaStore, solvedId: int) =
+  ## After ?m<solvedId> is assigned, retry every suspended goal blocked
+  ## on it. Goals that are still stuck re-suspend (appended at the end,
+  ## past this pass's drain); hard failures propagate as before. Each
+  ## pass drains a fixed snapshot, so re-suspension cannot loop.
+  var kept: seq[DeferredGoal] = @[]
+  var toRetry: seq[DeferredGoal] = @[]
+  for g in ms.deferred:
+    if solvedId in g.blockedOn: toRetry.add(g)
+    else: kept.add(g)
+  ms.deferred = kept
+  for g in toRetry:
+    unify(ms, g.ga, g.gb, g.gloc)
 
 proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) =
   ## Solve ?m[spine] = t (Miller pattern fragment).
+  ## Issue #56: pre-unification — a non-pattern spine or an escaping
+  ## variable suspends the goal instead of failing. The goal is retried
+  ## when a metavariable it is blocked on is assigned (retryDeferred,
+  ## below); whatever is still stuck at the declaration zonk point
+  ## becomes an ambiguity error via flushDeferred. The occurs check
+  ## stays a hard failure: a cycle can never resolve.
   if id notin ms.entries:
     raise uerr(loc, "unknown metavariable ?m" & $id)
   let e = ms.entries[id]
@@ -508,16 +597,23 @@ proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) 
         "constructor '" & ms.ctorTable.ctorNames[hid] &
         "' is applied to a term containing ?m" & $id)
     raise uerr(loc, "occurs check failed for ?m" & $id)
-  let perm = invertSpine(zsp, loc)
+  let (pok, perm) = spinePerm(zsp)
+  if not pok:
+    deferGoal(ms, tmMeta(id, zsp), zt, loc)
+    return
   var maxV = -1
   for p in perm: maxV = max(maxV, p)
   var inv = newSeq[int](maxV + 1)
   for i in 0 .. maxV: inv[i] = -1
   for i, p in perm: inv[p] = i
-  let sol = renameAt(zt, inv, 0, e.metaCtxLen, loc)
+  let (rok, sol) = tryRenameAt(zt, inv, 0, e.metaCtxLen)
+  if not rok:
+    deferGoal(ms, tmMeta(id, zsp), zt, loc)
+    return
   ms.entries[id] = MetaEntry(metaTy: e.metaTy, metaCtxLen: e.metaCtxLen,
                              metaLoc: e.metaLoc, solution: sol)
   traceEvt(tcMeta, "meta.assign", "?m" & $id & " := " & trunc($sol))
+  retryDeferred(ms, id)
 
 # --- unification ---------------------------------------------------------------
 
@@ -570,6 +666,8 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
     if a1.intVal != b1.intVal: raise uerr(loc, "integer mismatch")
   of tNatLit:
     if a1.natLitVal != b1.natLitVal: raise uerr(loc, "nat literal mismatch")
+  of tNatSing:
+    if a1.natSingVal != b1.natSingVal: raise uerr(loc, "nat singleton mismatch")
   of tPrim:
     if a1.primOp != b1.primOp: raise uerr(loc, "primitive op mismatch")
   of tR:
@@ -605,6 +703,24 @@ proc unify*(ms: var MetaStore, a, b: Term, loc: Loc) =
   of tMeta:
     discard  # handled above
 
+proc flushDeferred*(ms: var MetaStore, loc: Loc) =
+  ## Issue #56: declaration-final pre-unification pass. Re-runs every
+  ## suspended goal once — a solved meta may unblock a goal nothing
+  ## explicitly woke. Goals still stuck afterwards are genuinely
+  ## ambiguous: fail showing the stuck constraint, not a bare failure.
+  ## Hole-tolerant tooling mode (allowHoles) leaves them pending.
+  if ms.allowHoles: return
+  let pending = ms.deferred
+  ms.deferred = @[]
+  for g in pending:
+    unify(ms, g.ga, g.gb, g.gloc)
+  if ms.deferred.len > 0:
+    let g = ms.deferred[0]
+    raise uerr(loc, "ambiguous metavariable constraints remain (" &
+      $ms.deferred.len & " stuck): cannot solve " &
+      trunc($g.ga) & " =?= " & trunc($g.gb) &
+      " — suspended as a non-pattern pre-unification goal")
+
 when isMainModule:
   import strutils
   var ms = initMetaStore()
@@ -625,15 +741,52 @@ when isMainModule:
     assert "occurs check" in e.msg
     echo "ok: occurs check fires"
 
-  # pattern spine violation: ?m[V0, V0] = 1
+  # Issue #56: non-pattern spine suspends instead of failing.
+  # ?m[V0, V0] = 1 defers; nothing can unblock it (the duplicate is
+  # ground), so the declaration-final flush reports an ambiguity error
+  # showing the stuck constraint.
   let m2 = freshMeta(ms, tmC(cStar), 1, 0, loc)
   let badSpine = tmMeta(m2.metaId, @[vv(0), vv(0)])
+  unify(ms, badSpine, tmC(cOne), loc)  # must not raise
+  assert ms.deferred.len == 1, "goal should suspend, got " & $ms.deferred.len
+  assert m2.metaId in ms.deferred[0].blockedOn
+  echo "ok: non-pattern spine suspends"
   try:
-    unify(ms, badSpine, tmC(cOne), loc)
-    assert false, "non-pattern spine should fail"
+    flushDeferred(ms, loc)
+    assert false, "flush should report the stuck goal"
   except UnifyError as e:
-    assert "pattern spine" in e.msg
-    echo "ok: non-pattern spine rejected"
+    assert "ambiguous" in e.msg and "?m" in e.msg, e.msg
+    echo "ok: flush reports stuck constraint as ambiguity"
+
+  # Issue #56: deferred-then-solved. The spine [?m6[V0,V1], V0] is not a
+  # pattern spine while ?m6 is unsolved; solving ?m6 := V1 wakes the goal
+  # and it completes as ?m5[V1, V0] = 1.
+  var msD = initMetaStore()
+  let m5 = freshMeta(msD, tmC(cStar), 2, 0, loc)
+  let m6 = freshMeta(msD, tmC(cStar), 2, 0, loc)
+  unify(msD, tmMeta(m5.metaId, @[m6, vv(0)]), tmC(cOne), loc)
+  assert msD.deferred.len == 1, "goal should suspend"
+  assert m5.metaId in msD.deferred[0].blockedOn
+  assert m6.metaId in msD.deferred[0].blockedOn
+  unify(msD, m6, vv(1), loc)  # pattern solve; wakes the suspended goal
+  assert msD.deferred.len == 0, "woken goal should complete, still pending: " &
+    $msD.deferred.len
+  assert $zonk(msD, m5) == "1", $zonk(msD, m5)
+  assert $zonk(msD, m6) == "V1", $zonk(msD, m6)
+  echo "ok: deferred goal wakes and solves"
+
+  # Issue #56: escaping variable suspends too (?m[V0] = V5: V5 is outside
+  # the creation context); flush reports it as ambiguity.
+  var msE = initMetaStore()
+  let mEv = freshMeta(msE, tmC(cStar), 1, 0, loc)
+  unify(msE, mEv, vv(5), loc)  # must not raise
+  assert msE.deferred.len == 1, "escape goal should suspend"
+  try:
+    flushDeferred(msE, loc)
+    assert false, "flush should report the stuck goal"
+  except UnifyError as e:
+    assert "ambiguous" in e.msg, e.msg
+    echo "ok: escaping variable suspends, flush reports ambiguity"
 
   # spine inversion: ?m[V1] = V1  ==>  stored solution V0 (creation ctx),
   # while the value at the occurrence (spine [V1]) is V1

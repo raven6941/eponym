@@ -159,7 +159,7 @@ proc layoutTerm*(t: Term, holeGoalOf: proc(id: int): string): Box =
     Box(header: @["lam " & t.scope.adv & " : " & $t.dom],
         children: @[layoutTerm(t.scope.bdy, holeGoalOf)],
         arrange: baVertical)
-  else:  # tR, tV, tPi, tSi, tC, tInt, tNatLit, tPrim: atoms
+  else:  # tR, tV, tPi, tSi, tC, tInt, tNatLit, tNatSing, tPrim: atoms
     textBox($t)
 
 # --- measuring ------------------------------------------------------------

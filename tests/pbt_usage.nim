@@ -134,7 +134,7 @@ proc refOccurrences(t: Term, depth: int, acc: var seq[(int, int)]) =
   of tLet:
     refOccurrences(t.letVal, depth, acc)
     refOccurrences(t.letScope.bdy, depth + 1, acc)  # letTy is a type position
-  of tPrim, tR, tC, tType, tMeta, tInt, tNatLit:
+  of tPrim, tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
     discard  # no variable occurrences (tType: Issue #52 universe)
 
 proc refCountVarUses(t: Term): int =
@@ -148,7 +148,7 @@ proc shrinkTerm(t: Term): seq[Term] =
   ## Shrink toward smaller terms: subterms first, then tmInt(0).
   result = @[tmInt(0)]
   case t.kind
-  of tV, tR, tC, tType, tInt, tNatLit: discard
+  of tV, tR, tC, tType, tInt, tNatLit, tNatSing: discard
   of tMeta: result.add(t.metaSpine)
   of tLam, tPi, tSi:
     result.add(t.dom)

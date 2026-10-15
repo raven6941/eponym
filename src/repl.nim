@@ -35,6 +35,7 @@ proc prettyWhnfVal(v: Value, lvl: int, varNames: var seq[string],
   of wConst: $whnfConst(v)
   of wInt: $whnfIntVal(v)
   of wNatLit: $whnfNatLitVal(v)
+  of wNatSing: $whnfNatSingVal(v)  # Issue #74: singleton type prints as the literal
   of wRef:
     let id = whnfRefId(v)
     var s =

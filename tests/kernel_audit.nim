@@ -67,6 +67,10 @@ proc buildKernelGlobals(globals: Globals,
         result.natZeroId = e.tm.refId
       elif name == "suc" and result.natSucId < 0:
         result.natSucId = e.tm.refId
+      elif name == "Nat" and result.natTypeId < 0:
+        # Issue #74: the audit kernel's singleton base rule needs the
+        # Nat datatype's own refId.
+        result.natTypeId = e.tm.refId
       elif name == "Int" and result.intId < 0:
         result.intId = e.tm.refId
   for name, d in defsByName:
