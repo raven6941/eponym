@@ -1583,19 +1583,85 @@ proc resolveVar(ctx: Ctx, globals: Globals, name: string,
     return (g.tm, g.ty)
   raise elabErr(loc, "unbound variable '" & name & "'")
 
+proc headTy(ms: MetaStore, t: Term): Term  # forward (mutual with fireRedTerm)
+
+proc fireRedTerm(ms: MetaStore, rule: RedRule, args: seq[Term]): Term =
+  ## Term-level mirror of core fireRed (eponym_init): one head-iota step for
+  ## an eliminator RedRef. `args` is the application spine, outermost-first,
+  ## with args.len == rule.nargs; args[0] is the scrutinee (last applied).
+  ## Returns nil when the rule is stuck (scrutinee not constructor-headed),
+  ## in which case the application stays neutral.
+  ## Issue #88: headTy must see through eliminator reduction so that types
+  ## computed by elimination (e.g. `mapCont U0 A B`) expose their Pi head.
+  let scrut = headTy(ms, zonk(ms, args[0]))
+  var sargs: seq[Term] = @[]
+  var sf = scrut
+  while sf.kind == tApp:
+    sargs.add(sf.arg)
+    sf = sf.fn
+  if sf.kind != tR or sf.refId notin rule.cases:
+    return nil
+  # constructor args, application order, skipping the already-bound params
+  # (Experiment 5: params are elim variables, not fresh ctor variables)
+  var cargs: seq[Term] = @[]
+  for i in rule.nParams ..< sargs.len:
+    cargs.add(sargs[sargs.len - 1 - i])
+  for ca in cargs:
+    if ca.kind in {tFst, tSnd, tAbsurd}:
+      return nil  # the core stays neutral on projected scrutinee args
+  # substSpine spine, innermost-first: reversed ctor args, then reversed
+  # elim args (excluding the scrutinee) — the same order as core fireRed
+  var spine: seq[Term] = @[]
+  for i in countdown(cargs.high, 0):
+    spine.add(zonk(ms, cargs[i]))
+  for i in 1 .. args.high:
+    spine.add(zonk(ms, args[i]))
+  substSpine(rule.cases[sf.refId], spine)
+
 proc headTy(ms: MetaStore, t: Term): Term =
   ## Head-normalize a type for the elaborator: zonk, unfold definitions,
-  ## head-beta. Purely syntactic; the core's eval is never involved.
+  ## head-beta, head-iota for constructor-headed eliminator redexes
+  ## (Issue #88: types computed by elimination must expose their head).
+  ## Purely syntactic; the core's eval is never involved.
   var cur = zonk(ms, t)
   while true:
     case cur.kind
     of tApp:
-      let fh = headTy(ms, cur.fn)
-      if fh.kind == tLam:
-        cur = zonk(ms, subst(fh.scope.bdy, 0, cur.arg))
+      # Flatten the spine to expose the head: firing iota needs the whole
+      # argument list (nargs check + scrutinee), which the old one-argument
+      # recursion could never see.
+      var args: seq[Term] = @[]
+      var f = cur
+      while f.kind == tApp:
+        args.add(f.arg)
+        f = f.fn
+      let fh = headTy(ms, f)
+      if fh.kind == tLam and args.len >= 1:
+        var r = zonk(ms, subst(fh.scope.bdy, 0, args[^1]))
+        for i in countdown(args.high - 1, 0):
+          r = tmApp(r, args[i])
+        cur = r
+      elif fh.kind == tR and not fh.refVal.isNil and
+           fh.refVal.whnf.kind == wRed and
+           args.len == fh.refVal.whnf.rule.nargs:
+        let inst = fireRedTerm(ms, fh.refVal.whnf.rule, args)
+        if inst.isNil:
+          var r = fh
+          for i in countdown(args.high, 0):
+            r = tmApp(r, zonk(ms, args[i]))
+          return r
+        cur = zonk(ms, inst)
       else:
-        return tmApp(fh, zonk(ms, cur.arg))
+        var r = fh
+        for i in countdown(args.high, 0):
+          r = tmApp(r, zonk(ms, args[i]))
+        return r
     of tR:
+      if not cur.refVal.isNil and cur.refVal.whnf.kind == wRed:
+        # Eliminator reference: newRedRef sets refVal.syn to the ref itself,
+        # so unfolding would loop forever (this hung #88's use sites).
+        # A bare RedRef is neutral for headTy; iota fires in the tApp case.
+        return cur
       if cur.refIsDefn and not cur.refVal.isNil:
         cur = zonk(ms, cur.refVal.syn)
       else:
@@ -1969,7 +2035,18 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           if pre.c1.isNil: dom
           else:
             let ad = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
-            unifyElab(ms, ad, dom, pre.loc)
+            # Issue #88: ascribed domains are checked by conversion, not
+            # syntactic unification. unifyElab cannot see through definitions
+            # (unifyHead deliberately does no delta-unfolding), so an
+            # ascription that is definitionally equal to the expected domain
+            # — e.g. a concrete Pi against a motive-computed `mapCont U0 A B`
+            # (delta + iota away) — was wrongly rejected with
+            # "cannot unify tPi with tApp". convElab compares up to full
+            # reduction via the kernel evaluator and falls back to unification
+            # while metas remain unsolved, so meta-solving behavior here is
+            # unchanged.
+            discard convElab(ms, supply, ad, dom, pre.loc, ctx, globals,
+                             tmC(cStar), pre.loc)
             ad
         # Issue #66: subject-side quantity tracking (Γ ⊢ t :^q A). Reconcile
         # the lambda's binder quantity with the expected Pi's before

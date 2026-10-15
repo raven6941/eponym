@@ -158,10 +158,24 @@ proc checkUsage*(tm: Term): void =
         case t.kind
         of tV, tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
           discard # no binders
-        of tLam, tPi:
+        of tLam:
           verifyBinder(t)
           go(t.dom)         # domains may nest binders; uses inside them are
           go(t.scope.bdy)   # type positions, not counted against this binder
+        of tPi:
+          # Pi binders are not usage-verified (Issue #88). A Pi type declares
+          # the contract — linearity is enforced at the corresponding lambda
+          # (enforceBinderQty, #66, lambdas only by design) and at
+          # application sites (quantity-scaled argument contexts). The
+          # codomain need not mention the binder: `Pi (1 x : A). B` is a
+          # well-formed type. Verifying Pi binders here made Pi-types-as-terms
+          # ill-formed depending on where they were written (a return-type
+          # annotation passed, the same Pi computed in a body failed), which
+          # blocks the Usage-indexed pattern (#88), whose computing function
+          # builds Pi types with literal quantities as ordinary terms.
+          # (tSi was already exempt for the same reason.)
+          go(t.dom)
+          go(t.scope.bdy)
         of tSi:
           # Sigma binders: not linear-checked (they're types, not values)
           go(t.dom)
