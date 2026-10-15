@@ -1,0 +1,280 @@
+# Eponym surface-syntax reference
+
+The surface grammar is one grammar: what you write in a standalone `.ep`
+file and what you write inside `eponymBlock:` in Nim are the same language
+(issue #144; conformance is pinned by `tests/surface_conformance.nim`, and
+the Nim-side mapping for every form is pinned by
+`tests/test_embedded_macro_forms.nim`). The canonical grammar lives in
+`src/eponym/parse_surf.nim`:
+
+```
+decl    = proc | def | postulate | elim | red | data | record | import
+          | interface | command
+term    = ... Pi | Sig | lam | let | ascription | application | ? | Nat literals ...
+```
+
+Trust-model note: this document describes the syntax. What each construct
+*guarantees* (and the known soundness gaps) is in `docs/trust-model.md`.
+
+## Entering: `eponymBlock`
+
+```nim
+import eponym_mac
+import eponym_embed
+
+eponymBlock:
+  import "../../lib/nat.ep"
+
+  data(Session, Univ):
+    proc sendS(A: Univ, s: Session): Session
+```
+
+The macro converts the Nim AST block to Eponym source text, feeds it to the
+canonical string parser, elaborates at Nim compile time, and generates
+wrapper procs. Elaboration failures become Nim compiler errors. Standalone
+`.ep` files skip the macro and go straight to the parser; the syntax is
+identical.
+
+## Sheds: `shedsBlock` (hole-driven development)
+
+```nim
+import sheds_mac
+import sheds
+
+shedsBlock:
+  import "../../lib/nat.ep"
+
+  postulate(Int, Univ)
+
+  # Checked as usual: elaborates, gets a callable wrapper.
+  proc double(x: Int): Int = addInt(x, x)
+
+  # A shed: `![quadBody, ...]` names an unchecked scratch region whose
+  # goal (here `Int`, from the ascribed return type) and context
+  # (`n : Int`) are written to a sidecar file for the IDE/LSP.
+  proc quad(n: Int): Int = ![ quadBody, n ++++ n ]
+```
+
+`shedsBlock:` accepts the same declarations as `eponymBlock:`; the
+`![name, body]` forms are holes, not elaborated. See
+`examples/embedded/sheds_walkthrough.nim` and the VS Code extension in
+`editors/vscode/`.
+
+## Declarations
+
+### `data` — indexed datatypes
+
+```nim
+data(NatD, Univ):
+  proc zeroD(): NatD
+  proc sucD(n: NatD): NatD
+```
+
+The first argument is the index type (`Univ` = `?` for unindexed types;
+`Session -> Univ` for a type indexed by a session, as in
+`examples/embedded/session_types.nim`). Constructors are declared with
+`proc` inside the block; indices in the return type must be supplied
+(`proc mkChan(s: Session): Chan(s)`). `data` desugars to
+postulate/elim/red; the kernel motive-validates every generated iota rule
+(see trust model). Strict positivity is checked at elaboration time (issue
+#33): the type being defined may not occur in a constructor argument's
+Pi-domain (negative position) or inside an index term; violations are
+rejected with a located error naming the constructor and the offending
+argument. The check is conservative for nested-inductive-through-indices
+(see `docs/trust-model.md`).
+
+### `elim` / `red` — manual eliminators and computation rules
+
+`data` generates these, but you can write them directly (Experiment 4):
+
+```nim
+elim(boolElim, Pi(C: Bool -> Univ, C(true) -> C(false) -> Pi(b: Bool, C(b))))
+red(boolElim(C, t, f, true), t)
+red(boolElim(C, t, f, false), f)
+```
+
+(from `tests/test_embedded_macro_forms.nim`). The elaborator rejects
+non-structurally-recursive `red` rules at declaration time (issue #36).
+
+### `def` — clause-style definitions
+
+```nim
+def(isZeroD, NatD -> NatD):
+  clause([zeroD], zeroD)
+  clause([sucD(n)], zeroD)
+```
+
+(from `tests/test_embedded_macro_forms.nim`). Each `clause([patterns], rhs)` becomes one defining equation. Coverage and
+termination of clause definitions are checked (issues #78, #36).
+
+### `proc` — function definitions
+
+```nim
+proc addD(x: NatD, y: NatD): NatD =
+  natElim(lam(_: NatD, NatD), x, lam(n: NatD, r: NatD, sucD(r)), y)
+```
+
+`proc name(args): Ret = body`. Bodies are ordinary terms; `by` tactics (below)
+may discharge the whole body.
+
+### `postulate` — axioms
+
+```nim
+postulate(sendNat, Pi(x: Nat, ch {.linear.}: Chan(sendS(Nat, endS())), Chan(endS())))
+```
+
+`postulate` asserts a type with no evidence — it is an axiom. Machine `Int`
+and its primops are kernel axioms; a `postulate`d primop that lies
+poisons every proof touching it (trust model).
+
+### `record` — records (#37)
+
+```nim
+record(Pt):
+  field(x, Int)
+  field(y, Int)
+```
+
+(from `examples/embedded/records.nim`). Fields are declared with `field`;
+construction is `mkPt(x, y)`, projection is `p.x`.
+
+### `import`
+
+```nim
+import "../../lib/nat.ep"
+```
+
+Imports a prelude/stdlib file by path (issue #131): `lib/nat.ep`,
+`lib/bool.ep`, `lib/list.ep`, `lib/vec.ep`, `lib/nat_lemmas.ep`. The
+standalone grammar and the embedded form are the same statement.
+
+### `interface` / `command` — ambient abilities (#177)
+
+```nim
+interface Console
+command send : String -> 1 in Console
+```
+
+Frank-style ambient abilities threaded through `check`/`infer` at
+elaboration time only — they never appear in the object program.
+
+## Types and terms
+
+### The universe: `?` (spelled `Univ`)
+
+Type-in-Type, known-inconsistent; the honest policy is "don't write
+Girard's paradox" (issue #52, trust model). `Nat : ?`, `? : ?`.
+
+### Dependent functions: `Pi`
+
+Canonical surface (`.ep` files): one binder per `Pi`, dot before the body:
+
+```nim
+Pi {A : ?}. Pi (x : A). A
+```
+
+`eponymBlock` (Nim side): call syntax, the final position is the codomain:
+
+```nim
+Pi(x: Nat, ch {.linear.}: Chan(sendS(Nat, endS())), Chan(endS()))
+Pi({A: Univ}, A -> A)
+```
+
+Binders are `(name : Type)`; `{name : Type}` is *implicit* — solved by
+Miller-pattern unification at use sites (issue #201). Non-dependent arrows
+are sugar: `A -> B` is `Pi(_ : A). B`. (The one-grammar rule means both
+spellings parse the same language; the Nim side just uses call syntax
+because `Pi {A : T}. body` is not valid Nim — see `tests/surface_conformance.nim`.)
+
+### Dependent pairs: `Sig`
+
+```nim
+postulate(recvNat, Pi(ch {.linear.}: Chan(recvS(Nat, endS())), Sig(x: Nat, Chan(endS()))))
+```
+
+`Sig(x: Nat, Chan(endS()))` is the pair type; `fst(p)` / `snd(p)` project
+(as in `server` in `examples/embedded/session_types.nim`).
+
+### Lambdas: `lam`
+
+Nim side (call syntax): `lam(x: Nat, addInt(x, x))`. Canonical surface:
+`lam (x : A). x` — one binder, dot before the body, as with `Pi`.
+
+```nim
+lam(_: NatD, NatD)          # the motive in an eliminator call (Nim side)
+```
+
+### `let` (typed)
+
+Nim side: `let p = recvNat(ch)` binds `p` in the rest of the body (as in
+`server` in the tutorial). Canonical surface: `let y = x in y`.
+Ascriptions work too: `(t : T)` checks `t` against `T`.
+
+### Quantities (QTT, issues #64/#66)
+
+Binders carry a quantity: **linear** (use exactly once), **erased** (never
+used), or **unrestricted** (the default, unchecked). In `eponymBlock` the
+Nim-side spelling is a pragma:
+
+```nim
+proc client(ch {.linear.}: Chan(sendS(Nat, endS()))): Chan(endS()) =
+  sendNat(zero(), ch)
+```
+
+`ch {.linear.}` becomes `(1 ch : ...)`; the elaborator rejects using a
+linear variable zero or two-plus times. Types are checked in the all-0
+context, so a type-level mention of a linear variable does not consume it.
+In canonical surface text the spellings are `(1 x : T)` (linear),
+`(0 x : T)` (erased), `(q x : T)` (quantity variable, issue #66).
+
+### Natural numbers
+
+Integer literals are overloaded by the expected type. In checking mode
+against `Nat` they become the primitive `tNatLit` (O(1) — not a `suc`
+chain); against the postulated `Int` they are primitive integers; in
+inference mode a literal requires `Int` in scope. `1` in *type* position
+lexes as the unit type — write `01` for the literal one (the renderer
+emits `01` for `pkInt(1)` so render→parse stays faithful, issue #158).
+The unit value is `<>` (Nim side: `unitv`).
+
+### Tactics: `by`
+
+Canonical surface (`.ep` files): `= by refl`. Nim side: `= byTac(refl)`
+(`by` is not valid Nim in that position):
+
+```nim
+proc pf1 : Eq Int 42 42 = by refl          # canonical
+proc pf1(): Eq(Int, 42, 42) = byTac(refl)  # eponymBlock
+proc idInt(x: Int): Int = byTac(assumption)
+```
+
+A `by <tactic>` body is discharged by an elaboration-time tactic term.
+Tactic names resolve to registered tactics (`refl`, `assumption`, the
+`natArithHandler` behind `by arith` for linear Nat equations, ...).
+Conversion-handler effects fire at macro expansion/compile time, never in
+the object program; evidence is revalidated LCF-style with handlers
+uninstalled (issue #41, trust model).
+
+### Equality
+
+`Eq(A, x, y)` is propositional equality; `refl` proves `Eq(Int, 42, 42)`.
+(#66-era core.)
+
+## What's deliberately missing
+
+- No universe hierarchy (#52) — `? : ?`.
+- Termination: single-function structural recursion only (#36); mutual
+  recursion (#42) and looping type-level programs are the author's problem.
+- Implicit-binder *lambdas* have no Nim-side spelling (parser note,
+  issue #151): `{x : T}` in expression position would collide with the
+  Pi-implicit table syntax, and no corpus code needs it.
+
+## Further reading
+
+- `docs/trust-model.md` — what the system checks vs. what is your problem.
+- `docs/staging-design.md`, `docs/layers.md` — architecture (staging is
+  experimental; `src/experimental/` holds code not on production paths).
+- The `examples/embedded/` corpus and the compiling test corpus
+  (`tests/test_embedded_macro_forms.nim`, `tests/surface_conformance.nim`)
+  — every form above appears in a compiling example or test; the tutorial
+  (`docs/tutorial.md`, issue #184) walks through them in order.

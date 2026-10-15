@@ -2,6 +2,12 @@
 
 Loosely, epigram + nim ~= eponym. What happens if we adapt (a subset of) ideas from McBride & McKinna's influential work from 20+ years ago, as an embedded DSL for Nim? This is an exploratory work currently in progress. "Loosely" and "in progress" show up in at least a few ways.
 
+**New here?** Start with the [tutorial](docs/tutorial.md) (install → your
+first checked dependent type, ~15 minutes), look up any language form in the
+[surface-syntax reference](docs/surface-syntax-reference.md), and read the
+[trust model](docs/trust-model.md) to see what the system checks — and what
+is your problem.
+
 ### Deliberate points of departure
 
 QTT instead of ETT. Idris has demonstrated the 0/1/ω approach taken. This allows support for session types, and opt-in checking of the style popularized by rust.
