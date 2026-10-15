@@ -19,6 +19,14 @@
     "onLanguage:nim"
   ],
   "contributes": {
+    "languages": [
+      {
+        "id": "nim",
+        "aliases": ["Nim", "nim"],
+        "extensions": [".nim", ".nims", ".nimble"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
     "commands": [
       {
         "command": "eponym.showShedLayout",
