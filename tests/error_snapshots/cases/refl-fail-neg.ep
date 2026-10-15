@@ -1,0 +1,8 @@
+# Negative test (issue #34): `refl` on genuinely unequal terms fails with a
+# named noConfusion reason.
+data Nat : ? where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Eq (A : ?) (x : A) : A -> ? where
+| refl : Eq A x x
+proc bad : Eq Nat zero (suc zero) = refl Nat zero

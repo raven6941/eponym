@@ -1,0 +1,1 @@
+line 16, col 40: inferred type ((Mat (suc (suc zero))) (suc (suc zero))) does not match expected type ((Mat (suc zero)) (suc zero)): noConfusion: distinct constructors 'suc' and 'zero' of datatype 'Nat' cannot be equal

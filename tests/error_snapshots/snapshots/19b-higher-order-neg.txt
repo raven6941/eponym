@@ -1,0 +1,1 @@
+line 8, col 3: constructor 'bad' argument 'k': the family 'Bad' occurs in the domain of a higher-order argument (not strictly positive)

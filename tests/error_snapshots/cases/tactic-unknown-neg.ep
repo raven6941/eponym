@@ -1,0 +1,3 @@
+# Negative test (issue #34): an unknown tactic name is a located error.
+postulate Int : ?
+proc bad : Int = by nosuchtac

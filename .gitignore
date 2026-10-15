@@ -11,6 +11,11 @@ tests/**
 !tests/**/
 !tests/**/*.nim
 !tests/**/*.sh
+# Error-message snapshot corpus (issue #34): fixtures, blessed snapshots,
+# and corpus docs are sources, not build outputs.
+!tests/error_snapshots/**/*.ep
+!tests/error_snapshots/**/*.txt
+!tests/error_snapshots/**/*.md
 bench/**
 !bench/**/
 !bench/**/*.nim

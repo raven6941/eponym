@@ -1,0 +1,4 @@
+# Negative test (issue #34): an erased (0-quantity) variable used in the
+# body is a quantity violation.
+proc erasedUse (A : ?) : Pi (0 x : A). A =
+  lam (0 x : A). x

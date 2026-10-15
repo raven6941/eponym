@@ -1,0 +1,1 @@
+line 13, col 55: inferred type (VExpr zero) does not match expected type (VExpr (suc zero)): noConfusion: distinct constructors 'zero' and 'suc' of datatype 'Nat' cannot be equal

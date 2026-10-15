@@ -46,6 +46,18 @@ proc elabErr(loc: Loc, msg: string): ref ElabError =
   e.loc = loc
   e
 
+proc sanitizeKernelMsg*(msg: string): string =
+  ## Issue #34: the kernel evaluator's conversion errors embed raw
+  ## `$`-rendered terms (R123 refIds, `:$` application syntax, de Bruijn
+  ## V-indices) that leak elaborator internals to users. The elaborator
+  ## already reports the name-aware pretty-printed types alongside these
+  ## messages, so drop the raw dump and keep the failure kind. Apply at
+  ## every site where a kernel ValueError message reaches a user-facing
+  ## ElabError.
+  if msg.startsWith("neutral mismatch: "): "neutral mismatch"
+  elif msg.startsWith("mismatch: "): "mismatch"
+  else: msg
+
 proc unifyElab(ms: var MetaStore, a, b: Term, loc: Loc) =
   profilePhase(epUnify):
       ## unify, translating UnifyError into ElabError (adds the source location).
@@ -396,7 +408,7 @@ proc defaultConv(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
       if g.tm.kind == tR: refNames[g.tm.refId] = name
     raise elabErr(loc, "inferred type " & prettyTerm(a, ctx, refNames, ms.recordFields) &
       " does not match expected type " & prettyTerm(b, ctx, refNames, ms.recordFields) &
-      ": not convertible (" & e.msg & ")")
+      ": not convertible (" & sanitizeKernelMsg(e.msg) & ")")
 
 proc closeParams*(s: var Supply, ctx: Ctx): seq[Term] =
   ## Issue #45: the fresh rigid postulate refs closing a context. The goal
@@ -461,7 +473,8 @@ proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
   try:
     discard check(s, eval(closedGoal, @[]), closedEv)
   except ValueError as e:
-    raise elabErr(loc, "conversion handler evidence rejected by the core: " & e.msg)
+    raise elabErr(loc, "conversion handler evidence rejected by the core: " &
+      sanitizeKernelMsg(e.msg))
   finally:
     ms.convHandlers = saved
   ev1
@@ -797,7 +810,7 @@ proc checkLemma(s: var Supply, ty, tm: Term, name: string) =
       echo "  ty: ", $ty
       echo "  tm: ", $tm
     raise newException(ValueError, "lemma '" & name &
-      "' rejected by the bare core: " & e.msg)
+      "' rejected by the bare core: " & sanitizeKernelMsg(e.msg))
 
 proc needRef(globals: Globals, name: string): Term =
   if name notin globals:
@@ -1796,7 +1809,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
       try: check(supply, vStar(), tyT)
       except ValueError as e:
         raise elabErr(d.loc,
-          "ill-formed type of '" & d.name & "': " & e.msg)
+          "ill-formed type of '" & d.name & "': " & sanitizeKernelMsg(e.msg))
   # 2. elaborate the body against the type; zonk; reject leftovers
   if qtyFirst:
     discard convElab(ms, supply, tmTy0, tyT, d.loc, @[], globals, tmC(cStar))
@@ -1820,7 +1833,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
         try: check(supply, vStar(), tyT)
         except ValueError as e:
           raise elabErr(d.loc,
-            "ill-formed type of '" & d.name & "': " & e.msg)
+            "ill-formed type of '" & d.name & "': " & sanitizeKernelMsg(e.msg))
       let tm = newPostulateRef(supply, tyV)  # Issue #139: register the name
       globals[d.name] = GEntry(tm: tm, ty: tyT, peg: ab)
       ms.refNames[tm.refId] = d.name
@@ -1834,7 +1847,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
       try: check(supply, tyV, tmT)
       except ValueError as e:
         raise elabErr(d.loc, "definition '" & d.name &
-          "' does not check against its declared type: " & e.msg &
+          "' does not check against its declared type: " & sanitizeKernelMsg(e.msg) &
           "\n  expected: " & $d.desugarTy() &
           "\n  body:     " & $d.desugarTm())
   let dtm = newDefRef(supply, tyV, tmV)  # Issue #139: register the name
@@ -1867,7 +1880,7 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
     else:
       try: check(supply, vStar(), tyT)
       except ValueError as e:
-        raise elabErr(loc, "ill-formed type of '" & name & "': " & e.msg)
+        raise elabErr(loc, "ill-formed type of '" & name & "': " & sanitizeKernelMsg(e.msg))
   if ru.found:
     # allowHoles: leave the name unregistered; later decls mentioning it
     # fail at their own location.
@@ -2075,7 +2088,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
   try:
     attachRedCase(g.tm, cg.tm.refId, rhsTm, nParams)
   except ValueError as e:
-    raise elabErr(loc, e.msg)
+    raise elabErr(loc, sanitizeKernelMsg(e.msg))
 
 # --- Experiment 5: data declarations -------------------------------------------
 # A `data` declaration desugars to postulate/elim/red (Experiment 4) and
@@ -3795,7 +3808,7 @@ proc elabCommandDecl(name: string, ty: PreTerm, iface: string, loc: Loc,
   let tyV =
     try: check(supply, vStar(), tyT)
     except ValueError as e:
-      raise elabErr(loc, "ill-formed type of command '" & name & "': " & e.msg)
+      raise elabErr(loc, "ill-formed type of command '" & name & "': " & sanitizeKernelMsg(e.msg))
   let tm = newPostulateRef(supply, tyV)
   globals[name] = GEntry(tm: tm, ty: tyT, cmdIface: iface)
   ms.refNames[tm.refId] = name

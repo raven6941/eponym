@@ -1,0 +1,4 @@
+# Negative test (issue #34): applying a function to more arguments than its
+# type provides.
+proc id (A : ?) (x : A) : A = x
+proc bad (A : ?) (x : A) : A = id A x x

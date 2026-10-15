@@ -41,6 +41,8 @@ for f in eponym_init preterm parse_surf elab unify eponym_mac egraph eponym_embe
 done
 echo "=== examples ==="
 nim c -r --hints:off $P "tests/run_examples.nim"
+echo "=== error-message snapshots (issue #34) ==="
+nim c -r --hints:off $P "tests/error_snapshots.nim"
 echo "=== repl scripted session (issue #50) ==="
 sh tests/repl_session.sh
 echo "=== kernel audit (issue #62: independent re-check) ==="

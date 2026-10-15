@@ -1,0 +1,1 @@
+line 5, col 3: constructor return type must be the family 'Nat' applied to indices
