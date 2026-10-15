@@ -107,7 +107,7 @@ proc kshift(tm: Term, cutoff, amt: int): Term =
   of tV:
     if tm.idx >= cutoff: Term(kind: tV, idx: tm.idx + amt)
     else: tm
-  of tR, tC, tInt, tNatLit:
+  of tR, tC, tInt, tNatLit, tNatSing:
     tm
   of tMeta:
     raise kerr("out of kernel fragment: tMeta in kernel term (zonk invariant violated)")
@@ -155,7 +155,7 @@ proc ksubst(tm: Term, s: Term, cutoff: int, shrink: static bool = true): Term =
       when shrink: Term(kind: tV, idx: tm.idx - 1)
       else: tm
     else: tm
-  of tR, tC, tInt, tNatLit:
+  of tR, tC, tInt, tNatLit, tNatSing:
     tm
   of tMeta:
     raise kerr("out of kernel fragment: tMeta in kernel term (zonk invariant violated)")
@@ -230,6 +230,7 @@ proc ksynEq(a, b: Term): bool =
   of tC: a.c == b.c
   of tInt: a.intVal == b.intVal
   of tNatLit: a.natLitVal == b.natLitVal
+  of tNatSing: a.natSingVal == b.natSingVal
   of tPrim: a.primOp == b.primOp
   of tPi, tSi, tLam:
     ksynEq(a.dom, b.dom) and ksynEq(a.scope.bdy, b.scope.bdy)
@@ -551,6 +552,9 @@ proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term =
       raise kerr("out of kernel fragment: tNatLit literal " &
         "(no Nat constructors registered)")
     kInfer(kExpandNatLit(tm.natLitVal, g), ctx, g)
+  of tNatSing:
+    # Issue #74: a singleton is a type; its type is ?.
+    star
 
 proc kCheck(tm: Term, ty: Term, ctx: KCtx, g: KernelGlobals) =
   let wty = kwhnf(ty, g)
@@ -571,6 +575,17 @@ proc kCheck(tm: Term, ty: Term, ctx: KCtx, g: KernelGlobals) =
     let sty = kwhnf(kInfer(tm.sub, ctx, g), g)
     if sty.kind != tC or sty.c != cVoid:
       raise kerr("absurd requires a proof of O")
+  of tNatLit:
+    # Issue #74: a literal checks against a singleton type iff the values
+    # match; against any other type it must have the inferred (Nat) type.
+    if wty.kind == tNatSing:
+      if tm.natLitVal != wty.natSingVal:
+        raise kerr("nat literal " & $tm.natLitVal &
+          " does not inhabit singleton type " & $wty.natSingVal)
+    else:
+      let inferred = kInfer(tm, ctx, g)
+      if not kconv(inferred, ty, g):
+        raise kerr("type mismatch")
   else:
     let inferred = kInfer(tm, ctx, g)
     if not kconv(inferred, ty, g):
