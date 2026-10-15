@@ -50,6 +50,7 @@ const cases: seq[Case] = @[
   ("tests/error_snapshots/cases/unsolved-meta-neg.ep", "metavariable: unsolved hole"),
   ("tests/error_snapshots/cases/red-mismatch-neg.ep", "red rule: unknown eliminator"),
   ("tests/error_snapshots/cases/data-bad-ctor-neg.ep", "data: constructor return not the family"),
+  ("tests/error_snapshots/cases/data-reserved-family-neg.ep", "data: family named 'C' reserved for the motive"),
   ("tests/error_snapshots/cases/tactic-unknown-neg.ep", "tactic: unknown tactic name"),
   ("tests/error_snapshots/cases/tactic-assumption-fail-neg.ep", "tactic: assumption with no matching hypothesis"),
   ("tests/error_snapshots/cases/tactic-refl-noteq-neg.ep", "tactic: refl on non-equality goal"),

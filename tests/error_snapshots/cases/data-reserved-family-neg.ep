@@ -1,0 +1,7 @@
+# Negative test (issue #213): a data family named 'C' collides with the
+# motive binder the elaborator generates for the eliminator (Experiment 5
+# desugaring), and must be rejected with a clear reserved-name error — not
+# the confusing conversion mismatch the collision used to produce.
+data C : ? where
+| d1 : C
+| d2 : C

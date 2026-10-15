@@ -1,0 +1,1 @@
+line 5, col 1: data family may not be named 'C' (reserved for the motive)
