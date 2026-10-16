@@ -12,6 +12,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { LspClient } from "./protocol";
 import { serverPath, ensureServerBinary } from "./serverPath";
+import { initLog, log } from "./log";
 import { pageHtml } from "./render";
 import {
   generateSidecar,
@@ -161,6 +162,8 @@ async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<b
 
 export function activate(ctx: vscode.ExtensionContext) {
   out = vscode.window.createOutputChannel("Eponym");
+  initLog(out);
+  log("[eponym] extension v0.1.7 activated");
 
   // Issue #190: eager pre-render. When a shed file is opened and its
   // sidecar is already fresh, fetch the shed layouts in the background so
@@ -466,8 +469,12 @@ export function activate(ctx: vscode.ExtensionContext) {
 
   ctx.subscriptions.push(
     vscode.commands.registerCommand("eponym.expandShed", async (atOffset?: number) => {
+      log("[eponym] expandShed fired, atOffset=" + String(atOffset));
       const editor = vscode.window.activeTextEditor;
-      if (!editor) return;
+      if (!editor) {
+        vscode.window.showErrorMessage("Eponym: no active text editor");
+        return;
+      }
       try {
         await expandShed(editor, inlineClient, { showButtons: inlineShowButtons() }, atOffset);
       } catch (e) {
@@ -513,7 +520,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("eponym.shedRefine", async () => {
       const cur = currentExpanded();
       const editor = vscode.window.activeTextEditor;
-      if (!cur || !editor) return;
+      if (!editor) {
+        vscode.window.showErrorMessage("Eponym: no active text editor");
+        return;
+      }
+      if (!cur) {
+        vscode.window.showErrorMessage("Eponym: no shed expanded");
+        return;
+      }
       const term = await vscode.window.showInputBox({
         prompt: `Refine shed ${cur.shedName} with term`,
         placeHolder: "e.g. zero()",
@@ -551,7 +565,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("eponym.shedCaseSplit", async () => {
       const cur = currentExpanded();
       const editor = vscode.window.activeTextEditor;
-      if (!cur || !editor) return;
+      if (!editor) {
+        vscode.window.showErrorMessage("Eponym: no active text editor");
+        return;
+      }
+      if (!cur) {
+        vscode.window.showErrorMessage("Eponym: no shed expanded");
+        return;
+      }
       const variable = await vscode.window.showInputBox({
         prompt: `Case-split shed ${cur.shedName} on variable`,
         placeHolder: "e.g. n",
@@ -588,7 +609,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("eponym.shedGive", async () => {
       const cur = currentExpanded();
       const editor = vscode.window.activeTextEditor;
-      if (!cur || !editor) return;
+      if (!editor) {
+        vscode.window.showErrorMessage("Eponym: no active text editor");
+        return;
+      }
+      if (!cur) {
+        vscode.window.showErrorMessage("Eponym: no shed expanded");
+        return;
+      }
       const term = await vscode.window.showInputBox({
         prompt: `Give term for shed ${cur.shedName}`,
         placeHolder: "e.g. suc(zero())",
