@@ -105,6 +105,8 @@ interface ExpandedShed {
 let expanded: ExpandedShed | null = null;
 let cursorListener: vscode.Disposable | null = null;
 let docChangeListener: vscode.Disposable | null = null;
+/** True while we are applying our own insert/delete; ignore those events. */
+let suppressDocChange = false;
 
 async function clearExpanded(): Promise<void> {
   if (expanded) {
@@ -116,10 +118,16 @@ async function clearExpanded(): Promise<void> {
       new vscode.Position(anchorLine + 1, 0),
       new vscode.Position(anchorLine + viewLineCount + 1, 0)
     );
+    suppressDocChange = true;
     try {
       await editor.edit((eb) => eb.delete(delRange));
     } catch {
       // Editor may be closed; ignore.
+    } finally {
+      // Clear after the event loop delivers the change event.
+      setTimeout(() => {
+        suppressDocChange = false;
+      }, 0);
     }
   }
   if (cursorListener) {
@@ -159,6 +167,7 @@ function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
  */
 function onDocChange(e: vscode.TextDocumentChangeEvent): void {
   if (!expanded) return;
+  if (suppressDocChange) return;
   if (e.document.uri.toString() !== expanded.docUri) return;
   const lo = expanded.anchorLine;
   const hi = expanded.anchorLine + expanded.viewLineCount;
@@ -234,7 +243,11 @@ export async function expandShed(
   const anchorLine = doc.positionAt(at.start).line;
   const insertPos = new vscode.Position(anchorLine + 1, 0);
   const insertText = viewLines.join("\n") + "\n";
+  suppressDocChange = true;
   const ok = await editor.edit((eb) => eb.insert(insertPos, insertText));
+  setTimeout(() => {
+    suppressDocChange = false;
+  }, 0);
   if (!ok) {
     vscode.window.showErrorMessage("Eponym: could not insert shed view");
     return;
