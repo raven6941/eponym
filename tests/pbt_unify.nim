@@ -197,6 +197,17 @@ proc propP1(c: PairCase): bool =
   if not structEq(zonk(ms, zonk(ms, b)), zonk(ms, b)): return false
   structEq(zonk(ms, a), zonk(ms, b))
 
+proc classifyPair(c: PairCase): seq[string] =
+  ## Coverage tags for the pair generator: which head shapes the sweep
+  ## actually exercises. Pinned via `cover` so generator drift can't
+  ## silently drop a shape the properties rely on.
+  let (_, a, b) = c
+  let fa = a.kind == tMeta
+  let fb = b.kind == tMeta
+  if fa and fb: @["flex-flex"]
+  elif fa or fb: @["flex-rigid"]
+  else: @["rigid-rigid"]
+
 # --- P2: spine-inversion roundtrip ---------------------------------------------
 
 type
@@ -230,6 +241,16 @@ proc propP2(c: SpineCase): bool =
   # The stored solution, applied to the (zonked) spine and fully zonked,
   # reconstructs the unified term.
   structEq(zonk(ms, substSpine(sol, zsp)), zonk(ms, t))
+
+proc classifySpine(c: SpineCase): seq[string] =
+  ## Spine-length buckets for the p2 generator (k = genInt(1, 3)).
+  ## Note: permSpine is pattern-by-construction, so non-pattern spines
+  ## are covered deterministically by P5, not here.
+  let (_, _, spine, _) = c
+  case spine.len
+  of 1: @["spine-1"]
+  of 2: @["spine-2"]
+  else: @["spine-3+"]
 
 # --- P3: symmetry ---------------------------------------------------------------
 
@@ -458,13 +479,19 @@ when isMainModule:
     allOk = allOk and b
 
   check("P1 solve-then-zonk agreement (+P6 zonk idempotence)",
-        forAll("p1", r, Cases, genPair, propP1))
+        forAll("p1", r, Cases, genPair, propP1,
+               classify = classifyPair,
+               cover = @[("flex-flex", 8.0), ("flex-rigid", 7.0),
+                         ("rigid-rigid", 30.0)]))
   check("P1 non-vacuous: successes, failures, and solutions all occur",
         p1ok > 0 and p1fail > 0 and p1solved > 0)
   if not (p1ok > 0 and p1fail > 0 and p1solved > 0):
     echo "  p1ok=", p1ok, " p1fail=", p1fail, " p1solved=", p1solved
   check("P2 spine-inversion roundtrip",
-        forAll("p2", r, Cases, genSpineCase, propP2))
+        forAll("p2", r, Cases, genSpineCase, propP2,
+               classify = classifySpine,
+               cover = @[("spine-1", 15.0), ("spine-2", 15.0),
+                         ("spine-3+", 15.0)]))
   check("P2 non-vacuous: some spines solved", p2ok > 0)
   check("P3 symmetry (<=1 flexible side)",
         forAll("p3", r, Cases, genPair, propP3))
