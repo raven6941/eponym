@@ -90,6 +90,13 @@ type Case = object
   src: string
   probes: seq[string]
   expected: seq[bool]  # naive first-match RHS per probe
+  maxPatDepth: int    # max constructor-nesting depth over all row patterns
+  numRows: int        # 1 ⟺ degenerate catch-all matrix
+
+proc patDepth(p: Pat): int =
+  ## Constructor-nesting depth of a pattern (0 = flat/wildcard).
+  if p.kind != pkCtor or p.args.len == 0: 0
+  else: 1 + max(p.args.mapIt(patDepth(it)))
 
 proc `$`(c: Case): string = c.src
 
@@ -241,6 +248,8 @@ proc genSingleCase(r: var Rng): Case =
     result.expected.add(rows[idx].rhsTrue)
   src &= "proc expTrue : Bool = true\nproc expFalse : Bool = false\n"
   result.src = src
+  result.numRows = rows.len
+  result.maxPatDepth = max(rows.mapIt(patDepth(it.pats[0])))
 
 proc genTwoColCase(r: var Rng): Case =
   ## Two-column function `g : Bool -> Bool -> Bool`: exercises the
@@ -276,8 +285,24 @@ proc genTwoColCase(r: var Rng): Case =
     result.expected.add(rows[idx].rhsTrue)
   src &= "proc expTrue : Bool = true\nproc expFalse : Bool = false\n"
   result.src = src
+  result.numRows = rows.len
+  result.maxPatDepth = max(rows.mapIt(max(it.pats.mapIt(patDepth(it)))))
 
 # --- property -----------------------------------------------------------------
+
+proc classifyMatrix(c: Case): seq[string] =
+  ## Coverage tags for the matrix generators: nesting depth and
+  ## catch-all vs partitioned. Pinned via `cover` so generator drift
+  ## can't silently stop exercising nested patterns.
+  ## Note: expandPat partitions by construction, so overlapping /
+  ## redundant rows are not generatable (a deliberate design limit,
+  ## not a coverage gap).
+  result = @[]
+  case c.maxPatDepth
+  of 0: result.add("flat")
+  of 1: result.add("nested-1")
+  else: result.add("nested-2+")
+  result.add(if c.numRows == 1: "catch-all" else: "partitioned")
 
 proc checkCase(c: Case): bool =
   let defs = elabCheck(c.src)
@@ -308,9 +333,14 @@ proc checkCase(c: Case): bool =
 when isMainModule:
   var r = initRng(Seed)
   let ok1 = forAll("clause-matrix single-column", r, CasesSingle,
-                   genSingleCase, checkCase)
+                   genSingleCase, checkCase,
+                   classify = classifyMatrix,
+                   cover = @[("nested-1", 10.0), ("nested-2+", 15.0),
+                             ("catch-all", 7.0)])
   let ok2 = forAll("clause-matrix two-column", r, CasesMulti,
-                   genTwoColCase, checkCase)
+                   genTwoColCase, checkCase,
+                   classify = classifyMatrix,
+                   cover = @[("partitioned", 50.0)])
   if not (ok1 and ok2):
     quit(1)
   echo "all clause-matrix differential properties passed"

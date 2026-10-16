@@ -69,6 +69,8 @@ echo "=== staging soundness fuzz (issue #29, fixed seed; experimental paths) ===
 nim c -r --hints:off $XP "tests/fuzz_soundness.nim" -- --seed 424242 -n 1000
 echo "=== egraph property tests (issue #163, fixed seed) ==="
 nim c -r --hints:off $P "tests/pbt_egraph.nim"
+echo "=== egraph model-based command sequences (falsify runCommands) ==="
+nim c -r --hints:off $P "tests/pbt_egraph_commands.nim"
 echo "=== minikanren property tests (issue #163, fixed seed; experimental paths) ==="
 nim c -r --hints:off $XP "tests/pbt_minikanren.nim"
 echo "=== clause-matrix differential tests (issue #163, fixed seed) ==="
