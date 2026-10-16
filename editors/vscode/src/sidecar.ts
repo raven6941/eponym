@@ -12,7 +12,7 @@ import { execFile } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
-const NIM_PATH_FLAGS = ["src", "src/eponym", "src/relational", "src/staging"];
+const NIM_PATH_FLAGS = ["src", "src/eponym"];
 
 export function hasShedBlocks(text: string): boolean {
   return /\bshedsBlock\b/.test(text);

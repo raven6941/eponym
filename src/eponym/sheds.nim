@@ -42,7 +42,6 @@
 import macros  # NimNode, lineInfo, repr (macro-side rewriting)
 import json
 import os
-import times  # Time comparison for the sidecar reset rule
 import strutils
 import sequtils
 import elab  # elabCheckHolesDir (issue #134: refreshShedStatuses)
@@ -232,15 +231,19 @@ proc sidecarPath*(nimFile: string): string =
 # `isZeroBody_zero` surviving after the source went back to `isZeroBody`,
 # or suffixed duplicates like `isZeroBody_zero1`).
 #
-# Reset rule: if the sidecar on disk is OLDER than the source file, it's
-# from a previous compilation -- start fresh. If it's NEWER, it's from an
-# earlier `shedsBlock` expansion in THIS compilation -- merge by name.
-# (A module-level accumulator var would be cleaner, but the Nim VM cannot
-# evaluate globals at compile time, so the reset is keyed on mtimes,
-# which are plain file I/O.)
+# Reset rule: the first `shedsBlock` expansion for a given file in a
+# compilation starts fresh, ignoring any stale sidecar on disk; later
+# expansions for the same file in the SAME compilation merge by name.
+# Tracked in a {.compileTime.} var: it persists across macro expansions
+# within one `nim c` and resets on every fresh compiler invocation.
+# No file mtimes are consulted: `stat`/`getLastModificationTime` cannot
+# run in the Nim VM at macro-expansion time (regression: it crashed every
+# `nim c` of a sheds file once a sidecar existed).
 #
 # Multiple `shedsBlock` expansions in one file still accumulate within a
 # compilation; each fresh `nim c` after an edit starts clean.
+
+var sidecarResetDone {.compileTime.}: seq[string] = @[]
 
 proc writeShedSidecar*(nimFile: string, sheds: seq[ShedInfo],
                        errMsg = "") =
@@ -249,20 +252,19 @@ proc writeShedSidecar*(nimFile: string, sheds: seq[ShedInfo],
   ## server can show *why* a brown shed is brown.
   let path = sidecarPath(nimFile)
   var old: seq[ShedInfo] = @[]
-  var fresh = true
-  if fileExists(path):
-    try:
-      # Sidecar older than source => previous compilation => reset.
-      fresh = getLastModificationTime(path) < getLastModificationTime(nimFile)
-    except OSError:
-      discard
-  if not fresh:
+  if path in sidecarResetDone:
+    # Later shedsBlock expansion for this file in the same compilation:
+    # merge with what earlier expansions wrote.
     try:
       let j = parseJson(readFile(path))
       if j.hasKey("sheds"):
         old = shedsFromJson(j["sheds"])
     except JsonParsingError, IOError:
       discard
+  else:
+    # First expansion for this file in this compilation: reset, ignoring
+    # any stale sidecar left behind by a previous compilation.
+    sidecarResetDone.add(path)
   # Merge by name: current sheds replace same-name old entries; old
   # entries for sheds no longer in the source are dropped on reset.
   let here = sheds.mapIt(it.name)

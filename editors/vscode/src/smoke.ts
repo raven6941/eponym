@@ -62,8 +62,9 @@ async function main() {
     "eponymRepoRoot returns null above the filesystem root's repo check");
   const cargs = sidecarCompileArgs(root, demo);
   check(cargs[0] === "c" && cargs.includes("--hints:off") &&
+        cargs.includes("--path:" + path.join(root, "src")) &&
         cargs.includes("--path:" + path.join(root, "src", "eponym")) &&
-        cargs.includes("--path:" + path.join(root, "src", "staging")) &&
+        !cargs.some(a => a.includes("staging") || a.includes("relational")) &&
         cargs[cargs.length - 1] === demo,
     "sidecarCompileArgs builds the nim invocation: " + cargs.join(" "));
   // End-to-end: delete the sidecar and regenerate it via the real `nim c`,
