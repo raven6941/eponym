@@ -161,11 +161,14 @@ export async function expandShed(
 
   // Collapse any existing expansion first
   clearExpanded();
+  log("[eponym] expandShed: cleared");
 
   let client: LspClient | null;
   try {
     client = await getClient(doc);
+    log("[eponym] expandShed: client ok");
   } catch (e) {
+    log("[eponym] expandShed: getClient failed: " + String(e));
     vscode.window.showErrorMessage(`Eponym: could not start LSP server: ${String(e)}`);
     return;
   }
@@ -175,7 +178,9 @@ export async function expandShed(
   try {
     const res = await client.shedLayout(docUri, shedName);
     box = res.box;
+    log("[eponym] expandShed: layout ok, box keys=" + Object.keys(box ?? {}).join(","));
   } catch (e) {
+    log("[eponym] expandShed: shedLayout failed: " + String(e));
     vscode.window.showErrorMessage(`Eponym: shed layout failed: ${String(e)}`);
     return;
   }
@@ -183,6 +188,7 @@ export async function expandShed(
   const keyHints = "r: refine  c: case-split  g: give  (Esc: collapse)";
   const text = renderInlineShed(shedName, box, { showButtons: opts.showButtons, keyHints });
   const viewLines = text.split("\n");
+  log("[eponym] expandShed: rendered " + viewLines.length + " lines");
 
   const anchorLine = doc.positionAt(at.start).line;
   const deco = vscode.window.createTextEditorDecorationType({
@@ -206,6 +212,7 @@ export async function expandShed(
   };
   const d = vscode.window.createTextEditorDecorationType(renderOpts);
   editor.setDecorations(d, [range]);
+  log("[eponym] expandShed: decoration applied");
 
   expanded = {
     docUri,
