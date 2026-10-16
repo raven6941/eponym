@@ -100,13 +100,13 @@ interface ExpandedShed {
   viewLineCount: number;
   /** Editor holding the insertion (for removal). */
   editor: vscode.TextEditor;
+  /** Exact text we inserted (to recognize our own change events). */
+  insertText: string;
 }
 
 let expanded: ExpandedShed | null = null;
 let cursorListener: vscode.Disposable | null = null;
 let docChangeListener: vscode.Disposable | null = null;
-/** True while we are applying our own insert/delete; ignore those events. */
-let suppressDocChange = false;
 
 async function clearExpanded(): Promise<void> {
   if (expanded) {
@@ -118,16 +118,10 @@ async function clearExpanded(): Promise<void> {
       new vscode.Position(anchorLine + 1, 0),
       new vscode.Position(anchorLine + viewLineCount + 1, 0)
     );
-    suppressDocChange = true;
     try {
       await editor.edit((eb) => eb.delete(delRange));
     } catch {
       // Editor may be closed; ignore.
-    } finally {
-      // Clear after the event loop delivers the change event.
-      setTimeout(() => {
-        suppressDocChange = false;
-      }, 0);
     }
   }
   if (cursorListener) {
@@ -164,14 +158,36 @@ function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
 /**
  * If the user edits the inserted view text (or the anchor line), collapse
  * to avoid corrupting the tracked range. Edits elsewhere are fine.
+ * Our own insert/delete changes are recognized by content and ignored
+ * (no racy timeout flags — the web extension host delivers change events
+ * asynchronously after the edit promise resolves).
  */
 function onDocChange(e: vscode.TextDocumentChangeEvent): void {
   if (!expanded) return;
-  if (suppressDocChange) return;
   if (e.document.uri.toString() !== expanded.docUri) return;
   const lo = expanded.anchorLine;
   const hi = expanded.anchorLine + expanded.viewLineCount;
   for (const ch of e.contentChanges) {
+    // Ignore our own insertion: empty range at insert position with our text.
+    if (
+      ch.range.start.line === lo + 1 &&
+      ch.range.start.character === 0 &&
+      ch.range.end.line === lo + 1 &&
+      ch.range.end.character === 0 &&
+      ch.text === expanded.insertText
+    ) {
+      continue;
+    }
+    // Ignore our own deletion: range covering the inserted lines, empty text.
+    if (
+      ch.range.start.line === lo + 1 &&
+      ch.range.start.character === 0 &&
+      ch.range.end.line === lo + expanded.viewLineCount + 1 &&
+      ch.range.end.character === 0 &&
+      ch.text === ""
+    ) {
+      continue;
+    }
     const s = ch.range.start.line;
     const en = ch.range.end.line;
     // Overlaps [lo, hi]?
@@ -243,11 +259,7 @@ export async function expandShed(
   const anchorLine = doc.positionAt(at.start).line;
   const insertPos = new vscode.Position(anchorLine + 1, 0);
   const insertText = viewLines.join("\n") + "\n";
-  suppressDocChange = true;
   const ok = await editor.edit((eb) => eb.insert(insertPos, insertText));
-  setTimeout(() => {
-    suppressDocChange = false;
-  }, 0);
   if (!ok) {
     vscode.window.showErrorMessage("Eponym: could not insert shed view");
     return;
@@ -260,6 +272,7 @@ export async function expandShed(
     anchorLine,
     viewLineCount: viewLines.length,
     editor,
+    insertText,
   };
   vscode.commands.executeCommand("setContext", "eponym.shedExpanded", true);
 
