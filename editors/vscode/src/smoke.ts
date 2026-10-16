@@ -170,6 +170,46 @@ async function main() {
       check(!viewNoBtn.includes("[refine]") && viewNoBtn.includes(keyHints),
         `inline view for ${name}: buttons hideable via config, advisory line always shown`);
     }
+
+    // Regression: renderers must not crash on partial boxes. Older server
+    // binaries omit empty arrays (no top-level holeIds, etc.); boxToText/
+    // boxToHtml used to throw "Cannot read properties of undefined". Strip
+    // the array fields from a REAL shedLayout response and verify both
+    // renderers survive it.
+    const realBox = (await client.shedLayout(wtUri, "constABody")).box;
+    const stripArrays = (b: any): any => {
+      if (b === null || typeof b !== "object") return b;
+      const out: any = {};
+      for (const [k, v] of Object.entries(b)) {
+        if (k === "holeIds" || k === "premises" || k === "children" || k === "header") {
+          continue; // dropped entirely, like the old server
+        } else if (v && typeof v === "object") {
+          out[k] = stripArrays(v);
+        } else {
+          out[k] = v;
+        }
+      }
+      return out;
+    };
+    const partialBox = stripArrays(JSON.parse(JSON.stringify(realBox)));
+    check(!("holeIds" in partialBox),
+      "regression fixture: stripped box really lacks holeIds");
+    let partialView = "";
+    try {
+      partialView = renderInlineShed("constABody", partialBox, { showButtons: true, keyHints });
+    } catch (e) {
+      check(false, `renderInlineShed survives a partial box (threw: ${String(e)})`);
+    }
+    check(partialView.length > 0,
+      "renderInlineShed renders non-empty text from a partial box");
+    let partialHtml = "";
+    try {
+      partialHtml = boxToHtml(partialBox);
+    } catch (e) {
+      check(false, `boxToHtml survives a partial box (threw: ${String(e)})`);
+    }
+    check(partialHtml.includes("box"),
+      "boxToHtml renders a partial box without throwing");
   }
 
   // Issue #190: sidecar freshness + name listing.
