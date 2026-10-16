@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build and package Eponym Sheds VSIX",
+      "type": "shell",
+      "command": "npm run build && npx @vscode/vsce package",
+      "options": { "cwd": "${workspaceFolder}/editors/vscode" },
+      "presentation": { "reveal": "always", "panel": "new" },
+      "problemMatcher": []
+    }
+  ]
+}
