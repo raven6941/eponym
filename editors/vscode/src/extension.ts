@@ -163,7 +163,15 @@ async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<b
 export function activate(ctx: vscode.ExtensionContext) {
   out = vscode.window.createOutputChannel("Eponym");
   initLog(out);
-  log("[eponym] extension v0.1.8 activated");
+  log("[eponym] extension v0.1.9 activated");
+
+  // The inline shed view is real inserted text; remove it before save so
+  // the view never gets written to the file.
+  ctx.subscriptions.push(
+    vscode.workspace.onWillSaveTextDocument((e) => {
+      e.waitUntil(collapseShed());
+    })
+  );
 
   // Issue #190: eager pre-render. When a shed file is opened and its
   // sidecar is already fresh, fetch the shed layouts in the background so
