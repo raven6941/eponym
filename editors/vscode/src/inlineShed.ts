@@ -108,6 +108,7 @@ let expanded: ExpandedShed | null = null;
 let cursorListener: vscode.Disposable | null = null;
 
 async function clearExpanded(): Promise<void> {
+  log("[eponym] clearExpanded called, expanded=" + (expanded ? expanded.shedName : "null"));
   if (expanded) {
     const { editor, anchorLine, viewLineCount } = expanded;
     expanded = null;

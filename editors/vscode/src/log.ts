@@ -12,7 +12,16 @@ export function initLog(c: vscode.OutputChannel): void {
   channel = c;
 }
 
-/** Append a line to the shared channel; no-op until initLog runs. */
+/** Append a line to the shared channel; re-creates it defensively if lost. */
 export function log(msg: string): void {
-  channel?.appendLine(msg);
+  if (!channel) {
+    // Defensive: if initLog never ran or the host dropped the channel
+    // (seen in web VS Code with stale extension-host state), create it.
+    try {
+      channel = vscode.window.createOutputChannel("Eponym");
+    } catch {
+      return;
+    }
+  }
+  channel.appendLine(msg);
 }
