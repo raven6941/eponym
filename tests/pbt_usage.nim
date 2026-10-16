@@ -24,7 +24,7 @@
 ## Run: nim c -r --hints:off --path:src --path:src/eponym tests/pbt_usage.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
-import pbt
+import falsify
 import eponym_init  # Term, vv, tmLam/tmPi/tmApp/..., weaken, Const
 import preterm       # Quantity, qadd, qmul
 import usage_check   # countVarUses, checkUsage, UsageError

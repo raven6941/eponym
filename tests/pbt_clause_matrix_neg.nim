@@ -36,7 +36,7 @@
 ##        tests/pbt_clause_matrix_neg.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
-import pbt
+import falsify
 import pbt_clause_matrix  # reuse the exported generators (expandPat, renderPat, Prelude, ...)
 import elab
 import strutils

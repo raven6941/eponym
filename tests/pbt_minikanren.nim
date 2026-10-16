@@ -22,7 +22,7 @@
 ##        --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging tests/pbt_minikanren.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
-import pbt
+import falsify
 import minikanren
 import sequtils
 import strutils
