@@ -42,6 +42,7 @@
 import macros  # NimNode, lineInfo, repr (macro-side rewriting)
 import json
 import os
+import times  # Time comparison for the sidecar reset rule
 import strutils
 import sequtils
 import elab  # elabCheckHolesDir (issue #134: refreshShedStatuses)
@@ -224,33 +225,60 @@ proc sidecarPath*(nimFile: string): string =
   let (dir, base, _) = splitFile(nimFile)
   dir / (base & ".sheds.json")
 
+# --- per-compilation sidecar reset (issue #221 follow-up) -------------------
+# The sidecar must reflect EXACTLY the sheds in the current compilation.
+# The old unconditional read-merge-write kept stale entries -- sheds
+# deleted or renamed in the source lingered as ghosts (e.g. a case-split's
+# `isZeroBody_zero` surviving after the source went back to `isZeroBody`,
+# or suffixed duplicates like `isZeroBody_zero1`).
+#
+# Reset rule: if the sidecar on disk is OLDER than the source file, it's
+# from a previous compilation -- start fresh. If it's NEWER, it's from an
+# earlier `shedsBlock` expansion in THIS compilation -- merge by name.
+# (A module-level accumulator var would be cleaner, but the Nim VM cannot
+# evaluate globals at compile time, so the reset is keyed on mtimes,
+# which are plain file I/O.)
+#
+# Multiple `shedsBlock` expansions in one file still accumulate within a
+# compilation; each fresh `nim c` after an edit starts clean.
+
 proc writeShedSidecar*(nimFile: string, sheds: seq[ShedInfo],
                        errMsg = "") =
-  ## Write the sidecar for the LSP server. Read-merge-write keyed by shed
-  ## *name* (names should be unique per file -- the LSP server targets
-  ## sheds by position, and a name identifies the shed across edits that
-  ## shift line numbers), so several shedsBlock expansions in one file
-  ## accumulate and a recompiled shed overwrites its earlier entry.
-  ## Known limitation: entries for sheds deleted from the source linger
-  ## until the sidecar is removed by hand.
+  ## Write the sidecar for the LSP server (see reset rule above).
   ## `errMsg` (issue #134): the elaboration failure, if any, so the LSP
   ## server can show *why* a brown shed is brown.
   let path = sidecarPath(nimFile)
   var old: seq[ShedInfo] = @[]
+  var fresh = true
   if fileExists(path):
+    try:
+      # Sidecar older than source => previous compilation => reset.
+      fresh = getLastModificationTime(path) < getLastModificationTime(nimFile)
+    except OSError:
+      discard
+  if not fresh:
     try:
       let j = parseJson(readFile(path))
       if j.hasKey("sheds"):
         old = shedsFromJson(j["sheds"])
     except JsonParsingError, IOError:
       discard
+  # Merge by name: current sheds replace same-name old entries; old
+  # entries for sheds no longer in the source are dropped on reset.
   let here = sheds.mapIt(it.name)
   var merged: seq[ShedInfo] = @[]
   for s in old:
     if s.name notin here:
       merged.add(s)
   for s in sheds:
-    merged.add(s)
+    var replaced = false
+    for i in 0 ..< merged.len:
+      if merged[i].name == s.name:
+        merged[i] = s
+        replaced = true
+        break
+    if not replaced:
+      merged.add(s)
   writeFile(path, pretty(%*{"file": nimFile, "errMsg": errMsg,
                             "sheds": shedsToJson(merged)}))
 

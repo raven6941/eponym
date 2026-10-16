@@ -122,11 +122,14 @@ async function prefetchLayouts(doc: vscode.TextDocument): Promise<void> {
   }
 }
 
-async function ensureSidecar(doc: vscode.TextDocument): Promise<boolean> {
+async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<boolean> {
   // Issue #190: skip the `nim c` rerun when the sidecar is newer than the
   // source — this was the visible pause on "Show shed layout" whenever
   // the file had not changed since the last generation.
-  if (sidecarFresh(doc.uri.fsPath)) {
+  // Issue #221 follow-up: after a source splice (refine/case-split/give)
+  // always regenerate — don't trust mtime freshness, since the edit and
+  // the last sidecar write can land in the same millisecond.
+  if (!force && sidecarFresh(doc.uri.fsPath)) {
     out.appendLine(`[eponym] sidecar fresh for ${doc.uri.fsPath}, skipping nim c`);
     return true;
   }
@@ -462,15 +465,44 @@ export function activate(ctx: vscode.ExtensionContext) {
   }
 
   ctx.subscriptions.push(
-    vscode.commands.registerCommand("eponym.expandShed", async () => {
+    vscode.commands.registerCommand("eponym.expandShed", async (atOffset?: number) => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      await expandShed(editor, inlineClient, { showButtons: inlineShowButtons() });
+      await expandShed(editor, inlineClient, { showButtons: inlineShowButtons() }, atOffset);
     })
   );
   ctx.subscriptions.push(
     vscode.commands.registerCommand("eponym.collapseShed", () => collapseShed())
   );
+  // Issue #221 follow-up: splice a returned term over the single-line
+  // `![shedName]` / `![shedName, draft]` node at (nimLine, nimCol)
+  // (1-based, from the LSP). Returns false when the node can't be found.
+  async function spliceTermOverShed(
+    editor: vscode.TextEditor,
+    nimLine: number,
+    nimCol: number,
+    term: string
+  ): Promise<boolean> {
+    const line = nimLine - 1;
+    const startCh = nimCol - 1;
+    if (line < 0 || line >= editor.document.lineCount) return false;
+    const text = editor.document.lineAt(line).text;
+    let depth = 0;
+    let endCh = -1;
+    for (let i = startCh; i < text.length; i++) {
+      if (text[i] === "[") depth++;
+      else if (text[i] === "]") {
+        depth--;
+        if (depth === 0) { endCh = i + 1; break; }
+      }
+    }
+    if (endCh < 0) return false;
+    await editor.edit((b) =>
+      b.replace(new vscode.Range(line, startCh, line, endCh), term)
+    );
+    return true;
+  }
+
   // Keyboard-bound shed actions (r/c/g) operate on the expanded shed.
   // They reuse the webview's refine/case-split flows via a transient client.
   ctx.subscriptions.push(
@@ -486,7 +518,23 @@ export function activate(ctx: vscode.ExtensionContext) {
       const client = await inlineClient(editor.document);
       try {
         const res = await client.refineShed(cur.docUri, cur.shedName, term);
-        vscode.window.showInformationMessage(`Refined ${cur.shedName}: ${res.status}`);
+        // Complete the round-trip: splice the returned term over the shed
+        // node so the .nim source advances, then save (sidecar regenerates)
+        // and collapse the now-stale expansion.
+        const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
+        if (!ok) {
+          vscode.window.showWarningMessage(
+            `Refined ${cur.shedName} server-side, but could not locate the ![...] node to splice.`
+          );
+          return;
+        }
+        await editor.document.save();
+        await ensureSidecar(editor.document, true);
+        lensProvider.refreshDoc(editor.document);
+        collapseShed();
+        vscode.window.showInformationMessage(
+          `Refined ${cur.shedName}: ${res.status} (${res.yellowCount} yellow left)`
+        );
       } catch (e) {
         vscode.window.showErrorMessage(`Refine failed: ${String(e)}`);
       } finally {
@@ -507,8 +555,21 @@ export function activate(ctx: vscode.ExtensionContext) {
       const client = await inlineClient(editor.document);
       try {
         const res = await client.caseSplitShed(cur.docUri, cur.shedName, variable);
+        // Splice the eliminator term (carrying the new sub-shed nodes)
+        // over the shed node, then save so the recompile discovers them.
+        const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
+        if (!ok) {
+          vscode.window.showWarningMessage(
+            `Case-split ${cur.shedName} server-side, but could not locate the ![...] node to splice.`
+          );
+          return;
+        }
+        await editor.document.save();
+        await ensureSidecar(editor.document, true);
+        lensProvider.refreshDoc(editor.document);
+        collapseShed();
         vscode.window.showInformationMessage(
-          `Case-split: ${res.subSheds.length} new sheds (${res.subSheds.join(", ")})`
+          `Case-split ${variable}: ${res.subSheds.length} new sheds (${res.subSheds.join(", ")})`
         );
       } catch (e) {
         vscode.window.showErrorMessage(`Case-split failed: ${String(e)}`);
@@ -530,6 +591,17 @@ export function activate(ctx: vscode.ExtensionContext) {
       const client = await inlineClient(editor.document);
       try {
         const res = await client.refineShed(cur.docUri, cur.shedName, term);
+        const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
+        if (!ok) {
+          vscode.window.showWarningMessage(
+            `Gave ${cur.shedName} server-side, but could not locate the ![...] node to splice.`
+          );
+          return;
+        }
+        await editor.document.save();
+        await ensureSidecar(editor.document, true);
+        lensProvider.refreshDoc(editor.document);
+        collapseShed();
         vscode.window.showInformationMessage(`Gave ${cur.shedName}: ${res.status}`);
       } catch (e) {
         vscode.window.showErrorMessage(`Give failed: ${String(e)}`);
