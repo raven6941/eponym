@@ -106,14 +106,11 @@ interface ExpandedShed {
 
 let expanded: ExpandedShed | null = null;
 let cursorListener: vscode.Disposable | null = null;
-let docChangeListener: vscode.Disposable | null = null;
 
 async function clearExpanded(): Promise<void> {
   if (expanded) {
     const { editor, anchorLine, viewLineCount } = expanded;
     expanded = null;
-    // Delete the inserted lines: from start of first inserted line to
-    // start of the line after the last inserted line.
     const delRange = new vscode.Range(
       new vscode.Position(anchorLine + 1, 0),
       new vscode.Position(anchorLine + viewLineCount + 1, 0)
@@ -127,10 +124,6 @@ async function clearExpanded(): Promise<void> {
   if (cursorListener) {
     cursorListener.dispose();
     cursorListener = null;
-  }
-  if (docChangeListener) {
-    docChangeListener.dispose();
-    docChangeListener = null;
   }
   vscode.commands.executeCommand("setContext", "eponym.shedExpanded", false);
 }
@@ -152,49 +145,6 @@ function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
   const hi = expanded.anchorLine + expanded.viewLineCount;
   if (line < lo || line > hi) {
     void clearExpanded();
-  }
-}
-
-/**
- * If the user edits the inserted view text (or the anchor line), collapse
- * to avoid corrupting the tracked range. Edits elsewhere are fine.
- * Our own insert/delete changes are recognized by content and ignored
- * (no racy timeout flags — the web extension host delivers change events
- * asynchronously after the edit promise resolves).
- */
-function onDocChange(e: vscode.TextDocumentChangeEvent): void {
-  if (!expanded) return;
-  if (e.document.uri.toString() !== expanded.docUri) return;
-  const lo = expanded.anchorLine;
-  const hi = expanded.anchorLine + expanded.viewLineCount;
-  for (const ch of e.contentChanges) {
-    // Ignore our own insertion: empty range at insert position with our text.
-    if (
-      ch.range.start.line === lo + 1 &&
-      ch.range.start.character === 0 &&
-      ch.range.end.line === lo + 1 &&
-      ch.range.end.character === 0 &&
-      ch.text === expanded.insertText
-    ) {
-      continue;
-    }
-    // Ignore our own deletion: range covering the inserted lines, empty text.
-    if (
-      ch.range.start.line === lo + 1 &&
-      ch.range.start.character === 0 &&
-      ch.range.end.line === lo + expanded.viewLineCount + 1 &&
-      ch.range.end.character === 0 &&
-      ch.text === ""
-    ) {
-      continue;
-    }
-    const s = ch.range.start.line;
-    const en = ch.range.end.line;
-    // Overlaps [lo, hi]?
-    if (s <= hi && en >= lo) {
-      void clearExpanded();
-      return;
-    }
   }
 }
 
@@ -276,10 +226,9 @@ export async function expandShed(
   };
   vscode.commands.executeCommand("setContext", "eponym.shedExpanded", true);
 
-  // Collapse on cursor leaving the region, on Escape, on edits to the
-  // region, and before save (so the view text never hits the file).
+  // Collapse on cursor leaving the region, on Escape, and before save
+  // (so the view text never hits the file).
   cursorListener = vscode.window.onDidChangeTextEditorSelection(onCursorChange);
-  docChangeListener = vscode.workspace.onDidChangeTextDocument(onDocChange);
 }
 
 /** Collapse the inline view (bound to Escape via when-clause). */
