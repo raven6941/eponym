@@ -106,20 +106,29 @@ interface ExpandedShed {
 
 let expanded: ExpandedShed | null = null;
 let cursorListener: vscode.Disposable | null = null;
+/** In-flight clear operation; used to serialize clear+expand. */
+let clearing: Thenable<void> | null = null;
 
 async function clearExpanded(): Promise<void> {
-  if (expanded) {
-    const { editor, anchorLine, viewLineCount } = expanded;
-    expanded = null;
-    const delRange = new vscode.Range(
-      new vscode.Position(anchorLine + 1, 0),
-      new vscode.Position(anchorLine + viewLineCount + 1, 0)
-    );
-    try {
-      await editor.edit((eb) => eb.delete(delRange));
-    } catch {
-      // Editor may be closed; ignore.
-    }
+  // If a clear is already in flight, wait for it first (serializes
+  // the delete with a subsequent insert).
+  if (clearing) {
+    await clearing;
+  }
+  if (!expanded) return;
+  const { editor, anchorLine, viewLineCount } = expanded;
+  expanded = null;
+  const delRange = new vscode.Range(
+    new vscode.Position(anchorLine + 1, 0),
+    new vscode.Position(anchorLine + viewLineCount + 1, 0)
+  );
+  try {
+    clearing = editor.edit((eb) => eb.delete(delRange)).then(() => undefined);
+    await clearing;
+  } catch {
+    // Editor may be closed; ignore.
+  } finally {
+    clearing = null;
   }
   if (cursorListener) {
     cursorListener.dispose();
@@ -137,13 +146,16 @@ async function clearExpanded(): Promise<void> {
 function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
   if (!expanded) return;
   if (e.textEditor.document.uri.toString() !== expanded.docUri) {
+    log("[eponym] onCursorChange: different doc, clearing");
     void clearExpanded();
     return;
   }
   const line = e.selections[0].active.line;
   const lo = expanded.anchorLine;
   const hi = expanded.anchorLine + expanded.viewLineCount;
+  log(`[eponym] onCursorChange: line=${line}, region=[${lo},${hi}]`);
   if (line < lo || line > hi) {
+    log("[eponym] onCursorChange: outside region, clearing");
     void clearExpanded();
   }
 }
