@@ -124,6 +124,10 @@ async function main() {
   // the original three).
   const wt = path.resolve(path.dirname(demo), "sheds_walkthrough.nim");
   if (fs.existsSync(wt)) {
+    // The walkthrough layout checks below need its sidecar; generate it
+    // exactly as the extension does (a fresh checkout has none).
+    const wtGen = await generateSidecar(nimBin, root, wt);
+    check(wtGen.ok, "generateSidecar compiles the walkthrough (nim c): " + (wtGen.error ?? "ok"));
     const wtText = fs.readFileSync(wt, "utf8");
     const wtBlocks = shedBlocks(wtText);
     const wtNames = wtBlocks.flatMap((b) => b.sheds.map((s) => s.name));

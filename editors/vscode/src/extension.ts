@@ -163,7 +163,7 @@ async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<b
 export function activate(ctx: vscode.ExtensionContext) {
   out = vscode.window.createOutputChannel("Eponym");
   initLog(out);
-  log("[eponym] extension v0.1.7 activated");
+  log("[eponym] extension v0.1.8 activated");
 
   // Issue #190: eager pre-render. When a shed file is opened and its
   // sidecar is already fresh, fetch the shed layouts in the background so
