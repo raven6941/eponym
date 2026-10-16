@@ -1,7 +1,7 @@
 # Package
 
 version       = "0.1.0"
-author        = "Wally"
+author        = "raven6941"
 description   = "Eponym: a dependently-typed language elaborator in Nim"
 license       = "MIT"
 # Production modules live in src/eponym/ and import each other bare
