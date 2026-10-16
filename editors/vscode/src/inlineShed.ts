@@ -94,44 +94,82 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
 interface ExpandedShed {
   docUri: string;
   shedName: string;
-  /** 0-based line where the `![...]` sits; view renders below it. */
+  /** 0-based line where the `![...]` sits; view is inserted below it. */
   anchorLine: number;
-  /** Number of lines the decoration occupies (for collapse detection). */
+  /** Number of inserted view lines. */
   viewLineCount: number;
-  decoration: vscode.TextEditorDecorationType;
+  /** Editor holding the insertion (for removal). */
+  editor: vscode.TextEditor;
 }
 
 let expanded: ExpandedShed | null = null;
 let cursorListener: vscode.Disposable | null = null;
+let docChangeListener: vscode.Disposable | null = null;
 
-function clearExpanded(): void {
+async function clearExpanded(): Promise<void> {
   if (expanded) {
-    expanded.decoration.dispose();
+    const { editor, anchorLine, viewLineCount } = expanded;
     expanded = null;
+    // Delete the inserted lines: from start of first inserted line to
+    // start of the line after the last inserted line.
+    const delRange = new vscode.Range(
+      new vscode.Position(anchorLine + 1, 0),
+      new vscode.Position(anchorLine + viewLineCount + 1, 0)
+    );
+    try {
+      await editor.edit((eb) => eb.delete(delRange));
+    } catch {
+      // Editor may be closed; ignore.
+    }
   }
   if (cursorListener) {
     cursorListener.dispose();
     cursorListener = null;
+  }
+  if (docChangeListener) {
+    docChangeListener.dispose();
+    docChangeListener = null;
   }
   vscode.commands.executeCommand("setContext", "eponym.shedExpanded", false);
 }
 
 /**
  * Collapse when the cursor leaves the expanded region entirely.
- * Movement INTO the region (anchor line through anchor+viewLineCount)
- * does NOT collapse — per Aaron's 2026-10-15 feedback.
+ * Movement INTO the inserted region (anchor line through anchor+viewLineCount)
+ * does NOT collapse — per Aaron's 2026-10-15 feedback. The region is real
+ * document text, so the cursor can move into it with keyboard commands.
  */
 function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
   if (!expanded) return;
   if (e.textEditor.document.uri.toString() !== expanded.docUri) {
-    clearExpanded();
+    void clearExpanded();
     return;
   }
   const line = e.selections[0].active.line;
   const lo = expanded.anchorLine;
   const hi = expanded.anchorLine + expanded.viewLineCount;
   if (line < lo || line > hi) {
-    clearExpanded();
+    void clearExpanded();
+  }
+}
+
+/**
+ * If the user edits the inserted view text (or the anchor line), collapse
+ * to avoid corrupting the tracked range. Edits elsewhere are fine.
+ */
+function onDocChange(e: vscode.TextDocumentChangeEvent): void {
+  if (!expanded) return;
+  if (e.document.uri.toString() !== expanded.docUri) return;
+  const lo = expanded.anchorLine;
+  const hi = expanded.anchorLine + expanded.viewLineCount;
+  for (const ch of e.contentChanges) {
+    const s = ch.range.start.line;
+    const en = ch.range.end.line;
+    // Overlaps [lo, hi]?
+    if (s <= hi && en >= lo) {
+      void clearExpanded();
+      return;
+    }
   }
 }
 
@@ -160,7 +198,7 @@ export async function expandShed(
   const shedName = at.name;
 
   // Collapse any existing expansion first
-  clearExpanded();
+  await clearExpanded();
   log("[eponym] expandShed: cleared");
 
   let client: LspClient | null;
@@ -190,46 +228,37 @@ export async function expandShed(
   const viewLines = text.split("\n");
   log("[eponym] expandShed: rendered " + viewLines.length + " lines");
 
+  // Insert the view as real document text below the anchor line.
+  // (VS Code's `after` decoration contentText silently drops multi-line
+  // content — verified 2026-10-16 — so decorations cannot render the 2D box.)
   const anchorLine = doc.positionAt(at.start).line;
-  const deco = vscode.window.createTextEditorDecorationType({
-    isWholeLine: false,
-    after: {
-      contentText: "",
-      // We render via an after-decoration on the anchor line's end.
-      // Multi-line content: join with \n — VS Code renders it below.
-    },
-  });
-
-  // Use a single after-decoration with the full multi-line text.
-  const anchorPos = new vscode.Position(anchorLine, doc.lineAt(anchorLine).text.length);
-  const range = new vscode.Range(anchorPos, anchorPos);
-  const renderOpts: vscode.DecorationRenderOptions = {
-    after: {
-      contentText: "\n" + viewLines.join("\n"),
-      color: new vscode.ThemeColor("editorCodeLens.foreground"),
-      fontStyle: "normal",
-    },
-  };
-  const d = vscode.window.createTextEditorDecorationType(renderOpts);
-  editor.setDecorations(d, [range]);
-  log("[eponym] expandShed: decoration applied");
+  const insertPos = new vscode.Position(anchorLine + 1, 0);
+  const insertText = viewLines.join("\n") + "\n";
+  const ok = await editor.edit((eb) => eb.insert(insertPos, insertText));
+  if (!ok) {
+    vscode.window.showErrorMessage("Eponym: could not insert shed view");
+    return;
+  }
+  log("[eponym] expandShed: text inserted");
 
   expanded = {
     docUri,
     shedName,
     anchorLine,
     viewLineCount: viewLines.length,
-    decoration: d,
+    editor,
   };
   vscode.commands.executeCommand("setContext", "eponym.shedExpanded", true);
 
-  // Collapse on cursor leaving the region, or on Escape.
+  // Collapse on cursor leaving the region, on Escape, on edits to the
+  // region, and before save (so the view text never hits the file).
   cursorListener = vscode.window.onDidChangeTextEditorSelection(onCursorChange);
+  docChangeListener = vscode.workspace.onDidChangeTextDocument(onDocChange);
 }
 
 /** Collapse the inline view (bound to Escape via when-clause). */
-export function collapseShed(): void {
-  clearExpanded();
+export async function collapseShed(): Promise<void> {
+  await clearExpanded();
 }
 
 /** The currently expanded shed, if any (for action commands). */
