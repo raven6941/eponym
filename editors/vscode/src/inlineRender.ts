@@ -9,24 +9,32 @@ import { BoxJson } from "./protocol";
  *  `pad` is the left padding (spaces); the caller draws the outer frame. */
 export function boxToText(b: BoxJson, pad = ""): string {
   const lines: string[] = [];
+  // The server may omit empty arrays (older binaries); never crash on a
+  // partial box — treat missing fields as empty.
+  const holeIds = b.holeIds ?? [];
+  const premises = b.premises ?? [];
+  const children = b.children ?? [];
+  const header = b.header ?? [];
+  const ruleLabel = b.ruleLabel ?? "";
+  const holeGoal = b.holeGoal ?? "";
   const isHole =
-    b.holeIds.length > 0 && b.premises.length === 0 && b.children.length === 0;
+    holeIds.length > 0 && premises.length === 0 && children.length === 0;
 
   // Header lines (context entries)
-  for (const h of b.header) {
+  for (const h of header) {
     lines.push(`${pad}${h}`);
   }
 
   // Premises above the rule line (deduction style)
-  if (b.premises.length > 0) {
-    for (const p of b.premises) {
+  if (premises.length > 0) {
+    for (const p of premises) {
       lines.push(...boxToText(p, pad + "  ").split("\n"));
     }
   }
 
   // Horizontal rule separating premises from conclusion
-  if (b.premises.length > 0 || b.ruleLabel) {
-    const label = b.ruleLabel ? ` ${b.ruleLabel}` : "";
+  if (premises.length > 0 || ruleLabel) {
+    const label = ruleLabel ? ` ${ruleLabel}` : "";
     lines.push(`${pad}${"─".repeat(30)}${label}`);
   }
 
@@ -36,20 +44,20 @@ export function boxToText(b: BoxJson, pad = ""): string {
   }
 
   // Children (side-by-side sub-deductions become stacked in text)
-  for (const c of b.children) {
+  for (const c of children) {
     lines.push(...boxToText(c, pad + "  ").split("\n"));
   }
 
   // Hole: empty box displaying the goal type (Epigram's shed brackets)
   if (isHole) {
-    const goal = `?${b.holeIds[0]} : ${b.holeGoal}`;
+    const goal = `?${holeIds[0]} : ${holeGoal}`;
     lines.push(`${pad}┌${"─".repeat(goal.length + 2)}┐`);
     lines.push(`${pad}│ ${goal} │`);
     lines.push(`${pad}└${"─".repeat(goal.length + 2)}┘`);
   }
 
-  if (lines.length === 0 && b.holeGoal) {
-    lines.push(`${pad}? : ${b.holeGoal}`);
+  if (lines.length === 0 && holeGoal) {
+    lines.push(`${pad}? : ${holeGoal}`);
   }
 
   return lines.join("\n");

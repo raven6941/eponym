@@ -4,16 +4,19 @@
 import { spawn, ChildProcess } from "child_process";
 
 export interface BoxJson {
-  header: string[]; // context lines above the box
-  ruleLabel: string;
-  premises: BoxJson[];
-  conclusion: BoxJson | null;
-  children: BoxJson[];
-  arrange: string;
-  holeIds: number[];
-  holeGoal: string;
-  width: number;
-  height: number;
+  // All fields optional: older server binaries may omit empty arrays, and
+  // the renderers must not crash on a partial box (defensive ?? []/"" at
+  // every read site).
+  header?: string[]; // context lines above the box
+  ruleLabel?: string;
+  premises?: BoxJson[];
+  conclusion?: BoxJson | null;
+  children?: BoxJson[];
+  arrange?: string;
+  holeIds?: number[];
+  holeGoal?: string;
+  width?: number;
+  height?: number;
 }
 
 export class LspClient {

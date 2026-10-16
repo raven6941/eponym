@@ -14,21 +14,29 @@ function esc(s: string): string {
 
 // Every hole in the tree gets a stable DOM id "hole-<id>".
 export function boxToHtml(b: BoxJson): string {
-  const isHole = b.holeIds.length > 0 && b.premises.length === 0 && b.children.length === 0;
+  // Defensive: older servers may omit empty arrays — never crash on a
+  // partial box.
+  const holeIds = b.holeIds ?? [];
+  const premises = b.premises ?? [];
+  const children = b.children ?? [];
+  const header = b.header ?? [];
+  const holeGoal = b.holeGoal ?? "";
+  const ruleLabel = b.ruleLabel ?? "";
+  const isHole = holeIds.length > 0 && premises.length === 0 && children.length === 0;
   const cls = isHole ? "box hole" : "box";
-  const holeAttr = isHole ? ` data-hole="${b.holeIds[0]}" data-goal="${esc(b.holeGoal)}"` : "";
+  const holeAttr = isHole ? ` data-hole="${holeIds[0]}" data-goal="${esc(holeGoal)}"` : "";
   let inner = "";
-  if (b.header.length > 0)
-    inner += b.header.map((h) => `<div class="header">${esc(h)}</div>`).join("");
-  if (b.premises.length > 0) {
-    inner += `<div class="premises">` + b.premises.map(boxToHtml).join("") + `</div>`;
+  if (header.length > 0)
+    inner += header.map((h) => `<div class="header">${esc(h)}</div>`).join("");
+  if (premises.length > 0) {
+    inner += `<div class="premises">` + premises.map(boxToHtml).join("") + `</div>`;
   }
-  if (b.ruleLabel) inner += `<div class="rule"><span class="ruleline"></span><span class="rulelabel">${esc(b.ruleLabel)}</span></div>`;
+  if (ruleLabel) inner += `<div class="rule"><span class="ruleline"></span><span class="rulelabel">${esc(ruleLabel)}</span></div>`;
   if (b.conclusion) inner += `<div class="conclusion">` + boxToHtml(b.conclusion) + `</div>`;
-  if (b.children.length > 0) {
-    inner += `<div class="children">` + b.children.map(boxToHtml).join("") + `</div>`;
+  if (children.length > 0) {
+    inner += `<div class="children">` + children.map(boxToHtml).join("") + `</div>`;
   }
-  if (!inner && isHole) inner = `<div class="holemark">?${b.holeIds[0]}</div>`;
+  if (!inner && isHole) inner = `<div class="holemark">?${holeIds[0]}</div>`;
   return `<div class="${cls}"${holeAttr}>${inner}</div>`;
 }
 
@@ -77,15 +85,19 @@ const layout = ${layoutJson};
 let selectedHole = null;
 function escHtml(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 function renderBox(b){
-  const isHole = b.holeIds.length>0 && b.premises.length===0 && b.children.length===0;
+  const holeIds = b.holeIds || [];
+  const premises = b.premises || [];
+  const children = b.children || [];
+  const header = b.header || [];
+  const isHole = holeIds.length>0 && premises.length===0 && children.length===0;
   let inner="";
-  if(b.header.length>0) inner+=b.header.map(h=>'<div class="header">'+escHtml(h)+'</div>').join('');
-  if(b.premises.length>0) inner+='<div class="premises">'+b.premises.map(renderBox).join('')+'</div>';
+  if(header.length>0) inner+=header.map(h=>'<div class="header">'+escHtml(h)+'</div>').join('');
+  if(premises.length>0) inner+='<div class="premises">'+premises.map(renderBox).join('')+'</div>';
   if(b.ruleLabel) inner+='<div class="rule"><span class="ruleline"></span><span class="rulelabel">'+escHtml(b.ruleLabel)+'</span></div>';
   if(b.conclusion) inner+='<div class="conclusion">'+renderBox(b.conclusion)+'</div>';
-  if(b.children.length>0) inner+='<div class="children">'+b.children.map(renderBox).join('')+'</div>';
-  if(!inner && isHole) inner='<div class="holemark">?'+b.holeIds[0]+'</div>';
-  const attrs = isHole ? ' data-hole="'+b.holeIds[0]+'" data-goal="'+escHtml(b.holeGoal)+'"' : '';
+  if(children.length>0) inner+='<div class="children">'+children.map(renderBox).join('')+'</div>';
+  if(!inner && isHole) inner='<div class="holemark">?'+holeIds[0]+'</div>';
+  const attrs = isHole ? ' data-hole="'+holeIds[0]+'" data-goal="'+escHtml(b.holeGoal||'')+'"' : '';
   return '<div class="box'+(isHole?' hole':'')+'"'+attrs+'>'+inner+'</div>';
 }
 document.getElementById('tree').innerHTML = renderBox(layout.box);
