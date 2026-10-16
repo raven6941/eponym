@@ -136,11 +136,13 @@ function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
 
 /**
  * Expand the inline shed view below the `![...]` at the cursor.
- * `getClient` lazily creates the LSP client for the document.
+ * `getClient` lazily creates the LSP client for the document; it returns
+ * null (after showing an actionable error) when the server binary is
+ * missing, so the click path never fails silently.
  */
 export async function expandShed(
   editor: vscode.TextEditor,
-  getClient: (doc: vscode.TextDocument) => Promise<LspClient>,
+  getClient: (doc: vscode.TextDocument) => Promise<LspClient | null>,
   opts: { showButtons: boolean },
   atOffset?: number
 ): Promise<void> {
@@ -158,7 +160,14 @@ export async function expandShed(
   // Collapse any existing expansion first
   clearExpanded();
 
-  const client = await getClient(doc);
+  let client: LspClient | null;
+  try {
+    client = await getClient(doc);
+  } catch (e) {
+    vscode.window.showErrorMessage(`Eponym: could not start LSP server: ${String(e)}`);
+    return;
+  }
+  if (!client) return; // getClient already surfaced the problem
   const docUri = doc.uri.toString();
   let box: BoxJson;
   try {
