@@ -22,8 +22,15 @@
     "languages": [
       {
         "id": "nim",
-        "aliases": ["Nim", "nim"],
-        "extensions": [".nim", ".nims", ".nimble"],
+        "aliases": [
+          "Nim",
+          "nim"
+        ],
+        "extensions": [
+          ".nim",
+          ".nims",
+          ".nimble"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -109,7 +116,8 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "smoke": "node out/smoke.js"
+    "smoke": "node out/smoke.js",
+    "test:headless": "node test/inline-shed.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
