@@ -72,6 +72,7 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
             title,
             command: "eponym.expandShed",
             tooltip: `Expand inline shed view for ${name}`,
+            arguments: [m.index],
           })
         );
       }
@@ -140,10 +141,13 @@ function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
 export async function expandShed(
   editor: vscode.TextEditor,
   getClient: (doc: vscode.TextDocument) => Promise<LspClient>,
-  opts: { showButtons: boolean }
+  opts: { showButtons: boolean },
+  atOffset?: number
 ): Promise<void> {
   const doc = editor.document;
-  const cursorOff = doc.offsetAt(editor.selection.active);
+  // CodeLens clicks pass the shed marker's offset (clicking doesn't move the
+  // cursor); the Ctrl+Shift+S keybinding passes none, so fall back to cursor.
+  const cursorOff = atOffset ?? doc.offsetAt(editor.selection.active);
   const at = shedAtCursor(doc.getText(), cursorOff);
   if (!at) {
     vscode.window.showInformationMessage("Eponym: cursor is not on a shed");
