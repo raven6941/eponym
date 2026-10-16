@@ -15,6 +15,7 @@ import * as vscode from "vscode";
 import { BoxJson, LspClient } from "./protocol";
 import { renderInlineShed } from "./inlineRender";
 import { shedAtCursor, sidecarPathFor, readSidecarShedNames } from "./sidecar";
+import { log } from "./log";
 
 // ---------------------------------------------------------------------------
 // CodeLens provider: one-line goal summaries on `![shedName]` lines
@@ -151,6 +152,7 @@ export async function expandShed(
   // cursor); the Ctrl+Shift+S keybinding passes none, so fall back to cursor.
   const cursorOff = atOffset ?? doc.offsetAt(editor.selection.active);
   const at = shedAtCursor(doc.getText(), cursorOff);
+  log("[eponym] expandShed: shedAtCursor -> " + (at ? at.name : "none"));
   if (!at) {
     vscode.window.showInformationMessage("Eponym: cursor is not on a shed");
     return;
