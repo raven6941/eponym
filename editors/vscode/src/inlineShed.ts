@@ -106,29 +106,20 @@ interface ExpandedShed {
 
 let expanded: ExpandedShed | null = null;
 let cursorListener: vscode.Disposable | null = null;
-/** In-flight clear operation; used to serialize clear+expand. */
-let clearing: Thenable<void> | null = null;
 
 async function clearExpanded(): Promise<void> {
-  // If a clear is already in flight, wait for it first (serializes
-  // the delete with a subsequent insert).
-  if (clearing) {
-    await clearing;
-  }
-  if (!expanded) return;
-  const { editor, anchorLine, viewLineCount } = expanded;
-  expanded = null;
-  const delRange = new vscode.Range(
-    new vscode.Position(anchorLine + 1, 0),
-    new vscode.Position(anchorLine + viewLineCount + 1, 0)
-  );
-  try {
-    clearing = editor.edit((eb) => eb.delete(delRange)).then(() => undefined);
-    await clearing;
-  } catch {
-    // Editor may be closed; ignore.
-  } finally {
-    clearing = null;
+  if (expanded) {
+    const { editor, anchorLine, viewLineCount } = expanded;
+    expanded = null;
+    const delRange = new vscode.Range(
+      new vscode.Position(anchorLine + 1, 0),
+      new vscode.Position(anchorLine + viewLineCount + 1, 0)
+    );
+    try {
+      await editor.edit((eb) => eb.delete(delRange));
+    } catch {
+      // Editor may be closed; ignore.
+    }
   }
   if (cursorListener) {
     cursorListener.dispose();

@@ -163,7 +163,7 @@ async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<b
 export function activate(ctx: vscode.ExtensionContext) {
   out = vscode.window.createOutputChannel("Eponym");
   initLog(out);
-  log("[eponym] extension v0.1.13 activated");
+  log("[eponym] extension v0.1.14 activated");
 
   // The inline shed view is real inserted text; remove it before save so
   // the view never gets written to the file.
