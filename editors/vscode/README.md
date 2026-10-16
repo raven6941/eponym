@@ -52,7 +52,7 @@ the repo root containing `src/eponym/lsp.nim`).
 
 - `eponym.lspServerPath` — path to the compiled `lsp` server binary
   (defaults to `<workspace>/src/eponym/lsp`; build it with
-  `nim c --hints:off --path:src --path:src/eponym --path:src/relational --path:src/staging src/eponym/lsp.nim`).
+  `nim c --hints:off --path:src --path:src/eponym src/eponym/lsp.nim`).
 - `eponym.nimPath` — Nim binary used for automatic sidecar generation
   (defaults to `nim` on PATH).
 
@@ -62,8 +62,7 @@ No VSCode needed; drives the real LSP server:
 
 ```sh
 # from the repo root:
-nim c --hints:off --path:src --path:src/eponym --path:src/relational \
-  --path:src/staging src/eponym/lsp.nim
+nim c --hints:off --path:src --path:src/eponym src/eponym/lsp.nim
 cd editors/vscode && npm install && npm run build
 # NIMBIN= only needed when nim is not on PATH. The smoke test drives the
 # extension's own generateSidecar path to produce the sidecar (issue #153),

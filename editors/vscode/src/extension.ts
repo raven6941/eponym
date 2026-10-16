@@ -11,6 +11,7 @@ import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
 import { LspClient } from "./protocol";
+import { serverPath, ensureServerBinary } from "./serverPath";
 import { pageHtml } from "./render";
 import {
   generateSidecar,
@@ -28,14 +29,6 @@ import {
   collapseShed,
   currentExpanded,
 } from "./inlineShed";
-
-function serverPath(): string {
-  const cfg = vscode.workspace.getConfiguration("eponym").get<string>("lspServerPath", "");
-  if (cfg) return cfg;
-  const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!ws) throw new Error("Eponym: no workspace folder open");
-  return path.join(ws, "src", "eponym", "lsp");
-}
 
 function nimBin(): string {
   const cfg = vscode.workspace.getConfiguration("eponym").get<string>("nimPath", "");
@@ -274,9 +267,13 @@ export function activate(ctx: vscode.ExtensionContext) {
       }
       if (shedNames.length === 0) shedNames.push(shedName);
 
+      // The binary check shows an actionable error itself; the try/catch
+      // below covers spawn/initialize failures of an existing binary.
+      const sp = ensureServerBinary();
+      if (!sp) return;
       let client: LspClient;
       try {
-        client = new LspClient(serverPath());
+        client = new LspClient(sp);
         await client.initialize(editor.document.uri.fsPath.replace(/\/[^/]+$/, ""));
       } catch (e) {
         vscode.window.showErrorMessage("Eponym: could not start LSP server: " + String(e));
@@ -451,9 +448,12 @@ export function activate(ctx: vscode.ExtensionContext) {
     })
   );
 
-  // Lazily create an LSP client for inline-shed actions.
-  async function inlineClient(doc: vscode.TextDocument): Promise<LspClient> {
-    const c = new LspClient(serverPath());
+  // Lazily create an LSP client for inline-shed actions. Returns null
+  // (after showing an actionable error) when the server binary is missing.
+  async function inlineClient(doc: vscode.TextDocument): Promise<LspClient | null> {
+    const sp = ensureServerBinary();
+    if (!sp) return null;
+    const c = new LspClient(sp);
     await c.initialize(path.dirname(doc.uri.fsPath));
     c.didOpen(doc.uri.toString(), doc.getText());
     return c;
@@ -468,7 +468,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("eponym.expandShed", async (atOffset?: number) => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      await expandShed(editor, inlineClient, { showButtons: inlineShowButtons() }, atOffset);
+      try {
+        await expandShed(editor, inlineClient, { showButtons: inlineShowButtons() }, atOffset);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Eponym: expand failed: ${String(e)}`);
+      }
     })
   );
   ctx.subscriptions.push(
@@ -516,6 +520,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       });
       if (term === undefined) return;
       const client = await inlineClient(editor.document);
+      if (!client) return; // binary missing; actionable error already shown
       try {
         const res = await client.refineShed(cur.docUri, cur.shedName, term);
         // Complete the round-trip: splice the returned term over the shed
@@ -553,6 +558,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       });
       if (!variable) return;
       const client = await inlineClient(editor.document);
+      if (!client) return; // binary missing; actionable error already shown
       try {
         const res = await client.caseSplitShed(cur.docUri, cur.shedName, variable);
         // Splice the eliminator term (carrying the new sub-shed nodes)
@@ -589,6 +595,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       });
       if (term === undefined) return;
       const client = await inlineClient(editor.document);
+      if (!client) return; // binary missing; actionable error already shown
       try {
         const res = await client.refineShed(cur.docUri, cur.shedName, term);
         const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
