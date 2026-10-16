@@ -27,7 +27,7 @@
 ## Run: nim c -r --hints:off --path:src --path:src/eponym --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging tests/pbt_staged_agreement.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
-import pbt
+import falsify
 import options
 import minikanren
 import rel_elab_dep    # surface ctors: varTm, lamTm, appTm, piTy, ...

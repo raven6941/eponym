@@ -32,7 +32,7 @@
 ##        --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging tests/pbt_unify.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
-import pbt
+import falsify
 import eponym_init  # Term, vv, tmLam/tmPi/tmApp/..., tmMeta, weaken, substSpine
 import preterm       # Loc, noLoc, Quantity (q0/q1/qOmega)
 import unify         # MetaStore, initMetaStore, freshMeta, unify, zonk,

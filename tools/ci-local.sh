@@ -17,6 +17,12 @@ XP="$P --path:src/experimental --path:src/experimental/relational --path:src/exp
 
 nim --version
 
+echo "### Dependencies: install falsify (issue: eponym PBT migration)"
+# falsify is not in nimble's package index yet, so install it explicitly
+# from GitHub. `import falsify` in tests/pbt_*.nim then resolves via
+# nimble's package dir on nim's default import path.
+nimble install -y https://github.com/raven6941/falsify
+
 echo "### Build: production modules"
 # Production module list: keep in sync with eponym.nimble's `buildall` task
 # and `installFiles` (the installed set; issue #183). These are the full

@@ -19,7 +19,7 @@
 ##        --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging tests/pbt_egraph.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
-import pbt
+import falsify
 import egraph
 import eponym_init
 import hashes
@@ -31,6 +31,14 @@ proc genKey(r: var Rng): ConvKey =
   ## Hash is a distinct int: mask the generator output into int64 range.
   (r.below(4), Hash(cast[int64](r.next() shr 1)),
    Hash(cast[int64](r.next() shr 1)))
+
+proc shrinkConvKey(k: ConvKey): seq[ConvKey] =
+  ## Shrink a conversion-cache key toward (0, 0, 0).
+  ## (Moved from the retired tests/pbt.nim house harness.)
+  result = @[(0, Hash(0), Hash(0))]
+  if k[0] != 0: result.add((0, k[1], k[2]))
+  if k[1] != Hash(0): result.add((k[0], Hash(0), k[2]))
+  if k[2] != Hash(0): result.add((k[0], k[1], Hash(0)))
 
 let star = Term(kind: tC, c: cStar)
 let one = Term(kind: tC, c: cOne)

@@ -26,7 +26,7 @@
 ##        --path:src/experimental --path:src/experimental/relational --path:src/experimental/staging tests/pbt_clause_matrix.nim
 ## Fixed seed 424242 in CI (change Seed locally for fresh fuzzing).
 
-import pbt
+import falsify
 import elab
 import eponym_init
 import sequtils
