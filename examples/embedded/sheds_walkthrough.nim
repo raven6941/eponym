@@ -57,6 +57,17 @@ shedsBlock:
 
   # Shed 1 -- sketched. The draft is the plan; refining the hole with the
   # draft text should close it.
+  # Ways you might complete this shed with the vscode editor:
+  # 1. Directly:
+  #  a. Ctrl+Shift+S (or "Eponym: Expand inline shed view" in the command palette).
+  #     You should see a diagram presented beneath the codeline with the shed.
+  #  b. Press `g` for "give"; focus should shift to the command bar, prompting you to enter an expression.
+  #  c. Enter `double(double n)` and press enter. The whole shed will be replaced with this expression.
+  # 2. Refinement:
+  #  a. As above, Ctrl+Shift+S to expand the inline shed
+  #  b. Press `r` for "refine; your cursor moves to the command bar, and you can enter a refinement expression.
+  #  c. Enter `double( ? )`, and the whole shed is replaced with double(shedHole(quadBody))` will be added.
+  #     You now have a smaller shed to work on.
   proc quad(n: Int): Int = ![quadBody, double (double n)]
 
   # Shed 2 -- developing. The draft is honest scratch: the programmer tried
@@ -80,6 +91,8 @@ shedsBlock:
   # inductive type (Nat from the prelude), so the natural move is
   # case-split on `n`: the webview rewrites this proc into clause form
   # with one clause per constructor, each RHS a fresh hole.
+  # Here, after expanding the shed inline, press `c` for "case-split", and enter `n`.
+  # You'll end up with two new sheds which correspond to different ways of handling `n` when it's zero or not.
   proc isZero(n: Nat): Bool = ![isZeroBody]
 
   # Shed 6 -- deep nesting. The hole's goal is a Pi type with two binders
