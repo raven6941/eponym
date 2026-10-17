@@ -19,26 +19,16 @@ Package with vsce (`npm i -g @vscode/vsce && vsce package`) and install the
 
 ## Use
 
-1. Open a `.nim` file containing a `shedsBlock` and run **Eponym: Show shed
-   layout** (`eponym.showShedLayout`), then enter the shed name (e.g.
-   `quadBody` in `examples/embedded/sheds_demo.nim`).
-2. The extension compiles the file with Nim itself — the `shedsBlock` macro
-   writes the `<file>.sheds.json` sidecar at macro-expansion time, so no
-   terminal invocation is needed. The compile uses the repo's `--path`
-   setup, derived from the repo root, with progress in a notification.
-3. The webview renders the shed's proof state as Epigram-style 2D boxes.
-   Click a hole (`?n`) to see its goal type.
+See [Working with sheds in VS Code](USER_GUIDE.md) for the inline workflow,
+how to read the 2D proof state, and when to use Refine, Give, or Case-split.
 
-Editing a shed block and saving recompiles the file and refreshes any open
-shed webview for it. Files without shed blocks are never compiled as a side
-effect of saving.
-
-Hole actions (refine / give) call the server method `eponym/refineShed`,
-which fills the hole in the macro-recorded generated source, refreshes
-shed statuses, rewrites the sidecar, and returns the term for the client to
-splice over the `![...]` node in the `.nim` source (issue #137). Case-split
-sends `textDocument/codeAction` and applies the returned edits, then
-re-renders.
+In brief: open a Nim file with a `shedsBlock`, place the cursor on a `![name]`
+marker, and run **Eponym: Expand inline shed view** (default shortcut
+**Ctrl+Shift+S**). A CodeLens above each marker opens that specific shed.
+The extension compiles the file with Nim to generate the sidecar; progress
+and errors are reported in the **Eponym** Output channel. The inline view is
+temporary editor text, removed before save. Refinement actions splice their
+result into source and save it so the macro can refresh goals and CodeLens.
 
 ### If sidecar generation fails
 
