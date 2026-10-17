@@ -3,7 +3,7 @@
   "displayName": "Eponym Sheds",
   "description": "Renders Eponym shed proof states (Epigram-style 2D boxes) from the eponym LSP server.",
   "version": "0.1.18",
-  "publisher": "eponym",
+  "publisher": "raven6941",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
