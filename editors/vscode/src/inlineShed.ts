@@ -1,24 +1,15 @@
-// Inline shed view for issue #221: CodeLens + expandable 2D Epigram-style
-// display in the editor region.
-//
-// Instead of the isolated HTML panel, this keeps interaction text-centric:
-// - CodeLens above each `![shedName]` line shows a one-line goal summary.
-// - `eponym.expandShed` (keyboard) expands a multi-line 2D view below the
-//   line, in Epigram's deduction style: context premises above a rule line,
-//   goal below, holes as empty boxes.
-// - Cursor movement INTO the expanded region does NOT collapse it; only
-//   Escape or cursor moving fully away collapses.
-// - Actions are bindable to keyboard shortcuts; buttons can be hidden via
-//   config, with an advisory keybinding reminder line.
+// Inline shed view for issue #221: CodeLens summaries plus a temporary,
+// cursor-addressable 2D display inserted below the selected shed marker.
+// The preview is removed before saving so it never becomes Nim source.
 
 import * as vscode from "vscode";
 import { BoxJson, LspClient } from "./protocol";
 import { renderInlineShed } from "./inlineRender";
-import { shedAtCursor, sidecarPathFor, readSidecarShedNames } from "./sidecar";
+import { shedAtCursor, shedBlocks, sidecarPathFor, readSidecarShedNames } from "./sidecar";
 import { log } from "./log";
 
 // ---------------------------------------------------------------------------
-// CodeLens provider: one-line goal summaries on `![shedName]` lines
+// CodeLens provider: one-line goal summaries on shed marker lines
 // ---------------------------------------------------------------------------
 
 export class ShedCodeLensProvider implements vscode.CodeLensProvider {
@@ -57,14 +48,11 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
     try {
       const text = doc.getText();
       const goalMap = this.goals.get(doc.uri.toString()) ?? new Map();
-      // Find `![shedName]` occurrences
-      const re = /!\[([A-Za-z_][A-Za-z0-9_]*)(?:\s*,[^\]]*)?\]/g;
-      let m: RegExpExecArray | null;
-      let count = 0;
-      while ((m = re.exec(text)) !== null) {
-        count++;
-        const name = m[1];
-        const start = doc.positionAt(m.index);
+      // Use the same marker parser as cursor lookup and source splicing.
+      const nodes = shedBlocks(text).flatMap((block) => block.sheds);
+      for (const node of nodes) {
+        const name = node.name;
+        const start = doc.positionAt(node.start);
         const line = doc.lineAt(start.line);
         const goal = goalMap.get(name) ?? "";
         const title = goal ? `shed ${name} : ${goal}` : `shed ${name}`;
@@ -72,13 +60,13 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
           new vscode.CodeLens(line.range, {
             title,
             command: "eponym.expandShed",
-            tooltip: `Expand inline shed view for ${name}`,
-            arguments: [m.index],
+            tooltip: `Show 2D shed layout for ${name}`,
+            arguments: [node.start],
           })
         );
       }
       // Store count for debugging (accessible via a command if needed)
-      (globalThis as any).__eponymLastLensCount = count;
+      (globalThis as any).__eponymLastLensCount = nodes.length;
       (globalThis as any).__eponymLastLensDoc = doc.uri.fsPath;
     } catch (e) {
       (globalThis as any).__eponymLensError = String(e);
@@ -94,14 +82,12 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
 interface ExpandedShed {
   docUri: string;
   shedName: string;
-  /** 0-based line where the `![...]` sits; view is inserted below it. */
+  /** 0-based line where the shed marker sits; view is inserted below it. */
   anchorLine: number;
   /** Number of inserted view lines. */
   viewLineCount: number;
   /** Editor holding the insertion (for removal). */
   editor: vscode.TextEditor;
-  /** Exact text we inserted (to recognize our own change events). */
-  insertText: string;
 }
 
 let expanded: ExpandedShed | null = null;
@@ -131,9 +117,7 @@ async function clearExpanded(): Promise<void> {
 
 /**
  * Collapse when the cursor leaves the expanded region entirely.
- * Movement INTO the inserted region (anchor line through anchor+viewLineCount)
- * does NOT collapse — per Aaron's 2026-10-15 feedback. The region is real
- * document text, so the cursor can move into it with keyboard commands.
+ * Movement into the inserted view lines does not collapse it.
  */
 function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
   if (!expanded) return;
@@ -153,7 +137,7 @@ function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
 }
 
 /**
- * Expand the inline shed view below the `![...]` at the cursor.
+ * Expand the inline shed view below the shed marker at the cursor.
  * `getClient` lazily creates the LSP client for the document; it returns
  * null (after showing an actionable error) when the server binary is
  * missing, so the click path never fails silently.
@@ -207,9 +191,8 @@ export async function expandShed(
   const viewLines = text.split("\n");
   log("[eponym] expandShed: rendered " + viewLines.length + " lines");
 
-  // Insert the view as real document text below the anchor line.
-  // (VS Code's `after` decoration contentText silently drops multi-line
-  // content — verified 2026-10-16 — so decorations cannot render the 2D box.)
+  // Insert the view as real document text below the anchor line. The save
+  // hook removes these temporary lines before VS Code writes the document.
   const anchorLine = doc.positionAt(at.start).line;
   const insertPos = new vscode.Position(anchorLine + 1, 0);
   const insertText = viewLines.join("\n") + "\n";
@@ -226,12 +209,10 @@ export async function expandShed(
     anchorLine,
     viewLineCount: viewLines.length,
     editor,
-    insertText,
   };
   vscode.commands.executeCommand("setContext", "eponym.shedExpanded", true);
 
-  // Collapse on cursor leaving the region, on Escape, and before save
-  // (so the view text never hits the file).
+  // Collapse on cursor leaving the region or on Escape.
   cursorListener = vscode.window.onDidChangeTextEditorSelection(onCursorChange);
 }
 

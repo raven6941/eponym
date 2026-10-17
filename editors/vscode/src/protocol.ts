@@ -134,7 +134,8 @@ export class LspClient {
     return this.request("eponym/shedNames", { textDocument: { uri: docUri } }).catch(() => []);
   }
 
-  refineShed(docUri: string, shedName: string, term: string): Promise<{
+  refineShed(docUri: string, shedName: string, term: string,
+             requireComplete = false): Promise<{
     shedName: string;
     term: string;
     nimLine: number; // 1-based start of the `![...]` node in the .nim
@@ -145,11 +146,13 @@ export class LspClient {
     // Issue #137: the server-owned refine round-trip. The server fills
     // the hole in the macro-recorded generated source, refreshes
     // statuses, rewrites the sidecar, and returns the term for the
-    // client to splice over the shed node.
+    // client to splice over the shed node. Give sets requireComplete so
+    // the server rejects candidates that leave holes behind.
     return this.request("eponym/refineShed", {
       textDocument: { uri: docUri },
       shedName,
       term,
+      requireComplete,
     });
   }
 

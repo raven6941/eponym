@@ -33,7 +33,7 @@ check(renderBox(gs) == """
 │└───────┘ │
 ├──────────┤
 │┌────────┐│
-││?0 : Int││
+││_0 : Int││
 │└────────┘│
 └──────────┘""".strip(), "goal state: exact ASCII snapshot")
 check(gs.width == 12 and gs.height == 9,
@@ -82,7 +82,7 @@ let tm = tmApp(tmApp(vv(0), tmInt(3)), tmMeta(7, @[]))
 let tb = layoutTerm(tm, proc(id: int): string = "Nat")
 check(allHoleIds(tb) == @[7], "term layout: hole 7 wired")
 let ts = renderBox(tb)
-check(ts.contains("?7 : Nat"), "term layout: hole box shows goal")
+check(ts.contains("_7 : Nat"), "term layout: hole box shows goal")
 check(ts.contains("3"), "term layout: int argument rendered")
 
 # --- JSON shape --------------------------------------------------------------
@@ -111,7 +111,7 @@ block:
   let resp = shedLayout(uri, "quadBody")
   check(not resp.isNil, "shedLayout: response for known shed")
   check(resp["box"]["holeIds"] == % @[0], "shedLayout: hole id in box")
-  check(resp["box"]["conclusion"]["header"] == % @["?0 : Int"],
+  check(resp["box"]["conclusion"]["header"] == % @["_0 : Int"],
     "shedLayout: conclusion is the hole box")
   check(shedLayout(uri, "nope").isNil, "shedLayout: nil for unknown shed")
   check(shedLayout("file:///nonexistent/x.nim", "quadBody").isNil,
@@ -148,7 +148,7 @@ block:
                                status: ssYellow))
   let pir = renderBox(pi)
   check(pir.contains("f : A") and pir.contains("g : A") and
-        pir.contains("?0 : A"),
+        pir.contains("_0 : A"),
     "goalPi: binder boxes and residual-goal hole box all render")
   check(allHoleIds(pi) == @[0], "goalPi: hole id survives nesting")
   # Structural nesting: rule box -> binder box -> binder box -> hole box
@@ -160,7 +160,7 @@ block:
   check(mid.header == @["g : A"] and mid.children.len == 1,
     "goalPi: inner binder box wraps one child, got: " & $mid.header)
   let hole = mid.children[0]
-  check(hole.holeIds == @[0] and hole.header == @["?0 : A"],
+  check(hole.holeIds == @[0] and hole.header == @["_0 : A"],
     "goalPi: innermost box is the hole with the residual goal, got: " &
       $hole.header)
   # Flat sheds are unaffected: empty goalPi renders exactly as before.
