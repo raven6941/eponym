@@ -33,7 +33,7 @@ check(renderBox(gs) == """
 │└───────┘ │
 ├──────────┤
 │┌────────┐│
-││_0 : Int││
+││?0 : Int││
 │└────────┘│
 └──────────┘""".strip(), "goal state: exact ASCII snapshot")
 check(gs.width == 12 and gs.height == 9,
@@ -111,7 +111,7 @@ block:
   let resp = shedLayout(uri, "quadBody")
   check(not resp.isNil, "shedLayout: response for known shed")
   check(resp["box"]["holeIds"] == % @[0], "shedLayout: hole id in box")
-  check(resp["box"]["conclusion"]["header"] == % @["_0 : Int"],
+  check(resp["box"]["conclusion"]["header"] == % @["?0 : Int"],
     "shedLayout: conclusion is the hole box")
   check(shedLayout(uri, "nope").isNil, "shedLayout: nil for unknown shed")
   check(shedLayout("file:///nonexistent/x.nim", "quadBody").isNil,
@@ -143,12 +143,12 @@ block:
   let pi = layoutShed(ShedInfo(name: "constEndoBody", draft: "", nimLine: 1,
                                nimCol: 1, holeLine: 3, holeIdx: 0,
                                goal: "Pi (f : A). Pi (g : A). A",
-                               ctx: @["A : ?"],
+                               ctx: @["A : Type 0"],
                                goalPi: @["f : A", "g : A", "A"],
                                status: ssYellow))
   let pir = renderBox(pi)
   check(pir.contains("f : A") and pir.contains("g : A") and
-        pir.contains("_0 : A"),
+        pir.contains("?0 : A"),
     "goalPi: binder boxes and residual-goal hole box all render")
   check(allHoleIds(pi) == @[0], "goalPi: hole id survives nesting")
   # Structural nesting: rule box -> binder box -> binder box -> hole box
@@ -160,7 +160,7 @@ block:
   check(mid.header == @["g : A"] and mid.children.len == 1,
     "goalPi: inner binder box wraps one child, got: " & $mid.header)
   let hole = mid.children[0]
-  check(hole.holeIds == @[0] and hole.header == @["_0 : A"],
+  check(hole.holeIds == @[0] and hole.header == @["?0 : A"],
     "goalPi: innermost box is the hole with the residual goal, got: " &
       $hole.header)
   # Flat sheds are unaffected: empty goalPi renders exactly as before.

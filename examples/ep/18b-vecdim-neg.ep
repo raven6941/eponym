@@ -2,12 +2,12 @@
 # the vector (Issue #110). P2 is 2x2 but x is a 1-vector: rejected.
 import "../../lib/nat.ep"
 
-postulate Mat : Nat -> Nat -> ?
+postulate Mat : Nat -> Nat -> Type 0
 
-data VExpr : Nat -> ? where
+data VExpr : Nat -> Type 0 where
 | vVar (n : Nat) : VExpr n
 
-data CExpr : ? where
+data CExpr : Type 0 where
 | quadForm (n : Nat) (P : Mat n n) (x : VExpr n) : CExpr
 
 postulate P2 : Mat (suc (suc zero)) (suc (suc zero))

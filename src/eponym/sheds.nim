@@ -62,10 +62,10 @@ type
                        # the elaborator never sees this
     nimLine*: int      # 1-based line of `![...]` in the calling Nim file
     nimCol*: int       # 1-based column of `![...]` in the calling Nim file
-    holeLine*: int     # 1-based line of the `_` in the generated Eponym source
+    holeLine*: int     # 1-based line of the `?` in the generated Eponym source
     holeIdx*: int      # index into MetaStore.holes after elaboration
                        # (-1 = not matched)
-    holeCol*: int      # 1-based column of the `_` in the generated source
+    holeCol*: int      # 1-based column of the `?` in the generated source
                        # (0 = unknown; re-matched by refreshShedStatuses)
     genSrc*: string     # issue #137: the block's generated Eponym source at
                        # macro time, so the LSP server can run the #58
@@ -112,7 +112,7 @@ proc parseShedParts*(n: NimNode): tuple[name: string, draft: NimNode,
 
 proc shedPlaceholder*(i: int): string =
   ## Stand-in ident emitted for shed `i` during Nim->Eponym conversion;
-  ## resolveShedPlaceholders replaces it with `_` before parsing.
+  ## resolveShedPlaceholders replaces it with `?` before parsing.
   "__eponym_shed_" & $i & "__"
 
 proc parseLineInfo*(li: string): tuple[line, col: int] =
@@ -184,7 +184,7 @@ proc rewriteSheds*(body: NimNode, sheds: var seq[ShedInfo]) =
   walk(body, sheds)
 
 proc resolveShedPlaceholders*(src: var string, sheds: var seq[ShedInfo]) =
-  ## Replace each placeholder with `_` (a #58 hole), recording the
+  ## Replace each placeholder with `?` (a #58 hole), recording the
   ## 1-based generated-source line *and column* so the macro can match
   ## sheds to MetaStore.holes after elaboration (and so issue #137's
   ## `eponym/refineShed` can target the hole exactly).
@@ -201,8 +201,8 @@ proc resolveShedPlaceholders*(src: var string, sheds: var seq[ShedInfo]) =
         inc line
         lineStart = k
     sheds[i].holeLine = line
-    sheds[i].holeCol = pos - lineStart  # 1-based column of the `_`
-    src = src[0 ..< pos] & "_" & src[pos + ph.len .. ^1]
+    sheds[i].holeCol = pos - lineStart  # 1-based column of the `?`
+    src = src[0 ..< pos] & "?" & src[pos + ph.len .. ^1]
 
 # --- sidecar JSON: the bridge to the LSP server (issues #134/#135) --------
 

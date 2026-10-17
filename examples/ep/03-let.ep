@@ -1,6 +1,6 @@
 # Let bindings. Tests let elaboration.
 # Experiment: 03
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
 
-proc withLet (A : ?) (x : A) : A =
+proc withLet (A : Type 0) (x : A) : A =
   let y : A = x in y

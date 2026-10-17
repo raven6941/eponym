@@ -123,13 +123,13 @@ proc renderVal(v: Val): string =
       result = "(lcons " & renderVal(Val(kind: vkNat, n: v.elems[i])) &
         " " & result & ")"
 
-const Prelude* = """data Nat : ? where
+const Prelude* = """data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Bool : ? where
+data Bool : Type 0 where
 | true : Bool
 | false : Bool
-data ListN : ? where
+data ListN : Type 0 where
 | lnil : ListN
 | lcons (x : Nat) (xs : ListN) : ListN
 """

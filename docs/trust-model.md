@@ -151,13 +151,11 @@ cumulativity is directional: `Type i` checks against `Type j` for `i <= j`
 at ascription points, while conversion itself stays level-strict (so
 equality-handler extensions never see subtyping as an equality goal).
 
-The legacy `?` keeps its Type-in-Type behaviour — it bridges both ways
-(convertible with `Type 0`, the top sort in "is a type" positions), so
-every existing `?` program elaborates exactly as before. The honest
-remainder: `?` is still `? : ?`, so "don't write Girard's paradox" still
-applies to `?`-classified code. Full retirement of `?` is future work; if
-you need universe discipline from Eponym today, write `Type l`
-explicitly.
+Surface universe syntax is explicit: `Type l` has type `Type (l+1)`. The old
+surface `?` universe notation has been retired; `?` now introduces an
+elaboration hole, and `_` is used for discarded binders and wildcard
+patterns. In `eponymBlock`, `Univ` maps to `Type 0` because Nim cannot spell
+the universe token directly.
 
 ## Host code, postulates, and the phase distinction
 
@@ -170,7 +168,7 @@ time.
   thin: no NimNode semantic inspection, no hygiene tricks — elaboration
   failures become Nim compiler errors. Per #144, the standalone and embedded
   grammars are one grammar.
-- **`postulate` is an axiom.** `postulate Int : ?` asserts a type with no
+- **`postulate` is an axiom.** `postulate Int : Type 0` asserts a type with no
   evidence; machine `Int` and its primops (`tPrim`) are kernel axioms — the
   kernel trusts that the Nim host's binary `Int` operations are what they
   claim to be. If the host lies, every proof that touches `Int` lies too.
@@ -191,7 +189,7 @@ time.
 | Checked for you | Your responsibility |
 |---|---|
 | Bidirectional elaboration + conversion (kernel re-checks, LCF-style) | Termination beyond structural recursion + size-change (#36, #42) |
-| Eliminator iota rules (motive-validated by the kernel) | Girard's paradox in legacy `?` code — `?` is still `? : ?`; write `Type l` for discipline (#52) |
+| Eliminator iota rules (motive-validated by the kernel) | Girard's paradox from an inconsistent universe rule (the hierarchy is explicit, #52) |
 | QTT quantity discipline (linear used once, erased unused; inference for unannotated binders, #84) | Termination of type-level computation (author's problem) |
 | Structural recursion for `red` rules and clause defs (#36); mutual recursion via size-change termination (#42) | Soundness of `postulate`d primops (host `Int` ops) |
 | Strict positivity of `data` declarations (#33) | Anything your own metaprogramming computes |

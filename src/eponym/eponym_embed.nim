@@ -91,7 +91,7 @@ proc callIntFuncDir*(baseDir, src: string, name: string,
 
 proc getDefsHolesDir*(baseDir, src: string): seq[ElabDef] =
   ## Issue #133: like getDefsDir, but hole-tolerant (elabCheckHolesDir):
-  ## embedded sources containing shed holes (`_`) elaborate without
+  ## embedded sources containing shed holes (`?`) elaborate without
   ## failing on unsolved metas. Used by shedsBlock wrappers so a block
   ## mixing complete defs and shed holes still runs its complete defs.
   let key = cacheKey(baseDir, src) & "\x1eholes"

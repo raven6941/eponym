@@ -2,8 +2,8 @@
 #
 # The Paxos prepare/promise/accept/accepted exchange as dependent session
 # types (Issue #113). The session datatype has higher-order continuations:
-#   sendD (A : ?) (k : A -> Session)
-#   recvD (A : ?) (k : A -> Session)
+#   sendD (A : Type 0) (k : A -> Session)
+#   recvD (A : Type 0) (k : A -> Session)
 # so the continuation can depend on the value communicated.
 #
 # The value discipline -- the proposer must accept *the value the acceptor

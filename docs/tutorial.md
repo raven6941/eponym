@@ -63,10 +63,10 @@ What just happened:
   **elaborates it at Nim compile time** (inside the macro, running in
   Nim's VM), and generates a wrapper proc per definition. Ordinary Nim
   code then calls `double` like any other proc.
-- `postulate(Int, Univ)` takes `Int` as given (`Univ`, also written `?`,
-  is the legacy top sort — the universe of types). There is also an
-  explicit hierarchy, `Type 0 : Type 1 : ...` (issue #52); `?` still works
-  everywhere it used to, and bridges both ways. The full story is in
+- `postulate(Int, Univ)` takes `Int` as given (`Univ` is Nim-friendly
+  syntax for `Type 0`). Universes are explicit: `Type 0 : Type 1 : ...`.
+  In surface syntax, `?` introduces a hole to fill, and `_` discards a
+  binder or pattern. The full story is in
   [the surface-syntax reference](surface-syntax-reference.md). `addInt`
   is a primitive integer operation.
   The prelude (`lib/nat.ep`) defines `Nat` inductively instead — we will
@@ -134,7 +134,7 @@ A few notes on the syntax (the full story is in
   and the vector to eliminate. The cons case gets an induction
   hypothesis `ih` for the tail.
 - `{A}`, `{m}`, `{n}` in the prelude are *implicit* binders: a definition
-  declares them with braces (`proc vappend {A : ?} {m : Nat} ...`), but you
+  declares them with braces (`proc vappend {A : Type 0} {m : Nat} ...`), but you
   never write them at call sites — the elaborator fills them in.
 
 Now ascribe a 2-element vector the type of 1-element vectors:

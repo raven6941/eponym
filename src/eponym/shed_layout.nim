@@ -75,7 +75,7 @@ proc textBox*(lines: varargs[string]): Box =
 
 proc holeBox*(holeId: int, goal: string): Box =
   ## An empty box showing the goal type at a hole (issue #135).
-  Box(header: @["_" & $holeId & " : " & goal],
+  Box(header: @["?" & $holeId & " : " & goal],
       holeIds: @[holeId], holeGoal: goal, arrange: baVertical)
 
 proc ruleBox*(premises: seq[Box], ruleLabel: string,

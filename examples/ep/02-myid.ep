@@ -1,8 +1,8 @@
 # Identity function and its use. Tests basic def and application.
 # Experiment: 02
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
 
-proc myId (A : ?) (x : A) : A =
+proc myId (A : Type 0) (x : A) : A =
   x
-proc useId (A : ?) (x : A) : A =
+proc useId (A : Type 0) (x : A) : A =
   myId A x

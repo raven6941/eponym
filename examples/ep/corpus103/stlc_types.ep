@@ -5,6 +5,6 @@
 
 import "stlc_syntax.ep"
 
-data Ty : ? where
+data Ty : Type 0 where
 | tNat : Ty
 | tArr (a : Ty) (b : Ty) : Ty

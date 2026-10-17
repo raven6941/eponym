@@ -8,7 +8,7 @@
 # Canonical definitions: `add` recurses on its first argument (Idris's
 # `plus`: `add zero n` is definitionally `n`); `mul` is defined via `add`.
 
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 

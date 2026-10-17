@@ -3,25 +3,25 @@
 import "nat.ep"
 import "eq.ep"
 
-data List (A : ?) : ? where
+data List (A : Type 0) : Type 0 where
 | nil : List A
 | cons (x : A) (xs : List A) : List A
 
-proc map (A : ?) (B : ?) (f : A -> B) (xs : List A) : List B =
+proc map (A : Type 0) (B : Type 0) (f : A -> B) (xs : List A) : List B =
   listElim A (lam (u : List A). List B)
            (nil B)
            (lam (x : A). lam (tl : List A). lam (ih : List B).
              cons B (f x) ih)
            xs
 
-proc append (A : ?) (xs : List A) (ys : List A) : List A =
+proc append (A : Type 0) (xs : List A) (ys : List A) : List A =
   listElim A (lam (u : List A). List A)
            ys
            (lam (x : A). lam (tl : List A). lam (ih : List A).
              cons A x ih)
            xs
 
-proc length (A : ?) (xs : List A) : Nat =
+proc length (A : Type 0) (xs : List A) : Nat =
   listElim A (lam (u : List A). Nat)
            zero
            (lam (x : A). lam (tl : List A). lam (ih : Nat). suc ih)
@@ -29,7 +29,7 @@ proc length (A : ?) (xs : List A) : Nat =
 
 # --- Lemmas ---
 
-proc mapId (A : ?) (xs : List A)
+proc mapId (A : Type 0) (xs : List A)
     : Eq (List A) (map A A (lam (x : A). x) xs) xs =
   listElim A (lam (u : List A). Eq (List A) (map A A (lam (x : A). x) u) u)
            (refl (List A) (nil A))
@@ -39,7 +39,7 @@ proc mapId (A : ?) (xs : List A)
                     (map A A (lam (x : A). x) tl) tl ih)
            xs
 
-proc mapComp (A : ?) (B : ?) (C : ?) (f : B -> C) (g : A -> B) (xs : List A)
+proc mapComp (A : Type 0) (B : Type 0) (C : Type 0) (f : B -> C) (g : A -> B) (xs : List A)
     : Eq (List C) (map A C (lam (x : A). f (g x)) xs)
                     (map B C f (map A B g xs)) =
   listElim A (lam (u : List A). Eq (List C) (map A C (lam (x : A). f (g x)) u)
@@ -53,7 +53,7 @@ proc mapComp (A : ?) (B : ?) (C : ?) (f : B -> C) (g : A -> B) (xs : List A)
                     (map B C f (map A B g tl)) ih)
            xs
 
-proc appendAssoc (A : ?) (xs : List A) (ys : List A) (zs : List A)
+proc appendAssoc (A : Type 0) (xs : List A) (ys : List A) (zs : List A)
     : Eq (List A) (append A xs (append A ys zs))
                       (append A (append A xs ys) zs) =
   listElim A (lam (u : List A). Eq (List A) (append A u (append A ys zs))
@@ -67,7 +67,7 @@ proc appendAssoc (A : ?) (xs : List A) (ys : List A) (zs : List A)
                     (append A (append A tl ys) zs) ih)
            xs
 
-proc appendNilR (A : ?) (xs : List A) : Eq (List A) (append A xs (nil A)) xs =
+proc appendNilR (A : Type 0) (xs : List A) : Eq (List A) (append A xs (nil A)) xs =
   listElim A (lam (u : List A). Eq (List A) (append A u (nil A)) u)
            (refl (List A) (nil A))
            (lam (x : A). lam (tl : List A).
@@ -76,7 +76,7 @@ proc appendNilR (A : ?) (xs : List A) : Eq (List A) (append A xs (nil A)) xs =
                     (append A tl (nil A)) tl ih)
            xs
 
-proc lengthAppend (A : ?) (xs : List A) (ys : List A)
+proc lengthAppend (A : Type 0) (xs : List A) (ys : List A)
     : Eq Nat (length A (append A xs ys)) (add (length A xs) (length A ys)) =
   listElim A (lam (u : List A). Eq Nat (length A (append A u ys))
                                              (add (length A u) (length A ys)))

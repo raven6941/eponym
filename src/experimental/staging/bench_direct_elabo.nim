@@ -57,8 +57,8 @@ proc benchN(n: int) =
 
   # 3. Direct elaborator (checkTermElab via elabCheck)
   # Build surface syntax for Vec(Nat, n)
-  var src = "data Nat : ? where\n| zero : Nat\n| suc (n : Nat) : Nat\n"
-  src &= "data Vec (A : ?) : Nat -> ? where\n| nil : Vec A zero\n| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)\n"
+  var src = "data Nat : Type 0 where\n| zero : Nat\n| suc (n : Nat) : Nat\n"
+  src &= "data Vec (A : Type 0) : Nat -> Type 0 where\n| nil : Vec A zero\n| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)\n"
   var idxStr = "zero"
   for _ in 1 .. n: idxStr = "(suc " & idxStr & ")"
   src &= "proc t : Vec Nat " & idxStr & " =\n  "

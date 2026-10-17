@@ -87,7 +87,7 @@ async function main() {
 
   const html = boxToHtml(layout.box);
   check(html.includes("hole"), "rendered HTML marks the hole");
-  check(html.includes("_0"), "rendered HTML shows hole _0");
+  check(html.includes("?0"), "rendered HTML shows hole ?0");
   check(html.includes("data-goal"), "rendered HTML carries the hole goal");
 
   const page = pageHtml(JSON.stringify(layout), "quadBody", ["quadBody"]);
@@ -256,8 +256,8 @@ async function main() {
   fs.writeFileSync(nimFile, "-- fixture\n");
   const genSrc =
     "postulate Int : ?\n" +
-    "proc doubleIt (n : Int) : Int = _\n" +
-    "proc tripleIt (n : Int) : Int = _\n";
+    "proc doubleIt (n : Int) : Int = ?\n" +
+    "proc tripleIt (n : Int) : Int = ?\n";
   const sidecar = {
     file: nimFile,
     errMsg: "",
@@ -339,7 +339,7 @@ async function main() {
     "proc append {A : ?} {m : Nat} {n : Nat} (ys : Vec A n) (xs : Vec A m) : Vec A (add n m) ="
   );
   const epUri = "file:///tmp/shed-smoke-case-split.ep";
-  const holePos = { line: 10, character: 2 }; // 0-based: the `  _` line
+  const holePos = { line: 10, character: 2 }; // 0-based: the `  ?` line
   const caseSplitReq = (variable: string) => ({
     textDocument: { uri: epUri },
     range: { start: holePos, end: holePos },

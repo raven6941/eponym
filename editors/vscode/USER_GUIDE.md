@@ -33,12 +33,12 @@ The view is a proof state, read from top to bottom:
   For example, `n : Nat` means you may use `n` in a term for this goal.
 - A horizontal rule separates those assumptions from the goal.
 - The bottom box is the expression that still needs to be supplied. A label
-  such as `_0 : Bool` means the open hole has type `Bool`.
+  such as `?0 : Bool` means the open hole has type `Bool`.
 - For a function goal, nested boxes show the arguments you can introduce.
   For `Pi(f: A, g: A, A)`, the view shows `f : A`, then `g : A`, and finally
   the remaining goal `A`. A term such as `lam f. lam g. f` supplies those
   arguments and returns the first one.
-- `_n` is an internal hole ID printed by the view. It is not a variable to
+- `?n` is an internal hole ID printed by the view. It is not a variable to
   type into the editor or a source marker name. Each remaining goal has a
   named shed marker; use that marker or its CodeLens to open the goal you
   want to work on.
@@ -59,13 +59,13 @@ its role.
 
 Use **Refine** when you want to advance the proof but may leave smaller goals
 behind. Enter an Eponym term, not Nim implementation syntax. The term must
-type-check against the selected hole. `_` creates a new goal, which remains
+type-check against the selected hole. `?` creates a new goal, which remains
 available after the source is saved and recompiled.
 
 For example, with goal `Pi(f: A, g: A, A)`, refine with:
 
 ```text
-lam f. lam g. _
+lam f. lam g. ?
 ```
 
 This introduces both arguments and leaves a goal of type `A` in the context

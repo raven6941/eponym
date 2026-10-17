@@ -75,7 +75,7 @@ proc macroTime(nimFile: string, names: seq[string],
   ## Simulate what `shedsBlock` records: placeholders resolved by the
   ## real `resolveShedPlaceholders` (hole line AND column), `genSrc`
   ## stored per shed (the `sheds_mac` #137 addition).
-  var src = "postulate Int : ?\n"
+  var src = "postulate Int : Type 0\n"
   for i, nm in names:
     src &= "proc p" & $i & " (n : Int) : Int = " & shedPlaceholder(i) & "\n"
   result = @[]

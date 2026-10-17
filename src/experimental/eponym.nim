@@ -15,7 +15,7 @@
 #           | L Type Scope       (lambda, domain-annotated)
 #           | P Term (Term,Scope)(pair, with its range type)
 #           | Term :$ Elim Term  (eliminations: application, projections, OE)
-#           | C Const            (Star | One | Void | Zero  i.e. ? | 1 | <> | O)
+#           | C Const            (Star | One | Void | Zero  i.e. Type 0 | 1 | <> | O)
 #           | Let (Term,Type) Scope  (local definition [x |-> s:S]t)
 #
 # We use the finally-tagless style (Carette, Kiselyov & Shan): the language
@@ -54,7 +54,7 @@
 
 type
   Sym*[R] = object
-    ## The universe of (small) types, `?` (we follow the paper: ?:?).
+    ## The universe of (small) types, `Type 0` (we follow the paper: Type 0:Type 0).
     cStar*: proc(): R
     ## The unit type `1` and its canonical inhabitant `<>`.
     cUnit*: proc(): R
@@ -98,7 +98,7 @@ type
     of ekApp: arg: Value
     else: discard
   VKind* = enum
-    vkStar, vkUnit, vkTt, vkEmpty,   # constants: ?  1  <>  O
+    vkStar, vkUnit, vkTt, vkEmpty,   # constants: Type 0  1  <>  O
     vkPi, vkLam,                     # Pi-type and lambda (closures)
     vkSigma, vkPair,                 # Sigma-type and pair
     vkNeutral,                       # stuck variable + elimination spine
@@ -192,7 +192,7 @@ proc newPrinter(): Sym[string] =
     result = hint & $ns.next
     inc ns.next
   Sym[string](
-    cStar: proc(): string = "?",
+    cStar: proc(): string = "Type 0",
     cUnit: proc(): string = "1",
     cTt: proc(): string = "<>",
     cEmpty: proc(): string = "O",
@@ -230,7 +230,7 @@ proc newCodeGen(): Sym[string] =
     inc ns.next
   Sym[string](
     # Types erase to a placeholder (no runtime representation)
-    cStar: proc(): string = "/*: ?*/",
+    cStar: proc(): string = "/*: Type 0*/",
     cUnit: proc(): string = "/*: 1*/",
     cTt: proc(): string = "()",
     cEmpty: proc(): string = "/*: O*/",
@@ -329,7 +329,7 @@ proc convAt(ty, a, b: Value): bool =
 proc showValue(v: Value): string =
   ## Readable rendering of values (for types in test output).
   case v.kind
-  of vkStar: "?"
+  of vkStar: "Type 0"
   of vkUnit: "1"
   of vkTt: "<>"
   of vkEmpty: "O"
@@ -343,7 +343,7 @@ proc showValue(v: Value): string =
   of vkPair: "<" & showValue(v.fstV) & "; " & showValue(v.sndV) & ">"
   of vkNat: $v.natV
   of vkNeutral:
-    var s = if v.neutId == -1: "_" else: "?" & $v.neutId
+    var s = if v.neutId == -1: "_" else: "Type 0" & $v.neutId
     for e in v.spine:
       case e.kind
       of ekApp: s &= " " & showValue(e.arg)
@@ -428,7 +428,7 @@ let tcSym = Sym[Checked](
     if not convVal(z.typ, emptyV):
       raise newException(ValueError,
         "absurd needs an empty-type scrutinee, got: " & showValue(z.typ))
-    # Paper §6.5: z OE : Pi(X:?). X  (apply it to the desired type)
+    # Paper §6.5: z OE : Pi(X:Type 0). X  (apply it to the desired type)
     let absurdTy = Value(kind: vkPi, dom: starV,
       cod: proc(x: Value): Value = starV)
     Checked(rep: freshNeutral(), typ: absurdTy)
@@ -440,12 +440,12 @@ let tcSym = Sym[Checked](
 ## ---------------------------------------------------------------------------
 
 proc polyId[R](s: Sym[R]): R =
-  ## Polymorphic identity: Pi(X:?). X -> X
+  ## Polymorphic identity: Pi(X:Type 0). X -> X
   s.cLam(s.cStar(), proc(X: R): R =
     s.cLam(X, proc(x: R): R = x))
 
 proc twice*[R](s: Sym[R]): R =
-  ## Twice: Pi(X:?). (X -> X) -> X -> X
+  ## Twice: Pi(X:Type 0). (X -> X) -> X -> X
   ## (the paper's §6.4 example, in HOAS instead of de Bruijn)
   s.cLam(s.cStar(), proc(X: R): R =
     s.cLam(s.cArr(X, X), proc(f: R): R =
@@ -453,7 +453,7 @@ proc twice*[R](s: Sym[R]): R =
         s.cApp(f, s.cApp(f, x)))))
 
 proc constFn*[R](s: Sym[R]): R =
-  ## const: Pi(A:?). Pi(B:?). A -> B -> A
+  ## const: Pi(A:Type 0). Pi(B:Type 0). A -> B -> A
   s.cLam(s.cStar(), proc(A: R): R =
     s.cLam(s.cStar(), proc(B: R): R =
       s.cLam(A, proc(x: R): R =
@@ -533,7 +533,7 @@ when isMainModule:
   echo "--- typechecker tests ---"
   let tc = tcSym
 
-  # Test 8: twice checks; inferred type is Pi(X:? ). (X->X) -> X->X
+  # Test 8: twice checks; inferred type is Pi(X:Type 0 ). (X->X) -> X->X
   let twc = twice(tc)
   let expTwTy = ev.cPi(ev.cStar(),
     proc(X: Value): Value = ev.cArr(ev.cArr(X, X), ev.cArr(X, X)))
@@ -546,7 +546,7 @@ when isMainModule:
   assert convVal(t9.typ, unitV), "expected type 1, got " & showValue(t9.typ)
   echo "ok: polyId 1 <> : 1"
 
-  # Test 10: ill-typed application rejected (<> : 1 against domain ?)
+  # Test 10: ill-typed application rejected (<> : 1 against domain Type 0)
   var rejected = false
   try:
     discard tc.cApp(polyId(tc), tc.cTt())
@@ -593,7 +593,7 @@ when isMainModule:
   assert rejected, "absurd of non-empty was not rejected"
   echo "ok: absurd <> rejected (non-empty scrutinee)"
 
-  # Test 16: const checks with the dependent type Pi(A:? ). Pi(B:? ). A->B->A
+  # Test 16: const checks with the dependent type Pi(A:Type 0 ). Pi(B:Type 0 ). A->B->A
   let cc = constFn(tc)
   let expCTy = ev.cPi(ev.cStar(), proc(A: Value): Value =
     ev.cPi(ev.cStar(), proc(B: Value): Value = ev.cArr(A, ev.cArr(B, A))))

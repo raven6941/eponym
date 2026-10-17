@@ -40,13 +40,13 @@ proc check(cond: bool, label: string) =
 # --- harness (mock conventions shared with test_lsp_actions/test_sheds) ---
 
 proc holePos(src: string, n: int): tuple[line, col: int] =
-  ## 0-based position of the n-th `_` hole in the source.
+  ## 0-based position of the n-th `?` hole in the source.
   var seen = 0
   let hlines = src.splitLines()
   for i, ln in hlines:
     var j = 0
     while j < ln.len:
-      if ln[j] == '_':
+      if ln[j] == '?':
         if seen == n: return (i, j)
         inc seen
       inc j
@@ -110,9 +110,9 @@ proc diagsOf(resp: JsonNode): JsonNode =
 # The generated Eponym source the shedsBlock macro feeds the elaborator
 # (same shape as test_sheds' srcOneHole, two sheds on separate lines so
 # single-line fills keep the line matching exact -- the #134 limitation).
-const genSrcV0 = """postulate Int : ?
-proc doubleIt (n : Int) : Int = _
-proc tripleIt (n : Int) : Int = _
+const genSrcV0 = """postulate Int : Type 0
+proc doubleIt (n : Int) : Int = ?
+proc tripleIt (n : Int) : Int = ?
 """
 
 let dir = getTempDir() / "shed_loop_test"

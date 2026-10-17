@@ -25,16 +25,16 @@ proc runOnce(src: string, useCache: bool): tuple[secs: float, probes, hits: int,
   (t1 - t0, drv.ms.convCacheProbes, drv.ms.convCacheHits, defs.len)
 
 const vecCorpus = """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def add : Nat -> Nat -> Nat
 | zero n = n
 | (suc m) n = suc (add m n)
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-def vappend : Pi {A : ?}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n
+def vappend : Pi {A : Type 0}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n
   -> Vec A (add m n)
 | nil ys = ys
 | (cons k x xs) ys = cons A (add k n) x (vappend xs ys)

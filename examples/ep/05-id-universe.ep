@@ -1,8 +1,8 @@
-# Universe-polymorphic identity. Tests Pi over ?.
+# Universe-polymorphic identity. Tests Pi over Type 0.
 # Experiment: 05
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
 
-proc idU : Pi (A : ?). A -> A =
+proc idU : Pi (A : Type 0). A -> A =
   lam A. lam x. x
 proc letU : 1 =
   let f = lam x. x in f <>

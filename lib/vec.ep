@@ -3,11 +3,11 @@
 import "nat.ep"
 import "eq.ep"
 
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 
-proc vappend {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
+proc vappend {A : Type 0} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
     : Vec A (add m n) =
   vecElim A (lam (i : Nat). lam (v : Vec A i). Vec A (add i n))
             ys
@@ -15,24 +15,24 @@ proc vappend {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
               lam (ih : Vec A (add i n)). cons A (add i n) x ih)
             m xs
 
-proc vmap {A : ?} {B : ?} {n : Nat} (f : A -> B) (xs : Vec A n) : Vec B n =
+proc vmap {A : Type 0} {B : Type 0} {n : Nat} (f : A -> B) (xs : Vec A n) : Vec B n =
   vecElim A (lam (i : Nat). lam (v : Vec A i). Vec B i)
             (nil B)
             (lam (i : Nat). lam (x : A). lam (xs2 : Vec A i).
               lam (ih : Vec B i). cons B i (f x) ih)
             n xs
 
-proc myid (A : ?) (x : A) : A = x
+proc myid (A : Type 0) (x : A) : A = x
 
 # `vmapId`: mapping the identity over a vector is the identity, by induction.
 # (Issue #125 filed this as an elaborator bug — "cannot unify tV with tApp"
 # at the nil-case — but the repro's cons-case was ill-typed: `cong` was
 # applied with both type arguments as `Vec A (suc i)` while the mapped
 # function has domain `Vec A i`. The elaborator was right to reject
-# `Vec A i =?= Vec A (suc i)`. With `cong (Vec A i) (Vec A (suc i))` the
+# `Vec A i =Type 0= Vec A (suc i)`. With `cong (Vec A i) (Vec A (suc i))` the
 # whole induction checks, including the nil-case whose motive applies the
 # defined proc `vmap` with `{n} := i`.)
-proc vmapId {A : ?} {n : Nat} (xs : Vec A n)
+proc vmapId {A : Type 0} {n : Nat} (xs : Vec A n)
     : Eq (Vec A n) (vmap (myid A) xs) xs =
   vecElim A (lam (i : Nat). lam (v : Vec A i).
               Eq (Vec A i) (vmap (myid A) v) v)

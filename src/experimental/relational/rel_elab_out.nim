@@ -83,7 +83,7 @@ proc inferoOut*(tm, ty, ctx, etm: RTerm): Goal =
       # #87: primitive numeral elaborates to itself in O(1) — no
       # per-node walk of a unary suc-chain.
       return conj(`==`(ty, natTy()), `==`(etm, tm))
-    # Type formation: nat, univ : univ (mirrors checko; `? : ?` per #52)
+    # Type formation: nat, univ : univ (mirrors checko; `Type 0 : Type 0` per #52)
     if tm.name == "nat":
       return conj(`==`(ty, univTy()), `==`(etm, natTy()))
     if tm.name == "univ":

@@ -11,10 +11,10 @@
 # Decision (recorded in decisions.org under #88): a separate value type is
 # needed — the existing quantity annotations cannot be reused as values
 # because they live on binders in the core (preterm.Quantity), not in the
-# term language. The bridge is a computing function `Usage -> ?` whose
+# term language. The bridge is a computing function `Usage -> Type 0` whose
 # cases select the literal binder quantity.
 
-data Usage : ? where
+data Usage : Type 0 where
 | U0 : Usage
 | U1 : Usage
 | UOmega : Usage

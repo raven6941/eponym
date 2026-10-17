@@ -42,7 +42,7 @@ proc vecCorpus*(): seq[VCase] =
       expect: true),
     VCase(name: "suc (suc zero) : Nat",
       tm: sucTm(sucTm(zeroTm())), ty: natTy(), ctx: nilCtx, expect: true),
-    VCase(name: "Pi Nat Nat : ?",
+    VCase(name: "Pi Nat Nat : Type 0",
       tm: piTy(natTy(), natTy()), ty: univTy(), ctx: nilCtx, expect: true),
     VCase(name: "8 : Nat (primitive lit)",
       tm: rint(8), ty: natTy(), ctx: nilCtx, expect: true),

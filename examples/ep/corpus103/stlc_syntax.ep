@@ -5,7 +5,7 @@
 
 import "../../../lib/nat.ep"
 
-data Tm : ? where
+data Tm : Type 0 where
 | var (i : Nat) : Tm
 | lit (n : Nat) : Tm
 | app (f : Tm) (a : Tm) : Tm

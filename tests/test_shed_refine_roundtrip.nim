@@ -130,7 +130,7 @@ if partial.ok:
     check(sidecar.len == 0,
       "a fully refined source no longer emits an open shed")
     try:
-      discard elabCheck("proc constEndo (A : ?) : " &
+      discard elabCheck("proc constEndo (A : Type 0) : " &
         "Pi (f : A). Pi (g : A). A = lam f. lam g. f\n")
       check(true, "completed generated Eponym source passes strict checking")
     except CatchableError as e:

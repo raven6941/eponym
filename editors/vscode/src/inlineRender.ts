@@ -48,10 +48,9 @@ export function boxToText(b: BoxJson, pad = ""): string {
     lines.push(...boxToText(c, pad + "  ").split("\n"));
   }
 
-  // Hole: empty box displaying the goal type. `_n` avoids confusion with
-  // `?`, which is the universe in Eponym surface syntax.
+  // Hole: empty box displaying the goal type. Match the source notation.
   if (isHole) {
-    const goal = `_${holeIds[0]} : ${holeGoal}`;
+    const goal = `?${holeIds[0]} : ${holeGoal}`;
     lines.push(`${pad}┌${"─".repeat(goal.length + 2)}┐`);
     lines.push(`${pad}│ ${goal} │`);
     lines.push(`${pad}└${"─".repeat(goal.length + 2)}┘`);

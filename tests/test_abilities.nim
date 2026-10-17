@@ -45,16 +45,16 @@ proc rejects(src: string, frag: string): bool =
 
 const prelude = """
 interface Console
-postulate String : ?
+postulate String : Type 0
 postulate msg : String
 command send : String -> 1 in Console
 """
 
 # --- pure programs: zero annotations ---------------------------------------
 check(elaborates("""
-proc id (A : ?) (x : A) : A = x
-proc twice (A : ?) (f : A -> A) (x : A) : A = f (f x)
-proc constFn (A : ?) (B : ?) (x : A) (y : B) : A = x
+proc id (A : Type 0) (x : A) : A = x
+proc twice (A : Type 0) (f : A -> A) (x : A) : A = f (f x)
+proc constFn (A : Type 0) (B : Type 0) (x : A) (y : B) : A = x
 """), "pure programs elaborate with no ability annotations")
 
 # --- command under a matching peg -------------------------------------------
@@ -81,7 +81,7 @@ proc noPeg : 1 = send msg
 # --- implicit effect polymorphism: pure operator under [Console] ---------------
 check(elaborates(prelude & """
 proc puts : [Console] 1 = send msg
-proc id (A : ?) (x : A) : A = x
+proc id (A : Type 0) (x : A) : A = x
 proc useBoth : [Console] 1 = id 1 puts
 """), "pure operator instantiates under [Console] (per-use freshening)")
 
@@ -94,7 +94,7 @@ proc usePure : [] 1 = pid <>
 # --- explicit [] under an open ambient: Frank-strict rejection -------------------
 check(rejects(prelude & """
 proc pid : [] 1 -> 1 = lam (x : 1). x
-proc poly (A : ?) (x : A) : A = pid x
+proc poly (A : Type 0) (x : A) : A = pid x
 """, "ability mismatch"), "[] operator under a polymorphic ambient is rejected (no subeffecting)")
 
 # --- unknown interface in a peg ---------------------------------------------------
@@ -141,7 +141,7 @@ proc missing : [B] 1 = cb (ca <>)
 
 # --- data constructors stay usable under any ambient --------------------------------------
 check(elaborates(prelude & """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 proc puts : [Console] 1 = send msg

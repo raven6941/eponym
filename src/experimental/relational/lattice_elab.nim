@@ -274,17 +274,17 @@ proc unionEq(st: var LatState, a, b: int, why: string): bool =
   let ns = st.shape[ra] * st.shape[rb]
   let nn = meetNat(st.natl[ra], st.natl[rb])
   if ns == {}:
-    st.setFailure(st.descs[ra] & " =?= " & st.descs[rb], why,
+    st.setFailure(st.descs[ra] & " =Type 0= " & st.descs[rb], why,
                   "shapes " & $st.shape[ra] & " vs " & $st.shape[rb])
     return false
   if nn.bot:
-    st.setFailure(st.descs[ra] & " =?= " & st.descs[rb], why,
+    st.setFailure(st.descs[ra] & " =Type 0= " & st.descs[rb], why,
                   "indices " & $st.natl[ra] & " vs " & $st.natl[rb])
     return false
   let ca = st.constr[ra]
   let cb = st.constr[rb]
   if not constrAgree(ca, cb):
-    st.setFailure(st.descs[ra] & " =?= " & st.descs[rb], why,
+    st.setFailure(st.descs[ra] & " =Type 0= " & st.descs[rb], why,
                   "constructions disagree")
     return false
   st.parent[rb] = ra
@@ -370,7 +370,7 @@ proc checkLat*(tmId, tyId: int, ctx: seq[int], st: var LatState): bool =
     elif name == "zero" or isNatLit(ratom(name)):
       return st.meetShape(tyId, {hNat}, "nat literal needs Nat type")
     elif name == "nat" or name == "univ":
-      return st.meetShape(tyId, {hUniv}, "type former needs ? type")
+      return st.meetShape(tyId, {hUniv}, "type former needs Type 0 type")
     else:
       st.setFailure(st.descs[rtm], "known atom head", name)
       return false
@@ -397,12 +397,12 @@ proc checkLat*(tmId, tyId: int, ctx: seq[int], st: var LatState): bool =
         return false
       return st.unionEq(tyId, ctx[i], "variable lookup")
     of "pi":
-      if not st.meetShape(tyId, {hUniv}, "Pi former needs ? type"): return false
+      if not st.meetShape(tyId, {hUniv}, "Pi former needs Type 0 type"): return false
       let u = st.number(ratom("univ"))
       if not checkLat(rc.kids[0], u, ctx, st): return false
       return checkLat(rc.kids[1], u, ctx & @[rc.kids[0]], st)
     of "vec":
-      if not st.meetShape(tyId, {hUniv}, "Vec former needs ? type"): return false
+      if not st.meetShape(tyId, {hUniv}, "Vec former needs Type 0 type"): return false
       let u = st.number(ratom("univ"))
       let n = st.number(ratom("nat"))
       if not checkLat(rc.kids[0], u, ctx, st): return false
@@ -561,7 +561,7 @@ proc dumpState*(st: var LatState) =
   ## Inspectable state: every node's class, shape, natl, construction.
   for i in 0 ..< st.parent.len:
     let r = st.find(i)
-    var cs = "?"
+    var cs = "Type 0"
     case st.constr[r].kind
     of ckNone: cs = "none"
     of ckAtom: cs = "atom(" & st.constr[r].atomName & ")"

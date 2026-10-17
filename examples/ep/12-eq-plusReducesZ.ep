@@ -1,16 +1,16 @@
 # Propositional equality: Eq, refl, J, cong, plusReducesZ.
 # Experiment: 12
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
-# `data T : ? where` defines inductive types; in eponymBlock: `data(T, Univ):` + indented `proc` ctors
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
+# `data T : Type 0 where` defines inductive types; in eponymBlock: `data(T, Univ):` + indented `proc` ctors
 # Eq is an indexed family; refl typechecks up to conversion
 # (not just syntactic equality). J (eqElim) is the eliminator.
 # plusReducesZ is the Idris benchmark: (n : Nat) -> n = plus n Z.
 import "../../lib/nat.ep"
 
-data Eq (A : ?) (x : A) : A -> ? where
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 
-proc cong (A : ?) (B : ?) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
+proc cong (A : Type 0) (B : Type 0) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
     : Eq B (f x) (f y) =
   eqElim A x (lam (z : A). lam (q : Eq A x z). Eq B (f x) (f z))
          (refl B (f x)) y p

@@ -214,7 +214,7 @@ proc canonVarIds(s: string): string =
   result = ""
   var i = 0
   while i < s.len:
-    if s[i] == '?' and i + 1 < s.len and s[i + 1] == 'v':
+    if s[i] == 'Type 0' and i + 1 < s.len and s[i + 1] == 'v':
       var j = i + 2
       while j < s.len and s[j] in {'0'..'9'}: inc j
       let tok = s[i ..< j]

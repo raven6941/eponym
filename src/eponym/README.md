@@ -103,11 +103,11 @@ rendered text.
 Annotated example — this program fails:
 
 ```text
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 proc bad : Pi (x : Nat). Nat =
-  lam (x : ?). x
+  lam (x : Type 0). x
 ```
 
 ```sh
@@ -116,7 +116,7 @@ $ EPON_TRACE=check,unify nim c -r bad.nim
 check.in: pkLam <= tPi @5:3
   check.in: pkUniv <= tC @5:12
   check.out:
-  unify.in: ?  ~  R1
+  unify.in: Type 0  ~  R1
     unify.fail: cannot unify tC with tR
   unify.out:
 check.out:
@@ -125,7 +125,7 @@ ELABORATION FAILED: line 5, col 3: cannot unify tC with tR
 
 The bare error (`cannot unify tC with tR` at 5:3) doesn't say *which*
 unification failed. The trace shows it: under the lambda check at 5:3,
-the domain annotation `?` (elaborated at 5:12) is unified against the
+the domain annotation `Type 0` (elaborated at 5:12) is unified against the
 expected domain `R1` (`Nat`) — the user wrote the wrong domain
 annotation. A second example: on the quantity-violation fixture
 `tests/error_snapshots/cases/erased-use-neg.ep`,

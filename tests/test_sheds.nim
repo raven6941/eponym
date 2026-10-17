@@ -26,9 +26,9 @@ proc check(cond: bool, label: string) =
 # A source with a hole and a prelude import elaborates hole-tolerantly;
 # imports resolve relative to baseDir.
 let srcHoles = """import "../../lib/nat.ep"
-postulate Int : ?
+postulate Int : Type 0
 proc double (x : Int) : Int = x
-proc quad (n : Int) : Int = _
+proc quad (n : Int) : Int = ?
 """
 block:
   let (defs, ms, errLoc, errMsg) =
@@ -41,8 +41,8 @@ block:
 
 # --- elabCheckHolesDir: stops at the first non-hole failure -------------
 # The hole before the failure stays queryable (the #58 prefix property).
-let srcBad = """postulate Int : ?
-proc quad (n : Int) : Int = _
+let srcBad = """postulate Int : Type 0
+proc quad (n : Int) : Int = ?
 proc broken (x : Int) : Nat = x
 """
 block:
@@ -108,8 +108,8 @@ block:
 # hole is yellow; filling the hole (as the #58 refine action would) and
 # re-elaborating turns it white; breaking the shed's own declaration so no
 # goal is established turns it brown.
-let srcOneHole = """postulate Int : ?
-proc quad (n : Int) : Int = _
+let srcOneHole = """postulate Int : Type 0
+proc quad (n : Int) : Int = ?
 """
 block:
   var sheds = @[ShedInfo(name: "quadBody", draft: "", nimLine: 7, nimCol: 25,
@@ -118,7 +118,7 @@ block:
   refreshShedStatuses(sheds, srcOneHole, ".")
   check(sheds[0].status == ssYellow and sheds[0].holeIdx == 0,
     "open hole: yellow, matched to hole 0")
-  let filled = srcOneHole.replace("= _", "= n")
+  let filled = srcOneHole.replace("= ?", "= n")
   refreshShedStatuses(sheds, filled, ".")
   check(sheds[0].status == ssWhite and sheds[0].holeIdx == -1,
     "hole filled, clean elaboration: white")
@@ -184,8 +184,8 @@ block:
 
 # --- Issue #191: shed goal/context use the name-resolving pretty-printer --
 block:
-  let src191 = """postulate Int : ?
-proc quad (n : Int) : Int = _
+  let src191 = """postulate Int : Type 0
+proc quad (n : Int) : Int = ?
 """
   let (_, ms191, _, errMsg191) = elabCheckHolesDir(src191, ".")
   check(errMsg191 == "", "name-aware shed goal: no error, got: " & errMsg191)
