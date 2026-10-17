@@ -1,5 +1,6 @@
-// Inline shed view for issue #221: CodeLens summaries plus a virtual,
-// cursor-addressable 2D display rendered above the selected shed marker.
+// Inline shed view for issue #221: CodeLens summaries plus a temporary,
+// cursor-addressable 2D display inserted below the selected shed marker.
+// The preview is removed before saving so it never becomes Nim source.
 
 import * as vscode from "vscode";
 import { BoxJson, LspClient } from "./protocol";
@@ -58,19 +59,6 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
         const name = node.name;
         const start = doc.positionAt(node.start);
         const line = doc.lineAt(start.line);
-        if (expanded && expanded.shedName === name &&
-            expanded.docUri === doc.uri.toString() &&
-            expanded.anchorLine === start.line) {
-          // Virtual CodeLens rows stay visible across Auto Save without ever
-          // entering the Nim document.
-          for (const row of expanded.viewLines) {
-            lenses.push(new vscode.CodeLens(line.range, {
-              title: row,
-              command: "eponym.inlineViewNoop",
-            }));
-          }
-          continue;
-        }
         const goal = goalMap.get(name) ?? "";
         const title = goal ? `shed ${name} : ${goal}` : `shed ${name}`;
         lenses.push(
@@ -99,10 +87,12 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
 interface ExpandedShed {
   docUri: string;
   shedName: string;
-  /** 0-based source line whose CodeLens rows display the view. */
+  /** 0-based source line whose following lines contain the view. */
   anchorLine: number;
-  /** Virtual rows rendered immediately above the source marker. */
-  viewLines: string[];
+  /** Number of temporary view lines inserted after the marker. */
+  viewLineCount: number;
+  /** Editor holding the insertion (for removal). */
+  editor: vscode.TextEditor;
 }
 
 let expanded: ExpandedShed | null = null;
@@ -116,7 +106,20 @@ export function setInlineShedRefresh(callback: () => void): void {
 
 async function clearExpanded(): Promise<void> {
   log("[eponym] clearExpanded called, expanded=" + (expanded ? expanded.shedName : "null"));
-  expanded = null;
+  if (expanded) {
+    const { editor, anchorLine, viewLineCount } = expanded;
+    // Clear state before editing so resulting editor events cannot recurse.
+    expanded = null;
+    const delRange = new vscode.Range(
+      new vscode.Position(anchorLine + 1, 0),
+      new vscode.Position(anchorLine + viewLineCount + 1, 0)
+    );
+    try {
+      await editor.edit((eb) => eb.delete(delRange));
+    } catch {
+      // The editor may have been closed while the view was expanded.
+    }
+  }
   if (cursorListener) {
     cursorListener.dispose();
     cursorListener = null;
@@ -125,20 +128,43 @@ async function clearExpanded(): Promise<void> {
   refreshCodeLenses?.();
 }
 
+/** Remove the preview through VS Code's supported will-save edit mechanism. */
+export function removeExpandedForSave(docUri: string): vscode.TextEdit[] {
+  if (!expanded || expanded.docUri !== docUri) return [];
+  const { anchorLine, viewLineCount } = expanded;
+  expanded = null;
+  if (cursorListener) {
+    cursorListener.dispose();
+    cursorListener = null;
+  }
+  void vscode.commands.executeCommand("setContext", "eponym.shedExpanded", false);
+  refreshCodeLenses?.();
+  const delRange = new vscode.Range(
+    new vscode.Position(anchorLine + 1, 0),
+    new vscode.Position(anchorLine + viewLineCount + 1, 0)
+  );
+  return [vscode.TextEdit.delete(delRange)];
+}
+
 /**
- * The display is virtual CodeLens content, so source cursor movement cannot
- * enter it. Keep it active within this document; Escape collapses it.
+ * Collapse when the cursor leaves the expanded region. The inserted rows are
+ * real editor text, so the user can move into the view and use its key actions.
  */
 function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
   if (!expanded) return;
   if (e.textEditor.document.uri.toString() !== expanded.docUri) {
     log("[eponym] onCursorChange: different doc, clearing");
     void clearExpanded();
+    return;
   }
+  const line = e.selections[0].active.line;
+  const lo = expanded.anchorLine;
+  const hi = expanded.anchorLine + expanded.viewLineCount;
+  if (line < lo || line > hi) void clearExpanded();
 }
 
 /**
- * Expand the inline shed view above the shed marker as virtual CodeLens rows.
+ * Expand the inline shed view below the shed marker as temporary editor text.
  * `getClient` lazily creates the LSP client for the document; it returns
  * null (after showing an actionable error) when the server binary is
  * missing, so the click path never fails silently.
@@ -192,19 +218,19 @@ export async function expandShed(
   const viewLines = text.split("\n");
   log("[eponym] expandShed: rendered " + viewLines.length + " lines");
 
-  // Virtual CodeLens rows keep the display out of document edits, dirty
-  // tracking, and every Auto Save mode.
   const anchorLine = doc.positionAt(at.start).line;
-  expanded = {
-    docUri,
-    shedName,
-    anchorLine,
-    viewLines,
-  };
+  const insertPos = new vscode.Position(anchorLine + 1, 0);
+  const ok = await editor.edit((eb) => eb.insert(insertPos, viewLines.join("\n") + "\n"));
+  if (!ok) {
+    vscode.window.showErrorMessage("Eponym: could not insert shed view");
+    return;
+  }
+  log("[eponym] expandShed: text inserted");
+  expanded = { docUri, shedName, anchorLine, viewLineCount: viewLines.length, editor };
   vscode.commands.executeCommand("setContext", "eponym.shedExpanded", true);
   refreshCodeLenses?.();
 
-  // Collapse on document change or Escape.
+  // Collapse when leaving the view or on Escape.
   cursorListener = vscode.window.onDidChangeTextEditorSelection(onCursorChange);
 }
 

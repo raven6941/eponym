@@ -31,6 +31,7 @@ import {
   collapseShed,
   currentExpanded,
   setInlineShedRefresh,
+  removeExpandedForSave,
 } from "./inlineShed";
 
 function nimBin(): string {
@@ -447,9 +448,6 @@ export function activate(ctx: vscode.ExtensionContext) {
   // Issue #221: marker summaries and keyboard-navigable inline 2D previews.
   lensProvider = new ShedCodeLensProvider();
   setInlineShedRefresh(() => lensProvider.refreshCodeLenses());
-  ctx.subscriptions.push(
-    vscode.commands.registerCommand("eponym.inlineViewNoop", () => {})
-  );
   // Match by language ID "nim" OR by .nim file extension, since the
   // extension does not contribute the Nim language definition itself.
   const nimSelector: vscode.DocumentSelector = [
@@ -458,6 +456,14 @@ export function activate(ctx: vscode.ExtensionContext) {
   ];
   ctx.subscriptions.push(
     vscode.languages.registerCodeLensProvider(nimSelector, lensProvider)
+  );
+  // The inline box is temporary text so it can occupy multiple visual lines
+  // and accept cursor actions. Remove it as part of the save event so neither
+  // manual save nor Auto Save can persist the preview as Nim source.
+  ctx.subscriptions.push(
+    vscode.workspace.onWillSaveTextDocument((e) => {
+      e.waitUntil(Promise.resolve(removeExpandedForSave(e.document.uri.toString())));
+    })
   );
   // Refresh CodeLens when a shed file is opened (so goals show without save).
   ctx.subscriptions.push(
