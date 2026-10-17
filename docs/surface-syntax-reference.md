@@ -61,7 +61,7 @@ shedsBlock:
 `editors/vscode/`.
 
 When a refinement leaves a hole inside Nim command syntax (for example,
-inside `lam f. lam g. _`), Nim cannot parse the usual prefix marker
+inside `lam f. lam g. ?`), Nim cannot parse the usual prefix marker
 `![name]` in that position. The editor uses `shedHole(name)` there as a
 source-level encoding of the same named shed. `shedsBlock` records and
 typechecks it like `![name]`, keeping the residual goal available after

@@ -28,7 +28,7 @@ proc check(cond: bool, label: string) =
     echo "FAIL: ", label
 
 # --- unit: hoverAt -------------------------------------------------------
-let md = hoverAt(vecSrc, 7, 2)  # 0-based: line of `  _`, col of `_`
+let md = hoverAt(vecSrc, 7, 2)  # 0-based: line of `  ?`, col of `?`
 check(md.contains("goal"), "hoverAt returns a goal at the hole")
 check(md.contains("context"), "hoverAt returns the context at the hole")
 for name in ["xs", "d", "n", "A"]:

@@ -659,7 +659,8 @@ proc refineShed*(nimFile, shedName, term: string,
     let absolute = sourceOffset(newSrc, h.holeLoc.line, h.holeLoc.col)
     if absolute >= regionStart and absolute < regionEnd:
       let relative = absolute - regionStart
-      if relative < term.len and term[relative] == '_':
+      # Surface holes are `?`/`?N`; `_` is now a discard wildcard.
+      if relative < term.len and term[relative] == '?':
         residual.add((relative, hi, h))
   residual.sort(proc(a, b: tuple[offset, holeIdx: int, hole: HoleInfo]): int =
     cmp(a.offset, b.offset))
@@ -686,7 +687,9 @@ proc refineShed*(nimFile, shedName, term: string,
     # residual marker there; shedsBlock and the extension treat it as the
     # same named shed and turn it back into an Eponym hole.
     clientTerm.add("shedHole(" & residualNames[i] & ")")
-    termCursor = h.offset + 1
+    # Preserve the whole source token: `?` is anonymous and `?N` is a
+    # numbered hole. Replacing only `?` would leave the number behind.
+    termCursor = h.offset + 1 + h.hole.holeName.len
   if termCursor < term.len:
     clientTerm.add(term[termCursor .. ^1])
 

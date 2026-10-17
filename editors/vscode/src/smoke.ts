@@ -176,7 +176,7 @@ async function main() {
       const view = renderInlineShed(name, wl.box, { showButtons: true, keyHints });
       check(view.includes(name) && goals.some((g) => view.includes(g)),
         `inline view for ${name} shows the shed name and its goal`);
-      check(/_\d+\s*:/.test(view) && view.includes(keyHints),
+      check(/\?\d+\s*:/.test(view) && view.includes(keyHints),
         `inline view for ${name} draws the hole box and the advisory keybinding line`);
       check(view.includes("[refine] [case-split] [give]"),
         `inline view for ${name} shows action buttons when enabled`);
@@ -255,7 +255,7 @@ async function main() {
   const nimFile = path.join(tmp, "demo.nim");
   fs.writeFileSync(nimFile, "-- fixture\n");
   const genSrc =
-    "postulate Int : ?\n" +
+    "postulate Int : Type 0\n" +
     "proc doubleIt (n : Int) : Int = ?\n" +
     "proc tripleIt (n : Int) : Int = ?\n";
   const sidecar = {
@@ -281,13 +281,13 @@ async function main() {
   const sidecarBeforeGive = fs.readFileSync(sidecarPath, "utf8");
   let giveError = "";
   try {
-    await client.refineShed(uri2, "shedA", "addInt n _", true);
+    await client.refineShed(uri2, "shedA", "addInt n ?", true);
   } catch (e) {
     giveError = String(e);
   }
   check(giveError.includes("give rejected") &&
         fs.readFileSync(sidecarPath, "utf8") === sidecarBeforeGive,
-    "eponym/refineShed enforces Give completion without mutating rejected state");
+    "eponym/refineShed enforces Give completion without mutating rejected state: " + giveError);
 
   const r1 = await client.refineShed(uri2, "shedA", "addInt n n");
   check(r1.status === "white" && r1.term === "addInt n n" &&
@@ -318,25 +318,25 @@ async function main() {
   // answers "unknown document"; after didOpen the codeAction path reaches
   // case-split; didChange refreshes the buffer the server reasons about.
   const epLines = [
-    "data Nat : ? where",
+    "data Nat : Type 0 where",
     "| zero : Nat",
     "| suc (n : Nat) : Nat",
     "def add : Nat -> Nat -> Nat",
     "| zero n = n",
     "| (suc m) n = suc (add m n)",
-    "data Vec (A : ?) : Nat -> ? where",
+    "data Vec (A : Type 0) : Nat -> Type 0 where",
     "| nil : Vec A zero",
     "| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)",
-    "proc append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =",
-    "  _",
+    "proc append {A : Type 0} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =",
+    "  ?",
     "",
   ];
   const epSrc1 = epLines.join("\n");
   // Same text with the explicit arguments swapped: ys is now the first
   // explicit argument, so case-split applies to it instead of xs.
   const epSrc2 = epSrc1.replace(
-    "proc append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =",
-    "proc append {A : ?} {m : Nat} {n : Nat} (ys : Vec A n) (xs : Vec A m) : Vec A (add n m) ="
+    "proc append {A : Type 0} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =",
+    "proc append {A : Type 0} {m : Nat} {n : Nat} (ys : Vec A n) (xs : Vec A m) : Vec A (add n m) ="
   );
   const epUri = "file:///tmp/shed-smoke-case-split.ep";
   const holePos = { line: 10, character: 2 }; // 0-based: the `  ?` line

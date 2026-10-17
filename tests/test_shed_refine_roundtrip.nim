@@ -87,14 +87,14 @@ sidecar = readShedSidecar(sidecarPath(nimFile))
 check(sidecar[0].status == ssYellow and sidecar[0].genSrc == beforeRejectedRefine,
   "rejected refinement leaves the sidecar unchanged")
 let rejectedGive = refineShed(
-  nimFile, "constEndoBody", "lam f. lam g. _", requireComplete = true)
+  nimFile, "constEndoBody", "lam f. lam g. ?", requireComplete = true)
 check(not rejectedGive.ok and "give rejected" in rejectedGive.why,
   "Give rejects a candidate that leaves a residual hole")
 sidecar = readShedSidecar(sidecarPath(nimFile))
 check(sidecar[0].status == ssYellow and sidecar[0].genSrc == beforeRejectedRefine,
   "rejected Give leaves the sidecar unchanged")
 
-let partial = refineShed(nimFile, "constEndoBody", "lam f. lam g. _")
+let partial = refineShed(nimFile, "constEndoBody", "lam f. lam g. ?")
 check(partial.ok and partial.status == "yellow" and partial.yellowCount == 1,
   "a well-typed partial lambda is accepted with one open goal")
 check(partial.term == "lam f. lam g. shedHole(constEndoBody)",
@@ -148,7 +148,7 @@ compiled = compileFixture(natFile, scratch)
 if not compiled.ok: echo compiled.output
 check(compiled.ok, "multiple-hole fixture compiles")
 
-let split = refineShed(natFile, "sumBody", "add _ _")
+let split = refineShed(natFile, "sumBody", "add ? ?")
 check(split.ok and split.status == "yellow" and split.yellowCount == 2,
   "refinement records both residual application goals")
 check(split.term == "add shedHole(sumBody) shedHole(sumBody_1)",
