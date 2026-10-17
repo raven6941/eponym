@@ -59,7 +59,54 @@ proc qtyPrefix(n: NimNode): string =
     return ""
   return ""
 
+proc nimExprToEponym(n: NimNode): string
 proc nimTypeToEponym(n: NimNode): string
+
+proc nimCommandLamToEponym(n: NimNode): string =
+  ## Convert Nim's command-form untyped lambda (`lam x. body`) to Eponym
+  ## syntax. Nim represents a nested chain such as `lam x. lam y. body`
+  ## as `Command(lam, Command(DotExpr(x, lam), DotExpr(y, body)))`.
+  if n.kind != nnkCommand or n.len != 2 or
+     n[0].kind != nnkIdent or $n[0] != "lam":
+    error("eponymBlock: unsupported command-form lambda", n)
+  let arg = n[1]
+  if arg.kind == nnkDotExpr and arg.len == 2:
+    return "lam " & nimExprToEponym(arg[0]) & ". " &
+           nimExprToEponym(arg[1])
+  if arg.kind == nnkCommand and arg.len == 2 and
+     arg[0].kind == nnkDotExpr and arg[0].len == 2 and
+     arg[0][1].kind == nnkIdent and $arg[0][1] == "lam":
+    var nested = newNimNode(nnkCommand)
+    nested.add(ident("lam"))
+    nested.add(arg[1])
+    return "lam " & nimExprToEponym(arg[0][0]) & ". " &
+           nimCommandLamToEponym(nested)
+  error("eponymBlock: unsupported command-form lambda", n)
+
+proc nimCommandToEponym(n: NimNode): string =
+  ## Nim's command-call syntax (`suc n`) is also nnkCommand. Treat ordinary
+  ## commands as applications and reserve the special parser for `lam`.
+  ## Nim nests whitespace-separated command arguments in child Command
+  ## nodes; flatten those arguments instead of grouping them as one term.
+  if n.len == 0: error("eponymBlock: empty command expression", n)
+  if n[0].kind == nnkIdent and $n[0] == "lam":
+    return nimCommandLamToEponym(n)
+  var args: seq[string] = @[]
+  proc appendArg(a: NimNode) =
+    if a.kind == nnkCommand and a.len > 0 and
+       not (a[0].kind == nnkIdent and $a[0] == "lam"):
+      appendArg(a[0])
+      for j in 1 ..< a.len:
+        appendArg(a[j])
+    elif a.kind == nnkCommand:
+      args.add("(" & nimCommandLamToEponym(a) & ")")
+    elif a.kind in {nnkCall, nnkObjConstr}:
+      args.add("(" & nimExprToEponym(a) & ")")
+    else:
+      args.add(nimExprToEponym(a))
+  for i in 1 ..< n.len:
+    appendArg(n[i])
+  nimExprToEponym(n[0]) & " " & args.join(" ")
 
 proc nimExprToEponym(n: NimNode): string =
   ## Convert a Nim expression AST to Eponym source string.
@@ -145,7 +192,7 @@ proc nimExprToEponym(n: NimNode): string =
       let a = n[i]
       # Parenthesize if arg is a call or obj-constr (Pi/Sig type args
       # parse as nnkObjConstr in expression position and need grouping too)
-      if a.kind in {nnkCall, nnkObjConstr}:
+      if a.kind in {nnkCall, nnkObjConstr, nnkCommand}:
         args.add("(" & nimExprToEponym(a) & ")")
       else:
         args.add(nimExprToEponym(a))
@@ -155,6 +202,8 @@ proc nimExprToEponym(n: NimNode): string =
     # (x) -> x (parenthesized)
     if n.len == 1: nimExprToEponym(n[0])
     else: "(" & n.mapIt(nimExprToEponym(it)).join(", ") & ")"
+  of nnkCommand:
+    nimCommandToEponym(n)
   of nnkDotExpr:
     # p.x -> (p).x (record projection, issue #37; the surface parser
     # resolves it against the record table at elaboration time).

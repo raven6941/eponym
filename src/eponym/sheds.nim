@@ -18,12 +18,13 @@
 # linearized Nim-friendly syntax accepted by the shedsBlock macro
 # (sheds_mac.nim), a shed is written:
 #
-#   proc plus(x: Nat, y: Nat): Nat = ![ plusBody ]          # named shed
+#   proc plus(x: Nat, y: Nat): Nat = ![ plusBody ]            # named shed
 #   proc quad(n: Nat): Nat = ![ quadBody, double (double n) ] # with draft
+#   proc id(A: Univ): A = lam x. shedHole(inner)              # nested shed
 #
 # (A proc whose body is a shed *is* the Epigram shape: the declaration
 # exists with its type, and the shed is the incomplete right-hand side --
-# selecting it shows what's in scope and what must be built. A `![...]`
+# selecting it shows what's in scope and what must be built. A shed marker
 # at top level, outside any proc body, is an error.)
 # source
 # (reusing the #58 hole infrastructure) and records where the shed sits:
@@ -84,6 +85,17 @@ proc isShedNode*(n: NimNode): bool =
     n[0].kind == nnkIdent and $n[0] == "!" and
     n[1].kind == nnkBracket
 
+proc isShedHoleCall*(n: NimNode): bool =
+  ## `shedHole(name)`: call-form marker for a residual shed nested in
+  ## Nim command syntax, where the prefix form `![name]` cannot parse.
+  ## Inside `lam x. ...`, Nim attaches the binder to the call head and
+  ## parses this as `Call(DotExpr(x, shedHole), name)`.
+  if n.kind != nnkCall or n.len != 2 or n[1].kind != nnkIdent:
+    return false
+  (n[0].kind == nnkIdent and $n[0] == "shedHole") or
+    (n[0].kind == nnkDotExpr and n[0].len == 2 and
+     n[0][1].kind == nnkIdent and $n[0][1] == "shedHole")
+
 proc parseShedParts*(n: NimNode): tuple[name: string, draft: NimNode,
                                        hasDraft: bool] =
   ## Split `![ name ]` / `![ name, draft ]`. Errors with a helpful message
@@ -104,12 +116,14 @@ proc shedPlaceholder*(i: int): string =
   "__eponym_shed_" & $i & "__"
 
 proc parseLineInfo*(li: string): tuple[line, col: int] =
-  ## `lineInfo` has the form `/abs/path/file.nim(line, col)`.
+  ## `lineInfo` has the form `/abs/path/file.nim(line, col)`; Nim's line
+  ## is 1-based but its column is 0-based. Sidecar/LSP positions are
+  ## 1-based for both, so normalize the column here.
   let p = li.rfind('(')
   doAssert p >= 0, "cannot parse lineInfo: " & li
   let inner = li[p + 1 .. ^2]  # drop "(" ... ")"
   let parts = inner.split(',')
-  (parseInt(parts[0].strip()), parseInt(parts[1].strip()))
+  (parseInt(parts[0].strip()), parseInt(parts[1].strip()) + 1)
 
 proc callerFileOf*(body: NimNode): string =
   ## Absolute path of the Nim file containing the macro call.
@@ -120,34 +134,51 @@ proc callerFileOf*(body: NimNode): string =
   li[0 ..< p]
 
 proc rewriteSheds*(body: NimNode, sheds: var seq[ShedInfo]) =
-  ## In-place rewrite of the macro argument: every shed node becomes a
+  ## In-place rewrite of the macro argument: every `![...]` or
+  ## `shedHole(name)` marker becomes a
   ## placeholder ident (`shedPlaceholder i`), and `sheds` accumulates the
   ## metadata. Shed contents are never descended into -- the typechecker
   ## is forbidden to tread there, and neither is the converter.
   ##
-  ## A `![...]` at top level (outside any proc body) is an error: write a
+  ## A shed marker at top level (outside any proc body) is an error: write a
   ## proc whose body is the shed instead -- that is the Epigram shape
   ## (declaration with its type; the shed is the incomplete RHS).
   if body.kind == nnkStmtList:
     for i in 0 ..< body.len:
-      if isShedNode(body[i]):
+      if isShedNode(body[i]) or isShedHoleCall(body[i]):
         error("shedsBlock: a shed must sit inside a proc body, e.g. " &
           "proc plus(x: Nat, y: Nat): Nat = ![ plusBody ] -- " &
           "a bare top-level ![...] has no expected type to check against.", body[i])
   proc walk(n: NimNode, acc: var seq[ShedInfo]) =
     for i in 0 ..< n.len:
       let c = n[i]
-      if isShedNode(c):
-        let (name, draft, hasDraft) = parseShedParts(c)
-        let (ln, co) = parseLineInfo(lineInfo(c))
+      if isShedNode(c) or isShedHoleCall(c):
+        var name: string
+        var draft: NimNode
+        var hasDraft = false
+        var markerLoc = c
+        var replacement: NimNode
+        if isShedNode(c):
+          (name, draft, hasDraft) = parseShedParts(c)
+          replacement = ident(shedPlaceholder(acc.len))
+        else:
+          name = $c[1]
+          if c[0].kind == nnkDotExpr:
+            markerLoc = c[0][1]
+            replacement = newNimNode(nnkDotExpr)
+            replacement.add(c[0][0])
+            replacement.add(ident(shedPlaceholder(acc.len)))
+          else:
+            markerLoc = c[0]
+            replacement = ident(shedPlaceholder(acc.len))
+        let (ln, co) = parseLineInfo(lineInfo(markerLoc))
         acc.add(ShedInfo(name: name,
                          draft: if hasDraft: repr(draft) else: "",
                          nimLine: ln, nimCol: co,
                          holeLine: 0, holeIdx: -1,
                          status: ssYellow))  # issue #134: not yet elaborated
-        let ph = ident(shedPlaceholder(acc.len - 1))
-        copyLineInfo(ph, c)
-        n[i] = ph
+        copyLineInfo(replacement, c)
+        n[i] = replacement
       else:
         walk(c, acc)
   walk(body, sheds)
@@ -325,16 +356,13 @@ proc refreshShedStatuses*(sheds: var seq[ShedInfo], genSrc: string,
   ## Recompute per-shed status from the (possibly edited) generated Eponym
   ## source -- the #137 editor loop, headless: after holes are filled via
   ## the #58 refine/give actions, re-elaborate hole-tolerantly, re-match
-  ## sheds to holes by generated-source line, and re-apply the status
+  ## sheds to holes by generated-source line and column, and re-apply the status
   ## rule. A document that no longer parses marks every shed brown.
   ## `onlyGenSrc` (issue #137): restrict re-matching to sheds belonging
   ## to the elaborated block (see assignShedStatuses); other sheds keep
   ## their status, holeIdx, and holeCol untouched.
-  ## Limitation: matching is by generated-source line, so a multi-line
-  ## hole fill shifts later sheds' lines and unmatches them (they read as
-  ## white/brown instead of yellow); single-line fills are exact. The
-  ## #137 `eponym/refineShed` adjusts holeLine for the shift before
-  ## calling here.
+  ## The #137 `eponym/refineShed` adjusts generated-source positions before
+  ## calling here, so multiple holes on one line remain distinct.
   var errMsg = ""
   var holesOk = false
   try:
@@ -344,10 +372,15 @@ proc refreshShedStatuses*(sheds: var seq[ShedInfo], genSrc: string,
       if onlyGenSrc != "" and sheds[i].genSrc != onlyGenSrc: continue
       sheds[i].holeIdx = -1
       for j in 0 ..< r.ms.holes.len:
-        if r.ms.holes[j].holeLoc.line == sheds[i].holeLine:
-          sheds[i].holeIdx = j
-          sheds[i].holeCol = r.ms.holes[j].holeLoc.col  # self-healing
-          break
+        if r.ms.holes[j].holeLoc.line != sheds[i].holeLine: continue
+        if sheds[i].holeCol > 0:
+          if r.ms.holes[j].holeLoc.col == sheds[i].holeCol:
+            sheds[i].holeIdx = j
+            break
+        elif sheds[i].holeIdx < 0:
+          sheds[i].holeIdx = j  # legacy sidecar has no recorded column
+      if sheds[i].holeIdx >= 0:
+        sheds[i].holeCol = r.ms.holes[sheds[i].holeIdx].holeLoc.col
     holesOk = true
   except ParseError:
     discard

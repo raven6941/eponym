@@ -60,6 +60,13 @@ shedsBlock:
 `examples/embedded/sheds_walkthrough.nim` and the VS Code extension in
 `editors/vscode/`.
 
+When a refinement leaves a hole inside Nim command syntax (for example,
+inside `lam f. lam g. _`), Nim cannot parse the usual prefix marker
+`![name]` in that position. The editor uses `shedHole(name)` there as a
+source-level encoding of the same named shed. `shedsBlock` records and
+typechecks it like `![name]`, keeping the residual goal available after
+the file recompiles. Ordinary user-created sheds remain `![name]`.
+
 ## Declarations
 
 ### `data` — indexed datatypes

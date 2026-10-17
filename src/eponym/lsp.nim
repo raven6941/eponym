@@ -25,6 +25,7 @@
 # Then configure your editor to use it for .ep files.
 
 import json
+import algorithm
 import strutils
 import tables
 import os  # fileExists (issue #134: shed sidecar)
@@ -33,6 +34,7 @@ import preterm
 import eponym_init  # `$` for Term (issue #58)
 import parse_surf
 import unify  # HoleInfo, zonk (issue #58)
+import sheds_mac  # shedGoalAndCtx for residual refinement holes
 import sheds  # ShedInfo, ShedStatus, sidecarPath, readShedSidecarEx (issue #134)
 import shed_layout  # Box, layoutShed, boxToJson (issue #135)
 
@@ -468,7 +470,38 @@ proc shedNames*(uri: string): seq[string] =
   for s in readShedSidecar(sc):
     result.add(s.name)
 
-proc refineShed*(nimFile, shedName, term: string):
+proc sourceOffset(src: string, line, col: int): int =
+  ## Convert a 1-based source position to a byte offset.
+  if line < 1 or col < 1: return -1
+  var currentLine = 1
+  while currentLine < line:
+    let nl = src.find('\n', result)
+    if nl < 0: return -1
+    result = nl + 1
+    inc currentLine
+  result += col - 1
+  if result > src.len: return -1
+
+proc sourcePosition(src: string, offset: int): tuple[line, col: int] =
+  ## Convert a byte offset to a 1-based source position.
+  result = (1, 1)
+  for i in 0 ..< min(offset, src.len):
+    if src[i] == '\n':
+      inc result.line
+      result.col = 1
+    else:
+      inc result.col
+
+proc freshShedName(base: string, used: var seq[string]): string =
+  result = base
+  var suffix = 1
+  while result in used:
+    result = base & "_" & $suffix
+    inc suffix
+  used.add(result)
+
+proc refineShed*(nimFile, shedName, term: string,
+                 requireComplete = false):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           status: string, yellowCount: int] =
   ## Issue #137: the server-owned refine round-trip for real `.nim` shed
@@ -477,14 +510,15 @@ proc refineShed*(nimFile, shedName, term: string):
   ## not; here the client sends only (shedName, term) and the server does
   ## the whole loop: fill the hole in the macro-recorded generated source
   ## (`ShedInfo.genSrc`), refresh statuses, rewrite the sidecar, and
-  ## return the term plus the `.nim` splice position (`nimLine`, `nimCol`:
-  ## 1-based start of the `![...]` node -- the client replaces that node,
-  ## a single-line span, with the term).
+  ## return a Nim splice plus its replacement position (`nimLine`,
+  ## `nimCol`: 1-based start of the original shed marker). Residual `_`
+  ## holes become `shedHole(name)` markers in the splice and new sidecar
+  ## entries, so recompiling the source preserves their goals.
   ##
   ## Sheds from other shedsBlock expansions in the same file are
   ## identified by sharing the block's `genSrc` string: their sources are
-  ## updated to the filled source and their hole lines shifted past a
-  ## multi-line fill, while sheds from other blocks are untouched.
+  ## updated to the filled source and their generated-source hole
+  ## positions shifted, while sheds from other blocks are untouched.
   let sc = sidecarPath(nimFile)
   if not fileExists(sc):
     return (false, "no sheds sidecar for " & nimFile &
@@ -507,6 +541,8 @@ proc refineShed*(nimFile, shedName, term: string):
   if sheds[si].status != ssYellow:
     return (false, "shed '" & shedName & "' is not refinable (status " &
             shedStatusToStr(sheds[si].status) & ")", "", 0, 0, "", 0)
+  let spliceLine = sheds[si].nimLine
+  let spliceCol = sheds[si].nimCol
   let baseDir = parentDir(nimFile)
   # Locate the hole in the recorded source: exact (line, col) when the
   # column is known, else the first line match (the #134 rule).
@@ -530,27 +566,131 @@ proc refineShed*(nimFile, shedName, term: string):
   except ParseError as e:
     return (false, "recorded source no longer parses: " & e.msg,
             "", 0, 0, "", 0)
-  let f = fillHoleAt(oldSrc, holeLine1 - 1, holeCol1 - 1, term, baseDir)
+  # A replacement can sit inside a larger application (for example a
+  # natElim branch followed by its scrutinee). Parenthesize it in the
+  # generated source so low-precedence forms such as `lam p. ...` do not
+  # absorb the following application arguments. The client receives a Nim
+  # splice, with residual holes converted to nested shed markers below.
+  let wrappedTerm = "(" & term & ")"
+  let f = fillHoleAt(oldSrc, holeLine1 - 1, holeCol1 - 1,
+                     wrappedTerm, baseDir)
   if not f.ok:
     return (false, "refine rejected: " & f.why, "", 0, 0, "", 0)
-  # A multi-line fill shifts later sheds' generated-source lines; the
-  # filled shed keeps its line (the fill starts there) and is re-matched
-  # by refreshShedStatuses below.
   let newSrc = f.newSrc
-  let filledLine = sheds[si].holeLine
-  let linesAdded = term.count('\n')
+  let fillOffset = sourceOffset(oldSrc, holeLine1, holeCol1)
+  if fillOffset < 0:
+    return (false, "recorded hole position is outside its generated source",
+            "", 0, 0, "", 0)
+  let regionStart = fillOffset + 1  # skip the grouping `(`
+
+  # Re-elaborate to discover every residual hole created by this term.
+  # Each one must become a named Nim shed in the splice, or the next
+  # shedsBlock compilation would silently drop it from the sidecar.
+  var checked: MetaStore
+  try:
+    let r = elabCheckHolesDir(newSrc, baseDir)
+    if r.errMsg != "":
+      return (false, "refine rejected: " & r.errMsg, "", 0, 0, "", 0)
+    checked = r.ms
+  except ParseError as e:
+    return (false, "refine rejected: parse error: " & e.msg,
+            "", 0, 0, "", 0)
+
+  var residual: seq[tuple[offset, holeIdx: int, hole: HoleInfo]] = @[]
+  let regionEnd = regionStart + term.len
+  for hi, h in checked.holes:
+    let absolute = sourceOffset(newSrc, h.holeLoc.line, h.holeLoc.col)
+    if absolute >= regionStart and absolute < regionEnd:
+      let relative = absolute - regionStart
+      if relative < term.len and term[relative] == '_':
+        residual.add((relative, hi, h))
+  residual.sort(proc(a, b: tuple[offset, holeIdx: int, hole: HoleInfo]): int =
+    cmp(a.offset, b.offset))
+  if requireComplete and residual.len > 0:
+    return (false, "give rejected: candidate leaves " & $residual.len &
+            " open hole(s)", "", 0, 0, "", 0)
+
+  var usedNames: seq[string] = @[]
+  for i, s in sheds:
+    if i != si: usedNames.add(s.name)
+  var residualNames: seq[string] = @[]
+  for i in 0 ..< residual.len:
+    let base = if i == 0: shedName else: shedName & "_" & $i
+    residualNames.add(freshShedName(base, usedNames))
+
+  var clientTerm = ""
+  var termCursor = 0
+  var markerOffsets: seq[int] = @[]
+  for i, h in residual:
+    clientTerm.add(term[termCursor ..< h.offset])
+    markerOffsets.add(clientTerm.len)
+    # Nim cannot parse prefix `![name]` in every expression position (for
+    # example, after the dot in `lam f. lam g. ...`). Use a call-form
+    # residual marker there; shedsBlock and the extension treat it as the
+    # same named shed and turn it back into an Eponym hole.
+    clientTerm.add("shedHole(" & residualNames[i] & ")")
+    termCursor = h.offset + 1
+  if termCursor < term.len:
+    clientTerm.add(term[termCursor .. ^1])
+
+  # Update old shed locations by offsets, so same-line and multi-line
+  # fills both move later holes correctly.
   for i in 0 ..< sheds.len:
-    if sheds[i].genSrc == oldSrc:
-      sheds[i].genSrc = newSrc
-      if sheds[i].holeLine > filledLine:
-        sheds[i].holeLine += linesAdded
+    if sheds[i].genSrc != oldSrc or i == si: continue
+    let oldOffset = sourceOffset(oldSrc, sheds[i].holeLine, sheds[i].holeCol)
+    if oldOffset >= 0:
+      let movedOffset = if oldOffset > fillOffset:
+        oldOffset + wrappedTerm.len - 1
+      else:
+        oldOffset
+      let pos = sourcePosition(newSrc, movedOffset)
+      sheds[i].holeLine = pos.line
+      sheds[i].holeCol = pos.col
+    sheds[i].genSrc = newSrc
+
+  # The original shed becomes one child per residual hole. A single child
+  # keeps the original name, allowing the current panel to continue.
+  if residual.len == 0:
+    sheds[si].genSrc = newSrc
+    sheds[si].holeIdx = -1
+    sheds[si].status = ssWhite
+  else:
+    var children: seq[ShedInfo] = @[]
+    for i, h in residual:
+      let (goal, ctx, goalPi) = shedGoalAndCtx(checked, h.hole)
+      let (termLine, termCol) = sourcePosition(clientTerm, markerOffsets[i])
+      let nimLine = sheds[si].nimLine + termLine - 1
+      let nimCol = if termLine == 1:
+        sheds[si].nimCol + termCol - 1
+      else:
+        termCol
+      children.add(ShedInfo(
+        name: residualNames[i], draft: "", nimLine: nimLine, nimCol: nimCol,
+        holeLine: h.hole.holeLoc.line, holeCol: h.hole.holeLoc.col,
+        holeIdx: h.holeIdx, genSrc: newSrc, goal: goal, ctx: ctx,
+        goalPi: goalPi, status: ssYellow))
+    sheds.delete(si)
+    for i, child in children:
+      sheds.insert(child, si + i)
+
   refreshShedStatuses(sheds, newSrc, baseDir, onlyGenSrc = newSrc)
   writeShedSidecar(nimFile, sheds, errMsg0)  # keep the doc-level message
   var yellowCount = 0
   for s in sheds:
     if s.status == ssYellow: inc yellowCount
-  (true, "", term, sheds[si].nimLine, sheds[si].nimCol,
-   shedStatusToStr(sheds[si].status), yellowCount)
+  let responseName = if residual.len == 0: shedName else: residualNames[0]
+  var responseShed: ShedInfo
+  var foundResponseShed = false
+  for s in sheds:
+    if s.name == responseName and s.genSrc == newSrc:
+      responseShed = s
+      foundResponseShed = true
+      break
+  if not foundResponseShed:
+    return (false, "internal error: refinement result shed metadata missing",
+            "", 0, 0, "", 0)
+  (true, "", clientTerm, spliceLine, spliceCol,
+   shedStatusToStr(responseShed.status), yellowCount)
 
 proc caseSplitShed*(nimFile, shedName, variable: string):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
@@ -772,7 +912,9 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
     let uri = msg["params"]["textDocument"]["uri"].getStr()
     let shedName = msg["params"]["shedName"].getStr()
     let term = msg["params"]["term"].getStr()
-    let r = refineShed(uriToPath(uri), shedName, term)
+    let requireComplete = "requireComplete" in msg["params"] and
+      msg["params"]["requireComplete"].getBool()
+    let r = refineShed(uriToPath(uri), shedName, term, requireComplete)
     if not r.ok:
       return %*{"jsonrpc": "2.0", "id": id,
                 "error": {"code": -32602, "message": r.why}}
