@@ -1,4 +1,4 @@
-# [eponym](https://github.com/raven6941/eponym)
+# [Eponym](https://github.com/raven6941/eponym)
 
 Loosely, epigram + nim ~= eponym. Eponym brings dependent types and quantitative type checking to Nim as an embedded DSL, so you can check the parts of a Nim program that benefit from stronger guarantees.
 
@@ -16,8 +16,7 @@ Linear syntax is notably different to compromise with the macro approach to embe
 
 ## Use cases
 
-Eponym can check invariants that are awkward to express with ordinary Nim
-types, while leaving IO, algorithms, and application code in Nim. The examples
+Eponym can encode and check correctness properties on just the libraries and pathways that need it, while code for specific use cases can remain in normal Nim. The examples
 show a few useful patterns:
 
 - **Protocol state and message order** — model a session as a type and make
@@ -43,7 +42,6 @@ show a few useful patterns:
 
 Eponym is deliberately *not* a standalone language.
 The goal is not to build and grow a full independent compiler, stdlib, package system, community around a new language. Rather, if only _some_ of your program really calls for dependent typing, and some parts are fine with the type facilities already offered by Nim, then an embedded approach allows you to use the dependent types only where needed. I especially hope that libraries can host dependent reasoning, and use cases can get safety benefits whether or not they engage with dependent types directly.
-
 
 ## Writing eponym in Nim code
 
