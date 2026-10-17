@@ -22,7 +22,7 @@ import "../../lib/usage.ep"
 # literal binder quantity; `mapU` below dispatches on `u` so that in each
 # branch `mapCont u A B` reduces (delta + iota) to the concrete Pi type.
 proc mapCont (u : Usage) (A : Type 0) (B : Type 0) : Type 0 =
-  usageElim (lam (w : Usage). Type 0)
+  usageElimLarge (lam (w : Usage). Type 0)
     (Pi (0 x : A). B)
     (Pi (1 x : A). B)
     (Pi (x : A). B)

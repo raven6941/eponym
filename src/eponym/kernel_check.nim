@@ -434,6 +434,7 @@ proc kconv(a, b: Term, g: KernelGlobals, depth: int = 0): bool =
   case wa.kind
   of tV: return wa.idx == wb.idx
   of tC: return wa.c == wb.c
+  of tType: return wa.lvl == wb.lvl
   of tR: return wa.refId == wb.refId
   of tInt: return wa.intVal == wb.intVal
   of tNatSing: return wa.natSingVal == wb.natSingVal  # Issue #74
