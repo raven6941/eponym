@@ -3370,3 +3370,37 @@
   simply the first client. =RedRule= and =Whnf.rule= are now exported
   from eponym_init for the mirror.
   Status: OPEN (branch =exp88-qty-poly=).
+
+* 2026-10-15 — Release scope freeze (recorded 2026-10-17)
+
+  Decision: no merges to main except LSP/Sheds work and doc updates Aaron
+  explicitly directs (e.g. #222 tutorial/reference refresh). #52/#84/#74/#56
+  stay merged. Once sheds/LSP unblock, future experiments go on a
+  long-lived branch from main; that branch merges back after. Release tag
+  cut from main.
+  Enforcement: the eponym-work-continuation worker re-reads the freeze
+  clause before every merge; in-flight non-freeze work retargets to
+  =exp-longlived=; the freeze is lifted only by Aaron in chat. Exceptions
+  are recorded here explicitly — a merge without a recorded exception is
+  a process failure, not a judgment call.
+  Context: #88 (usage-indexed operators) merged during the freeze because
+  the freeze lived only in chat history and no worker re-checked it before
+  merging. Recorded late (2026-10-17) per the standing lesson: constraints
+  go in decisions.org the same turn they are decided.
+
+* 2026-10-17 — Freeze exception: #88 stays on main
+
+  Settled by merge, not by revert: PR #243 (merged 2026-10-17, the
+  interactive-edit-patches branch) builds on #88 via commit 0b01b4e9
+  (usage.ep eliminator), so reverting #88 would now also require unwinding
+  that commit. Main is coherent with #88 (CI green); the exception is
+  scope, not breakage. If Aaron wants #88 out, that is a new decision,
+  not a revert of this one.
+
+* 2026-10-17 — Universe/hole syntax: =?= now denotes holes (supersedes the #52 entry's "= ? = stays")
+
+  PR #243 (commit ccdab8f) switched holes to question-mark syntax: =?=,
+  =?0=, =?1=, … denote holes to be filled; universes are written =Type 0=,
+  =Type 1=, etc. The 2026-10-15 #52 entry's "= ? = stays" clause no longer
+  holds. The hierarchy design itself (explicit =Type l= + cumulativity)
+  is unchanged.
