@@ -10,10 +10,9 @@ the shed must eventually prove.
 Put the cursor on the `![name]` marker and run **Eponym: Expand inline shed
 view** from the Command Palette. The default shortcut is **Ctrl+Shift+S**.
 You can also use the `shed name : goal` CodeLens above a marker; clicking it
-opens that specific shed without relying on cursor position. The display is
-inserted temporarily below the marker in the source editor so it remains
-keyboard-accessible. Press **Escape** to collapse it. The temporary display
-is removed before the file is saved.
+opens that specific shed without relying on cursor position. The 2D display
+is rendered as virtual CodeLens rows above the marker, so it stays in the
+editor without changing the Nim document. Press **Escape** to collapse it.
 
 The extension compiles a `shedsBlock` file with Nim to generate or refresh
 its `.sheds.json` sidecar. This is how it learns the current goals and
@@ -110,5 +109,5 @@ channel for a Nim compile error and make sure the installed extension was
 rebuilt from the current source.
 
 The CodeLens and `shedsBlock` source marker are the durable navigation
-points. The 2D view itself is temporary editor text and should not be edited
-as proof source.
+points. The 2D view is virtual editor content, not proof source, and does not
+dirty the document or interfere with manual or automatic saves.

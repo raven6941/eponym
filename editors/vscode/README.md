@@ -27,8 +27,10 @@ marker, and run **Eponym: Expand inline shed view** (default shortcut
 **Ctrl+Shift+S**). A CodeLens above each marker opens that specific shed.
 The extension compiles the file with Nim to generate the sidecar; progress
 and errors are reported in the **Eponym** Output channel. The inline view is
-temporary editor text, removed before save. Refinement actions splice their
-result into source and save it so the macro can refresh goals and CodeLens.
+rendered as virtual CodeLens rows, so it never enters the document or
+interferes with Auto Save.
+Refinement actions splice their result into source and save it so the macro can
+refresh goals and CodeLens.
 
 ### If sidecar generation fails
 

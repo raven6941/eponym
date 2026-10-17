@@ -30,6 +30,7 @@ import {
   expandShed,
   collapseShed,
   currentExpanded,
+  setInlineShedRefresh,
 } from "./inlineShed";
 
 function nimBin(): string {
@@ -184,18 +185,6 @@ export function activate(ctx: vscode.ExtensionContext) {
   out = vscode.window.createOutputChannel("Eponym");
   initLog(out);
   log("[eponym] extension v0.1.18 activated");
-
-  // The inline shed view is temporary editor text. Remove it before either
-  // manual or Auto Save writes the document, without collapsing the keyboard
-  // interaction any earlier than the save itself.
-  ctx.subscriptions.push(
-    vscode.workspace.onWillSaveTextDocument((e) => {
-      const active = currentExpanded();
-      if (active?.docUri === e.document.uri.toString()) {
-        e.waitUntil(collapseShed());
-      }
-    })
-  );
 
   // Issue #190: eager pre-render. When a shed file is opened and its
   // sidecar is already fresh, fetch the shed layouts in the background so
@@ -457,6 +446,10 @@ export function activate(ctx: vscode.ExtensionContext) {
 
   // Issue #221: marker summaries and keyboard-navigable inline 2D previews.
   lensProvider = new ShedCodeLensProvider();
+  setInlineShedRefresh(() => lensProvider.refreshCodeLenses());
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("eponym.inlineViewNoop", () => {})
+  );
   // Match by language ID "nim" OR by .nim file extension, since the
   // extension does not contribute the Nim language definition itself.
   const nimSelector: vscode.DocumentSelector = [
@@ -562,8 +555,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       try {
         const res = await client.refineShed(cur.docUri, cur.shedName, term);
         // Complete the round-trip: splice the returned term over the shed
-        // node so the .nim source advances, then save (sidecar regenerates)
-        // and collapse the now-stale expansion.
+        // node, collapse its virtual view, then save so the sidecar regenerates.
         const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
         if (!ok) {
           vscode.window.showWarningMessage(
@@ -571,11 +563,11 @@ export function activate(ctx: vscode.ExtensionContext) {
           );
           return;
         }
+        await collapseShed();
         await editor.document.save();
         layoutCache.delete(editor.document.uri.toString());
         if (!(await ensureSidecar(editor.document, true))) return;
         lensProvider.refreshDoc(editor.document);
-        collapseShed();
         vscode.window.showInformationMessage(
           `Refined ${cur.shedName}: ${res.status} (${res.yellowCount} yellow left)`
         );
@@ -616,11 +608,11 @@ export function activate(ctx: vscode.ExtensionContext) {
           );
           return;
         }
+        await collapseShed();
         await editor.document.save();
         layoutCache.delete(editor.document.uri.toString());
         if (!(await ensureSidecar(editor.document, true))) return;
         lensProvider.refreshDoc(editor.document);
-        collapseShed();
         vscode.window.showInformationMessage(
           `Case-split ${variable}: ${res.subSheds.length} new sheds (${res.subSheds.join(", ")})`
         );
@@ -659,11 +651,11 @@ export function activate(ctx: vscode.ExtensionContext) {
           );
           return;
         }
+        await collapseShed();
         await editor.document.save();
         layoutCache.delete(editor.document.uri.toString());
         if (!(await ensureSidecar(editor.document, true))) return;
         lensProvider.refreshDoc(editor.document);
-        collapseShed();
         vscode.window.showInformationMessage(`Gave ${cur.shedName}: ${res.status}`);
       } catch (e) {
         vscode.window.showErrorMessage(`Give failed: ${String(e)}`);
