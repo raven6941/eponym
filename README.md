@@ -150,8 +150,14 @@ eponym> :eval (add (suc zero) two)
 eponym> :quit
 ```
 
-Commands: `:type <tm>`, `:eval <tm>` (weak-head normal form), `:load
-<file.ep>`, `:help`, `:quit`. Anything else is Eponym source: declarations
+Commands:
+- `:type <tm>`,
+- `:eval <tm>` (weak-head normal form),
+- `:load<file.ep>`,
+- `:help`,
+- `:quit`. 
+
+Anything else is Eponym source: declarations
 elaborate into the persistent session and stay in scope; multi-line
 declarations work, and errors print as located messages without killing the
 session. A scripted session is exercised in CI (`tests/repl_session.sh`).
