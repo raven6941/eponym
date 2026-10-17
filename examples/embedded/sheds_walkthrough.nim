@@ -57,17 +57,18 @@ shedsBlock:
 
   # Shed 1 -- sketched. The draft is the plan; refining the hole with the
   # draft text should close it.
-  # Ways you might complete this shed with the vscode editor:
+  # Ways you might complete this shed with the VSCode editor:
   # 1. Directly:
-  #  a. Ctrl+Shift+S (or "Eponym: Expand inline shed view" in the command palette).
-  #     You should see a diagram presented beneath the codeline with the shed.
-  #  b. Press `g` for "give"; focus should shift to the command bar, prompting you to enter an expression.
-  #  c. Enter `double(double n)` and press enter. The whole shed will be replaced with this expression.
+  #  a. Press Ctrl+Shift+S (or run "Eponym: Expand inline shed view" from
+  #     the command palette). A diagram appears beneath the line with the shed.
+  #  b. Press `g` for give; focus moves to the command bar.
+  #  c. Enter `double (double n)` and press Enter. The shed is replaced with
+  #     this complete expression.
   # 2. Refinement:
-  #  a. As above, Ctrl+Shift+S to expand the inline shed
-  #  b. Press `r` for "refine; your cursor moves to the command bar, and you can enter a refinement expression.
-  #  c. Enter `double( ? )`, and the whole shed is replaced with double(shedHole(quadBody))` will be added.
-  #     You now have a smaller shed to work on.
+  #  a. Expand the inline shed as above, then press `r` for refine.
+  #  b. Enter `double ( ? )` and press Enter. The extension wraps the new
+  #     hole in `double` and gives it a fresh name.
+  #  c. Click the new hole and refine it with `double n` to finish.
   proc quad(n: Int): Int = ![quadBody, double (double n)]
 
   # Shed 2 -- developing. The draft is honest scratch: the programmer tried
@@ -75,24 +76,48 @@ shedsBlock:
   # wrong turn, and it typechecks as a draft because drafts are never
   # elaborated: `double` is over the postulated Int, but the goal here is
   # Nat -- the draft is allowed to be wrong; that's what sheds are for.)
+  # Ways you might complete this shed with the VSCode editor:
+  # 1. Replace the draft with a complete term:
+  #  a. Expand the inline shed with Ctrl+Shift+S, then click its hole.
+  #  b. Press `r` for refine and enter `add (add n 3) 3`.
+  #  c. Press Enter. The extension replaces the shed with that term; the
+  #     wrong-typed draft is just scratch and does not constrain the repair.
   proc addThree(n: Nat): Nat = ![addThreeBody, double (add n 3)]
 
   # Shed 3 -- greenfield. No draft; just a hole, a goal type (Int), and `x`
   # in context. A good first click in the webview.
+  # Ways you might complete this shed with the VSCode editor:
+  # 1. Refine directly from the context:
+  #  a. Expand the inline shed with Ctrl+Shift+S, then click its hole to
+  #     inspect the goal and context.
+  #  b. Press `r` for refine and enter `x`.
+  #  c. Press Enter. The hole is replaced with `x` from the context.
   proc shuffle(x: Int): Int = ![shuffleBody]
 
   # Shed 4 -- give. The goal is exactly `x`, already in scope: the natural
   # completion is a single `give`, no refinement steps. (In the webview both
   # "refine hole" and "give x" are offered -- give is the one that promises
   # no holes are left behind.)
+  # Ways you might complete this shed with the VSCode editor:
+  # 1. Give the complete term:
+  #  a. Expand the inline shed with Ctrl+Shift+S, then click its hole.
+  #  b. Press `g` for give and enter `x`.
+  #  c. Press Enter. Give installs the complete term directly, with no
+  #     smaller hole left to solve.
   proc constA(A: Univ, x: A): A = ![constABody, x]
 
   # Shed 5 -- case-split. `n` is the first explicit argument and has an
   # inductive type (Nat from the prelude), so the natural move is
   # case-split on `n`: the webview rewrites this proc into clause form
   # with one clause per constructor, each RHS a fresh hole.
-  # Here, after expanding the shed inline, press `c` for "case-split", and enter `n`.
-  # You'll end up with two new sheds which correspond to different ways of handling `n` when it's zero or not.
+  # Ways you might complete this shed with the VSCode editor:
+  # 1. Split on `n`, then give each case:
+  #  a. Expand the inline shed with Ctrl+Shift+S, then click its hole.
+  #  b. Press `c` for case-split and enter `n`. The extension rewrites the
+  #     proc into one clause per constructor, with a fresh shed in each.
+  #  c. Click the zero-case hole, press `g`, and enter `false`.
+  #  d. Click the successor-case hole, press `g`, and enter `true`. The
+  #     diagnostics should clear as both clauses complete.
   proc isZero(n: Nat): Bool = ![isZeroBody]
 
   # Shed 6 -- deep nesting. The hole's goal is a Pi type with two binders
@@ -100,6 +125,19 @@ shedsBlock:
   # binder around the hole: context above the rule, `f : A`, `g : A`, then
   # the hole with the residual goal `A` innermost. The draft is the plan
   # in surface syntax (drafts are text; they are never elaborated).
+  # Ways you might complete this shed with the vscode editor:
+  # 1. Step by step:
+  #  a. Ctrl+Shift+S to expand the inline shed, then click the innermost hole
+  #     to inspect its goal and the `f`/`g` context.
+  #  b. Press `r` for refine and enter `lam (f : A). ?`; this introduces `f`
+  #     and leaves a smaller hole with `g` in context.
+  #  c. Click that hole, press `r` again, and enter `lam (g : A). ?`.
+  #  d. In the resulting hole, refine with `f` or `g` to complete the proof.
+  #     `f` ignores `g`, while `g` returns it.
+  # 2. All at once:
+  #  a. Expand the inline shed as above and press `r` for refine.
+  #  b. Enter `lam (f : A). lam (g : A). f`; the nested binder boxes collapse
+  #     as the proof becomes complete.
   proc constEndo(A: Univ): Pi(f: A, g: A, A) =
     ![constEndoBody, "lam (f : A). lam (g : A). f"]
 
