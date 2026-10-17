@@ -1,6 +1,6 @@
 # eponym
 
-Loosely, epigram + nim ~= eponym. What happens if we adapt (a subset of) ideas from McBride & McKinna's influential work from 20+ years ago, as an embedded DSL for Nim? This is an exploratory work currently in progress. "Loosely" and "in progress" show up in at least a few ways.
+Loosely, epigram + nim ~= eponym. Eponym brings dependent types and quantitative type checking to Nim as an embedded DSL, so you can check the parts of a Nim program that benefit from stronger guarantees.
 
 **New here?** Start with the [tutorial](docs/tutorial.md) (install → your
 first checked dependent type, ~15 minutes), look up any language form in the
@@ -14,67 +14,36 @@ QTT instead of ETT. Idris has demonstrated the 0/1/ω approach taken. This allow
 
 Linear syntax is notably different to compromise with the macro approach to embedding in Nim.
 
-### Not yet delivered
+## Use cases
 
-The 2d shed interactive editing experience. I have some hope that LSP + a vscode plugin may provide an avenue to this.
+Eponym can check invariants that are awkward to express with ordinary Nim
+types, while leaving IO, algorithms, and application code in Nim. The examples
+show a few useful patterns:
+
+- **Protocol state and message order** — model a session as a type and make
+  invalid operations, such as sending after close or accepting a value that
+  was not promised, fail during compilation. See
+  [`session_types.nim`](examples/embedded/session_types.nim) and
+  [`paxos_session.nim`](examples/embedded/paxos_session.nim).
+- **Dimensions and shapes** — index vectors and matrices by their dimensions
+  so operations like dot product and matrix-vector multiplication require
+  compatible sizes. See [`convex_opt_vec.nim`](examples/embedded/convex_opt_vec.nim).
+- **Mathematical certificates** — require a proof that an expression follows
+  convexity rules before passing it to an optimizer. See
+  [`convex_opt.nim`](examples/embedded/convex_opt.nim) and
+  [`convex_opt_vec.nim`](examples/embedded/convex_opt_vec.nim).
+- **Resource use and borrowing** — check that a borrow is used exactly once,
+  that its owner is not used while borrowed, and that the borrow does not
+  escape its scope. See [`qtt_borrow.nim`](examples/embedded/qtt_borrow.nim).
+- **Interactive proof development** — explore goals and contexts in the
+  editor, then refine, finish, or split a proof into cases. See the
+  [shed walkthrough](examples/embedded/sheds_walkthrough.nim).
 
 ## Why embedded
 
 Eponym is deliberately *not* a standalone language.
 The goal is not to build and grow a full independent compiler, stdlib, package system, community around a new language. Rather, if only _some_ of your program really calls for dependent typing, and some parts are fine with the type facilities already offered by Nim, then an embedded approach allows you to use the dependent types only where needed. I especially hope that libraries can host dependent reasoning, and use cases can get safety benefits whether or not they engage with dependent types directly.
 
-
-## The elaborator pipeline
-
-Surface text → `PreTerm` (named) → de Bruijn core terms → elaborated
-`Term` with metavariables solved → checked against the QTT core.
-
-- **`parse_surf.nim`** — hand-written surface parser (canonical front end;
-  `eponymBlock` renders Nim AST to text and feeds it here, issue #144).
-- **`preterm.nim`** — named preterm AST, the common interchange.
-- **`unify.nim`** — Miller pattern unification for metavariables.
-- **`elab.nim`** — bidirectional elaborator: `inferTm`/`checkTm`,
-  implicit insertion, `data` desugaring, conversion checking.
-- **`elab_trace.nim`** — structured elaboration trace for debugging
-  (issue #83): `check`/`infer` entry/exit, unification attempts,
-  metavariable assignments, implicit insertions, conversion-handler
-  invocations, quantity checks. Enabled via the `EPON_TRACE` env var;
-  see `src/eponym/README.md` for an annotated example.
-
-All live in `src/eponym/`; experimental code (the old `mac_surf` Nim-AST
-front end, the relational/staging work) lives in `src/experimental/`. the per-module notes are in
-`src/eponym/README.md`. The interesting part is this pipeline —
-the two ETT encodings (`eponym.nim`, `eponym_init.nim`) were the
-starting point; the elaborator is where the research lives.
-
-## Experiments (see `plan.org`, `decisions.org`)
-
-1. **Surface syntax** — string parser and Nim-AST macro converge on
-   `PreTerm`. Chose thin string-literal macro.
-2. **De Bruijn core** — named → de Bruijn, compile-time `eponym"..."`.
-3. **Metavariables** — Miller-pattern unification, holes, bidirectional
-   elaboration, implicit insertion. (`unify.nim`)
-4. **Extensible reduction** — `postulate`/`elim`/`red`; reduction rules
-   stored in `wRed` values. Bool and Nat eliminators compute.
-5. **Indexed families** — `data` declarations desugar to
-   postulate/elim/red. `Vec` with length indices works.
-5b. **Conversion** — `checkTm` uses full conversion (not just
-   unification), so `Vec append` with `add` in indices elaborates.
-6. **Tactics** — basic `refl`/`assumption`; custom tactic API (in progress).
-7. **LSP** — diagnostics via Language Server Protocol; holes/goals/actions (in progress).
-8. **Staging** — tagless string generation for residual code (basic; full pipeline in progress).
-9. **Erasure** — QTT-lite 0-quantity erased binders (superseded by #66:
-   QTT is now the core type theory, not a post-pass).
-10. **Conversion cache** — exact equality-query memoization (not yet a true e-graph).
-11. **Primitive types** — machine `Int` via `wRed`; Nat literal overloading (`3` instead of `suc` chains).
-12. **Propositional equality** — `Eq`/`refl`/`J`; `plusReducesZ` proof works.
-13. *(future)* **Polynomial functors** — functorial datatypes (Topos PolyTT).
-14. **QTT core** — quantities 0/1/ω in the judgments: quantity-aware
-    conversion, in-judgment enforcement at lambda/application sites,
-    quantity polymorphism (#66; builds on the #64 prototype).
-15. **Constructor disjointness** — `noConfusion`/`noCycle` as named
-    disequality facts in unification; impossible clauses rejected
-    early (#80).
 
 ## Writing eponym in Nim code
 
@@ -105,44 +74,6 @@ eponymBlock:
   logistic regression with dimension-indexed vectors), `qtt_borrow.nim`
   (Rust-style borrow discipline checked at compile time).
 
-## Track C: Relational × staged interpreters
-
-One relational spec of a small language, many tools
-(inference, checking, synthesis) via staging. Lives in
-`src/experimental/` (issue #189) — research material, not on production
-paths. The direct elaborator (`src/eponym/elab.nim`) is production; the
-#143 verdict kept it that way.
-
-- **`src/experimental/relational/minikanren.nim`** — independent
-  µKanren-style engine (no elaborator deps): S-expr terms, unification
-  with occurs check, explicit `Stream` tree (no call-stack recursion),
-  FIFO worklist (fair search — backward `typeo` now enumerates
-  all results), `=/=` disequality with a constraint store,
-  `setEqo` global set-equality constraint, and
-  most-constrained-first branching over constraint-derived
-  domains (4×4 Sudoku in ~20ms; was a 30s timeout).
-- **`src/experimental/relational/rel_elab.nim`** — `typeo` relation for STLC+Nat, plus
-  a `Vec` length-indexed branch.
-- **Staged tools** — each direction of the relation staged to
-  direct code: inference with zero search; synthesis pruned
-  by expected type (~17000x); evaluation as direct recursion
-  (61x); a language-specialized engine on top (546x over the
-  generic staged version).
-- **`tests/lms_staging.nim`** — LMS-style: one `prog` polymorphic
-  over `R`; `R = int` executes, `R = Rep` builds IR which
-  constant-folds at staging time. No hand-written staged duplicate.
-- **`tests/synth_staged.nim`** — `evalo` run backwards (static
-  language rules, dynamic target value), staged to a direct
-  recursive search (6860x), witnesses verified.
-
-Status: experimental. See `docs/staging-design.md` for the staging architecture.
-
-## Trust model
-
-[docs/trust-model.md](docs/trust-model.md) states what the system checks and
-guarantees — and what is your problem: explicit `Type l` universes (#52), unchecked
-positivity of `data` declarations (#33), termination beyond single-function
-structural recursion (#42), and arbitrary type-level host programs.
 
 ## Installation
 
@@ -242,7 +173,28 @@ elaborator and an embedded Nim library:
   definitions are elaborated by `eponymBlock` at compile time, then used
   from plain Nim: Paxos, DCP convex optimization, QTT borrow-checking,
   session types, sensor fusion. Each has header comments explaining
-  what the dependent types are buying.
+  what the dependent types are buying.  
+
+## Editor support
+
+Eponym includes a Language Server Protocol (LSP) server and a VS Code
+extension for interactive development with sheds. The extension shows each
+goal with its context in an inline 2D view, and provides Refine, Give, and
+Case-split actions that update the source and refresh remaining goals.
+
+- Try the [shed walkthrough](examples/embedded/sheds_walkthrough.nim) for
+  guided examples of the editor actions.
+- Find setup and usage instructions in the [VS Code extension guide](editors/vscode/README.md)
+  and [user guide](editors/vscode/USER_GUIDE.md).
+- Browse the [extension source](editors/vscode/).
+- The Nim LSP implementation is in [`src/eponym/lsp.nim`](src/eponym/lsp.nim).
+
+## Trust model
+
+[docs/trust-model.md](docs/trust-model.md) states what the system checks and
+guarantees — and what is your problem: explicit `Type l` universes (#52), unchecked
+positivity of `data` declarations (#33), termination beyond single-function
+structural recursion (#42), and arbitrary type-level host programs.  
 
 ## Layout
 
