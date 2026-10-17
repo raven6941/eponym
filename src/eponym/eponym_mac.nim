@@ -79,7 +79,10 @@ proc nimCommandLamToEponym(n: NimNode): string =
     var nested = newNimNode(nnkCommand)
     nested.add(ident("lam"))
     nested.add(arg[1])
-    return "lam " & binderName(arg[0][0]) & ". " &
+    # A command-form typed binder such as `(n : Nat)` is represented as a
+    # tuple/colon AST, not an identifier. Reuse the expression converter so
+    # typed binders survive in nested command lambdas.
+    return "lam " & nimExprToEponym(arg[0][0]) & ". " &
            nimCommandLamToEponym(nested)
   error("eponymBlock: unsupported command-form lambda", n)
 

@@ -34,6 +34,9 @@ eponymBlock:
   proc two(): Nat = suc(suc(zero))
   proc addN(m: Nat, n: Nat): Nat =
     natElim(lam(u, Nat, Nat), m, lam(p, Nat, lam(ih, Nat, suc(ih))), n)
+  proc zeroAfterStep(n: Nat): Bool =
+    natElim(lam(u, Nat, Bool), true,
+            lam (n: Nat). lam (ih: Bool). false, n)
 
   # --- smoke 14 embedded: tactics ---
   postulate(Int, Univ)
