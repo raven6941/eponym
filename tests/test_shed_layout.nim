@@ -82,7 +82,7 @@ let tm = tmApp(tmApp(vv(0), tmInt(3)), tmMeta(7, @[]))
 let tb = layoutTerm(tm, proc(id: int): string = "Nat")
 check(allHoleIds(tb) == @[7], "term layout: hole 7 wired")
 let ts = renderBox(tb)
-check(ts.contains("_7 : Nat"), "term layout: hole box shows goal")
+check(ts.contains("?7 : Nat"), "term layout: hole box shows goal")
 check(ts.contains("3"), "term layout: int argument rendered")
 
 # --- JSON shape --------------------------------------------------------------

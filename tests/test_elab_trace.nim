@@ -20,7 +20,7 @@ proc polyId {A : Type 0} (x : A) : A =
   x
 proc usePolyId : Nat =
   polyId (suc zero)
-proc useBare : Pi (x : Type 0). Type 0 =
+proc useBare : Pi (x : Nat). Nat =
   polyId
 proc applyLam : Nat =
   (lam (x : Nat). x) (suc zero)

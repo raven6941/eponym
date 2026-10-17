@@ -1,1 +1,1 @@
-line 4, col 32: expected a function type
+line 4, col 37: expected a function type

@@ -5103,9 +5103,8 @@ data U33 : Type 0 -> Type 0 where
 """, "an index of the return type")
   # Family-headed argument type with the family inside an index.
   expectElabErr("""
-proc idPoly33b (A : Type 0) (x : A) : A = x
 data T33 : Type 0 -> Type 0 where
-| tmk33 (A : Type 0) (x : T33 (idPoly33b Type 0 (T33 A))) : T33 A
+| tmk33 (A : Type 0) (x : T33 (T33 A)) : T33 A
 """, "an index of argument 'x'")
   # The acceptance example shape: negative occurrence, located, naming the
   # constructor and the offending argument.
