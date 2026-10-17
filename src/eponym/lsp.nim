@@ -5,7 +5,7 @@
 # - Shed status (issue #134): white/yellow/brown per shed, read from the
 #   `<nimfile>.sheds.json` sidecar the shedsBlock macro writes; published
 #   as diagnostics (yellow -> Warning, brown -> Error, white -> none)
-# - Hover (issue #58): goal type + context at `_` holes
+# - Hover (issue #58): goal type + context at `?` holes
 # - Code actions (issue #58): refine, case-split, give at holes
 # - `eponym/refineShed` (issue #137): the server-owned refine round-trip
 #   for real `.nim` shed documents -- fill the hole in the macro-recorded
@@ -25,6 +25,7 @@
 # Then configure your editor to use it for .ep files.
 
 import json
+import algorithm
 import strutils
 import tables
 import os  # fileExists (issue #134: shed sidecar)
@@ -33,6 +34,7 @@ import preterm
 import eponym_init  # `$` for Term (issue #58)
 import parse_surf
 import unify  # HoleInfo, zonk (issue #58)
+import sheds_mac  # shedGoalAndCtx for residual refinement holes
 import sheds  # ShedInfo, ShedStatus, sidecarPath, readShedSidecarEx (issue #134)
 import shed_layout  # Box, layoutShed, boxToJson (issue #135)
 
@@ -181,7 +183,7 @@ proc findHoleAt*(ms: MetaStore, line, col: int): int =
   -1
 
 proc hoverAt*(src: string, line, col: int): string =
-  ## Issue #58: goal type + context at a `_` hole.
+  ## Issue #58: goal type + context at a `?` hole.
   ## `line`, `col` are 0-based (LSP positions). Returns markdown, or ""
   ## when no hole sits at the position or the document does not elaborate.
   try:
@@ -301,7 +303,7 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
         pat = "(" & c.name & " " & args.join(" ") & ")"
       var newPats: seq[string] = @[pat]
       for i in 1 ..< explicitNames.len: newPats.add(explicitNames[i])
-      newLines.add("| " & newPats.join(" ") & " = _")
+      newLines.add("| " & newPats.join(" ") & " = ?")
     # Replace the whole proc decl: from its first line to the line before
     # the next decl (or end of file).
     let lines = src.splitLines()
@@ -331,53 +333,100 @@ proc fillHoleAt*(src: string, line, col: int, term: string,
                 baseDir = ""):
     tuple[ok: bool, why: string, errLine, errCol: int,
           startLine, startChar, endLine, endChar: int, newSrc: string,
-          holesInRegion: int] =
-  ## Replace the `_` at 0-based (line, col) with `term` and re-elaborate
-  ## hole-tolerantly. ok=false when the document no longer parses or the
-  ## filled region fails to elaborate (why carries the message, errLine/
-  ## errCol its 0-based location). holesInRegion counts holes left inside
-  ## the replaced span (refine tolerates them; give rejects them).
-  ## `baseDir` (issue #137): when non-empty, elaboration resolves
-  ## `import` declarations relative to it (elabCheckHolesDir semantics,
-  ## as the shedsBlock macro does); empty keeps the old elabCheckHoles
-  ## behavior for `.ep` documents.
+          holesInRegion: int,
+          editRanges: seq[tuple[startLine, startChar, endLine, endChar: int]]] =
+  ## Replace the selected `_`/`?` hole and re-elaborate. Repeated named holes
+  ## (`?n`) are replaced together, as they share one metavariable.
   let lines = src.splitLines()
-  if line < 0 or line >= lines.len or col < 0 or col >= lines[line].len or
-     lines[line][col] != '_':
-    return (false, "no '_' hole at the requested position", 0, 0,
-            0,0,0,0, "", 0)
-  let newLine = lines[line][0 ..< col] & term & lines[line][col + 1 .. ^1]
-  var newLines = lines
-  newLines[line] = newLine
-  let newSrc = newLines.join("\n")
-  # End of the replaced span, 1-based (line, col-exclusive), walking the term.
-  var eLine = line + 1
-  var eCol = col + 1
+  if line < 0 or line >= lines.len or col < 0 or col >= lines[line].len:
+    return (false, "no hole at the requested position", 0, 0,
+            0,0,0,0, "", 0, @[])
+  var selected = ""
+  let c = lines[line][col]
+  if c == '_': selected = "_"
+  elif c == '?':
+    selected = "?"
+    var j = col + 1
+    while j < lines[line].len and lines[line][j] in {'0'..'9'}:
+      selected.add(lines[line][j]); inc j
+  else:
+    return (false, "no hole at the requested position", 0, 0,
+            0,0,0,0, "", 0, @[])
+
+  # Find the exact token at every source occurrence. For a named hole, all
+  # token occurrences are one metavariable and therefore must be filled as a
+  # single editor action. Ignore comments to avoid rewriting explanatory text.
+  var offsets: seq[int] = @[]
+  var offset = 0
+  var selectedOffset = col
+  for li in 0 ..< line: selectedOffset += lines[li].len + 1
+  proc startsDecl(ln: string): bool =
+    let t = ln.strip()
+    for kw in ["proc ", "def ", "data ", "postulate ", "elim ",
+               "red ", "record ", "mutual ", "command ", "interface ",
+               "import "]:
+      if t.startsWith(kw): return true
+    false
+  var declStart = 0
+  for li in countdown(line, 0):
+    if startsDecl(lines[li]): declStart = li; break
+  var declEnd = lines.len
+  for li in line + 1 ..< lines.len:
+    if startsDecl(lines[li]): declEnd = li; break
+  for li, ln in lines:
+    if li < declStart or li >= declEnd:
+      offset += ln.len + (if li < lines.high: 1 else: 0)
+      continue
+    let commentAt = min((if ln.find("--") >= 0: ln.find("--") else: ln.len),
+                        (if ln.find('#') >= 0: ln.find('#') else: ln.len))
+    var i = 0
+    while i < commentAt:
+      if ln[i ..< min(ln.len, i + selected.len)] == selected and
+         (selected == "_" or
+          (i + selected.len == ln.len or ln[i + selected.len] notin {'0'..'9'})):
+        if selected == "_" or (i + selected.len == ln.len or
+           not (ln[i + selected.len].isAlphaNumeric or ln[i + selected.len] == '_')):
+          offsets.add(offset + i)
+      inc i
+    offset += ln.len + (if li < lines.high: 1 else: 0)
+  if selected == "_" or selected == "?": offsets = @[selectedOffset]
+  if offsets.len == 0:
+    return (false, "no hole at the requested position", 0, 0,
+            0,0,0,0, "", 0, @[])
+
+  var edited = src
+  for o in countdown(offsets.high, 0):
+    let at = offsets[o]
+    edited = edited[0 ..< at] & term & edited[at + selected.len .. ^1]
+  let newSrc = edited
+  var editRanges: seq[tuple[startLine, startChar, endLine, endChar: int]] = @[]
+  for at in offsets:
+    let before = src[0 ..< at]
+    let lineNo = before.count('\n')
+    let lineStart = before.rfind('\n') + 1
+    editRanges.add((lineNo, at - lineStart, lineNo, at - lineStart + selected.len))
+  editRanges.sort(proc(x, y: tuple[startLine, startChar, endLine, endChar: int]): int =
+    if x.startLine != y.startLine: cmp(y.startLine, x.startLine)
+    else: cmp(y.startChar, x.startChar))
+
+  # Holes introduced by the replacement term are counted per occurrence;
+  # this preserves the refine/give distinction for shared holes.
+  var termHoles = 0
   for ch in term:
-    if ch == '\n': inc eLine; eCol = 1
-    else: inc eCol
-  let sLine = line + 1
-  let sCol = col + 1
+    if ch == '?': inc termHoles
   try:
     let (_, ms, errLoc, errMsg) =
       if baseDir == "": elabCheckHoles(newSrc)
       else: elabCheckHolesDir(newSrc, baseDir)
     if errMsg != "":
       return (false, errMsg, errLoc.line - 1, errLoc.col - 1,
-              0,0,0,0, "", 0)
-    var inRegion = 0
-    for hh in ms.holes:
-      let afterStart = hh.holeLoc.line > sLine or
-        (hh.holeLoc.line == sLine and hh.holeLoc.col >= sCol)
-      let beforeEnd = hh.holeLoc.line < eLine or
-        (hh.holeLoc.line == eLine and hh.holeLoc.col < eCol)
-      if afterStart and beforeEnd: inc inRegion
-    # Edit range is the original `_` char in the pre-edit document; the
-    # (sLine..eLine) span above is only for the holes-in-region check.
-    (true, "", 0, 0, line, col, line, col + 1, newSrc, inRegion)
+              0,0,0,0, "", 0, @[])
+    let first = editRanges[^1]
+    (true, "", 0, 0, first.startLine, first.startChar,
+     first.endLine, first.endChar, newSrc, termHoles * offsets.len, editRanges)
   except ParseError as e:
     (false, "parse error: " & e.msg, e.loc.line - 1, e.loc.col - 1,
-     0,0,0,0, "", 0)
+     0,0,0,0, "", 0, @[])
 
 proc editJson(uri: string, sLine, sChar, eLine, eChar: int,
               newText: string): JsonNode =
@@ -392,6 +441,18 @@ proc editJson(uri: string, sLine, sChar, eLine, eChar: int,
       }]
     }
   }
+
+proc editJsonMany(uri: string,
+    ranges: seq[tuple[startLine, startChar, endLine, endChar: int]],
+    newText: string): JsonNode =
+  var edits = newJArray()
+  for r in ranges:
+    edits.add(%*{
+      "range": {"start": {"line": r.startLine, "character": r.startChar},
+                "end": {"line": r.endLine, "character": r.endChar}},
+      "newText": newText
+    })
+  %*{"changes": {uri: edits}}
 
 proc codeActionError(id: JsonNode, msg: string): JsonNode =
   %*{"jsonrpc": "2.0", "id": id,
@@ -424,15 +485,13 @@ proc codeActionsAt*(src, uri: string, line, col: int, variable, term: string,
     actions.add(%*{
       "title": "refine hole",
       "kind": "refactor",
-      "edit": editJson(uri, f.startLine, f.startChar, f.endLine, f.endChar,
-                       term)
+      "edit": editJsonMany(uri, f.editRanges, term)
     })
     if f.holesInRegion == 0:
       actions.add(%*{
         "title": "give " & term,
         "kind": "refactor",
-        "edit": editJson(uri, f.startLine, f.startChar, f.endLine, f.endChar,
-                         term)
+        "edit": editJsonMany(uri, f.editRanges, term)
       })
     # else: the term leaves holes behind — only refine is offered.
   else:
@@ -468,7 +527,38 @@ proc shedNames*(uri: string): seq[string] =
   for s in readShedSidecar(sc):
     result.add(s.name)
 
-proc refineShed*(nimFile, shedName, term: string):
+proc sourceOffset(src: string, line, col: int): int =
+  ## Convert a 1-based source position to a byte offset.
+  if line < 1 or col < 1: return -1
+  var currentLine = 1
+  while currentLine < line:
+    let nl = src.find('\n', result)
+    if nl < 0: return -1
+    result = nl + 1
+    inc currentLine
+  result += col - 1
+  if result > src.len: return -1
+
+proc sourcePosition(src: string, offset: int): tuple[line, col: int] =
+  ## Convert a byte offset to a 1-based source position.
+  result = (1, 1)
+  for i in 0 ..< min(offset, src.len):
+    if src[i] == '\n':
+      inc result.line
+      result.col = 1
+    else:
+      inc result.col
+
+proc freshShedName(base: string, used: var seq[string]): string =
+  result = base
+  var suffix = 1
+  while result in used:
+    result = base & "_" & $suffix
+    inc suffix
+  used.add(result)
+
+proc refineShed*(nimFile, shedName, term: string,
+                 requireComplete = false):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           status: string, yellowCount: int] =
   ## Issue #137: the server-owned refine round-trip for real `.nim` shed
@@ -477,14 +567,15 @@ proc refineShed*(nimFile, shedName, term: string):
   ## not; here the client sends only (shedName, term) and the server does
   ## the whole loop: fill the hole in the macro-recorded generated source
   ## (`ShedInfo.genSrc`), refresh statuses, rewrite the sidecar, and
-  ## return the term plus the `.nim` splice position (`nimLine`, `nimCol`:
-  ## 1-based start of the `![...]` node -- the client replaces that node,
-  ## a single-line span, with the term).
+  ## return a Nim splice plus its replacement position (`nimLine`,
+  ## `nimCol`: 1-based start of the original shed marker). Residual `_`
+  ## holes become `shedHole(name)` markers in the splice and new sidecar
+  ## entries, so recompiling the source preserves their goals.
   ##
   ## Sheds from other shedsBlock expansions in the same file are
   ## identified by sharing the block's `genSrc` string: their sources are
-  ## updated to the filled source and their hole lines shifted past a
-  ## multi-line fill, while sheds from other blocks are untouched.
+  ## updated to the filled source and their generated-source hole
+  ## positions shifted, while sheds from other blocks are untouched.
   let sc = sidecarPath(nimFile)
   if not fileExists(sc):
     return (false, "no sheds sidecar for " & nimFile &
@@ -507,6 +598,8 @@ proc refineShed*(nimFile, shedName, term: string):
   if sheds[si].status != ssYellow:
     return (false, "shed '" & shedName & "' is not refinable (status " &
             shedStatusToStr(sheds[si].status) & ")", "", 0, 0, "", 0)
+  let spliceLine = sheds[si].nimLine
+  let spliceCol = sheds[si].nimCol
   let baseDir = parentDir(nimFile)
   # Locate the hole in the recorded source: exact (line, col) when the
   # column is known, else the first line match (the #134 rule).
@@ -530,27 +623,134 @@ proc refineShed*(nimFile, shedName, term: string):
   except ParseError as e:
     return (false, "recorded source no longer parses: " & e.msg,
             "", 0, 0, "", 0)
-  let f = fillHoleAt(oldSrc, holeLine1 - 1, holeCol1 - 1, term, baseDir)
+  # A replacement can sit inside a larger application (for example a
+  # natElim branch followed by its scrutinee). Parenthesize it in the
+  # generated source so low-precedence forms such as `lam p. ...` do not
+  # absorb the following application arguments. The client receives a Nim
+  # splice, with residual holes converted to nested shed markers below.
+  let wrappedTerm = "(" & term & ")"
+  let f = fillHoleAt(oldSrc, holeLine1 - 1, holeCol1 - 1,
+                     wrappedTerm, baseDir)
   if not f.ok:
     return (false, "refine rejected: " & f.why, "", 0, 0, "", 0)
-  # A multi-line fill shifts later sheds' generated-source lines; the
-  # filled shed keeps its line (the fill starts there) and is re-matched
-  # by refreshShedStatuses below.
   let newSrc = f.newSrc
-  let filledLine = sheds[si].holeLine
-  let linesAdded = term.count('\n')
+  let fillOffset = sourceOffset(oldSrc, holeLine1, holeCol1)
+  if fillOffset < 0:
+    return (false, "recorded hole position is outside its generated source",
+            "", 0, 0, "", 0)
+  let regionStart = fillOffset + 1  # skip the grouping `(`
+
+  # Re-elaborate to discover every residual hole created by this term.
+  # Each one must become a named Nim shed in the splice, or the next
+  # shedsBlock compilation would silently drop it from the sidecar.
+  var checked: MetaStore
+  try:
+    let r = elabCheckHolesDir(newSrc, baseDir)
+    if r.errMsg != "":
+      return (false, "refine rejected: " & r.errMsg, "", 0, 0, "", 0)
+    checked = r.ms
+  except ParseError as e:
+    return (false, "refine rejected: parse error: " & e.msg,
+            "", 0, 0, "", 0)
+
+  var residual: seq[tuple[offset, holeIdx: int, hole: HoleInfo]] = @[]
+  let regionEnd = regionStart + term.len
+  for hi, h in checked.holes:
+    let absolute = sourceOffset(newSrc, h.holeLoc.line, h.holeLoc.col)
+    if absolute >= regionStart and absolute < regionEnd:
+      let relative = absolute - regionStart
+      # Surface holes are `?`/`?N`; `_` is now a discard wildcard.
+      if relative < term.len and term[relative] == '?':
+        residual.add((relative, hi, h))
+  residual.sort(proc(a, b: tuple[offset, holeIdx: int, hole: HoleInfo]): int =
+    cmp(a.offset, b.offset))
+  if requireComplete and residual.len > 0:
+    return (false, "give rejected: candidate leaves " & $residual.len &
+            " open hole(s)", "", 0, 0, "", 0)
+
+  var usedNames: seq[string] = @[]
+  for i, s in sheds:
+    if i != si: usedNames.add(s.name)
+  var residualNames: seq[string] = @[]
+  for i in 0 ..< residual.len:
+    let base = if i == 0: shedName else: shedName & "_" & $i
+    residualNames.add(freshShedName(base, usedNames))
+
+  var clientTerm = ""
+  var termCursor = 0
+  var markerOffsets: seq[int] = @[]
+  for i, h in residual:
+    clientTerm.add(term[termCursor ..< h.offset])
+    markerOffsets.add(clientTerm.len)
+    # Nim cannot parse prefix `![name]` in every expression position (for
+    # example, after the dot in `lam f. lam g. ...`). Use a call-form
+    # residual marker there; shedsBlock and the extension treat it as the
+    # same named shed and turn it back into an Eponym hole.
+    clientTerm.add("shedHole(" & residualNames[i] & ")")
+    # Preserve the whole source token: `?` is anonymous and `?N` is a
+    # numbered hole. Replacing only `?` would leave the number behind.
+    termCursor = h.offset + 1 + h.hole.holeName.len
+  if termCursor < term.len:
+    clientTerm.add(term[termCursor .. ^1])
+
+  # Update old shed locations by offsets, so same-line and multi-line
+  # fills both move later holes correctly.
   for i in 0 ..< sheds.len:
-    if sheds[i].genSrc == oldSrc:
-      sheds[i].genSrc = newSrc
-      if sheds[i].holeLine > filledLine:
-        sheds[i].holeLine += linesAdded
+    if sheds[i].genSrc != oldSrc or i == si: continue
+    let oldOffset = sourceOffset(oldSrc, sheds[i].holeLine, sheds[i].holeCol)
+    if oldOffset >= 0:
+      let movedOffset = if oldOffset > fillOffset:
+        oldOffset + wrappedTerm.len - 1
+      else:
+        oldOffset
+      let pos = sourcePosition(newSrc, movedOffset)
+      sheds[i].holeLine = pos.line
+      sheds[i].holeCol = pos.col
+    sheds[i].genSrc = newSrc
+
+  # The original shed becomes one child per residual hole. A single child
+  # keeps the original name, allowing the current panel to continue.
+  if residual.len == 0:
+    sheds[si].genSrc = newSrc
+    sheds[si].holeIdx = -1
+    sheds[si].status = ssWhite
+  else:
+    var children: seq[ShedInfo] = @[]
+    for i, h in residual:
+      let (goal, ctx, goalPi) = shedGoalAndCtx(checked, h.hole)
+      let (termLine, termCol) = sourcePosition(clientTerm, markerOffsets[i])
+      let nimLine = sheds[si].nimLine + termLine - 1
+      let nimCol = if termLine == 1:
+        sheds[si].nimCol + termCol - 1
+      else:
+        termCol
+      children.add(ShedInfo(
+        name: residualNames[i], draft: "", nimLine: nimLine, nimCol: nimCol,
+        holeLine: h.hole.holeLoc.line, holeCol: h.hole.holeLoc.col,
+        holeIdx: h.holeIdx, genSrc: newSrc, goal: goal, ctx: ctx,
+        goalPi: goalPi, status: ssYellow))
+    sheds.delete(si)
+    for i, child in children:
+      sheds.insert(child, si + i)
+
   refreshShedStatuses(sheds, newSrc, baseDir, onlyGenSrc = newSrc)
   writeShedSidecar(nimFile, sheds, errMsg0)  # keep the doc-level message
   var yellowCount = 0
   for s in sheds:
     if s.status == ssYellow: inc yellowCount
-  (true, "", term, sheds[si].nimLine, sheds[si].nimCol,
-   shedStatusToStr(sheds[si].status), yellowCount)
+  let responseName = if residual.len == 0: shedName else: residualNames[0]
+  var responseShed: ShedInfo
+  var foundResponseShed = false
+  for s in sheds:
+    if s.name == responseName and s.genSrc == newSrc:
+      responseShed = s
+      foundResponseShed = true
+      break
+  if not foundResponseShed:
+    return (false, "internal error: refinement result shed metadata missing",
+            "", 0, 0, "", 0)
+  (true, "", clientTerm, spliceLine, spliceCol,
+   shedStatusToStr(responseShed.status), yellowCount)
 
 proc caseSplitShed*(nimFile, shedName, variable: string):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
@@ -651,7 +851,7 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
       inc k
     used.add(nm)
     subSheds.add(nm)
-  # Build the terms. The Eponym term (for validation) uses `_` holes;
+  # Build the terms. The Eponym term (for validation) uses `?` holes;
   # the nim term uses `![sub]` shed nodes so recompile discovers them.
   let goalStr = sheds0[si].goal
   if goalStr == "":
@@ -662,7 +862,7 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
   var epArgs: seq[string] = @[motiveEp]
   var nimArgs: seq[string] = @[motiveNim]
   for ss in subSheds:
-    epArgs.add("_")
+    epArgs.add("?")
     nimArgs.add("![" & ss & "]")
   epArgs.add(variable)
   nimArgs.add(variable)
@@ -772,7 +972,9 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
     let uri = msg["params"]["textDocument"]["uri"].getStr()
     let shedName = msg["params"]["shedName"].getStr()
     let term = msg["params"]["term"].getStr()
-    let r = refineShed(uriToPath(uri), shedName, term)
+    let requireComplete = "requireComplete" in msg["params"] and
+      msg["params"]["requireComplete"].getBool()
+    let r = refineShed(uriToPath(uri), shedName, term, requireComplete)
     if not r.ok:
       return %*{"jsonrpc": "2.0", "id": id,
                 "error": {"code": -32602, "message": r.why}}

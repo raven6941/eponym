@@ -28,13 +28,14 @@
 #            | "Sig" binder "." term
 #            | "let" name (":" term)? "=" term "in" term
 #            | "fst" atom | "snd" atom | "by" tactic
-#            | "_"                                     -- hole (Experiment 3)
-#            | name | "?" | "1" | "<>" | "O" | integer
+#            | "?" [digits]                            -- fresh/named hole
+#            | "_"                                     -- discard/pattern wildcard
+#            | name | "1" | "<>" | "O" | integer
 #   binder-arrow: "(" name ":" term ")" "->" term  -- binds name (issue #65)
 # Comments: `--` or `#` to end of line.
 #
 # eponymBlock Nim-AST mapping (eponym_mac.nim `blockToEponym`):
-#   `Univ`                -> `?`            (Nim can't parse a bare `?`)
+#   `Univ`                -> `Type 0`       (Nim can't parse a universe token)
 #   `unitTy`              -> `1`            (unit type; `1` lexes as unit, #151)
 #   `emptyTy`             -> `O`            (empty type, #151)
 #   `unitv`               -> `<>`           (unit value; `<>` isn't valid Nim, #151)
@@ -84,7 +85,7 @@ type
     tkRecord, tkMutual,
     tkImport, tkInterface, tkCommand,
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
-    tkUniv, tkUnitTy, tkUnitV, tkEmptyTy,
+    tkQuestion, tkUnitTy, tkUnitV, tkEmptyTy,
     tkLParen, tkRParen, tkLBrace, tkRBrace, tkLBracket, tkRBracket,
     tkColon, tkColonEq, tkDot, tkComma, tkArrow, tkEq, tkPipe
   Token = object
@@ -146,8 +147,12 @@ proc lex(src: string): seq[Token] =
         if w == "O": k = tkEmptyTy
       result.add Token(kind: k, lexeme: w, loc: l)
     elif c == '?':
-      result.add Token(kind: tkUniv, lexeme: "?", loc: curLoc())
-      inc col; inc i
+      let l = curLoc()
+      var j = i + 1
+      while j < src.len and src[j] in {'0'..'9'}: inc j
+      let suffix = src[i + 1 ..< j]
+      result.add Token(kind: tkQuestion, lexeme: suffix, loc: l)
+      col += j - i; i = j
     elif c == '"':
       # String literal (issue #49: `import "path"`); only `\"` escapes.
       let l = curLoc()
@@ -237,7 +242,7 @@ proc expect(p: var Parser, k: TokKind, what: string): Token =
     raise fail(result.loc, "expected " & what & ", got '" & result.lexeme & "'")
 
 proc isAtomStart(k: TokKind): bool =
-  k in {tkIdent, tkInt, tkUniv, tkUnitTy, tkUnitV, tkEmptyTy, tkLParen,
+  k in {tkIdent, tkInt, tkQuestion, tkUnitTy, tkUnitV, tkEmptyTy, tkLParen,
         tkLam, tkPi, tkSig, tkFst, tkSnd, tkBy}
 
 proc parseTerm(p: var Parser): PreTerm  # forward
@@ -290,7 +295,7 @@ proc parseAtom(p: var Parser): PreTerm =
   let t = p.next()
   case t.kind
   of tkIdent:
-    if t.lexeme == "_": mkHole(t.loc)  # hole (Experiment 3)
+    if t.lexeme == "_": mkDiscard(t.loc)
     elif t.lexeme == "Type" and p.peek().kind in {tkInt, tkUnitTy} and
          (p.peek().kind == tkInt or p.peek().lexeme == "1"):
       # Issue #52: `Type l` — the level-annotated universe. `Type` stays a
@@ -302,7 +307,8 @@ proc parseAtom(p: var Parser): PreTerm =
       discard p.next()  # consume the level literal
       mkUnivN(lvl, t.loc)
     else: mkVar(t.lexeme, t.loc)
-  of tkUniv: mkUniv(t.loc)
+  of tkQuestion:
+    if t.lexeme == "": mkHole(t.loc) else: mkNamedHole(t.lexeme, t.loc)
   of tkUnitTy: mkUnitTy(t.loc)
   of tkUnitV: mkUnitV(t.loc)
   of tkEmptyTy: mkEmptyTy(t.loc)
@@ -498,7 +504,7 @@ proc parseRed(p: var Parser): SurfDecl =
   SurfDecl(kind: dkRed, lhs: lhs, rhs: rhs, rloc: t.loc)
 
 proc parseData(p: var Parser): SurfDecl =
-  ## data Vec (A : ?) : Nat -> ? where
+  ## data Vec (A : Type 0) : Nat -> Type 0 where
   ## | nil : Vec A zero
   ## | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
   let t = p.expect(tkData, "'data'")
@@ -632,32 +638,32 @@ proc parseTermStr*(src: string): PreTerm =
 
 when isMainModule:
   let prog = parseProgram("""
-proc twice (A : ?) (f : A -> A) (x : A) : A =
+proc twice (A : Type 0) (f : A -> A) (x : A) : A =
   f (f x)
 
 -- const and pairSwap
-proc const (A : ?) (B : ?) (x : A) (y : B) : A =
+proc const (A : Type 0) (B : Type 0) (x : A) (y : B) : A =
   x
 
-proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
+proc pairSwap (A : Type 0) (B : Type 0) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 
-proc withLet (A : ?) (x : A) : A =
+proc withLet (A : Type 0) (x : A) : A =
   let y : A = x in y
 """)
   assert prog.len == 4
   assert prog[0].def.name == "twice"
-  assert $prog[0].def.desugarTy() == "Pi (A : ?). Pi (f : A -> A). Pi (x : A). A"
+  assert $prog[0].def.desugarTy() == "Pi (A : Type 0). Pi (f : A -> A). Pi (x : A). A"
   assert $prog[0].def.desugarTm() ==
-    "lam (A : ?). lam (f : A -> A). lam (x : A). f (f x)"
+    "lam (A : Type 0). lam (f : A -> A). lam (x : A). f (f x)"
   assert $prog[1].def.desugarTm() ==
-    "lam (A : ?). lam (B : ?). lam (x : A). lam (y : B). x"
+    "lam (A : Type 0). lam (B : Type 0). lam (x : A). lam (y : B). x"
   assert $prog[2].def.desugarTy() ==
-    "Pi (A : ?). Pi (B : ?). Pi (p : Sig (u : A). B). Sig (v : B). A"
+    "Pi (A : Type 0). Pi (B : Type 0). Pi (p : Sig (u : A). B). Sig (v : B). A"
   assert $prog[2].def.desugarTm() ==
-    "lam (A : ?). lam (B : ?). lam (p : Sig (u : A). B). (snd p, fst p)"
+    "lam (A : Type 0). lam (B : Type 0). lam (p : Sig (u : A). B). (snd p, fst p)"
   assert $prog[3].def.desugarTm() ==
-    "lam (A : ?). lam (x : A). let y : A = x in y"
+    "lam (A : Type 0). lam (x : A). let y : A = x in y"
 
   # locations are tracked (Nim's `"""` strips the leading newline)
   assert prog[0].def.body.loc.line == 2
@@ -666,7 +672,7 @@ proc withLet (A : ?) (x : A) : A =
 
   # errors point at source
   try:
-    discard parseProgram("proc broken (A : ?) : A =\n  f (")
+    discard parseProgram("proc broken (A : Type 0) : A =\n  f (")
     assert false, "should have raised"
   except ParseError as e:
     assert "line 2" in e.msg, e.msg
@@ -679,30 +685,30 @@ proc withLet (A : ?) (x : A) : A =
     assert "line 1" in e.msg
 
   # round trip through the renderer
-  let rt = parseProgram("proc id (A : ?) (x : A) : A = x")
-  assert $rt[0].def.desugarTm() == "lam (A : ?). lam (x : A). x"
+  let rt = parseProgram("proc id (A : Type 0) (x : A) : A = x")
+  assert $rt[0].def.desugarTm() == "lam (A : Type 0). lam (x : A). x"
 
   # implicit binders and holes (Experiment 3)
   let imp = parseProgram("""
-proc polyId {A : ?} (x : A) : A = x
-proc useHole : 1 = _
-proc impPi : Pi {A : ?}. A -> A = lam {A : ?}. lam (x : A). x
+proc polyId {A : Type 0} (x : A) : A = x
+proc useHole : 1 = ?
+proc impPi : Pi {A : Type 0}. A -> A = lam {A : Type 0}. lam (x : A). x
 """)
   assert imp.len == 3
   assert imp[0].def.tele[0].impl
   assert not imp[0].def.tele[1].impl
-  assert $imp[0].def.desugarTy() == "Pi {A : ?}. Pi (x : A). A"
-  assert $imp[0].def.desugarTm() == "lam {A : ?}. lam (x : A). x"
+  assert $imp[0].def.desugarTy() == "Pi {A : Type 0}. Pi (x : A). A"
+  assert $imp[0].def.desugarTm() == "lam {A : Type 0}. lam (x : A). x"
   assert imp[1].def.body.kind == pkHole
-  assert $imp[2].def.desugarTy() == "Pi {A : ?}. A -> A"
-  assert $imp[2].def.desugarTm() == "lam {A : ?}. lam (x : A). x"
+  assert $imp[2].def.desugarTy() == "Pi {A : Type 0}. A -> A"
+  assert $imp[2].def.desugarTm() == "lam {A : Type 0}. lam (x : A). x"
 
 
   # postulate / elim / red declarations (Experiment 4)
   let decls = parseProgram("""
-postulate Bool : ?
+postulate Bool : Type 0
 postulate true : Bool
-elim boolElim : Pi (C : Bool -> ?). C true -> C false -> Pi (b : Bool). C b
+elim boolElim : Pi (C : Bool -> Type 0). C true -> C false -> Pi (b : Bool). C b
 red boolElim C t f true  = t
 red boolElim C t f false = f
 """)
@@ -713,7 +719,7 @@ red boolElim C t f false = f
   assert decls[3].lhs.kind == pkApp
 
   # import declarations (issue #49)
-  let imps = parseProgram("import \"lib/nat.ep\"\nproc id (A : ?) (x : A) : A = x")
+  let imps = parseProgram("import \"lib/nat.ep\"\nproc id (A : Type 0) (x : A) : A = x")
   assert imps.len == 2
   assert imps[0].kind == dkImport and imps[0].ipath == "lib/nat.ep"
   assert imps[1].kind == dkDef

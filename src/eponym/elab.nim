@@ -8,14 +8,14 @@
 ##   checkTm -- checking mode against an expected *Term*; lambdas and pairs
 ##              elaborate against it, everything else infers then unifies.
 ##
-## Metavariables (unify.nim) are created for implicit arguments, holes `_`,
+## Metavariables (unify.nim) are created for implicit arguments, holes `?`,
 ## unannotated lambda domains, and unknown function/pair types. They are
 ## solved by pattern unification during elaboration; elabCheck zonks
 ## (substitutes all solutions) before the core's check/infer ever runs, so
 ## the core never sees a metavariable in the success path. Leftover unsolved
 ## metas are elaboration errors carrying the creation location.
 ##
-## Implicit arguments: Pi/lambda binders written `{A : ?}` elaborate to
+## Implicit arguments: Pi/lambda binders written `{A : Type 0}` elaborate to
 ## core binders flagged `impl`; using a variable whose type has implicit
 ## leading Pis inserts fresh metas for them (insertImplicits), which
 ## unification solves from later explicit arguments. There is no surface
@@ -644,7 +644,7 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
         return nil
       # Issue #52: cumulativity fast path (subtyping, not equality). A term
       # whose type is `Type i` checks against an expected `Type j` when
-      # i <= j; the legacy `?` is the bottom universe on the inferred side
+      # i <= j; `Type 0` is the bottom universe on the inferred side
       # and the top sort on the expected side ("is a type" positions admit
       # any universe) — mirroring the core's directional rule in `check`.
       # Handlers never see these goals, exactly as the core's `check`
@@ -660,8 +660,8 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
         if aLvl < 0: break cumul
         let bIsStar = vb.whnf.kind == wConst and vb.whnf.c == cStar
         if bIsStar:
-          # `?` stays the top sort for "is a type" positions: any universe checks.
-          traceEvt(tcConv, "conv.cumul", "Type " & $aLvl & " <= ?")
+          # the internal top sort stays available for "is a type" positions: any universe checks.
+          traceEvt(tcConv, "conv.cumul", "Type " & $aLvl & " <= Type 0")
           return nil
         let bLvl =
           try: univIdx(vb)
@@ -1727,6 +1727,7 @@ type MetaSnapshot = object
   entries: Table[int, MetaEntry]
   nextId: int
   holesLen: int
+  namedHoles: Table[string, NamedHoleEntry]
   qvarNames: Table[string, int]
   qvarSols: seq[QtySol]
   qvarPending: Table[string, seq[tuple[varName: string, loc: Loc]]]
@@ -1739,6 +1740,7 @@ proc snapshotMeta(ms: MetaStore): MetaSnapshot =
   var pending = initTable[string, seq[tuple[varName: string, loc: Loc]]]()
   for k, v in ms.qvarPending: pending[k] = @v
   MetaSnapshot(entries: ms.entries, nextId: ms.nextId, holesLen: ms.holes.len,
+               namedHoles: ms.namedHoles,
                qvarNames: ms.qvarNames, qvarSols: ms.qvarSols,
                qvarPending: pending, extDischarges: ms.extDischarges)
 
@@ -1749,6 +1751,7 @@ proc restoreMeta(ms: var MetaStore, snap: MetaSnapshot) =
   ms.entries = snap.entries
   ms.nextId = snap.nextId
   ms.holes.setLen(snap.holesLen)
+  ms.namedHoles = snap.namedHoles
   ms.qvarNames = snap.qvarNames
   ms.qvarSols = snap.qvarSols
   ms.qvarPending = snap.qvarPending
@@ -1783,25 +1786,45 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
       of pkUnitV: (tmC(cVoid), tmC(cOne))
       of pkEmptyTy: (tmC(cZero), tmC(cStar))
       of pkHole:
-        let tyM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
-        let holeTm = freshMeta(ms, tyM, ctx.len, 0, pre.loc)
+        var tyM, holeTm: Term
+        if pre.holeName != "" and pre.holeName in ms.namedHoles:
+          let named = ms.namedHoles[pre.holeName]
+          var sameContext = ctx.len == named.ctxLen
+          if sameContext:
+            for i, e in ctx:
+              if e.name != named.ctxNames[i]: sameContext = false
+          if not sameContext:
+            raise elabErr(pre.loc, "named hole ?" & pre.holeName &
+              " is reused in a different context")
+          tyM = tmMeta(named.tyMetaId, identitySpine(named.ctxLen, 0))
+          holeTm = tmMeta(named.termMetaId, identitySpine(named.ctxLen, 0))
+        else:
+          tyM = freshMeta(ms, tmC(cStar), ctx.len, 0, pre.loc)
+          holeTm = freshMeta(ms, tyM, ctx.len, 0, pre.loc)
+          if pre.holeName != "":
+            ms.namedHoles[pre.holeName] = NamedHoleEntry(
+              termMetaId: holeTm.metaId, tyMetaId: tyM.metaId, ctxLen: ctx.len,
+              ctxNames: ctx.mapIt(it.name))
         # Issue #58: record the hole for LSP hover — goal type + binder context.
         var hctx: seq[tuple[name: string, ty: Term]] = @[]
         for e in ctx: hctx.add((e.name, e.ty))
-        ms.holes.add(HoleInfo(holeLoc: pre.loc, holeGoal: tyM, holeCtx: hctx,
+        ms.holes.add(HoleInfo(holeLoc: pre.loc, holeName: pre.holeName,
+                              holeGoal: tyM, holeCtx: hctx,
                               holeAb: ab))  # Issue #177
         (holeTm, tyM)
+      of pkDiscard:
+        raise elabErr(pre.loc, "'_' is a discard pattern/binder, not a term; use '?' for a hole")
       of pkInt:
         # Experiment 11: integer literal; type is the postulated Int
         if "Int" notin globals:
-          raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?'")
+          raise elabErr(pre.loc, "integer literal requires 'postulate Int : Type 0'")
         let intTy = globals["Int"].tm  # the R node for Int
         (tmInt(pre.intVal), intTy)
       of pkPi:
         let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
         let c = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, tmC(cStar), ab)
         # Issue #52: Pi formation takes the max of the domain/codomain
-        # universe levels (the core rule); legacy `?`-classified types
+        # universe levels (the core rule); internally generated legacy-universe terms
         # contribute level 0.
         let lvl = max(univLevelOfTy(supply, ms, d, ctx),
                       univLevelOfTy(supply, ms, c, ctx.ext(pre.name, d, pre.qty)))
@@ -2024,7 +2047,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
                 raise e
           if not done:
             if "Int" notin globals:
-              raise elabErr(pre.loc, "integer literal requires 'postulate Int : ?' or 'data Nat'")
+              raise elabErr(pre.loc, "integer literal requires 'postulate Int : Type 0' or 'data Nat'")
             let intTy = globals["Int"].tm
             discard convElab(ms, supply, intTy, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
             resTm = tmInt(pre.intVal)
@@ -2170,6 +2193,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   # handler extends what the system accepts, scoping the trust extension.
   let extBefore = ms.extDischarges
   resetQVars(ms)  # Issue #66: fresh quantity-variable scope per declaration
+  ms.namedHoles = initTable[string, NamedHoleEntry]()
   let ab = sigAmbient(d, globals, ms)  # Issue #177: ambient ability
   # 1. elaborate the type; it must be a type and contain no metas
   let tyPre = d.desugarTy()
@@ -2522,7 +2546,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
 # goes through the same elaborators. The desugarer generates:
 #   postulate F : Pi (params...). indexTy
 #   postulate c : Pi (params...). Pi (tele...). retTy     (per constructor)
-#   elim fElim : Pi (params...)(C : Pi (idx...). F params idx -> ?).
+#   elim fElim : Pi (params...)(C : Pi (idx...). F params idx -> Type 0).
 #                Pi (methods...). Pi (idx...)(v : F params idx). C idx v
 #   red fElim params C methods idxVars (c params teleVars) = contractum
 # Index positions in red patterns are dummy variables (unused in the
@@ -2680,7 +2704,7 @@ proc genElimTy(d: SurfDecl, loc: Loc): tuple[ty: PreTerm, methodNames: seq[strin
   for i in 0 ..< indexTele.len:
     indexNames.add("i" & $i)
   # Issue #112: later index domains may mention earlier index binders
-  # (dependent index telescopes, e.g. `Pi (n : Nat). VExpr n -> ?`).
+  # (dependent index telescopes, e.g. `Pi (n : Nat). VExpr n -> Type 0`).
   # The eliminator renames binders to i0, i1, ..., so substitute the
   # old names for the generated ones across the telescope; a no-op for
   # non-dependent telescopes. Capture-avoiding via substPreN (a domain
@@ -2691,7 +2715,7 @@ proc genElimTy(d: SurfDecl, loc: Loc): tuple[ty: PreTerm, methodNames: seq[strin
   for i in 0 ..< indexTele.len:
     indexTys.add(substPreN(indexTele[i].ty, idxSubs, idxFresh))
     idxSubs.add((indexTele[i].name, mkVar(indexNames[i], loc)))
-  # C : Pi (idx...). F params idx -> ?
+  # C : Pi (idx...). F params idx -> Type 0
   var cTy = mkArrow(famAppPre(famName, d.params,
                              indexNames.mapIt(mkVar(it, loc)), loc),
                     mkUniv(loc), loc)
@@ -2901,7 +2925,7 @@ proc elabRecordDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
                     ms: var MetaStore) =
   profilePhase(epData):
       ## Issue #37: desugar `record R:` with `| f : T` fields to:
-      ##   def R : ? = Sig (f0:T0). ... . 1          (transparent Sigma)
+      ##   def R : Type 0 = Sig (f0:T0). ... . 1          (transparent Sigma)
       ##   def mkR (f0:T0) ... : R = (f0, (..., <>)) (positional constructor)
       ##   def R.fi (p : R) : Ti[...] = <accessor>   (named projections)
       ## `e.f` (pkProj) resolves through ms.recordFields at elaboration.
@@ -3425,7 +3449,7 @@ proc subsumesPat(p, q: PreTerm, ctorToData: Table[string, string]): bool =
   if not ip:
     # A genuine variable/wildcard subsumes anything (a bare pkVar naming
     # a constructor was classified as a constructor above).
-    return p.kind == pkVar or p.kind == pkHole
+    return p.kind == pkVar or p.kind == pkDiscard
   let (iq, hq, aq) = patKindOf(q, ctorToData)
   iq and hp == hq and subsumesNests(ap, aq, ctorToData)
 
@@ -3437,7 +3461,7 @@ proc subsumesAll(p: PreTerm, dataInfos: Table[string, SurfDecl],
   ## patterns. (A bare `zero` is *not* match-all for Nat: it misses `suc`.)
   let (isCtor, head, args) = patKindOf(p, ctorToData)
   if not isCtor:
-    return p.kind == pkVar or p.kind == pkHole
+    return p.kind == pkVar or p.kind == pkDiscard
   let d2 = ctorToData.getOrDefault(head, "")
   if d2 == "" or not dataInfos.hasKey(d2): return false
   if dataInfos[d2].ctors.len != 1: return false
@@ -3503,7 +3527,7 @@ proc checkMatrixCoverage(rows: seq[MatrixRow], dd: SurfDecl,
             $q.cloc.col & ctxMsg)
       covered[headName].add(ri)
     else:
-      if row.pats[0].kind != pkVar and row.pats[0].kind != pkHole:
+      if row.pats[0].kind != pkVar and row.pats[0].kind != pkDiscard:
         raise elabErr(row.cloc, "pattern must be a constructor pattern, a " &
           "variable, or a wildcard `_`" & ctxMsg)
       # A variable/wildcard row is redundant iff every constructor is
@@ -3556,7 +3580,7 @@ proc specializeRows(rows: seq[MatrixRow], dd: SurfDecl, ci: int,
                            src: row.src, catchVar: ""))
     else:
       var npats: seq[PreTerm] = @[]
-      for _ in ctor.tele: npats.add(mkHole(loc))
+      for _ in ctor.tele: npats.add(mkDiscard(loc))
       for p in row.pats[1 .. ^1]: npats.add(p)
       let cv = if row.pats[0].kind == pkVar: row.pats[0].name else: ""
       result.add(MatrixRow(pats: npats,
@@ -3646,7 +3670,7 @@ proc assembleLeaf(ctx: ClauseCtx, cols: seq[MatrixCol], rows: seq[MatrixRow],
     let p = row.pats[i]
     if p.kind == pkVar:
       rhs = substPre(rhs, p.name, col.term, ctx.fresh)
-    elif p.kind != pkHole:
+    elif p.kind != pkDiscard:
       raise elabErr(row.cloc, "'def' clauses: cannot pattern-match on '" &
         $p & "': the argument type is not a data type")
   result = rhs
@@ -4006,7 +4030,7 @@ proc compileClausesToSurfDef(cd: ClausesDef, globals: var Globals,
         if b.name.len > 0: teleNames.incl(b.name)
       # Binder hygiene: the compiler generates references to telescope binders
       # (scrutinee, rest args) by name, so duplicate names would misresolve.
-      # "_" binders (from `->`) are unreferenceable — `_` parses as a hole —
+      # "_" binders (from `->`) are unreferenceable — `_` is a discard —
       # so freshening them is semantics-preserving and needs no substitution.
       # Any other duplicate is rejected with a clear error.
       var seenTele = initHashSet[string]()
@@ -4056,7 +4080,7 @@ proc compileClausesToSurfDef(cd: ClausesDef, globals: var Globals,
           if not tele[ti].impl:
             let rp = cl.pats[pi]
             let (rpIsCtor, _, _) = patKindOf(rp, ctorToData)
-            if not rpIsCtor and rp.kind != pkVar and rp.kind != pkHole:
+            if not rpIsCtor and rp.kind != pkVar and rp.kind != pkDiscard:
               raise elabErr(cl.cloc, "'def' clauses: pattern must be a " &
                 "constructor pattern, a variable, or a wildcard `_`")
             collectPatVarSeq(rp, ctorToData, pvars)
@@ -4552,7 +4576,7 @@ proc elabCheckHoles*(src: string): tuple[defs: seq[ElabDef], ms: MetaStore,
     errLoc: Loc, errMsg: string] =
   profilePhase(epOther):
       ## Issue #58: hole-tolerant elaboration for tooling (LSP hover).
-      ## Like elabCheckState, but unsolved metavariables (surface `_` holes)
+      ## Like elabCheckState, but unsolved metavariables (surface `?` holes)
       ## do not fail the declaration: open defs are registered postulate-style
       ## and the core re-check is skipped for them. Elaborates decl by decl
       ## and stops at the first declaration that fails for any *other* reason,
@@ -4786,27 +4810,27 @@ when isMainModule:
   import times
   # --- Experiment 2's programs still elaborate --------------------------------
   let defs = elabCheck("""
-proc twice (A : ?) (f : A -> A) (x : A) : A =
+proc twice (A : Type 0) (f : A -> A) (x : A) : A =
   f (f x)
-proc constFn (A : ?) (B : ?) (x : A) (y : B) : A =
+proc constFn (A : Type 0) (B : Type 0) (x : A) (y : B) : A =
   x
-proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
+proc pairSwap (A : Type 0) (B : Type 0) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 """)
   assert defs.len == 3
   echo "ok: twice, constFn, pairSwap elaborate and check"
 
   let defs2 = elabCheck("""
-proc myId (A : ?) (x : A) : A =
+proc myId (A : Type 0) (x : A) : A =
   x
-proc useId (A : ?) (x : A) : A =
+proc useId (A : Type 0) (x : A) : A =
   myId A x
 """)
   assert defs2.len == 2
   echo "ok: later defs can mention earlier defs"
 
   let defs3 = elabCheck("""
-proc withLet (A : ?) (x : A) : A =
+proc withLet (A : Type 0) (x : A) : A =
   let y : A = x in y
 """)
   assert defs3.len == 1
@@ -4814,15 +4838,15 @@ proc withLet (A : ?) (x : A) : A =
 
   # --- Experiment 3: implicit arguments inferred -------------------------------
   let defs4 = elabCheck("""
-proc polyId {A : ?} (x : A) : A =
+proc polyId {A : Type 0} (x : A) : A =
   x
 proc usePolyId : 1 =
   polyId <>
-proc constI {A : ?} {B : ?} (x : A) (y : B) : A =
+proc constI {A : Type 0} {B : Type 0} (x : A) (y : B) : A =
   x
 proc useConstI : 1 =
   constI <> <>
-proc pairSwapI {A : ?} {B : ?} (p : Sig (u : A). B) : Sig (v : B). A =
+proc pairSwapI {A : Type 0} {B : Type 0} (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 proc usePairSwapI : Sig (v : 1). 1 =
   pairSwapI (<>, <>)
@@ -4832,7 +4856,7 @@ proc usePairSwapI : Sig (v : 1). 1 =
 
   # --- Experiment 3: unannotated lambdas and lets infer ------------------------
   let defs5 = elabCheck("""
-proc idU : Pi (A : ?). A -> A =
+proc idU : Pi (A : Type 0). A -> A =
   lam A. lam x. x
 proc letU : 1 =
   let f = lam x. x in f <>
@@ -4851,35 +4875,35 @@ proc letU : 1 =
       echo "ok: ElabError [" & frag & "] at line " & $e.loc.line &
         ", col " & $e.loc.col & ": " & e.msg.splitLines()[0]
 
-  expectElabErr("proc bad (A : ?) (x : A) : A =\n  1\n",
+  expectElabErr("proc bad (A : Type 0) (x : A) : A =\n  1\n",
     "does not match expected type")
-  expectElabErr("proc bad : ? =\n  x\n", "unbound variable 'x'")
+  expectElabErr("proc bad : Type 0 =\n  x\n", "unbound variable 'x'")
   expectElabErr("proc bad : 1 =\n  (<>, <>)\n",
     "checked against a non-Sigma type")
-  expectElabErr("proc bad (A : ?) (p : Sig (u : A). A) : ? =\n  fst (snd p, fst p)\n",
+  expectElabErr("proc bad (A : Type 0) (p : Sig (u : A). A) : Type 0 =\n  fst (snd p, fst p)\n",
     "not convertible")
-  expectElabErr("proc bad (A : ?) : ? =\n  _\n",
+  expectElabErr("proc bad (A : Type 0) : Type 0 =\n  ?\n",
     "unsolved metavariable")
-  expectElabErr("proc bad : ? =\n  lam x. x x\n",
+  expectElabErr("proc bad : Type 0 =\n  lam x. x x\n",
     "expected a function type")
   expectElabErr("proc bad : 1 =\n  polyIdBad <>\n",
     "unbound variable 'polyIdBad'")
 
   # --- annotated surface lambdas elaborate; mismatches caught by check --------
   let defs6 = elabCheck("""
-proc constLam : Pi (A : ?) . A -> A =
-  lam (A : ?) . lam (x : A) . x
+proc constLam : Pi (A : Type 0) . A -> A =
+  lam (A : Type 0) . lam (x : A) . x
 """)
   assert defs6.len == 1
   echo "ok: annotated surface lambda elaborates"
-  expectElabErr("proc bad : ? =\n  lam (x : ?) . x\n",
+  expectElabErr("proc bad : Type 0 =\n  lam (x : Type 0) . x\n",
     "expected a function type")
 
   # --- Issue #65: Pi binders in type annotations are in scope ---------------
   let defs65 = elabCheck("""
-postulate foo65 : (A : ?) -> A -> A
-proc bar65 : (A : ?) -> A -> A =
-  lam (A : ?) . lam (x : A) . x
+postulate foo65 : (A : Type 0) -> A -> A
+proc bar65 : (A : Type 0) -> A -> A =
+  lam (A : Type 0) . lam (x : A) . x
 proc useFoo65 : 1 =
   foo65 1 <>
 """)
@@ -4888,7 +4912,7 @@ proc useFoo65 : 1 =
 
   # --- parse errors propagate with locations ----------------------------------
   try:
-    discard elabCheck("proc bad (A : ?) : =\n  x\n")
+    discard elabCheck("proc bad (A : Type 0) : =\n  x\n")
     assert false, "expected ParseError"
   except ParseError as e:
     assert e.loc.line > 0
@@ -4896,10 +4920,10 @@ proc useFoo65 : 1 =
 
   # --- Experiment 4: postulate / elim / red; reduction fires ------------------
   let boolDefs = elabCheck("""
-postulate Bool : ?
+postulate Bool : Type 0
 postulate true : Bool
 postulate false : Bool
-elim boolElim : Pi (C : Bool -> ?). C true -> C false -> Pi (b : Bool). C b
+elim boolElim : Pi (C : Bool -> Type 0). C true -> C false -> Pi (b : Bool). C b
 red boolElim C t f true  = t
 red boolElim C t f false = f
 proc not (b : Bool) : Bool =
@@ -4924,10 +4948,10 @@ proc notFalse : Bool = not false
 
   # Nat: constructor with arguments; recursive rule; stuck scrutinee
   let natDefs = elabCheck("""
-postulate Nat : ?
+postulate Nat : Type 0
 postulate zero : Nat
 postulate suc : Nat -> Nat
-elim natElim : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+elim natElim : Pi (C : Nat -> Type 0). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
 red natElim C z s zero    = z
 red natElim C z s (suc n) = s n (natElim C z s n)
 proc two : Nat = suc (suc zero)
@@ -4953,29 +4977,29 @@ proc stuckTest (n : Nat) : Nat =
 
   # red errors: duplicate rule, non-eliminator, wrong arity
   expectElabErr("""
-postulate Bool : ?
+postulate Bool : Type 0
 postulate true : Bool
-elim boolElim : Pi (C : Bool -> ?). C true -> Pi (b : Bool). C b
+elim boolElim : Pi (C : Bool -> Type 0). C true -> Pi (b : Bool). C b
 red boolElim C t true = t
 red boolElim C t true = t
 """, "duplicate reduction rule")
   expectElabErr("""
-postulate Bool : ?
+postulate Bool : Type 0
 postulate true : Bool
 postulate notElim : Bool -> Bool
 red notElim x true = x
 """, "not an eliminator")
   expectElabErr("""
-postulate Bool : ?
+postulate Bool : Type 0
 postulate true : Bool
-elim boolElim : Pi (C : Bool -> ?). C true -> Pi (b : Bool). C b
+elim boolElim : Pi (C : Bool -> Type 0). C true -> Pi (b : Bool). C b
 red boolElim C true = true
 """, "takes 3 arguments")
 
   # --- Experiment 5: data declarations --------------------------------------
   # data Nat: non-indexed, desugars to postulate/elim/red
   let dataNatDefs = elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 proc two : Nat = suc (suc zero)
@@ -4998,10 +5022,10 @@ proc four : Nat = add two two
 
   # data Vec: indexed family; the eliminator computes over indices
   let dataVecDefs = elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc v2 : Vec Nat (suc (suc zero)) =
@@ -5021,10 +5045,10 @@ proc lenIsTwo : Nat =
   # induction hypothesis under binders: ih : Pi (x:A). C (k x), and the
   # computation rule pushes the recursive call under the binders.
   let hoDefs = elabCheck("""
-data HNat : ? where
+data HNat : Type 0 where
 | hzero : HNat
 | hsuc (n : HNat) : HNat
-data HTree : ? where
+data HTree : Type 0 where
 | hleaf : HTree
 | hnode (k : HNat -> HTree) : HTree
 proc hdepth (t : HTree) : HNat =
@@ -5054,17 +5078,17 @@ proc htwo : HNat = hsuc (hsuc hzero)
 
   # Genuinely non-positive argument: family in a domain position.
   expectElabErr("""
-data HNat113 : ? where
+data HNat113 : Type 0 where
 | hzero113 : HNat113
-data Bad : ? where
+data Bad : Type 0 where
 | bad (k : (Bad -> HNat113) -> Bad) : Bad
 """, "not strictly positive")
   # Nested occurrence: family under another type former, not a direct
   # application to indices.
   expectElabErr("""
-data Box113 (A : ?) : ? where
+data Box113 (A : Type 0) : Type 0 where
 | box113 (x : A) : Box113 A
-data Nest : ? where
+data Nest : Type 0 where
 | nnil : Nest
 | ncons (b : Box113 Nest) : Nest
 """, "direct application to indices")
@@ -5073,20 +5097,19 @@ data Nest : ? where
   # --- Issue #33: family occurrences in index positions ---------------------
   # Return-type index mentioning the family (otherwise well-formed).
   expectElabErr("""
-proc idPoly33 (A : ?) (x : A) : A = x
-data U33 : ? -> ? where
-| umk33 (A : ?) (x : U33 A) : U33 (idPoly33 ? (U33 A))
+proc idPoly33 (A : Type 0) (x : A) : A = x
+data U33 : Type 0 -> Type 0 where
+| umk33 (A : Type 0) (x : U33 A) : U33 (idPoly33 Type 0 (U33 A))
 """, "an index of the return type")
   # Family-headed argument type with the family inside an index.
   expectElabErr("""
-proc idPoly33b (A : ?) (x : A) : A = x
-data T33 : ? -> ? where
-| tmk33 (A : ?) (x : T33 (idPoly33b ? (T33 A))) : T33 A
+data T33 : Type 0 -> Type 0 where
+| tmk33 (A : Type 0) (x : T33 (T33 A)) : T33 A
 """, "an index of argument 'x'")
   # The acceptance example shape: negative occurrence, located, naming the
   # constructor and the offending argument.
   expectElabErr("""
-data Bad33 : ? where
+data Bad33 : Type 0 where
 | bad33 (k : (Bad33 -> O) -> Bad33) : Bad33
 """, "constructor 'bad33' argument 'k'")
   echo "ok: family occurrences in index positions rejected (#33)"
@@ -5098,19 +5121,19 @@ data Bad33 : ? where
   # Before this change, syntactic unification rejected it — the
   # documented gap in Experiment 5's decision-log entry.
   let convDefs = elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc add (m : Nat) (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
 proc vnil : Vec Nat (add zero zero) =
   nil Nat
-proc constNil (A : ?) (x : A) : Vec A (add zero zero) =
+proc constNil (A : Type 0) (x : A) : Vec A (add zero zero) =
   nil A
-proc append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
+proc append {A : Type 0} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
     : Vec A (add m n) =
   vecElim A (lam (i : Nat). lam (v : Vec A i). Vec A (add i n))
             ys
@@ -5122,10 +5145,10 @@ proc append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
   echo "ok: checkTm converts up to reduction (vnil, constNil, Vec append)"
   # ...but genuinely different indices are still rejected
   expectElabErr("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc add (m : Nat) (n : Nat) : Nat =
@@ -5136,10 +5159,10 @@ proc bad : Vec Nat (add (suc zero) zero) =
 
   # data errors: constructor return must be the family
   expectElabErr("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Bad : ? where
+data Bad : Type 0 where
 | mk : Nat
 """, "must be the family")
 
@@ -5148,10 +5171,10 @@ data Bad : ? where
   # refl typechecks up to conversion (Experiment 5b), not just
   # syntactic equality.
   let eqDefs = elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Eq (A : ?) (x : A) : A -> ? where
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 proc two : Nat = suc (suc zero)
 proc add (m : Nat) (n : Nat) : Nat =
@@ -5159,7 +5182,7 @@ proc add (m : Nat) (n : Nat) : Nat =
 proc four : Nat = suc (suc (suc (suc zero)))
 proc r1 : Eq Nat zero zero = refl Nat zero
 proc r2 : Eq Nat (add two two) four = refl Nat (add two two)
-proc cong (A : ?) (B : ?) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
+proc cong (A : Type 0) (B : Type 0) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
     : Eq B (f x) (f y) =
   eqElim A x (lam (z : A). lam (q : Eq A x z). Eq B (f x) (f z))
          (refl B (f x)) y p
@@ -5175,10 +5198,10 @@ proc plusReducesZ (n : Nat) : Eq Nat n (add n zero) =
   # refl rejects genuinely unequal terms — with a named noConfusion
   # reason (issue #80) instead of the old generic "not convertible".
   expectElabErr("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Eq (A : ?) (x : A) : A -> ? where
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 proc bad : Eq Nat zero (suc zero) = refl Nat zero
 """, "noConfusion")
@@ -5187,8 +5210,8 @@ proc bad : Eq Nat zero (suc zero) = refl Nat zero
   # postulate Int with integer literals and primitive ops (+, -, *)
   # that reduce via host computation (not unary s(s(z))).
   let intDefs = elabCheck("""
-postulate Int : ?
-data Eq (A : ?) (x : A) : A -> ? where
+postulate Int : Type 0
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 proc fortyTwo : Int = 42
 proc sum : Int = addInt 42 17
@@ -5202,8 +5225,8 @@ proc pf3 : Eq Int prod 42 = refl Int prod
   echo "ok: primitive Int literals and ops compute (Experiment 11)"
   # data Nat still works for proofs alongside primitive Int
   let bothDefs = elabCheck("""
-postulate Int : ?
-data Nat : ? where
+postulate Int : Type 0
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 proc n : Nat = suc (suc zero)
@@ -5215,8 +5238,8 @@ proc i : Int = 42
   # --- Experiment 6: tactics and reflection -------------------------
   # `by` blocks run Nim tactics against the expected type.
   let tacDefs = elabCheck("""
-postulate Int : ?
-data Eq (A : ?) (x : A) : A -> ? where
+postulate Int : Type 0
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 proc pf1 : Eq Int 42 42 = by refl
 proc id (x : Int) : Int = by assumption
@@ -5226,7 +5249,7 @@ proc pf2 : Eq Int (addInt 20 22) 42 = by refl
   echo "ok: by refl and by assumption tactics (Experiment 6)"
   # unknown tactic is an error
   expectElabErr("""
-postulate Int : ?
+postulate Int : Type 0
 proc bad : Int = by nosuchtac
 """, "unknown tactic")
 
@@ -5234,8 +5257,8 @@ proc bad : Int = by nosuchtac
   # (0 x : T) marks an erased binder. The flag threads through to the
   # core Term; full usage checking and codegen erasure are future work.
   let erasedDefs = elabCheck("""
-proc const (0 A : ?) (x : A) : A = x
-proc id2 (0 A : ?) : A -> A = lam (x : A). x
+proc const (0 A : Type 0) (x : A) : A = x
+proc id2 (0 A : Type 0) : A -> A = lam (x : A). x
 """)
   assert erasedDefs.len == 2
   echo "ok: erased binders (0 x : T) elaborate (Experiment 9)"
@@ -5246,27 +5269,27 @@ proc id2 (0 A : ?) : A -> A = lam (x : A). x
   # reports at the declaration. Type annotations don't count as uses
   # (QTT: types are checked in the all-0 context).
   let qttDefs = elabCheck("""
-proc linId (A : ?) : Pi (1 x : A). A =
+proc linId (A : Type 0) : Pi (1 x : A). A =
   lam (1 x : A). x
 """)
   assert qttDefs.len == 1
   echo "ok: linear binder used exactly once elaborates (#66)"
   expectElabErr("""
-proc linDup (A : ?) (f : A -> A -> A) : Pi (1 x : A). A =
+proc linDup (A : Type 0) (f : A -> A -> A) : Pi (1 x : A). A =
   lam (1 x : A). f x x
 """, "used 2 times (expected exactly once)")
   expectElabErr("""
-proc linUnused (A : ?) (y : A) : Pi (1 x : A). A =
+proc linUnused (A : Type 0) (y : A) : Pi (1 x : A). A =
   lam (1 x : A). y
 """, "linear variable 'x' not used")
   expectElabErr("""
-proc erasedUse (A : ?) : Pi (0 x : A). A =
+proc erasedUse (A : Type 0) : Pi (0 x : A). A =
   lam (0 x : A). x
 """, "erased variable 'x' used")
   # Pi binders are NOT enforced in-judgment (#66 design): a postulate's
   # linear Pi declares use-site linearity; its codomain need not mention it
   let qttPiDefs = elabCheck("""
-postulate B : ?
+postulate B : Type 0
 postulate useB : Pi (1 b : B). B
 proc useBClient (b : B) : B = useB b
 """)
@@ -5278,7 +5301,7 @@ proc useBClient (b : B) : B = useB b
   # -> B): the quantity is part of the Pi/Sigma type, checked in
   # structuralEq on wPi/wSi.
   let qttQtyConvOk = elabCheck("""
-postulate N : ?
+postulate N : Type 0
 postulate idN0 : Pi (0 x : N). N
 proc sameQty : Pi (1 x : N). N = lam (1 x : N). x
 proc sameQty0 : Pi (0 x : N). N = idN0
@@ -5286,7 +5309,7 @@ proc sameQty0 : Pi (0 x : N). N = idN0
   assert qttQtyConvOk.len == 2
   echo "ok: Pi conversion accepts matching quantities (#66)"
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 proc idN (x : N) : N = x
 proc qtyMismatch : Pi (1 x : N). N = idN
 """, "quantity mismatch")
@@ -5295,7 +5318,7 @@ proc qtyMismatch : Pi (1 x : N). N = idN
   # usable where an unrestricted one is expected (this is what lets
   # inferred-precise types interoperate with ω-annotated code).
   let qttSubOk = elabCheck("""
-postulate N : ?
+postulate N : Type 0
 postulate idN0 : Pi (0 x : N). N
 proc subOk : Pi (x : N). N = idN0
 """)
@@ -5304,7 +5327,7 @@ proc subOk : Pi (x : N). N = idN0
   # The reverse direction stays rejected: an unrestricted function is not
   # usable where an erasing one is expected.
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 postulate idNW : Pi (x : N). N
 proc revMismatch : Pi (0 x : N). N = idNW
 """, "quantity mismatch")
@@ -5315,19 +5338,19 @@ proc revMismatch : Pi (0 x : N). N = idNW
   # 0-binder cannot consume it, so it would be silently discarded. The
   # binder-side check (countVarUses = 1) cannot catch this.
   let qttErasedAppOk = elabCheck("""
-postulate N : ?
+postulate N : Type 0
 postulate z0 : Pi (0 x : N). N
 proc useErased (y : N) : N = z0 y
 """)
   assert qttErasedAppOk.len == 1
   echo "ok: unrestricted var into erased parameter accepted (#66)"
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 postulate z0 : Pi (0 x : N). N
 proc badDrop (1 y : N) : N = z0 y
 """, "silently discarded")
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 proc badDrop2 (1 y : N) (z : N) : N = (lam (0 w : N). z) y
 """, "silently discarded")
   echo "ok: linear var into erased parameter rejected (#66)"
@@ -5337,21 +5360,21 @@ proc badDrop2 (1 y : N) (z : N) : N = (lam (0 w : N). z) y
   # lambda from the bound variable's use count: 0 -> q0, 1 -> q1, 2+ ->
   # qOmega. The core language only ever sees concrete quantities.
   let qttQVarDefs = elabCheck("""
-postulate N : ?
-proc qid {A : ?} (q x : A) : A =
+postulate N : Type 0
+proc qid {A : Type 0} (q x : A) : A =
   x
-proc qconst {A : ?} {B : ?} (q x : A) (y : B) : A =
+proc qconst {A : Type 0} {B : Type 0} (q x : A) (y : B) : A =
   x
-proc qdup {A : ?} (q x : A) : Sig (u : A). A =
+proc qdup {A : Type 0} (q x : A) : Sig (u : A). A =
   (x, x)
-proc qunused {A : ?} (q x : A) : 1 =
+proc qunused {A : Type 0} (q x : A) : 1 =
   <>
 """)
   assert qttQVarDefs.len == 4
   echo "ok: quantity variables solve from use count (#66)"
   # One variable shared by two binders must agree on the solution.
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 proc qconf (q x : N) (q y : N) : Sig (u : N). N =
   (x, (y, y))
 """, "requires quantity")
@@ -5360,7 +5383,7 @@ proc qconf (q x : N) (q y : N) : Sig (u : N). N =
   # same leak as a concrete linear variable: the app-site check runs while
   # the variable is unsolved, so the obligation is deferred to solve time.
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 postulate z0 : Pi (0 x : N). N
 proc badQDrop (q y : N) : N = z0 y
 """, "silently discarded")
@@ -5368,7 +5391,7 @@ proc badQDrop (q y : N) : N = z0 y
   # But the same shape with 2+ uses solves to qOmega: discarding an
   # unrestricted variable is fine.
   let qttQVarOmegaDrop = elabCheck("""
-postulate N : ?
+postulate N : Type 0
 postulate z0 : Pi (0 x : N). N
 proc okQDrop (q y : N) : N = snd (z0 y, y)
 """)
@@ -5381,7 +5404,7 @@ proc okQDrop (q y : N) : N = snd (z0 y, y)
   # solved from the expected type, an unannotated binder inherits it, and
   # an explicit mismatch is an error.
   let qttSubjDefs = elabCheck("""
-postulate N : ?
+postulate N : Type 0
 postulate n0 : N
 proc linId : Pi (1 x : N). N = lam (1 x : N). x
 proc inheritLin : Pi (1 x : N). N = lam (x : N). x
@@ -5393,34 +5416,34 @@ proc inheritErased : Pi (0 x : N). N = lam (x : N). n0
   # The documented gap: an explicitly linear lambda against an
   # unrestricted Pi is now rejected (was silently accepted).
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 proc badQtyLam : Pi (x : N). N = lam (1 x : N). x
 """, "does not match the expected quantity")
   # An inherited linear binder is still use-once: dropping it is an error.
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 postulate n0 : N
 proc badInheritDrop : Pi (1 x : N). N = lam (x : N). n0
 """, "not used")
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 proc badInheritDup : Pi (1 x : N). Sig (u : N). N = lam (x : N). (x, x)
 """, "used 2 times")
   # A quantity variable solved from the expected type is enforced, not
   # re-solved: double use under a linear Pi is an error.
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 proc qbadLinDup : Pi (1 x : N). Sig (u : N). N = lam (q x : N). (x, x)
 """, "used 2 times")
   # An inherited erased binder must not be used in term position.
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 proc badInheritErased : Pi (0 x : N). N = lam (x : N). x
 """, "erased variable 'x' used")
   # A variable shared by two binders must also agree with the expected
   # types it is checked against.
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 postulate n0 : N
 proc qconfTy : N =
   let f : Pi (1 x : N). N = lam (q x : N). x in
@@ -5437,9 +5460,9 @@ proc qconfTy : N =
   # An unshared ascribed quantity variable (unannotated binder written only
   # in the ascribed type) is solved positionally from the inference.
   let q84Pos = elabCheck("""
-postulate N : ?
+postulate N : Type 0
 postulate n0 : N
-proc p (A : ?) : Pi (x : A). N = lam (x : A). n0
+proc p (A : Type 0) : Pi (x : A). N = lam (x : A). n0
 """)
   let pTy = q84Pos[^1].tyTm
   assert pTy.kind == tPi and pTy.scope.bdy.kind == tPi
@@ -5449,17 +5472,17 @@ proc p (A : ?) : Pi (x : A). N = lam (x : A). n0
   # an inferred q0 widens to it (no regression vs main, where the body
   # inherited omega in checking mode).
   discard elabCheck("""
-postulate N : ?
+postulate N : Type 0
 postulate n0 : N
-proc w (A : ?) : N -> N = lam (x : N). n0
+proc w (A : Type 0) : N -> N = lam (x : N). n0
 """)
   echo "ok: inferred q0 widens to ascribed qOmega (#84)"
   # Plain inference: unused binders infer q0, used binders qOmega.
   let q84Inf = elabCheck("""
-postulate N : ?
+postulate N : Type 0
 postulate n0 : N
-proc k (A : ?) (x : A) : N = n0
-proc u (A : ?) (x : A) : A = x
+proc k (A : Type 0) (x : A) : N = n0
+proc u (A : Type 0) (x : A) : A = x
 """)
   let kTy = q84Inf[^2].tyTm
   assert kTy.kind == tPi and kTy.qty == q0
@@ -5471,21 +5494,21 @@ proc u (A : ?) (x : A) : A = x
   # An explicit ascribed 0/1 disagreeing with the inference is an error
   # naming the binder and the usage sites that forced the inference.
   expectElabErr("""
-postulate N : ?
-proc h2 (A : ?) : Pi (0 x : A). A = lam (x : A). x
+postulate N : Type 0
+proc h2 (A : Type 0) : Pi (0 x : A). A = lam (x : A). x
 """, "quantity mismatch for binder 'x'")
   expectElabErr("""
-postulate N : ?
-proc h2 (A : ?) : Pi (0 x : A). A = lam (x : A). x
+postulate N : Type 0
+proc h2 (A : Type 0) : Pi (0 x : A). A = lam (x : A). x
 """, "the body uses 'x' 1 time(s) at line 2")
   expectElabErr("""
-postulate N : ?
+postulate N : Type 0
 postulate n0 : N
-proc g2 (A : ?) : Pi (1 x : A). N = lam (x : A). n0
+proc g2 (A : Type 0) : Pi (1 x : A). N = lam (x : A). n0
 """, "the body never uses 'x', inferring quantity q0")
   expectElabErr("""
-postulate N : ?
-proc g (A : ?) : Pi (1 x : A). A = lam (x : A). x
+postulate N : Type 0
+proc g (A : Type 0) : Pi (1 x : A). A = lam (x : A). x
 """, "quantity 1 is never inferred")
   echo "ok: inferred/ascribed quantity conflicts name binder and use sites (#84)"
 
@@ -5495,16 +5518,16 @@ proc g (A : ?) : Pi (1 x : A). A = lam (x : A). x
   # Elaborate a Vec-heavy corpus with and without the handler and check
   # identical results; wall-clock is reported for both.
   let vecCorpus = """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def add : Nat -> Nat -> Nat
 | zero n = n
 | (suc m) n = suc (add m n)
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-def vappend : Pi {A : ?}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n
+def vappend : Pi {A : Type 0}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n
   -> Vec A (add m n)
 | nil ys = ys
 | (cons k x xs) ys = cons A (add k n) x (vappend xs ys)
@@ -5556,10 +5579,10 @@ proc v4 : Vec Nat (suc (suc (suc (suc zero)))) =
   block:
     var drv = initModuleDriver()
     discard drv.elabDeclsDir(parseProgram("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Eq (A : ?) (x : A) : A -> ? where
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 def add : Nat -> Nat -> Nat
 | zero n = n
@@ -5572,10 +5595,10 @@ def add : Nat -> Nat -> Nat
     assert lem.ok, "lemma synthesis failed: " & lem.failReason
     echo "ok: arith lemmas synthesize and check with the bare core"
   let (arithDefs, arithMs) = elabCheckState("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Eq (A : ?) (x : A) : A -> ? where
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 def add : Nat -> Nat -> Nat
 | zero n = n
@@ -5598,10 +5621,10 @@ proc addAssoc (a : Nat) (b : Nat) (c : Nat)
   # The same open goal fails with the default `refl` tactic — the gap is
   # real — and a false goal still fails under `by arith` (no overreach).
   expectElabErr("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Eq (A : ?) (x : A) : A -> ? where
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 def add : Nat -> Nat -> Nat
 | zero n = n
@@ -5610,10 +5633,10 @@ proc bad (n : Nat) (m : Nat) : Eq Nat (add n (suc m)) (suc (add n m)) =
   by refl
 """, "not convertible")
   expectElabErr("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Eq (A : ?) (x : A) : A -> ? where
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 def add : Nat -> Nat -> Nat
 | zero n = n
@@ -5631,10 +5654,10 @@ proc bad : Eq Nat zero (suc zero) =
   # the bare-core re-check in elabDefDecl stays in force). Negative:
   # bogus evidence for a false goal is rejected with a located error.
   let evPrelude = """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Eq (A : ?) (x : A) : A -> ? where
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 def add : Nat -> Nat -> Nat
 | zero n = n
@@ -5701,11 +5724,11 @@ def add : Nat -> Nat -> Nat
 
   # --- Issue #32: clause-style definitions ---------------------------
   let clauseDefs = elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 
-data Bool : ? where
+data Bool : Type 0 where
 | true : Bool
 | false : Bool
 
@@ -5743,7 +5766,7 @@ proc four : Nat = add two two
   # compiler must not resolve all of them to the innermost one
   # (add two three was silently computing add three three = 6).
   let add23Defs = elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def add : Nat -> Nat -> Nat
@@ -5768,7 +5791,7 @@ proc five : Nat = add two three
   # Coverage error
   try:
     discard elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def bad : Nat -> Nat
@@ -5782,7 +5805,7 @@ def bad : Nat -> Nat
   # Overlap error
   try:
     discard elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def bad : Nat -> Nat
@@ -5828,10 +5851,10 @@ def bad : Nat -> Nat
   # downstream unification failure is now a named noConfusion.
   try:
     discard elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 def badHead : Pi {n : Nat}. Vec Nat n -> Vec Nat (suc n)
@@ -5847,10 +5870,10 @@ def badHead : Pi {n : Nat}. Vec Nat n -> Vec Nat (suc n)
   # conflict goes through unify's rigid-rigid case with the named reason.
   try:
     discard elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc k {m : Nat} (x : Vec Nat (suc m)) : Nat = zero
@@ -5862,10 +5885,10 @@ proc bad : Nat = k (nil Nat)
     echo "ok: unify surfaces named noConfusion through elaboration"
   # ...while a solvable implicit still solves (?m := zero).
   let impDefs = elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc k {m : Nat} (x : Vec Nat (suc m)) : Nat = zero
@@ -5878,16 +5901,16 @@ proc good : Nat = k (cons Nat zero zero (nil Nat))
   # vappend over Vec: the scrutinee's index is refined per constructor
   # (nil: m := zero, cons: m := suc k); the motive abstracts over the index.
   let vappendDefs = elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def add : Nat -> Nat -> Nat
 | zero n = n
 | (suc m) n = suc (add m n)
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-def vappend : Pi {A : ?}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n
+def vappend : Pi {A : Type 0}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n
   -> Vec A (add m n)
 | nil ys = ys
 | (cons k x xs) ys = cons A (add k n) x (vappend xs ys)
@@ -5920,13 +5943,13 @@ proc v123 : Vec Nat (suc (suc (suc zero))) =
   # Index refinement is real: a RHS with the wrong index is rejected
   # (here over Vec Nat so the element typechecks and only the index is wrong)
   expectElabErr("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def add : Nat -> Nat -> Nat
 | zero n = n
 | (suc m) n = suc (add m n)
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 def badAppend : Pi {m : Nat}. Pi {n : Nat}. Vec Nat m -> Vec Nat n
@@ -5936,13 +5959,13 @@ def badAppend : Pi {m : Nat}. Pi {n : Nat}. Vec Nat m -> Vec Nat n
 """, "not convertible")
   # Pattern variable shadowing a telescope binder is a located error
   expectElabErr("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-def badShadow : Pi {A : ?}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n -> Vec A n
+def badShadow : Pi {A : Type 0}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n -> Vec A n
 | nil ys = ys
 | (cons n x xs) ys = ys
 """, "shadows argument")
@@ -5951,10 +5974,10 @@ def badShadow : Pi {A : ?}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n -> Ve
   # A variable/wildcard first pattern covers every constructor not matched
   # by an earlier clause; a variable pattern stands for the scrutinee.
   let catchAllDefs = elabCheck("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Bool : ? where
+data Bool : Type 0 where
 | true : Bool
 | false : Bool
 def isZeroV : Nat -> Bool
@@ -5993,10 +6016,10 @@ proc one : Nat = suc zero
   echo "ok: catch-all first patterns elaborate and compute (issue #78)"
   # A clause after a catch-all covers nothing new
   expectElabErr("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Bool : ? where
+data Bool : Type 0 where
 | true : Bool
 | false : Bool
 def bad : Nat -> Bool
@@ -6005,10 +6028,10 @@ def bad : Nat -> Bool
 """, "already covered")
   # A catch-all after full coverage is redundant
   expectElabErr("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Bool : ? where
+data Bool : Type 0 where
 | true : Bool
 | false : Bool
 def bad : Nat -> Bool
@@ -6034,12 +6057,12 @@ def bad : Nat -> Bool
     except ElabError:
       inc termRejected
   acc36("data Nat", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 """)
   acc36("clause add", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def add : Nat -> Nat -> Nat
@@ -6047,7 +6070,7 @@ def add : Nat -> Nat -> Nat
 | (suc m) n = suc (add m n)
 """)
   acc36("clause double", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def double : Nat -> Nat
@@ -6055,7 +6078,7 @@ def double : Nat -> Nat
 | (suc n) = suc (suc (double n))
 """)
   acc36("clause pred", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def pred : Nat -> Nat
@@ -6063,7 +6086,7 @@ def pred : Nat -> Nat
 | (suc n) = n
 """)
   acc36("clause mult", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def add : Nat -> Nat -> Nat
@@ -6074,10 +6097,10 @@ def mult : Nat -> Nat -> Nat
 | (suc m) n = add n (mult m n)
 """)
   acc36("clause isEven", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Bool : ? where
+data Bool : Type 0 where
 | true : Bool
 | false : Bool
 def not : Bool -> Bool
@@ -6088,20 +6111,20 @@ def isEven : Nat -> Bool
 | (suc n) = not (isEven n)
 """)
   acc36("data Bool", """
-data Bool : ? where
+data Bool : Type 0 where
 | true : Bool
 | false : Bool
 """)
   acc36("manual structural red", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-elim dblElim : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+elim dblElim : Pi (C : Nat -> Type 0). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
 red dblElim C z s zero = z
 red dblElim C z s (suc n) = s n (dblElim C z s n)
 """)
   acc36("clause idNat", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def idNat : Nat -> Nat
@@ -6109,51 +6132,51 @@ def idNat : Nat -> Nat
 | (suc n) = suc (idNat n)
 """)
   acc36("data List", """
-data List (A : ?) : ? where
+data List (A : Type 0) : Type 0 where
 | nil : List A
 | cons (x : A) (xs : List A) : List A
 """)
   rej36("growing red rule", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-elim bad1 : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+elim bad1 : Pi (C : Nat -> Type 0). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
 red bad1 C z s (suc n) = bad1 C z s (suc (suc n))
 """)
   rej36("self-loop red rule", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-elim bad2 : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+elim bad2 : Pi (C : Nat -> Type 0). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
 red bad2 C z s (suc n) = bad2 C z s (suc n)
 """)
   rej36("base-case loop", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-elim bad3 : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+elim bad3 : Pi (C : Nat -> Type 0). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
 red bad3 C z s zero = bad3 C z s zero
 """)
   rej36("non-subterm var", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-elim bad4 : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+elim bad4 : Pi (C : Nat -> Type 0). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
 red bad4 C z s (suc n) = bad4 C z s zero
 """)
   # Note: bad4's RHS applies bad4 to `zero`, which is not a variable at all,
   # let alone a subterm. The check requires a variable from smallerVars.
   rej36("growing call under step arg", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-elim bad5 : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+elim bad5 : Pi (C : Nat -> Type 0). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
 red bad5 C z s (suc n) = s n (bad5 C z s (suc (suc n)))
 """)
   # bad5 exercises the nested-spine traversal: the recursive call sits
   # inside the step argument and the scrutinee grows, so it is rejected.
   rej36("clause-level growing scrutinee", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def badc : Nat -> Nat
@@ -6162,7 +6185,7 @@ def badc : Nat -> Nat
 """)
   # Clause-level: self-call on a constructed value, not a pattern subterm.
   rej36("clause-level self-loop", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def loopc : Nat -> Nat
@@ -6171,7 +6194,7 @@ def loopc : Nat -> Nat
 """)
   # Clause-level: self-call on the original scrutinee pattern.
   rej36("clause-level call on unrelated arg", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 def badm : Nat -> Nat -> Nat
@@ -6207,10 +6230,10 @@ def badm : Nat -> Nat -> Nat
           " rejected without naming the cycle: " & e.msg
       inc mutRejected
   let natBoolPre = """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Bool : ? where
+data Bool : Type 0 where
 | true : Bool
 | false : Bool
 """
@@ -6302,14 +6325,14 @@ def ok : Nat -> Bool
   let modDir = getTempDir() / "eponym_import_test"
   createDir(modDir)
   writeFile(modDir / "mynat.ep", """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 proc two : Nat = suc (suc zero)
 """)
   writeFile(modDir / "mybool.ep", """
 import "mynat.ep"
-data Bool : ? where
+data Bool : Type 0 where
 | true : Bool
 | false : Bool
 proc twoIsNat : Nat = two
@@ -6391,20 +6414,20 @@ proc isTrue (b : Bool) : Bool = b
   # An iterated Sigma whose binder names and unit tail match a registered
   # record prints as `R{f: T, ...}`, never as raw `Si` nesting.
   let rstate = elabCheckState("""
-postulate Nat : ?
+postulate Nat : Type 0
 postulate zero : Nat
-postulate Vec : Nat -> ? -> ?
+postulate Vec : Nat -> Type 0 -> Type 0
 record Point:
 | x : Nat
 | y : Nat
 record DepR:
 | n : Nat
 | v : Vec n Nat
-proc asSig : ? =
+proc asSig : Type 0 =
   Sig (x : Nat). Sig (y : Nat). 1
-proc asSigDep : ? =
+proc asSigDep : Type 0 =
   Sig (n : Nat). Sig (v : Vec n Nat). 1
-proc asSigOther : ? =
+proc asSigOther : Type 0 =
   Sig (u : Nat). Sig (v : Nat). 1
 """)
   proc findDef(ds: seq[ElabDef], name: string): ElabDef =
@@ -6469,13 +6492,12 @@ proc Type : Nat =
 """)
   assert uidef.len == 1  # postulates yield no ElabDef; one proc
   echo "ok: #52 `Type` alone remains a plain identifier (contextual keyword)"
-  # Legacy `?` programs are unaffected: `?`-classified Pis stay level-0
-  # definitionally (the `?`/Type-0 bridge) and keep elaborating.
+  # Explicit `Type 0` programs continue to elaborate under the new syntax.
   let ulegacy = elabCheck("""
-proc legacyId (A : ?) (x : A) : A =
+proc legacyId (A : Type 0) (x : A) : A =
   x
 """)
   assert ulegacy.len == 1
-  echo "ok: #52 legacy `?` programs unaffected"
+  echo "ok: #52 explicit Type 0 program elaborates"
 
   echo "--- all elaborator tests passed ---"

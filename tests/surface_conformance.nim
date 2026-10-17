@@ -111,18 +111,18 @@ macro conforms*(src: static string, blk: untyped): untyped =
 # --- corpus ----------------------------------------------------------
 
 # arrows, application, nested calls
-conforms """proc twice (A : ?) (f : A -> A) (x : A) : A = f (f x)
-proc constFn (A : ?) (B : ?) (x : A) (y : B) : A = x
+conforms """proc twice (A : Type 0) (f : A -> A) (x : A) : A = f (f x)
+proc constFn (A : Type 0) (B : Type 0) (x : A) (y : B) : A = x
 """:
   proc twice(A: Univ, f: A -> A, x: A): A = f(f(x))
   proc constFn(A: Univ, B: Univ, x: A, y: B): A = x
 
 # lam, Sig (named and anonymous), pairs, projections
-conforms """proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
+conforms """proc pairSwap (A : Type 0) (B : Type 0) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
-proc applyLam (A : ?) : A -> A =
+proc applyLam (A : Type 0) : A -> A =
   lam (x : A). x
-proc anonSig (A : ?) (B : ?) : Sig (_ : A). B -> A =
+proc anonSig (A : Type 0) (B : Type 0) : Sig (_ : A). B -> A =
   lam (p : Sig (_ : A). B). fst p
 """:
   proc pairSwap(A: Univ, B: Univ, p: Sig(u, A, B)): Sig(v, B, A) =
@@ -132,10 +132,10 @@ proc anonSig (A : ?) (B : ?) : Sig (_ : A). B -> A =
     lam(p, Sig(A, B), fst(p))
 
 # Pi with named binders, implicit binders, let..in, holes
-conforms """proc polyId (A : ?) (x : A) : A = x
-proc impId : Pi {A : ?}. A -> A = lam (x : A). x
-proc withLet (A : ?) (x : A) : A = let y = x in y
-proc holeTy : ? = _
+conforms """proc polyId (A : Type 0) (x : A) : A = x
+proc impId : Pi {A : Type 0}. A -> A = lam (x : A). x
+proc withLet (A : Type 0) (x : A) : A = let y = x in y
+proc holeTy : Type 0 = ?
 """:
   proc polyId(A: Univ, x: A): A = x
   proc impId(): Pi({A: Univ}, A -> A) = lam(x, A, x)
@@ -145,15 +145,15 @@ proc holeTy : ? = _
   proc holeTy(): Univ = _
 
 # Pi/Sig as terms (Nim parses named-binder Pi as an object constructor)
-conforms """proc piTy : ? = Pi (x : Nat). Nat
+conforms """proc piTy : Type 0 = Pi (x : Nat). Nat
 """:
   proc piTy(): Univ = Pi(x: Nat, Nat)
 
 # data declaration + postulate
-conforms """data Nat : ? where
+conforms """data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-postulate Bool : ?
+postulate Bool : Type 0
 """:
   data(Nat, Univ):
     proc zero(): Nat
@@ -161,7 +161,7 @@ postulate Bool : ?
   postulate(Bool, Univ)
 
 # parameterized indexed data (Vec); `vecnil` maps to `nil`
-conforms """data Vec (A : ?) : Pi (n : Nat). Vec A n -> ? where
+conforms """data Vec (A : Type 0) : Pi (n : Nat). Vec A n -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 """:
@@ -177,8 +177,8 @@ proc useNat (x : Nat) : Nat = x
   proc useNat(x: Nat): Nat = x
 
 # quantity binders from {.linear.} / {.erased.} pragmas
-conforms """proc useLin (1 ch : ?) (x : ?) : ? = x
-proc useEra (0 ch : ?) (x : ?) : ? = x
+conforms """proc useLin (1 ch : Type 0) (x : Type 0) : Type 0 = x
+proc useEra (0 ch : Type 0) (x : Type 0) : Type 0 = x
 """:
   proc useLin(ch {.linear.}: Univ, x: Univ): Univ = x
   proc useEra(ch {.erased.}: Univ, x: Univ): Univ = x
@@ -192,7 +192,7 @@ proc one : Nat = (suc zero)
   proc one(): Nat = 1
 
 # elim / red declarations (smoke tests 07/08; issue #151)
-conforms """elim boolElim : Pi (C : Bool -> ?). C true -> C false -> Pi (b : Bool). C b
+conforms """elim boolElim : Pi (C : Bool -> Type 0). C true -> C false -> Pi (b : Bool). C b
 red boolElim C t f true = t
 red boolElim C t f false = f
 """:
@@ -217,7 +217,7 @@ conforms """def isZero : Nat -> Bool
     clause([suc(n)], false)
 
 # quantity-variable binders (issue #151 / #66)
-conforms """proc qid (q x : ?) : ? = x
+conforms """proc qid (q x : Type 0) : Type 0 = x
 """:
   proc qid(x {.qvar(q).}: Univ): Univ = x
 
@@ -229,10 +229,10 @@ proc absurd (x : O) : O = x
   proc absurd(x: emptyTy): emptyTy = x
 
 # term ascription, typed let, quantity-annotated lam (issue #151)
-conforms """proc asc (A : ?) (x : A) : A = (x : A)
-proc typedLet (A : ?) (x : A) : A =
+conforms """proc asc (A : Type 0) (x : A) : A = (x : A)
+proc typedLet (A : Type 0) (x : A) : A =
   let y : A = x in y
-proc linLam : ? = lam (1 x : ?). x
+proc linLam : Type 0 = lam (1 x : Type 0). x
 """:
   proc asc(A: Univ, x: A): A = (x: A)
   proc typedLet(A: Univ, x: A): A =
@@ -242,9 +242,9 @@ proc linLam : ? = lam (1 x : ?). x
 
 # record declaration + dot projection (issue #37)
 conforms """record Point:
-| x : ?
-| y : ?
-proc getX (p : Point) : ? = p.x
+| x : Type 0
+| y : Type 0
+proc getX (p : Point) : Type 0 = p.x
 """:
   record(Point):
     field(x, Univ)

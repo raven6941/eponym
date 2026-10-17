@@ -1,11 +1,11 @@
 # Naturals via postulate. Tests postulate with eliminator.
 # Experiment: 08
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
 
-postulate Nat : ?
+postulate Nat : Type 0
 postulate zero : Nat
 postulate suc : Nat -> Nat
-elim natElim : Pi (C : Nat -> ?). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
+elim natElim : Pi (C : Nat -> Type 0). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (n : Nat). C n
 red natElim C z s zero   = z
 red natElim C z s (suc n)= s n (natElim C z s n)
 proc two : Nat= suc (suc zero)

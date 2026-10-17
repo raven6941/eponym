@@ -434,6 +434,7 @@ proc kconv(a, b: Term, g: KernelGlobals, depth: int = 0): bool =
   case wa.kind
   of tV: return wa.idx == wb.idx
   of tC: return wa.c == wb.c
+  of tType: return wa.lvl == wb.lvl
   of tR: return wa.refId == wb.refId
   of tInt: return wa.intVal == wb.intVal
   of tNatSing: return wa.natSingVal == wb.natSingVal  # Issue #74
@@ -472,7 +473,7 @@ proc kCheck(tm: Term, ty: Term, ctx: KCtx, g: KernelGlobals)
 
 proc kunivIdx(u: Term): int =
   ## Issue #52: the level index of a universe *term*: `Type l` -> l,
-  ## legacy `?` -> 0. Raises KernelError if `u` is not a universe.
+  ## internal legacy sort -> 0. Raises KernelError if `u` is not a universe.
   case u.kind
   of tType: u.lvl
   of tC:
@@ -504,7 +505,7 @@ proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term =
       raise kerr("unknown global refId " & $tm.refId)
     g.entries[tm.refId].ty
   of tC:
-    # ? : ?, 1 : ?, O : ? -- but the unit value <> : 1 (elab: pkUnitV).
+    # Type 0 : Type 1, 1 : Type 0, O : Type 0 -- but the unit value <> : 1 (elab: pkUnitV).
     if tm.c == cVoid: Term(kind: tC, c: cOne)
     else: star
   of tType:
@@ -514,7 +515,7 @@ proc kInfer(tm: Term, ctx: KCtx, g: KernelGlobals): Term =
     kCheck(tm.dom, star, ctx, g)
     kCheck(tm.scope.bdy, star, tm.dom & ctx, g)
     ## Issue #52: Pi/Sigma formation takes the max of the domain and
-    ## codomain universe levels (legacy `?`-based types stay at level 0).
+    ## codomain universe levels (internally generated legacy-universe terms stay at level 0).
     Term(kind: tType, lvl: max(kunivIdx(kInfer(tm.dom, ctx, g)),
                               kunivIdx(kInfer(tm.scope.bdy, tm.dom & ctx, g))))
   of tApp:
@@ -832,7 +833,7 @@ when isMainModule:
   proc vv(i: int): Term = Term(kind: tV, idx: i)
 
   var g = initKernelGlobals()
-  # id : (A : ?) -> A -> A ; body returns the last argument
+  # id : (A : Type 0) -> A -> A ; body returns the last argument
   let idTy = pi(star, pi(vv(0), pi(vv(1), vv(2))))
   let idTm = lam(lam(lam(vv(0))))
   assert kernelCheck(idTm, idTy, g), "id should check"
@@ -864,7 +865,7 @@ when isMainModule:
     "defined reference should unfold and check"
   # dependent pair elimination (regression: sigma-binder elimination must
   # decrement outer indices -- kinst, not ksubstKeep):
-  # (A B : ?) (p : Sig (u : A). B) |- (snd p, fst p) : Sig (v : B). A
+  # (A B : Type 0) (p : Sig (u : A). B) |- (snd p, fst p) : Sig (v : B). A
   let siAB = Term(kind: tSi, dom: vv(1), scope: Scope(bdy: vv(1)),
                   impl: false, erased: false, qty: qOmega)   # at depth 2
   let siBA = Term(kind: tSi, dom: vv(1), scope: Scope(bdy: vv(3)),
@@ -892,11 +893,11 @@ when isMainModule:
   g.entries[zeroId] = KGEntry(ty: kref(natId), def: nil)
   g.entries[sucId] = KGEntry(ty: pi(kref(natId), kref(natId)), def: nil)
   g.natZeroId = zeroId; g.natSucId = sucId
-  # natElim : Pi (C : Nat -> ?) (z : C zero)
+  # natElim : Pi (C : Nat -> Type 0) (z : C zero)
   #             (s : Pi (n : Nat). C n -> C (suc n)) (n : Nat). C n
   let cVar = vv(3)  # C, from inside the body (depth 4)
   let elimTy =
-    pi(pi(kref(natId), star),                       # C : Nat -> ?
+    pi(pi(kref(natId), star),                       # C : Nat -> Type 0
       pi(app(vv(0), kref(zeroId)),                   # z : C zero
         pi(pi(kref(natId),                           # s : Pi (n:Nat). C n -> C (suc n)
               pi(app(vv(2), vv(0)),

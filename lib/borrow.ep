@@ -7,8 +7,8 @@
 # their own scoped clients against this library.
 import "nat.ep"
 
-postulate Res : ?
-postulate Borrow : ?
+postulate Res : Type 0
+postulate Borrow : Type 0
 
 # A unique borrow of a resource: `withBorrow r k` hands `k` the *only*
 # borrow of `r`; `r` itself is consumed (linear), so the owner cannot

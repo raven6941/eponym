@@ -6,8 +6,8 @@
 # macro only feeds the elaborator a string and turns failures into
 # compiler errors.
 #
-# Each `![ name ]` / `![ name, draft ]` shed becomes a `_` hole in the
-# generated Eponym source, elaborated hole-tolerantly
+# Each `![ name ]` / `![ name, draft ]` or nested `shedHole(name)` shed
+# becomes a `?` hole in the generated Eponym source, elaborated hole-tolerantly
 # (elab.elabCheckHolesDir: #58 semantics + #131 import support). Sheds
 # that remain holes are matched back to MetaStore.holes by generated-
 # source line, and their metadata (Nim source position, goal type,

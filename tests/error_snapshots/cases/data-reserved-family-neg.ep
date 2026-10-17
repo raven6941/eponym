@@ -2,6 +2,6 @@
 # motive binder the elaborator generates for the eliminator (Experiment 5
 # desugaring), and must be rejected with a clear reserved-name error — not
 # the confusing conversion mismatch the collision used to produce.
-data C : ? where
+data C : Type 0 where
 | d1 : C
 | d2 : C

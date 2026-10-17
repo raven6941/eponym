@@ -18,6 +18,7 @@ import {
   generateSidecar,
   shedBlocks,
   shedAtCursor,
+  shedNodeStartingAt,
   blockShedsAtCursor,
   sidecarPathFor,
   sidecarFresh,
@@ -118,10 +119,18 @@ async function main() {
     "blockShedsAtCursor: cursor in the block (outside the node) sees quadBody");
   check(blockShedsAtCursor(demoText, 0).length === 0,
     "blockShedsAtCursor: outside any block sees nothing");
+  const residualText =
+    "shedsBlock:\n  proc f(A: Univ): A = lam x. shedHole(innerGoal)\n";
+  const residualOff = residualText.indexOf("shedHole(innerGoal)");
+  check(shedNodeStartingAt(residualText, residualOff)?.name === "innerGoal",
+    "shedNodeStartingAt recognizes a residual shedHole marker");
+  check(shedAtCursor(residualText, residualOff + 10)?.name === "innerGoal" &&
+        blockShedsAtCursor(residualText, residualOff).length === 1,
+    "cursor and block lookup keep residual lambda holes addressable");
 
-  // The walkthrough demo (issue #192): one block, six shed nodes (the
-  // #192 extension: give, case-split, and deep-nesting sheds on top of
-  // the original three).
+  // The walkthrough is edited as users complete sheds, so compare its
+  // current source markers with the freshly generated sidecar rather than
+  // assuming a fixed number of open goals.
   const wt = path.resolve(path.dirname(demo), "sheds_walkthrough.nim");
   if (fs.existsSync(wt)) {
     // The walkthrough layout checks below need its sidecar; generate it
@@ -131,16 +140,17 @@ async function main() {
     const wtText = fs.readFileSync(wt, "utf8");
     const wtBlocks = shedBlocks(wtText);
     const wtNames = wtBlocks.flatMap((b) => b.sheds.map((s) => s.name));
-    check(wtBlocks.length === 1 &&
-          wtNames.join(",") === "quadBody,addThreeBody,shuffleBody,constABody,isZeroBody,constEndoBody",
-      "shedBlocks finds all six walkthrough sheds: " + wtNames.join(","));
-    const shuffleOff = wtText.indexOf("![shuffleBody");
-    check(shuffleOff >= 0 && shedAtCursor(wtText, shuffleOff + 2)?.name === "shuffleBody",
-      "shedAtCursor disambiguates the walkthrough's third shed");
-    // A cursor in the block but outside any node sees all six (ambiguous).
-    const inBody = wtBlocks[0].sheds[0].end + 2;
-    check(blockShedsAtCursor(wtText, inBody).length === 6,
-      "blockShedsAtCursor reports all six sheds when the block is ambiguous");
+    const sidecarNames = readSidecarShedNames(sidecarPathFor(wt));
+    check(wtBlocks.length === 1 && wtNames.length > 0 &&
+          wtNames.join(",") === sidecarNames.join(","),
+      "walkthrough source markers match its generated sidecar: " + wtNames.join(","));
+    const firstShed = wtBlocks[0].sheds[0];
+    check(shedAtCursor(wtText, firstShed.start + 2)?.name === firstShed.name,
+      "shedAtCursor resolves a current walkthrough shed");
+    // A cursor in the block but outside any node sees all current sheds.
+    const inBody = wtBlocks[0].start + 5;
+    check(blockShedsAtCursor(wtText, inBody).length === wtNames.length,
+      "blockShedsAtCursor reports all current sheds when the block is ambiguous");
 
     // Issue #221: the inline view path against the real server — shedLayout
     // for each walkthrough shed, rendered by renderInlineShed exactly as the
@@ -166,7 +176,7 @@ async function main() {
       const view = renderInlineShed(name, wl.box, { showButtons: true, keyHints });
       check(view.includes(name) && goals.some((g) => view.includes(g)),
         `inline view for ${name} shows the shed name and its goal`);
-      check(view.includes("?") && view.includes(keyHints),
+      check(/\?\d+\s*:/.test(view) && view.includes(keyHints),
         `inline view for ${name} draws the hole box and the advisory keybinding line`);
       check(view.includes("[refine] [case-split] [give]"),
         `inline view for ${name} shows action buttons when enabled`);
@@ -178,9 +188,9 @@ async function main() {
     // Regression: renderers must not crash on partial boxes. Older server
     // binaries omit empty arrays (no top-level holeIds, etc.); boxToText/
     // boxToHtml used to throw "Cannot read properties of undefined". Strip
-    // the array fields from a REAL shedLayout response and verify both
-    // renderers survive it.
-    const realBox = (await client.shedLayout(wtUri, "constABody")).box;
+    // array fields from a real response and verify both renderers survive.
+    const partialName = wtNames[0];
+    const realBox = (await client.shedLayout(wtUri, partialName)).box;
     const stripArrays = (b: any): any => {
       if (b === null || typeof b !== "object") return b;
       const out: any = {};
@@ -200,7 +210,7 @@ async function main() {
       "regression fixture: stripped box really lacks holeIds");
     let partialView = "";
     try {
-      partialView = renderInlineShed("constABody", partialBox, { showButtons: true, keyHints });
+      partialView = renderInlineShed(partialName, partialBox, { showButtons: true, keyHints });
     } catch (e) {
       check(false, `renderInlineShed survives a partial box (threw: ${String(e)})`);
     }
@@ -245,9 +255,9 @@ async function main() {
   const nimFile = path.join(tmp, "demo.nim");
   fs.writeFileSync(nimFile, "-- fixture\n");
   const genSrc =
-    "postulate Int : ?\n" +
-    "proc doubleIt (n : Int) : Int = _\n" +
-    "proc tripleIt (n : Int) : Int = _\n";
+    "postulate Int : Type 0\n" +
+    "proc doubleIt (n : Int) : Int = ?\n" +
+    "proc tripleIt (n : Int) : Int = ?\n";
   const sidecar = {
     file: nimFile,
     errMsg: "",
@@ -267,6 +277,17 @@ async function main() {
   const names = await client.shedNames(uri2);
   check(Array.isArray(names) && names.length === 2 && names[0] === "shedA",
     "eponym/shedNames lists the fixture sheds: " + JSON.stringify(names));
+
+  const sidecarBeforeGive = fs.readFileSync(sidecarPath, "utf8");
+  let giveError = "";
+  try {
+    await client.refineShed(uri2, "shedA", "addInt n ?", true);
+  } catch (e) {
+    giveError = String(e);
+  }
+  check(giveError.includes("give rejected") &&
+        fs.readFileSync(sidecarPath, "utf8") === sidecarBeforeGive,
+    "eponym/refineShed enforces Give completion without mutating rejected state: " + giveError);
 
   const r1 = await client.refineShed(uri2, "shedA", "addInt n n");
   check(r1.status === "white" && r1.term === "addInt n n" &&
@@ -297,28 +318,28 @@ async function main() {
   // answers "unknown document"; after didOpen the codeAction path reaches
   // case-split; didChange refreshes the buffer the server reasons about.
   const epLines = [
-    "data Nat : ? where",
+    "data Nat : Type 0 where",
     "| zero : Nat",
     "| suc (n : Nat) : Nat",
     "def add : Nat -> Nat -> Nat",
     "| zero n = n",
     "| (suc m) n = suc (add m n)",
-    "data Vec (A : ?) : Nat -> ? where",
+    "data Vec (A : Type 0) : Nat -> Type 0 where",
     "| nil : Vec A zero",
     "| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)",
-    "proc append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =",
-    "  _",
+    "proc append {A : Type 0} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =",
+    "  ?",
     "",
   ];
   const epSrc1 = epLines.join("\n");
   // Same text with the explicit arguments swapped: ys is now the first
   // explicit argument, so case-split applies to it instead of xs.
   const epSrc2 = epSrc1.replace(
-    "proc append {A : ?} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =",
-    "proc append {A : ?} {m : Nat} {n : Nat} (ys : Vec A n) (xs : Vec A m) : Vec A (add n m) ="
+    "proc append {A : Type 0} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =",
+    "proc append {A : Type 0} {m : Nat} {n : Nat} (ys : Vec A n) (xs : Vec A m) : Vec A (add n m) ="
   );
   const epUri = "file:///tmp/shed-smoke-case-split.ep";
-  const holePos = { line: 10, character: 2 }; // 0-based: the `  _` line
+  const holePos = { line: 10, character: 2 }; // 0-based: the `  ?` line
   const caseSplitReq = (variable: string) => ({
     textDocument: { uri: epUri },
     range: { start: holePos, end: holePos },

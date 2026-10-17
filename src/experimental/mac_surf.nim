@@ -3,7 +3,7 @@
 # A macro `ettDefs` takes a block of `proc` definitions and produces a
 # seq[SurfDef] of preterms (see preterm.nim). Mapping:
 #   proc twice(A: Univ, f: A -> A, x: A): A = f(f(x))
-#   - `Univ`            -> ?                 (Nim can't parse a bare `?`)
+#   - `Univ`            -> Type 0                 (Nim can't parse a bare `Type 0`)
 #   - `A -> B` (infix)  -> Pi (_ : A). B
 #   - `lam(x, T, body)` -> lam (x : T). body
 #   - `Sig(A, B)`       -> Sig (_ : A). B    (non-dependent for now)
@@ -135,11 +135,11 @@ when isMainModule:
       (snd(p), fst(p))
 
   let sDefs = parseProgram("""
-proc twice (A : ?) (f : A -> A) (x : A) : A =
+proc twice (A : Type 0) (f : A -> A) (x : A) : A =
   f (f x)
-proc constFn (A : ?) (B : ?) (x : A) (y : B) : A =
+proc constFn (A : Type 0) (B : Type 0) (x : A) (y : B) : A =
   x
-proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
+proc pairSwap (A : Type 0) (B : Type 0) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 """)
 
@@ -160,6 +160,6 @@ proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
     proc applyTwice(A: Univ, f: A -> A): A -> A =
       lam(x, A, f(f(x)))
   assert $lamDef[0].desugarTm() ==
-    "lam (A : ?). lam (f : A -> A). lam (x : A). f (f x)"
+    "lam (A : Type 0). lam (f : A -> A). lam (x : A). f (f x)"
 
   echo "mac_surf: all tests passed"

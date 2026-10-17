@@ -13,7 +13,7 @@
 #   (the old ettEmbed"""...""" string form was dropped in Issue #115)
 # - `proc` — Nim keyword (Eponym string syntax also uses `proc` now, was `def`)
 # - `=` — Nim definition (was `:=` in old Eponym syntax)
-# - `postulate(Int, Univ)` — call syntax; `Univ` stands for `?` (`?` isn't valid Nim)
+# - `postulate(Int, Univ)` — call syntax; `Univ` stands for `Type 0` (`Type 0` isn't valid Nim)
 # - `import "../../lib/nat.ep"` — Eponym-module import (issue #131), resolved
 #   relative to this file's directory; pulls in Nat/Vec/etc. from the prelude
 #   instead of redefining them per file (`data(Nat, Univ):` block syntax still
@@ -37,8 +37,8 @@ eponymBlock:
   import "../../lib/vec.ep"
 
   # postulate(Int, Univ): declares primitive Int type.
-  # Call syntax because `postulate Int : ?` isn't valid Nim (`?` doesn't parse).
-  # `Univ` is the Nim-friendly spelling of Eponym's `?` (the universe).
+  # Call syntax because `postulate Int : Type 0` isn't valid Nim (`Type 0` doesn't parse).
+  # `Univ` is the Nim-friendly spelling of Eponym's `Type 0` (the universe).
   postulate(Int, Univ)
 
   # `proc` not `def`; `=` not `:=` — matches Nim.

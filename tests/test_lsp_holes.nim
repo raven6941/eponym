@@ -1,21 +1,21 @@
 ## Issue #58: LSP hole commands — hover slice.
 ##
 ## Headless scripted mock-LSP session (no editor): drives the server's
-## message handlers in-process over a Vec program with a `_` hole and
+## message handlers in-process over a Vec program with a `?` hole and
 ## asserts hover returns the goal type + context at the hole.
 import json
 import strutils
 import tables
 import lsp
 
-const vecSrc = """data Nat : ? where
+const vecSrc = """data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-proc headDefault (A : ?) (n : Nat) (d : A) (xs : Vec A (suc n)) : A =
-  _
+proc headDefault (A : Type 0) (n : Nat) (d : A) (xs : Vec A (suc n)) : A =
+  ?
 """
 
 proc msg(s: string): JsonNode = parseJson(s)
@@ -28,7 +28,7 @@ proc check(cond: bool, label: string) =
     echo "FAIL: ", label
 
 # --- unit: hoverAt -------------------------------------------------------
-let md = hoverAt(vecSrc, 7, 2)  # 0-based: line of `  _`, col of `_`
+let md = hoverAt(vecSrc, 7, 2)  # 0-based: line of `  ?`, col of `?`
 check(md.contains("goal"), "hoverAt returns a goal at the hole")
 check(md.contains("context"), "hoverAt returns the context at the hole")
 for name in ["xs", "d", "n", "A"]:
@@ -43,7 +43,7 @@ check(md.contains("goal : A"), "hover goal resolves to `A`")
 check(md.contains("`xs : (Vec A (suc n))`"),
   "hover ctx resolves `Vec` and `suc`")
 check(md.contains("`n : Nat`"), "hover ctx resolves `Nat`")
-check(md.contains("`A : ?`"), "hover ctx renders the universe as `?`")
+check(md.contains("`A : Type 0`"), "hover ctx renders the universe as `Type 0`")
 # No `libpcre` in this VM, so scan for `R<digit>` without the `re` module.
 proc hasRigidRender(s: string): bool =
   var i = 0
@@ -53,11 +53,11 @@ proc hasRigidRender(s: string): bool =
   false
 check(not hasRigidRender(md),
   "hover shows no rigid `R<n>` renderings for globals")
-const natGoalSrc = """data Nat : ? where
+const natGoalSrc = """data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 proc f : Nat =
-  _
+  ?
 """
 let mdNat = hoverAt(natGoalSrc, 4, 2)
 check(mdNat.contains("goal : Nat"),

@@ -10,15 +10,15 @@
 # because the postulate's type doesn't match.
 import "../../lib/nat.ep"
 
-data Session : ? where
-| sendD (A : ?) (k : A -> Session) : Session
-| recvD (A : ?) (k : A -> Session) : Session
+data Session : Type 0 where
+| sendD (A : Type 0) (k : A -> Session) : Session
+| recvD (A : Type 0) (k : A -> Session) : Session
 | endS : Session
 
-data Chan : Session -> ? where
+data Chan : Session -> Type 0 where
 | mkChan (s : Session) : Chan s
 
-postulate AcceptMsg : Nat -> ?
+postulate AcceptMsg : Nat -> Type 0
 
 proc propAfterAccept (a : Nat) : Session = endS
 proc propAfterPromise (pr : Sig (v : Nat). AcceptMsg v) : Session =

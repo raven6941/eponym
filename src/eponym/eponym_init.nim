@@ -930,7 +930,7 @@ proc check*(s: var Supply, ty: Value, t: Term, qtySubsumption = false): Value =
       # the bare symmetric check. #74: a term whose inferred type is a
       # singleton (or a Pi/Sigma built over one) checks against the
       # widened expected type. #52: universe cumulativity (`Type i` <:
-      # `Type j` for i <= j; the legacy `?` admits any universe) is a
+      # `Type j` for i <= j; the internal legacy sort admits any universe) is a
       # subsumption rule too. When subsumption fails, areEqual raises the
       # standard mismatch error, so failure behavior is unchanged.
       # Issue #84: with qtySubsumption, fall back to the directional
@@ -1072,7 +1072,7 @@ proc areEqual*(s: var Supply, ty, a, b: Value, qtySubsumption = false) =
 
 proc univIdx*(u: Value): int =
   ## Issue #52: the level index of a universe *value*: `Type l` -> l,
-  ## legacy `?` -> 0. Raises if `u` is not a universe. Exported for the
+  ## internal legacy sort -> 0. Raises if `u` is not a universe. Exported for the
   ## elaborator's cumulativity fast path and Pi/Sigma formation levels.
   case u.whnf.kind
   of wType: u.whnf.lvl
@@ -1345,7 +1345,7 @@ when isMainModule:
   assert selfFailed, "Type 0 : Type 0 must fail"
   echo "ok: Type 0 : Type 0 rejected (no Type-in-Type)"
 
-  # legacy `?` admits any universe in "is a type" positions
+  # the internal legacy sort admits any universe in "is a type" positions
   discard check(tcSupply, vStar(), tmType(5))
   echo "ok: legacy ? admits Type 5"
 

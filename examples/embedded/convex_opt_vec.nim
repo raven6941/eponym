@@ -28,7 +28,7 @@
 # for a principled reason: constructors of a parameterized family must
 # target the family at the *same* params (`Vec`'s `cons` targets
 # `Vec A`, never `Vec B`), but matvec changes the dimension from `n`
-# to `m`. Dependent index telescopes (`Pi (n : Nat). VExpr n -> ?`)
+# to `m`. Dependent index telescopes (`Pi (n : Nat). VExpr n -> Type 0`)
 # would allow it as a constructor, but the `data` desugar's eliminator
 # generator does not support them (it renames index binders without
 # substituting later index types). So the dimension-preserving rules
@@ -85,7 +85,7 @@ eponymBlock:
     proc quadForm(n: Nat, P: Mat(n, n), x: VExpr(n)): CExpr
 
   # Affine vector expressions, dimension-indexed (n is a parameter,
-  # Vec-style, so the index type VExpr n -> ? stays non-dependent).
+  # Vec-style, so the index type VExpr n -> Type 0 stays non-dependent).
   data(VAffine, [n: Nat], VExpr(n) -> Univ):
     proc vafVar(): VAffine(n, vVar(n))
     proc vafConstV(): VAffine(n, vConstV(n))

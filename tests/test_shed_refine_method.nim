@@ -75,7 +75,7 @@ proc macroTime(nimFile: string, names: seq[string],
   ## Simulate what `shedsBlock` records: placeholders resolved by the
   ## real `resolveShedPlaceholders` (hole line AND column), `genSrc`
   ## stored per shed (the `sheds_mac` #137 addition).
-  var src = "postulate Int : ?\n"
+  var src = "postulate Int : Type 0\n"
   for i, nm in names:
     src &= "proc p" & $i & " (n : Int) : Int = " & shedPlaceholder(i) & "\n"
   result = @[]
@@ -232,9 +232,45 @@ try:
 except ElabError as e:
   check(false, "multi-line completed source passes strict elabCheck: " & e.msg)
 
+# --- dependent eliminator branch refinement ------------------------------
+# Regression for case-split-created sheds: the successor branch of
+# natElim over Nat -> Bool has two binders (the predecessor and its
+# induction hypothesis). Filling that named shed must accept the lambda
+# implementing the branch, then refresh it to white.
+let dir4 = getTempDir() / "shed_refine_method_dependent_branch"
+createDir(dir4)
+let nimFile4 = dir4 / "demo.nim"
+writeFile(nimFile4, "-- placeholder")
+let natLib = (getCurrentDir() / "lib/nat.ep").replace("\\", "/")
+let boolLib = (getCurrentDir() / "lib/bool.ep").replace("\\", "/")
+var branchSrc = "import \"" & natLib & "\"\n" &
+                "import \"" & boolLib & "\"\n" &
+                "proc isZero (n : Nat) : Bool = " &
+                "natElim (lam (u : Nat). Bool) true " &
+                shedPlaceholder(0) & " n\n"
+var branchInfo = @[ShedInfo(name: "isZeroBody_suc", draft: "",
+                            nimLine: 5, nimCol: 1, status: ssYellow)]
+resolveShedPlaceholders(branchSrc, branchInfo)
+branchInfo[0].genSrc = branchSrc
+writeShedSidecar(nimFile4, branchInfo)
+let branchResp = refineShedReq(
+  server, "file://" & nimFile4, "isZeroBody_suc",
+  "lam p. lam ih. false", 50)
+check("error" notin branchResp,
+  "case-split successor shed accepts its two-binder Bool implementation: " &
+  (if "error" in branchResp: branchResp["error"]["message"].getStr()
+   else: $branchResp))
+if "error" notin branchResp:
+  check(branchResp["result"]["status"].getStr() == "white",
+    "case-split successor shed becomes white after filling")
+  let branchAfter = readShedSidecar(sidecarPath(nimFile4))[0]
+  check(branchAfter.genSrc.contains("(lam p. lam ih. false)"),
+    "dependent branch fill is parenthesized in the recorded source")
+
 removeDir(dir)
 removeDir(dir2)
 removeDir(dir3)
+removeDir(dir4)
 
 if failures > 0:
   echo failures, " FAILURES"

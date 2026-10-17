@@ -104,7 +104,7 @@ proc collectUseLocsWalk(p: PreTerm, binder: PreTerm, stack: var seq[PreTerm],
     discard stack.pop()
   of pkAnn:
     collectUseLocsWalk(p.c1, binder, stack, acc)  # c2 is the type: skip
-  of pkHole, pkInt, pkBy, pkUniv, pkUnivN, pkUnitTy, pkUnitV, pkEmptyTy:
+  of pkHole, pkDiscard, pkInt, pkBy, pkUniv, pkUnivN, pkUnitTy, pkUnitV, pkEmptyTy:
     discard
 
 proc collectBinderUseLocs*(body: PreTerm, binder: PreTerm): seq[Loc] =

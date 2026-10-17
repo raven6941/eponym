@@ -1,13 +1,13 @@
 # Tactics: `by` blocks run Nim tactics against the expected type.
 # Experiment: 6
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
 # `by tac` runs a tactic (e.g. `by refl`); built-ins: `refl`, `assumption`
 # `by refl` proves equalities by reflexivity (up to conversion).
 # `by assumption` finds a matching hypothesis.
 
-postulate Int : ?
+postulate Int : Type 0
 
-data Eq (A : ?) (x : A) : A -> ? where
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 
 proc pf1 : Eq Int 42 42= by refl

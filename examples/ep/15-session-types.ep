@@ -1,6 +1,6 @@
 # Session types (indexed protocol descriptions). Tests issue #28.
 # Experiment: session-typed channels
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe
 #
 # A session type describes a communication protocol. A channel indexed by
 # a session type ensures at compile time that send/recv follow the protocol.

@@ -71,7 +71,7 @@ proc below(r: var Rng, n: int): int =
 # --- prelude ----------------------------------------------------------------
 
 let (globals, _, _) = elabPrelude("""
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
 """)
@@ -389,7 +389,7 @@ block:
     checkProp(decls[0].def.body == mkInt(1),
               "P7: `01` parsed to " & $decls[0].def.body & ", want pkInt(1)")
   elabOk "P7 parse `1` as unit type":
-    let decls = parseProgram("proc tmp : ? =\n  1\n")
+    let decls = parseProgram("proc tmp : Type 0 =\n  1\n")
     checkProp(decls.len == 1 and decls[0].kind == dkDef,
               "P7: `1` did not parse to one def")
     checkProp(decls[0].def.body.kind == pkUnitTy,

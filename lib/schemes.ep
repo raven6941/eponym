@@ -31,11 +31,11 @@ import "eq.ep"
 # `cataNat P z s` is `natElim P z s`: the fold for Nat. Naming it `cata`
 # documents the intent — every use is a fold, never ad-hoc recursion.
 
-proc cataNat (P : Nat -> ?) (z : P zero)
+proc cataNat (P : Nat -> Type 0) (z : P zero)
     (s : (p : Nat) -> P p -> P (suc p)) (n : Nat) : P n =
   natElim P z s n
 
-proc cataList (A : ?) (P : List A -> ?) (nilC : P (nil A))
+proc cataList (A : Type 0) (P : List A -> Type 0) (nilC : P (nil A))
     (consC : (x : A) -> (tl : List A) -> P tl -> P (cons A x tl))
     (xs : List A) : P xs =
   listElim A P nilC consC xs
@@ -50,7 +50,7 @@ proc cataList (A : ?) (P : List A -> ?) (nilC : P (nil A))
 # with the termination evidence in hand. (A corecursive `ana` without fuel
 # would need codata, which Eponym does not have.)
 
-proc anaList (A : ?) (S : ?) (fuel : Nat) (hd : S -> A) (tl : S -> S)
+proc anaList (A : Type 0) (S : Type 0) (fuel : Nat) (hd : S -> A) (tl : S -> S)
     (stop : S -> Bool) (s : S) : List A =
   cataNat (lam (u : Nat). S -> List A)
           (lam (s0 : S). nil A)
@@ -72,7 +72,7 @@ proc isZero (n : Nat) : Bool =
 # `replicate n x`: the length-n list of x's, as an anamorphism. Seed and
 # fuel are both n; the coalgebra observes head = x, step = pred, stop =
 # isZero.
-proc replicate (A : ?) (n : Nat) (x : A) : List A =
+proc replicate (A : Type 0) (n : Nat) (x : A) : List A =
   anaList A Nat n (lam (s : Nat). x) pred isZero n
 
 # --- laws ---
@@ -103,7 +103,7 @@ proc cataNatRefl (n : Nat)
 # Cata-map fusion for List: folding after a map is folding with the
 # composed algebra — one pass, no intermediate list. This is the general
 # fusion law; `mapComp` in list.ep is the instance for the map algebra.
-proc cataMapFusion (A : ?) (B : ?) (P : List B -> ?)
+proc cataMapFusion (A : Type 0) (B : Type 0) (P : List B -> Type 0)
     (nilC : P (nil B))
     (consC : (x : B) -> (tl : List B) -> P tl -> P (cons B x tl))
     (g : A -> B) (xs : List A)
@@ -153,7 +153,7 @@ proc cataMapFusion (A : ?) (B : ?) (P : List B -> ?)
 # `replicate (suc p) x` unfolds definitionally: `isZero (suc p)` is
 # `false`, `pred (suc p)` is `p`, so it is `cons x (replicate p x)`,
 # and `length` of that is `suc (length (replicate p x))`.
-proc hyloLenRepLaw (A : ?) (n : Nat) (x : A)
+proc hyloLenRepLaw (A : Type 0) (n : Nat) (x : A)
     : Eq Nat (length A (replicate A n x)) n =
   cataNat (lam (u : Nat). Eq Nat (length A (replicate A u x)) u)
           (refl Nat zero)
@@ -170,7 +170,7 @@ proc fusedLenRep (n : Nat) : Nat =
 # Fusion lemma connecting fused and unfused: the intermediate list is
 # provably unnecessary. `trans`/`sym` from eq.ep; `cataNatRefl` says the
 # fused program is `n`.
-proc deforestLenRep (A : ?) (n : Nat) (x : A)
+proc deforestLenRep (A : Type 0) (n : Nat) (x : A)
     : Eq Nat (length A (replicate A n x)) (fusedLenRep n) =
   trans Nat (length A (replicate A n x)) n (fusedLenRep n)
         (hyloLenRepLaw A n x)

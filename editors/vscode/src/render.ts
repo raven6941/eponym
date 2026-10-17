@@ -104,7 +104,7 @@ document.getElementById('tree').innerHTML = renderBox(layout.box);
 document.querySelectorAll('.hole').forEach(el=>{
   el.addEventListener('click', ()=>{
     selectedHole = el.getAttribute('data-hole');
-    document.getElementById('goalpane').textContent = '?'+selectedHole+' : '+el.getAttribute('data-goal');
+    document.getElementById('goalpane').textContent = '_'+selectedHole+' : '+el.getAttribute('data-goal');
   });
 });
 function refine(){ const t=document.getElementById('term').value; vscode.postMessage({cmd:'refine', term:t, hole:selectedHole}); }

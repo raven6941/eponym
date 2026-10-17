@@ -1,11 +1,11 @@
 # Primitive efficient integers: literals and ops compute via host.
 # Experiment: 11
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
 # No unary s(s(z)) — 42 is a machine integer, addInt computes directly.
 
-postulate Int : ?
+postulate Int : Type 0
 
-data Eq (A : ?) (x : A) : A -> ? where
+data Eq (A : Type 0) (x : A) : A -> Type 0 where
 | refl : Eq A x x
 
 proc sum : Int= addInt 42 17

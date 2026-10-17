@@ -11,10 +11,23 @@
 # Decision (recorded in decisions.org under #88): a separate value type is
 # needed — the existing quantity annotations cannot be reused as values
 # because they live on binders in the core (preterm.Quantity), not in the
-# term language. The bridge is a computing function `Usage -> ?` whose
+# term language. The bridge is a computing function `Usage -> Type 0` whose
 # cases select the literal binder quantity.
 
-data Usage : ? where
+data Usage : Type 0 where
 | U0 : Usage
 | U1 : Usage
 | UOmega : Usage
+
+# Large eliminator for selecting a type from a Usage value. The generated
+# usageElim has a Type 0 motive; this variant returns into Type 1 so its
+# branches can be function types (which inhabit Type 0).
+elim usageElimLarge :
+  Pi (C : Usage -> Type 1).
+  Pi (m0 : C U0).
+  Pi (m1 : C U1).
+  Pi (mOmega : C UOmega).
+  Pi (u : Usage). C u
+red usageElimLarge C m0 m1 mOmega U0 = m0
+red usageElimLarge C m0 m1 mOmega U1 = m1
+red usageElimLarge C m0 m1 mOmega UOmega = mOmega

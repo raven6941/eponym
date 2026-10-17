@@ -59,7 +59,57 @@ proc qtyPrefix(n: NimNode): string =
     return ""
   return ""
 
+proc nimExprToEponym(n: NimNode): string
 proc nimTypeToEponym(n: NimNode): string
+
+proc nimCommandLamToEponym(n: NimNode): string =
+  ## Convert Nim's command-form untyped lambda (`lam x. body`) to Eponym
+  ## syntax. Nim represents a nested chain such as `lam x. lam y. body`
+  ## as `Command(lam, Command(DotExpr(x, lam), DotExpr(y, body)))`.
+  if n.kind != nnkCommand or n.len != 2 or
+     n[0].kind != nnkIdent or $n[0] != "lam":
+    error("eponymBlock: unsupported command-form lambda", n)
+  let arg = n[1]
+  if arg.kind == nnkDotExpr and arg.len == 2:
+    return "lam " & nimExprToEponym(arg[0]) & ". " &
+           nimExprToEponym(arg[1])
+  if arg.kind == nnkCommand and arg.len == 2 and
+     arg[0].kind == nnkDotExpr and arg[0].len == 2 and
+     arg[0][1].kind == nnkIdent and $arg[0][1] == "lam":
+    var nested = newNimNode(nnkCommand)
+    nested.add(ident("lam"))
+    nested.add(arg[1])
+    # A command-form typed binder such as `(n : Nat)` is represented as a
+    # tuple/colon AST, not an identifier. Reuse the expression converter so
+    # typed binders survive in nested command lambdas.
+    return "lam " & nimExprToEponym(arg[0][0]) & ". " &
+           nimCommandLamToEponym(nested)
+  error("eponymBlock: unsupported command-form lambda", n)
+
+proc nimCommandToEponym(n: NimNode): string =
+  ## Nim's command-call syntax (`suc n`) is also nnkCommand. Treat ordinary
+  ## commands as applications and reserve the special parser for `lam`.
+  ## Nim nests whitespace-separated command arguments in child Command
+  ## nodes; flatten those arguments instead of grouping them as one term.
+  if n.len == 0: error("eponymBlock: empty command expression", n)
+  if n[0].kind == nnkIdent and $n[0] == "lam":
+    return nimCommandLamToEponym(n)
+  var args: seq[string] = @[]
+  proc appendArg(a: NimNode) =
+    if a.kind == nnkCommand and a.len > 0 and
+       not (a[0].kind == nnkIdent and $a[0] == "lam"):
+      appendArg(a[0])
+      for j in 1 ..< a.len:
+        appendArg(a[j])
+    elif a.kind == nnkCommand:
+      args.add("(" & nimCommandLamToEponym(a) & ")")
+    elif a.kind in {nnkCall, nnkObjConstr}:
+      args.add("(" & nimExprToEponym(a) & ")")
+    else:
+      args.add(nimExprToEponym(a))
+  for i in 1 ..< n.len:
+    appendArg(n[i])
+  nimExprToEponym(n[0]) & " " & args.join(" ")
 
 proc nimExprToEponym(n: NimNode): string =
   ## Convert a Nim expression AST to Eponym source string.
@@ -71,7 +121,9 @@ proc nimExprToEponym(n: NimNode): string =
     if s == "unitv": s = "<>"   # issue #151: `<>` is not valid Nim syntax
     if s == "unitTy": s = "1"   # issue #151: the unit *type* (QTT)
     if s == "emptyTy": s = "O"  # issue #151: the empty type
-    if s == "Univ": "?" else: s
+    if s == "Univ": "Type 0"
+    elif s == "_": "?"
+    else: s
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
     # In eponymBlock, integer literals are passed through verbatim and
     # overloaded by the elaborator (checkTm pkInt: Nat when the expected
@@ -145,7 +197,7 @@ proc nimExprToEponym(n: NimNode): string =
       let a = n[i]
       # Parenthesize if arg is a call or obj-constr (Pi/Sig type args
       # parse as nnkObjConstr in expression position and need grouping too)
-      if a.kind in {nnkCall, nnkObjConstr}:
+      if a.kind in {nnkCall, nnkObjConstr, nnkCommand}:
         args.add("(" & nimExprToEponym(a) & ")")
       else:
         args.add(nimExprToEponym(a))
@@ -155,6 +207,8 @@ proc nimExprToEponym(n: NimNode): string =
     # (x) -> x (parenthesized)
     if n.len == 1: nimExprToEponym(n[0])
     else: "(" & n.mapIt(nimExprToEponym(it)).join(", ") & ")"
+  of nnkCommand:
+    nimCommandToEponym(n)
   of nnkDotExpr:
     # p.x -> (p).x (record projection, issue #37; the surface parser
     # resolves it against the record table at elaboration time).
@@ -190,7 +244,7 @@ proc nimTypeToEponym(n: NimNode): string =
     if s == "unitv": s = "<>"   # issue #151: `<>` is not valid Nim syntax
     if s == "unitTy": s = "1"   # issue #151: the unit *type* (QTT)
     if s == "emptyTy": s = "O"  # issue #151: the empty type
-    if s == "Univ": "?" else: s
+    if s == "Univ": "Type 0" else: s
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
     # Integer literal in type position: passed through verbatim; the
     # elaborator overloads it against the expected type (Nat or Int),
@@ -293,6 +347,8 @@ proc patToEponym(n: NimNode): string =
   ## Clause patterns are surface *atoms*; constructor applications need
   ## parens in surface syntax (`(suc m)`), so wrap calls (issue #151).
   case n.kind
+  of nnkIdent:
+    if $n == "_": "_" else: nimExprToEponym(n)
   of nnkCall:
     let s = nimExprToEponym(n)
     if n.len > 1: "(" & s & ")" else: s
@@ -309,7 +365,7 @@ proc procDefToEponym(n: NimNode): string =
   let name = $n[0]
   let params = n[3]  # nnkFormalParams: [returnType, param1, param2, ...]
   var paramStrs: seq[string] = @[]
-  var retTy = "?"
+  var retTy = "Type 0"
   if params.len > 0 and params[0].kind != nnkEmpty:
     retTy = nimTypeToEponym(params[0])
   for i in 1 ..< params.len:
@@ -361,7 +417,7 @@ proc blockToEponym*(body: NimNode): string =
     of nnkCall:
       let head = $st[0]
       if head == "postulate":
-        # postulate(Int, Univ) -> postulate Int : ?
+        # postulate(Int, Univ) -> postulate Int : Type 0
         if st.len != 3: error("postulate expects (name, type)", st)
         result.add("postulate " & $st[1] & " : " & nimTypeToEponym(st[2]) & "\n")
       elif head == "elim":
@@ -400,8 +456,8 @@ proc blockToEponym*(body: NimNode): string =
         if ndefs == 0:
           error("mutual needs at least one def group", st)
       elif head == "data":
-        # data(Nat, Univ): block -> data Nat : ? where | ...
-        # data(Vec, [A: Univ], Nat -> Univ): block -> data Vec (A : ?) : Nat -> ? where | ...
+        # data(Nat, Univ): block -> data Nat : Type 0 where | ...
+        # data(Vec, [A: Univ], Nat -> Univ): block -> data Vec (A : Type 0) : Nat -> Type 0 where | ...
         if st.len < 3: error("data expects (name, type) with block", st)
         let name = $st[1]
         # Check if we have params: data(Vec, [A: Univ], kind)
@@ -531,9 +587,9 @@ macro eponym*(src: string): untyped =
 
 when isMainModule:
   eponym"""
-proc twice (A : ?) (f : A -> A) (x : A) : A =
+proc twice (A : Type 0) (f : A -> A) (x : A) : A =
   f (f x)
-proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
+proc pairSwap (A : Type 0) (B : Type 0) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 """
   echo "ok: eponym macro accepts well-typed programs at compile time"

@@ -25,10 +25,10 @@ stagedCheckoVec2Procs()
 # --- Setup (mirrors staging/bench_rel_elab.nim) ------------------------------
 
 let setupSrc = """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 """
@@ -148,7 +148,7 @@ let cases = @[
   Case(name: "suc (suc zero) : Nat",
     rtm: sucTm(sucTm(zeroTm())), rty: natTy(),
     pre: mkInt(2), dty: natTyT),
-  Case(name: "Pi Nat Nat : ?",
+  Case(name: "Pi Nat Nat : Type 0",
     rtm: piTy(natTy(), natTy()), rty: univTy(),
     pre: mkPi("x", natV, natV), dty: tmC(cStar)),
 ]

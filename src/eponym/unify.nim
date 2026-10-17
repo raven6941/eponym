@@ -63,7 +63,7 @@ type
   # is rejected with a located error, and validated evidence does NOT
   # extend trust (no extDischarges increment) — the Andromeda endgame:
   # installing the handler extends automation, not the trusted base.
-  # `goalTy` is the type of the goal's sides (the universe `?` when the
+  # `goalTy` is the type of the goal's sides (the appropriate `Type l` when the
   # sides are themselves types); it lets the handler build a well-typed
   # evidence term.
   ConvVerdict* = enum
@@ -85,14 +85,20 @@ type
     metaLoc*: Loc     # where the meta was created (for error messages)
     solution*: Term   # nil = unsolved; lives in the creation context
 
-  # Issue #58 (LSP holes): a surface `_` hole recorded at creation time,
+  # Issue #58 (LSP holes): a surface `?` hole recorded at creation time,
   # with the goal type (a type metavariable, zonked at query time) and the
   # binder context (names + types, innermost-first) for hover display.
   HoleInfo* = object
     holeLoc*: Loc
+    holeName*: string
     holeGoal*: Term
     holeCtx*: seq[tuple[name: string, ty: Term]]
     holeAb*: Ability  # Issue #177: the ambient ability at the hole
+
+  NamedHoleEntry* = object
+    termMetaId*, tyMetaId*: int
+    ctxLen*: int
+    ctxNames*: seq[string]
 
   # Issue #56: pre-unification — suspended unification goals.
   #
@@ -114,6 +120,7 @@ type
     nextId*: int
     entries*: Table[int, MetaEntry]
     holes*: seq[HoleInfo]  # Issue #58: surface holes, in source order
+    namedHoles*: Table[string, NamedHoleEntry] # declaration-local ?n sharing
     allowHoles*: bool     # Issue #58: tooling mode — unsolved metas
                          # (holes) do not fail the declaration; the
                          # core re-check is skipped for open defs
@@ -239,6 +246,7 @@ proc constructorForbidEdges*(ms: MetaStore): seq[(int, int)] =
 
 proc initMetaStore*(): MetaStore =
   MetaStore(nextId: 0, entries: initTable[int, MetaEntry](), holes: @[],
+            namedHoles: initTable[string, NamedHoleEntry](),
             allowHoles: false,
             convCache: initEGraph(), convHandlers: @[], extDischarges: 0,
             qvarNames: initTable[string, int](), qvarSols: @[],
@@ -247,6 +255,11 @@ proc initMetaStore*(): MetaStore =
             refNames: initTable[int, string](),
             abNext: 0,
             deferred: @[])
+
+proc identitySpine*(ctxLen, extra: int): seq[Term] =
+  ## Occurrence of a meta created in an outer context, under `extra` binders.
+  result = newSeq[Term](ctxLen)
+  for i in 0 ..< ctxLen: result[i] = vv(i + extra)
 
 proc uerr(loc: Loc, msg: string): ref UnifyError =
   # No location prefix here: the elaborator catches UnifyError and re-raises

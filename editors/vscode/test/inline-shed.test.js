@@ -9,6 +9,7 @@
 
 const assert = require("assert");
 const Module = require("module");
+const path = require("path");
 const { makeMockVscode } = require("./mock-vscode");
 
 function loadInlineShed(mock) {
@@ -28,9 +29,9 @@ function loadInlineShed(mock) {
     return origRequire.apply(this, arguments);
   };
   // Bust require cache so each test gets a fresh module state.
-  const path = "/home/hatch/workspace/eponym/editors/vscode/out/inlineShed.js";
-  delete require.cache[path];
-  const mod = require(path);
+  const modulePath = path.join(__dirname, "..", "out", "inlineShed.js");
+  delete require.cache[modulePath];
+  const mod = require(modulePath);
   Module.prototype.require = origRequire;
   return mod;
 }

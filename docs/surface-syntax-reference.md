@@ -10,7 +10,7 @@ the Nim-side mapping for every form is pinned by
 ```
 decl    = proc | def | postulate | elim | red | data | record | import
           | interface | command
-term    = ... Pi | Sig | lam | let | ascription | application | ? | Nat literals ...
+term    = ... Pi | Sig | lam | let | ascription | application | ?[digits] | Nat literals ...
 ```
 
 Trust-model note: this document describes the syntax. What each construct
@@ -60,6 +60,13 @@ shedsBlock:
 `examples/embedded/sheds_walkthrough.nim` and the VS Code extension in
 `editors/vscode/`.
 
+When a refinement leaves a hole inside Nim command syntax (for example,
+inside `lam f. lam g. ?`), Nim cannot parse the usual prefix marker
+`![name]` in that position. The editor uses `shedHole(name)` there as a
+source-level encoding of the same named shed. `shedsBlock` records and
+typechecks it like `![name]`, keeping the residual goal available after
+the file recompiles. Ordinary user-created sheds remain `![name]`.
+
 ## Declarations
 
 ### `data` — indexed datatypes
@@ -70,7 +77,7 @@ data(NatD, Univ):
   proc sucD(n: NatD): NatD
 ```
 
-The first argument is the index type (`Univ` = `?` for unindexed types;
+The first argument is the index type (`Univ` = `Type 0` for unindexed types;
 `Session -> Univ` for a type indexed by a session, as in
 `examples/embedded/session_types.nim`). Constructors are declared with
 `proc` inside the block; indices in the return type must be supplied
@@ -160,31 +167,29 @@ elaboration time only — they never appear in the object program.
 
 ## Types and terms
 
-### The universe: `Type l` (and the legacy `?`)
+### Universes and holes
 
-Explicit universe hierarchy (issue #52): `Type 0 : Type 1 : Type 2 : ...`.
+Universes are written explicitly: `Type 0 : Type 1 : Type 2 : ...`.
 `Pi`/`Sig` formation takes the maximum of the domain and codomain levels,
-and `Type i` checks against `Type j` when `i <= j` at ascription points
-(cumulativity is directional — conversion itself stays level-strict, so
-handlers never see it as an equality goal). `Type` is a *contextual*
-keyword: `Type l` parses as a universe only when directly followed by an
-integer literal (`Type 0`, `Type 1`, …); a bare `Type` is an ordinary
-identifier. (Note: `1` lexes as the unit type, so `Type 1` uses the same
-escape hatch as numeric literals — see below.)
+and `Type i` checks against `Type j` when `i <= j` at ascription points.
+`Type` is contextual syntax: it parses as a universe only when followed by
+an integer literal (`Type 0`, `Type 1`, …); bare `Type` remains an ordinary
+identifier.
 
-The legacy `?` (spelled `Univ` in `eponymBlock`) keeps its Type-in-Type
-behaviour and bridges both ways: it is convertible with `Type 0` and acts
-as the top sort in "is a type" positions. Every existing `?` program
-elaborates exactly as before. Full retirement of `?` is future work —
-"don't write Girard's paradox" still applies to `?`-classified code
-(trust model).
+A bare `?` is a fresh hole. `?0`, `?1`, and so on name holes within one
+definition: occurrences of the same number share one unknown, while different
+numbers are independent. For example, `(?0, ?0)` asks for a pair with the same
+unknown value in both positions; `(?0, ?1)` allows the values to differ.
+`_` is a discard in binder and pattern positions, and is not a term hole.
+In `eponymBlock`, `Univ` denotes `Type 0`, and Nim `_` in term position
+converts to a fresh `?` hole.
 
 ### Dependent functions: `Pi`
 
 Canonical surface (`.ep` files): one binder per `Pi`, dot before the body:
 
 ```nim
-Pi {A : ?}. Pi (x : A). A
+Pi {A : Type 0}. Pi (x : A). A
 ```
 
 `eponymBlock` (Nim side): call syntax, the final position is the codomain:

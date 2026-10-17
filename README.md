@@ -92,7 +92,7 @@ eponymBlock:
     proc endS(): Session
   ...
 ```
-- `Univ` is `?` (universe); call syntax for declarations
+- `Univ` maps to `Type 0`; `?` introduces holes and `_` discards; call syntax for declarations
   (`postulate(Int, Univ)`); `proc` not `def`; `=` not `:=` — it reads
   as Nim, and the elaborator typechecks it at compile time.
 - Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).
@@ -140,7 +140,7 @@ Status: experimental. See `docs/staging-design.md` for the staging architecture.
 ## Trust model
 
 [docs/trust-model.md](docs/trust-model.md) states what the system checks and
-guarantees — and what is your problem: `? : ?` universes (#52), unchecked
+guarantees — and what is your problem: explicit `Type l` universes (#52), unchecked
 positivity of `data` declarations (#33), termination beyond single-function
 structural recursion (#42), and arbitrary type-level host programs.
 

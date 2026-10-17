@@ -23,12 +23,15 @@ import {
   sidecarPathFor,
   sidecarFresh,
   readSidecarShedNames,
+  shedNodeStartingAt,
 } from "./sidecar";
 import {
   ShedCodeLensProvider,
   expandShed,
   collapseShed,
   currentExpanded,
+  setInlineShedRefresh,
+  removeExpandedForSave,
 } from "./inlineShed";
 
 function nimBin(): string {
@@ -67,6 +70,8 @@ interface ShedPanel {
 }
 
 const openPanels = new Map<string, ShedPanel>(); // docUri -> panel
+const sidecarJobs = new Map<string, Promise<boolean>>();
+let lensProvider: ShedCodeLensProvider;
 let out: vscode.OutputChannel;
 
 // Issue #190: pre-fetched layouts, keyed by docUri, tagged with the
@@ -117,61 +122,70 @@ async function prefetchLayouts(doc: vscode.TextDocument): Promise<void> {
 }
 
 async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<boolean> {
-  // Issue #190: skip the `nim c` rerun when the sidecar is newer than the
-  // source — this was the visible pause on "Show shed layout" whenever
-  // the file had not changed since the last generation.
-  // Issue #221 follow-up: after a source splice (refine/case-split/give)
-  // always regenerate — don't trust mtime freshness, since the edit and
-  // the last sidecar write can land in the same millisecond.
-  if (!force && sidecarFresh(doc.uri.fsPath)) {
-    out.appendLine(`[eponym] sidecar fresh for ${doc.uri.fsPath}, skipping nim c`);
-    return true;
-  }
-  const root = eponymRepoRoot(path.dirname(doc.uri.fsPath));
-  if (!root) {
-    vscode.window.showErrorMessage(
-      "Eponym: could not find the eponym repo (no src/eponym/lsp.nim above this file). " +
-        "Open the eponym repo as a workspace folder so the extension can compile shed files."
-    );
+  // Sidecar compilation reads the file from disk. Save dirty editor content
+  // first so a just-added marker is included instead of silently using an
+  // older but mtime-fresh sidecar.
+  if (doc.isDirty && !(await doc.save())) {
+    vscode.window.showWarningMessage("Eponym: save the Nim file before opening its shed view");
     return false;
   }
-  let ok = false;
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: `Eponym: generating shed sidecar (${path.basename(doc.uri.fsPath)})`,
-    },
-    async () => {
-      const res = await generateSidecar(nimBin(), root, doc.uri.fsPath);
-      if (res.ok) {
-        ok = true;
-      } else {
-        out.appendLine(`[eponym] sidecar generation failed for ${doc.uri.fsPath}`);
-        out.appendLine(res.error ?? "(no output)");
-        const show = await vscode.window.showErrorMessage(
-          `Eponym: shed sidecar generation failed for ${path.basename(doc.uri.fsPath)} ` +
-            "(nim compile error or Nim not on PATH).",
-          "Show output"
-        );
-        if (show === "Show output") out.show();
-      }
+  const docUri = doc.uri.toString();
+  const activeJob = sidecarJobs.get(docUri);
+  if (activeJob) return activeJob;
+  const job = (async (): Promise<boolean> => {
+    // Issue #190: skip the `nim c` rerun when the sidecar is newer than the
+    // source — this was the visible pause on "Show shed layout" whenever
+    // the file had not changed since the last generation.
+    // Force after a save or source splice; mtime resolution can otherwise
+    // leave a same-millisecond edit looking fresh.
+    if (!force && sidecarFresh(doc.uri.fsPath)) {
+      out.appendLine(`[eponym] sidecar fresh for ${doc.uri.fsPath}, skipping nim c`);
+      return true;
     }
-  );
-  return ok;
+    const root = eponymRepoRoot(path.dirname(doc.uri.fsPath));
+    if (!root) {
+      vscode.window.showErrorMessage(
+        "Eponym: could not find the eponym repo (no src/eponym/lsp.nim above this file). " +
+          "Open the eponym repo as a workspace folder so the extension can compile shed files."
+      );
+      return false;
+    }
+    let ok = false;
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Eponym: generating shed sidecar (${path.basename(doc.uri.fsPath)})`,
+      },
+      async () => {
+        const res = await generateSidecar(nimBin(), root, doc.uri.fsPath);
+        if (res.ok) {
+          ok = true;
+        } else {
+          out.appendLine(`[eponym] sidecar generation failed for ${doc.uri.fsPath}`);
+          out.appendLine(res.error ?? "(no output)");
+          const show = await vscode.window.showErrorMessage(
+            `Eponym: shed sidecar generation failed for ${path.basename(doc.uri.fsPath)} ` +
+              "(nim compile error or Nim not on PATH).",
+            "Show output"
+          );
+          if (show === "Show output") out.show();
+        }
+      }
+    );
+    return ok;
+  })();
+  sidecarJobs.set(docUri, job);
+  try {
+    return await job;
+  } finally {
+    if (sidecarJobs.get(docUri) === job) sidecarJobs.delete(docUri);
+  }
 }
 
 export function activate(ctx: vscode.ExtensionContext) {
   out = vscode.window.createOutputChannel("Eponym");
   initLog(out);
-  log("[eponym] extension v0.1.15 activated");
-
-  // The inline shed view is real inserted text; remove it before save so
-  // the view never gets written to the file.
-  ctx.subscriptions.push(
-    vscode.workspace.onWillSaveTextDocument((e) => {
-      e.waitUntil(collapseShed());
-    })
-  );
+  log("[eponym] extension v0.1.18 activated");
 
   // Issue #190: eager pre-render. When a shed file is opened and its
   // sidecar is already fresh, fetch the shed layouts in the background so
@@ -187,25 +201,27 @@ export function activate(ctx: vscode.ExtensionContext) {
     })
   );
 
-  // Issue #153: editing a shed block and saving refreshes the webview.
-  // Only fires for documents that already have a shed panel open, so
-  // ordinary Nim files are never compiled as a side effect of saving.
+  // Recompile every saved shedsBlock file so new or changed markers always
+  // have fresh goals and source positions. Ordinary Nim files are untouched.
   ctx.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(async (doc) => {
-      // The sidecar was just regenerated; any prefetched layouts are stale.
-      layoutCache.delete(doc.uri.toString());
-      const entry = openPanels.get(doc.uri.toString());
-      if (!entry) return;
+      if (doc.languageId !== "nim" && !doc.fileName.endsWith(".nim")) return;
       if (!hasShedBlocks(doc.getText())) return;
-      // Issue #208: keep the server's open-document buffer fresh so
-      // webview code actions (case-split) see the saved text.
-      entry.client.didChange(doc.uri.toString(), doc.getText());
-      if (await ensureSidecar(doc)) await entry.refresh();
+      const docUri = doc.uri.toString();
+      layoutCache.delete(docUri);
+      const entry = openPanels.get(docUri);
+      if (entry) {
+        // Keep the open LSP document current before the sidecar is read.
+        entry.client.didChange(docUri, doc.getText());
+      }
+      if (!(await ensureSidecar(doc, true))) return;
+      lensProvider.refreshDoc(doc);
+      if (entry) await entry.refresh();
     })
   );
 
   ctx.subscriptions.push(
-    vscode.commands.registerCommand("eponym.showShedLayout", async () => {
+    vscode.commands.registerCommand("eponym.showShedLayout", async (requestedOffset?: number) => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) {
         vscode.window.showErrorMessage("Eponym: open a .nim file with sheds first");
@@ -222,7 +238,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (existing) {
         existing.panel.reveal(vscode.ViewColumn.Beside);
         const reText = editor.document.getText();
-        const reCursorOff = editor.document.offsetAt(editor.selection.active);
+        const reCursorOff = requestedOffset ?? editor.document.offsetAt(editor.selection.active);
         const reAtCursor = shedAtCursor(reText, reCursorOff)?.name;
         const reInBlock = reAtCursor
           ? []
@@ -247,13 +263,13 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (!(await ensureSidecar(editor.document))) return;
 
       // Issue #190: cursor-aware default. With the cursor inside a shed
-      // node (`![ name ...]`), open that shed directly — no typing. With
-      // the cursor elsewhere in a single-shed block, that shed is the
+      // marker (`![ name ...]` or `shedHole(name)`), open that shed directly.
+      // Elsewhere in a single-shed block, that shed is the
       // unambiguous choice. Otherwise offer a QuickPick of the file's
       // sheds (read from the sidecar; no LSP round-trip needed), falling
       // back to the free-text box only when the sidecar lists nothing.
       const text = editor.document.getText();
-      const cursorOff = editor.document.offsetAt(editor.selection.active);
+      const cursorOff = requestedOffset ?? editor.document.offsetAt(editor.selection.active);
       let shedName: string | undefined = shedAtCursor(text, cursorOff)?.name;
       if (!shedName) {
         const inBlock = blockShedsAtCursor(text, cursorOff);
@@ -335,26 +351,28 @@ export function activate(ctx: vscode.ExtensionContext) {
             // Issue #137: the server owns the whole refine round-trip --
             // it fills the hole in the macro-recorded generated source,
             // refreshes statuses, and rewrites the sidecar. The client
-            // splices the returned term over the single-line `![...]`
-            // node at (nimLine, nimCol) so the .nim source advances.
-            const res = await client.refineShed(docUri, entry.shedName, m.term ?? "");
+            // splices the returned term over the single-line shed marker
+            // at (nimLine, nimCol) so the .nim source advances.
+            const res = await client.refineShed(
+              docUri, entry.shedName, m.term ?? "", m.cmd === "give"
+            );
             const line = res.nimLine - 1;
             const startCh = res.nimCol - 1;
-            const text = editor.document.lineAt(line).text;
-            let depth = 0;
-            let endCh = -1;
-            for (let i = startCh; i < text.length; i++) {
-              if (text[i] === "[") depth++;
-              else if (text[i] === "]") {
-                depth--;
-                if (depth === 0) { endCh = i + 1; break; }
-              }
-            }
-            if (endCh < 0) throw new Error("Eponym: unbalanced shed node at " +
-              `${res.nimLine}:${res.nimCol}`);
-            await editor.edit((b) =>
-              b.replace(new vscode.Range(line, startCh, line, endCh), res.term)
+            const startOffset = editor.document.offsetAt(
+              new vscode.Position(line, startCh)
             );
+            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
+            if (!node) throw new Error("Eponym: no shed marker at " +
+              `${res.nimLine}:${res.nimCol}`);
+            const end = editor.document.positionAt(node.end);
+            if (end.line !== line) throw new Error("Eponym: shed marker spans multiple lines");
+            await editor.edit((b) =>
+              b.replace(new vscode.Range(line, startCh, line, end.character), res.term)
+            );
+            await editor.document.save();
+            layoutCache.delete(docUri);
+            if (!(await ensureSidecar(editor.document, true))) return;
+            lensProvider.refreshDoc(editor.document);
             panel.webview.postMessage({
               cmd: "actionmsg",
               text: `refined ${res.shedName}: ${res.status} (${res.yellowCount} yellow left)`,
@@ -378,38 +396,34 @@ export function activate(ctx: vscode.ExtensionContext) {
               entry.shedName,
               variable
             );
-            // Splice the eliminator term over the ![shedName] node
+            // Splice the eliminator term over the shed marker
             // (same single-line span logic as refine).
             const line = res.nimLine - 1;
             const startCh = res.nimCol - 1;
-            const text = editor.document.lineAt(line).text;
-            let depth = 0;
-            let endCh = -1;
-            for (let i = startCh; i < text.length; i++) {
-              if (text[i] === "[") depth++;
-              else if (text[i] === "]") {
-                depth--;
-                if (depth === 0) {
-                  endCh = i + 1;
-                  break;
-                }
-              }
-            }
-            if (endCh < 0) {
+            const startOffset = editor.document.offsetAt(
+              new vscode.Position(line, startCh)
+            );
+            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
+            if (!node || editor.document.positionAt(node.end).line !== line) {
               throw new Error(
-                `case-split: could not find the end of the ![...] node for '${entry.shedName}'`
+                `case-split: could not find the shed marker for '${entry.shedName}'`
               );
             }
+            const endCh = editor.document.positionAt(node.end).character;
             await editor.edit((b) =>
               b.replace(
                 new vscode.Range(line, startCh, line, endCh),
                 res.term
               )
             );
-            // Save so the recompile discovers the sub-shed nodes, then
-            // refresh onto the first sub-shed.
+            // Persist the source splice, then always compile it so the
+            // macro rewrites the sidecar with the newly-created sub-sheds.
+            // Force avoids same-millisecond mtime races with Auto Save and
+            // the onDidSave handler.
             await editor.document.save();
-            if (await ensureSidecar(editor.document)) {
+            layoutCache.delete(docUri);
+            if (await ensureSidecar(editor.document, true)) {
+              lensProvider.refreshDoc(editor.document);
               entry.shedName = res.subSheds[0];
               await refresh();
             }
@@ -431,8 +445,9 @@ export function activate(ctx: vscode.ExtensionContext) {
     })
   );
 
-  // Issue #221: inline shed view — CodeLens + expandable 2D display.
-  const lensProvider = new ShedCodeLensProvider();
+  // Issue #221: marker summaries and keyboard-navigable inline 2D previews.
+  lensProvider = new ShedCodeLensProvider();
+  setInlineShedRefresh(() => lensProvider.refreshCodeLenses());
   // Match by language ID "nim" OR by .nim file extension, since the
   // extension does not contribute the Nim language definition itself.
   const nimSelector: vscode.DocumentSelector = [
@@ -442,12 +457,12 @@ export function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(
     vscode.languages.registerCodeLensProvider(nimSelector, lensProvider)
   );
-  // Refresh CodeLens goals when a shed file is saved (sidecar regenerated).
+  // The inline box is temporary text so it can occupy multiple visual lines
+  // and accept cursor actions. Remove it as part of the save event so neither
+  // manual save nor Auto Save can persist the preview as Nim source.
   ctx.subscriptions.push(
-    vscode.workspace.onDidSaveTextDocument((doc) => {
-      if (doc.languageId !== "nim" && !doc.fileName.endsWith(".nim")) return;
-      if (!hasShedBlocks(doc.getText())) return;
-      lensProvider.refreshDoc(doc);
+    vscode.workspace.onWillSaveTextDocument((e) => {
+      e.waitUntil(Promise.resolve(removeExpandedForSave(e.document.uri.toString())));
     })
   );
   // Refresh CodeLens when a shed file is opened (so goals show without save).
@@ -474,7 +489,6 @@ export function activate(ctx: vscode.ExtensionContext) {
       .getConfiguration("eponym")
       .get<boolean>("inlineShed.showButtons", true);
   }
-
   ctx.subscriptions.push(
     vscode.commands.registerCommand("eponym.expandShed", async (atOffset?: number) => {
       log("[eponym] expandShed fired, atOffset=" + String(atOffset));
@@ -483,8 +497,15 @@ export function activate(ctx: vscode.ExtensionContext) {
         vscode.window.showErrorMessage("Eponym: no active text editor");
         return;
       }
+      if (!(await ensureSidecar(editor.document))) return;
+      lensProvider.refreshDoc(editor.document);
       try {
-        await expandShed(editor, inlineClient, { showButtons: inlineShowButtons() }, atOffset);
+        await expandShed(
+          editor,
+          inlineClient,
+          { showButtons: inlineShowButtons() },
+          atOffset
+        );
       } catch (e) {
         vscode.window.showErrorMessage(`Eponym: expand failed: ${String(e)}`);
       }
@@ -494,7 +515,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand("eponym.collapseShed", () => collapseShed())
   );
   // Issue #221 follow-up: splice a returned term over the single-line
-  // `![shedName]` / `![shedName, draft]` node at (nimLine, nimCol)
+  // shed marker at (nimLine, nimCol)
   // (1-based, from the LSP). Returns false when the node can't be found.
   async function spliceTermOverShed(
     editor: vscode.TextEditor,
@@ -505,19 +526,13 @@ export function activate(ctx: vscode.ExtensionContext) {
     const line = nimLine - 1;
     const startCh = nimCol - 1;
     if (line < 0 || line >= editor.document.lineCount) return false;
-    const text = editor.document.lineAt(line).text;
-    let depth = 0;
-    let endCh = -1;
-    for (let i = startCh; i < text.length; i++) {
-      if (text[i] === "[") depth++;
-      else if (text[i] === "]") {
-        depth--;
-        if (depth === 0) { endCh = i + 1; break; }
-      }
-    }
-    if (endCh < 0) return false;
+    const startOffset = editor.document.offsetAt(new vscode.Position(line, startCh));
+    const node = shedNodeStartingAt(editor.document.getText(), startOffset);
+    if (!node) return false;
+    const end = editor.document.positionAt(node.end);
+    if (end.line !== line) return false;
     await editor.edit((b) =>
-      b.replace(new vscode.Range(line, startCh, line, endCh), term)
+      b.replace(new vscode.Range(line, startCh, line, end.character), term)
     );
     return true;
   }
@@ -546,19 +561,19 @@ export function activate(ctx: vscode.ExtensionContext) {
       try {
         const res = await client.refineShed(cur.docUri, cur.shedName, term);
         // Complete the round-trip: splice the returned term over the shed
-        // node so the .nim source advances, then save (sidecar regenerates)
-        // and collapse the now-stale expansion.
+        // node, collapse its virtual view, then save so the sidecar regenerates.
         const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
         if (!ok) {
           vscode.window.showWarningMessage(
-            `Refined ${cur.shedName} server-side, but could not locate the ![...] node to splice.`
+            `Refined ${cur.shedName} server-side, but could not locate its shed marker to splice.`
           );
           return;
         }
+        await collapseShed();
         await editor.document.save();
-        await ensureSidecar(editor.document, true);
+        layoutCache.delete(editor.document.uri.toString());
+        if (!(await ensureSidecar(editor.document, true))) return;
         lensProvider.refreshDoc(editor.document);
-        collapseShed();
         vscode.window.showInformationMessage(
           `Refined ${cur.shedName}: ${res.status} (${res.yellowCount} yellow left)`
         );
@@ -595,14 +610,15 @@ export function activate(ctx: vscode.ExtensionContext) {
         const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
         if (!ok) {
           vscode.window.showWarningMessage(
-            `Case-split ${cur.shedName} server-side, but could not locate the ![...] node to splice.`
+            `Case-split ${cur.shedName} server-side, but could not locate its shed marker to splice.`
           );
           return;
         }
+        await collapseShed();
         await editor.document.save();
-        await ensureSidecar(editor.document, true);
+        layoutCache.delete(editor.document.uri.toString());
+        if (!(await ensureSidecar(editor.document, true))) return;
         lensProvider.refreshDoc(editor.document);
-        collapseShed();
         vscode.window.showInformationMessage(
           `Case-split ${variable}: ${res.subSheds.length} new sheds (${res.subSheds.join(", ")})`
         );
@@ -633,18 +649,19 @@ export function activate(ctx: vscode.ExtensionContext) {
       const client = await inlineClient(editor.document);
       if (!client) return; // binary missing; actionable error already shown
       try {
-        const res = await client.refineShed(cur.docUri, cur.shedName, term);
+        const res = await client.refineShed(cur.docUri, cur.shedName, term, true);
         const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
         if (!ok) {
           vscode.window.showWarningMessage(
-            `Gave ${cur.shedName} server-side, but could not locate the ![...] node to splice.`
+            `Gave ${cur.shedName} server-side, but could not locate its shed marker to splice.`
           );
           return;
         }
+        await collapseShed();
         await editor.document.save();
-        await ensureSidecar(editor.document, true);
+        layoutCache.delete(editor.document.uri.toString());
+        if (!(await ensureSidecar(editor.document, true))) return;
         lensProvider.refreshDoc(editor.document);
-        collapseShed();
         vscode.window.showInformationMessage(`Gave ${cur.shedName}: ${res.status}`);
       } catch (e) {
         vscode.window.showErrorMessage(`Give failed: ${String(e)}`);

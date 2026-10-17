@@ -2,7 +2,7 @@
 #
 import "eq.ep"
 
-data Bool : ? where
+data Bool : Type 0 where
 | true : Bool
 | false : Bool
 

@@ -11,7 +11,7 @@ import "eq.ep"
 
 # The catamorphism for Vec: `vecElim`, renamed. The motive ranges over the
 # index as well as the vector — dependent folds come for free.
-proc cataVec (A : ?) (P : (i : Nat) -> Vec A i -> ?)
+proc cataVec (A : Type 0) (P : (i : Nat) -> Vec A i -> Type 0)
     (nilC : P zero (nil A))
     (consC : (i : Nat) -> (x : A) -> (xs2 : Vec A i) -> P i xs2
                -> P (suc i) (cons A i x xs2))
@@ -21,7 +21,7 @@ proc cataVec (A : ?) (P : (i : Nat) -> Vec A i -> ?)
 # Map fusion for Vec: `vmap g (vmap f xs) = vmap (g . f) xs`. Same shape
 # as `vmapId` in vec.ep: nil-case by conversion, cons-case by `cong`
 # over the constructor with the induction hypothesis.
-proc vmapFusion (A : ?) (B : ?) (C : ?) (f : A -> B) (g : B -> C)
+proc vmapFusion (A : Type 0) (B : Type 0) (C : Type 0) (f : A -> B) (g : B -> C)
     (n : Nat) (xs : Vec A n)
     : Eq (Vec C n) (vmap g (vmap f xs))
                    (vmap (lam (x : A). g (f x)) xs) =

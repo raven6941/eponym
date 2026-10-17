@@ -12,15 +12,15 @@
 # the check.
 import "nat.ep"
 
-data CExpr : ? where
+data CExpr : Type 0 where
 | eVar : CExpr
 | eMul (e1 : CExpr) (e2 : CExpr) : CExpr
 | eSq (e : CExpr) : CExpr
 
-data Affine : CExpr -> ? where
+data Affine : CExpr -> Type 0 where
 | afVar : Affine eVar
 
-data Convex : CExpr -> ? where
+data Convex : CExpr -> Type 0 where
 | cvSq (e : CExpr) (h : Affine e) : Convex (eSq e)
 
 proc minimize (e : CExpr) (h : Convex e) : CExpr = e

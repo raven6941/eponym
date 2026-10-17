@@ -28,7 +28,7 @@ checks it succeeds. These test the elaborator in isolation.
   Pi types, application.
 - **02-myid.ep** — Identity function. Basic `def`.
 - **03-let.ep** — Let bindings.
-- **04-polyid-implicit.ep** — Polymorphic identity with `{A : ?}` implicit
+- **04-polyid-implicit.ep** — Polymorphic identity with `{A : Type 0}` implicit
   args. Tests implicit insertion (Experiment 3).
 - **05-id-universe.ep** — Universe-polymorphic identity.
 - **06-const-lam.ep** — Constant function via explicit `lam`.
@@ -170,7 +170,7 @@ generates callable Nim wrappers. If elaboration fails, compilation stops
 with the type error.
 
 Nim-friendly syntax (vs `.ep` surface syntax):
-- `postulate(Int, Univ)` — call syntax; `Univ` is `?` (`?` isn't valid Nim)
+- `postulate(Int, Univ)` — call syntax; `Univ` maps to `Type 0` (Nim cannot spell the universe token)
 - `data(Nat, Univ):` — block with indented `proc` constructors
 - `Vec(A, n)` — call syntax for type application
 - `proc` / `=` — Nim keywords (Eponym `.ep` also uses these now)

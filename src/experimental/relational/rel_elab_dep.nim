@@ -3,7 +3,7 @@
 ## Fragment (v2, no general substitution):
 ## - Non-dependent functions: Pi(x:A).B where B doesn't use x (STLC-style),
 ##   plus dependent Vec as the interesting dependent case.
-## - Types: `?` (univ), `Nat`, `Vec A n`, `Pi A B` (non-dep)
+## - Types: `Type 0` (univ), `Nat`, `Vec A n`, `Pi A B` (non-dep)
 ## - Terms: vars, `lam`, app, `zero`/`suc`, `nil`/`cons`
 ##
 ## Rationale: General dependent Pi needs substitution B[x:=a], which requires
@@ -111,7 +111,7 @@ proc checko*(tm, ty, ctx: RTerm): Goal =
         return disj(`==`(idx, zeroTm()), `==`(idx, rint(0)))
       return fail()
     # Type formation (issue #59): nat, univ : univ. (The fragment keeps
-    # `? : ?`; universe hierarchy is issue #52.)
+    # `Type 0 : Type 0`; universe hierarchy is issue #52.)
     if tm.name == "nat": return `==`(ty, univTy())
     if tm.name == "univ": return `==`(ty, univTy())
     return fail()

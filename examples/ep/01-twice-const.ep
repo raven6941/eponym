@@ -1,10 +1,10 @@
 # Basic definitions: twice, const, pairSwap. Tests Pi types and application.
 # Experiment: 01
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `?` = universe (in eponymBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
 
-proc twice (A : ?) (f : A -> A) (x : A) : A =
+proc twice (A : Type 0) (f : A -> A) (x : A) : A =
   f (f x)
-proc constFn (A : ?) (B : ?) (x : A) (y : B) : A =
+proc constFn (A : Type 0) (B : Type 0) (x : A) (y : B) : A =
   x
-proc pairSwap (A : ?) (B : ?) (p : Sig (u : A). B) : Sig (v : B). A =
+proc pairSwap (A : Type 0) (B : Type 0) (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)

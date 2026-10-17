@@ -37,13 +37,14 @@ proc qtyVar*(name: string): Qty =
 
 type
   PreKind* = enum
-    pkVar, pkUniv, pkUnivN,        # x, ?, Type l (Issue #52)
+    pkVar, pkUniv, pkUnivN,        # x, internal legacy universe, Type l
     pkUnitTy, pkUnitV, pkEmptyTy,  # 1, <>, O
     pkPi, pkLam, pkApp,            # Pi, lam, application
     pkSigma, pkPair, pkFst, pkSnd, # Sig, pairs, projections
     pkProj,                       # e.f (issue #37: record projection)
     pkLet, pkAnn,                  # let, ascription
-    pkHole,                       # _ (Experiment 3: elaborator hole)
+    pkHole,                       # ?, ?n (elaborator hole)
+    pkDiscard,                    # _ (discard / pattern wildcard)
     pkInt,                        # integer literal (Experiment 11)
     pkBy                          # by tactic (Experiment 6)
 
@@ -51,6 +52,7 @@ type
     loc*: Loc
     kind*: PreKind
     name*: string     # pkVar name; binder name for pkPi/pkSigma/pkLam/pkLet
+    holeName*: string # pkHole name; empty means a fresh anonymous hole
     impl*: bool       # pkPi/pkLam: implicit binder (Experiment 3)
     erased*: bool     # pkPi/pkLam/pkSigma: erased binder (Experiment 9)
     qty*: Qty         # pkPi/pkLam: binder quantity (Issue #64; default qOmega)
@@ -90,7 +92,9 @@ proc qmul*(a, b: Quantity): Quantity =
 proc mkVar*(name: string, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkVar, name: name)
 proc mkUniv*(loc = noLoc): PreTerm =
-  PreTerm(loc: loc, kind: pkUniv)
+  ## Compatibility constructor for generated source. Surface universe 0 is
+  ## explicit `Type 0`; preserve this constructor internally during migration.
+  PreTerm(loc: loc, kind: pkUnivN, intVal: 0)
 proc mkUnivN*(lvl: int, loc = noLoc): PreTerm =
   ## Issue #52: the level-annotated universe `Type l` (surface syntax);
   ## the level rides in `intVal` like pkInt's literal.
@@ -133,6 +137,10 @@ proc mkAnn*(e, ty: PreTerm, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkAnn, c1: e, c2: ty)
 proc mkHole*(loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkHole)
+proc mkNamedHole*(name: string, loc = noLoc): PreTerm =
+  PreTerm(loc: loc, kind: pkHole, holeName: name)
+proc mkDiscard*(loc = noLoc): PreTerm =
+  PreTerm(loc: loc, kind: pkDiscard)
 proc mkInt*(n: int, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkInt, intVal: n)
 
@@ -184,7 +192,7 @@ proc bodyNeedsCheck*(tmPre: PreTerm): bool =
 proc `==`*(a, b: PreTerm): bool =
   if a.isNil and b.isNil: return true
   if a.isNil or b.isNil: return false
-  a.kind == b.kind and a.name == b.name and a.impl == b.impl and
+  a.kind == b.kind and a.name == b.name and a.holeName == b.holeName and a.impl == b.impl and
     a.erased == b.erased and a.intVal == b.intVal and
     a.c1 == b.c1 and a.c2 == b.c2 and a.c3 == b.c3
 
@@ -198,7 +206,9 @@ proc render(p: PreTerm, prec: int): string =
   ## prec: 0 top, 1 arrow, 2 application, 3 atom.
   case p.kind
   of pkVar: p.name
-  of pkHole: "_"
+  of pkHole:
+    if p.holeName == "": "?" else: "?" & p.holeName
+  of pkDiscard: "_"
   of pkInt:
     # Issue #158: `1` lexes as the unit *type* (QTT), so a bare `1` would
     # re-parse as pkUnitTy, not pkInt(1). The integer literal one is written
@@ -206,7 +216,7 @@ proc render(p: PreTerm, prec: int): string =
     # to keep render->parse faithful.
     if p.intVal == 1: "01" else: $p.intVal
   of pkBy: "by " & p.name
-  of pkUniv: "?"
+  of pkUniv: "Univ"
   of pkUnivN: "Type " & $p.intVal  # Issue #52
   of pkUnitTy: "1"
   of pkUnitV: "<>"
@@ -306,7 +316,7 @@ type
     of dkData:
       dname*: string
       params*: seq[tuple[name: string, ty: PreTerm, impl: bool, erased: bool, qty: Qty]]
-      indexTy*: PreTerm  # indices -> ?  (e.g. Nat -> ?)
+      indexTy*: PreTerm  # indices -> Type 0  (e.g. Nat -> Type 0)
       ctors*: seq[DataCtor]
       daloc*: Loc
     of dkClauses:
@@ -365,7 +375,7 @@ proc `$`*(d: SurfDef): string =
 when isMainModule:
   let twiceTy = mkPi("A", mkUniv(), mkArrow(mkArrow(mkVar("A"), mkVar("A")),
                                           mkArrow(mkVar("A"), mkVar("A"))))
-  assert $twiceTy == "Pi (A : ?). (A -> A) -> A -> A"
+  assert $twiceTy == "Pi (A : Type 0). (A -> A) -> A -> A"
   let p = mkApp(mkVar("f"), mkApp(mkVar("f"), mkVar("x")))
   assert $p == "f (f x)"
   assert mkVar("x") == mkVar("x")
@@ -376,6 +386,6 @@ when isMainModule:
   let d = SurfDef(name: "const", tele: @[(name: "A", ty: mkUniv(), impl: false, erased: false, qty: qOmega),
                                          (name: "x", ty: mkVar("A"), impl: false, erased: false, qty: qOmega)],
                   retTy: mkVar("A"), body: mkVar("x"))
-  assert $d.desugarTy() == "Pi (A : ?). Pi (x : A). A"
-  assert $d.desugarTm() == "lam (A : ?). lam (x : A). x"
+  assert $d.desugarTy() == "Pi (A : Type 0). Pi (x : A). A"
+  assert $d.desugarTm() == "lam (A : Type 0). lam (x : A). x"
   echo "preterm: all tests passed"

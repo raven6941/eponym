@@ -43,15 +43,15 @@ export interface GenerateResult {
   error?: string;
 }
 
-// Issue #190: cursor-aware shed detection. A *shed node* is one `![ name ]`
-// or `![ name, draft ]` occurrence; a *shed block* is a top-level
-// `shedsBlock:` statement plus its indented body. Offsets are absolute
+// Issue #190: cursor-aware shed detection. A *shed node* is one `![ name ]`,
+// `![ name, draft ]`, or residual `shedHole(name)` occurrence; a shed block
+// is a top-level `shedsBlock:` statement plus its indented body. Offsets are absolute
 // character offsets into the document text.
 
 export interface ShedNode {
   name: string;
-  start: number; // offset of the `![`
-  end: number; // offset just past the closing `]`
+  start: number; // offset of the shed marker
+  end: number; // offset just past the marker
 }
 
 export interface ShedBlock {
@@ -60,7 +60,7 @@ export interface ShedBlock {
   sheds: ShedNode[];
 }
 
-const SHED_NODE_RE = /!\[\s*([A-Za-z_][\w']*)/g;
+const SHED_NODE_RE = /!\[\s*([A-Za-z_][\w']*)(?:\s*,[^\]]*)?\]|shedHole\(\s*([A-Za-z_][\w']*)\s*\)/g;
 const SHED_BLOCK_RE = /^([ \t]*)shedsBlock\s*:/;
 
 function lineStartOffsets(text: string): number[] {
@@ -93,14 +93,9 @@ export function shedBlocks(text: string): ShedBlock[] {
     SHED_NODE_RE.lastIndex = 0;
     let nm: RegExpExecArray | null;
     while ((nm = SHED_NODE_RE.exec(body)) !== null) {
-      // The node ends at the first `]` after the name. Drafts are
-      // single-line Nim expressions in practice; a bracket inside a
-      // draft would truncate the range, which only affects the
-      // generous cursor-containment check, not correctness.
-      const close = body.indexOf("]", nm.index);
-      if (close < 0) continue;
+      const close = nm.index + nm[0].length - 1;
       sheds.push({
-        name: nm[1],
+        name: nm[1] ?? nm[2],
         start: blockStart + nm.index,
         end: blockStart + close + 1,
       });
@@ -110,9 +105,19 @@ export function shedBlocks(text: string): ShedBlock[] {
   return blocks;
 }
 
+/** The shed marker beginning exactly at `offset`, or null. */
+export function shedNodeStartingAt(text: string, offset: number): ShedNode | null {
+  for (const block of shedBlocks(text)) {
+    for (const shed of block.sheds) {
+      if (shed.start === offset) return shed;
+    }
+  }
+  return null;
+}
+
 /**
  * The shed node at the cursor, or null. Matches when the cursor is inside
- * the `![...]` node itself, or anywhere else on the node's line (issue
+ * the marker itself, or anywhere else on the node's line (issue
  * #203): in practice each shed lives on its proc's line
  * (`proc quad(n: Int): Int = ![quadBody, ...]`), and requiring the cursor
  * to sit inside the brackets made the cursor-aware default almost

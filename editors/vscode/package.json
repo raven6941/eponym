@@ -2,7 +2,7 @@
   "name": "eponym-sheds",
   "displayName": "Eponym Sheds",
   "description": "Renders Eponym shed proof states (Epigram-style 2D boxes) from the eponym LSP server.",
-  "version": "0.1.15",
+  "version": "0.1.18",
   "publisher": "eponym",
   "license": "MIT",
   "engines": {
@@ -109,7 +109,7 @@
         "eponym.inlineShed.showButtons": {
           "type": "boolean",
           "default": true,
-          "description": "Show clickable [refine] [case-split] [give] buttons in the inline shed view. When false, only the keybinding reminder line is shown."
+          "description": "Show action labels in the inline shed view. When false, only the keybinding hints are shown."
         }
       }
     }

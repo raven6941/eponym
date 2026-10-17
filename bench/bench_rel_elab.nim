@@ -87,10 +87,10 @@ when isMainModule:
   let cases = buildCases()
   # Setup: elaborate prelude once, reuse state
   let setupSrc = """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 """

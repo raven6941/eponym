@@ -48,7 +48,7 @@ export function boxToText(b: BoxJson, pad = ""): string {
     lines.push(...boxToText(c, pad + "  ").split("\n"));
   }
 
-  // Hole: empty box displaying the goal type (Epigram's shed brackets)
+  // Hole: empty box displaying the goal type. Match the source notation.
   if (isHole) {
     const goal = `?${holeIds[0]} : ${holeGoal}`;
     lines.push(`${pad}┌${"─".repeat(goal.length + 2)}┐`);

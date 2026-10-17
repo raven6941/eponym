@@ -45,10 +45,10 @@ const Reps = 100
 # --- Setup (mirrors tests/test_rel_elab_out.nim) -----------------------------
 
 let setupSrc = """
-data Nat : ? where
+data Nat : Type 0 where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : ?) : Nat -> ? where
+data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 """
@@ -168,7 +168,7 @@ let cases = @[
   Case(name: "suc (suc zero) : Nat",
     rtm: sucTm(sucTm(zeroTm())), rty: natTy(), rctx: nilCtxR,
     pre: mkInt(2), dty: natTyT, ectx: @[], expect: true),
-  Case(name: "Pi Nat Nat : ?",
+  Case(name: "Pi Nat Nat : Type 0",
     rtm: piTy(natTy(), natTy()), rty: univTy(), rctx: nilCtxR,
     pre: mkPi("x", natV, natV), dty: tmC(cStar), ectx: @[], expect: true),
   Case(name: "8 : Nat (primitive lit)",
