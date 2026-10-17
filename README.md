@@ -1,6 +1,8 @@
 # [Eponym](https://github.com/raven6941/eponym)
 
-Loosely, epigram + nim ~= eponym. Eponym brings dependent types and quantitative type checking to Nim as an embedded DSL, so you can check the parts of a Nim program that benefit from stronger guarantees.
+Loosely, Epigram + Nim ~= Eponym. 
+What if we took the influential system built by McBride and McKinna some 20 years ago, and implemented (some of) its ideas in Nim macros/metaprogramming?
+Eponym brings dependent types and quantitative type checking to Nim as an embedded DSL, so you can check the parts of a Nim program that benefit from stronger guarantees.
 
 **New here?** Start with the [tutorial](docs/tutorial.md) (install → your
 first checked dependent type, ~15 minutes), look up any language form in the
