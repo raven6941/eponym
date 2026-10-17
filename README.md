@@ -189,6 +189,9 @@ Case-split actions that update the source and refresh remaining goals.
 - Browse the [extension source](editors/vscode/).
 - The Nim LSP implementation is in [`src/eponym/lsp.nim`](src/eponym/lsp.nim).
 
+<img width="520" height="289" alt="Screenshot 2026-10-17 at 9 44 08 AM" src="https://github.com/user-attachments/assets/cab4c01c-d761-4d11-9f9a-2bc5c9e2e54f" />
+    *example shed view*
+
 ## Trust model
 
 [docs/trust-model.md](docs/trust-model.md) states what the system checks and
