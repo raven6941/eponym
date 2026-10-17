@@ -1,4 +1,4 @@
-# eponym
+# [eponym](https://github.com/raven6941/eponym)
 
 Loosely, epigram + nim ~= eponym. Eponym brings dependent types and quantitative type checking to Nim as an embedded DSL, so you can check the parts of a Nim program that benefit from stronger guarantees.
 
