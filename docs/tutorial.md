@@ -97,7 +97,7 @@ like any other compile error.
 ## 3. Your first dependent type: length-indexed vectors
 
 A *dependent* type is a type that mentions a value. The classic example
-is vectors indexed by their length: `Vec(A, n)` is the type of vectors
+is vectors indexed by their length: `Vec[A, n]` is the type of vectors
 with elements in `A` and length exactly `n`. It lives in the prelude —
 no need to define it yourself.
 
@@ -111,18 +111,22 @@ eponymBlock:
   import "lib/vec.ep"
 
   # A 2-vector, with its length in the type.
-  proc twoNats(x: Nat, y: Nat): Vec(Nat, suc(suc(zero()))) =
-    cons(Nat, suc(zero()), x, cons(Nat, zero(), y, vecnil(Nat)))
+  proc twoNats(x: Nat, y: Nat): Vec[Nat, suc(suc(zero()))] =
+    cons[Nat, suc(zero())](x, cons[Nat, zero()](y, vecnil[Nat]()))
 
-  # Append: the result length is the sum, by construction.
-  # vappend's implicit {A} {m} {n} are inferred from the arguments.
-  proc myAppend(xs: Vec(Nat, suc(zero())), ys: Vec(Nat, suc(zero()))): Vec(Nat, add(suc(zero()), suc(zero()))) =
-    vappend(xs, ys)
+  # Generic Eponym binders and type applications use Nim's square brackets.
+  proc myAppend[A: Univ, n: Nat](x: A, xs: Vec[A, n]): Vec[A, suc(n)] =
+    cons[A, n](x, xs)
+
+  # Explicitly supply the prelude's implicit binders when desired.
+  proc appendTwo(xs: Vec[Nat, suc(zero())],
+                 ys: Vec[Nat, suc(zero())]): Vec[Nat, add(suc(zero()), suc(zero()))] =
+    vappend[Nat, suc(zero()), suc(zero())](xs, ys)
 
   # Length of a vector, by induction on the vector.
-  proc vlen(A: Univ, n: Nat, v: Vec(A, n)): Nat =
-    vecElim(A, lam(i, Nat, lam(w, Vec(A, i), Nat)), zero(),
-            lam(i, Nat, lam(x, A, lam(xs, Vec(A, i), lam(ih, Nat, suc(ih))))),
+  proc vlen(A: Univ, n: Nat, v: Vec[A, n]): Nat =
+    vecElim[A](lam(i, Nat, lam(w, Vec[A, i], Nat)), zero(),
+            lam(i, Nat, lam(x, A, lam(xs, Vec[A, i], lam(ih, Nat, suc(ih))))),
             n, v)
 ```
 
@@ -130,8 +134,9 @@ A few notes on the syntax (the full story is in
 [the surface-syntax reference](surface-syntax-reference.md)):
 
 - `Nat` is `zero` / `suc(n)`; `suc(suc(zero()))` is the number 2.
-- `cons` takes the element type and the tail length explicitly:
-  `cons(A, n, x, xs) : Vec(A, suc(n))`.
+- `cons[A, n](x, xs)` takes explicit type and length parameters in brackets,
+  followed by ordinary vector terms in parentheses. `cons(A, n, x, xs)` and
+  `Vec(A, n)` remain accepted as migration forms.
 - `vecnil` is the empty vector. In `.ep` files it is spelled `nil`,
   but inside `eponymBlock` — which is Nim syntax, where `nil` is a
   keyword — you write `vecnil` and the macro maps it back.
@@ -142,14 +147,14 @@ A few notes on the syntax (the full story is in
   and the vector to eliminate. The cons case gets an induction
   hypothesis `ih` for the tail.
 - `{A}`, `{m}`, `{n}` in the prelude are *implicit* binders: a definition
-  declares them with braces (`proc vappend {A : Type 0} {m : Nat} ...`), but you
-  never write them at call sites — the elaborator fills them in.
+  declares them with braces (`proc vappend {A : Type 0} {m : Nat} ...`). They
+  can be inferred or supplied explicitly in brackets, as in `vappend[Nat,m,n]`.
 
 Now ascribe a 2-element vector the type of 1-element vectors:
 
 ```nim
-  proc badVec(x: Nat, y: Nat): Vec(Nat, suc(zero())) =
-    cons(Nat, suc(zero()), x, cons(Nat, zero(), y, vecnil(Nat)))
+  proc badVec(x: Nat, y: Nat): Vec[Nat, suc(zero())] =
+    cons[Nat, suc(zero())](x, cons[Nat, zero()](y, vecnil[Nat]()))
 ```
 
 ```
@@ -162,7 +167,7 @@ vec_bad.nim(5, 3) Error: eponymBlock elaboration error: line 2, col 56:
 
 The checker proved `2 ≠ 1` and refused the program. That is the whole
 point: the length invariant is enforced where the vector is built, so
-every consumer of `Vec(A, n)` can rely on it without re-checking.
+every consumer of `Vec[A, n]` can rely on it without re-checking.
 
 ## 4. Why bother: a protocol, stated once as a type
 
