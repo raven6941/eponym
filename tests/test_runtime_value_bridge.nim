@@ -34,6 +34,11 @@ proc hostRouteChannel(channel: ChannelHandle,
   result = channel
   result.label.add(":" & message)
 
+proc hostRouteChannelWithId(channel: ChannelHandle, message: string,
+                            requestId: int): ChannelHandle =
+  result = channel
+  result.label.add(":" & message & "#" & $requestId)
+
 proc hostWrongRoute(channel: int, message: string): int = channel + message.len
 
 static:
@@ -45,6 +50,8 @@ static:
     hostRouteChannel))
   doAssert not compiles(hostOpaqueBinary[ChannelHandle, string, ChannelHandle](
     hostWrongRoute))
+  doAssert compiles(hostOpaqueTernary[ChannelHandle, string, int,
+    ChannelHandle](hostRouteChannelWithId))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -64,16 +71,25 @@ eponymBlock:
 eponymBlock:
   postulate(Channel, Univ)
   postulate(Message, Univ)
+  postulate(RequestId, Univ)
   runtimeType(Channel, ChannelHandle)
   runtimeType(Message, string)
+  runtimeType(RequestId, int)
   postulate(rotateChannel, Channel -> Channel)
   bindPostulate(rotateChannel, hostRotateChannel, Channel)
   postulate(routeChannel, Channel -> Message -> Channel)
   bindPostulate(routeChannel, hostRouteChannel, Channel, Message, Channel)
+  postulate(routeChannelWithId,
+    Channel -> Message -> RequestId -> Channel)
+  bindPostulate(routeChannelWithId, hostRouteChannelWithId,
+    Channel, Message, RequestId, Channel)
   proc generatedRotateRole(channel: Channel): Channel =
     rotateChannel(channel)
   proc generatedRouteRole(channel: Channel, message: Message): Channel =
     routeChannel(channel, message)
+  proc generatedRouteWithIdRole(channel: Channel, message: Message,
+                                requestId: RequestId): Channel =
+    routeChannelWithId(channel, message, requestId)
 
 static:
   doAssert compiles(generatedCheckedRole(35))
@@ -85,6 +101,7 @@ static:
   doAssert not compiles(generatedRotateRole("not a channel"))
   doAssert compiles(generatedRouteRole(ChannelHandle(id: 1), "hello"))
   doAssert not compiles(generatedRouteRole("not a channel", "hello"))
+  doAssert compiles(generatedRouteWithIdRole(ChannelHandle(id: 1), "hello", 2))
 
 when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
@@ -167,6 +184,11 @@ proc opaqueRole : Channel -> Channel =
 proc routeRole : Channel -> Message -> Channel =
   lam (channel : Channel). lam (message : Message).
     routeChannel channel message
+postulate RequestId : Type 0
+postulate routeChannelWithId : Channel -> Message -> RequestId -> Channel
+proc routeWithIdRole : Channel -> Message -> RequestId -> Channel =
+  lam (channel : Channel). lam (message : Message). lam (requestId : RequestId).
+    routeChannelWithId channel message requestId
 """
   let checked = elabCheckDirState(identityProgram, baseDir)
   let postulateId = checked.globals["hostStep"].tm.refId
@@ -222,6 +244,26 @@ proc routeRole : Channel -> Message -> Channel =
   let routedChannel = valueToHost[ChannelHandle](routedValue)
   if routedChannel.id != originalChannel.id or
       routedChannel.label != "socket:payload":
+    quit(1)
+  var ternaryOpaqueBindings = initRuntimeBindings()
+  bindHostOpaqueTernary[ChannelHandle, string, int, ChannelHandle](
+    ternaryOpaqueBindings, cachedGlobals, "routeChannelWithId", "Channel",
+    "Message", "RequestId", "Channel", hostRouteChannelWithId)
+  let routedWithIdCases = forAll(
+    "three-argument opaque postulate dispatch", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let channel = ChannelHandle(id: id, label: "ch")
+      let message = $id
+      let requestId = -id
+      let value = callValueFuncDir(baseDir, identityProgram,
+        "routeWithIdRole", @[toHostValue(channel), toHostValue(message),
+          toHostValue(requestId)], ternaryOpaqueBindings)
+      let actual = valueToHost[ChannelHandle](value)
+      actual.id == id and actual.label == "ch:" & message & "#" &
+        $requestId,
+    shrinkInt)
+  if not routedWithIdCases:
     quit(1)
   var wrongBinaryMappingRejected = false
   try:

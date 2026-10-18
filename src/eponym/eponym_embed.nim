@@ -23,6 +23,8 @@ import preterm  # Quantity constants for validating supported adapter shapes
 proc hostIntUnary*(implementation: proc(x: int): int): Value
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
 proc hostOpaqueBinary*[A, B, C](implementation: proc(x: A, y: B): C): Value
+proc hostOpaqueTernary*[A, B, C, D](
+  implementation: proc(x: A, y: B, z: C): D): Value
 proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value
 proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value
 
@@ -268,6 +270,37 @@ proc validateHostOpaqueBinaryType*(globals: Globals, postulateName,
       "' to have type " & firstTypeName & " -> " & secondTypeName & " -> " &
       resultTypeName)
 
+proc validateHostOpaqueTernaryType*(globals: Globals, postulateName,
+                                   firstTypeName, secondTypeName,
+                                   thirdTypeName, resultTypeName: string) =
+  ## Validate a curried opaque contract `A -> B -> C -> D`.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  let firstId = opaqueTypeId(globals, firstTypeName, postulateName)
+  let secondId = opaqueTypeId(globals, secondTypeName, postulateName)
+  let thirdId = opaqueTypeId(globals, thirdTypeName, postulateName)
+  let resultId = opaqueTypeId(globals, resultTypeName, postulateName)
+  let outer = entry.ty
+  let middle = if outer.kind == tPi: outer.scope.bdy else: nil
+  let inner = if not middle.isNil and middle.kind == tPi:
+    middle.scope.bdy
+  else: nil
+  if outer.kind != tPi or outer.impl or outer.qty == q0 or
+      opaqueTypeHeadId(outer.dom) != firstId or middle.isNil or
+      middle.kind != tPi or middle.impl or middle.qty == q0 or
+      opaqueTypeHeadId(middle.dom) != secondId or inner.isNil or
+      inner.kind != tPi or inner.impl or inner.qty == q0 or
+      opaqueTypeHeadId(inner.dom) != thirdId or
+      opaqueTypeHeadId(inner.scope.bdy) != resultId:
+    raise newException(ValueError,
+      "opaque ternary adapter requires postulate '" & postulateName &
+      "' to have type " & firstTypeName & " -> " & secondTypeName & " -> " &
+      thirdTypeName & " -> " & resultTypeName)
+
 proc bindHostOpaqueBinary*[A, B, C](bindings: var RuntimeBindings,
                                     globals: Globals, postulateName,
                                     firstTypeName, secondTypeName,
@@ -279,6 +312,17 @@ proc bindHostOpaqueBinary*[A, B, C](bindings: var RuntimeBindings,
                                secondTypeName, resultTypeName)
   bindHostValue(bindings, globals, postulateName,
                 hostOpaqueBinary[A, B, C](implementation))
+
+proc bindHostOpaqueTernary*[A, B, C, D](bindings: var RuntimeBindings,
+    globals: Globals, postulateName, firstTypeName, secondTypeName,
+    thirdTypeName, resultTypeName: string,
+    implementation: proc(x: A, y: B, z: C): D) =
+  ## Bind a Nim `proc(A, B, C): D` to the explicitly mapped Eponym contract
+  ## `E1 -> E2 -> E3 -> E4`. Payload representations and behavior are trusted.
+  validateHostOpaqueTernaryType(globals, postulateName, firstTypeName,
+    secondTypeName, thirdTypeName, resultTypeName)
+  bindHostValue(bindings, globals, postulateName,
+                hostOpaqueTernary[A, B, C, D](implementation))
 
 proc bindHostOpaqueUnary*[T](bindings: var RuntimeBindings, globals: Globals,
                              postulateName, eponymTypeName: string,
@@ -340,6 +384,15 @@ proc hostOpaqueBinary*[A, B, C](implementation: proc(x: A, y: B): C): Value =
     vHostFunc(proc(second: Value): Value =
       toHostValue(implementation(valueToHost[A](first),
                                  valueToHost[B](second)))))
+
+proc hostOpaqueTernary*[A, B, C, D](
+    implementation: proc(x: A, y: B, z: C): D): Value =
+  ## Adapt a three-argument Nim procedure to a curried Eponym runtime function.
+  vHostFunc(proc(first: Value): Value =
+    vHostFunc(proc(second: Value): Value =
+      vHostFunc(proc(third: Value): Value =
+        toHostValue(implementation(valueToHost[A](first),
+          valueToHost[B](second), valueToHost[C](third))))))
 
 proc natToValue*(n: int): Value = vNatLit(n)
 
