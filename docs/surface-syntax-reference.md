@@ -80,7 +80,9 @@ does not inspect or verify the Nim procedure body. Top-level, non-generic
 definitions over primitive `Int` and `Nat` generate fixed-arity Nim wrappers;
 `Nat` uses Nim `int` with nonnegative runtime checks. Other Eponym signatures
 need an explicit opaque mapping as shown below or an appropriate structural
-codec, which is not yet implemented. A reachable postulate without a
+codec, which is not yet implemented. Calling an explicit `proc` definition
+without a supported runtime mapping fails at compile time with the missing
+codec type in the diagnostic. A reachable postulate without a
 binding fails when evaluated; diagnostics for missing bindings at expansion
 time are not implemented.
 

@@ -12,8 +12,12 @@ design notes where the limit comes from.
 `eponymBlock` checks definitions at Nim compile time, then generates Nim
 wrappers for them. Top-level non-generic definitions whose parameters and
 result use primitive `Int` or `Nat` get fixed-arity Nim `proc` wrappers with
-`int` parameters and results. `Nat` conversions reject negative values. Other
-signatures still use the compatibility `varargs[int] -> int` wrapper in
+`int` parameters and results. Explicit `runtimeType` mappings add opaque
+postulated types and indexed families. `Nat` conversions reject negative
+values. An explicit `proc` declaration with an unsupported signature remains
+checked but emits a targeted compile-time error if called. Generated names
+without a matching `proc` declaration retain the compatibility
+`varargs[int] -> int` wrapper in
 [`eponym_mac.nim`](../src/eponym/eponym_mac.nim). At runtime,
 [`eponym_embed.nim`](../src/eponym/eponym_embed.nim) converts Nim integers to
 Eponym's primitive `Int`, applies the checked term, and converts an `Int`
@@ -31,9 +35,9 @@ without exposing their representation. `eponymBlock` can
 generate typed wrappers for first-order definitions over mapped opaque types
 that correspond to named Eponym postulates. Tests exercise user-defined values
 through checked definitions and generated wrappers. This does not yet provide
-structural codecs for records or collections, callback shapes with more than
-two curried opaque arguments, closures as exported values, async results, or
-socket transports. The session runtime demo includes a hand-written Nat
+structural codecs for records or collections, dependent or generic signatures,
+callback shapes with more than two curried opaque arguments, closures as
+exported values, async results, or socket transports. The session runtime demo includes a hand-written Nat
 LEB128 message codec, but there is no reusable structural codec framework.
 Nim's type checker checks the concrete adapter signature, but the mapping to
 the Eponym type and the adapter behavior remain trusted. Neither compiler
