@@ -12,7 +12,7 @@ design notes where the limit comes from.
 | Example or boundary | Checked by Eponym | Checked by Nim | Trusted or separate |
 |---|---|---|---|
 | `session_runtime_bindings.nim`, `session_tcp_bindings.nim` | The sender/receiver role and its session-indexed postulate calls | Generated wrapper and adapter signatures | Adapter behavior, message codec, and TCP transport |
-| `paxos_session.nim` | Proposer/acceptor session descriptions and roles | The hand-written mailbox driver compiles | Driver repeats the protocol; it does not call the checked roles |
+| `paxos_session.nim` | Proposer/acceptor roles, dependent promise ticket use, and indexed channel transitions | Generated wrapper and Nim TCP adapter signatures | Wire codec, TCP behavior, and host promise/ticket correspondence |
 | `qtt_borrow.nim` | The modeled linear owner/borrow use and postulated operation sequence | The separate buffer driver compiles | Buffer exclusivity/lifetime and synchronization between driver and model |
 | `convex_opt.nim` | The reified objective and DCP certificate | Nim interpreter and ternary search consume the runtime value of checked `prob()` | Integer interpreter and search are trusted |
 | `convex_opt_vec.nim` | The reified objective and DCP certificate | Separate numeric implementation compiles | Logistic loss and gradient are still restated in Nim |
@@ -156,20 +156,20 @@ unchanged. A mapped `Future[T]` is returned as an opaque Nim value and remains
 owned by the caller and Nim's normal lifetime rules; Eponym does not await or
 cancel it.
 
-### Some checked roles still have separate Nim drivers
+### The borrow example still has a separate Nim driver
 
 `session_runtime_bindings.nim` and `session_tcp_bindings.nim` run checked
-sender/receiver roles through typed Nim adapters; the latter uses a loopback
-TCP socket. The larger `paxos_session.nim` still checks `proposer` and
-`acceptor`, while `runPaxosRound` manually repeats the message sequence using
-mailboxes and assertions. `qtt_borrow.nim` checks a linear borrow API, while
-its buffer driver mirrors the operations separately.
+sender/receiver roles through typed Nim adapters. `paxos_session.nim` runs its
+checked proposer and acceptor in separate processes through a loopback TCP
+adapter; `runPaxosRound` starts the acceptor and invokes the checked proposer
+rather than repeating their message sequence. `qtt_borrow.nim` checks a linear
+borrow API, while its buffer driver mirrors the operations separately.
 
-The integrated session examples establish that the checked roles execute
-through their bound postulates, but the adapter and transport remain trusted.
-The Eponym checker does not establish network ordering or inspect aliases in
-ordinary Nim. Paxos and buffer execution still require manual synchronization
-with their checked Eponym descriptions.
+The integrated session and Paxos examples establish that the checked roles
+execute through their bound postulates, but the adapters and transports remain
+trusted. The Eponym checker does not establish network ordering or inspect
+aliases in ordinary Nim. Buffer execution still requires manual
+synchronization with its checked Eponym description.
 
 ### Some examples certify a model, not the runtime computation
 
