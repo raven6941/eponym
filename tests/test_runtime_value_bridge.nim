@@ -35,9 +35,19 @@ static:
 
 eponymBlock:
   postulate(Int, Univ)
+  postulate(Nat, Univ)
   postulate(hostPlusSeven, Int -> Int)
   bindPostulate(hostPlusSeven, hostStepNim)
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
+  proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
+  proc generatedNatId(value: Nat): Nat = value
+
+static:
+  doAssert compiles(generatedCheckedRole(35))
+  doAssert compiles(generatedAdd(20, 22))
+  doAssert not compiles(generatedAdd(42))
+  doAssert not compiles(generatedAdd("20", 22))
+  doAssert compiles(generatedNatId(17))
 
 when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
@@ -65,6 +75,8 @@ when isMainModule:
   # Value-based evaluator path.
   let compat = callIntFuncDir(baseDir, program, "double", @[21]) == 42
   let generatedBindingWorks = generatedCheckedRole(35) == 42
+  let generatedTypedWrappersWork = generatedAdd(20, 22) == 42 and
+    generatedNatId(17) == 17
 
   var rejectedNegativeNat = false
   try:
@@ -72,7 +84,7 @@ when isMainModule:
   except ValueError:
     rejectedNegativeNat = true
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
-      rejectedNegativeNat):
+      generatedTypedWrappersWork and rejectedNegativeNat):
     quit(1)
 
   # The runtime-binding work needs the exact global identities assigned by

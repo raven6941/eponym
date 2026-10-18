@@ -76,9 +76,11 @@ doAssert checkedRole(41) == 42
 For this supported shape, the macro checks that the Eponym postulate is
 `Int -> Int`, and Nim checks that the supplied procedure has type
 `proc(int): int`. The implementation is trusted to honor its contract; Eponym
-does not inspect or verify the Nim procedure body. Generated wrappers still
-use the integer runtime ABI. Other Eponym signatures, user-defined Nim values,
-and automatic codecs are not yet supported. A reachable postulate without a
+does not inspect or verify the Nim procedure body. Top-level, non-generic
+definitions over primitive `Int` and `Nat` generate fixed-arity Nim wrappers;
+`Nat` uses Nim `int` with nonnegative runtime checks. Other Eponym signatures,
+user-defined Nim values, and automatic codecs are not yet supported by
+generated wrappers. A reachable postulate without a
 binding fails when evaluated; diagnostics for missing bindings at expansion
 time are not implemented.
 

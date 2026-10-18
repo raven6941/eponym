@@ -552,6 +552,80 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
       result.add(HostPostulateBinding(postulateName: name,
                                      implementation: st[2]))
 
+proc simpleRuntimeCodec(n: NimNode): string =
+  if n.kind == nnkIdent:
+    case $n
+    of "Int": result = "int"
+    of "Nat": result = "nat"
+    else: result = ""
+
+proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
+                         bindings: seq[HostPostulateBinding]): NimNode =
+  ## Emit concrete Nim wrappers for non-generic first-order Int/Nat procs.
+  ## Other definitions retain the compatibility varargs wrapper until a
+  ## runtime codec exists for their Eponym types.
+  if decl.kind != nnkProcDef or decl[2].kind != nnkEmpty:
+    return nil
+  let params = decl[3]
+  if params.len == 0 or params[0].kind == nnkEmpty:
+    return nil
+  let resultCodec = simpleRuntimeCodec(params[0])
+  if resultCodec == "": return nil
+
+  var formal = newNimNode(nnkFormalParams)
+  formal.add(ident("int"))
+  var argSyms: seq[NimNode] = @[]
+  var argCodecs: seq[string] = @[]
+  for i in 1 ..< params.len:
+    let p = params[i]
+    if p.kind != nnkIdentDefs: return nil
+    let codec = simpleRuntimeCodec(p[^2])
+    if codec == "": return nil
+    for j in 0 ..< p.len - 2:
+      let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
+      let argSym = genSym(nskParam, $argName)
+      formal.add(newIdentDefs(argSym, ident("int"), newEmptyNode()))
+      argSyms.add(argSym)
+      argCodecs.add(codec)
+
+  let dirLit = newLit(baseDir)
+  let srcLit = newLit(src)
+  let nameLit = newLit(defName)
+  var wrapperBody = newStmtList()
+  var bindingSym: NimNode = nil
+  if bindings.len > 0:
+    let globalsSym = genSym(nskLet, "checkedGlobals")
+    bindingSym = genSym(nskVar, "runtimeBindings")
+    wrapperBody.add(newLetStmt(globalsSym,
+      newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+    wrapperBody.add(newVarStmt(bindingSym,
+      newCall(bindSym"initRuntimeBindings")))
+    for binding in bindings:
+      wrapperBody.add(newCall(bindSym"bindHostIntUnary", bindingSym,
+        globalsSym, newLit(binding.postulateName), binding.implementation))
+
+  var values = newNimNode(nnkBracket)
+  for i, argSym in argSyms:
+    let valueConverter = ident(if argCodecs[i] == "int": "intToValue" else: "natToValue")
+    values.add(newCall(valueConverter, argSym))
+  let valuesSeq = newTree(nnkPrefix, ident("@"), values)
+  var callArgs = @[dirLit, srcLit, nameLit, valuesSeq]
+  if not bindingSym.isNil: callArgs.add(bindingSym)
+  let runtimeValue = genSym(nskLet, "runtimeValue")
+  wrapperBody.add(newLetStmt(runtimeValue,
+    newCall(bindSym"callValueFuncDir", callArgs)))
+  let resultConverter = ident(if resultCodec == "int": "valueToInt" else: "valueToNat")
+  wrapperBody.add(newCall(resultConverter, runtimeValue))
+
+  result = newNimNode(nnkProcDef)
+  result.add(newTree(nnkPostfix, ident("*"), ident(defName)))
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(formal)
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(wrapperBody)
+
 macro eponymBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
@@ -602,6 +676,17 @@ macro eponymBlock*(body: untyped): untyped =
     let procName = ident(d.name)
     let srcLit = newLit(src)
     let nameLit = newLit(d.name)
+    var procDecl: NimNode = nil
+    for st in body:
+      if st.kind == nnkProcDef and $st[0] == d.name:
+        procDecl = st
+        break
+    if not procDecl.isNil:
+      let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
+                                             bindings)
+      if not typedWrapper.isNil:
+        result.add(typedWrapper)
+        continue
     if bindings.len == 0:
       result.add(quote do:
         proc `procName`*(args: varargs[int]): int =

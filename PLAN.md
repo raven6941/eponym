@@ -291,9 +291,16 @@ implementations.
    type mismatch rejection, per-call binding isolation, and rejection of
    Eponym conversion over opaque payloads. This is opaque pass-through, not a
    structural codec or generated Nim wrapper.
+- [x] Generate fixed-arity Nim `proc` wrappers with concrete Nim `int`
+   parameters and results for top-level, non-generic Eponym definitions over
+   primitive `Int` and `Nat`. Tests cover runtime calls and reject missing,
+   extra, and wrong-kind Nim arguments. `Nat` uses Nim `int` with a checked
+   nonnegative conversion.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
-   definition. Generate a Nim proc with declared parameter and result types
-   instead of `varargs[int]`.
+   definition and support user-defined/structural Nim types, dependent
+   signatures, and generic or higher-order definitions. Unsupported shapes
+   still use the legacy `varargs[int]` wrapper, so generated ABI support is
+   partial.
 - [ ] Validate the supported Eponym type shape and Nim adapter signature during
    macro expansion/compilation. Reject unsupported conversions with an
    error naming the Eponym binder and Nim type; never fall back to unchecked
@@ -312,9 +319,10 @@ implementations.
 
 **Exit criteria:**
 
-- [ ] Existing integer examples keep working; at least one non-`Int` Eponym
-  definition crosses a generated statically typed Nim wrapper; wrong Nim
-  signatures fail compilation; no Eponym proof is weakened by the new ABI.
+- [x] Existing integer examples keep working; primitive `Nat` crosses a
+  generated statically typed Nim wrapper; wrong Nim argument shapes fail
+  compilation; no Eponym proof is weakened. Verified for first-order
+  `Int`/`Nat` signatures only; arbitrary codecs and signatures remain open.
 
 #### C. Bind postulates to Nim procedures
 

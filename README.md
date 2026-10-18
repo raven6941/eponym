@@ -44,7 +44,8 @@ show a few useful patterns:
   [shed walkthrough](examples/embedded/sheds_walkthrough.nim).
 
 These examples show compile-time checking of Eponym models. The current
-Nim runtime bridge only calls definitions over primitive `Int`; protocol
+Nim runtime bridge generates fixed-arity wrappers for first-order `Int` and
+`Nat` definitions; protocol
 postulates and the hand-written Nim drivers in the session, borrowing, and
 optimization examples are not yet connected to the checked definitions.
 See [known limitations](docs/known-limitations.md) for the exact boundary.
