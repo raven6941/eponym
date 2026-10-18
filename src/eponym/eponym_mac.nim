@@ -1103,6 +1103,76 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   result.add(newEmptyNode())
   result.add(wrapperBody)
 
+proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
+                              bindings: seq[HostPostulateBinding],
+                              mappings: seq[HostRuntimeType],
+                              records: seq[HostRecord]): NimNode =
+  ## Emit a typed host-argument overload that returns the checked result as a
+  ## Value. This keeps the definition's full Eponym signature while exposing
+  ## only codecs explicitly described by runtimeType and the primitive codecs.
+  if decl.kind != nnkProcDef or decl[2].kind != nnkEmpty:
+    return nil
+  let params = decl[3]
+  if params.len <= 1 or params[0].kind == nnkEmpty:
+    return nil
+
+  var formal = newNimNode(nnkFormalParams)
+  formal.add(parseExpr("tuple[value: Value, globals: Globals]"))
+  var argSyms: seq[NimNode] = @[]
+  var eponymTypes: seq[NimNode] = @[]
+  var nimTypes: seq[NimNode] = @[]
+  for i in 1 ..< params.len:
+    let p = params[i]
+    if p.kind != nnkIdentDefs: return nil
+    let nimType = runtimeNimType(p[^2], mappings, records)
+    if nimType.isNil: return nil
+    for j in 0 ..< p.len - 2:
+      let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
+      let argSym = genSym(nskParam, $argName)
+      formal.add(newIdentDefs(argSym, nimType, newEmptyNode()))
+      argSyms.add(argSym)
+      eponymTypes.add(p[^2])
+      nimTypes.add(nimType)
+
+  var values = newNimNode(nnkBracket)
+  for i, argSym in argSyms:
+    let converted = runtimeValueConversionExpr(eponymTypes[i], nimTypes[i],
+      argSym, true, mappings, records)
+    if converted.isNil: return nil
+    values.add(converted)
+  let valuesSeq = newTree(nnkPrefix, ident("@"), values)
+  let dirLit = newLit(baseDir)
+  let srcLit = newLit(src)
+  let nameLit = newLit(defName)
+  let globalsSym = genSym(nskLet, "runtimeGlobals")
+  let defsSym = genSym(nskLet, "runtimeDefs")
+  let runtimeValueSym = genSym(nskLet, "runtimeValue")
+  var body = newStmtList()
+  body.add(newLetStmt(globalsSym,
+    newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+  body.add(newLetStmt(defsSym,
+    newCall(bindSym"getDefsDir", dirLit, srcLit)))
+  var bindingSym: NimNode = nil
+  bindingSym = genSym(nskVar, "runtimeBindings")
+  body.add(newVarStmt(bindingSym, newCall(bindSym"initRuntimeBindings")))
+  if bindings.len > 0:
+    for binding in bindings:
+      body.add(bindingCall(binding, bindingSym, globalsSym, mappings, records))
+  let runtimeCall = newCall(bindSym"callDefValueWithBindings",
+    newCall(bindSym"findDef", defsSym, nameLit), valuesSeq, bindingSym)
+  body.add(newLetStmt(runtimeValueSym,
+    runtimeCall))
+  body.add(newTree(nnkTupleConstr, runtimeValueSym, globalsSym))
+
+  result = newNimNode(nnkProcDef)
+  result.add(newTree(nnkPostfix, ident("*"), ident(defName & "RuntimeValue")))
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(formal)
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(body)
+
 macro eponymBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
@@ -1298,6 +1368,11 @@ macro eponymBlock*(body: untyped): untyped =
           result.add quote do:
             proc `runtimeName`*(): tuple[value: Value, globals: Globals] =
               `runtimeName`([])
+        else:
+          let typedValueWrapper = typedRuntimeValueWrapper(procDecl,
+            baseDir, src, d.name, bindings, runtimeTypes, records)
+          if not typedValueWrapper.isNil:
+            result.add(typedValueWrapper)
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
                                              bindings, runtimeTypes, records)
       if not typedWrapper.isNil:
