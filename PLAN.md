@@ -370,8 +370,11 @@ implementations.
 - [ ] Diagnose unused or unreachable bindings during macro expansion; the
    current implementation checks for a missing binding when a runtime call
    reaches it.
-- [ ] Specify exception and async behavior; add a later adapter form for
-   `Future[T]` rather than conflating synchronous and asynchronous effects.
+- [x] Specify synchronous exception behavior: exceptions raised by a Nim
+   adapter propagate unchanged through the checked runtime wrapper; property
+   tests verify the original exception type and message.
+- [ ] Specify async behavior and add an adapter form for `Future[T]` rather
+   than conflating synchronous and asynchronous effects.
 - [x] Extend the low-level typed adapter from scalar primitives to an opaque
    user-defined Nim value. The handle can cross a checked role and return to
    Nim; representation and behavior are explicitly trusted. Property tests
