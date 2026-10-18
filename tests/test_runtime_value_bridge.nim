@@ -138,7 +138,9 @@ eponymBlock:
     proc leaf(): Tree
     proc node(n: Nat, rest: Tree): Tree
   proc sampleTree(): Tree = node(37, leaf())
+  proc sampleTreeWith(n: Nat): Tree = node(n, leaf())
   runtimeValue(sampleTree)
+  runtimeValue(sampleTreeWith)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -309,6 +311,15 @@ when isMainModule:
   doAssert treeRuntime.value.whnfSpineLen == 2
   doAssert treeRuntime.value.whnfSpineArg(0).whnfNatLitVal == 37
   doAssert treeRuntime.value.whnfSpineArg(1).whnfRefId == leafId
+  let parameterizedTree = sampleTreeWithRuntimeValue([natToValue(91)])
+  doAssert parameterizedTree.value.whnfRefId == nodeId
+  doAssert parameterizedTree.value.whnfSpineArg(0).whnfNatLitVal == 91
+  var wrongRuntimeArityRejected = false
+  try:
+    discard sampleTreeWithRuntimeValue([])
+  except ValueError as error:
+    wrongRuntimeArityRejected = "argument count mismatch" in error.msg
+  doAssert wrongRuntimeArityRejected
   let boundRuntime = runtimeResultRuntimeValue()
   doAssert boundRuntime.value.whnfKind == wInt
   doAssert boundRuntime.value.whnfIntVal == 42

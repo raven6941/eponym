@@ -643,10 +643,10 @@ proc blockToEponym*(body: NimNode): string =
         if st.len != 3 or st[1].kind != nnkIdent:
           error("runtimeType expects (EponymType, NimType)", st)
       elif head == "runtimeValue":
-        # Request an explicitly unboxed Eponym Value for a zero-argument
-        # definition, typically for a host interpreter of reified data.
+        # Request a raw Eponym Value wrapper for a checked definition,
+        # typically for a host interpreter of reified data.
         if st.len != 2 or st[1].kind != nnkIdent:
-          error("runtimeValue expects (zeroArgumentDefinition)", st)
+          error("runtimeValue expects (checkedDefinition)", st)
       else:
         error("eponymBlock: unsupported call: " & head, st)
     else:
@@ -1160,10 +1160,14 @@ macro eponymBlock*(body: untyped): untyped =
       if st.kind == nnkProcDef and $st[0] == requested:
         declaration = st
         break
-    if declaration.isNil or declaration[3].len != 1 or
-        declaration[3][0].kind == nnkEmpty:
-      error("runtimeValue requires a declared zero-argument definition with a result: " &
+    if declaration.isNil or declaration[2].kind != nnkEmpty or
+        declaration[3].len == 0 or declaration[3][0].kind == nnkEmpty:
+      error("runtimeValue requires a non-generic checked definition with a result: " &
         requested, body)
+    for i in 1 ..< declaration[3].len:
+      if declaration[3][i].kind != nnkIdentDefs:
+        error("runtimeValue supports ordinary fixed-arity parameters: " & requested,
+          declaration)
 
   let bindings = hostPostulateBindings(body)
   for binding in bindings:
@@ -1250,25 +1254,50 @@ macro eponymBlock*(body: untyped): untyped =
     if not procDecl.isNil:
       if d.name in runtimeValueNames:
         let params = procDecl[3]
-        if params.len != 1 or params[0].kind == nnkEmpty:
-          error("runtimeValue requires a zero-argument definition with a result: " & d.name,
-            procDecl)
+        var valueArity = 0
+        for i in 1 ..< params.len:
+          valueArity += params[i].len - 2
         let runtimeName = ident(d.name & "RuntimeValue")
         let globalsSym = genSym(nskLet, "runtimeGlobals")
         let defsSym = genSym(nskLet, "runtimeDefs")
         let bindingsSym = genSym(nskVar, "runtimeBindings")
+        let argsSym = genSym(nskParam, "runtimeArguments")
+        let expectedArity = newLit(valueArity)
         var bindingStatements = newStmtList()
         for binding in bindings:
           bindingStatements.add(bindingCall(binding, bindingsSym, globalsSym,
                                             runtimeTypes, records))
-        result.add quote do:
-          proc `runtimeName`*(): tuple[value: Value, globals: Globals] =
+        var rawBody = newStmtList()
+        rawBody.add quote do:
+          if `argsSym`.len != `expectedArity`:
+            raise newException(ValueError,
+              "runtimeValue argument count mismatch for " & `nameLit`)
+        rawBody.add quote do:
             let `globalsSym` = getGlobalsDir(`dirLit`, `srcLit`)
             let `defsSym` = getDefsDir(`dirLit`, `srcLit`)
             var `bindingsSym` = initRuntimeBindings()
-            `bindingStatements`
-            (callDefValueWithBindings(findDef(`defsSym`, `nameLit`), [],
+        rawBody.add(bindingStatements)
+        rawBody.add quote do:
+            (callDefValueWithBindings(findDef(`defsSym`, `nameLit`), `argsSym`,
                                       `bindingsSym`), `globalsSym`)
+        var rawProc = newNimNode(nnkProcDef)
+        rawProc.add(newTree(nnkPostfix, ident("*"), runtimeName))
+        rawProc.add(newEmptyNode())
+        rawProc.add(newEmptyNode())
+        var rawFormal = newNimNode(nnkFormalParams)
+        rawFormal.add(parseExpr("tuple[value: Value, globals: Globals]"))
+        rawFormal.add(newIdentDefs(argsSym,
+          newTree(nnkBracketExpr, ident"openArray", bindSym"Value"),
+          newEmptyNode()))
+        rawProc.add(rawFormal)
+        rawProc.add(newEmptyNode())
+        rawProc.add(newEmptyNode())
+        rawProc.add(rawBody)
+        result.add(rawProc)
+        if valueArity == 0:
+          result.add quote do:
+            proc `runtimeName`*(): tuple[value: Value, globals: Globals] =
+              `runtimeName`([])
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
                                              bindings, runtimeTypes, records)
       if not typedWrapper.isNil:
