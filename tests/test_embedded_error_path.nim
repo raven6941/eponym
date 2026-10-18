@@ -67,6 +67,8 @@ for (path, expected) in [
      "no runtime codec for Eponym result type 'Point'"),
     ("tests/fixtures/embedded_err_bool_without_prelude.nim",
      "Bool constructor 'true' is not declared; import bool.ep"),
+    ("tests/fixtures/embedded_err_generic_runtime_index.nim",
+     "only type-level generic binders annotated with Univ"),
     ("tests/fixtures/embedded_err_dependent_sigma_postulate_binding.nim",
      "structured pair adapter requires postulate 'makeDependentPair'"),
     ("tests/fixtures/embedded_err_pair_binding_nim_type.nim", "type mismatch"),

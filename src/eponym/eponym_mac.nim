@@ -918,6 +918,37 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     return newCall(valueFn, value, globals)
   newCall(valueFn, value)
 
+proc genericRuntimeInfo(decl: NimNode,
+                        mappings: seq[HostRuntimeType]): tuple[
+    genericParams: NimNode, typeNames: seq[string],
+    codecMappings: seq[HostRuntimeType], error: string] =
+  result.genericParams = newEmptyNode()
+  result.codecMappings = mappings
+  if decl[2].kind == nnkEmpty:
+    return
+  result.genericParams = newNimNode(nnkGenericParams)
+  for param in decl[2]:
+    if param.kind != nnkIdentDefs or param[^2].kind == nnkEmpty or
+        nimTypeToEponym(param[^2]) != "Type 0":
+      result.error = "runtime wrappers currently support only type-level " &
+        "generic binders annotated with Univ"
+      return
+    for i in 0 ..< param.len - 2:
+      let name = $param[i]
+      if name in result.typeNames:
+        result.error = "duplicate generic runtime type parameter '" & name & "'"
+        return
+      if decl.len > 6 and not decl[6].isNil and mentionsName(decl[6], name):
+        result.error = "generic type parameter '" & name &
+          "' is used by the runtime body; an explicit runtime type " &
+          "representation is required"
+        return
+      result.typeNames.add(name)
+      result.genericParams.add(newIdentDefs(copyNimTree(param[i]),
+        newEmptyNode(), newEmptyNode()))
+      result.codecMappings.add(HostRuntimeType(eponymName: name,
+        nimType: copyNimTree(param[i])))
+
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
                  mappings: seq[HostRuntimeType],
                  records: seq[HostRecord]): NimNode =
@@ -1057,14 +1088,17 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          bindings: seq[HostPostulateBinding],
                          mappings: seq[HostRuntimeType],
                          records: seq[HostRecord]): NimNode =
-  ## Emit concrete Nim wrappers for non-generic first-order primitive and
-  ## explicitly mapped opaque types.
-  if decl.kind != nnkProcDef or decl[2].kind != nnkEmpty:
+  ## Emit concrete Nim wrappers for first-order types, including generic type
+  ## variables represented as opaque host boxes.
+  if decl.kind != nnkProcDef:
     return nil
+  let generic = genericRuntimeInfo(decl, mappings)
+  if generic.error.len > 0: return nil
+  let codecMappings = generic.codecMappings
   let params = decl[3]
   if params.len == 0 or params[0].kind == nnkEmpty:
     return nil
-  let resultType = runtimeNimType(params[0], mappings, records)
+  let resultType = runtimeNimType(params[0], codecMappings, records)
   if resultType.isNil: return nil
 
   var formal = newNimNode(nnkFormalParams)
@@ -1075,7 +1109,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   for i in 1 ..< params.len:
     let p = params[i]
     if p.kind != nnkIdentDefs: return nil
-    let argType = runtimeNimType(p[^2], mappings, records)
+    let argType = runtimeNimType(p[^2], codecMappings, records)
     if argType.isNil: return nil
     for j in 0 ..< p.len - 2:
       let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
@@ -1100,13 +1134,15 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     wrapperBody.add(newVarStmt(bindingSym,
       newCall(bindSym"initRuntimeBindings")))
     for binding in bindings:
-      wrapperBody.add(bindingCall(binding, bindingSym, globalsSym, mappings,
+      wrapperBody.add(bindingCall(binding, bindingSym, globalsSym, codecMappings,
                                   records))
 
   var values = newNimNode(nnkBracket)
+  for _ in generic.typeNames:
+    values.add(newCall(bindSym"vType", newLit(0)))
   for i, argSym in argSyms:
     values.add(runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i],
-      argSym, true, mappings, records, globalsSym))
+      argSym, true, codecMappings, records, globalsSym))
     if values[^1].isNil: return nil
   let valuesSeq = newTree(nnkPrefix, ident("@"), values)
   var callArgs = @[dirLit, srcLit, nameLit, valuesSeq]
@@ -1115,14 +1151,14 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   wrapperBody.add(newLetStmt(runtimeValue,
     newCall(bindSym"callValueFuncDir", callArgs)))
   let resultExpr = runtimeValueConversionExpr(params[0], resultType,
-    runtimeValue, false, mappings, records, globalsSym)
+    runtimeValue, false, codecMappings, records, globalsSym)
   if resultExpr.isNil: return nil
   wrapperBody.add(resultExpr)
 
   result = newNimNode(nnkProcDef)
   result.add(newTree(nnkPostfix, ident("*"), ident(defName)))
   result.add(newEmptyNode())
-  result.add(newEmptyNode())
+  result.add(generic.genericParams)
   result.add(formal)
   result.add(newEmptyNode())
   result.add(newEmptyNode())
@@ -1135,8 +1171,11 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   ## Emit a typed host-argument overload that returns the checked result as a
   ## Value. This keeps the definition's full Eponym signature while exposing
   ## only codecs explicitly described by runtimeType and the primitive codecs.
-  if decl.kind != nnkProcDef or decl[2].kind != nnkEmpty:
+  if decl.kind != nnkProcDef:
     return nil
+  let generic = genericRuntimeInfo(decl, mappings)
+  if generic.error.len > 0: return nil
+  let codecMappings = generic.codecMappings
   let params = decl[3]
   if params.len <= 1 or params[0].kind == nnkEmpty:
     return nil
@@ -1149,7 +1188,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   for i in 1 ..< params.len:
     let p = params[i]
     if p.kind != nnkIdentDefs: return nil
-    let nimType = runtimeNimType(p[^2], mappings, records)
+    let nimType = runtimeNimType(p[^2], codecMappings, records)
     if nimType.isNil: return nil
     for j in 0 ..< p.len - 2:
       let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
@@ -1161,9 +1200,11 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
 
   let globalsSym = genSym(nskLet, "runtimeGlobals")
   var values = newNimNode(nnkBracket)
+  for _ in generic.typeNames:
+    values.add(newCall(bindSym"vType", newLit(0)))
   for i, argSym in argSyms:
     let converted = runtimeValueConversionExpr(eponymTypes[i], nimTypes[i],
-      argSym, true, mappings, records, globalsSym)
+      argSym, true, codecMappings, records, globalsSym)
     if converted.isNil: return nil
     values.add(converted)
   let valuesSeq = newTree(nnkPrefix, ident("@"), values)
@@ -1182,7 +1223,8 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   body.add(newVarStmt(bindingSym, newCall(bindSym"initRuntimeBindings")))
   if bindings.len > 0:
     for binding in bindings:
-      body.add(bindingCall(binding, bindingSym, globalsSym, mappings, records))
+      body.add(bindingCall(binding, bindingSym, globalsSym, codecMappings,
+                           records))
   let runtimeCall = newCall(bindSym"callDefValueWithBindings",
     newCall(bindSym"findDef", defsSym, nameLit), valuesSeq, bindingSym)
   body.add(newLetStmt(runtimeValueSym,
@@ -1192,7 +1234,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   result = newNimNode(nnkProcDef)
   result.add(newTree(nnkPostfix, ident("*"), ident(defName & "RuntimeValue")))
   result.add(newEmptyNode())
-  result.add(newEmptyNode())
+  result.add(generic.genericParams)
   result.add(formal)
   result.add(newEmptyNode())
   result.add(newEmptyNode())
@@ -1255,10 +1297,15 @@ macro eponymBlock*(body: untyped): untyped =
       if st.kind == nnkProcDef and $st[0] == requested:
         declaration = st
         break
-    if declaration.isNil or declaration[2].kind != nnkEmpty or
+    if declaration.isNil or
         declaration[3].len == 0 or declaration[3][0].kind == nnkEmpty:
-      error("runtimeValue requires a non-generic checked definition with a result: " &
+      error("runtimeValue requires a checked definition with a result: " &
         requested, body)
+    if declaration[2].kind != nnkEmpty:
+      let generic = genericRuntimeInfo(declaration, hostRuntimeTypes(body))
+      if generic.error.len > 0:
+        error("runtimeValue cannot expose '" & requested & "': " &
+          generic.error, declaration)
     for i in 1 ..< declaration[3].len:
       if declaration[3][i].kind != nnkIdentDefs:
         error("runtimeValue supports ordinary fixed-arity parameters: " & requested,
@@ -1358,6 +1405,7 @@ macro eponymBlock*(body: untyped): untyped =
     if not procDecl.isNil:
       if d.name in runtimeValueNames:
         let params = procDecl[3]
+        let generic = genericRuntimeInfo(procDecl, runtimeTypes)
         var valueArity = 0
         for i in 1 ..< params.len:
           valueArity += params[i].len - 2
@@ -1366,6 +1414,8 @@ macro eponymBlock*(body: untyped): untyped =
         let defsSym = genSym(nskLet, "runtimeDefs")
         let bindingsSym = genSym(nskVar, "runtimeBindings")
         let argsSym = genSym(nskParam, "runtimeArguments")
+        let runtimeArgsSym = newCall(bindSym"prependErasedTypeArgs",
+          newLit(generic.typeNames.len), argsSym)
         let expectedArity = newLit(valueArity)
         var bindingStatements = newStmtList()
         for binding in bindings:
@@ -1382,7 +1432,7 @@ macro eponymBlock*(body: untyped): untyped =
             var `bindingsSym` = initRuntimeBindings()
         rawBody.add(bindingStatements)
         rawBody.add quote do:
-            (callDefValueWithBindings(findDef(`defsSym`, `nameLit`), `argsSym`,
+            (callDefValueWithBindings(findDef(`defsSym`, `nameLit`), `runtimeArgsSym`,
                                       `bindingsSym`), `globalsSym`)
         var rawProc = newNimNode(nnkProcDef)
         rawProc.add(newTree(nnkPostfix, ident("*"), runtimeName))
