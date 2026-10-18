@@ -66,7 +66,9 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_binding_unused.nim",
      "binding for postulate 'hostStepPostulate' is unused"),
     ("tests/fixtures/embedded_err_unsupported_operator.nim",
-     "unsupported pure operator 'div'")]:
+     "unsupported pure operator 'div'"),
+    ("tests/fixtures/embedded_err_chained_if.nim",
+     "chained if branches are not supported yet")]:
   if not checkFixture(path, expected):
     inc failed
 

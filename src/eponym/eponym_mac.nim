@@ -65,6 +65,36 @@ proc qtyPrefix(n: NimNode): string =
 proc nimExprToEponym(n: NimNode): string
 proc nimTypeToEponym(n: NimNode): string
 
+proc ifExprToEponym(n: NimNode): string =
+  var condition, thenBranch, elseBranch: NimNode = nil
+  for branch in n:
+    case branch.kind
+    of nnkElifExpr, nnkElifBranch:
+      if not condition.isNil:
+        error("eponymBlock: chained if branches are not supported yet", branch)
+      if branch.len != 2:
+        error("eponymBlock: if branch must have one condition and body", branch)
+      condition = branch[0]
+      thenBranch = branch[1]
+    of nnkElseExpr, nnkElse:
+      if branch.len != 1:
+        error("eponymBlock: else branch must have one body", branch)
+      elseBranch = branch[0]
+    else:
+      error("eponymBlock: unsupported if branch " & $branch.kind, branch)
+  if condition.isNil or thenBranch.isNil or elseBranch.isNil:
+    error("eponymBlock: pure if expression requires one condition and an else branch", n)
+  if thenBranch.kind == nnkStmtList:
+    if thenBranch.len != 1:
+      error("eponymBlock: if branch must be one expression", thenBranch)
+    thenBranch = thenBranch[0]
+  if elseBranch.kind == nnkStmtList:
+    if elseBranch.len != 1:
+      error("eponymBlock: else branch must be one expression", elseBranch)
+    elseBranch = elseBranch[0]
+  "ifThenElse (" & nimExprToEponym(condition) & ") (" &
+    nimExprToEponym(thenBranch) & ") (" & nimExprToEponym(elseBranch) & ")"
+
 proc nimCommandLamToEponym(n: NimNode): string =
   ## Convert Nim's command-form untyped lambda (`lam x. body`) to Eponym
   ## syntax. Nim represents a nested chain such as `lam x. lam y. body`
@@ -227,6 +257,8 @@ proc nimExprToEponym(n: NimNode): string =
     else:
       error("eponymBlock: unsupported pure prefix operator '" & $n[0] & "'",
             n[0])
+  of nnkIfExpr, nnkIfStmt:
+    ifExprToEponym(n)
   of nnkDotExpr:
     # p.x -> (p).x (record projection, issue #37; the surface parser
     # resolves it against the record table at elaboration time).

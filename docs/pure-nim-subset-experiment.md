@@ -1,8 +1,8 @@
 # Experiment: a pure Nim subset inside `eponymBlock`
 
-**Status:** the `let` form plus unary minus and `+`, `-`, `*` for Eponym
-`Int` now lower to checked primitive terms. Pure `if`, booleans, and other
-operators remain proposals.
+**Status:** `let`, unary minus, `+`, `-`, and `*` for Eponym `Int`, plus a
+single-condition `if/else` expression for imported `Bool`, lower to checked
+Eponym terms. Chained `elif`, effects, and other operators remain unsupported.
 
 ## Motivation
 
@@ -19,21 +19,21 @@ that it was checked by Eponym.
 
 ## Initial scope to prototype
 
-The implemented first slice covers familiar expressions whose semantics can
-be represented directly in the current core:
+The implemented slice covers familiar expressions whose semantics can be
+represented directly in the current core:
 
 - local `let` bindings;
 - unary minus and `+`, `-`, `*`, lowered to `subInt`, `addInt`, `subInt`, and
   `mulInt` respectively (only when Eponym checks the expression as `Int`).
   Overflow follows the existing primitive implementation; this syntax adds
   no overflow proof or checked arithmetic guarantee.
+- `if condition: thenExpr else: elseExpr`, lowered to the polymorphic
+  `ifThenElse` definition from `lib/bool.ep`; the condition must check as
+  `Bool` and each branch must be one expression.
 
 Potential next forms include:
 
-- integer and boolean literals (after checking how the existing Eponym
-  literal forms elaborate);
-- `if condition: thenExpr else: elseExpr`, translated to a Boolean
-  eliminator or a core conditional;
+- chained `elif` branches and broader statement forms;
 - integer arithmetic/comparison operators, only where corresponding Eponym
   operations and types exist;
 - parentheses and ordinary function application.
@@ -45,16 +45,14 @@ evaluation for an unrecognized expression.
 
 ## First vertical slice
 
-1. Document the current boundary in the surface-syntax reference.
-2. Add one expression form—preferably a pure `if` expression—to the AST
-   converter with a specific diagnostic for unsupported branches.
-3. Desugar it to existing Eponym syntax if possible; otherwise add a
-   primitive only with its typing, reduction, and soundness implications
-   documented.
-4. Add positive and negative examples demonstrating both compilation-time
-   checking and the restriction against host effects.
-5. Compare the syntax and error messages with normal Nim expectations, and
-   decide whether the ergonomic gain justifies the additional DSL surface.
+The boundary, integer operators, and single-condition `if/else` are
+implemented and documented. Property tests compare arithmetic wrappers with
+Nim for bounded values; both Boolean branches run through the checked Bool
+eliminator. Compile-fail fixtures cover unsupported integer division and
+chained `elif`.
+
+Continue with additional pure syntax only when the matching Eponym term and
+runtime behavior already exist or can be added with separate soundness review.
 
 ## Questions to settle
 

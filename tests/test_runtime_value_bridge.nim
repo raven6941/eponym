@@ -67,6 +67,7 @@ static:
     hostInvokeCallback))
 
 eponymBlock:
+  import "../lib/bool.ep"
   postulate(Int, Univ)
   postulate(Nat, Univ)
   postulate(hostPlusSeven, Int -> Int)
@@ -78,6 +79,10 @@ eponymBlock:
     let difference = left - right
     let subtotal = difference + -right
     subtotal * scale
+  proc generatedChooseTrue(): Int =
+    if true: addInt(19, 0) else: addInt(17, 0)
+  proc generatedChooseFalse(): Int =
+    if false: addInt(19, 0) else: addInt(17, 0)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -130,6 +135,8 @@ static:
   doAssert not compiles(generatedAdd("20", 22))
   doAssert compiles(generatedNatId(17))
   doAssert compiles(generatedArithmetic(1, 2, 3))
+  doAssert compiles(generatedChooseTrue())
+  doAssert compiles(generatedChooseFalse())
   doAssert compiles(generatedRotateRole(ChannelHandle(id: 1)))
   doAssert not compiles(generatedRotateRole("not a channel"))
   doAssert compiles(generatedRouteRole(ChannelHandle(id: 1), "hello"))
@@ -167,6 +174,8 @@ when isMainModule:
   let generatedBindingWorks = generatedCheckedRole(35) == 42
   let generatedTypedWrappersWork = generatedAdd(20, 22) == 42 and
     generatedNatId(17) == 17 and generatedArithmetic(5, 7, 3) == -27
+  let generatedPureConditionalsWork = generatedChooseTrue() == 19 and
+    generatedChooseFalse() == 17
   let generatedOpaqueWrapperWorks = generatedRouteRole(
     ChannelHandle(id: 17, label: "socket"), "generated").label ==
       "socket:generated"
@@ -211,6 +220,7 @@ when isMainModule:
     rejectedNegativeNat = true
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
+      generatedPureConditionalsWork and
       generatedUnaryOpaqueWorks and generatedUnaryOpaqueCases and
       generatedOpaqueWrapperCases and
       rejectedNegativeNat and hostExceptionPropagated):
