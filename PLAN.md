@@ -43,7 +43,8 @@ wrappers support first-order `Int`/`Nat` and explicitly mapped opaque
 postulated types; unsupported signatures retain the legacy
 `varargs[int] -> int` wrapper. The first runtime call re-elaborates the block
 and caches its checked terms and globals for subsequent calls. External
-postulates can be bound for unary Int, unary opaque, and binary opaque shapes.
+postulates can be bound for unary Int, unary opaque, and opaque callbacks up
+to three curried arguments.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -384,6 +385,10 @@ implementations.
    mappings for both Eponym argument types and the result type. A checked
    role dispatches a channel handle and a message string to a Nim callback;
    property tests cover 200 input pairs.
+- [x] Support a curried three-argument opaque adapter with explicit Nim type
+  checks for all parameters and the result. A generated wrapper and a 200-case
+  property test exercise a `Channel -> Message -> RequestId -> Channel`
+  postulate.
 - [x] Expose unary opaque and binary opaque bindings through `eponymBlock`;
    explicit `runtimeType` mappings connect Eponym postulates to Nim types.
    Nim checks adapter and generated wrapper signatures, and compile-fail
