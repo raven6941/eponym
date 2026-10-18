@@ -638,6 +638,8 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
   var typeIndexes: seq[int] = @[]
   if binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
     typeIndexes = @[0]
+  elif binding.eponymTypes.len == 2:
+    typeIndexes = @[0, 1]
   elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
     typeIndexes = @[1]
   else:
@@ -659,6 +661,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
     if binding.eponymTypes.len == 1: bindSym"bindHostOpaqueUnary"
     elif binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
       bindSym"bindHostOpaqueNatUnary"
+    elif binding.eponymTypes.len == 2: bindSym"bindHostOpaqueMapUnary"
     elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
       bindSym"bindHostNatOpaqueBinary"
     elif binding.eponymTypes.len == 3: bindSym"bindHostOpaqueBinary"
@@ -842,11 +845,13 @@ macro eponymBlock*(body: untyped): untyped =
             "postulate '" & binding.postulateName & "' requires opaque Eponym type '" &
             required & "', not '" & binding.eponymTypes[0] & "'")
       of 2:
-        if binding.eponymTypes[1] != "Nat":
-          raise newException(ValueError,
-            "two-type binding must use an opaque argument and Nat result")
-        validateHostOpaqueNatUnaryType(checkedGlobals, binding.postulateName,
-                                      binding.eponymTypes[0])
+        if binding.eponymTypes[1] == "Nat":
+          validateHostOpaqueNatUnaryType(checkedGlobals,
+            binding.postulateName, binding.eponymTypes[0])
+        else:
+          validateHostOpaqueMapUnaryType(checkedGlobals,
+            binding.postulateName, binding.eponymTypes[0],
+            binding.eponymTypes[1])
       of 3:
         if binding.eponymTypes[0] == "Nat":
           validateHostNatOpaqueBinaryType(checkedGlobals,
@@ -862,9 +867,9 @@ macro eponymBlock*(body: untyped): untyped =
           binding.eponymTypes[2], binding.eponymTypes[3])
       else:
         raise newException(ValueError,
-          "bindPostulate supports Int -> Int, opaque T -> T, opaque T -> Nat, " &
-          "Nat -> opaque T -> opaque U, opaque A -> B -> C, and opaque " &
-          "A -> B -> C -> D")
+          "bindPostulate supports Int -> Int, opaque T -> T, opaque T -> U, " &
+          "opaque T -> Nat, Nat -> opaque T -> opaque U, opaque A -> B -> C, " &
+          "and opaque A -> B -> C -> D")
     except ValueError as e:
       error("eponymBlock binding error: " & e.msg, body)
 

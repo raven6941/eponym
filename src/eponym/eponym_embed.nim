@@ -22,6 +22,7 @@ import preterm  # Quantity constants for validating supported adapter shapes
 
 proc hostIntUnary*(implementation: proc(x: int): int): Value
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
+proc hostOpaqueMapUnary*[A, B](implementation: proc(x: A): B): Value
 proc hostOpaqueBinary*[A, B, C](implementation: proc(x: A, y: B): C): Value
 proc hostOpaqueTernary*[A, B, C, D](
   implementation: proc(x: A, y: B, z: C): D): Value
@@ -139,6 +140,26 @@ proc validateHostOpaqueUnaryType*(globals: Globals,
       "opaque unary adapter requires postulate '" & postulateName &
       "' to have type Opaque -> Opaque")
   opaqueTypeName(globals, domainId, postulateName)
+
+proc validateHostOpaqueMapUnaryType*(globals: Globals, postulateName,
+                                     argTypeName, resultTypeName: string) =
+  ## Validate a unary opaque contract `A -> B`, where the Nim representations
+  ## may differ (for example, a handle mapped to a Future result).
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  let argId = opaqueTypeId(globals, argTypeName, postulateName)
+  let resultId = opaqueTypeId(globals, resultTypeName, postulateName)
+  let ty = entry.ty
+  if ty.kind != tPi or ty.impl or ty.qty == q0 or
+      opaqueTypeHeadId(ty.dom) != argId or
+      opaqueTypeHeadId(ty.scope.bdy) != resultId:
+    raise newException(ValueError,
+      "opaque unary adapter requires postulate '" & postulateName &
+      "' to have type " & argTypeName & " -> " & resultTypeName)
 
 proc validateHostOpaqueType*(globals: Globals, typeName: string) =
   ## Ensure an explicit runtimeType mapping refers to an opaque postulated
@@ -337,6 +358,15 @@ proc bindHostOpaqueUnary*[T](bindings: var RuntimeBindings, globals: Globals,
   bindHostValue(bindings, globals, postulateName,
                 hostOpaqueUnary[T](implementation))
 
+proc bindHostOpaqueMapUnary*[A, B](bindings: var RuntimeBindings,
+    globals: Globals, postulateName, argTypeName, resultTypeName: string,
+    implementation: proc(x: A): B) =
+  ## Bind a Nim `proc(A): B` to a mapped opaque Eponym contract `E1 -> E2`.
+  validateHostOpaqueMapUnaryType(globals, postulateName, argTypeName,
+                                 resultTypeName)
+  bindHostValue(bindings, globals, postulateName,
+                hostOpaqueMapUnary[A, B](implementation))
+
 proc bindHostIntUnary*(bindings: var RuntimeBindings, globals: Globals,
                        postulateName: string,
                        implementation: proc(x: int): int) =
@@ -376,6 +406,11 @@ proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value =
   ## without inspecting it; the callback and its adapter define its meaning.
   vHostFunc(proc(value: Value): Value =
     toHostValue(implementation(valueToHost[T](value))))
+
+proc hostOpaqueMapUnary*[A, B](implementation: proc(x: A): B): Value =
+  ## Adapt a unary Nim callback between distinct opaque Eponym mappings.
+  vHostFunc(proc(value: Value): Value =
+    toHostValue(implementation(valueToHost[A](value))))
 
 proc hostOpaqueBinary*[A, B, C](implementation: proc(x: A, y: B): C): Value =
   ## Adapt a two-argument Nim procedure to a curried Eponym runtime function.

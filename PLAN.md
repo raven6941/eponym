@@ -346,7 +346,8 @@ implementations.
 - [x] Add explicit `bindPostulate(name, nimProc)` syntax for a declared
    postulate and Nim proc. Generated-wrapper bindings support unary
    `Int -> Int`, unary opaque `T -> T` / `T -> Nat`, mixed
-   `Nat -> T -> U`, and curried binary opaque `A -> B -> C`; longer
+   `Nat -> T -> U`, unary opaque `A -> B`, curried binary opaque
+   `A -> B -> C`, and curried ternary opaque `A -> B -> C -> D`; longer
    signatures remain unsupported.
 - [x] Use an explicit runtime binding environment keyed by
    checked postulate reference identity; do not use a process-global name or
@@ -375,8 +376,12 @@ implementations.
 - [x] Specify synchronous exception behavior: exceptions raised by a Nim
    adapter propagate unchanged through the checked runtime wrapper; property
    tests verify the original exception type and message.
-- [ ] Specify async behavior and add an adapter form for `Future[T]` rather
-   than conflating synchronous and asynchronous effects.
+- [x] Allow an explicitly mapped opaque `Future[T]` as the result of a
+   synchronous postulate callback and generated wrapper. The future passes
+   through unchanged; Eponym does not await it.
+- [ ] Specify asynchronous effect semantics, including awaiting, cancellation,
+   failure propagation, and future-valued callback arguments. Keep those
+   semantics distinct from opaque future pass-through.
 - [x] Extend the low-level typed adapter from scalar primitives to an opaque
    user-defined Nim value. The handle can cross a checked role and return to
    Nim; representation and behavior are explicitly trusted. Property tests
@@ -390,6 +395,10 @@ implementations.
   checks for all parameters and the result. A generated wrapper and a 200-case
   property test exercise a `Channel -> Message -> RequestId -> Channel`
   postulate.
+- [x] Bind unary callbacks between distinct opaque mappings (`A -> B`) and
+  return a mapped `Future[T]` through an ordinary typed wrapper. Property tests
+  verify the future object and its result pass through unchanged; Eponym does
+  not await it.
 - [x] Expose unary opaque and binary opaque bindings through `eponymBlock`;
    explicit `runtimeType` mappings connect Eponym postulates to Nim types.
    Nim checks adapter and generated wrapper signatures, and compile-fail
