@@ -134,8 +134,9 @@ for verified components inside a larger Nim application.
   the softplus composition rule, non-obvious unlike least squares),
   plus a two-variable objective with different dimensions and a
   portfolio risk term (`quadForm` with a PSD side condition). The Nim
-  driver still re-states the logistic loss and gradient in Nim; it is not yet
-  connected to the checked objective. Dimension
+  driver interprets the exact checked logistic objective, including its
+  concrete matrix and label vector, and derives a finite-difference gradient
+  from it. Dimension
   mismatches and non-DCP vector products (`vMul`) are compile-time
   errors (see 18a/18b/18c above).
 - **qtt_borrow.nim** — QTT borrow checking as an embedded DSL (Issue
