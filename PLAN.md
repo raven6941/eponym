@@ -498,9 +498,10 @@ implementations.
 - [x] Lower a single-condition `if/else` expression through the polymorphic
   `ifThenElse` definition in `lib/bool.ep`; both branches remain Eponym terms
   and Bool eliminator computation selects the result.
-- [ ] Add chained `elif` expressions and continue expanding the explicitly
-  documented subset. Effects, arbitrary procedure calls, macros, mutation,
-  and IO remain outside unless introduced as explicit trusted bindings.
+- [x] Lower chained `elif` expressions to nested checked `ifThenElse` calls;
+  test a multi-branch embedded definition and a missing-`else` compile error.
+  Effects, arbitrary procedure calls, macros, mutation, and IO remain outside
+  unless introduced as explicit trusted bindings.
 - [x] Use square brackets for explicit Eponym binders (`A`, indices such as
   `n`), parentheses for term arguments, and braces for implicit binders.
   Generic declarations, bracketed type applications, and bracketed term

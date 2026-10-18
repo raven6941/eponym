@@ -50,11 +50,11 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `cons[A, n](x, xs)`, `Vec[A, n]` | Square brackets supply explicit Eponym parameters; parentheses supply term arguments. Call-style forms remain supported during migration. |
 | `let x = term` in a definition body | Eponym local binding; one or more lets may precede the final term |
 | `left + right`, `left - right`, `left * right`, `-value` | Lowered to checked Eponym `Int` primitives; the Eponym checker enforces operand types |
-| `if condition: yes else: no` | One-condition pure expression lowered through `ifThenElse` from `lib/bool.ep`; import that file, use a `Bool` condition, and provide one expression per branch |
+| `if condition: yes elif other: maybe else: no` | Pure conditional chain lowered to nested `ifThenElse` calls from `lib/bool.ep`; import that file, use `Bool` conditions, and provide one expression per branch |
 | `addInt(x, y)`, `suc(n)`, `f x`, `lam(x, T, body)` | Eponym applications and lambda forms, translated by the macro |
 | `import "nat.ep"` | Eponym module import; relative to the source file first, then the installed package prelude. Absolute paths select an explicit file. |
 | `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported shapes are listed in [known limitations](known-limitations.md) |
-| `echo`, `for`, `var`, chained `elif`, Nim library calls | Not supported as host Nim statements/expressions in the block |
+| `echo`, `for`, `var`, effectful Nim control flow, Nim library calls | Not supported as host Nim statements/expressions in the block |
 
 Put ordinary computation, IO, control flow, and Nim library calls outside
 the block. Call the generated wrappers from Nim, and pass values across the

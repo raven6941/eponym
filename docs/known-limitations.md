@@ -166,3 +166,8 @@ Eponym parameters can use Nim square brackets, as in `Vec[A, n]` and
 `cons[A, n](x, xs)`; legacy call-style forms remain accepted. Generic Eponym
 definitions can be checked, but the generated Nim runtime wrapper for a
 generic definition is not implemented yet.
+
+Pure `if`/`elif`/`else` expressions lower to nested checked `ifThenElse`
+calls when `lib/bool.ep` is imported. Each condition must have type `Bool`,
+and each branch must be one Eponym expression. This does not enable ordinary
+effectful Nim control flow inside the block.
