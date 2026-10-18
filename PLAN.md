@@ -517,10 +517,9 @@ implementations.
 
 ### Cross-stage validation and project claims
 
-- [ ] Add positive tests for every supported codec and callback shape, plus
-  compile-fail cases for type mismatch, missing binding, duplicate binding,
-  effectful unsupported expression, dependent-index mismatch, and linear
-  misuse.
+- [x] Add positive property coverage for each supported codec/callback shape,
+  plus compile-fail cases for type mismatch, missing and duplicate bindings,
+  unsupported operators, dependent-index mismatch, and linear misuse.
 - [ ] Add runtime integration examples that execute the exact Eponym-checked
   definition, not a mirrored Nim implementation.
 - [ ] Keep the README's examples classified as compile-time model checks,
