@@ -7,7 +7,7 @@ design notes where the limit comes from.
 
 ## Embedding and runtime
 
-### Callable definitions have an integer-only runtime bridge
+### Callable definitions have a partial runtime bridge
 
 `eponymBlock` checks definitions at Nim compile time, then generates Nim
 wrappers for them. Top-level non-generic definitions whose parameters and
@@ -24,9 +24,10 @@ signature.
 
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values and opaque boxes for arbitrary Nim payload
-types. A typed `T -> T` postulate adapter can pass a Nim object, reference, or
-other value through a named Eponym type without exposing its representation.
-Tests exercise a user-defined object through an imported checked definition.
+types. Typed unary `T -> T` and binary `A -> B -> C` postulate adapters can
+pass Nim objects, references, strings, or other values through explicitly
+mapped Eponym types without exposing their representation. Tests exercise
+user-defined values through checked definitions.
 This does not yet provide generated typed wrappers for arbitrary values,
 structural codecs for records or collections, callbacks of other shapes,
 closures as exported values, async results, or socket/channel protocols.

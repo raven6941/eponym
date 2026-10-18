@@ -21,6 +21,7 @@ import preterm  # Quantity constants for validating supported adapter shapes
 
 proc hostIntUnary*(implementation: proc(x: int): int): Value
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
+proc hostOpaqueBinary*[A, B, C](implementation: proc(x: A, y: B): C): Value
 
 # Cache: (baseDir, source) key -> checked module state. Retaining globals is
 # required for runtime postulate bindings to use the identities assigned by
@@ -128,6 +129,58 @@ proc validateHostOpaqueUnaryType*(globals: Globals,
     "opaque adapter type for postulate '" & postulateName &
     "' must be a named postulated type")
 
+proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int =
+  if typeName notin globals:
+    raise newException(ValueError,
+      "opaque adapter type '" & typeName & "' is not declared for postulate '" &
+      postulateName & "'")
+  let entry = globals[typeName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.ty.kind != tType:
+    raise newException(ValueError,
+      "opaque adapter mapping '" & typeName & "' must name a postulated type")
+  entry.tm.refId
+
+proc validateHostOpaqueBinaryType*(globals: Globals, postulateName,
+                                   firstTypeName, secondTypeName,
+                                   resultTypeName: string) =
+  ## Validate a curried opaque contract `A -> B -> C`; every Eponym type to
+  ## Nim type mapping is named explicitly by the caller.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  let firstId = opaqueTypeId(globals, firstTypeName, postulateName)
+  let secondId = opaqueTypeId(globals, secondTypeName, postulateName)
+  let resultId = opaqueTypeId(globals, resultTypeName, postulateName)
+  let outer = entry.ty
+  if outer.kind != tPi or outer.impl or outer.qty == q0 or
+      outer.dom.kind != tR or outer.dom.refId != firstId:
+    raise newException(ValueError,
+      "opaque binary adapter requires postulate '" & postulateName &
+      "' to have the declared first argument type '" & firstTypeName & "'")
+  let inner = outer.scope.bdy
+  if inner.kind != tPi or inner.impl or inner.qty == q0 or
+      inner.dom.kind != tR or inner.dom.refId != secondId or
+      inner.scope.bdy.kind != tR or inner.scope.bdy.refId != resultId:
+    raise newException(ValueError,
+      "opaque binary adapter requires postulate '" & postulateName &
+      "' to have type " & firstTypeName & " -> " & secondTypeName & " -> " &
+      resultTypeName)
+
+proc bindHostOpaqueBinary*[A, B, C](bindings: var RuntimeBindings,
+                                    globals: Globals, postulateName,
+                                    firstTypeName, secondTypeName,
+                                    resultTypeName: string,
+                                    implementation: proc(x: A, y: B): C) =
+  ## Bind Nim `proc(A, B): C` to the explicitly mapped Eponym contract
+  ## `E1 -> E2 -> E3`. All payload representations and behavior are trusted.
+  validateHostOpaqueBinaryType(globals, postulateName, firstTypeName,
+                               secondTypeName, resultTypeName)
+  bindHostValue(bindings, globals, postulateName,
+                hostOpaqueBinary[A, B, C](implementation))
+
 proc bindHostOpaqueUnary*[T](bindings: var RuntimeBindings, globals: Globals,
                              postulateName, eponymTypeName: string,
                              implementation: proc(x: T): T) =
@@ -180,6 +233,14 @@ proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value =
   ## without inspecting it; the callback and its adapter define its meaning.
   vHostFunc(proc(value: Value): Value =
     toHostValue(implementation(valueToHost[T](value))))
+
+proc hostOpaqueBinary*[A, B, C](implementation: proc(x: A, y: B): C): Value =
+  ## Adapt a two-argument Nim procedure to a curried Eponym runtime function.
+  ## Values remain opaque and concrete Nim types are enforced when unboxing.
+  vHostFunc(proc(first: Value): Value =
+    vHostFunc(proc(second: Value): Value =
+      toHostValue(implementation(valueToHost[A](first),
+                                 valueToHost[B](second)))))
 
 proc natToValue*(n: int): Value = vNatLit(n)
 
