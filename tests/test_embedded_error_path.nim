@@ -65,6 +65,8 @@ for (path, expected) in [
      "no runtime codec for Eponym result type 'Thing'"),
     ("tests/fixtures/embedded_err_binding_unused.nim",
      "binding for postulate 'hostStepPostulate' is unused"),
+    ("tests/fixtures/embedded_err_binding_duplicate.nim",
+     "duplicate bindPostulate for 'hostStepPostulate'"),
     ("tests/fixtures/embedded_err_unsupported_operator.nim",
      "unsupported pure operator 'div'"),
     ("tests/fixtures/embedded_err_if_missing_else.nim",
