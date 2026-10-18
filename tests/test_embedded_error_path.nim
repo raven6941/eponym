@@ -65,6 +65,8 @@ for (path, expected) in [
      "no runtime codec for Eponym result type 'Sig(n: Nat, Vec[Nat, n])'"),
     ("tests/fixtures/embedded_err_dependent_record_runtime.nim",
      "no runtime codec for Eponym result type 'Point'"),
+    ("tests/fixtures/embedded_err_bool_without_prelude.nim",
+     "Bool constructor 'true' is not declared; import bool.ep"),
     ("tests/fixtures/embedded_err_dependent_sigma_postulate_binding.nim",
      "structured pair adapter requires postulate 'makeDependentPair'"),
     ("tests/fixtures/embedded_err_pair_binding_nim_type.nim", "type mismatch"),

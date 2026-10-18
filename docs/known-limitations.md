@@ -28,9 +28,12 @@ the postulated behavior.
 `eponymBlock` checks definitions at Nim compile time, then generates Nim
 wrappers for them. Top-level non-generic definitions whose parameters and
 result use primitive `Int` or `Nat` get fixed-arity Nim `proc` wrappers with
-`int` parameters and results. Explicit `runtimeType` mappings add opaque
-postulated types and indexed families. `Nat` conversions reject negative
-values. An explicit `proc` declaration with an unsupported signature remains
+`int` parameters and results. Definitions over `Bool` get Nim `bool` wrappers
+when `bool.ep` is imported; the codec uses the checked `true` and `false`
+constructors and rejects noncanonical Bool runtime values. Explicit
+`runtimeType` mappings add opaque postulated types and indexed families.
+`Nat` conversions reject negative values. An explicit `proc` declaration with
+an unsupported signature remains
 checked but emits a targeted compile-time error if called. Generated names
 without a matching `proc` declaration retain the compatibility
 `varargs[int] -> int` wrapper in
@@ -43,8 +46,9 @@ do not thereby become callable from ordinary Nim with a faithful typed
 signature.
 
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
-supports primitive Int/Nat values and opaque boxes for arbitrary Nim payload
-types. Typed adapters support unary `T -> T`, `T -> U`, `T -> Nat`,
+supports primitive Int/Nat values, canonical Bool constructors, and opaque
+boxes for arbitrary Nim payload types. Typed adapters support unary
+`T -> T`, `T -> U`, `T -> Nat`,
 `Nat -> A -> B`, and opaque postulate contracts with up to four curried
 arguments.
 They can pass Nim objects, references, strings, or other values through

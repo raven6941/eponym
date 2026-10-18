@@ -558,6 +558,26 @@ proc valueToInt*(v: Value): int =
   # Force evaluation if it's not yet a wInt
   raise newException(ValueError, "value is not an Int")
 
+proc boolToValue*(value: bool, globals: Globals): Value =
+  ## Encode a Nim bool using the checked Bool constructors from this module.
+  let constructorName = if value: "true" else: "false"
+  if constructorName notin globals:
+    raise newException(ValueError,
+      "runtime Bool constructors are unavailable (import bool.ep)")
+  eval(globals[constructorName].tm, @[])
+
+proc valueToBool*(value: Value, globals: Globals): bool =
+  ## Decode only the canonical `true` and `false` constructors.
+  if "true" notin globals or "false" notin globals:
+    raise newException(ValueError,
+      "runtime Bool constructors are unavailable (import bool.ep)")
+  let valueId = runtimeReferenceId(value)
+  let trueId = globals["true"].tm.refId
+  let falseId = globals["false"].tm.refId
+  if valueId == trueId: return true
+  if valueId == falseId: return false
+  raise newException(ValueError, "runtime value is not a canonical Bool")
+
 proc hostIntUnary*(implementation: proc(x: int): int): Value =
   ## Adapt a Nim Int -> Int procedure to a runtime postulate value. Nim
   ## checks the adapter's concrete signature; the implementation's behavior
@@ -703,7 +723,8 @@ proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
   if refId >= 0:
     for name, entry in globals.pairs:
       if not entry.tm.isNil and entry.tm.kind == tR and
-          not entry.tm.refIsDefn and entry.tm.refId == refId:
+          not entry.tm.refIsDefn and entry.tm.refId == refId and
+          not entry.isDataConstructor:
         raise newException(ValueError,
           "unbound runtime postulate '" & name & "' while evaluating '" &
           d.name & "'")
