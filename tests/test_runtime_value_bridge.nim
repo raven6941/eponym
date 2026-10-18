@@ -34,6 +34,10 @@ type RuntimeEnvelope = object
   point: RuntimePoint
   note: string
 
+type IndexedChannelHandle = object
+  index: int
+  label: string
+
 proc hostWrongFour(channel: ChannelHandle, message: string,
                    requestId, phase: int): int = channel.id + requestId + phase
 
@@ -216,6 +220,22 @@ eponymBlock:
   proc generatedCallbackRole(callback: Callback, value: Sample): Sample =
     invokeCallback(callback, value)
 
+proc hostIndexedChannelParts(channel: IndexedChannelHandle):
+    tuple[index: int, next: IndexedChannelHandle] =
+  (channel.index, IndexedChannelHandle(index: channel.index,
+    label: channel.label & "/indexed"))
+
+eponymBlock:
+  import "../lib/nat.ep"
+  postulate(Channel, Nat -> Univ)
+  runtimeType(Channel, IndexedChannelHandle)
+  postulate(splitIndexedChannel,
+    Channel(0) -> Sig(index: Nat, Channel(index)))
+  bindPostulatePairTrusted(splitIndexedChannel, hostIndexedChannelParts,
+    Channel, Nat, Channel)
+  proc generatedIndexedChannelIndex(channel: Channel(0)): Nat =
+    fst(splitIndexedChannel(channel))
+
 static:
   doAssert compiles(generatedCheckedRole(35))
   doAssert compiles(generatedAdd(20, 22))
@@ -249,6 +269,8 @@ static:
     note: "ok")))
   doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
   doAssert not compiles(generatedCallbackRole(42, 1))
+  doAssert compiles(generatedIndexedChannelIndex(
+    IndexedChannelHandle(index: 17, label: "indexed")))
 
 when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
@@ -329,6 +351,15 @@ when isMainModule:
           label: "ternary-" & $second & "/split-two"),
     shrinkInt)
   if not generatedTernaryPairBindingCases:
+    quit(1)
+  let generatedTrustedDependentPairCases = forAll(
+    "explicit trusted codecs carry a dependent Sigma field", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 1000),
+    proc(index: int): bool =
+      generatedIndexedChannelIndex(IndexedChannelHandle(index: index,
+        label: "index-" & $index)) == index,
+    shrinkInt)
+  if not generatedTrustedDependentPairCases:
     quit(1)
   let generatedNestedRecordRoundTrips = forAll(
     "nested structural record codecs preserve recursive fields", r, 200,
@@ -413,6 +444,7 @@ when isMainModule:
       generatedPairBindingCases and
       generatedBinaryPairBindingCases and
       generatedTernaryPairBindingCases and
+      generatedTrustedDependentPairCases and
       generatedNestedRecordRoundTrips and
       generatedFutureInputPassesThrough and
       generatedPureConditionalsWork and
