@@ -395,8 +395,9 @@ implementations.
 - [x] Add a message codec and use an opaque handle to bind protocol operations
    through Nim adapters. The indexed session demo encodes Nat payloads as
    canonical unsigned LEB128 bytes outside Eponym and runs checked sender and
-   receiver roles over the channel handle. A TCP adapter remains a follow-up;
-   transport libraries stay outside the Eponym core.
+   receiver roles over the channel handle. A separate `std/net` demo uses the
+   same codec through a loopback TCP socket; transport libraries stay outside
+   the Eponym core.
 
 **Exit criteria:**
 
@@ -412,9 +413,11 @@ implementations.
   messages. The Paxos demo and its hand-mirrored driver remain open.
 - [ ] Replace the hand-mirrored `runPaxosRound` sequence with calls to the
    checked `proposer` and `acceptor` roles through bound mailbox operations.
-- [ ] Then provide a socket adapter with message encoding/decoding outside the
-   Eponym checker. Keep transport failure and serialization validity
-   explicit in the Nim result type.
+- [x] Provide a `std/net` loopback TCP adapter using the checked sender and
+  receiver roles, with message encoding/decoding outside Eponym. Runtime
+  failures currently propagate as Nim exceptions.
+- [ ] Represent transport and serialization failures in an explicit Nim
+  result type; exception propagation is the current synchronous behavior.
 - [ ] Make the buffer/borrow example route through bound postulates, and label
    what the linear checker establishes versus what the Nim buffer adapter
    must uphold.

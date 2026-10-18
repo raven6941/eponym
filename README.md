@@ -31,7 +31,8 @@ show a few useful patterns:
   [`paxos_session.nim`](examples/embedded/paxos_session.nim). The smaller
   [`session_runtime_bindings.nim`](examples/embedded/session_runtime_bindings.nim)
   demo also runs checked sender/receiver roles through Nim channel adapters
-  with a small Nat message codec.
+  with a small Nat message codec. [`session_tcp_bindings.nim`](examples/embedded/session_tcp_bindings.nim)
+  applies the same roles and codec to a loopback TCP socket.
 - **Dimensions and shapes** — index vectors and matrices by their dimensions
   so operations like dot product and matrix-vector multiplication require
   compatible sizes. See [`convex_opt_vec.nim`](examples/embedded/convex_opt_vec.nim).
