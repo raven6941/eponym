@@ -444,9 +444,10 @@ implementations.
 - [ ] Make the buffer/borrow example route through bound postulates, and label
    what the linear checker establishes versus what the Nim buffer adapter
    must uphold.
-- [ ] Exercise both correct runtime execution and compile-time failures for
-   wrong message order, wrong indexed value, double use, and dropped linear
-   handles.
+- [x] Exercise correct runtime session execution and compile-time failures for
+  wrong message order, wrong indexed value, double use, and dropped linear
+  handles. The error snapshots cover the negative cases; the TCP loopback test
+  exercises the positive checked sender/receiver roles.
 
 **Exit criteria:**
 

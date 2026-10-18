@@ -1,1 +1,1 @@
-line 3, col 1: import "no-such-module.ep": file not found (resolved to '<root>/examples/ep/no-such-module.ep', imported from '<root>/examples/ep/24-import-missing-neg.ep')
+line 3, col 1: import "no-such-module.ep": file not found (searched source-relative and package prelude paths, imported from '<root>/examples/ep/24-import-missing-neg.ep')
