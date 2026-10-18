@@ -1,8 +1,8 @@
 # Experiment: bind Eponym postulates to Nim procedures
 
-**Status:** low-level unary Int prototype implemented; `eponymBlock` binding
-syntax and arbitrary Nim values remain unimplemented. This work is tracked in
-[known limitations](known-limitations.md).
+**Status:** unary Int `eponymBlock` binding prototype implemented; other Nim
+value shapes and arbitrary postulate signatures remain unimplemented. This
+work is tracked in [known limitations](known-limitations.md).
 
 ## Goal
 
@@ -41,12 +41,12 @@ types remain open.
 
 ## Current implementation and remaining obstacle
 
-`eponym_embed` now retains checked globals and offers `bindHostIntUnary` for
-postulates whose exact Eponym type is `Int -> Int`. Bindings are keyed by the
-checked postulate reference ID and passed to binding-aware evaluation; cached
-definitions are not mutated. This works through imported definitions too.
-The Nim adapter has the concrete signature `proc(x: int): int`, and Eponym's
-postulate type is checked against that supported shape. The adapter's behavior
+`eponymBlock` now accepts `bindPostulate(name, nimProc)` for postulates whose
+exact Eponym type is `Int -> Int`. Generated wrappers use a call-local runtime
+binding table keyed by the checked postulate reference ID; cached definitions
+are not mutated. This works through imported definitions too. The Nim
+adapter has the concrete signature `proc(x: int): int`, and Eponym's
+postulate type is checked during macro expansion. The adapter's behavior
 remains trusted.
 
 The current low-level API looks like this:
@@ -63,10 +63,11 @@ Property tests exercise direct and imported checked definitions, multiple
 independent binding environments, incompatible Nim proc types, mismatched
 Eponym postulate shapes, and duplicate bindings.
 
-The generated `eponymBlock` wrappers still use the integer-only ABI and do
-not accept `bindPostulate` declarations. There is no generated compile-time
-binding record, no support for opaque user-defined Nim values, and no adapter
-support yet for multiple arguments, async results, or structured codecs.
+Generated `eponymBlock` wrappers still use the integer-only ABI
+(`varargs[int] -> int`). The binding syntax currently accepts only unary
+`Int -> Int` postulates; there is no support yet for opaque user-defined Nim
+values, multi-argument callback signatures, async results, structured codecs,
+or missing-binding checks before invocation.
 
 ## Suggested first vertical slice
 

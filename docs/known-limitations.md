@@ -29,12 +29,13 @@ concrete Nim signature, but it cannot automatically map every Nim object,
 reference, closure, or async result to a dependent Eponym type or verify that
 the value satisfies a dependent index.
 
-This is an ABI/runtime limitation, not an elaborator restriction. A low-level
-runtime binding API now supports explicitly binding an `Int -> Int` postulate
-to a typed Nim `proc(int): int`; it verifies the Eponym contract shape and
-dispatches through direct and imported checked definitions. The generated
-`eponymBlock` wrappers do not yet expose binding syntax, and arbitrary Nim
-values still need explicit adapters/codecs. See the
+This is an ABI/runtime limitation, not an elaborator restriction. The
+`eponymBlock` macro now supports `bindPostulate(name, nimProc)` for a unary
+`Int -> Int` postulate backed by a Nim `proc(int): int`. It verifies the
+Eponym contract during macro expansion, lets Nim check the implementation
+signature, and dispatches through imported checked definitions. Other
+postulate signatures, arbitrary Nim values, and explicit missing-binding
+diagnostics are still unsupported. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the
 supported prototype and remaining work.
 

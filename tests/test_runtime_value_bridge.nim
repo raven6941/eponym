@@ -2,6 +2,7 @@
 
 import std/[os, tables]
 import falsify
+import eponym_mac
 import eponym_embed
 import elab
 import eponym_init
@@ -20,6 +21,12 @@ proc hostString(value: string): string = value
 static:
   doAssert compiles(hostIntUnary(hostStepNim))
   doAssert not compiles(hostIntUnary(hostString))
+
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(hostPlusSeven, Int -> Int)
+  bindPostulate(hostPlusSeven, hostStepNim)
+  proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
 
 when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
@@ -46,13 +53,15 @@ when isMainModule:
   # Keep the original generated-wrapper helper working through the shared
   # Value-based evaluator path.
   let compat = callIntFuncDir(baseDir, program, "double", @[21]) == 42
+  let generatedBindingWorks = generatedCheckedRole(35) == 42
 
   var rejectedNegativeNat = false
   try:
     discard natToValue(-1)
   except ValueError:
     rejectedNegativeNat = true
-  if not (intRoundTrips and natRoundTrips and compat and rejectedNegativeNat):
+  if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
+      rejectedNegativeNat):
     quit(1)
 
   # The runtime-binding work needs the exact global identities assigned by

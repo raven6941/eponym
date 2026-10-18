@@ -49,6 +49,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `let x = term` in a definition body | Eponym local binding; one or more lets may precede the final term |
 | `addInt(x, y)`, `suc(n)`, `f x`, `lam(x, T, body)` | Eponym applications and lambda forms, translated by the macro |
 | `import "lib/nat.ep"` | Eponym module import, not a Nim module import |
+| `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported only for unary `Int -> Int` contracts |
 | `echo`, `for`, `var`, `if`, Nim library calls | Not supported as host Nim statements/expressions in the block |
 
 Put ordinary computation, IO, control flow, and Nim library calls outside
@@ -57,6 +58,29 @@ wrapper boundary using the supported runtime types. See the
 [tutorial](tutorial.md) for a complete example. This is the current
 boundary; a planned experiment may add a small *pure* expression subset
 whose forms translate to checked Eponym terms rather than running as Nim.
+
+### `bindPostulate` — trusted runtime adapter
+
+```nim
+proc incrementNim(value: int): int = value + 1
+
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(increment, Int -> Int)
+  bindPostulate(increment, incrementNim)
+  proc checkedRole(value: Int): Int = increment(value)
+
+doAssert checkedRole(41) == 42
+```
+
+For this supported shape, the macro checks that the Eponym postulate is
+`Int -> Int`, and Nim checks that the supplied procedure has type
+`proc(int): int`. The implementation is trusted to honor its contract; Eponym
+does not inspect or verify the Nim procedure body. Generated wrappers still
+use the integer runtime ABI. Other Eponym signatures, user-defined Nim values,
+and automatic codecs are not yet supported. A reachable postulate without a
+binding fails when evaluated; diagnostics for missing bindings at expansion
+time are not implemented.
 
 ## Sheds: `shedsBlock` (hole-driven development)
 

@@ -308,8 +308,9 @@ implementations.
 
 #### C. Bind postulates to Nim procedures
 
-- [ ] Add explicit binding syntax linking a declared postulate to a Nim proc or
-   closure in the same embedding module or an explicit binding record.
+- [x] Add explicit `bindPostulate(name, nimProc)` syntax for a declared
+   postulate and Nim proc. Current generated-wrapper support is limited to
+   unary `Int -> Int`; arbitrary callbacks and value shapes remain below.
 - [x] Use an explicit runtime binding environment keyed by
    checked postulate reference identity; do not use a process-global name or
    reference-ID registry. **Foundation complete:** `elabCheckDirState` and
@@ -324,8 +325,12 @@ implementations.
    coverage checks imported-definition calls, independent per-call binding
    environments, duplicate and wrong-Eponym-type rejection, and 400 generated
    callback inputs.
-- [ ] Extend binding shape checking to generated `eponymBlock` wrappers and
-   add missing/unreachable binding diagnostics.
+- [x] Validate the `Int -> Int` Eponym contract during macro expansion and
+   the Nim `proc(int): int` signature through generated calls. Compile-fail
+   fixtures cover mismatches on each side.
+- [ ] Add missing/unreachable binding diagnostics. An invoked but unbound
+   postulate currently fails during runtime evaluation; unreachable bindings
+   are not diagnosed.
 - [ ] Specify exception and async behavior; add a later adapter form for
    `Future[T]` rather than conflating synchronous and asynchronous effects.
 - [ ] Start with scalar primitives, then an opaque user-defined handle plus a
@@ -335,10 +340,10 @@ implementations.
 
 **Exit criteria:**
 
-- [ ] A checked role calls its bound postulate at runtime; the Nim compiler
+- [x] A checked role calls its bound postulate at runtime; the Nim compiler
   rejects a mismatched adapter signature; a negative Eponym role still fails
-  during elaboration; the trusted implementation caveat is shown at the
-  binding site and in the trust model.
+  during elaboration; the trusted implementation caveat is documented.
+  Verified for the unary Int prototype only.
 
 #### D. Make one end-to-end example use the checked role
 
