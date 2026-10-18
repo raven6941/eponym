@@ -7,6 +7,21 @@ design notes where the limit comes from.
 
 ## Embedding and runtime
 
+### What each layer establishes
+
+| Example or boundary | Checked by Eponym | Checked by Nim | Trusted or separate |
+|---|---|---|---|
+| `session_runtime_bindings.nim`, `session_tcp_bindings.nim` | The sender/receiver role and its session-indexed postulate calls | Generated wrapper and adapter signatures | Adapter behavior, message codec, and TCP transport |
+| `paxos_session.nim` | Proposer/acceptor session descriptions and roles | The hand-written mailbox driver compiles | Driver repeats the protocol; it does not call the checked roles |
+| `qtt_borrow.nim` | The modeled linear owner/borrow use and postulated operation sequence | The separate buffer driver compiles | Buffer exclusivity/lifetime and synchronization between driver and model |
+| `convex_opt.nim`, `convex_opt_vec.nim` | The reified objective and DCP certificate | Separate numeric implementation compiles | No connection from checked objective to the executed loss/gradient |
+| `bindPostulate` runtime bridge | Checked callers match the Eponym postulate type | Generated wrapper and Nim adapter signatures match declared mappings | Adapter implementation and opaque mappings uphold the postulate semantics |
+
+“Checked” in this table means the Eponym layer elaborates the definition and
+the kernel accepts its proof obligations. It does not imply that a separate
+Nim driver calls that definition or that the host implementation satisfies
+the postulated behavior.
+
 ### Callable definitions have a partial runtime bridge
 
 `eponymBlock` checks definitions at Nim compile time, then generates Nim

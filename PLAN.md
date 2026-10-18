@@ -522,12 +522,13 @@ implementations.
   unsupported operators, dependent-index mismatch, and linear misuse.
 - [ ] Add runtime integration examples that execute the exact Eponym-checked
   definition, not a mirrored Nim implementation.
-- [ ] Keep the README's examples classified as compile-time model checks,
-  runtime-integrated examples, or illustrative parallel implementations.
-  Remove or qualify claims when the implementation does not meet them.
+- [x] Classify the TCP/in-memory session, Paxos, borrow, and optimizer
+  examples by what Eponym checks, what Nim checks, and what remains trusted
+  or disconnected. The README links to the table; retain it as implementations
+  change and qualify claims when the implementation does not meet them.
 - [ ] Update `docs/known-limitations.md`, the trust model, the tutorial, syntax
   reference, and this plan in the same change when a stage lands.
-- [ ] Preserve a supported-claims table in the docs: “checked by Eponym”,
+- [x] Preserve a supported-claims table in the docs: “checked by Eponym”,
   “checked by Nim”, “trusted adapter”, and “not currently connected”.
 
 ### Dependencies and sequencing
