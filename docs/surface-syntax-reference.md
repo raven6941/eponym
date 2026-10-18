@@ -35,6 +35,29 @@ wrapper procs. Elaboration failures become Nim compiler errors. Standalone
 `.ep` files skip the macro and go straight to the parser; the syntax is
 identical.
 
+### The Nim boundary
+
+Nim syntax is the *surface notation* for Eponym declarations inside the
+block; it does not make the block a normal Nim procedure body. The macro
+does not evaluate arbitrary Nim expressions, resolve Nim symbols, or inline
+calls to Nim libraries. It translates a supported set of Nim AST shapes to
+Eponym source, then the Eponym parser and checker decide their meaning.
+
+| Inside `eponymBlock` | Meaning |
+|---|---|
+| `proc f(x: T): U = term` | Eponym definition; `term` must use Eponym forms |
+| `let x = term` in a definition body | Eponym local binding; one or more lets may precede the final term |
+| `addInt(x, y)`, `suc(n)`, `f x`, `lam(x, T, body)` | Eponym applications and lambda forms, translated by the macro |
+| `import "lib/nat.ep"` | Eponym module import, not a Nim module import |
+| `echo`, `for`, `var`, `if`, Nim library calls | Not supported as host Nim statements/expressions in the block |
+
+Put ordinary computation, IO, control flow, and Nim library calls outside
+the block. Call the generated wrappers from Nim, and pass values across the
+wrapper boundary using the supported runtime types. See the
+[tutorial](tutorial.md) for a complete example. This is the current
+boundary; a planned experiment may add a small *pure* expression subset
+whose forms translate to checked Eponym terms rather than running as Nim.
+
 ## Sheds: `shedsBlock` (hole-driven development)
 
 ```nim

@@ -65,6 +65,11 @@ eponymBlock:
     proc endS(): Session
   ...
 ```
+- The block uses Eponym's language through Nim-shaped syntax; it does not
+  execute arbitrary Nim code. The current accepted forms and the proposed
+  pure-Nim-subset experiment are described in the
+  [surface-syntax reference](docs/surface-syntax-reference.md) and
+  [experiment note](docs/pure-nim-subset-experiment.md).
 - `Univ` maps to `Type 0`; `?` introduces holes and `_` discards; call syntax for declarations
   (`postulate(Int, Univ)`); `proc` not `def`; `=` not `:=` — it reads
   as Nim, and the elaborator typechecks it at compile time.
