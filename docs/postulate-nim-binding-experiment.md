@@ -1,7 +1,8 @@
 # Experiment: bind Eponym postulates to Nim procedures
 
-**Status:** design investigation; external postulate bindings are not implemented.
-This work is one item in [known limitations](known-limitations.md).
+**Status:** low-level unary Int prototype implemented; `eponymBlock` binding
+syntax and arbitrary Nim values remain unimplemented. This work is tracked in
+[known limitations](known-limitations.md).
 
 ## Goal
 
@@ -38,21 +39,34 @@ types remain open.
    linear resources, or sends the bytes its declared result claims. A
    postulate binding is an explicit trust boundary.
 
-## Current runtime obstacle
+## Current implementation and remaining obstacle
 
-`eponymBlock` currently generates wrappers only for definitions whose
-runtime ABI is `Int -> ... -> Int`. `eponym_embed` re-elaborates source and
-evaluates those terms. The evaluator represents a postulate as an inert
-global reference (`wRef`); it has no host-callable value or external symbol
-registry. Therefore a Nim signature check alone would not make a bound
-postulate executable. The runtime evaluator and wrapper ABI need a deliberate
-extension.
+`eponym_embed` now retains checked globals and offers `bindHostIntUnary` for
+postulates whose exact Eponym type is `Int -> Int`. Bindings are keyed by the
+checked postulate reference ID and passed to binding-aware evaluation; cached
+definitions are not mutated. This works through imported definitions too.
+The Nim adapter has the concrete signature `proc(x: int): int`, and Eponym's
+postulate type is checked against that supported shape. The adapter's behavior
+remains trusted.
 
-The first groundwork is now present in `eponym_embed`: callers can invoke an
-elaborated definition with ETT `Value`s via `callValueFunc` or
-`callValueFuncDir`, and convert primitive Nim integers to/from Eponym `Int`
-and `Nat` literals. The generated `eponymBlock` wrappers still use the
-integer-only ABI, and these new calls do not yet bind postulates.
+The current low-level API looks like this:
+
+```nim
+let globals = getGlobalsDir(baseDir, source)
+var bindings = initRuntimeBindings()
+bindings.bindHostIntUnary(globals, "hostStep", hostStepNim)
+let result = callValueFuncDir(baseDir, source, "checkedRole", args, bindings)
+```
+
+This is a runtime API, not yet a declaration accepted inside `eponymBlock`.
+Property tests exercise direct and imported checked definitions, multiple
+independent binding environments, incompatible Nim proc types, mismatched
+Eponym postulate shapes, and duplicate bindings.
+
+The generated `eponymBlock` wrappers still use the integer-only ABI and do
+not accept `bindPostulate` declarations. There is no generated compile-time
+binding record, no support for opaque user-defined Nim values, and no adapter
+support yet for multiple arguments, async results, or structured codecs.
 
 ## Suggested first vertical slice
 
