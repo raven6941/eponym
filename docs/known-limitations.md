@@ -33,7 +33,8 @@ that correspond to named Eponym postulates. Tests exercise user-defined values
 through checked definitions and generated wrappers. This does not yet provide
 structural codecs for records or collections, callback shapes with more than
 two curried opaque arguments, closures as exported values, async results, or
-socket/channel protocols.
+socket transports. The session runtime demo includes a hand-written Nat
+LEB128 message codec, but there is no reusable structural codec framework.
 Nim's type checker checks the concrete adapter signature, but the mapping to
 the Eponym type and the adapter behavior remain trusted. Neither compiler
 proves that the host value satisfies a dependent index.

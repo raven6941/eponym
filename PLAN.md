@@ -383,9 +383,11 @@ implementations.
    `Nat -> opaque -> opaque` postulates. The end-to-end session example uses
    these to pass a Nat payload through a checked send role and receive it
    through a checked receive role.
-- [ ] Add a message codec and use an opaque handle to bind a protocol
-   operation through a Nim adapter. A TCP adapter should be one example, not
-   a dependency of the Eponym core.
+- [x] Add a message codec and use an opaque handle to bind protocol operations
+   through Nim adapters. The indexed session demo encodes Nat payloads as
+   canonical unsigned LEB128 bytes outside Eponym and runs checked sender and
+   receiver roles over the channel handle. A TCP adapter remains a follow-up;
+   transport libraries stay outside the Eponym core.
 
 **Exit criteria:**
 

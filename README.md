@@ -30,7 +30,8 @@ show a few useful patterns:
   [`session_types.nim`](examples/embedded/session_types.nim) and
   [`paxos_session.nim`](examples/embedded/paxos_session.nim). The smaller
   [`session_runtime_bindings.nim`](examples/embedded/session_runtime_bindings.nim)
-  demo also runs checked sender/receiver roles through Nim channel adapters.
+  demo also runs checked sender/receiver roles through Nim channel adapters
+  with a small Nat message codec.
 - **Dimensions and shapes** — index vectors and matrices by their dimensions
   so operations like dot product and matrix-vector multiplication require
   compatible sizes. See [`convex_opt_vec.nim`](examples/embedded/convex_opt_vec.nim).
