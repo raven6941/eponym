@@ -501,10 +501,10 @@ implementations.
 - [ ] Add chained `elif` expressions and continue expanding the explicitly
   documented subset. Effects, arbitrary procedure calls, macros, mutation,
   and IO remain outside unless introduced as explicit trusted bindings.
-- [ ] Decide the parameter convention: square brackets for explicit Eponym
-   binders (`A`, indices such as `n`), parentheses for term arguments, and
-   braces for implicit binders. Preserve a migration path from call-style
-   forms such as `cons(A, n, x, xs)` and `Vec(A, n)`.
+- [x] Use square brackets for explicit Eponym binders (`A`, indices such as
+  `n`), parentheses for term arguments, and braces for implicit binders.
+  Generic declarations, bracketed type applications, and bracketed term
+  applications are covered; call-style forms remain supported for migration.
 - [x] Resolve relative `.ep` imports source-relative first, then from the
   installed package's `lib/` directory. Absolute paths remain explicit
   overrides; a prelude-resolution test checks nested imports without vendoring.

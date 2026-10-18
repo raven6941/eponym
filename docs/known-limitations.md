@@ -161,9 +161,8 @@ file. Clean-install resolution is covered by a separate-project test. See
 
 ## Surface syntax
 
-The embedded syntax is Nim-shaped but is not ordinary Nim semantics. For
-example, explicit Eponym parameters currently use call-style forms such as
-`Vec(A, n)` and `cons(A, n, x, xs)`, rather than Nim's generic bracket
-convention. A proposal to investigate brackets for explicit Eponym binders
-is tracked separately; this page should be updated when a concrete syntax
-decision is made.
+The embedded syntax is Nim-shaped but is not ordinary Nim semantics. Explicit
+Eponym parameters can use Nim square brackets, as in `Vec[A, n]` and
+`cons[A, n](x, xs)`; legacy call-style forms remain accepted. Generic Eponym
+definitions can be checked, but the generated Nim runtime wrapper for a
+generic definition is not implemented yet.
