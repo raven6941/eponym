@@ -122,9 +122,9 @@ every opaque type is explicitly mapped. These shapes cover resource handles
 with primitive message values. Other structured values, dependent signatures,
 and longer callbacks still need explicit codec and adapter support.
 
-For a postulate that returns a non-dependent pair, `bindPostulatePair` lets a
-Nim callback return a typed tuple. The macro checks the declared pair field
-types and builds the runtime pair:
+For a postulate with one to three arguments and a non-dependent pair result,
+`bindPostulatePair` lets a Nim callback return a typed tuple. The macro checks
+the declared argument and pair field type heads and builds the runtime pair:
 
 ```nim
 postulate(split, Channel -> Sig(Nat, Channel))
@@ -132,8 +132,9 @@ bindPostulatePair(split, splitChannel, Channel, Nat, Channel)
 ```
 
 The Nim callback has type `proc(ChannelHandle): tuple[int, ChannelHandle]`.
-The generated codec converts the tuple recursively. Dependent Sigma results
-are rejected because the host signature cannot establish the dependent index.
+The generated codec converts the arguments and tuple recursively. Dependent
+Sigma results are rejected because the host signature cannot establish the
+dependent index. Indices on mapped type families remain trusted by the adapter.
 
 First-order wrappers also support non-dependent `Sig(A, B)` values as
 two-element Nim tuples and non-dependent named Eponym records as mapped Nim

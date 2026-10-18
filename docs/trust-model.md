@@ -189,10 +189,11 @@ time.
   fields according to their Eponym types; opaque field mappings and host
   adapter behavior remain trusted. Dependent Sigma values and records with
   dependent fields are rejected; the bridge does not erase a dependent index.
-  `bindPostulatePair` supports a codec-supported named argument and a
-  non-dependent Sigma result. Its generated adapter checks the Nim tuple type and recursively
-  encodes both fields. A dependent pair result is rejected during macro
-  expansion.
+  `bindPostulatePair` supports one to three codec-supported named arguments
+  and a non-dependent Sigma result. Its generated adapter checks the Nim tuple
+  type and recursively encodes both fields. A dependent pair result is
+  rejected during macro expansion; indices on mapped type families remain
+  trusted by the adapter.
 - **Host evaluation inside types.** There is no general splice of arbitrary
   Nim code into types; the trust boundary is that *you* are the compiler
   plugin. Any Nim computation you run to produce or check an Eponym program

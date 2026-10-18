@@ -319,11 +319,12 @@ implementations.
    primitive, opaque, and nested non-dependent record fields recurse through
    their codecs. 200-case properties cover mixed `Nat` and opaque fields and
    recursively nested records, while dependent fields fail wrapper generation.
-- [x] Add `bindPostulatePair` for a typed Nim adapter `A -> (B, C)` bound to
-   an Eponym postulate `A -> Sig(B, C)`. The macro validates the non-dependent
-   Sigma shape, generates recursive codecs for argument and result, and lets
-   Nim check the callback signature. A 200-case property covers primitive and
-   opaque pair fields; a compile-fail fixture rejects a dependent Sigma result.
+- [x] Add `bindPostulatePair` for typed Nim adapters with one to three
+   arguments and a `(B, C)` result, bound to `A1 -> ... -> An -> Sig(B, C)`.
+   The macro validates the postulate's argument type heads and non-dependent
+   Sigma shape, generates recursive codecs, and lets Nim check the callback
+   signature. 200-case properties cover each arity; compile-fail fixtures
+   reject dependent Sigma results and mismatched Nim tuple fields.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
    signatures, and generic or higher-order definitions. Definitions without
