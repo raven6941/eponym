@@ -20,12 +20,13 @@ Idris) stalled on the adoption problem — each asked programmers to buy a
 whole new ecosystem. A library in a language people already use is a much
 easier sell. The target case is a session-type library: protocol
 violations rejected at compile time through plain `send`/`recv` calls
-(issue #28). This is the intended destination, not the current experience:
-today's session examples check Eponym roles but do not bind their postulates
-to Nim transports or run those checked roles. The embedding applicability
-plan below tracks the implementation needed to close that gap. Deliberate-
-embedding prior art: Turnstile/Turnstile+ (the architectural ancestor —
-dependent type systems as macros), SynQ, Liquid Haskell.
+(issue #28). The in-memory and TCP session examples already run checked
+sender/receiver roles through bound Nim postulates. The larger Paxos demo
+still mirrors its checked roles in a Nim driver, and the borrow and numeric
+examples retain separate runtime implementations. The embedding applicability
+plan below tracks those remaining gaps. Deliberate-embedding prior art:
+Turnstile/Turnstile+ (the architectural ancestor — dependent type systems as
+macros), SynQ, Liquid Haskell.
 
 ## Architecture overview
 
