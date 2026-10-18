@@ -51,8 +51,12 @@ explicitly mapped Eponym types without exposing their representation.
 `eponymBlock` can generate typed wrappers for first-order definitions over
 mapped opaque types that correspond to named Eponym postulates. Tests exercise
 user-defined values through checked definitions and generated wrappers. A
-mapped `Future[T]` can pass through as an opaque postulate result, but Eponym
-does not await it or define async failure and cancellation semantics.
+mapped `Future[T]` can pass through an opaque postulate adapter as either an
+argument or result; the bridge preserves the same Nim future value. Eponym
+has no async effect, await, or cancellation operation. Completion, failure,
+and cancellation remain Nim runtime behavior: Eponym does not observe or
+transform them. The runtime bridge tests identity pass-through for a future
+argument and the existing future-result case.
 Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
 bodies. Returning closures from generated wrappers remains unsupported.
