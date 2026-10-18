@@ -267,9 +267,9 @@ implementations.
    evaluation. Separate structural codecs (which translate data that
    Eponym inspects) from opaque handles (which Eponym only passes to a
    postulate and receives back). The current opaque mappings are restricted to
-   named postulated Eponym types. The structural runtime codec is currently
-   limited to non-dependent two-field Sigma tuples; records and dependent
-   structures remain future work.
+   named postulated Eponym types. Structural runtime codecs support
+   non-dependent two-field Sigma tuples and named records represented as
+   mapped Nim objects. Dependent structures remain future work.
 - [x] Specify supported ownership, aliasing, exception, async, and lifetime
    behavior. QTT linearity is limited to checked Eponym terms; boxed Nim refs
    and closures may alias or be retained. Adapters pass values by value, have
@@ -312,8 +312,13 @@ implementations.
 - [x] Add structural codecs for non-dependent `Sig(A, B)` values as nested
    runtime pairs and Nim two-element tuples. Recursively support primitive
    `Int`/`Nat` and explicitly mapped opaque leaves; 200-case properties cover
-   primitive and opaque pair fields. Dependent pairs and named records remain
-   unsupported and fail wrapper generation rather than losing indices.
+   primitive and opaque pair fields. Dependent pairs fail wrapper generation
+   rather than losing indices.
+- [x] Add structural codecs for non-dependent named `record` declarations as
+   mapped Nim objects. Fields encode in declaration order using nested pairs;
+   primitive, opaque, and nested non-dependent record fields recurse through
+   their codecs. A 200-case property covers mixed `Nat` and opaque fields,
+   while dependent fields fail wrapper generation.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
    signatures, and generic or higher-order definitions. Definitions without
@@ -338,10 +343,10 @@ implementations.
 - [x] Document which runtime forms are genuinely represented (first-order data,
    closures, records, dependent pairs, opaque handles) instead of implying
    that one `Value` escape hatch makes all Nim types callable. The low-level
-   bridge now represents primitive Int/Nat, evaluator closures, opaque boxed
-   Nim values, and non-dependent Sigma tuples; records and dependent pairs
-   still lack Nim codecs and
-   generated typed wrappers. The remaining implementation is tracked in the
+  bridge now represents primitive Int/Nat, evaluator closures, opaque boxed
+  Nim values, non-dependent Sigma tuples, and non-dependent named records;
+  dependent pairs still lack Nim codecs and generated typed wrappers. The
+  remaining implementation is tracked in the
    preceding ABI/codec items.
 
 **Exit criteria:**

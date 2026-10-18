@@ -102,15 +102,16 @@ at the generated wrapper; Eponym treats its body as opaque and trusted.
 Returning closures from generated wrappers is not supported.
 
 Generated `eponymBlock` wrappers support first-order primitive `Int` and
-`Nat` signatures, non-dependent `Sig(A, B)` tuples whose leaves have runtime
-codecs, and explicitly mapped opaque types or indexed families. Dependent
-Sigma values and named records remain unsupported.
+`Nat` signatures, non-dependent `Sig(A, B)` tuples and named records whose
+fields have runtime codecs, and explicitly mapped opaque types or indexed
+families. Dependent Sigma values and records with dependent fields remain
+unsupported.
 `bindPostulate` supports unary `Int -> Int`, opaque `T -> T`, opaque `T -> U`,
 `T -> Nat`, `Nat -> A -> B`, and curried opaque postulates with up to four
 arguments. A mapped `Future[T]` may be
 returned opaquely; it is not awaited and async failure/cancellation semantics
-are undefined. Longer callback signatures, structural codecs beyond
-non-dependent Sigma tuples, and call-graph reachability checks remain
+are undefined. Longer callback signatures, dependent structural codecs,
+collections, and call-graph reachability checks remain
 unsupported. A binding unused by all checked proc bodies is rejected during
 macro expansion. An invoked unbound
 postulate raises a runtime `ValueError` naming the postulate. Exceptions raised

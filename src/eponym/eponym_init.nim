@@ -840,6 +840,10 @@ proc pairValue*(first, second: Value): Value =
   Value(syn: tStar(),
         whnf: Whnf(kind: wPair, fstV: first, sndV: second))
 
+proc unitValue*(): Value =
+  ## Construct the terminal unit value used by generated record codecs.
+  Value(syn: tTt(), whnf: Whnf(kind: wConst, c: cVoid))
+
 type HostBox[T] = ref object of RootObj
   value: T
 

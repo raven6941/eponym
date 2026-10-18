@@ -123,10 +123,11 @@ with primitive message values. Other structured values, dependent signatures,
 and longer callbacks still need explicit codec and adapter support.
 
 First-order wrappers also support non-dependent `Sig(A, B)` values as
-two-element Nim tuples, recursively using primitive `Int`/`Nat` codecs and
-explicitly mapped opaque leaves. For example, `Sig(Nat, Int)` maps to
-`(int, int)`. Dependent `Sig` values and named Eponym records do not yet have
-generated structural codecs.
+two-element Nim tuples and non-dependent named Eponym records as mapped Nim
+objects. Both recursively use primitive `Int`/`Nat` codecs and explicitly
+mapped opaque leaves. Record fields follow declaration order internally, while
+Nim checks the named object fields and their types. Dependent `Sig` values and
+records with dependent fields do not have generated structural codecs.
 
 ## Sheds: `shedsBlock` (hole-driven development)
 
