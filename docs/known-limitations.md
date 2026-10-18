@@ -54,9 +54,10 @@ mapped opaque types that correspond to named Eponym postulates. Tests exercise
 user-defined values through checked definitions and generated wrappers. A
 `runtimeValue(name)` request inside `eponymBlock` exposes a zero-argument
 checked definition as its runtime `Value` together with the checked globals,
-for host-side interpreters of reified data. It does not generate a structural
-Nim type or bind host postulates; callers must handle unsupported constructors
-and neutral values explicitly. A
+for host-side interpreters of reified data. It applies the block's declared
+`bindPostulate` adapters; unbound postulates remain neutral. It does not
+generate a structural Nim type, so callers must handle unsupported
+constructors and neutral values explicitly. A
 non-dependent `Sig(A, B)` runtime type is structurally mapped to a two-element
 Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque
 leaves. Named non-dependent `record` declarations map to Nim objects via

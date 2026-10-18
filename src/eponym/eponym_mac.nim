@@ -1240,11 +1240,21 @@ macro eponymBlock*(body: untyped): untyped =
           error("runtimeValue requires a zero-argument definition with a result: " & d.name,
             procDecl)
         let runtimeName = ident(d.name & "RuntimeValue")
+        let globalsSym = genSym(nskLet, "runtimeGlobals")
+        let defsSym = genSym(nskLet, "runtimeDefs")
+        let bindingsSym = genSym(nskVar, "runtimeBindings")
+        var bindingStatements = newStmtList()
+        for binding in bindings:
+          bindingStatements.add(bindingCall(binding, bindingsSym, globalsSym,
+                                            runtimeTypes, records))
         result.add quote do:
           proc `runtimeName`*(): tuple[value: Value, globals: Globals] =
-            let globals = getGlobalsDir(`dirLit`, `srcLit`)
-            let defs = getDefsDir(`dirLit`, `srcLit`)
-            (callDefValue(findDef(defs, `nameLit`), []), globals)
+            let `globalsSym` = getGlobalsDir(`dirLit`, `srcLit`)
+            let `defsSym` = getDefsDir(`dirLit`, `srcLit`)
+            var `bindingsSym` = initRuntimeBindings()
+            `bindingStatements`
+            (callDefValueWithBindings(findDef(`defsSym`, `nameLit`), [],
+                                      `bindingsSym`), `globalsSym`)
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
                                              bindings, runtimeTypes, records)
       if not typedWrapper.isNil:

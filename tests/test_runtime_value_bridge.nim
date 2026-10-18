@@ -142,6 +142,13 @@ eponymBlock:
 
 eponymBlock:
   postulate(Int, Univ)
+  postulate(hostPlusSeven, Int -> Int)
+  bindPostulate(hostPlusSeven, hostStepNim)
+  proc runtimeResult(): Int = hostPlusSeven(35)
+  runtimeValue(runtimeResult)
+
+eponymBlock:
+  postulate(Int, Univ)
   postulate(hostFailure, Int -> Int)
   bindPostulate(hostFailure, hostFailureNim)
   proc generatedFailureRole(value: Int): Int = hostFailure(value)
@@ -302,6 +309,9 @@ when isMainModule:
   doAssert treeRuntime.value.whnfSpineLen == 2
   doAssert treeRuntime.value.whnfSpineArg(0).whnfNatLitVal == 37
   doAssert treeRuntime.value.whnfSpineArg(1).whnfRefId == leafId
+  let boundRuntime = runtimeResultRuntimeValue()
+  doAssert boundRuntime.value.whnfKind == wInt
+  doAssert boundRuntime.value.whnfIntVal == 42
   let baseDir = currentSourcePath().parentDir.parentDir
   var r = initRng(424242'u64)
 
