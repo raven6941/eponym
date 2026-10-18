@@ -22,7 +22,8 @@ const pathFlags = "--path:src --path:src/eponym"
 let tmpDir = getTempDir() / "eponym-errpath-tests"
 createDir(tmpDir)
 
-proc checkFixture(path: string): bool =
+proc checkFixture(path: string,
+                  expected = "eponymBlock elaboration error"): bool =
   let name = path.splitFile().name
   let bin = tmpDir / name
   let (cOut, cCode) = execCmdEx("nim c --hints:off " & pathFlags &
@@ -38,8 +39,8 @@ proc checkFixture(path: string): bool =
     echo "FAIL (expected exit 1, got ", cCode, "): ", path
     echo cOut
     return false
-  if "eponymBlock elaboration error" notin cOut:
-    echo "FAIL (missing clean error message): ", path
+  if expected notin cOut:
+    echo "FAIL (missing expected error marker '", expected, "'): ", path
     echo cOut
     return false
   echo "ok (clean compile error): ", path
@@ -50,6 +51,13 @@ for path in ["tests/fixtures/embedded_err_unbound.nim",
              "tests/fixtures/embedded_err_mismatch.nim",
              "tests/fixtures/embedded_err_singleton_mismatch.nim"]:
   if not checkFixture(path):
+    inc failed
+
+for (path, expected) in [
+    ("tests/fixtures/embedded_err_binding_eponym_type.nim",
+     "eponymBlock binding error"),
+    ("tests/fixtures/embedded_err_binding_nim_type.nim", "type mismatch")]:
+  if not checkFixture(path, expected):
     inc failed
 
 if failed > 0:

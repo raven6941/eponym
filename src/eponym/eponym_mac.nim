@@ -7,10 +7,12 @@
 
 import macros
 import elab
+import eponym_embed  # runtime wrapper helpers and adapter-shape validation
 import parse_surf
 import os  # issue #131: parentDir of the eponymBlock call site
 import strutils
 import sequtils
+import sets
 
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
@@ -522,10 +524,33 @@ proc blockToEponym*(body: NimNode): string =
           if f.len != 3 or f[1].kind != nnkIdent:
             error("field expects (name, type)", f)
           result.add("| " & $f[1] & " : " & nimTypeToEponym(f[2]) & "\n")
+      elif head == "bindPostulate":
+        # Host binding is consumed by eponymBlock after checking its Eponym
+        # contract; it is not part of the Eponym source text.
+        if st.len != 3 or st[1].kind != nnkIdent:
+          error("bindPostulate expects (postulateName, nimProcedure)", st)
       else:
         error("eponymBlock: unsupported call: " & head, st)
     else:
       error("eponymBlock: unsupported statement: " & $st.kind, st)
+
+type HostPostulateBinding = object
+  postulateName: string
+  implementation: NimNode
+
+proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
+  var seen = initHashSet[string]()
+  for st in body:
+    if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
+        $st[0] == "bindPostulate":
+      if st.len != 3 or st[1].kind != nnkIdent:
+        error("bindPostulate expects (postulateName, nimProcedure)", st)
+      let name = $st[1]
+      if name in seen:
+        error("duplicate bindPostulate for '" & name & "'", st)
+      seen.incl(name)
+      result.add(HostPostulateBinding(postulateName: name,
+                                     implementation: st[2]))
 
 macro eponymBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
@@ -554,12 +579,22 @@ macro eponymBlock*(body: untyped): untyped =
   # Issue #131: imports resolve relative to the calling Nim file's dir.
   let baseDir = callerDir(body)
   var defs: seq[ElabDef]
+  var checkedGlobals: Globals
   try:
-    defs = elabCheckDir(src, baseDir)
+    let checked = elabCheckDirState(src, baseDir)
+    defs = checked.defs
+    checkedGlobals = checked.globals
   except ElabError as e:
     error("eponymBlock elaboration error: " & e.msg, body)
   except ParseError as e:
     error("eponymBlock parse error: " & e.msg, body)
+
+  let bindings = hostPostulateBindings(body)
+  for binding in bindings:
+    try:
+      validateHostIntUnaryType(checkedGlobals, binding.postulateName)
+    except ValueError as e:
+      error("eponymBlock binding error: " & e.msg, body)
 
   result = newStmtList()
   let dirLit = newLit(baseDir)
@@ -567,10 +602,35 @@ macro eponymBlock*(body: untyped): untyped =
     let procName = ident(d.name)
     let srcLit = newLit(src)
     let nameLit = newLit(d.name)
-    result.add(quote do:
-      proc `procName`*(args: varargs[int]): int =
-        callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @args)
-    )
+    if bindings.len == 0:
+      result.add(quote do:
+        proc `procName`*(args: varargs[int]): int =
+          callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @args)
+      )
+    else:
+      var wrapper = quote do:
+        proc `procName`*(args: varargs[int]): int = discard
+      let argsIdent = wrapper[3][1][0]
+      let globalsId = genSym(nskLet, "checkedGlobals")
+      let runtimeBindingsId = genSym(nskVar, "runtimeBindings")
+      var wrapperBody = newStmtList()
+      wrapperBody.add(quote do:
+        let `globalsId` = getGlobalsDir(`dirLit`, `srcLit`)
+        var `runtimeBindingsId` = initRuntimeBindings()
+      )
+      for binding in bindings:
+        let postulateLit = newLit(binding.postulateName)
+        let implementation = binding.implementation
+        wrapperBody.add(quote do:
+          bindHostIntUnary(`runtimeBindingsId`, `globalsId`, `postulateLit`,
+                           `implementation`)
+        )
+      wrapperBody.add(quote do:
+        callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @`argsIdent`,
+                       `runtimeBindingsId`)
+      )
+      wrapper[6] = wrapperBody
+      result.add(wrapper)
 
 macro eponym*(src: string): untyped =
   ## Elaborate and typecheck a surface program at compile time.

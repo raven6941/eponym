@@ -82,12 +82,9 @@ proc bindHostValue*(bindings: var RuntimeBindings, globals: Globals,
       "duplicate runtime binding for postulate: " & postulateName)
   bindings[id] = implementation
 
-proc bindHostIntUnary*(bindings: var RuntimeBindings, globals: Globals,
-                       postulateName: string,
-                       implementation: proc(x: int): int) =
-  ## Bind a Nim `proc(int): int` only to an Eponym postulate with the exact
-  ## runtime shape `Int -> Int`. This verifies the adapter shape in both
-  ## languages; the implementation's behavior is still trusted.
+proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
+  ## Require an Eponym postulate with the exact runtime shape `Int -> Int`.
+  ## Used at macro expansion and again at runtime before binding.
   if postulateName notin globals:
     raise newException(ValueError, "postulate not found: " & postulateName)
   let entry = globals[postulateName]
@@ -105,8 +102,13 @@ proc bindHostIntUnary*(bindings: var RuntimeBindings, globals: Globals,
     raise newException(ValueError,
       "Nim proc(int): int requires Eponym postulate '" & postulateName &
       "' to have type Int -> Int")
-  bindHostValue(bindings, globals, postulateName,
-                hostIntUnary(implementation))
+proc bindHostIntUnary*(bindings: var RuntimeBindings, globals: Globals,
+                       postulateName: string,
+                       implementation: proc(x: int): int) =
+  ## Bind a Nim `proc(int): int` only to an Eponym postulate with the exact
+  ## runtime shape `Int -> Int`. The implementation's behavior is trusted.
+  validateHostIntUnaryType(globals, postulateName)
+  bindHostValue(bindings, globals, postulateName, hostIntUnary(implementation))
 
 proc findDef*(defs: seq[ElabDef], name: string): ElabDef =
   for d in defs:
@@ -191,6 +193,14 @@ proc callIntFuncDir*(baseDir, src: string, name: string,
   let defs = getDefsDir(baseDir, src)
   let d = findDef(defs, name)
   callDefInt(d, args)
+
+proc callIntFuncDir*(baseDir, src: string, name: string,
+                     args: seq[int], bindings: RuntimeBindings): int =
+  ## Directory-aware integer wrapper with explicit host postulate bindings.
+  let defs = getDefsDir(baseDir, src)
+  let d = findDef(defs, name)
+  let values = args.mapIt(intToValue(it))
+  valueToInt(callDefValueWithBindings(d, values, bindings))
 
 proc getDefsHolesDir*(baseDir, src: string): seq[ElabDef] =
   ## Issue #133: like getDefsDir, but hole-tolerant (elabCheckHolesDir):
