@@ -166,8 +166,12 @@ time.
   text, feeds it to the canonical string parser (`parse_surf`), elaborates,
   and generates wrapper procs (eponym_mac.nim). The macro is deliberately
   thin: no NimNode semantic inspection, no hygiene tricks — elaboration
-  failures become Nim compiler errors. Per #144, the standalone and embedded
-  grammars are one grammar.
+  failures become Nim compiler errors. The Nim-shaped syntax is translated
+  into Eponym forms first: for example, supported arithmetic and pure
+  `if`/`elif`/`else` expressions become Eponym primitive/application terms.
+  This translation does not run arbitrary Nim expressions or import Nim
+  semantics into Eponym. Per #144, the standalone and embedded grammars are
+  one grammar after translation.
 - **`postulate` is an axiom.** `postulate Int : Type 0` asserts a type with no
   evidence; machine `Int` and its primops (`tPrim`) are kernel axioms — the
   kernel trusts that the Nim host's binary `Int` operations are what they
