@@ -381,9 +381,11 @@ implementations.
 - [x] Allow an explicitly mapped opaque `Future[T]` as the result of a
    synchronous postulate callback and generated wrapper. The future passes
    through unchanged; Eponym does not await it.
-- [ ] Specify asynchronous effect semantics, including awaiting, cancellation,
-   failure propagation, and future-valued callback arguments. Keep those
-   semantics distinct from opaque future pass-through.
+- [x] Specify that mapped `Future[T]` values pass through postulate adapters
+  opaquely as arguments or results; Eponym does not await, cancel, observe
+  failure, or define async effects. A runtime identity check covers a future
+  argument. Keep this distinct from asynchronous effect semantics, which are
+  still unsupported.
 - [x] Extend the low-level typed adapter from scalar primitives to an opaque
    user-defined Nim value. The handle can cross a checked role and return to
    Nim; representation and behavior are explicitly trusted. Property tests

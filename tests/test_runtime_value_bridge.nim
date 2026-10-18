@@ -45,6 +45,8 @@ proc hostFutureForChannel(channel: ChannelHandle): Future[int] =
   result = newFuture[int]("hostFutureForChannel")
   result.complete(channel.id)
 
+proc hostFutureIdentity(value: Future[int]): Future[int] = value
+
 proc hostInvokeCallback(callback: NimIntCallback, value: int): int =
   callback(value)
 
@@ -104,6 +106,8 @@ eponymBlock:
     Channel, Message, RequestId, Channel)
   postulate(startFuture, Channel -> PendingResult)
   bindPostulate(startFuture, hostFutureForChannel, Channel, PendingResult)
+  postulate(passFuture, PendingResult -> PendingResult)
+  bindPostulate(passFuture, hostFutureIdentity, PendingResult)
   postulate(invokeCallback, Callback -> Sample -> Sample)
   bindPostulate(invokeCallback, hostInvokeCallback,
     Callback, Sample, Sample)
@@ -116,6 +120,8 @@ eponymBlock:
     routeChannelWithId(channel, message, requestId)
   proc generatedFutureRole(channel: Channel): PendingResult =
     startFuture(channel)
+  proc generatedFutureInput(value: PendingResult): PendingResult =
+    passFuture(value)
   proc generatedCallbackRole(callback: Callback, value: Sample): Sample =
     invokeCallback(callback, value)
 
@@ -131,6 +137,7 @@ static:
   doAssert not compiles(generatedRouteRole("not a channel", "hello"))
   doAssert compiles(generatedRouteWithIdRole(ChannelHandle(id: 1), "hello", 2))
   doAssert compiles(generatedFutureRole(ChannelHandle(id: 1)))
+  doAssert compiles(generatedFutureInput(newFuture[int]("typedFuture")))
   doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
   doAssert not compiles(generatedCallbackRole(42, 1))
 
@@ -165,6 +172,9 @@ when isMainModule:
   let generatedOpaqueWrapperWorks = generatedRouteRole(
     ChannelHandle(id: 17, label: "socket"), "generated").label ==
       "socket:generated"
+  let futureInput = newFuture[int]("futureArgument")
+  let generatedFutureInputPassesThrough =
+    generatedFutureInput(futureInput) == futureInput
   let generatedUnaryOpaqueWorks = generatedRotateRole(
     ChannelHandle(id: 18, label: "single")).id == 19
   let generatedUnaryOpaqueCases = forAll(
@@ -197,6 +207,7 @@ when isMainModule:
     rejectedNegativeNat = true
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
+      generatedFutureInputPassesThrough and
       generatedUnaryOpaqueWorks and generatedUnaryOpaqueCases and
       generatedOpaqueWrapperCases and
       rejectedNegativeNat and hostExceptionPropagated):
