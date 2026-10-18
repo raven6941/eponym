@@ -312,9 +312,11 @@ implementations.
    closure in the same embedding module or an explicit binding record.
 - [ ] Use a block-local binding record and evaluator environment keyed by
    checked postulate reference identity; do not use a process-global name or
-   reference-ID registry. The current `elabCheckDir` API returns definitions
-   but not the global table needed to preserve postulate identities, so extend
-   that API (or emit a stable runtime descriptor) before implementing binding.
+   reference-ID registry. **Foundation complete:** `elabCheckDirState` and
+   the runtime cache retain the checked `Globals` table alongside definitions;
+   property coverage confirms definition occurrences and cached globals share
+   the postulate's reference identity. The actual binding evaluator remains
+   unchecked below.
 - [ ] At compile time, check that the Nim adapter type matches the supported
    runtime shape of the postulate's Eponym type. Preserve dependent indices
    and quantities in Eponym checking; state clearly that they do not prove

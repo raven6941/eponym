@@ -18,8 +18,15 @@ import sequtils
 import elab
 import eponym_init
 
-# Cache: (baseDir, source) key -> elaborated defs
-var defCache {.global.}: Table[string, seq[ElabDef]]
+# Cache: (baseDir, source) key -> checked module state. Retaining globals is
+# required for runtime postulate bindings to use the identities assigned by
+# the checker rather than resolve by a potentially ambiguous name.
+type CheckedRuntime = object
+  defs: seq[ElabDef]
+  globals: Globals
+
+var defCache {.global.}: Table[string, CheckedRuntime]
+var holeDefCache {.global.}: Table[string, seq[ElabDef]]
 
 proc cacheKey(baseDir, src: string): string =
   baseDir & "\x1f" & src
@@ -27,10 +34,11 @@ proc cacheKey(baseDir, src: string): string =
 proc getDefs*(src: string): seq[ElabDef] =
   ## Get elaborated defs for source, using cache.
   if src in defCache:
-    return defCache[src]
-  let defs = elabCheck(src)
-  defCache[src] = defs
-  defs
+    return defCache[src].defs
+  let checked = elabCheckStateG(src)
+  defCache[src] = CheckedRuntime(defs: checked.defs,
+                                 globals: checked.globals)
+  checked.defs
 
 proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
   ## Issue #131: like getDefs, but `import "path.ep"` declarations in `src`
@@ -39,10 +47,17 @@ proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
   ## compile-time elaboration did.
   let key = cacheKey(baseDir, src)
   if key in defCache:
-    return defCache[key]
-  let defs = elabCheckDir(src, baseDir)
-  defCache[key] = defs
-  defs
+    return defCache[key].defs
+  let checked = elabCheckDirState(src, baseDir)
+  defCache[key] = CheckedRuntime(defs: checked.defs,
+                                 globals: checked.globals)
+  checked.defs
+
+proc getGlobalsDir*(baseDir, src: string): Globals =
+  ## Retrieve the checked globals associated with the same runtime module
+  ## state as getDefsDir, including postulates from imported modules.
+  discard getDefsDir(baseDir, src) # populate cache on first use
+  defCache[cacheKey(baseDir, src)].globals
 
 proc findDef*(defs: seq[ElabDef], name: string): ElabDef =
   for d in defs:
@@ -115,14 +130,14 @@ proc getDefsHolesDir*(baseDir, src: string): seq[ElabDef] =
   ## failing on unsolved metas. Used by shedsBlock wrappers so a block
   ## mixing complete defs and shed holes still runs its complete defs.
   let key = cacheKey(baseDir, src) & "\x1eholes"
-  if key in defCache:
-    return defCache[key]
+  if key in holeDefCache:
+    return holeDefCache[key]
   let (defs, _, errLoc, errMsg) = elabCheckHolesDir(src, baseDir)
   if errMsg != "":
     raise newException(ValueError,
       "shedsBlock runtime elaboration failed at " &
       $errLoc.line & ":" & $errLoc.col & ": " & errMsg)
-  defCache[key] = defs
+  holeDefCache[key] = defs
   defs
 
 proc callIntFuncHolesDir*(baseDir, src: string, name: string,
