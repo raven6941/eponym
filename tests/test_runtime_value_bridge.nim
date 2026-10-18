@@ -49,6 +49,20 @@ proc hostSplitChannel(channel: ChannelHandle): tuple[count: int,
   inc result.remainder.id
   result.remainder.label.add("/split")
 
+proc hostSplitChannelWithNat(n: int, channel: ChannelHandle):
+    tuple[count: int, remainder: ChannelHandle] =
+  result.count = n + channel.id
+  result.remainder = channel
+  inc result.remainder.id
+  result.remainder.label.add("/split-nat")
+
+proc hostSplitChannelWithTwoNats(first, second: int, channel: ChannelHandle):
+    tuple[count: int, remainder: ChannelHandle] =
+  result.count = first + second + channel.id
+  result.remainder = channel
+  inc result.remainder.id
+  result.remainder.label.add("/split-two")
+
 proc hostRouteChannel(channel: ChannelHandle,
                       message: string): ChannelHandle =
   result = channel
@@ -140,6 +154,19 @@ eponymBlock:
   bindPostulatePair(splitChannel, hostSplitChannel, Channel, Nat, Channel)
   proc generatedSplitChannel(channel: Channel): Sig(Nat, Channel) =
     splitChannel(channel)
+  postulate(splitChannelWithNat,
+    Nat -> Channel -> Sig(Nat, Channel))
+  bindPostulatePair(splitChannelWithNat, hostSplitChannelWithNat,
+    Nat, Channel, Nat, Channel)
+  proc generatedSplitChannelWithNat(n: Nat, channel: Channel):
+      Sig(Nat, Channel) = splitChannelWithNat(n, channel)
+  postulate(splitChannelWithTwoNats,
+    Nat -> Nat -> Channel -> Sig(Nat, Channel))
+  bindPostulatePair(splitChannelWithTwoNats, hostSplitChannelWithTwoNats,
+    Nat, Nat, Channel, Nat, Channel)
+  proc generatedSplitChannelWithTwoNats(first, second: Nat,
+      channel: Channel): Sig(Nat, Channel) =
+    splitChannelWithTwoNats(first, second, channel)
   record(Point):
     field(x, Nat)
     field(channel, Channel)
@@ -213,6 +240,10 @@ static:
   doAssert compiles(generatedPointId(RuntimePoint(x: 17,
     channel: ChannelHandle(id: 1))))
   doAssert compiles(generatedSplitChannel(ChannelHandle(id: 17)))
+  doAssert compiles(generatedSplitChannelWithNat(3,
+    ChannelHandle(id: 17)))
+  doAssert compiles(generatedSplitChannelWithTwoNats(3, 4,
+    ChannelHandle(id: 17)))
   doAssert compiles(generatedEnvelopeId(RuntimeEnvelope(
     point: RuntimePoint(x: 17, channel: ChannelHandle(id: 1)),
     note: "ok")))
@@ -271,6 +302,33 @@ when isMainModule:
         ChannelHandle(id: nat + 1, label: "split-" & $nat & "/split"),
     shrinkInt)
   if not generatedPairBindingCases:
+    quit(1)
+  let generatedBinaryPairBindingCases = forAll(
+    "two-argument typed adapters return non-dependent Sigma values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let left = abs(n mod 1000)
+      let right = abs((n div 3) mod 1000)
+      let channel = ChannelHandle(id: left, label: "binary-" & $right)
+      let pairResult = generatedSplitChannelWithNat(right, channel)
+      pairResult[0] == right + left and pairResult[1] ==
+        ChannelHandle(id: left + 1, label: "binary-" & $right & "/split-nat"),
+    shrinkInt)
+  if not generatedBinaryPairBindingCases:
+    quit(1)
+  let generatedTernaryPairBindingCases = forAll(
+    "three-argument typed adapters return non-dependent Sigma values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let first = abs(n mod 1000)
+      let second = abs((n div 5) mod 1000)
+      let channel = ChannelHandle(id: first, label: "ternary-" & $second)
+      let pairResult = generatedSplitChannelWithTwoNats(first, second, channel)
+      pairResult[0] == first + second + first and pairResult[1] ==
+        ChannelHandle(id: first + 1,
+          label: "ternary-" & $second & "/split-two"),
+    shrinkInt)
+  if not generatedTernaryPairBindingCases:
     quit(1)
   let generatedNestedRecordRoundTrips = forAll(
     "nested structural record codecs preserve recursive fields", r, 200,
@@ -353,6 +411,8 @@ when isMainModule:
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
       generatedRecordRoundTrips and
       generatedPairBindingCases and
+      generatedBinaryPairBindingCases and
+      generatedTernaryPairBindingCases and
       generatedNestedRecordRoundTrips and
       generatedFutureInputPassesThrough and
       generatedPureConditionalsWork and

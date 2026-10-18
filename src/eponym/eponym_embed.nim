@@ -16,6 +16,7 @@
 
 import tables
 import sequtils
+import strutils
 import elab
 import eponym_init
 import preterm  # Quantity constants for validating supported adapter shapes
@@ -99,37 +100,42 @@ proc bindHostValue*(bindings: var RuntimeBindings, globals: Globals,
       "duplicate runtime binding for postulate: " & postulateName)
   bindings[id] = implementation
 
-proc bindHostValueAdapter*(bindings: var RuntimeBindings, globals: Globals,
-                           postulateName: string,
-                           implementation: proc(value: Value): Value) =
-  ## Bind a macro-generated, statically typed adapter whose codec handles a
-  ## structured argument or result. The public Nim callback is invoked only
-  ## after generated conversions have established its concrete Nim types.
-  bindHostValue(bindings, globals, postulateName, vHostFunc(implementation))
-
 proc opaqueTypeHeadId(ty: Term): int
 
-proc validateHostSigmaUnaryType*(globals: Globals, postulateName,
-    argTypeName, firstTypeName, secondTypeName: string) =
-  ## Validate a named argument followed by a non-dependent Sigma result:
-  ## A -> Sig(B, C). The Sigma fields are checked by their type-family heads;
-  ## indices on named families remain part of the trusted host codec boundary.
+proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
+    argTypeNames: openArray[string], firstTypeName, secondTypeName: string) =
+  ## Validate named arguments followed by a non-dependent Sigma result:
+  ## A1 -> ... -> An -> Sig(B, C). The Sigma fields are checked by their
+  ## type-family heads; indices on named families remain part of the trusted
+  ## host codec boundary.
   if postulateName notin globals:
     raise newException(ValueError, "postulate not found: " & postulateName)
   let entry = globals[postulateName]
   if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
     raise newException(ValueError,
       "runtime binding target is not a postulate: " & postulateName)
-  for typeName in [argTypeName, firstTypeName, secondTypeName]:
+  for typeName in argTypeNames:
     if typeName notin globals or globals[typeName].tm.isNil or
         globals[typeName].tm.kind != tR:
       raise newException(ValueError,
         "structured adapter type is not a declared Eponym type: " & typeName)
-  let expectedArgId = globals[argTypeName].tm.refId
+  for typeName in [firstTypeName, secondTypeName]:
+    if typeName notin globals or globals[typeName].tm.isNil or
+        globals[typeName].tm.kind != tR:
+      raise newException(ValueError,
+        "structured adapter type is not a declared Eponym type: " & typeName)
   let expectedFirstId = globals[firstTypeName].tm.refId
   let expectedSecondId = globals[secondTypeName].tm.refId
-  let ty = entry.ty
-  let pairTy = if ty.kind == tPi: ty.scope.bdy else: nil
+  var current = entry.ty
+  var validArguments = true
+  for argTypeName in argTypeNames:
+    if current.isNil or current.kind != tPi or current.impl or
+        current.qty == q0 or
+        opaqueTypeHeadId(current.dom) != globals[argTypeName].tm.refId:
+      validArguments = false
+      break
+    current = current.scope.bdy
+  let pairTy = current
   var dependent = false
   proc containsVar(term: Term): bool =
     if term.isNil: return false
@@ -146,14 +152,14 @@ proc validateHostSigmaUnaryType*(globals: Globals, postulateName,
     of tR, tV, tMeta, tC, tInt, tPrim, tNatLit, tNatSing, tType: false
   if pairTy != nil and pairTy.kind == tSi:
     dependent = containsVar(pairTy.scope.bdy)
-  if ty.kind != tPi or ty.impl or ty.qty == q0 or
-      opaqueTypeHeadId(ty.dom) != expectedArgId or pairTy.isNil or
-      pairTy.kind != tSi or pairTy.impl or dependent or
+  if not validArguments or pairTy.isNil or pairTy.kind != tSi or
+      pairTy.impl or dependent or
       opaqueTypeHeadId(pairTy.dom) != expectedFirstId or
       opaqueTypeHeadId(pairTy.scope.bdy) != expectedSecondId:
+    let argTypeSig = argTypeNames.join(" -> ")
     raise newException(ValueError,
-      "structured unary adapter requires postulate '" & postulateName &
-      "' to have type " & argTypeName & " -> Sig(" & firstTypeName & ", " &
+      "structured pair adapter requires postulate '" & postulateName &
+      "' to have type " & argTypeSig & " -> Sig(" & firstTypeName & ", " &
       secondTypeName & ") with a non-dependent pair")
 
 proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =

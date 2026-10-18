@@ -620,11 +620,12 @@ proc blockToEponym*(body: NimNode): string =
         if st.len notin {3, 4, 5, 6, 7, 8} or st[1].kind != nnkIdent:
           error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       elif head == "bindPostulatePair":
-        # Typed adapter for A -> Sig(B, C), with recursive runtime codecs.
-        if st.len != 6 or st[1].kind != nnkIdent or
-            st[3].kind != nnkIdent or st[4].kind != nnkIdent or
-            st[5].kind != nnkIdent:
-          error("bindPostulatePair expects (name, nimProc, Argument, First, Second)", st)
+        # Typed adapter for A1 -> ... -> An -> Sig(B, C).
+        if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
+          error("bindPostulatePair expects (name, nimProc, Argument[, Argument...], First, Second)", st)
+        for i in 3 ..< st.len:
+          if st[i].kind != nnkIdent:
+            error("bindPostulatePair Eponym types must be identifiers", st[i])
       elif head == "runtimeType":
         # Explicit opaque Nim/Eponym representation mapping, consumed by the
         # wrapper generator and never interpreted as an Eponym declaration.
@@ -640,6 +641,7 @@ type HostPostulateBinding = object
   implementation: NimNode
   eponymTypes: seq[string]
   pairResult: bool
+  pairArgCount: int
 
 type HostRuntimeType = object
   eponymName: string
@@ -701,8 +703,8 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
         $st[0] in ["bindPostulate", "bindPostulatePair"]:
       let pairResult = $st[0] == "bindPostulatePair"
       if pairResult:
-        if st.len != 6 or st[1].kind != nnkIdent:
-          error("bindPostulatePair expects (name, nimProc, Argument, First, Second)", st)
+        if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
+          error("bindPostulatePair expects (name, nimProc, Argument[, Argument...], First, Second)", st)
       elif st.len notin {3, 4, 5, 6, 7, 8} or st[1].kind != nnkIdent:
         error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       let name = $st[1]
@@ -717,7 +719,9 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
       result.add(HostPostulateBinding(postulateName: name,
                                      implementation: st[2],
                                      eponymTypes: typeNames,
-                                     pairResult: pairResult))
+                                     pairResult: pairResult,
+                                     pairArgCount: if pairResult:
+                                       typeNames.len - 2 else: 0))
 
 proc mentionsName(node: NimNode, name: string): bool =
   if node.kind in {nnkIdent, nnkSym} and $node == name:
@@ -870,30 +874,51 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
                  records: seq[HostRecord]): NimNode =
   let nameLit = newLit(binding.postulateName)
   if binding.pairResult:
-    let argType = ident(binding.eponymTypes[0])
-    let pairType = newCall(ident"Sig", ident(binding.eponymTypes[1]),
-                           ident(binding.eponymTypes[2]))
-    let argNimType = runtimeNimType(argType, mappings, records)
+    let pairType = newCall(ident"Sig",
+      ident(binding.eponymTypes[binding.pairArgCount]),
+      ident(binding.eponymTypes[binding.pairArgCount + 1]))
     let pairNimType = runtimeNimType(pairType, mappings, records)
-    if argNimType.isNil or pairNimType.isNil:
-      error("bindPostulatePair needs runtime codecs for its argument and both pair fields")
-    let runtimeArg = genSym(nskParam, "runtimeArgument")
+    if pairNimType.isNil:
+      error("bindPostulatePair needs runtime codecs for both pair fields")
+    var runtimeArgs: seq[NimNode] = @[]
+    var decodedArgs: seq[NimNode] = @[]
+    for i in 0 ..< binding.pairArgCount:
+      let eponymArgType = ident(binding.eponymTypes[i])
+      let nimArgType = runtimeNimType(eponymArgType, mappings, records)
+      if nimArgType.isNil:
+        error("bindPostulatePair needs a runtime codec for argument '" &
+          binding.eponymTypes[i] & "'")
+      let runtimeArg = genSym(nskParam, "runtimeArgument")
+      runtimeArgs.add(runtimeArg)
+      let decoded = runtimeValueConversionExpr(eponymArgType, nimArgType,
+        runtimeArg, false, mappings, records)
+      if decoded.isNil:
+        error("bindPostulatePair could not build an argument codec")
+      decodedArgs.add(decoded)
     let hostResult = genSym(nskLet, "hostPairResult")
-    let decodedArg = runtimeValueConversionExpr(argType, argNimType,
-      runtimeArg, false, mappings, records)
     let encodedResult = runtimeValueConversionExpr(pairType, pairNimType,
       hostResult, true, mappings, records)
-    if decodedArg.isNil or encodedResult.isNil:
+    if encodedResult.isNil:
       error("bindPostulatePair could not build a value codec")
     var adapterBody = newStmtList()
-    adapterBody.add(newLetStmt(hostResult,
-      newCall(binding.implementation, decodedArg)))
+    var implementationCall = newCall(binding.implementation)
+    for decodedArg in decodedArgs:
+      implementationCall.add(decodedArg)
+    adapterBody.add(newLetStmt(hostResult, implementationCall))
     adapterBody.add(encodedResult)
-    let adapterProc = newProc(params = @[bindSym"Value",
-      newIdentDefs(runtimeArg, bindSym"Value", newEmptyNode())],
-      body = adapterBody)
-    return newCall(bindSym"bindHostValueAdapter", bindingsSym, globalsSym,
-                   nameLit, adapterProc)
+    var adapterValue = newCall(bindSym"vHostFunc",
+      newProc(params = @[bindSym"Value",
+        newIdentDefs(runtimeArgs[^1], bindSym"Value", newEmptyNode())],
+        body = adapterBody))
+    if binding.pairArgCount > 1:
+      for i in countdown(binding.pairArgCount - 2, 0):
+        let partialBody = newStmtList(adapterValue)
+        let partialProc = newProc(params = @[bindSym"Value",
+          newIdentDefs(runtimeArgs[i], bindSym"Value", newEmptyNode())],
+          body = partialBody)
+        adapterValue = newCall(bindSym"vHostFunc", partialProc)
+    return newCall(bindSym"bindHostValue", bindingsSym, globalsSym,
+                   nameLit, adapterValue)
   if binding.eponymTypes.len == 0:
     return newCall(bindSym"bindHostIntUnary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
@@ -1105,9 +1130,11 @@ macro eponymBlock*(body: untyped): untyped =
   for binding in bindings:
     try:
       if binding.pairResult:
-        validateHostSigmaUnaryType(checkedGlobals,
-          binding.postulateName, binding.eponymTypes[0],
-          binding.eponymTypes[1], binding.eponymTypes[2])
+        let pairArgs = binding.eponymTypes[0 ..< binding.pairArgCount]
+        validateHostSigmaAdapterType(checkedGlobals,
+          binding.postulateName, pairArgs,
+          binding.eponymTypes[binding.pairArgCount],
+          binding.eponymTypes[binding.pairArgCount + 1])
         continue
       case binding.eponymTypes.len
       of 0:
