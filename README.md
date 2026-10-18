@@ -90,8 +90,9 @@ eponymBlock:
 - Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).
 - Two-layer shape: the checked definitions are the proof layer; the
   surrounding Nim is the running layer. Generated runtime calls support
-  primitive `Int`/`Nat`, non-dependent `Sig` values as Nim tuples, and
-  explicitly mapped opaque postulated types; other definitions are checked
+  primitive `Int`/`Nat`, non-dependent `Sig` values as Nim tuples, non-dependent
+  named records as mapped Nim objects, and explicitly mapped opaque postulated
+  types; dependent structures and other unsupported definitions are checked
   at compile time but do not yet have typed Nim wrappers.
 - The headline demos in `examples/embedded/` are built this way:
   `paxos_session.nim` (Paxos as dependent session types with

@@ -98,7 +98,9 @@ eponymBlock:
 doAssert keepPair((3, -4)) == (3, -4)
 ```
 
-Dependent pairs and named records still need explicit structural codecs.
+Named non-dependent records can also map to Nim objects with `runtimeType`;
+record fields recursively use the `Int`/`Nat`, opaque, tuple, and record
+codecs. Records with fields indexed by earlier fields remain unsupported.
 
 Now break it. Change the body to `addInt(x, y)` and recompile:
 

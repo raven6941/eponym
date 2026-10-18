@@ -183,12 +183,12 @@ time.
   fails was still checked at compile time; the runtime path cannot introduce
   an unchecked term.
 - **Runtime value codecs.** First-order generated wrappers convert primitive
-  `Int`/`Nat`, opaque mapped values, and non-dependent `Sig(A, B)` values
-  represented as two-element Nim tuples. The pair codec recursively converts
-  each field according to its Eponym type; opaque field mappings and host
-  adapter behavior remain trusted. Dependent Sigma values and named records
-  are rejected when no codec exists; the bridge does not erase a dependent
-  index to make a Nim tuple fit.
+  `Int`/`Nat`, opaque mapped values, non-dependent `Sig(A, B)` values
+  represented as two-element Nim tuples, and non-dependent named records
+  represented as mapped Nim objects. Structural codecs recursively convert
+  fields according to their Eponym types; opaque field mappings and host
+  adapter behavior remain trusted. Dependent Sigma values and records with
+  dependent fields are rejected; the bridge does not erase a dependent index.
 - **Host evaluation inside types.** There is no general splice of arbitrary
   Nim code into types; the trust boundary is that *you* are the compiler
   plugin. Any Nim computation you run to produce or check an Eponym program

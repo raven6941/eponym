@@ -53,8 +53,11 @@ mapped opaque types that correspond to named Eponym postulates. Tests exercise
 user-defined values through checked definitions and generated wrappers. A
 non-dependent `Sig(A, B)` runtime type is structurally mapped to a two-element
 Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque
-leaves. Property tests cover primitive and opaque tuple fields. Dependent
-`Sig` types and named records still have no generated Nim codec. A
+leaves. Named non-dependent `record` declarations map to Nim objects via
+`runtimeType`, using the same recursive codecs in declaration order. Property
+tests cover primitive and opaque tuple fields and mixed primitive and opaque
+record fields. Dependent `Sig` types and records with dependent fields remain
+unsupported. A
 mapped `Future[T]` can pass through an opaque postulate adapter as either an
 argument or result; the bridge preserves the same Nim future value. Eponym
 has no async effect, await, or cancellation operation. Completion, failure,
@@ -64,8 +67,8 @@ argument and the existing future-result case.
 Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
 bodies. Returning closures from generated wrappers remains unsupported.
-Structural codecs for records or collections beyond non-dependent two-field
-`Sig` tuples, dependent or generic signatures,
+Structural codecs for collections beyond non-dependent two-field `Sig` tuples
+and named non-dependent records, dependent or generic signatures,
 callback shapes with more than four curried opaque arguments, and structural
 inspection of closures remain unsupported. The session runtime demo includes a
 hand-written Nat LEB128 message codec, and the TCP adapter demo uses it over a

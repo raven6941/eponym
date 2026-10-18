@@ -26,6 +26,10 @@ type ChannelHandle = object
 
 type NimIntCallback = proc(value: int): int {.closure.}
 
+type RuntimePoint = object
+  x: int
+  channel: ChannelHandle
+
 proc hostWrongFour(channel: ChannelHandle, message: string,
                    requestId, phase: int): int = channel.id + requestId + phase
 
@@ -121,6 +125,11 @@ eponymBlock:
   runtimeType(PendingResult, Future[int])
   runtimeType(Callback, NimIntCallback)
   runtimeType(Sample, int)
+  record(Point):
+    field(x, Nat)
+    field(channel, Channel)
+  runtimeType(Point, RuntimePoint)
+  proc generatedPointId(value: Point): Point = value
   postulate(rotateChannel, Channel -> Channel)
   bindPostulate(rotateChannel, hostRotateChannel, Channel)
   postulate(routeChannel, Channel -> Message -> Channel)
@@ -181,6 +190,8 @@ static:
   doAssert compiles(generatedFutureRole(ChannelHandle(id: 1)))
   doAssert compiles(generatedFutureInput(newFuture[int]("typedFuture")))
   doAssert compiles(generatedOpaqueSigmaId((17, ChannelHandle(id: 1))))
+  doAssert compiles(generatedPointId(RuntimePoint(x: 17,
+    channel: ChannelHandle(id: 1))))
   doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
   doAssert not compiles(generatedCallbackRole(42, 1))
 
@@ -215,6 +226,16 @@ when isMainModule:
     generatedSigmaId((17, -9)) == (17, -9) and
     generatedOpaqueSigmaId((17, ChannelHandle(id: 1))) ==
       (17, ChannelHandle(id: 1))
+  let generatedRecordRoundTrips = forAll(
+    "structural record codec preserves primitive and opaque fields", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let input = RuntimePoint(x: abs(n mod 1000),
+        channel: ChannelHandle(id: n, label: "point-" & $n))
+      generatedPointId(input) == input,
+    shrinkInt)
+  if not generatedRecordRoundTrips:
+    quit(1)
   let generatedPureConditionalsWork = generatedChooseTrue() == 19 and
     generatedChooseFalse() == 17
   let generatedOpaqueWrapperWorks = generatedRouteRole(
@@ -282,6 +303,7 @@ when isMainModule:
     rejectedNegativeNat = true
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
+      generatedRecordRoundTrips and
       generatedFutureInputPassesThrough and
       generatedPureConditionalsWork and
       generatedUnaryOpaqueWorks and generatedUnaryOpaqueCases and
