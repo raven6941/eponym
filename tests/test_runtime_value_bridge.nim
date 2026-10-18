@@ -17,6 +17,8 @@ proc idNat : Nat -> Nat = lam (n : Nat). n
 proc hostStepNim(value: int): int = value + 7
 proc hostTripleNim(value: int): int = value * 3
 proc hostString(value: string): string = value
+proc hostFailureNim(value: int): int =
+  raise newException(IOError, "host adapter failed")
 
 type ChannelHandle = object
   id: int
@@ -52,6 +54,12 @@ eponymBlock:
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
   proc generatedNatId(value: Nat): Nat = value
+
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(hostFailure, Int -> Int)
+  bindPostulate(hostFailure, hostFailureNim)
+  proc generatedFailureRole(value: Int): Int = hostFailure(value)
 
 eponymBlock:
   postulate(Channel, Univ)
@@ -128,6 +136,11 @@ when isMainModule:
                                      $id)
       value.id == id and value.label == "channel:" & $id,
     shrinkInt)
+  var hostExceptionPropagated = false
+  try:
+    discard generatedFailureRole(1)
+  except IOError as e:
+    hostExceptionPropagated = e.msg == "host adapter failed"
 
   var rejectedNegativeNat = false
   try:
@@ -138,7 +151,7 @@ when isMainModule:
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
       generatedUnaryOpaqueWorks and generatedUnaryOpaqueCases and
       generatedOpaqueWrapperCases and
-      rejectedNegativeNat):
+      rejectedNegativeNat and hostExceptionPropagated):
     quit(1)
 
   # The runtime-binding work needs the exact global identities assigned by

@@ -101,7 +101,8 @@ Generated `eponymBlock` wrappers support first-order primitive `Int` and
 `Nat -> T -> U`, and curried binary opaque `A -> B -> C` postulates. Longer
 callback signatures, async results, structural codecs, and macro-time
 missing/unreachable-binding checks remain unsupported. An invoked unbound
-postulate raises a runtime `ValueError` naming the postulate.
+postulate raises a runtime `ValueError` naming the postulate. Exceptions raised
+by a synchronous Nim adapter propagate to the caller without wrapping.
 
 ## Suggested first vertical slice
 
