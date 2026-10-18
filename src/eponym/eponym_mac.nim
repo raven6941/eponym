@@ -665,6 +665,33 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
   call.add(binding.implementation)
   call
 
+proc unsupportedRuntimeWrapper(decl: NimNode, defName: string,
+                               mappings: seq[HostRuntimeType]): NimNode =
+  let params = decl[3]
+  var reason = "unsupported generic or higher-order signature"
+  if decl[2].kind != nnkEmpty:
+    reason = "generic Eponym procedures do not yet have runtime wrappers"
+  elif params.len == 0 or params[0].kind == nnkEmpty:
+    reason = "Eponym procedure has no explicit runtime result type"
+  elif runtimeNimType(params[0], mappings).isNil:
+    reason = "no runtime codec for Eponym result type '" & repr(params[0]) & "'"
+  else:
+    for i in 1 ..< params.len:
+      let p = params[i]
+      if p.kind != nnkIdentDefs:
+        reason = "unsupported Nim parameter declaration for Eponym procedure '" &
+          defName & "'"
+        break
+      if runtimeNimType(p[^2], mappings).isNil:
+        reason = "no runtime codec for Eponym parameter type '" & repr(p[^2]) & "'"
+        break
+  let name = ident(defName)
+  let message = newLit("eponymBlock wrapper '" & defName & "': " & reason &
+    "; add runtimeType for an opaque postulated type or use a supported primitive")
+  result = quote do:
+    template `name`*(args: varargs[untyped]): untyped =
+      {.error: `message`.}
+
 proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          bindings: seq[HostPostulateBinding],
                          mappings: seq[HostRuntimeType]): NimNode =
@@ -831,7 +858,9 @@ macro eponymBlock*(body: untyped): untyped =
                                              bindings, runtimeTypes)
       if not typedWrapper.isNil:
         result.add(typedWrapper)
-        continue
+      else:
+        result.add(unsupportedRuntimeWrapper(procDecl, d.name, runtimeTypes))
+      continue
     if bindings.len == 0:
       result.add(quote do:
         proc `procName`*(args: varargs[int]): int =

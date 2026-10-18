@@ -306,13 +306,19 @@ implementations.
    `proc(ChannelHandle, string): ChannelHandle` role with 200 property cases.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
-   signatures, and generic or higher-order definitions. Unsupported shapes
-   still use the legacy `varargs[int]` wrapper, so generated ABI support is
-   partial.
+   signatures, and generic or higher-order definitions. Definitions without
+   a matching explicit Nim `proc` declaration still retain the legacy
+   `varargs[int]` compatibility wrapper; explicit `proc` declarations with
+   unsupported signatures fail clearly when called.
 - [ ] Validate the supported Eponym type shape and Nim adapter signature during
    macro expansion/compilation. Reject unsupported conversions with an
    error naming the Eponym binder and Nim type; never fall back to unchecked
    casts or late `ValueError`s for signature mismatches.
+- [x] For explicit `proc` declarations with no runtime codec, emit a
+   compile-time error template naming the unsupported Eponym result or
+   parameter type instead of silently generating a `varargs[int]` wrapper.
+   A negative fixture covers a missing opaque mapping. Full structural and
+   dependent codecs remain open.
 - [x] Keep runtime source re-elaboration outside the per-call path. The Nim
    macro VM's checked `Term`/`Value` objects contain runtime closures and
    cannot be retained directly as executable runtime values; the first call
