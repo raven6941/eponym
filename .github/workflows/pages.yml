@@ -21,10 +21,31 @@ jobs:
       - uses: actions/checkout@v4
       - name: Configure Pages
         uses: actions/configure-pages@v5
+      - name: Install Pandoc
+        uses: pandoc/actions/setup@v1
+        with:
+          version: 3.6
+      - name: Convert Markdown files to HTML
+        run: |
+          mkdir -p _site
+          cp site.css _site/site.css
+          find . -type f -name '*.md' -not -path './.git/*' -not -path '*/node_modules/*' -print0 \
+            | while IFS= read -r -d '' source; do
+                case "$source" in
+                  ./README.md) source="README.md" ;;
+                  ./*) source="${source#./}" ;;
+                esac
+                target="${source%.md}.html"
+                fragment="${target}.fragment"
+                pandoc --from=gfm --to=html5 --metadata title="$(basename "${source%.md}")" -o "$fragment" "$source"
+                python3 tools/wrap_markdown_page.py "$source" "$fragment" "$target" _site
+                rm "$fragment"
+              done
+          cp robots.txt sitemap.xml _site/
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
 
   deploy:
     environment:

@@ -10,6 +10,10 @@ first checked dependent type, ~15 minutes), look up any language form in the
 [trust model](docs/trust-model.md) to see what the system checks — and what
 is your problem.
 
+Documentation links use relative `.md` paths so they work in GitHub's README
+view. The GitHub Pages build renders these Markdown files as HTML and adjusts
+the published links automatically.
+
 ### Deliberate points of departure
 
 QTT instead of ETT. Idris has demonstrated the 0/1/ω approach taken. This allows support for session types, and opt-in checking of the style popularized by rust.
