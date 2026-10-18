@@ -317,8 +317,8 @@ implementations.
 - [x] Add structural codecs for non-dependent named `record` declarations as
    mapped Nim objects. Fields encode in declaration order using nested pairs;
    primitive, opaque, and nested non-dependent record fields recurse through
-   their codecs. A 200-case property covers mixed `Nat` and opaque fields,
-   while dependent fields fail wrapper generation.
+   their codecs. 200-case properties cover mixed `Nat` and opaque fields and
+   recursively nested records, while dependent fields fail wrapper generation.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
    signatures, and generic or higher-order definitions. Definitions without
