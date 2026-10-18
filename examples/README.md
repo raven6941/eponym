@@ -110,9 +110,9 @@ for verified components inside a larger Nim application.
   The value discipline is enforced by *unforgeable promise tickets*
   (`AcceptMsg` is postulated with no constructors, so the proposer can only
   accept the value the acceptor promised); the dependent session binds the
-  received promise and indexes the continuation by it. The normal-Nim driver
-  binds the same message sequence to an in-memory transport and runs a full
-  round, mirroring the checked roles step by step. Wrong-order and
+  received promise and indexes the continuation by it. The checked proposer
+  and acceptor run in separate processes through bound loopback TCP adapters;
+  the wire codec and promise/ticket mapping remain trusted. Wrong-order and
   wrong-value violations are compile-time errors (see 16a/16b negative
   tests above).
 - **convex_opt.nim** — Disciplined convex programming as a compile-time

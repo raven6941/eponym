@@ -51,7 +51,8 @@ show a few useful patterns:
 Most examples show compile-time checking of Eponym models. The runtime bridge
 generates fixed-arity wrappers for first-order `Int`, `Nat`, and explicitly
 mapped opaque postulated types. The new session runtime demo connects checked
-roles to Nim adapters; the larger Paxos, borrowing, and optimization examples
+roles to Nim adapters, and `paxos_session.nim` runs its checked proposer and
+acceptor through bound TCP adapters. The borrowing and optimization examples
 still have separate hand-written drivers. The
 [support table](docs/known-limitations.md#what-each-layer-establishes)
 classifies what each example checks, what Nim validates, and what remains

@@ -21,10 +21,10 @@ whole new ecosystem. A library in a language people already use is a much
 easier sell. The target case is a session-type library: protocol
 violations rejected at compile time through plain `send`/`recv` calls
 (issue #28). The in-memory and TCP session examples already run checked
-sender/receiver roles through bound Nim postulates. The larger Paxos demo
-still mirrors its checked roles in a Nim driver, and the borrow and numeric
-examples retain separate runtime implementations. The embedding applicability
-plan below tracks those remaining gaps. Deliberate-embedding prior art:
+sender/receiver roles through bound Nim postulates. The Paxos demo now runs its
+checked proposer and acceptor through bound TCP adapters. The borrow and
+numeric examples retain separate runtime implementations. The embedding
+applicability plan below tracks those remaining gaps. Deliberate-embedding prior art:
 Turnstile/Turnstile+ (the architectural ancestor — dependent type systems as
 macros), SynQ, Liquid Haskell.
 
@@ -462,9 +462,10 @@ implementations.
 
 - [x] Add a minimal indexed session example whose sender and receiver roles
   call bound Nim channel operations at runtime; property tests exercise 200
-  messages. The Paxos demo and its hand-mirrored driver remain open.
-- [ ] Replace the hand-mirrored `runPaxosRound` sequence with calls to the
-   checked `proposer` and `acceptor` roles through bound mailbox operations.
+  messages.
+- [x] Replace the hand-mirrored `runPaxosRound` sequence with calls to the
+   checked `proposer` and `acceptor` roles through bound TCP operations.
+   Forty property-generated rounds run the two roles in separate processes.
 - [x] Provide a `std/net` loopback TCP adapter using the checked sender and
   receiver roles, with message encoding/decoding outside Eponym. The checked
   wrappers return explicitly mapped outcomes.
@@ -563,8 +564,8 @@ implementations.
   unsupported operators, dependent-index mismatch, and linear misuse.
 - [x] Add runtime integration examples that execute the exact Eponym-checked
   definition, not a mirrored Nim implementation. The in-memory and TCP session
-  examples run their checked sender/receiver roles; Paxos and borrow remain
-  separate open items.
+  examples run their checked sender/receiver roles and Paxos runs its checked
+  proposer and acceptor; borrow remains an open item.
 - [x] Classify the TCP/in-memory session, Paxos, borrow, and optimizer
   examples by what Eponym checks, what Nim checks, and what remains trusted
   or disconnected. The README links to the table; retain it as implementations
