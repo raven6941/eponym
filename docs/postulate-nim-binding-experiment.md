@@ -63,6 +63,23 @@ Property tests exercise direct and imported checked definitions, multiple
 independent binding environments, incompatible Nim proc types, mismatched
 Eponym postulate shapes, and duplicate bindings.
 
+For an opaque Nim object, pair `toHostValue` / `valueToHost[T]` with
+`bindHostOpaqueUnary[T]`. The adapter declares which named Eponym type the
+Nim type represents:
+
+```nim
+bindHostOpaqueUnary[ChannelHandle](bindings, globals, "rotateChannel",
+  "Channel", rotateChannelNim)
+let result = callValueFuncDir(baseDir, source, "checkedRole",
+  @[toHostValue(channel)], bindings)
+let channelAfter = valueToHost[ChannelHandle](result)
+```
+
+This passes an opaque payload unchanged through the checked definition and
+back to Nim. Eponym cannot inspect the payload or establish that it obeys a
+dependent index. The mapping and callback behavior are trusted. This API does
+not yet generate a typed Nim wrapper; callers use the low-level Value API.
+
 Generated `eponymBlock` wrappers still use the integer-only ABI
 (`varargs[int] -> int`). The binding syntax currently accepts only unary
 `Int -> Int` postulates; there is no support yet for opaque user-defined Nim

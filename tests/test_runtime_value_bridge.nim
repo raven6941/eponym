@@ -18,9 +18,20 @@ proc hostStepNim(value: int): int = value + 7
 proc hostTripleNim(value: int): int = value * 3
 proc hostString(value: string): string = value
 
+type ChannelHandle = object
+  id: int
+  label: string
+
+proc hostRotateChannel(channel: ChannelHandle): ChannelHandle =
+  result = channel
+  inc result.id
+  result.label.add("*")
+
 static:
   doAssert compiles(hostIntUnary(hostStepNim))
   doAssert not compiles(hostIntUnary(hostString))
+  doAssert compiles(hostOpaqueUnary[ChannelHandle](hostRotateChannel))
+  doAssert not compiles(hostOpaqueUnary[ChannelHandle](hostString))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -70,6 +81,8 @@ when isMainModule:
   const identityProgram = """
 import "tests/fixtures/runtime_host_step.ep"
 proc throughHelper : Int -> Int = lam (n : Int). importedHelper n
+proc opaqueRole : Channel -> Channel =
+  lam (channel : Channel). importedChannelStep channel
 """
   let checked = elabCheckDirState(identityProgram, baseDir)
   let postulateId = checked.globals["hostStep"].tm.refId
@@ -94,6 +107,50 @@ proc throughHelper : Int -> Int = lam (n : Int). importedHelper n
       valueToInt(value) == hostStepNim(n),
     shrinkInt)
   if not hostDispatch:
+    quit(1)
+
+  var opaqueBindings = initRuntimeBindings()
+  bindHostOpaqueUnary[ChannelHandle](opaqueBindings, cachedGlobals,
+    "rotateChannel", "Channel", hostRotateChannel)
+  let originalChannel = ChannelHandle(id: 17, label: "socket")
+  let opaqueResult = callValueFuncDir(baseDir, identityProgram, "opaqueRole",
+    @[toHostValue(originalChannel)], opaqueBindings)
+  let rotatedChannel = valueToHost[ChannelHandle](opaqueResult)
+  if rotatedChannel.id != 18 or rotatedChannel.label != "socket*":
+    quit(1)
+
+  var wrongOpaqueMappingRejected = false
+  try:
+    var wrongOpaqueBindings = initRuntimeBindings()
+    bindHostOpaqueUnary[ChannelHandle](wrongOpaqueBindings, cachedGlobals,
+      "rotateChannel", "WrongType", hostRotateChannel)
+  except ValueError:
+    wrongOpaqueMappingRejected = true
+  var wrongNimOpaqueTypeRejected = false
+  try:
+    discard valueToHost[seq[int]](toHostValue(originalChannel))
+  except ValueError:
+    wrongNimOpaqueTypeRejected = true
+  var opaqueConversionRejected = false
+  try:
+    var supply = Supply()
+    areEqual(supply, vStar(), toHostValue(originalChannel),
+             toHostValue(originalChannel))
+  except ValueError:
+    opaqueConversionRejected = true
+  if not wrongOpaqueMappingRejected or not wrongNimOpaqueTypeRejected or
+      not opaqueConversionRejected:
+    quit(1)
+
+  let opaqueRoundTrips = forAll("arbitrary Nim objects cross as opaque Values",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let value = ChannelHandle(id: id, label: $id)
+      let decoded = valueToHost[ChannelHandle](toHostValue(value))
+      decoded.id == value.id and decoded.label == value.label,
+    shrinkInt)
+  if not opaqueRoundTrips:
     quit(1)
 
   let alternateHostDispatch = forAll("runtime bindings stay local to each call",

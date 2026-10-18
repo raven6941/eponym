@@ -18,24 +18,27 @@ result back. This means the checker can accept definitions over `Nat`,
 vectors, records, session types, and other Eponym types, but those definitions
 do not thereby become callable from ordinary Nim.
 
-The runtime module also exposes a lower-level `Value`-based call path
-(`callValueFunc` / `callValueFuncDir`) and primitive Nat/int adapters. This
-is implementation groundwork, not the user-facing solution: it does not
-provide typed wrappers for ordinary Nim values, user-defined Nim objects,
-collections, closures, async results, or socket/channel types. The intended
-direction is a typed boundary for user-defined Nim values. Arbitrary values
-will need explicit adapters/codecs: Nim's type checker can check an adapter's
-concrete Nim signature, but it cannot automatically map every Nim object,
-reference, closure, or async result to a dependent Eponym type or verify that
-the value satisfies a dependent index.
+The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
+supports primitive Int/Nat values and opaque boxes for arbitrary Nim payload
+types. A typed `T -> T` postulate adapter can pass a Nim object, reference, or
+other value through a named Eponym type without exposing its representation.
+Tests exercise a user-defined object through an imported checked definition.
+This does not yet provide generated typed wrappers for arbitrary values,
+structural codecs for records or collections, callbacks of other shapes,
+closures as exported values, async results, or socket/channel protocols.
+Nim's type checker checks the concrete adapter signature, but the mapping to
+the Eponym type and the adapter behavior remain trusted. Neither compiler
+proves that the host value satisfies a dependent index.
 
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro now supports `bindPostulate(name, nimProc)` for a unary
 `Int -> Int` postulate backed by a Nim `proc(int): int`. It verifies the
 Eponym contract during macro expansion, lets Nim check the implementation
-signature, and dispatches through imported checked definitions. Other
-postulate signatures, arbitrary Nim values, and explicit missing-binding
-diagnostics are still unsupported. See the
+signature, and dispatches through imported checked definitions. The low-level
+API also supports opaque boxed Nim payloads with an explicit mapping to a
+named Eponym type. Other callback shapes, generated typed wrappers for such
+values, structural codecs, and explicit missing-binding diagnostics are still
+unsupported. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the
 supported prototype and remaining work.
 
