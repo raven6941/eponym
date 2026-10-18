@@ -368,9 +368,10 @@ implementations.
 - [x] Report an invoked but unbound runtime postulate by name at the call
    boundary instead of surfacing only a later `ValueError` during result
    conversion.
-- [ ] Diagnose unused or unreachable bindings during macro expansion; the
-   current implementation checks for a missing binding when a runtime call
-   reaches it.
+- [x] Diagnose a binding that no checked proc body references during macro
+   expansion. Compile-time call-graph reachability remains open because Nim
+   can call each generated wrapper independently; missing runtime bindings
+   still fail by name if reached.
 - [x] Specify synchronous exception behavior: exceptions raised by a Nim
    adapter propagate unchanged through the checked runtime wrapper; property
    tests verify the original exception type and message.

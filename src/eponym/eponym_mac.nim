@@ -582,6 +582,22 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
                                      implementation: st[2],
                                      eponymTypes: typeNames))
 
+proc mentionsName(node: NimNode, name: string): bool =
+  if node.kind in {nnkIdent, nnkSym} and $node == name:
+    return true
+  for child in node:
+    if mentionsName(child, name):
+      return true
+
+proc bindingIsReferenced(body: NimNode, postulateName: string): bool =
+  ## A binding is useful only if some checked proc body calls its postulate.
+  ## This deliberately checks direct references; call-graph reachability is a
+  ## separate question because any generated wrapper can be called by Nim.
+  for st in body:
+    if st.kind == nnkProcDef and st.len > 6 and
+        mentionsName(st[6], postulateName):
+      return true
+
 proc simpleRuntimeCodec(n: NimNode): string =
   if n.kind == nnkIdent:
     case $n
@@ -803,6 +819,10 @@ macro eponymBlock*(body: untyped): untyped =
     error("eponymBlock parse error: " & e.msg, body)
 
   let bindings = hostPostulateBindings(body)
+  for binding in bindings:
+    if not bindingIsReferenced(body, binding.postulateName):
+      error("eponymBlock binding error: binding for postulate '" &
+        binding.postulateName & "' is unused by every proc body", body)
   let runtimeTypes = hostRuntimeTypes(body)
   for mapping in runtimeTypes:
     try:
