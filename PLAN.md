@@ -450,6 +450,11 @@ implementations.
    receiver roles over the channel handle. A separate `std/net` demo uses the
    same codec through a loopback TCP socket; transport libraries stay outside
    the Eponym core.
+- [x] Add an explicitly trusted `bindPostulateValue` adapter for host
+   operations that must invoke Eponym CPS continuations. The checked borrow
+   client uses it to run its `withBorrow`/`readB`/`writeB`/`endB` sequence;
+   300 property cases exercise different buffer contents. This low-level form
+   checks postulate arity but leaves Value conversion and semantics to Nim.
 
 **Exit criteria:**
 
@@ -472,9 +477,10 @@ implementations.
 - [x] Represent transport and serialization failures in explicit Nim result
   values. The loopback integration test checks success, peer closure, and a
   malformed Nat frame through the checked receiver role.
-- [ ] Make the buffer/borrow example route through bound postulates, and label
+- [x] Make the buffer/borrow example route through bound postulates, and label
    what the linear checker establishes versus what the Nim buffer adapter
-   must uphold.
+   must uphold. The adapter scopes the runtime borrow in `try/finally`; Nim
+   aliases held elsewhere remain outside the Eponym guarantee.
 - [x] Exercise correct runtime session execution and compile-time failures for
   wrong message order, wrong indexed value, double use, and dropped linear
   handles. The error snapshots cover the negative cases; the TCP loopback test
@@ -482,9 +488,10 @@ implementations.
 
 **Exit criteria:**
 
-- [ ] The running demo executes the same checked roles that compile-time
+- [x] The running demos execute the same checked roles that compile-time
   negative examples constrain; there is no second manually maintained
-  protocol sequence.
+  protocol sequence. The borrow property test invokes generated
+  `borrowClient(Buffer)` and checks only the borrowed head cell changes.
 
 #### E. Connect certified models to numeric execution
 
@@ -567,8 +574,9 @@ implementations.
   unsupported operators, dependent-index mismatch, and linear misuse.
 - [x] Add runtime integration examples that execute the exact Eponym-checked
   definition, not a mirrored Nim implementation. The in-memory and TCP session
-  examples run their checked sender/receiver roles and Paxos runs its checked
-  proposer and acceptor; borrow remains an open item.
+  examples run their checked sender/receiver roles, Paxos runs its checked
+  proposer and acceptor, and the borrow example runs `borrowClient` through
+  bound postulates. The raw borrow adapters remain trusted.
 - [x] Classify the TCP/in-memory session, Paxos, borrow, and optimizer
   examples by what Eponym checks, what Nim checks, and what remains trusted
   or disconnected. The README links to the table; retain it as implementations

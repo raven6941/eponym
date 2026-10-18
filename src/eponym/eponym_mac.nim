@@ -619,6 +619,10 @@ proc blockToEponym*(body: NimNode): string =
         # contract; it is not part of the Eponym source text.
         if st.len notin {3, 4, 5, 6, 7, 8} or st[1].kind != nnkIdent:
           error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
+      elif head == "bindPostulateValue":
+        # Deliberate raw runtime escape hatch; the Nim adapter owns codecs.
+        if st.len != 3 or st[1].kind != nnkIdent:
+          error("bindPostulateValue expects (postulateName, nimProcedure)", st)
       elif head == "bindPostulatePair":
         # Typed adapter for A1 -> ... -> An -> Sig(B, C).
         if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
@@ -655,6 +659,7 @@ type HostPostulateBinding = object
   pairResult: bool
   pairArgCount: int
   trustedPairIndex: bool
+  rawValue: bool
 
 type HostRuntimeType = object
   eponymName: string
@@ -713,9 +718,10 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   var seen = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
-        $st[0] in ["bindPostulate", "bindPostulatePair",
+        $st[0] in ["bindPostulate", "bindPostulateValue", "bindPostulatePair",
                    "bindPostulatePairTrusted"]:
-      let pairResult = $st[0] != "bindPostulate"
+      let rawValue = $st[0] == "bindPostulateValue"
+      let pairResult = $st[0] in ["bindPostulatePair", "bindPostulatePairTrusted"]
       let trustedPairIndex = $st[0] == "bindPostulatePairTrusted"
       if pairResult:
         if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
@@ -737,7 +743,8 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
                                      pairResult: pairResult,
                                      pairArgCount: if pairResult:
                                        typeNames.len - 2 else: 0,
-                                     trustedPairIndex: trustedPairIndex))
+                                     trustedPairIndex: trustedPairIndex,
+                                     rawValue: rawValue))
 
 proc mentionsName(node: NimNode, name: string): bool =
   if node.kind in {nnkIdent, nnkSym} and $node == name:
@@ -890,6 +897,9 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
                  mappings: seq[HostRuntimeType],
                  records: seq[HostRecord]): NimNode =
   let nameLit = newLit(binding.postulateName)
+  if binding.rawValue:
+    return newCall(bindSym"bindHostValueNary", bindingsSym, globalsSym,
+                   nameLit, binding.implementation)
   if binding.pairResult:
     let pairType = newCall(ident"Sig",
       ident(binding.eponymTypes[binding.pairArgCount]),
@@ -1170,6 +1180,10 @@ macro eponymBlock*(body: untyped): untyped =
       error("eponymBlock runtimeType error: " & e.msg, body)
   for binding in bindings:
     try:
+      if binding.rawValue:
+        discard validateHostValueNaryType(checkedGlobals,
+                                          binding.postulateName)
+        continue
       if binding.pairResult:
         let pairArgs = binding.eponymTypes[0 ..< binding.pairArgCount]
         validateHostSigmaAdapterType(checkedGlobals,

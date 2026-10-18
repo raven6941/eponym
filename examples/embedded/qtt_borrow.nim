@@ -24,15 +24,31 @@
 # buffer from outside the scope are all easy slips in an untyped API, and
 # each is a compile-time error here.
 #
-# The operations are postulates (mock backend), exactly as in
-# paxos_session.nim: the types enforce the borrow discipline, and the
-# normal-Nim driver below binds the same op sequence to a real buffer —
-# the Wu & Xi "typed API over untrusted backend" architecture. The
-# Eponym-checked client is the spec; the driver is the trusted backend
-# that upholds it (in particular: it never creates a second borrow).
+# The operations are postulates implemented by a Nim buffer backend. The
+# backend uses the explicit raw-Value adapter because it must invoke the
+# checked Eponym continuations. Eponym checks the client and linear uses;
+# Nim remains responsible for exclusivity, alias discipline, and lifetime.
 
+import std/sequtils
 import eponym_mac
 import eponym_embed
+import eponym_init
+import elab
+
+type
+  Buffer* = ref object
+    cells*: seq[int]
+    borrowed: bool
+
+  BorrowHandle = ref object
+    buffer: Buffer
+    active: bool
+
+proc hostWithBorrow(args: seq[Value], globals: Globals): Value
+proc hostReadB(args: seq[Value], globals: Globals): Value
+proc hostWriteB(args: seq[Value], globals: Globals): Value
+proc hostEndB(args: seq[Value], globals: Globals): Value
+proc hostFailBorrow(args: seq[Value], globals: Globals): Value
 
 eponymBlock:
   # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
@@ -41,6 +57,7 @@ eponymBlock:
 
   postulate(Res, Univ)
   postulate(Borrow, Univ)
+  runtimeType(Res, Buffer)
 
   postulate(allocRes, Pi(n: Nat, Res))
 
@@ -69,6 +86,13 @@ eponymBlock:
        Nat))
   postulate(endB,
     Pi(b {.linear.}: Borrow, v: Nat, Nat))
+  postulate(failBorrow, Borrow -> Nat)
+
+  bindPostulateValue(withBorrow, hostWithBorrow)
+  bindPostulateValue(readB, hostReadB)
+  bindPostulateValue(writeB, hostWriteB)
+  bindPostulateValue(endB, hostEndB)
+  bindPostulateValue(failBorrow, hostFailBorrow)
 
   # Client: read the head cell, write back its successor, read again,
   # finish the borrow with the new value. `r` appears in term position
@@ -80,36 +104,79 @@ eponymBlock:
           readB(b3, lam(v2, Nat, lam(b4, Borrow,
             endB(b4, v2)))))))))))
 
-# --- Normal Nim program: real buffer backend + driver ----------------------
-# Mirrors borrowClient op-for-op against a real buffer:
-#   allocRes -> withBorrow -> readB -> writeB(suc) -> readB -> endB.
-# The backend upholds the contract the types assume: exactly one borrow
-# exists at a time, and the scope brackets its lifetime.
+  proc failingBorrowClient(r {.linear.}: Res): Nat =
+    withBorrow(r, lam(b, Borrow, failBorrow(b)))
 
-type Buffer = object
-  cells: seq[int]
+proc requireArgs(args: seq[Value], expected: int, operation: string) =
+  if args.len != expected:
+    raise newException(ValueError, operation & " expects " & $expected &
+      " runtime arguments")
 
-proc allocBuffer(n: int): Buffer =
-  Buffer(cells: newSeq[int](n))
+proc getBorrow(value: Value, operation: string): BorrowHandle =
+  result = valueToHost[BorrowHandle](value)
+  if result.isNil or not result.active or not result.buffer.borrowed:
+    raise newException(ValueError, operation & " used an inactive borrow")
 
-proc runBorrowDemo(): int =
-  var buf = allocBuffer(4)        # allocRes 4
-  # withBorrow buf: exclusive scope begins — no other handle to buf exists.
-  var cell = buf.cells[0]         # readB b -> v
-  cell += 1                       # suc v
-  buf.cells[0] = cell             # writeB b v
-  let v2 = buf.cells[0]           # readB b -> v2
-  # endB b v2 -> v2; scope ends, the single borrow is gone (linear).
-  v2
+proc hostWithBorrow(args: seq[Value], globals: Globals): Value =
+  requireArgs(args, 2, "withBorrow")
+  let buffer = valueToHost[Buffer](args[0])
+  if buffer.isNil or buffer.cells.len == 0 or buffer.cells.anyIt(it < 0):
+    raise newException(ValueError,
+      "withBorrow requires a nonempty buffer containing only Nat cells")
+  if buffer.borrowed:
+    raise newException(ValueError, "buffer already has an active borrow")
+  buffer.borrowed = true
+  let borrow = BorrowHandle(buffer: buffer, active: true)
+  try:
+    let callbackResult = callRuntimeValue(args[1], [toHostValue(borrow)])
+    if borrow.active:
+      raise newException(IOError,
+        "withBorrow callback returned without ending the borrow")
+    result = callbackResult
+  finally:
+    borrow.active = false
+    buffer.borrowed = false
+
+proc hostReadB(args: seq[Value], globals: Globals): Value =
+  requireArgs(args, 2, "readB")
+  let borrow = getBorrow(args[0], "readB")
+  result = callRuntimeValue(args[1], [natToValue(borrow.buffer.cells[0]),
+                                     toHostValue(borrow)])
+
+proc hostWriteB(args: seq[Value], globals: Globals): Value =
+  requireArgs(args, 3, "writeB")
+  let borrow = getBorrow(args[0], "writeB")
+  borrow.buffer.cells[0] = valueToNat(args[1], globals)
+  result = callRuntimeValue(args[2], [toHostValue(borrow)])
+
+proc hostEndB(args: seq[Value], globals: Globals): Value =
+  requireArgs(args, 2, "endB")
+  let borrow = getBorrow(args[0], "endB")
+  borrow.active = false
+  natToValue(valueToNat(args[1], globals))
+
+proc hostFailBorrow(args: seq[Value], globals: Globals): Value =
+  requireArgs(args, 1, "failBorrow")
+  discard getBorrow(args[0], "failBorrow")
+  raise newException(IOError, "simulated failure while borrowing")
+
+proc runBorrowClient*(cells: seq[int]): tuple[value: int, cells: seq[int]] =
+  if cells.len == 0 or cells.anyIt(it < 0):
+    raise newException(ValueError, "borrowClient requires nonempty Nat cells")
+  let buffer = Buffer(cells: cells)
+  result.value = borrowClient(buffer)
+  result.cells = buffer.cells
 
 proc main() =
   echo "qtt_borrow: QTT borrow checking, embedded (Issue #122)."
   echo "  borrowClient threads 4 linear borrows through read/write/end;"
   echo "  double-use, owner-use-while-borrowed, and dropped borrows are"
   echo "  compile-time errors (examples/ep/21a,21b,21c-*-neg.ep)."
-  let v = runBorrowDemo()
-  echo "  backend run on a 4-cell buffer (head 0 -> bump -> read): ", v
-  assert v == 1, "borrow protocol violated on the backend"
+  let outcome = runBorrowClient(@[0, 7, 12, 99])
+  echo "  checked client on a 4-cell buffer: ", outcome.cells,
+    " -> result ", outcome.value
+  assert outcome.value == 1 and outcome.cells == @[1, 7, 12, 99],
+    "borrow protocol violated on the backend"
 
 when isMainModule:
   main()
