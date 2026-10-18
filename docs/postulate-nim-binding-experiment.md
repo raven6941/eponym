@@ -96,11 +96,11 @@ receives the callback result. The generated wrapper and binding support is
 limited to these documented first-order forms.
 
 Generated `eponymBlock` wrappers support first-order primitive `Int` and
-`Nat` signatures and explicitly mapped opaque types. `bindPostulate` supports
-unary `Int -> Int`, unary opaque `T -> T`, and curried binary opaque
-`A -> B -> C` postulates. Longer callback signatures, async results,
-structural codecs, and missing-binding checks before invocation remain
-unsupported.
+`Nat` signatures and explicitly mapped opaque types or indexed families.
+`bindPostulate` supports unary `Int -> Int`, opaque `T -> T`, `T -> Nat`,
+`Nat -> T -> U`, and curried binary opaque `A -> B -> C` postulates. Longer
+callback signatures, async results, structural codecs, and missing-binding
+checks before invocation remain unsupported.
 
 ## Suggested first vertical slice
 

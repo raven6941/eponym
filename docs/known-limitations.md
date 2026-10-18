@@ -24,9 +24,10 @@ signature.
 
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values and opaque boxes for arbitrary Nim payload
-types. Typed unary `T -> T` and binary `A -> B -> C` postulate adapters can
-pass Nim objects, references, strings, or other values through explicitly
-mapped Eponym types without exposing their representation. `eponymBlock` can
+types. Typed adapters support unary `T -> T`, `T -> Nat`, `Nat -> T -> U`, and
+binary `A -> B -> C` postulate contracts. They can pass Nim objects,
+references, strings, or other values through explicitly mapped Eponym types
+without exposing their representation. `eponymBlock` can
 generate typed wrappers for first-order definitions over mapped opaque types
 that correspond to named Eponym postulates. Tests exercise user-defined values
 through checked definitions and generated wrappers. This does not yet provide
@@ -39,9 +40,10 @@ proves that the host value satisfies a dependent index.
 
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
-opaque `T -> T`, and curried binary opaque `A -> B -> C` postulates. Opaque
-bindings require explicit `runtimeType(EponymType, NimType)` mappings to
-postulated Eponym types. Nim checks adapter and generated wrapper signatures;
+opaque `T -> T`, `T -> Nat`, `Nat -> T -> U`, and curried binary opaque
+`A -> B -> C` postulates. Opaque bindings require explicit
+`runtimeType(EponymType, NimType)` mappings to postulated Eponym types or
+type families. Nim checks adapter and generated wrapper signatures;
 the implementation and mapping remain trusted. Longer callback shapes,
 structural codecs, and explicit missing-binding diagnostics are still
 unsupported. See the
@@ -78,9 +80,11 @@ See the [trust model](trust-model.md).
 ### Checked roles are not yet wired to their Nim backends
 
 Several embedding examples intentionally have a checked Eponym role and a
-separate ordinary-Nim driver. For example, `paxos_session.nim` checks
-`proposer` and `acceptor`, but `runPaxosRound` manually repeats the message
-sequence using mailboxes and assertions. `qtt_borrow.nim` checks a linear
+separate ordinary-Nim driver. `session_runtime_bindings.nim` is a minimal
+counterexample: it runs checked sender/receiver roles through Nim channel
+adapters. The larger `paxos_session.nim` still checks `proposer` and
+`acceptor`, while `runPaxosRound` manually repeats the message sequence using
+mailboxes and assertions. `qtt_borrow.nim` checks a linear
 borrow API, while its buffer driver mirrors the operations separately.
 The Eponym roles do not invoke the backend postulates at runtime because
 postulate-to-Nim bindings are not implemented.

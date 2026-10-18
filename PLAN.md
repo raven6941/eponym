@@ -300,8 +300,9 @@ implementations.
    extra, and wrong-kind Nim arguments. `Nat` uses Nim `int` with a checked
    nonnegative conversion.
 - [x] Generate typed wrappers for explicitly mapped opaque Eponym postulates
-   using `runtimeType(EponymType, NimType)`. Mappings are accepted only for
-   named postulated Eponym types. Coverage includes a generated
+   and indexed type families using `runtimeType(EponymType, NimType)`.
+   Mappings are accepted only for named postulated types/families, never
+   transparent data definitions. Coverage includes a generated
    `proc(ChannelHandle, string): ChannelHandle` role with 200 property cases.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
@@ -337,8 +338,9 @@ implementations.
 
 - [x] Add explicit `bindPostulate(name, nimProc)` syntax for a declared
    postulate and Nim proc. Generated-wrapper bindings support unary
-   `Int -> Int`, unary opaque `T -> T`, and curried binary opaque `A -> B -> C`;
-   longer signatures remain unsupported.
+   `Int -> Int`, unary opaque `T -> T` / `T -> Nat`, mixed
+   `Nat -> T -> U`, and curried binary opaque `A -> B -> C`; longer
+   signatures remain unsupported.
 - [x] Use an explicit runtime binding environment keyed by
    checked postulate reference identity; do not use a process-global name or
    reference-ID registry. **Foundation complete:** `elabCheckDirState` and
@@ -374,6 +376,10 @@ implementations.
    explicit `runtimeType` mappings connect Eponym postulates to Nim types.
    Nim checks adapter and generated wrapper signatures, and compile-fail
    coverage rejects a mismatched callback type.
+- [x] Add mixed primitive/opaque adapters for `opaque -> Nat` and
+   `Nat -> opaque -> opaque` postulates. The end-to-end session example uses
+   these to pass a Nat payload through a checked send role and receive it
+   through a checked receive role.
 - [ ] Add a message codec and use an opaque handle to bind a protocol
    operation through a Nim adapter. A TCP adapter should be one example, not
    a dependency of the Eponym core.
@@ -387,6 +393,9 @@ implementations.
 
 #### D. Make one end-to-end example use the checked role
 
+- [x] Add a minimal indexed session example whose sender and receiver roles
+  call bound Nim channel operations at runtime; property tests exercise 200
+  messages. The Paxos demo and its hand-mirrored driver remain open.
 - [ ] Replace the hand-mirrored `runPaxosRound` sequence with calls to the
    checked `proposer` and `acceptor` roles through bound mailbox operations.
 - [ ] Then provide a socket adapter with message encoding/decoding outside the

@@ -23,6 +23,8 @@ import preterm  # Quantity constants for validating supported adapter shapes
 proc hostIntUnary*(implementation: proc(x: int): int): Value
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
 proc hostOpaqueBinary*[A, B, C](implementation: proc(x: A, y: B): C): Value
+proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value
+proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value
 
 # Cache: (baseDir, source) key -> checked module state. Retaining globals is
 # required for runtime postulate bindings to use the identities assigned by
@@ -106,10 +108,15 @@ proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
       "Nim proc(int): int requires Eponym postulate '" & postulateName &
       "' to have type Int -> Int")
 
+proc opaqueTypeHeadId(ty: Term): int
+proc opaqueTypeName(globals: Globals, typeId: int,
+                    postulateName: string): string
+proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int
+
 proc validateHostOpaqueUnaryType*(globals: Globals,
                                   postulateName: string): string =
-  ## Validate a first-order `T -> T` contract over a named opaque Eponym type.
-  ## Returns that Eponym type's name for an explicit Nim adapter mapping.
+  ## Validate a first-order `T -> T` contract over an opaque Eponym type or
+  ## indexed type family. Returns its name for an explicit Nim mapping.
   if postulateName notin globals:
     raise newException(ValueError, "postulate not found: " & postulateName)
   let entry = globals[postulateName]
@@ -117,31 +124,110 @@ proc validateHostOpaqueUnaryType*(globals: Globals,
     raise newException(ValueError,
       "runtime binding target is not a postulate: " & postulateName)
   let ty = entry.ty
-  if ty.kind != tPi or ty.impl or ty.qty == q0 or ty.dom.kind != tR or
-      ty.scope.bdy.kind != tR or ty.dom.refId != ty.scope.bdy.refId:
+  let domainId = if ty.kind == tPi: opaqueTypeHeadId(ty.dom) else: -1
+  let resultId = if ty.kind == tPi: opaqueTypeHeadId(ty.scope.bdy) else: -1
+  if ty.kind != tPi or ty.impl or ty.qty == q0 or domainId < 0 or
+      domainId != resultId:
     raise newException(ValueError,
       "opaque unary adapter requires postulate '" & postulateName &
       "' to have type Opaque -> Opaque")
-  for typeName, typeEntry in globals.pairs:
-    if not typeEntry.tm.isNil and typeEntry.tm.kind == tR and
-        typeEntry.tm.refId == ty.dom.refId and typeEntry.ty.kind == tType:
-      return typeName
-  raise newException(ValueError,
-    "opaque adapter type for postulate '" & postulateName &
-    "' must be a named postulated type")
+  opaqueTypeName(globals, domainId, postulateName)
 
 proc validateHostOpaqueType*(globals: Globals, typeName: string) =
   ## Ensure an explicit runtimeType mapping refers to an opaque postulated
-  ## type, not an Eponym data type whose structure could be inspected.
+  ## type or type family, not an Eponym data type whose structure can compute.
   if typeName notin globals:
     raise newException(ValueError,
       "opaque runtime type '" & typeName & "' is not declared")
   let entry = globals[typeName]
   if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn or
-      entry.ty.kind != tType:
+      entry.ty.isNil:
     raise newException(ValueError,
       "opaque runtime type mapping '" & typeName &
-      "' must name a postulated type")
+      "' must name a postulated type or type family")
+  var terminalType = entry.ty
+  while terminalType.kind == tPi:
+    terminalType = terminalType.scope.bdy
+  if terminalType.kind != tType:
+    raise newException(ValueError,
+      "opaque runtime type mapping '" & typeName &
+      "' must name a postulated type or type family")
+
+proc opaqueTypeHeadId(ty: Term): int =
+  case ty.kind
+  of tR: ty.refId
+  of tApp: opaqueTypeHeadId(ty.fn)
+  else: -1
+
+proc opaqueTypeName(globals: Globals, typeId: int,
+                    postulateName: string): string =
+  for typeName, typeEntry in globals.pairs:
+    if not typeEntry.tm.isNil and typeEntry.tm.kind == tR and
+        typeEntry.tm.refId == typeId:
+      try:
+        validateHostOpaqueType(globals, typeName)
+        return typeName
+      except ValueError:
+        discard
+  raise newException(ValueError,
+    "opaque adapter type for postulate '" & postulateName &
+    "' must be a named postulated type or type family")
+
+proc validateHostOpaqueNatUnaryType*(globals: Globals, postulateName,
+                                     opaqueType: string) =
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  let opaqueId = opaqueTypeId(globals, opaqueType, postulateName)
+  let natId = if "Nat" in globals: globals["Nat"].tm.refId else: -1
+  if entry.ty.kind != tPi or entry.ty.impl or entry.ty.qty == q0 or
+      opaqueTypeHeadId(entry.ty.dom) != opaqueId or
+      entry.ty.scope.bdy.kind != tR or entry.ty.scope.bdy.refId != natId:
+    raise newException(ValueError,
+      "opaque Nat adapter requires postulate '" & postulateName & "' to have type " &
+      opaqueType & " -> Nat")
+
+proc validateHostNatOpaqueBinaryType*(globals: Globals, postulateName,
+                                      opaqueArgType, opaqueResultType: string) =
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  let argId = opaqueTypeId(globals, opaqueArgType, postulateName)
+  let resultId = opaqueTypeId(globals, opaqueResultType, postulateName)
+  let natId = if "Nat" in globals: globals["Nat"].tm.refId else: -1
+  let outer = entry.ty
+  let inner = if outer.kind == tPi: outer.scope.bdy else: nil
+  if outer.kind != tPi or outer.impl or outer.qty == q0 or
+      outer.dom.kind != tR or outer.dom.refId != natId or inner.isNil or
+      inner.kind != tPi or inner.impl or inner.qty == q0 or
+      opaqueTypeHeadId(inner.dom) != argId or
+      opaqueTypeHeadId(inner.scope.bdy) != resultId:
+    raise newException(ValueError,
+      "Nat/opaque adapter requires postulate '" & postulateName &
+      "' to have type Nat -> " & opaqueArgType & " -> " & opaqueResultType)
+
+proc bindHostOpaqueNatUnary*[T](bindings: var RuntimeBindings,
+                                globals: Globals, postulateName,
+                                opaqueType: string,
+                                implementation: proc(x: T): int) =
+  validateHostOpaqueNatUnaryType(globals, postulateName, opaqueType)
+  bindHostValue(bindings, globals, postulateName,
+                hostOpaqueNatUnary[T](implementation))
+
+proc bindHostNatOpaqueBinary*[T](bindings: var RuntimeBindings,
+                                 globals: Globals, postulateName,
+                                 opaqueArgType, opaqueResultType: string,
+                                 implementation: proc(n: int, x: T): T) =
+  validateHostNatOpaqueBinaryType(globals, postulateName, opaqueArgType,
+                                  opaqueResultType)
+  bindHostValue(bindings, globals, postulateName,
+                hostNatOpaqueBinary[T](implementation))
 
 proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int =
   validateHostOpaqueType(globals, typeName)
@@ -164,14 +250,14 @@ proc validateHostOpaqueBinaryType*(globals: Globals, postulateName,
   let resultId = opaqueTypeId(globals, resultTypeName, postulateName)
   let outer = entry.ty
   if outer.kind != tPi or outer.impl or outer.qty == q0 or
-      outer.dom.kind != tR or outer.dom.refId != firstId:
+      opaqueTypeHeadId(outer.dom) != firstId:
     raise newException(ValueError,
       "opaque binary adapter requires postulate '" & postulateName &
       "' to have the declared first argument type '" & firstTypeName & "'")
   let inner = outer.scope.bdy
   if inner.kind != tPi or inner.impl or inner.qty == q0 or
-      inner.dom.kind != tR or inner.dom.refId != secondId or
-      inner.scope.bdy.kind != tR or inner.scope.bdy.refId != resultId:
+      opaqueTypeHeadId(inner.dom) != secondId or
+      opaqueTypeHeadId(inner.scope.bdy) != resultId:
     raise newException(ValueError,
       "opaque binary adapter requires postulate '" & postulateName &
       "' to have type " & firstTypeName & " -> " & secondTypeName & " -> " &
@@ -257,6 +343,19 @@ proc valueToNat*(v: Value): int =
   if v.whnf.kind == wNatLit:
     return v.whnf.natLitVal
   raise newException(ValueError, "value is not a canonical Nat literal")
+
+proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value =
+  ## Adapt an opaque Nim argument and primitive Nat result to a unary Eponym
+  ## runtime function.
+  vHostFunc(proc(value: Value): Value =
+    natToValue(implementation(valueToHost[T](value))))
+
+proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value =
+  ## Adapt primitive Nat and opaque Nim arguments to a curried Eponym function.
+  vHostFunc(proc(natValue: Value): Value =
+    vHostFunc(proc(opaqueValue: Value): Value =
+      toHostValue(implementation(valueToNat(natValue),
+                                 valueToHost[T](opaqueValue)))))
 
 proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
                                bindings: RuntimeBindings): Value =

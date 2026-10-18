@@ -28,7 +28,9 @@ show a few useful patterns:
   invalid operations, such as sending after close or accepting a value that
   was not promised, fail during compilation. See
   [`session_types.nim`](examples/embedded/session_types.nim) and
-  [`paxos_session.nim`](examples/embedded/paxos_session.nim).
+  [`paxos_session.nim`](examples/embedded/paxos_session.nim). The smaller
+  [`session_runtime_bindings.nim`](examples/embedded/session_runtime_bindings.nim)
+  demo also runs checked sender/receiver roles through Nim channel adapters.
 - **Dimensions and shapes** — index vectors and matrices by their dimensions
   so operations like dot product and matrix-vector multiplication require
   compatible sizes. See [`convex_opt_vec.nim`](examples/embedded/convex_opt_vec.nim).
@@ -43,11 +45,11 @@ show a few useful patterns:
   editor, then refine, finish, or split a proof into cases. See the
   [shed walkthrough](examples/embedded/sheds_walkthrough.nim).
 
-These examples show compile-time checking of Eponym models. The current
-Nim runtime bridge generates fixed-arity wrappers for first-order `Int`,
-`Nat`, and explicitly mapped opaque postulated types; protocol
-postulates and the hand-written Nim drivers in the session, borrowing, and
-optimization examples are not yet connected to the checked definitions.
+Most examples show compile-time checking of Eponym models. The runtime bridge
+generates fixed-arity wrappers for first-order `Int`, `Nat`, and explicitly
+mapped opaque postulated types. The new session runtime demo connects checked
+roles to Nim adapters; the larger Paxos, borrowing, and optimization examples
+still have separate hand-written drivers.
 See [known limitations](docs/known-limitations.md) for the exact boundary.
 
 ## Why embedded

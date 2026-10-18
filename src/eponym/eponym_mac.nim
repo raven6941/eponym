@@ -528,7 +528,7 @@ proc blockToEponym*(body: NimNode): string =
       elif head == "bindPostulate":
         # Host binding is consumed by eponymBlock after checking its Eponym
         # contract; it is not part of the Eponym source text.
-        if st.len notin {3, 4, 6} or st[1].kind != nnkIdent:
+        if st.len notin {3, 4, 5, 6} or st[1].kind != nnkIdent:
           error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       elif head == "runtimeType":
         # Explicit opaque Nim/Eponym representation mapping, consumed by the
@@ -567,7 +567,7 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
         $st[0] == "bindPostulate":
-      if st.len notin {3, 4, 6} or st[1].kind != nnkIdent:
+      if st.len notin {3, 4, 5, 6} or st[1].kind != nnkIdent:
         error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       let name = $st[1]
       if name in seen:
@@ -590,12 +590,15 @@ proc simpleRuntimeCodec(n: NimNode): string =
     else: result = ""
 
 proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType]): NimNode =
-  if n.kind == nnkIdent:
-    case $n
+  var head = n
+  while head.kind in {nnkCall, nnkCommand, nnkBracketExpr} and head.len > 0:
+    head = head[0]
+  if head.kind == nnkIdent:
+    case $head
     of "Int", "Nat": return ident("int")
     else:
       for mapping in mappings:
-        if mapping.eponymName == $n:
+        if mapping.eponymName == $head:
           return mapping.nimType
   nil
 
@@ -616,8 +619,17 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
   if binding.eponymTypes.len == 0:
     return newCall(bindSym"bindHostIntUnary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
+  var typeIndexes: seq[int] = @[]
+  if binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+    typeIndexes = @[0]
+  elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
+    typeIndexes = @[1]
+  else:
+    for i in 0 ..< binding.eponymTypes.len:
+      typeIndexes.add(i)
   var typeArgs: seq[NimNode] = @[]
-  for eponymName in binding.eponymTypes:
+  for typeIndex in typeIndexes:
+    let eponymName = binding.eponymTypes[typeIndex]
     var nimType: NimNode = nil
     for mapping in mappings:
       if mapping.eponymName == eponymName:
@@ -627,15 +639,29 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       error("bindPostulate for '" & binding.postulateName &
         "' needs runtimeType(" & eponymName & ", NimType)")
     typeArgs.add(nimType)
-  let adapter = if typeArgs.len == 1: bindSym"bindHostOpaqueUnary"
-                else: bindSym"bindHostOpaqueBinary"
+  let adapter =
+    if binding.eponymTypes.len == 1: bindSym"bindHostOpaqueUnary"
+    elif binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+      bindSym"bindHostOpaqueNatUnary"
+    elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
+      bindSym"bindHostNatOpaqueBinary"
+    elif binding.eponymTypes.len == 3: bindSym"bindHostOpaqueBinary"
+    else:
+      error("unsupported bindPostulate codec combination for '" &
+            binding.postulateName & "'")
   var genericAdapter = newNimNode(nnkBracketExpr)
   genericAdapter.add(adapter)
   for typeArg in typeArgs:
     genericAdapter.add(typeArg)
   var call = newCall(genericAdapter, bindingsSym, globalsSym, nameLit)
-  for eponymName in binding.eponymTypes:
-    call.add(newLit(eponymName))
+  if binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+    call.add(newLit(binding.eponymTypes[0]))
+  elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
+    call.add(newLit(binding.eponymTypes[1]))
+    call.add(newLit(binding.eponymTypes[2]))
+  else:
+    for eponymName in binding.eponymTypes:
+      call.add(newLit(eponymName))
   call.add(binding.implementation)
   call
 
@@ -767,13 +793,25 @@ macro eponymBlock*(body: untyped): untyped =
           raise newException(ValueError,
             "postulate '" & binding.postulateName & "' requires opaque Eponym type '" &
             required & "', not '" & binding.eponymTypes[0] & "'")
+      of 2:
+        if binding.eponymTypes[1] != "Nat":
+          raise newException(ValueError,
+            "two-type binding must use an opaque argument and Nat result")
+        validateHostOpaqueNatUnaryType(checkedGlobals, binding.postulateName,
+                                      binding.eponymTypes[0])
       of 3:
-        validateHostOpaqueBinaryType(checkedGlobals, binding.postulateName,
-          binding.eponymTypes[0], binding.eponymTypes[1],
-          binding.eponymTypes[2])
+        if binding.eponymTypes[0] == "Nat":
+          validateHostNatOpaqueBinaryType(checkedGlobals,
+            binding.postulateName, binding.eponymTypes[1],
+            binding.eponymTypes[2])
+        else:
+          validateHostOpaqueBinaryType(checkedGlobals, binding.postulateName,
+            binding.eponymTypes[0], binding.eponymTypes[1],
+            binding.eponymTypes[2])
       else:
         raise newException(ValueError,
-          "bindPostulate supports Int -> Int, opaque T -> T, and opaque A -> B -> C")
+          "bindPostulate supports Int -> Int, opaque T -> T, opaque T -> Nat, " &
+          "Nat -> opaque T -> opaque U, and opaque A -> B -> C")
     except ValueError as e:
       error("eponymBlock binding error: " & e.msg, body)
 
