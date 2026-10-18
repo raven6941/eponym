@@ -78,9 +78,9 @@ For this supported shape, the macro checks that the Eponym postulate is
 `proc(int): int`. The implementation is trusted to honor its contract; Eponym
 does not inspect or verify the Nim procedure body. Top-level, non-generic
 definitions over primitive `Int` and `Nat` generate fixed-arity Nim wrappers;
-`Nat` uses Nim `int` with nonnegative runtime checks. Other Eponym signatures,
-user-defined Nim values, and automatic codecs are not yet supported by
-generated wrappers. A reachable postulate without a
+`Nat` uses Nim `int` with nonnegative runtime checks. Other Eponym signatures
+need an explicit opaque mapping as shown below or an appropriate structural
+codec, which is not yet implemented. A reachable postulate without a
 binding fails when evaluated; diagnostics for missing bindings at expansion
 time are not implemented.
 
@@ -92,7 +92,8 @@ in the postulate contract:
 type ChannelHandle = object
   socketId: int
 
-proc sendMessage(channel: ChannelHandle, message: string): ChannelHandle = ...
+proc sendMessage(channel: ChannelHandle, message: string): ChannelHandle =
+  result = channel
 
 eponymBlock:
   postulate(Channel, Univ)

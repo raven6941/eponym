@@ -35,8 +35,8 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
    imports resolved relative to the calling Nim file's directory, so
    embedded code shares the `lib/*.ep` prelude instead of redefining
    `Nat`/`Vec`/etc. per file. At runtime the generated wrappers
-   re-elaborate through `eponym_embed.callIntFuncDir`, which resolves the
-   same imports.
+   evaluate through `eponym_embed.callValueFuncDir`, which resolves the same
+   imports and caches the runtime terms after first use.
 
 ## Files
 

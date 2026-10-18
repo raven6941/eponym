@@ -4,14 +4,15 @@
 # provides the runtime support for *calling* elaborated definitions from
 # Nim code.
 #
-# Design: the macro currently generates an integer wrapper for each `def`.
-# The lower-level call API accepts and returns ETT Values, allowing typed
-# Nim adapters to grow without limiting the evaluator to primitive Int.
+# Design: the macro generates typed wrappers for primitive Int/Nat and
+# explicitly mapped opaque postulated types. The lower-level call API accepts
+# and returns ETT Values, so host adapters are not limited to primitive Int.
 #
-# The elaborated terms are obtained by re-running the elaborator at
-# runtime on the embedded source (cached after first use). Compile-time
-# elaboration ensures the code is well-typed; runtime elaboration is
-# just for getting the evaluable terms.
+# Compile-time Nim AST/VM objects cannot be retained as runtime Term values;
+# the evaluator also needs runtime closures for checked definitions. The
+# embedded source is therefore checked again on the first runtime call and
+# the resulting terms and globals are cached by source and base directory.
+# Subsequent calls use the cache rather than re-elaborating.
 
 import tables
 import sequtils
@@ -52,8 +53,8 @@ proc getDefs*(src: string): seq[ElabDef] =
 proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
   ## Issue #131: like getDefs, but `import "path.ep"` declarations in `src`
   ## resolve relative to `baseDir` (via elabCheckDir). Used by eponymBlock
-  ## wrappers so runtime re-elaboration sees the same modules the
-  ## compile-time elaboration did.
+  ## wrappers so the one-time runtime elaboration sees the same modules as
+  ## compile-time elaboration.
   let key = cacheKey(baseDir, src)
   if key in defCache:
     return defCache[key].defs

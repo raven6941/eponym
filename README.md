@@ -44,8 +44,8 @@ show a few useful patterns:
   [shed walkthrough](examples/embedded/sheds_walkthrough.nim).
 
 These examples show compile-time checking of Eponym models. The current
-Nim runtime bridge generates fixed-arity wrappers for first-order `Int` and
-`Nat` definitions; protocol
+Nim runtime bridge generates fixed-arity wrappers for first-order `Int`,
+`Nat`, and explicitly mapped opaque postulated types; protocol
 postulates and the hand-written Nim drivers in the session, borrowing, and
 optimization examples are not yet connected to the checked definitions.
 See [known limitations](docs/known-limitations.md) for the exact boundary.
@@ -81,9 +81,10 @@ eponymBlock:
   as Nim, and the elaborator typechecks it at compile time.
 - Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).
 - Two-layer shape: the checked definitions are the proof layer; the
-  surrounding Nim is the running layer. Generated runtime calls currently
-  support primitive `Int` arguments and results; other definitions are
-  checked at compile time but do not yet have typed Nim wrappers.
+  surrounding Nim is the running layer. Generated runtime calls support
+  first-order primitive `Int`/`Nat` and explicitly mapped opaque postulated
+  types; other definitions are checked at compile time but do not yet have
+  typed Nim wrappers.
 - The headline demos in `examples/embedded/` are built this way:
   `paxos_session.nim` (Paxos as dependent session types with
   unforgeable promise tickets), `convex_opt_vec.nim` (DCP-checked

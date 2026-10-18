@@ -111,6 +111,14 @@ when isMainModule:
       "socket:generated"
   let generatedUnaryOpaqueWorks = generatedRotateRole(
     ChannelHandle(id: 18, label: "single")).id == 19
+  let generatedUnaryOpaqueCases = forAll(
+    "generated unary opaque wrappers preserve typed values",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let value = generatedRotateRole(ChannelHandle(id: id, label: "unit"))
+      value.id == id + 1 and value.label == "unit*",
+    shrinkInt)
   let generatedOpaqueWrapperCases = forAll(
     "generated opaque wrappers preserve typed values",
     r, 200,
@@ -128,7 +136,8 @@ when isMainModule:
     rejectedNegativeNat = true
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
-      generatedUnaryOpaqueWorks and generatedOpaqueWrapperCases and
+      generatedUnaryOpaqueWorks and generatedUnaryOpaqueCases and
+      generatedOpaqueWrapperCases and
       rejectedNegativeNat):
     quit(1)
 
