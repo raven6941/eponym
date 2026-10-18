@@ -38,6 +38,23 @@ import mutual_termination  # Issue #42: mutual-block call-graph termination chec
 import elab_prof      # Issue #55: phase timers (zero-cost when -d:elabProfile off)
 import elab_trace     # Issue #83: structured elaboration trace (runtime flag)
 
+# Nimble installs the package prelude under its package root's `lib/`, while
+# this module lives under `src/eponym/`. Deriving the root from this source
+# file also works when the package is installed outside the user's project.
+proc packagePreludeTargets(importPath: string): seq[string] =
+  let packageRoot = parentDir(parentDir(parentDir(currentSourcePath())))
+  result.add(packageRoot / importPath)
+  result.add(packageRoot / "lib" / importPath)
+
+proc resolveImportTarget(importPath, baseDir: string): string =
+  if isAbsolute(importPath):
+    if fileExists(importPath): return importPath
+    return ""
+  let sourceRelative = baseDir / importPath
+  if fileExists(sourceRelative): return sourceRelative
+  for candidate in packagePreludeTargets(importPath):
+    if fileExists(candidate): return candidate
+
 type
   ElabError* = object of CatchableError
     loc*: Loc
@@ -4660,11 +4677,11 @@ proc elabDeclsDirInner(drv: var ModuleDriver, decls: seq[SurfDecl],
   for d in decls:
     try:
       if d.kind == dkImport:
-        let target = if isAbsolute(d.ipath): d.ipath
-                     else: baseDir / d.ipath
-        if not fileExists(target):
+        let target = resolveImportTarget(d.ipath, baseDir)
+        if target.len == 0:
           raise elabErr(d.iloc, "import \"" & d.ipath & "\": file not found " &
-            "(resolved to '" & target & "', imported from '" & srcLabel & "')")
+            "(searched source-relative and package prelude paths, imported from '" &
+            srcLabel & "')")
         discard drv.elabFile(target, d.iloc)
       else:
         let eds = elabDecl(d, drv.globals, drv.supply, drv.ms, drv.dataInfos)

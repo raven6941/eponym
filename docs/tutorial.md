@@ -22,18 +22,17 @@ nimble install
 
 This installs the elaborator modules and the Eponym prelude (`lib/*.ep`:
 `Nat`, `Vec`, `Eq`, lists, …) into the nimble package directory. Set up
-a project like this:
+a project like this; the prelude directory is optional:
 
 ```
 myproject/
   hello.nim
-  lib/            <- copy the prelude files you need here,
-                     from ~/.nimble/pkgs2/eponym-*/lib/
 ```
 
-`import "x.ep"` inside an `eponymBlock` resolves relative to the Nim file
-containing the block, so you vendor the prelude files your project uses
-next to it.
+Relative `import "x.ep"` paths resolve first beside the Nim file containing
+the block, then from the installed package's `lib/` directory. A project-local
+file with the same relative path takes precedence. Use an absolute path when
+you need to select a specific external `.ep` file.
 
 ## 2. Hello, checked world
 
@@ -101,7 +100,7 @@ is vectors indexed by their length: `Vec(A, n)` is the type of vectors
 with elements in `A` and length exactly `n`. It lives in the prelude —
 no need to define it yourself.
 
-`vecs.nim` (with `lib/vec.ep` and `lib/nat.ep` vendored under `lib/`):
+`vecs.nim` (using the installed package prelude fallback):
 
 ```nim
 import eponym_mac

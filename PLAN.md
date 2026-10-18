@@ -505,10 +505,12 @@ implementations.
    binders (`A`, indices such as `n`), parentheses for term arguments, and
    braces for implicit binders. Preserve a migration path from call-style
    forms such as `cons(A, n, x, xs)` and `Vec(A, n)`.
-- [ ] Make installed preludes discoverable by the package without requiring
-   users to copy `.ep` files beside every source file; define deterministic
-   resolution order (source-relative, package prelude, explicit override)
-   and keep standalone file behavior reproducible.
+- [x] Resolve relative `.ep` imports source-relative first, then from the
+  installed package's `lib/` directory. Absolute paths remain explicit
+  overrides; a prelude-resolution test checks nested imports without vendoring.
+- [x] Verify the resolution contract against a clean package-shaped install
+  from a separate working directory; document the path order and absolute
+  override behavior.
 - [ ] Revisit the first-use time estimate after installation and editor setup
    are streamlined.
 

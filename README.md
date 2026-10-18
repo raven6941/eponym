@@ -122,11 +122,12 @@ eponymBlock:
   ...
 ```
 
-`import "x.ep"` inside `eponymBlock` resolves relative to the Nim file
-containing the block, so vendor the prelude files you need next to your
-project — copy them from the installed package's `lib/` directory
-(`~/.nimble/pkgs2/eponym-*/lib/`). See `examples/embedded/` for complete
-examples of ordinary Nim programs using Eponym-checked definitions.
+Relative `import "x.ep"` paths first resolve beside the Nim file containing
+the block, then fall back to the installed package's `lib/` directory. You
+can use a project-local `.ep` file to override a prelude by keeping the same
+relative path, or use an absolute import path for an explicit location. See
+`examples/embedded/` for complete examples of ordinary Nim programs using
+Eponym-checked definitions.
 
 Note: on first install nimble may prompt about a package-list download or
 about `src/eponym/lib` — answer yes / continue; the prelude is installed

@@ -50,7 +50,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `left + right`, `left - right`, `left * right`, `-value` | Lowered to checked Eponym `Int` primitives; the Eponym checker enforces operand types |
 | `if condition: yes else: no` | One-condition pure expression lowered through `ifThenElse` from `lib/bool.ep`; import that file, use a `Bool` condition, and provide one expression per branch |
 | `addInt(x, y)`, `suc(n)`, `f x`, `lam(x, T, body)` | Eponym applications and lambda forms, translated by the macro |
-| `import "lib/nat.ep"` | Eponym module import, not a Nim module import |
+| `import "nat.ep"` | Eponym module import; relative to the source file first, then the installed package prelude. Absolute paths select an explicit file. |
 | `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported shapes are listed in [known limitations](known-limitations.md) |
 | `echo`, `for`, `var`, chained `elif`, Nim library calls | Not supported as host Nim statements/expressions in the block |
 

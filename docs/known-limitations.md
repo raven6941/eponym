@@ -153,10 +153,10 @@ buffer driver is hand-written to mirror the checked sequence.
 
 ## First-use setup
 
-The tutorial's short completion estimate covers the Eponym concepts, but a
-new project currently has to vendor the `.ep` prelude files beside the Nim
-source. A released nimble package does not yet make those Eponym imports
-resolve automatically from the installed package. See
+Relative prelude imports now fall back to the installed package's `lib/`
+directory after checking beside the importing Nim source. Project-local
+preludes can override the package copy, and absolute paths select a specific
+file. Clean-install resolution is covered by a separate-project test. See
 [installation](../README.md#installation).
 
 ## Surface syntax

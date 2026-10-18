@@ -19,10 +19,9 @@ requires "falsify >= 0.1.0"  # property-based testing for tests/pbt_*.nim
 # explicitly (tools/ci-local.sh, .github/workflows/ci.yml) via
 # `nimble install -y https://github.com/raven6941/falsify`.
 
-# The Eponym prelude (lib/*.ep) ships with the package. `import "x.ep"`
-# inside eponymBlock resolves relative to the calling Nim file, so users
-# vendor the prelude files they need next to their project; see README
-# "Installation". installDirs is package-root-relative: nimble first probes
+# The Eponym prelude (lib/*.ep) ships with the package. Relative imports
+# resolve beside the calling Nim file first and then fall back to this
+# installed `lib/` directory. installDirs is package-root-relative: nimble first probes
 # srcDir-relative (spurious "Missing directory src/eponym/lib" prompt,
 # auto-answered by --accept / interactive "Continue?"), then falls back to
 # the package root and copies correctly. "../../lib" installs nothing
