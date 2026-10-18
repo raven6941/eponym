@@ -314,10 +314,11 @@ implementations.
    a matching explicit Nim `proc` declaration still retain the legacy
    `varargs[int]` compatibility wrapper; explicit `proc` declarations with
    unsupported signatures fail clearly when called.
-- [ ] Validate the supported Eponym type shape and Nim adapter signature during
-   macro expansion/compilation. Reject unsupported conversions with an
-   error naming the Eponym binder and Nim type; never fall back to unchecked
-   casts or late `ValueError`s for signature mismatches.
+- [x] Validate each currently supported Eponym adapter shape during macro
+   expansion and the concrete Nim adapter signature during compilation.
+   Unsupported generated wrapper shapes produce a compile-time diagnostic;
+   no unchecked cast is used for a signature mismatch. Generic and structural
+   codecs remain part of the preceding open item.
 - [x] For explicit `proc` declarations with no runtime codec, emit a
    compile-time error template naming the unsupported Eponym result or
    parameter type instead of silently generating a `varargs[int]` wrapper.
