@@ -348,7 +348,7 @@ implementations.
 - [x] Add explicit `bindPostulate(name, nimProc)` syntax for a declared
    postulate and Nim proc. Generated-wrapper bindings support unary
    `Int -> Int`, unary opaque `T -> T` / `T -> Nat`, mixed
-   `Nat -> T -> U`, unary opaque `A -> B`, curried binary opaque
+   `Nat -> A -> B`, unary opaque `A -> B`, curried binary opaque
    `A -> B -> C`, and curried ternary opaque `A -> B -> C -> D`; longer
    signatures remain unsupported.
 - [x] Use an explicit runtime binding environment keyed by
@@ -409,9 +409,9 @@ implementations.
    Nim checks adapter and generated wrapper signatures, and compile-fail
    coverage rejects a mismatched callback type.
 - [x] Add mixed primitive/opaque adapters for `opaque -> Nat` and
-   `Nat -> opaque -> opaque` postulates. The end-to-end session example uses
-   these to pass a Nat payload through a checked send role and receive it
-   through a checked receive role.
+  `Nat -> A -> B` postulates, including different Nim types for the opaque
+  argument and result. The in-memory session passes a Nat payload through a
+  checked send/receive pair; the TCP session returns a mapped result value.
 - [x] Add a message codec and use an opaque handle to bind protocol operations
    through Nim adapters. The indexed session demo encodes Nat payloads as
    canonical unsigned LEB128 bytes outside Eponym and runs checked sender and
@@ -434,10 +434,11 @@ implementations.
 - [ ] Replace the hand-mirrored `runPaxosRound` sequence with calls to the
    checked `proposer` and `acceptor` roles through bound mailbox operations.
 - [x] Provide a `std/net` loopback TCP adapter using the checked sender and
-  receiver roles, with message encoding/decoding outside Eponym. Runtime
-  failures currently propagate as Nim exceptions.
-- [ ] Represent transport and serialization failures in an explicit Nim
-  result type; exception propagation is the current synchronous behavior.
+  receiver roles, with message encoding/decoding outside Eponym. The checked
+  wrappers return explicitly mapped outcomes.
+- [x] Represent transport and serialization failures in explicit Nim result
+  values. The loopback integration test checks success, peer closure, and a
+  malformed Nat frame through the checked receiver role.
 - [ ] Make the buffer/borrow example route through bound postulates, and label
    what the linear checker establishes versus what the Nim buffer adapter
    must uphold.

@@ -641,7 +641,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
   elif binding.eponymTypes.len == 2:
     typeIndexes = @[0, 1]
   elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
-    typeIndexes = @[1]
+    typeIndexes = @[1, 2]
   else:
     for i in 0 ..< binding.eponymTypes.len:
       typeIndexes.add(i)
@@ -663,7 +663,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       bindSym"bindHostOpaqueNatUnary"
     elif binding.eponymTypes.len == 2: bindSym"bindHostOpaqueMapUnary"
     elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
-      bindSym"bindHostNatOpaqueBinary"
+      bindSym"bindHostNatOpaqueMapBinary"
     elif binding.eponymTypes.len == 3: bindSym"bindHostOpaqueBinary"
     elif binding.eponymTypes.len == 4: bindSym"bindHostOpaqueTernary"
     else:

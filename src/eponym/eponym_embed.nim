@@ -28,6 +28,8 @@ proc hostOpaqueTernary*[A, B, C, D](
   implementation: proc(x: A, y: B, z: C): D): Value
 proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value
 proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value
+proc hostNatOpaqueMapBinary*[A, B](
+  implementation: proc(n: int, x: A): B): Value
 
 # Cache: (baseDir, source) key -> checked module state. Retaining globals is
 # required for runtime postulate bindings to use the identities assigned by
@@ -257,6 +259,15 @@ proc bindHostNatOpaqueBinary*[T](bindings: var RuntimeBindings,
   bindHostValue(bindings, globals, postulateName,
                 hostNatOpaqueBinary[T](implementation))
 
+proc bindHostNatOpaqueMapBinary*[A, B](bindings: var RuntimeBindings,
+    globals: Globals, postulateName, opaqueArgType,
+    opaqueResultType: string, implementation: proc(n: int, x: A): B) =
+  ## Bind `Nat -> A -> B` where A and B are distinct opaque Nim mappings.
+  validateHostNatOpaqueBinaryType(globals, postulateName, opaqueArgType,
+                                  opaqueResultType)
+  bindHostValue(bindings, globals, postulateName,
+                hostNatOpaqueMapBinary[A, B](implementation))
+
 proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int =
   validateHostOpaqueType(globals, typeName)
   let entry = globals[typeName]
@@ -449,6 +460,14 @@ proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value =
     vHostFunc(proc(opaqueValue: Value): Value =
       toHostValue(implementation(valueToNat(natValue),
                                  valueToHost[T](opaqueValue)))))
+
+proc hostNatOpaqueMapBinary*[A, B](
+    implementation: proc(n: int, x: A): B): Value =
+  ## Adapt a Nat and opaque argument to a potentially different opaque result.
+  vHostFunc(proc(natValue: Value): Value =
+    vHostFunc(proc(opaqueValue: Value): Value =
+      toHostValue(implementation(valueToNat(natValue),
+                                 valueToHost[A](opaqueValue)))))
 
 proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
                                bindings: RuntimeBindings): Value =

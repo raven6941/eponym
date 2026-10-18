@@ -32,7 +32,8 @@ show a few useful patterns:
   [`session_runtime_bindings.nim`](examples/embedded/session_runtime_bindings.nim)
   demo also runs checked sender/receiver roles through Nim channel adapters
   with a small Nat message codec. [`session_tcp_bindings.nim`](examples/embedded/session_tcp_bindings.nim)
-  applies the same roles and codec to a loopback TCP socket.
+  applies the same roles and codec to a loopback TCP socket, returning
+  transport and codec failures as explicit result values.
 - **Dimensions and shapes** — index vectors and matrices by their dimensions
   so operations like dot product and matrix-vector multiplication require
   compatible sizes. See [`convex_opt_vec.nim`](examples/embedded/convex_opt_vec.nim).
