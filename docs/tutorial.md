@@ -85,6 +85,21 @@ What just happened:
   and the [postulate binding experiment](postulate-nim-binding-experiment.md)
   for the path toward callable Nim-backed operations.
 
+A small structural codec also maps non-dependent `Sig(A, B)` values to Nim
+two-element tuples. Primitive fields use the `Int`/`Nat` codecs; opaque fields
+use their declared `runtimeType` mappings. For example:
+
+```nim
+eponymBlock:
+  import "lib/nat.ep"
+  postulate(Int, Univ)
+  proc keepPair(value: Sig(Nat, Int)): Sig(Nat, Int) = value
+
+doAssert keepPair((3, -4)) == (3, -4)
+```
+
+Dependent pairs and named records still need explicit structural codecs.
+
 Now break it. Change the body to `addInt(x, y)` and recompile:
 
 ```

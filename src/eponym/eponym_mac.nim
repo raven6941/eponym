@@ -694,7 +694,29 @@ proc simpleRuntimeCodec(n: NimNode): string =
     of "Nat": result = "nat"
     else: result = ""
 
+proc runtimeSigmaComponents(n: NimNode): tuple[first, second: NimNode] =
+  ## Runtime tuples represent only non-dependent two-field Sig types. Reject
+  ## dependent tails rather than erasing the first component from their type.
+  if n.kind != nnkCall or n.len != 3 or n[0].kind != nnkIdent or
+      $n[0] != "Sig":
+    return
+  if n[1].kind == nnkExprColonExpr:
+    if n[1].len != 2 or n[1][0].kind != nnkIdent or
+        mentionsName(n[2], $n[1][0]):
+      return
+    return (n[1][1], n[2])
+  (n[1], n[2])
+
 proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType]): NimNode =
+  let sigma = runtimeSigmaComponents(n)
+  if not sigma.first.isNil:
+    let first = runtimeNimType(sigma.first, mappings)
+    let second = runtimeNimType(sigma.second, mappings)
+    if first.isNil or second.isNil: return nil
+    result = newNimNode(nnkTupleConstr)
+    result.add(first)
+    result.add(second)
+    return
   var head = n
   while head.kind in {nnkCall, nnkCommand, nnkBracketExpr} and head.len > 0:
     head = head[0]
@@ -715,8 +737,36 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
   if simpleRuntimeCodec(eponymType) == "nat":
     if toValue: return bindSym"natToValue"
     return bindSym"valueToNat"
+  if eponymType.kind == nnkCall and eponymType.len == 3 and
+      eponymType[0].kind == nnkIdent and $eponymType[0] == "Sig":
+    return nil # handled structurally by runtimeValueConversionExpr
   let generic = if toValue: bindSym"toHostValue" else: bindSym"valueToHost"
   newTree(nnkBracketExpr, generic, nimType)
+
+proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
+                               toValue: bool): NimNode =
+  let sigma = runtimeSigmaComponents(eponymType)
+  if not sigma.first.isNil:
+    if nimType.kind notin {nnkTupleConstr, nnkTupleTy} or nimType.len != 2:
+      return nil
+    if toValue:
+      let first = runtimeValueConversionExpr(sigma.first, nimType[0],
+        newTree(nnkBracketExpr, value, newLit(0)), true)
+      let second = runtimeValueConversionExpr(sigma.second, nimType[1],
+        newTree(nnkBracketExpr, value, newLit(1)), true)
+      if first.isNil or second.isNil: return nil
+      return newCall(bindSym"pairValue", first, second)
+    let firstValue = newCall(bindSym"whnfFst", value)
+    let secondValue = newCall(bindSym"whnfSnd", value)
+    let first = runtimeValueConversionExpr(sigma.first, nimType[0],
+      firstValue, false)
+    let second = runtimeValueConversionExpr(sigma.second, nimType[1],
+      secondValue, false)
+    if first.isNil or second.isNil: return nil
+    return newTree(nnkTupleConstr, first, second)
+  let valueFn = runtimeValueConverter(eponymType, nimType, toValue)
+  if valueFn.isNil: return nil
+  newCall(valueFn, value)
 
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
                  mappings: seq[HostRuntimeType]): NimNode =
@@ -852,17 +902,16 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
 
   var values = newNimNode(nnkBracket)
   for i, argSym in argSyms:
-    let valueConverter = runtimeValueConverter(argEponymTypes[i],
-                                               argNimTypes[i], true)
-    values.add(newCall(valueConverter, argSym))
+    values.add(runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i],
+      argSym, true))
   let valuesSeq = newTree(nnkPrefix, ident("@"), values)
   var callArgs = @[dirLit, srcLit, nameLit, valuesSeq]
   if not bindingSym.isNil: callArgs.add(bindingSym)
   let runtimeValue = genSym(nskLet, "runtimeValue")
   wrapperBody.add(newLetStmt(runtimeValue,
     newCall(bindSym"callValueFuncDir", callArgs)))
-  let resultConverter = runtimeValueConverter(params[0], resultType, false)
-  wrapperBody.add(newCall(resultConverter, runtimeValue))
+  wrapperBody.add(runtimeValueConversionExpr(params[0], resultType,
+    runtimeValue, false))
 
   result = newNimNode(nnkProcDef)
   result.add(newTree(nnkPostfix, ident("*"), ident(defName)))

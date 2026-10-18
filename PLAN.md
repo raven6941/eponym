@@ -268,7 +268,9 @@ implementations.
    evaluation. Separate structural codecs (which translate data that
    Eponym inspects) from opaque handles (which Eponym only passes to a
    postulate and receives back). The current opaque mappings are restricted to
-   named postulated Eponym types; structural codecs remain future work.
+   named postulated Eponym types. The structural runtime codec is currently
+   limited to non-dependent two-field Sigma tuples; records and dependent
+   structures remain future work.
 - [x] Specify supported ownership, aliasing, exception, async, and lifetime
    behavior. QTT linearity is limited to checked Eponym terms; boxed Nim refs
    and closures may alias or be retained. Adapters pass values by value, have
@@ -308,6 +310,11 @@ implementations.
    Mappings are accepted only for named postulated types/families, never
    transparent data definitions. Coverage includes a generated
    `proc(ChannelHandle, string): ChannelHandle` role with 200 property cases.
+- [x] Add structural codecs for non-dependent `Sig(A, B)` values as nested
+   runtime pairs and Nim two-element tuples. Recursively support primitive
+   `Int`/`Nat` and explicitly mapped opaque leaves; 200-case properties cover
+   primitive and opaque pair fields. Dependent pairs and named records remain
+   unsupported and fail wrapper generation rather than losing indices.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
    signatures, and generic or higher-order definitions. Definitions without
@@ -333,8 +340,9 @@ implementations.
 - [x] Document which runtime forms are genuinely represented (first-order data,
    closures, records, dependent pairs, opaque handles) instead of implying
    that one `Value` escape hatch makes all Nim types callable. The low-level
-   bridge now represents primitive Int/Nat, evaluator closures, and opaque
-   boxed Nim values; records and dependent pairs still lack Nim codecs and
+   bridge now represents primitive Int/Nat, evaluator closures, opaque boxed
+   Nim values, and non-dependent Sigma tuples; records and dependent pairs
+   still lack Nim codecs and
    generated typed wrappers. The remaining implementation is tracked in the
    preceding ABI/codec items.
 

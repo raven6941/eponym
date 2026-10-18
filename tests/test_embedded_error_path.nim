@@ -63,6 +63,8 @@ for (path, expected) in [
      "eponymBlock runtimeType error"),
     ("tests/fixtures/embedded_err_unsupported_runtime_type.nim",
      "no runtime codec for Eponym result type 'Thing'"),
+    ("tests/fixtures/embedded_err_dependent_sigma_runtime.nim",
+     "no runtime codec for Eponym result type 'Sig(n: Nat, Vec[Nat, n])'"),
     ("tests/fixtures/embedded_err_binding_unused.nim",
      "binding for postulate 'hostStepPostulate' is unused"),
     ("tests/fixtures/embedded_err_binding_duplicate.nim",

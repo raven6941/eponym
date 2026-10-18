@@ -119,8 +119,14 @@ follows a protocol. `runtimeType` mappings must name postulated Eponym types or
 indexed type families. Opaque bindings support `T -> T`, `T -> U`, `T -> Nat`,
 `Nat -> T -> U`, and curried opaque contracts with up to four arguments when
 every opaque type is explicitly mapped. These shapes cover resource handles
-with primitive message values. Structured values, dependent signatures, and
-longer callbacks still need explicit codec and adapter support.
+with primitive message values. Other structured values, dependent signatures,
+and longer callbacks still need explicit codec and adapter support.
+
+First-order wrappers also support non-dependent `Sig(A, B)` values as
+two-element Nim tuples, recursively using primitive `Int`/`Nat` codecs and
+explicitly mapped opaque leaves. For example, `Sig(Nat, Int)` maps to
+`(int, int)`. Dependent `Sig` values and named Eponym records do not yet have
+generated structural codecs.
 
 ## Sheds: `shedsBlock` (hole-driven development)
 
