@@ -339,6 +339,11 @@ implementations.
    the concrete mapped argument types; the result remains a runtime `Value`,
    and correspondence between mapped host values and dependent indices is
    trusted. Logistic regression exercises indexed matrix/vector inputs.
+- [x] Add a `Bool`/Nim `bool` codec backed by the checked `true` and `false`
+   constructors from `bool.ep`. Generated wrappers compute checked Bool
+   definitions and round-trip both constructor cases in a 200-case property;
+   runtime missing-postulate diagnostics recognize data constructors as valid
+   results.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
    signatures, and generic or higher-order definitions. Definitions without

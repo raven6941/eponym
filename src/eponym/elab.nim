@@ -116,6 +116,7 @@ type
     ty*: Term                     # elaborated + zonked type, for implicits
     isElim*: bool                 # Experiment 4: declared with 'elim'
     elimNargs*: int               # Experiment 4: eliminator arity (incl. scrutinee)
+    isDataConstructor*: bool     # constructed data values are valid runtime results
     peg*: Ability                # Issue #177: the signature's peg ([?aN]
                                  # freshened per signature, generalized;
                                  # nil for interface markers)
@@ -2906,6 +2907,7 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
         var fullTele = d.params & ctor.tele
         elabPostulateDecl(ctor.name, mkPis(fullTele, ctor.retTy, ctor.cloc),
                           ctor.cloc, globals, supply, ms, false)
+        globals[ctor.name].isDataConstructor = true
       # eliminator
       let elimName = elimNameFor(d.dname)
       let (elimTy, methodNames) = genElimTy(d, loc)

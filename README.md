@@ -91,7 +91,8 @@ eponymBlock:
 - Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).
 - Two-layer shape: the checked definitions are the proof layer; the
   surrounding Nim is the running layer. Generated runtime calls support
-  primitive `Int`/`Nat`, non-dependent `Sig` values as Nim tuples, non-dependent
+  primitive `Int`/`Nat`, `Bool` (when `bool.ep` is imported), non-dependent
+  `Sig` values as Nim tuples, non-dependent
   named records as mapped Nim objects, and explicitly mapped opaque postulated
   types; dependent structures and other unsupported definitions are checked
   at compile time but do not yet have typed Nim wrappers.

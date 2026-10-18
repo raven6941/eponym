@@ -149,9 +149,16 @@ eponymBlock:
   proc runtimeResult(): Int = hostPlusSeven(35)
   runtimeValue(runtimeResult)
 
+eponymBlock:
+  import "../lib/bool.ep"
+  proc generatedBoolNot(value: Bool): Bool =
+    if value: false else: true
+
 static:
   doAssert compiles(sampleTreeWithRuntimeValue(2))
   doAssert not compiles(sampleTreeWithRuntimeValue("not a Nat"))
+  doAssert compiles(generatedBoolNot(true))
+  doAssert not compiles(generatedBoolNot(1))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -588,6 +595,13 @@ proc callbackRole : Callback -> Sample -> Sample =
       valueToInt(value) == hostStepNim(n),
     shrinkInt)
   if not hostDispatch:
+    quit(1)
+
+  let boolCodecCases = forAll("generated Bool wrappers preserve constructors",
+    r, 200,
+    proc(r: var Rng): bool = r.genBool(),
+    proc(value: bool): bool = generatedBoolNot(value) == not value)
+  if not boolCodecCases:
     quit(1)
 
   var opaqueBindings = initRuntimeBindings()
