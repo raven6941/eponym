@@ -39,9 +39,11 @@ User code is ordinary Nim. Eponym surface syntax appears inside a macro;
 the macro elaborates it at compile time and splices ordinary Nim code
 back. The target is for proof terms and static evidence to have no runtime
 cost, with runtime values crossing an explicit typed boundary. Current
-implementation is narrower: `eponymBlock` emits `varargs[int] -> int`
-wrappers, and runtime calls re-elaborate/cache the block before evaluating
-the requested definition. External postulates are not callable from Nim.
+wrappers support first-order `Int`/`Nat` and explicitly mapped opaque
+postulated types; unsupported signatures retain the legacy
+`varargs[int] -> int` wrapper. The first runtime call re-elaborates the block
+and caches its checked terms and globals for subsequent calls. External
+postulates can be bound for unary Int, unary opaque, and binary opaque shapes.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -260,20 +262,21 @@ implementations.
 
 #### A. Specify and freeze the host boundary
 
-- [ ] Define an adapter/codec contract for values entering and leaving Eponym
+- [x] Define an adapter/codec contract for values entering and leaving Eponym
    evaluation. Separate structural codecs (which translate data that
    Eponym inspects) from opaque handles (which Eponym only passes to a
-   postulate and receives back).
+   postulate and receives back). The current opaque mappings are restricted to
+   named postulated Eponym types; structural codecs remain future work.
 - [ ] Specify supported ownership, aliasing, exception, async, and lifetime
    behavior. In particular, decide how a QTT linear channel relates to a
    Nim `ref`, `var`, or closure that may be aliased.
-- [ ] Keep this contract independent of a particular TCP library. A user or
+- [x] Keep this contract independent of a particular TCP library. A user or
    library author writes a narrow adapter over `std/net`, `asyncnet`, or
    another backend.
 
 **Exit criteria:**
 
-- [ ] The docs distinguish the Eponym guarantee, Nim signature check, codec
+- [x] The docs distinguish the Eponym guarantee, Nim signature check, codec
   behavior, and trusted host semantics; a reviewer can tell what an opaque
   handle does and does not prove.
 
@@ -309,10 +312,12 @@ implementations.
    macro expansion/compilation. Reject unsupported conversions with an
    error naming the Eponym binder and Nim type; never fall back to unchecked
    casts or late `ValueError`s for signature mismatches.
-- [ ] Remove runtime source re-elaboration from the normal generated-call path:
-   emit or register the checked core term and required static environment at
-   compile time, or demonstrate why a cache is necessary and keep it outside
-   the per-call path.
+- [x] Keep runtime source re-elaboration outside the per-call path. The Nim
+   macro VM's checked `Term`/`Value` objects contain runtime closures and
+   cannot be retained directly as executable runtime values; the first call
+   therefore re-elaborates, then `eponym_embed` caches terms and globals by
+   base directory and source. Subsequent calls use the cache. Property tests
+   verify cached globals retain the checked postulate identities.
 - [x] Document which runtime forms are genuinely represented (first-order data,
    closures, records, dependent pairs, opaque handles) instead of implying
    that one `Value` escape hatch makes all Nim types callable. The low-level

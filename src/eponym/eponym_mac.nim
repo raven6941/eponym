@@ -731,8 +731,9 @@ macro eponymBlock*(body: untyped): untyped =
   ## `x {.qvar(q).}` (Issue #151): quantity-variable binder `(q x : T)`.
   ## Nim-safe name mappings: `vecnil` -> `nil`, `unitv` -> `<>`,
   ## `unitTy` -> `1` (unit type), `emptyTy` -> `O` (empty type).
-  ## Generates wrapper procs (each `def : Int -> ... -> Int` becomes a
-  ## callable Nim proc via eponym_embed.callIntFuncDir).
+  ## Generates callable fixed-arity wrappers for primitive Int/Nat and
+  ## explicitly mapped opaque postulated types. Unsupported legacy shapes
+  ## retain the varargs[int] compatibility wrapper.
   let src = blockToEponym(body)
   # Issue #131: imports resolve relative to the calling Nim file's dir.
   let baseDir = callerDir(body)

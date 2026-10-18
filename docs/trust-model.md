@@ -172,8 +172,9 @@ time.
   evidence; machine `Int` and its primops (`tPrim`) are kernel axioms — the
   kernel trusts that the Nim host's binary `Int` operations are what they
   claim to be. If the host lies, every proof that touches `Int` lies too.
-- **Runtime re-elaboration.** The wrappers re-run the elaborator at runtime
-  (cached; eponym_embed.nim) only to obtain evaluable terms — compile-time
+- **Runtime re-elaboration.** The first wrapper call re-runs the elaborator
+  (cached by source and base directory; `eponym_embed.nim`) to obtain terms
+  with runtime closures. Subsequent calls use the cache. Compile-time
   elaboration is the checking. A definition whose runtime re-elaboration
   fails was still checked at compile time; the runtime path cannot introduce
   an unchecked term.

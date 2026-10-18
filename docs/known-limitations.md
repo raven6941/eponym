@@ -30,21 +30,20 @@ mapped Eponym types without exposing their representation. `eponymBlock` can
 generate typed wrappers for first-order definitions over mapped opaque types
 that correspond to named Eponym postulates. Tests exercise user-defined values
 through checked definitions and generated wrappers. This does not yet provide
-generated typed wrappers for arbitrary values,
-structural codecs for records or collections, callbacks of other shapes,
-closures as exported values, async results, or socket/channel protocols.
+structural codecs for records or collections, callback shapes with more than
+two curried opaque arguments, closures as exported values, async results, or
+socket/channel protocols.
 Nim's type checker checks the concrete adapter signature, but the mapping to
 the Eponym type and the adapter behavior remain trusted. Neither compiler
 proves that the host value satisfies a dependent index.
 
 This is an ABI/runtime limitation, not an elaborator restriction. The
-`eponymBlock` macro now supports `bindPostulate(name, nimProc)` for a unary
-`Int -> Int` postulate backed by a Nim `proc(int): int`. It verifies the
-Eponym contract during macro expansion, lets Nim check the implementation
-signature, and dispatches through imported checked definitions. The low-level
-API also supports opaque boxed Nim payloads with an explicit mapping to a
-named Eponym type. Other callback shapes, generated typed wrappers for such
-values, structural codecs, and explicit missing-binding diagnostics are still
+`eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
+opaque `T -> T`, and curried binary opaque `A -> B -> C` postulates. Opaque
+bindings require explicit `runtimeType(EponymType, NimType)` mappings to
+postulated Eponym types. Nim checks adapter and generated wrapper signatures;
+the implementation and mapping remain trusted. Longer callback shapes,
+structural codecs, and explicit missing-binding diagnostics are still
 unsupported. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the
 supported prototype and remaining work.
