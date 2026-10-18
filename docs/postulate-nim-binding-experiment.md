@@ -58,10 +58,10 @@ bindings.bindHostIntUnary(globals, "hostStep", hostStepNim)
 let result = callValueFuncDir(baseDir, source, "checkedRole", args, bindings)
 ```
 
-This is a runtime API, not yet a declaration accepted inside `eponymBlock`.
-Property tests exercise direct and imported checked definitions, multiple
-independent binding environments, incompatible Nim proc types, mismatched
-Eponym postulate shapes, and duplicate bindings.
+The low-level API is also available directly to callers. Property tests
+exercise direct and imported checked definitions, multiple independent
+binding environments, incompatible Nim proc types, mismatched Eponym
+postulate shapes, and duplicate bindings.
 
 For opaque Nim values, pair `toHostValue` / `valueToHost[T]` with a typed
 adapter. Unary `bindHostOpaqueUnary[T]` handles `E -> E`; the low-level
@@ -76,10 +76,11 @@ let result = callValueFuncDir(baseDir, source, "checkedRole",
 let channelAfter = valueToHost[ChannelHandle](result)
 ```
 
-This passes an opaque payload unchanged through the checked definition and
-back to Nim. Eponym cannot inspect the payload or establish that it obeys a
-dependent index. The mapping and callback behavior are trusted. This API does
-not yet generate a typed Nim wrapper; callers use the low-level Value API.
+This passes an opaque payload through the checked definition and back to Nim.
+Eponym cannot inspect the payload or establish that it obeys a dependent
+index. The mapping and callback behavior are trusted. `eponymBlock` also
+accepts these mappings through `runtimeType(EponymType, NimType)` and can
+generate typed wrappers for supported first-order definitions.
 
 The binary form takes explicit mappings for both arguments and the result:
 
@@ -90,17 +91,16 @@ bindHostOpaqueBinary[ChannelHandle, string, ChannelHandle](bindings, globals,
 
 It checks the curried Eponym signature and lets Nim check the callback's
 concrete `proc(ChannelHandle, string): ChannelHandle` type. Runtime property
-coverage sends generated handle/message pairs through an imported checked
-role and receives the callback result. This is a low-level binding API; the
-`eponymBlock` syntax and generated wrappers remain limited to the documented
-forms.
+coverage sends generated handle/message pairs through checked roles and
+receives the callback result. The generated wrapper and binding support is
+limited to these documented first-order forms.
 
 Generated `eponymBlock` wrappers support first-order primitive `Int` and
-`Nat` signatures, while other shapes retain the compatibility
-`varargs[int] -> int` ABI. `bindPostulate` syntax currently accepts only unary
-`Int -> Int` postulates; opaque and multi-argument adapters are available only
-through the low-level API. Async results, structural codecs, and
-missing-binding checks before invocation remain unsupported.
+`Nat` signatures and explicitly mapped opaque types. `bindPostulate` supports
+unary `Int -> Int`, unary opaque `T -> T`, and curried binary opaque
+`A -> B -> C` postulates. Longer callback signatures, async results,
+structural codecs, and missing-binding checks before invocation remain
+unsupported.
 
 ## Suggested first vertical slice
 

@@ -129,15 +129,22 @@ proc validateHostOpaqueUnaryType*(globals: Globals,
     "opaque adapter type for postulate '" & postulateName &
     "' must be a named postulated type")
 
-proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int =
+proc validateHostOpaqueType*(globals: Globals, typeName: string) =
+  ## Ensure an explicit runtimeType mapping refers to an opaque postulated
+  ## type, not an Eponym data type whose structure could be inspected.
   if typeName notin globals:
     raise newException(ValueError,
-      "opaque adapter type '" & typeName & "' is not declared for postulate '" &
-      postulateName & "'")
+      "opaque runtime type '" & typeName & "' is not declared")
   let entry = globals[typeName]
-  if entry.tm.isNil or entry.tm.kind != tR or entry.ty.kind != tType:
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn or
+      entry.ty.kind != tType:
     raise newException(ValueError,
-      "opaque adapter mapping '" & typeName & "' must name a postulated type")
+      "opaque runtime type mapping '" & typeName &
+      "' must name a postulated type")
+
+proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int =
+  validateHostOpaqueType(globals, typeName)
+  let entry = globals[typeName]
   entry.tm.refId
 
 proc validateHostOpaqueBinaryType*(globals: Globals, postulateName,

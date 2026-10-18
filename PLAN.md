@@ -296,6 +296,10 @@ implementations.
    primitive `Int` and `Nat`. Tests cover runtime calls and reject missing,
    extra, and wrong-kind Nim arguments. `Nat` uses Nim `int` with a checked
    nonnegative conversion.
+- [x] Generate typed wrappers for explicitly mapped opaque Eponym postulates
+   using `runtimeType(EponymType, NimType)`. Mappings are accepted only for
+   named postulated Eponym types. Coverage includes a generated
+   `proc(ChannelHandle, string): ChannelHandle` role with 200 property cases.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
    signatures, and generic or higher-order definitions. Unsupported shapes
@@ -327,8 +331,9 @@ implementations.
 #### C. Bind postulates to Nim procedures
 
 - [x] Add explicit `bindPostulate(name, nimProc)` syntax for a declared
-   postulate and Nim proc. Current generated-wrapper support is limited to
-   unary `Int -> Int`; arbitrary callbacks and value shapes remain below.
+   postulate and Nim proc. Generated-wrapper bindings support unary
+   `Int -> Int`, unary opaque `T -> T`, and curried binary opaque `A -> B -> C`;
+   longer signatures remain unsupported.
 - [x] Use an explicit runtime binding environment keyed by
    checked postulate reference identity; do not use a process-global name or
    reference-ID registry. **Foundation complete:** `elabCheckDirState` and
@@ -359,7 +364,11 @@ implementations.
 - [x] Support a curried two-argument opaque postulate adapter with explicit
    mappings for both Eponym argument types and the result type. A checked
    role dispatches a channel handle and a message string to a Nim callback;
-   property tests cover 200 input pairs. This remains a low-level API.
+   property tests cover 200 input pairs.
+- [x] Expose unary opaque and binary opaque bindings through `eponymBlock`;
+   explicit `runtimeType` mappings connect Eponym postulates to Nim types.
+   Nim checks adapter and generated wrapper signatures, and compile-fail
+   coverage rejects a mismatched callback type.
 - [ ] Add a message codec and use an opaque handle to bind a protocol
    operation through a Nim adapter. A TCP adapter should be one example, not
    a dependency of the Eponym core.
@@ -369,7 +378,7 @@ implementations.
 - [x] A checked role calls its bound postulate at runtime; the Nim compiler
   rejects a mismatched adapter signature; a negative Eponym role still fails
   during elaboration; the trusted implementation caveat is documented.
-  Verified for the unary Int prototype only.
+  Verified for primitive unary Int and mapped opaque unary/binary adapters.
 
 #### D. Make one end-to-end example use the checked role
 

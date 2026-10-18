@@ -56,7 +56,11 @@ for path in ["tests/fixtures/embedded_err_unbound.nim",
 for (path, expected) in [
     ("tests/fixtures/embedded_err_binding_eponym_type.nim",
      "eponymBlock binding error"),
-    ("tests/fixtures/embedded_err_binding_nim_type.nim", "type mismatch")]:
+    ("tests/fixtures/embedded_err_binding_nim_type.nim", "type mismatch"),
+    ("tests/fixtures/embedded_err_binding_opaque_nim_type.nim",
+     "type mismatch"),
+    ("tests/fixtures/embedded_err_runtime_type_structured.nim",
+     "eponymBlock runtimeType error")]:
   if not checkFixture(path, expected):
     inc failed
 
