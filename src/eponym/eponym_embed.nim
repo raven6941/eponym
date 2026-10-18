@@ -29,6 +29,8 @@ proc hostOpaqueTernary*[A, B, C, D](
   implementation: proc(x: A, y: B, z: C): D): Value
 proc hostOpaqueQuaternary*[A, B, C, D, E](
   implementation: proc(w: A, x: B, y: C, z: D): E): Value
+proc hostOpaqueQuinary*[A, B, C, D, E, F](
+  implementation: proc(v: A, w: B, x: C, y: D, z: E): F): Value
 proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value
 proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value
 proc hostNatOpaqueMapBinary*[A, B](
@@ -476,6 +478,34 @@ proc validateHostOpaqueQuaternaryType*(globals: Globals, postulateName,
       "' to have type " & firstTypeName & " -> " & secondTypeName & " -> " &
       thirdTypeName & " -> " & fourthTypeName & " -> " & resultTypeName)
 
+proc validateHostOpaqueQuinaryType*(globals: Globals, postulateName,
+    firstTypeName, secondTypeName, thirdTypeName, fourthTypeName,
+    fifthTypeName, resultTypeName: string) =
+  ## Validate a curried opaque contract `A -> B -> C -> D -> E -> F`.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  let names = [firstTypeName, secondTypeName, thirdTypeName,
+               fourthTypeName, fifthTypeName, resultTypeName]
+  var ids: array[6, int]
+  for i, typeName in names:
+    ids[i] = opaqueTypeId(globals, typeName, postulateName)
+  var current = entry.ty
+  for i in 0 ..< 5:
+    if current.isNil or current.kind != tPi or current.impl or
+        current.qty == q0 or opaqueTypeHeadId(current.dom) != ids[i]:
+      raise newException(ValueError,
+        "opaque quinary adapter requires postulate '" & postulateName &
+        "' to have type " & names.join(" -> "))
+    current = current.scope.bdy
+  if current.isNil or opaqueTypeHeadId(current) != ids[5]:
+    raise newException(ValueError,
+      "opaque quinary adapter requires postulate '" & postulateName &
+      "' to have type " & names.join(" -> "))
+
 proc bindHostOpaqueBinary*[A, B, C](bindings: var RuntimeBindings,
                                     globals: Globals, postulateName,
                                     firstTypeName, secondTypeName,
@@ -508,6 +538,17 @@ proc bindHostOpaqueQuaternary*[A, B, C, D, E](bindings: var RuntimeBindings,
     secondTypeName, thirdTypeName, fourthTypeName, resultTypeName)
   bindHostValue(bindings, globals, postulateName,
     hostOpaqueQuaternary[A, B, C, D, E](implementation))
+
+proc bindHostOpaqueQuinary*[A, B, C, D, E, F](bindings: var RuntimeBindings,
+    globals: Globals, postulateName, firstTypeName, secondTypeName,
+    thirdTypeName, fourthTypeName, fifthTypeName, resultTypeName: string,
+    implementation: proc(v: A, w: B, x: C, y: D, z: E): F) =
+  ## Bind a Nim `proc(A, B, C, D, E): F` to a five-argument opaque contract.
+  validateHostOpaqueQuinaryType(globals, postulateName, firstTypeName,
+    secondTypeName, thirdTypeName, fourthTypeName, fifthTypeName,
+    resultTypeName)
+  bindHostValue(bindings, globals, postulateName,
+    hostOpaqueQuinary[A, B, C, D, E, F](implementation))
 
 proc bindHostOpaqueUnary*[T](bindings: var RuntimeBindings, globals: Globals,
                              postulateName, eponymTypeName: string,
@@ -633,6 +674,18 @@ proc hostOpaqueQuaternary*[A, B, C, D, E](
           toHostValue(implementation(valueToHost[A](first),
             valueToHost[B](second), valueToHost[C](third),
             valueToHost[D](fourth)))))))
+
+proc hostOpaqueQuinary*[A, B, C, D, E, F](
+    implementation: proc(v: A, w: B, x: C, y: D, z: E): F): Value =
+  ## Adapt five typed Nim arguments to a curried Eponym runtime function.
+  vHostFunc(proc(first: Value): Value =
+    vHostFunc(proc(second: Value): Value =
+      vHostFunc(proc(third: Value): Value =
+        vHostFunc(proc(fourth: Value): Value =
+          vHostFunc(proc(fifth: Value): Value =
+            toHostValue(implementation(valueToHost[A](first),
+              valueToHost[B](second), valueToHost[C](third),
+              valueToHost[D](fourth), valueToHost[E](fifth))))))))
 
 proc natToValue*(n: int): Value = vNatLit(n)
 

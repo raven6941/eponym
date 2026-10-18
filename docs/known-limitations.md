@@ -55,7 +55,7 @@ The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values, canonical Bool constructors, and opaque
 boxes for arbitrary Nim payload types. Typed adapters support unary
 `T -> T`, `T -> U`, `T -> Nat`,
-`Nat -> A -> B`, and opaque postulate contracts with up to four curried
+`Nat -> A -> B`, and opaque postulate contracts with up to five curried
 arguments.
 They can pass Nim objects, references, strings, or other values through
 explicitly mapped Eponym types without exposing their representation.
@@ -92,7 +92,7 @@ bodies. Returning closures from generated wrappers remains unsupported.
 Structural codecs for collections beyond non-dependent two-field `Sig` tuples
 and named non-dependent records, dependent signatures, value-indexed generic
 signatures, and generic binders used in runtime bodies,
-callback shapes with more than four curried opaque arguments, and structural
+callback shapes with more than five curried opaque arguments, and structural
 inspection of closures remain unsupported. The session runtime demo includes a
 hand-written Nat LEB128 message codec, and the TCP adapter demo uses it over a
 loopback socket, but there is no reusable structural codec framework.
@@ -103,7 +103,7 @@ proves that the host value satisfies a dependent index.
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
 opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`, and curried
-opaque postulates with up to four arguments.
+opaque postulates with up to five arguments.
 `bindPostulatePair` additionally binds one to three codec-supported named
 arguments to a non-dependent `Sig(B, C)` result using recursive tuple codecs.
 It checks the declared argument type heads and tuple field type heads; indices
@@ -119,7 +119,7 @@ Nim adapter propagate unchanged to the caller. An invoked but unbound
 postulate raises a `ValueError` naming the postulate. `eponymBlock` rejects a
 binding that no checked proc body references, but does not determine whether
 that proc is reachable from an application entry point. Call-graph
-reachability, callbacks with more than four opaque arguments, and structural
+reachability, callbacks with more than five opaque arguments, and structural
 codecs remain unsupported. The TCP demo returns transport and codec failures
 through a mapped `TransportResult` value. Other adapters may still propagate
 synchronous exceptions. See the
