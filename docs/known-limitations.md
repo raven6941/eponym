@@ -44,8 +44,8 @@ signature.
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values and opaque boxes for arbitrary Nim payload
 types. Typed adapters support unary `T -> T`, `T -> U`, `T -> Nat`,
-`Nat -> A -> B`, binary `A -> B -> C`, and ternary `A -> B -> C -> D`
-postulate contracts.
+`Nat -> A -> B`, and opaque postulate contracts with up to four curried
+arguments.
 They can pass Nim objects, references, strings, or other values through
 explicitly mapped Eponym types without exposing their representation.
 `eponymBlock` can generate typed wrappers for first-order definitions over
@@ -61,7 +61,7 @@ Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
 bodies. Returning closures from generated wrappers remains unsupported.
 Structural codecs for records or collections, dependent or generic signatures,
-callback shapes with more than three curried opaque arguments, and structural
+callback shapes with more than four curried opaque arguments, and structural
 inspection of closures remain unsupported. The session runtime demo includes a
 hand-written Nat LEB128 message codec, and the TCP adapter demo uses it over a
 loopback socket, but there is no reusable structural codec framework.
@@ -71,9 +71,8 @@ proves that the host value satisfies a dependent index.
 
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
-opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`,
-curried binary opaque `A -> B -> C`, and curried ternary opaque
-`A -> B -> C -> D` postulates.
+opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`, and curried
+opaque postulates with up to four arguments.
 Opaque bindings require explicit `runtimeType(EponymType, NimType)` mappings
 to postulated Eponym types or
 type families. Nim checks adapter and generated wrapper signatures;

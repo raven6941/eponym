@@ -617,7 +617,7 @@ proc blockToEponym*(body: NimNode): string =
       elif head == "bindPostulate":
         # Host binding is consumed by eponymBlock after checking its Eponym
         # contract; it is not part of the Eponym source text.
-        if st.len notin {3, 4, 5, 6, 7} or st[1].kind != nnkIdent:
+        if st.len notin {3, 4, 5, 6, 7, 8} or st[1].kind != nnkIdent:
           error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       elif head == "runtimeType":
         # Explicit opaque Nim/Eponym representation mapping, consumed by the
@@ -656,7 +656,7 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
         $st[0] == "bindPostulate":
-      if st.len notin {3, 4, 5, 6, 7} or st[1].kind != nnkIdent:
+      if st.len notin {3, 4, 5, 6, 7, 8} or st[1].kind != nnkIdent:
         error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       let name = $st[1]
       if name in seen:
@@ -755,6 +755,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       bindSym"bindHostNatOpaqueMapBinary"
     elif binding.eponymTypes.len == 3: bindSym"bindHostOpaqueBinary"
     elif binding.eponymTypes.len == 4: bindSym"bindHostOpaqueTernary"
+    elif binding.eponymTypes.len == 5: bindSym"bindHostOpaqueQuaternary"
     else:
       error("unsupported bindPostulate codec combination for '" &
             binding.postulateName & "'")
@@ -954,11 +955,16 @@ macro eponymBlock*(body: untyped): untyped =
         validateHostOpaqueTernaryType(checkedGlobals, binding.postulateName,
           binding.eponymTypes[0], binding.eponymTypes[1],
           binding.eponymTypes[2], binding.eponymTypes[3])
+      of 5:
+        validateHostOpaqueQuaternaryType(checkedGlobals,
+          binding.postulateName, binding.eponymTypes[0],
+          binding.eponymTypes[1], binding.eponymTypes[2],
+          binding.eponymTypes[3], binding.eponymTypes[4])
       else:
         raise newException(ValueError,
           "bindPostulate supports Int -> Int, opaque T -> T, opaque T -> U, " &
           "opaque T -> Nat, Nat -> opaque T -> opaque U, opaque A -> B -> C, " &
-          "and opaque A -> B -> C -> D")
+          "opaque A -> B -> C -> D, and opaque A -> B -> C -> D -> E")
     except ValueError as e:
       error("eponymBlock binding error: " & e.msg, body)
 

@@ -26,6 +26,9 @@ type ChannelHandle = object
 
 type NimIntCallback = proc(value: int): int {.closure.}
 
+proc hostWrongFour(channel: ChannelHandle, message: string,
+                   requestId, phase: int): int = channel.id + requestId + phase
+
 proc hostRotateChannel(channel: ChannelHandle): ChannelHandle =
   result = channel
   inc result.id
@@ -40,6 +43,11 @@ proc hostRouteChannelWithId(channel: ChannelHandle, message: string,
                             requestId: int): ChannelHandle =
   result = channel
   result.label.add(":" & message & "#" & $requestId)
+
+proc hostRouteChannelWithPhase(channel: ChannelHandle, message: string,
+                               requestId, phase: int): ChannelHandle =
+  result = channel
+  result.label.add(":" & message & "#" & $requestId & "/" & $phase)
 
 proc hostFutureForChannel(channel: ChannelHandle): Future[int] =
   result = newFuture[int]("hostFutureForChannel")
@@ -63,6 +71,10 @@ static:
     hostWrongRoute))
   doAssert compiles(hostOpaqueTernary[ChannelHandle, string, int,
     ChannelHandle](hostRouteChannelWithId))
+  doAssert compiles(hostOpaqueQuaternary[ChannelHandle, string, int, int,
+    ChannelHandle](hostRouteChannelWithPhase))
+  doAssert not compiles(hostOpaqueQuaternary[ChannelHandle, string, int, int,
+    ChannelHandle](hostWrongFour))
   doAssert compiles(hostOpaqueMapUnary[ChannelHandle, Future[int]](
     hostFutureForChannel))
   doAssert compiles(hostOpaqueBinary[NimIntCallback, int, int](
@@ -96,12 +108,14 @@ eponymBlock:
   postulate(Channel, Univ)
   postulate(Message, Univ)
   postulate(RequestId, Univ)
+  postulate(Phase, Univ)
   postulate(PendingResult, Univ)
   postulate(Callback, Univ)
   postulate(Sample, Univ)
   runtimeType(Channel, ChannelHandle)
   runtimeType(Message, string)
   runtimeType(RequestId, int)
+  runtimeType(Phase, int)
   runtimeType(PendingResult, Future[int])
   runtimeType(Callback, NimIntCallback)
   runtimeType(Sample, int)
@@ -113,6 +127,10 @@ eponymBlock:
     Channel -> Message -> RequestId -> Channel)
   bindPostulate(routeChannelWithId, hostRouteChannelWithId,
     Channel, Message, RequestId, Channel)
+  postulate(routeChannelWithPhase,
+    Channel -> Message -> RequestId -> Phase -> Channel)
+  bindPostulate(routeChannelWithPhase, hostRouteChannelWithPhase,
+    Channel, Message, RequestId, Phase, Channel)
   postulate(startFuture, Channel -> PendingResult)
   bindPostulate(startFuture, hostFutureForChannel, Channel, PendingResult)
   postulate(passFuture, PendingResult -> PendingResult)
@@ -127,6 +145,10 @@ eponymBlock:
   proc generatedRouteWithIdRole(channel: Channel, message: Message,
                                 requestId: RequestId): Channel =
     routeChannelWithId(channel, message, requestId)
+  proc generatedRouteWithPhaseRole(channel: Channel, message: Message,
+                                   requestId: RequestId,
+                                   phase: Phase): Channel =
+    routeChannelWithPhase(channel, message, requestId, phase)
   proc generatedFutureRole(channel: Channel): PendingResult =
     startFuture(channel)
   proc generatedFutureInput(value: PendingResult): PendingResult =
@@ -148,6 +170,8 @@ static:
   doAssert compiles(generatedRouteRole(ChannelHandle(id: 1), "hello"))
   doAssert not compiles(generatedRouteRole("not a channel", "hello"))
   doAssert compiles(generatedRouteWithIdRole(ChannelHandle(id: 1), "hello", 2))
+  doAssert compiles(generatedRouteWithPhaseRole(ChannelHandle(id: 1),
+    "hello", 2, 3))
   doAssert compiles(generatedFutureRole(ChannelHandle(id: 1)))
   doAssert compiles(generatedFutureInput(newFuture[int]("typedFuture")))
   doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
@@ -251,6 +275,7 @@ proc routeRole : Channel -> Message -> Channel =
   lam (channel : Channel). lam (message : Message).
     routeChannel channel message
 postulate RequestId : Type 0
+postulate Phase : Type 0
 postulate PendingResult : Type 0
 postulate Callback : Type 0
 postulate Sample : Type 0
@@ -258,6 +283,10 @@ postulate routeChannelWithId : Channel -> Message -> RequestId -> Channel
 proc routeWithIdRole : Channel -> Message -> RequestId -> Channel =
   lam (channel : Channel). lam (message : Message). lam (requestId : RequestId).
     routeChannelWithId channel message requestId
+postulate routeChannelWithPhase : Channel -> Message -> RequestId -> Phase -> Channel
+proc routeWithPhaseRole : Channel -> Message -> RequestId -> Phase -> Channel =
+  lam (channel : Channel). lam (message : Message). lam (requestId : RequestId).
+    lam (phase : Phase). routeChannelWithPhase channel message requestId phase
 postulate startFuture : Channel -> PendingResult
 proc futureRole : Channel -> PendingResult =
   lam (channel : Channel). startFuture channel
@@ -340,6 +369,28 @@ proc callbackRole : Callback -> Sample -> Sample =
         $requestId,
     shrinkInt)
   if not routedWithIdCases:
+    quit(1)
+  var quaternaryOpaqueBindings = initRuntimeBindings()
+  bindHostOpaqueQuaternary[ChannelHandle, string, int, int, ChannelHandle](
+    quaternaryOpaqueBindings, cachedGlobals, "routeChannelWithPhase",
+    "Channel", "Message", "RequestId", "Phase", "Channel",
+    hostRouteChannelWithPhase)
+  let routedWithPhaseCases = forAll(
+    "four-argument opaque postulate dispatch", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let channel = ChannelHandle(id: id, label: "ch")
+      let message = $id
+      let requestId = -id
+      let phase = id mod 7
+      let value = callValueFuncDir(baseDir, identityProgram,
+        "routeWithPhaseRole", @[toHostValue(channel), toHostValue(message),
+          toHostValue(requestId), toHostValue(phase)], quaternaryOpaqueBindings)
+      let actual = valueToHost[ChannelHandle](value)
+      actual.id == id and actual.label == "ch:" & message & "#" &
+        $requestId & "/" & $phase,
+    shrinkInt)
+  if not routedWithPhaseCases:
     quit(1)
   let futureAdapterCases = forAll(
     "opaque Future[T] results from typed postulate adapters", r, 200,
