@@ -145,8 +145,10 @@ for verified components inside a larger Nim application.
   continuation-passing style so every borrow is a lambda binder, and the
   quantity checker fires at every step; unannotated lambdas inherit the
   linear quantity from the expected `Pi` (Idris 2 behaviour). The
-  normal-Nim driver binds the same op sequence to a real buffer and runs
-  it. Double-use, owner-use-while-borrowed, and dropped borrows are
+  checked `borrowClient` runs through bound Nim postulates against a real
+  buffer. The raw-Value callback adapters invoke the checked continuations;
+  the backend is responsible for excluding aliases and ending the borrow
+  scope. Double-use, owner-use-while-borrowed, and dropped borrows are
   compile-time errors (see 21a/21b/21c above).
 
 ### The embedded pattern
