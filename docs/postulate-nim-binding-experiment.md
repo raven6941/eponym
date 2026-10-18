@@ -104,8 +104,8 @@ Returning closures from generated wrappers is not supported.
 Generated `eponymBlock` wrappers support first-order primitive `Int` and
 `Nat` signatures and explicitly mapped opaque types or indexed families.
 `bindPostulate` supports unary `Int -> Int`, opaque `T -> T`, opaque `T -> U`,
-`T -> Nat`, `Nat -> A -> B`, curried binary opaque `A -> B -> C`, and curried
-ternary opaque `A -> B -> C -> D` postulates. A mapped `Future[T]` may be
+`T -> Nat`, `Nat -> A -> B`, and curried opaque postulates with up to four
+arguments. A mapped `Future[T]` may be
 returned opaquely; it is not awaited and async failure/cancellation semantics
 are undefined. Longer callback signatures, structural codecs, and call-graph
 reachability checks remain unsupported. A binding unused by all checked proc bodies is rejected during
