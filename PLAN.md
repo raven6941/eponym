@@ -46,7 +46,7 @@ postulated types; unsupported signatures retain the legacy
 `varargs[int] -> int` wrapper. The first runtime call re-elaborates the block
 and caches its checked terms and globals for subsequent calls. External
 postulates can be bound for unary Int, unary opaque, mixed Nat/opaque, and
-opaque callbacks up to four curried arguments.
+opaque callbacks up to five curried arguments.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -396,7 +396,7 @@ implementations.
    postulate and Nim proc. Generated-wrapper bindings support unary
    `Int -> Int`, unary opaque `T -> T` / `T -> Nat`, mixed
    `Nat -> A -> B`, unary opaque `A -> B`, and curried opaque signatures up
-   to four arguments; longer signatures remain unsupported.
+   to five arguments; longer signatures remain unsupported.
 - [x] Use an explicit runtime binding environment keyed by
    checked postulate reference identity; do not use a process-global name or
    reference-ID registry. **Foundation complete:** `elabCheckDirState` and
@@ -449,6 +449,10 @@ implementations.
   Eponym signature validation and Nim signature checking. Generated wrappers
   and low-level runtime dispatch pass 200 property cases; a negative fixture
   rejects an incorrect fourth-argument mapping.
+- [x] Support a curried five-argument opaque adapter with compile-time Eponym
+   signature validation and Nim signature checking. A generated checked role
+   passes 200 property cases, and a negative fixture rejects a Nim result type
+   mismatch.
 - [x] Bind unary callbacks between distinct opaque mappings (`A -> B`) and
   return a mapped `Future[T]` through an ordinary typed wrapper. Property tests
   verify the future object and its result pass through unchanged; Eponym does
