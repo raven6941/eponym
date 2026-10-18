@@ -492,10 +492,12 @@ implementations.
 #### G. Improve the Nim surface and onboarding
 
 - [ ] Keep the current supported AST boundary explicit in the syntax reference.
-- [ ] Prototype a small pure Nim-looking subset (`let`, selected arithmetic,
-   and `if` expressions) by lowering it to Eponym terms. Effects, arbitrary
-   procedure calls, macros, mutation, and IO remain outside unless introduced
-   as explicit trusted bindings.
+- [x] Lower Nim `Int` expressions using `let`, unary minus, and `+`, `-`, `*`
+  to the existing checked Eponym primitives. A 200-case property test compares
+  generated wrappers with Nim arithmetic over values that avoid overflow.
+- [ ] Add pure `if` expressions and expand the explicitly documented subset.
+  Effects, arbitrary procedure calls, macros, mutation, and IO remain outside
+  unless introduced as explicit trusted bindings.
 - [ ] Decide the parameter convention: square brackets for explicit Eponym
    binders (`A`, indices such as `n`), parentheses for term arguments, and
    braces for implicit binders. Preserve a migration path from call-style

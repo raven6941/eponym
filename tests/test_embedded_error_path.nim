@@ -64,7 +64,9 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_unsupported_runtime_type.nim",
      "no runtime codec for Eponym result type 'Thing'"),
     ("tests/fixtures/embedded_err_binding_unused.nim",
-     "binding for postulate 'hostStepPostulate' is unused")]:
+     "binding for postulate 'hostStepPostulate' is unused"),
+    ("tests/fixtures/embedded_err_unsupported_operator.nim",
+     "unsupported pure operator 'div'")]:
   if not checkFixture(path, expected):
     inc failed
 
