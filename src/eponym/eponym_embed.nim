@@ -17,6 +17,9 @@ import tables
 import sequtils
 import elab
 import eponym_init
+import preterm  # Quantity constants for validating supported adapter shapes
+
+proc hostIntUnary*(implementation: proc(x: int): int): Value
 
 # Cache: (baseDir, source) key -> checked module state. Retaining globals is
 # required for runtime postulate bindings to use the identities assigned by
@@ -27,6 +30,10 @@ type CheckedRuntime = object
 
 var defCache {.global.}: Table[string, CheckedRuntime]
 var holeDefCache {.global.}: Table[string, seq[ElabDef]]
+
+proc initRuntimeBindings*(): RuntimeBindings =
+  ## Create an empty environment for explicit host postulate bindings.
+  initTable[int, Value]()
 
 proc cacheKey(baseDir, src: string): string =
   baseDir & "\x1f" & src
@@ -59,6 +66,48 @@ proc getGlobalsDir*(baseDir, src: string): Globals =
   discard getDefsDir(baseDir, src) # populate cache on first use
   defCache[cacheKey(baseDir, src)].globals
 
+proc bindHostValue*(bindings: var RuntimeBindings, globals: Globals,
+                    postulateName: string, implementation: Value) =
+  ## Bind one checked postulate reference to a runtime ETT value. The host
+  ## implementation is trusted to honor the declared contract.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  let id = entry.tm.refId
+  if id in bindings:
+    raise newException(ValueError,
+      "duplicate runtime binding for postulate: " & postulateName)
+  bindings[id] = implementation
+
+proc bindHostIntUnary*(bindings: var RuntimeBindings, globals: Globals,
+                       postulateName: string,
+                       implementation: proc(x: int): int) =
+  ## Bind a Nim `proc(int): int` only to an Eponym postulate with the exact
+  ## runtime shape `Int -> Int`. This verifies the adapter shape in both
+  ## languages; the implementation's behavior is still trusted.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  if "Int" notin globals:
+    raise newException(ValueError,
+      "cannot bind Int adapter without an Eponym Int declaration")
+  let intId = globals["Int"].tm.refId
+  let ty = entry.ty
+  if ty.kind != tPi or ty.impl or ty.qty == q0 or ty.dom.kind != tR or
+      ty.dom.refId != intId or ty.scope.bdy.kind != tR or
+      ty.scope.bdy.refId != intId:
+    raise newException(ValueError,
+      "Nim proc(int): int requires Eponym postulate '" & postulateName &
+      "' to have type Int -> Int")
+  bindHostValue(bindings, globals, postulateName,
+                hostIntUnary(implementation))
+
 proc findDef*(defs: seq[ElabDef], name: string): ElabDef =
   for d in defs:
     if d.name == name:
@@ -78,6 +127,13 @@ proc valueToInt*(v: Value): int =
   # Force evaluation if it's not yet a wInt
   raise newException(ValueError, "value is not an Int")
 
+proc hostIntUnary*(implementation: proc(x: int): int): Value =
+  ## Adapt a Nim Int -> Int procedure to a runtime postulate value. Nim
+  ## checks the adapter's concrete signature; the implementation's behavior
+  ## remains trusted relative to the Eponym postulate.
+  vHostFunc(proc(value: Value): Value =
+    intToValue(implementation(valueToInt(value))))
+
 proc natToValue*(n: int): Value = vNatLit(n)
 
 proc valueToNat*(v: Value): int =
@@ -86,14 +142,19 @@ proc valueToNat*(v: Value): int =
     return v.whnf.natLitVal
   raise newException(ValueError, "value is not a canonical Nat literal")
 
-proc callDefValue*(d: ElabDef, args: openArray[Value]): Value =
-  ## Evaluate an elaborated definition with values from the ETT runtime.
+proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
+                               bindings: RuntimeBindings): Value =
+  ## Evaluate a checked definition with explicit host postulate bindings.
   let t = d.tmTm
-  var fn = eval(t, @[])
+  var fn = evalWithBindings(t, @[], bindings)
   for arg in args:
     let w = applyWhnf(fn, arg)
     fn = Value(syn: t, whnf: w)  # syn doesn't matter for result
   fn
+
+proc callDefValue*(d: ElabDef, args: openArray[Value]): Value =
+  ## Evaluate an elaborated definition with values from the ETT runtime.
+  callDefValueWithBindings(d, args, initTable[int, Value]())
 
 proc callValueFunc*(src: string, name: string,
                     args: openArray[Value]): Value =
@@ -104,6 +165,13 @@ proc callValueFuncDir*(baseDir, src: string, name: string,
                        args: openArray[Value]): Value =
   ## Directory-aware low-level runtime entry point over ETT values.
   callDefValue(findDef(getDefsDir(baseDir, src), name), args)
+
+proc callValueFuncDir*(baseDir, src: string, name: string,
+                       args: openArray[Value],
+                       bindings: RuntimeBindings): Value =
+  ## Directory-aware Value call with block-local host postulate bindings.
+  callDefValueWithBindings(findDef(getDefsDir(baseDir, src), name), args,
+                           bindings)
 
 proc callDefInt(d: ElabDef, args: seq[int]): int =
   ## Compatibility bridge for `Int -> ... -> Int` generated wrappers.

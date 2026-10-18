@@ -310,20 +310,22 @@ implementations.
 
 - [ ] Add explicit binding syntax linking a declared postulate to a Nim proc or
    closure in the same embedding module or an explicit binding record.
-- [ ] Use a block-local binding record and evaluator environment keyed by
+- [x] Use an explicit runtime binding environment keyed by
    checked postulate reference identity; do not use a process-global name or
    reference-ID registry. **Foundation complete:** `elabCheckDirState` and
    the runtime cache retain the checked `Globals` table alongside definitions;
    property coverage confirms definition occurrences and cached globals share
-   the postulate's reference identity. The actual binding evaluator remains
-   unchecked below.
-- [ ] At compile time, check that the Nim adapter type matches the supported
-   runtime shape of the postulate's Eponym type. Preserve dependent indices
-   and quantities in Eponym checking; state clearly that they do not prove
-   adapter behavior.
-- [ ] Add host-callable values to the runtime evaluator, or generate direct
-   wrappers that call the bound Nim adapter. Make missing, duplicate, and
-   unreachable bindings diagnostics explicit.
+   the postulate's reference identity. The runtime evaluator accepts these
+   bindings without mutating cached definitions.
+- [x] Add a first typed adapter shape, Nim `proc(int): int` to Eponym
+   `Int -> Int`; reject mismatched Eponym contracts before invocation. Keep
+   the adapter implementation explicitly trusted.
+- [x] Add host-callable values to binding-aware runtime evaluation. Property
+   coverage checks imported-definition calls, independent per-call binding
+   environments, duplicate and wrong-Eponym-type rejection, and 400 generated
+   callback inputs.
+- [ ] Extend binding shape checking to generated `eponymBlock` wrappers and
+   add missing/unreachable binding diagnostics.
 - [ ] Specify exception and async behavior; add a later adapter form for
    `Future[T]` rather than conflating synchronous and asynchronous effects.
 - [ ] Start with scalar primitives, then an opaque user-defined handle plus a

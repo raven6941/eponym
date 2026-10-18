@@ -13,6 +13,14 @@ postulate Nat : Type 0
 proc idNat : Nat -> Nat = lam (n : Nat). n
 """
 
+proc hostStepNim(value: int): int = value + 7
+proc hostTripleNim(value: int): int = value * 3
+proc hostString(value: string): string = value
+
+static:
+  doAssert compiles(hostIntUnary(hostStepNim))
+  doAssert not compiles(hostIntUnary(hostString))
+
 when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
   var r = initRng(424242'u64)
@@ -51,19 +59,59 @@ when isMainModule:
   # the checker. Confirm a definition body refers to the same postulate
   # reference exposed in the returned state.
   const identityProgram = """
-postulate Int : Type 0
-postulate hostStep : Int -> Int
-proc throughHost : Int -> Int = lam (n : Int). hostStep n
+import "tests/fixtures/runtime_host_step.ep"
+proc throughHelper : Int -> Int = lam (n : Int). importedHelper n
 """
   let checked = elabCheckDirState(identityProgram, baseDir)
   let postulateId = checked.globals["hostStep"].tm.refId
-  let throughHost = checked.defs.findDef("throughHost")
-  let body = throughHost.tmTm.scope.bdy
-  if body.kind != tApp or body.fn.kind != tR or
-      body.fn.refId != postulateId:
-    quit(1)
   let cachedGlobals = getGlobalsDir(baseDir, identityProgram)
   if cachedGlobals["hostStep"].tm.refId != postulateId:
     quit(1)
+  var runtimeBindings = initRuntimeBindings()
+  runtimeBindings.bindHostIntUnary(cachedGlobals, "hostStep", hostStepNim)
+  let hostResult = callValueFuncDir(baseDir, identityProgram,
+    "throughHelper", @[intToValue(35)], runtimeBindings)
+  if valueToInt(hostResult) != 42:
+    quit(1)
 
-  echo "test_runtime_value_bridge: Value calls, cached globals, and postulate identity ok"
+  let hostDispatch = forAll("checked definitions dispatch to typed Nim postulates",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      var bindings = initRuntimeBindings()
+      bindings.bindHostIntUnary(cachedGlobals, "hostStep", hostStepNim)
+      let value = callValueFuncDir(baseDir, identityProgram, "throughHelper",
+        @[intToValue(n)], bindings)
+      valueToInt(value) == hostStepNim(n),
+    shrinkInt)
+  if not hostDispatch:
+    quit(1)
+
+  let alternateHostDispatch = forAll("runtime bindings stay local to each call",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      var bindings = initRuntimeBindings()
+      bindings.bindHostIntUnary(cachedGlobals, "hostStep", hostTripleNim)
+      let value = callValueFuncDir(baseDir, identityProgram, "throughHelper",
+        @[intToValue(n)], bindings)
+      valueToInt(value) == hostTripleNim(n),
+    shrinkInt)
+  if not alternateHostDispatch:
+    quit(1)
+
+  var wrongEponymTypeRejected = false
+  try:
+    var wrongTypeBindings = initRuntimeBindings()
+    wrongTypeBindings.bindHostIntUnary(cachedGlobals, "hostNat", hostStepNim)
+  except ValueError:
+    wrongEponymTypeRejected = true
+  var duplicateBindingRejected = false
+  try:
+    runtimeBindings.bindHostIntUnary(cachedGlobals, "hostStep", hostStepNim)
+  except ValueError:
+    duplicateBindingRejected = true
+  if not wrongEponymTypeRejected or not duplicateBindingRejected:
+    quit(1)
+
+  echo "test_runtime_value_bridge: Value calls, postulate identity, and typed host dispatch ok"
