@@ -37,8 +37,9 @@ that correspond to named Eponym postulates. Tests exercise user-defined values
 through checked definitions and generated wrappers. This does not yet provide
 structural codecs for records or collections, dependent or generic signatures,
 callback shapes with more than two curried opaque arguments, closures as
-exported values, async results, or socket transports. The session runtime demo includes a hand-written Nat
-LEB128 message codec, but there is no reusable structural codec framework.
+exported values, or async results. The session runtime demo includes a
+hand-written Nat LEB128 message codec, and the TCP adapter demo uses it over a
+loopback socket, but there is no reusable structural codec framework.
 Nim's type checker checks the concrete adapter signature, but the mapping to
 the Eponym type and the adapter behavior remain trusted. Neither compiler
 proves that the host value satisfies a dependent index.
@@ -53,7 +54,8 @@ the implementation and mapping remain trusted. Synchronous exceptions from a
 Nim adapter propagate unchanged to the caller. An invoked but unbound
 postulate raises a `ValueError` naming the postulate. Macro-time checks for
 missing or unreachable bindings, longer callback shapes, and structural
-codecs are still unsupported. See the
+codecs are still unsupported. The TCP adapter demo propagates transport and
+codec failures as exceptions rather than an explicit result type. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the
 supported prototype and remaining work.
 
