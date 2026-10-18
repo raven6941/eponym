@@ -95,6 +95,12 @@ coverage sends generated handle/message pairs through checked roles and
 receives the callback result. The generated wrapper and binding support is
 limited to these documented first-order forms.
 
+A Nim closure can also be an explicitly mapped opaque argument. For example,
+a postulate may take a mapped callback type and a mapped value type, while the
+Nim adapter invokes the callback. Nim checks the callback's concrete proc type
+at the generated wrapper; Eponym treats its body as opaque and trusted.
+Returning closures from generated wrappers is not supported.
+
 Generated `eponymBlock` wrappers support first-order primitive `Int` and
 `Nat` signatures and explicitly mapped opaque types or indexed families.
 `bindPostulate` supports unary `Int -> Int`, opaque `T -> T`, opaque `T -> U`,

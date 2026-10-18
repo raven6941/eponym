@@ -24,6 +24,8 @@ type ChannelHandle = object
   id: int
   label: string
 
+type NimIntCallback = proc(value: int): int {.closure.}
+
 proc hostRotateChannel(channel: ChannelHandle): ChannelHandle =
   result = channel
   inc result.id
@@ -43,6 +45,9 @@ proc hostFutureForChannel(channel: ChannelHandle): Future[int] =
   result = newFuture[int]("hostFutureForChannel")
   result.complete(channel.id)
 
+proc hostInvokeCallback(callback: NimIntCallback, value: int): int =
+  callback(value)
+
 proc hostWrongRoute(channel: int, message: string): int = channel + message.len
 
 static:
@@ -58,6 +63,8 @@ static:
     ChannelHandle](hostRouteChannelWithId))
   doAssert compiles(hostOpaqueMapUnary[ChannelHandle, Future[int]](
     hostFutureForChannel))
+  doAssert compiles(hostOpaqueBinary[NimIntCallback, int, int](
+    hostInvokeCallback))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -79,10 +86,14 @@ eponymBlock:
   postulate(Message, Univ)
   postulate(RequestId, Univ)
   postulate(PendingResult, Univ)
+  postulate(Callback, Univ)
+  postulate(Sample, Univ)
   runtimeType(Channel, ChannelHandle)
   runtimeType(Message, string)
   runtimeType(RequestId, int)
   runtimeType(PendingResult, Future[int])
+  runtimeType(Callback, NimIntCallback)
+  runtimeType(Sample, int)
   postulate(rotateChannel, Channel -> Channel)
   bindPostulate(rotateChannel, hostRotateChannel, Channel)
   postulate(routeChannel, Channel -> Message -> Channel)
@@ -93,6 +104,9 @@ eponymBlock:
     Channel, Message, RequestId, Channel)
   postulate(startFuture, Channel -> PendingResult)
   bindPostulate(startFuture, hostFutureForChannel, Channel, PendingResult)
+  postulate(invokeCallback, Callback -> Sample -> Sample)
+  bindPostulate(invokeCallback, hostInvokeCallback,
+    Callback, Sample, Sample)
   proc generatedRotateRole(channel: Channel): Channel =
     rotateChannel(channel)
   proc generatedRouteRole(channel: Channel, message: Message): Channel =
@@ -102,6 +116,8 @@ eponymBlock:
     routeChannelWithId(channel, message, requestId)
   proc generatedFutureRole(channel: Channel): PendingResult =
     startFuture(channel)
+  proc generatedCallbackRole(callback: Callback, value: Sample): Sample =
+    invokeCallback(callback, value)
 
 static:
   doAssert compiles(generatedCheckedRole(35))
@@ -115,6 +131,8 @@ static:
   doAssert not compiles(generatedRouteRole("not a channel", "hello"))
   doAssert compiles(generatedRouteWithIdRole(ChannelHandle(id: 1), "hello", 2))
   doAssert compiles(generatedFutureRole(ChannelHandle(id: 1)))
+  doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
+  doAssert not compiles(generatedCallbackRole(42, 1))
 
 when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
@@ -199,6 +217,8 @@ proc routeRole : Channel -> Message -> Channel =
     routeChannel channel message
 postulate RequestId : Type 0
 postulate PendingResult : Type 0
+postulate Callback : Type 0
+postulate Sample : Type 0
 postulate routeChannelWithId : Channel -> Message -> RequestId -> Channel
 proc routeWithIdRole : Channel -> Message -> RequestId -> Channel =
   lam (channel : Channel). lam (message : Message). lam (requestId : RequestId).
@@ -206,6 +226,10 @@ proc routeWithIdRole : Channel -> Message -> RequestId -> Channel =
 postulate startFuture : Channel -> PendingResult
 proc futureRole : Channel -> PendingResult =
   lam (channel : Channel). startFuture channel
+postulate invokeCallback : Callback -> Sample -> Sample
+proc callbackRole : Callback -> Sample -> Sample =
+  lam (callback : Callback). lam (value : Sample).
+    invokeCallback callback value
 """
   let checked = elabCheckDirState(identityProgram, baseDir)
   let postulateId = checked.globals["hostStep"].tm.refId
@@ -290,6 +314,15 @@ proc futureRole : Channel -> PendingResult =
       future.finished and future.read() == id,
     shrinkInt)
   if not futureAdapterCases:
+    quit(1)
+  let callbackArgumentCases = forAll(
+    "Nim closures passed through checked opaque callback parameters", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(offset: int): bool =
+      let callback: NimIntCallback = proc(value: int): int = value + offset
+      generatedCallbackRole(callback, offset * 2) == offset * 3,
+    shrinkInt)
+  if not callbackArgumentCases:
     quit(1)
   var wrongBinaryMappingRejected = false
   try:

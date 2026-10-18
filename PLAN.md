@@ -399,6 +399,9 @@ implementations.
   return a mapped `Future[T]` through an ordinary typed wrapper. Property tests
   verify the future object and its result pass through unchanged; Eponym does
   not await it.
+- [x] Accept a Nim closure as an explicitly mapped opaque callback argument to
+  a checked role. The generated Nim wrapper checks the closure signature, and
+  the bound adapter can invoke it; Eponym treats the closure body as trusted.
 - [x] Expose unary opaque and binary opaque bindings through `eponymBlock`;
    explicit `runtimeType` mappings connect Eponym postulates to Nim types.
    Nim checks adapter and generated wrapper signatures, and compile-fail
