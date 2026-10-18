@@ -26,9 +26,11 @@ The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values and opaque boxes for arbitrary Nim payload
 types. Typed unary `T -> T` and binary `A -> B -> C` postulate adapters can
 pass Nim objects, references, strings, or other values through explicitly
-mapped Eponym types without exposing their representation. Tests exercise
-user-defined values through checked definitions.
-This does not yet provide generated typed wrappers for arbitrary values,
+mapped Eponym types without exposing their representation. `eponymBlock` can
+generate typed wrappers for first-order definitions over mapped opaque types
+that correspond to named Eponym postulates. Tests exercise user-defined values
+through checked definitions and generated wrappers. This does not yet provide
+generated typed wrappers for arbitrary values,
 structural codecs for records or collections, callbacks of other shapes,
 closures as exported values, async results, or socket/channel protocols.
 Nim's type checker checks the concrete adapter signature, but the mapping to

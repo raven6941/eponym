@@ -84,6 +84,35 @@ generated wrappers. A reachable postulate without a
 binding fails when evaluated; diagnostics for missing bindings at expansion
 time are not implemented.
 
+Opaque Nim values can cross a checked role when the Eponym type is a named
+postulate. Declare an explicit type mapping, then list the mapped Eponym types
+in the postulate contract:
+
+```nim
+type ChannelHandle = object
+  socketId: int
+
+proc sendMessage(channel: ChannelHandle, message: string): ChannelHandle = ...
+
+eponymBlock:
+  postulate(Channel, Univ)
+  postulate(Message, Univ)
+  runtimeType(Channel, ChannelHandle)
+  runtimeType(Message, string)
+  postulate(send, Channel -> Message -> Channel)
+  bindPostulate(send, sendMessage, Channel, Message, Channel)
+  proc checkedSend(channel: Channel, message: Message): Channel =
+    send(channel, message)
+```
+
+This generates a fixed-arity Nim wrapper for `checkedSend` and checks the
+adapter's Nim signature. Eponym can pass the opaque boxes to the postulate,
+but cannot inspect a `ChannelHandle` or prove that the Nim implementation
+follows a protocol. `runtimeType` mappings must name postulated Eponym types.
+Opaque bindings currently support unary `T -> T` and curried binary
+`A -> B -> C` contracts. Structured values and longer signatures still need
+explicit codec and adapter support.
+
 ## Sheds: `shedsBlock` (hole-driven development)
 
 ```nim

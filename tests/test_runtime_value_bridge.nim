@@ -53,12 +53,30 @@ eponymBlock:
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
   proc generatedNatId(value: Nat): Nat = value
 
+eponymBlock:
+  postulate(Channel, Univ)
+  postulate(Message, Univ)
+  runtimeType(Channel, ChannelHandle)
+  runtimeType(Message, string)
+  postulate(rotateChannel, Channel -> Channel)
+  bindPostulate(rotateChannel, hostRotateChannel, Channel)
+  postulate(routeChannel, Channel -> Message -> Channel)
+  bindPostulate(routeChannel, hostRouteChannel, Channel, Message, Channel)
+  proc generatedRotateRole(channel: Channel): Channel =
+    rotateChannel(channel)
+  proc generatedRouteRole(channel: Channel, message: Message): Channel =
+    routeChannel(channel, message)
+
 static:
   doAssert compiles(generatedCheckedRole(35))
   doAssert compiles(generatedAdd(20, 22))
   doAssert not compiles(generatedAdd(42))
   doAssert not compiles(generatedAdd("20", 22))
   doAssert compiles(generatedNatId(17))
+  doAssert compiles(generatedRotateRole(ChannelHandle(id: 1)))
+  doAssert not compiles(generatedRotateRole("not a channel"))
+  doAssert compiles(generatedRouteRole(ChannelHandle(id: 1), "hello"))
+  doAssert not compiles(generatedRouteRole("not a channel", "hello"))
 
 when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
@@ -88,6 +106,20 @@ when isMainModule:
   let generatedBindingWorks = generatedCheckedRole(35) == 42
   let generatedTypedWrappersWork = generatedAdd(20, 22) == 42 and
     generatedNatId(17) == 17
+  let generatedOpaqueWrapperWorks = generatedRouteRole(
+    ChannelHandle(id: 17, label: "socket"), "generated").label ==
+      "socket:generated"
+  let generatedUnaryOpaqueWorks = generatedRotateRole(
+    ChannelHandle(id: 18, label: "single")).id == 19
+  let generatedOpaqueWrapperCases = forAll(
+    "generated opaque wrappers preserve typed values",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let value = generatedRouteRole(ChannelHandle(id: id, label: "channel"),
+                                     $id)
+      value.id == id and value.label == "channel:" & $id,
+    shrinkInt)
 
   var rejectedNegativeNat = false
   try:
@@ -95,7 +127,9 @@ when isMainModule:
   except ValueError:
     rejectedNegativeNat = true
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
-      generatedTypedWrappersWork and rejectedNegativeNat):
+      generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
+      generatedUnaryOpaqueWorks and generatedOpaqueWrapperCases and
+      rejectedNegativeNat):
     quit(1)
 
   # The runtime-binding work needs the exact global identities assigned by
