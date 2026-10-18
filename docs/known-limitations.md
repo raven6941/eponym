@@ -89,7 +89,7 @@ Nim adapter propagate unchanged to the caller. An invoked but unbound
 postulate raises a `ValueError` naming the postulate. `eponymBlock` rejects a
 binding that no checked proc body references, but does not determine whether
 that proc is reachable from an application entry point. Call-graph
-reachability, callbacks longer than three opaque arguments, and structural
+reachability, callbacks with more than four opaque arguments, and structural
 codecs remain unsupported. The TCP demo returns transport and codec failures
 through a mapped `TransportResult` value. Other adapters may still propagate
 synchronous exceptions. See the
