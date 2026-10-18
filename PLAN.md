@@ -553,7 +553,9 @@ implementations.
   overrides; a prelude-resolution test checks nested imports without vendoring.
 - [x] Verify the resolution contract against a clean package-shaped install
   from a separate working directory; document the path order and absolute
-  override behavior.
+  override behavior. The smoke script also compiles and runs the tutorial's
+  first checked example and compiles its generic vector example from a clean
+  Nim project directory.
 - [ ] Revisit the first-use time estimate after installation and editor setup
    are streamlined.
 
