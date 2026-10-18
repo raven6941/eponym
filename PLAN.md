@@ -20,9 +20,12 @@ Idris) stalled on the adoption problem — each asked programmers to buy a
 whole new ecosystem. A library in a language people already use is a much
 easier sell. The target case is a session-type library: protocol
 violations rejected at compile time through plain `send`/`recv` calls
-(issue #28). Deliberate-embedding prior art: Turnstile/Turnstile+ (the
-architectural ancestor — dependent type systems as macros), SynQ, Liquid
-Haskell.
+(issue #28). This is the intended destination, not the current experience:
+today's session examples check Eponym roles but do not bind their postulates
+to Nim transports or run those checked roles. The embedding applicability
+plan below tracks the implementation needed to close that gap. Deliberate-
+embedding prior art: Turnstile/Turnstile+ (the architectural ancestor —
+dependent type systems as macros), SynQ, Liquid Haskell.
 
 ## Architecture overview
 
@@ -34,7 +37,11 @@ at compile time), the **layer stack** (dependency discipline), and the
 
 User code is ordinary Nim. Eponym surface syntax appears inside a macro;
 the macro elaborates it at compile time and splices ordinary Nim code
-back. The dependent types evaporate — zero runtime cost.
+back. The target is for proof terms and static evidence to have no runtime
+cost, with runtime values crossing an explicit typed boundary. Current
+implementation is narrower: `eponymBlock` emits `varargs[int] -> int`
+wrappers, and runtime calls re-elaborate/cache the block before evaluating
+the requested definition. External postulates are not callable from Nim.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -220,6 +227,221 @@ disequality facts in unification; impossible clauses rejected early).
 Then: #33 positivity, #34 error snapshots, #37 records, #38 elaboration
 adequacy tests, #28 session-type library demo (the motivating case),
 DCP/convexity case (no issue yet — strong second demo).
+
+## Embedding applicability plan
+
+This plan addresses the user-visible gaps tracked in
+[`docs/known-limitations.md`](docs/known-limitations.md), including the
+runtime bridge, disconnected postulates, separate proof/runtime examples,
+Nim interop, and setup friction. The goal is to make checked Eponym code
+usable as a Nim library without claiming that Eponym verifies arbitrary host
+implementations.
+
+### Design boundary and target
+
+- Eponym checks Eponym declarations, dependent indices, and QTT usage at
+  compile time.
+- Ordinary Nim types and procedures cross the boundary through generated,
+  statically typed adapters/codecs. User-defined objects, references,
+  collections, closures, and async results should be supportable when an
+  adapter defines their runtime representation. Opaque values may pass
+  through Eponym without exposing their structure.
+- Nim's compiler checks the adapter's concrete Nim signature. Eponym checks
+  callers against the postulated Eponym type. The adapter's behavior remains
+  trusted: neither compiler proves that an arbitrary Nim implementation
+  obeys a dependent protocol or that a host value satisfies an index.
+- No unrecognized Nim code is evaluated as if Eponym checked it. A pure
+  expression subset, if adopted, must lower explicitly to Eponym terms.
+- QTT usage checking is a static guarantee over Eponym terms. It is not
+  automatically a borrow checker for ordinary Nim references or a promise
+  of mutation-based code generation.
+
+### Ordered implementation stages
+
+#### A. Specify and freeze the host boundary
+
+- [ ] Define an adapter/codec contract for values entering and leaving Eponym
+   evaluation. Separate structural codecs (which translate data that
+   Eponym inspects) from opaque handles (which Eponym only passes to a
+   postulate and receives back).
+- [ ] Specify supported ownership, aliasing, exception, async, and lifetime
+   behavior. In particular, decide how a QTT linear channel relates to a
+   Nim `ref`, `var`, or closure that may be aliased.
+- [ ] Keep this contract independent of a particular TCP library. A user or
+   library author writes a narrow adapter over `std/net`, `asyncnet`, or
+   another backend.
+
+**Exit criteria:**
+
+- [ ] The docs distinguish the Eponym guarantee, Nim signature check, codec
+  behavior, and trusted host semantics; a reviewer can tell what an opaque
+  handle does and does not prove.
+
+#### B. Generalize the runtime call engine and generated ABI
+
+- [x] Build on the `Value`-based evaluator entry points in
+   `eponym_embed.nim`; preserve existing `Int` wrappers as compatibility
+   shims.
+- [x] Add property-based runtime coverage for `Int` and primitive `Nat`
+   values crossing the low-level call API; retain a compatibility check for
+   the old integer helper and reject negative Nim values for `Nat`.
+- [ ] Add an explicit runtime type/codec description to each exported Eponym
+   definition. Generate a Nim proc with declared parameter and result types
+   instead of `varargs[int]`.
+- [ ] Validate the supported Eponym type shape and Nim adapter signature during
+   macro expansion/compilation. Reject unsupported conversions with an
+   error naming the Eponym binder and Nim type; never fall back to unchecked
+   casts or late `ValueError`s for signature mismatches.
+- [ ] Remove runtime source re-elaboration from the normal generated-call path:
+   emit or register the checked core term and required static environment at
+   compile time, or demonstrate why a cache is necessary and keep it outside
+   the per-call path.
+- [ ] Define which runtime forms are genuinely represented (first-order data,
+   closures, records, dependent pairs, opaque handles) instead of implying
+   that one `Value` escape hatch makes all Nim types callable.
+
+**Exit criteria:**
+
+- [ ] Existing integer examples keep working; at least one non-`Int` Eponym
+  definition crosses a generated statically typed Nim wrapper; wrong Nim
+  signatures fail compilation; no Eponym proof is weakened by the new ABI.
+
+#### C. Bind postulates to Nim procedures
+
+- [ ] Add explicit binding syntax linking a declared postulate to a Nim proc or
+   closure in the same embedding module or an explicit binding record.
+- [ ] Use a block-local binding record and evaluator environment keyed by
+   checked postulate reference identity; do not use a process-global name or
+   reference-ID registry. The current `elabCheckDir` API returns definitions
+   but not the global table needed to preserve postulate identities, so extend
+   that API (or emit a stable runtime descriptor) before implementing binding.
+- [ ] At compile time, check that the Nim adapter type matches the supported
+   runtime shape of the postulate's Eponym type. Preserve dependent indices
+   and quantities in Eponym checking; state clearly that they do not prove
+   adapter behavior.
+- [ ] Add host-callable values to the runtime evaluator, or generate direct
+   wrappers that call the bound Nim adapter. Make missing, duplicate, and
+   unreachable bindings diagnostics explicit.
+- [ ] Specify exception and async behavior; add a later adapter form for
+   `Future[T]` rather than conflating synchronous and asynchronous effects.
+- [ ] Start with scalar primitives, then an opaque user-defined handle plus a
+   message codec. Use the handle to bind a protocol operation through a
+   Nim adapter. A TCP adapter should be one example, not a dependency of the
+   Eponym core.
+
+**Exit criteria:**
+
+- [ ] A checked role calls its bound postulate at runtime; the Nim compiler
+  rejects a mismatched adapter signature; a negative Eponym role still fails
+  during elaboration; the trusted implementation caveat is shown at the
+  binding site and in the trust model.
+
+#### D. Make one end-to-end example use the checked role
+
+- [ ] Replace the hand-mirrored `runPaxosRound` sequence with calls to the
+   checked `proposer` and `acceptor` roles through bound mailbox operations.
+- [ ] Then provide a socket adapter with message encoding/decoding outside the
+   Eponym checker. Keep transport failure and serialization validity
+   explicit in the Nim result type.
+- [ ] Make the buffer/borrow example route through bound postulates, and label
+   what the linear checker establishes versus what the Nim buffer adapter
+   must uphold.
+- [ ] Exercise both correct runtime execution and compile-time failures for
+   wrong message order, wrong indexed value, double use, and dropped linear
+   handles.
+
+**Exit criteria:**
+
+- [ ] The running demo executes the same checked roles that compile-time
+  negative examples constrain; there is no second manually maintained
+  protocol sequence.
+
+#### E. Connect certified models to numeric execution
+
+- [ ] Choose one path: interpret a certified reified objective at runtime, or
+   generate its numeric implementation from that same expression.
+- [ ] Pass the exact Eponym objective/certificate to the solver API. Do not
+   separately restate the formula as Nim code without an explicit, tested
+   correspondence proof or code-generation path.
+- [ ] State which assumptions remain trusted: solver correctness, floating
+   point behavior, derivative implementation (unless generated), and
+   convergence conditions.
+- [ ] Update the single-variable and logistic-regression examples so changing
+   the checked objective necessarily changes the executed objective.
+
+**Exit criteria:**
+
+- [ ] A mutation to the checked objective changes the runtime function or
+  causes generation/validation to fail; the solver cannot silently optimize
+  a different expression.
+
+#### F. Evaluate QTT-guided code generation
+
+- [ ] Keep usage checking as the correctness feature, independently of any
+   optimization.
+- [ ] Prototype destination-passing or slot reuse for a narrow first-order
+   expression language where liveness and aliasing are explicit.
+- [ ] Generate mutation only when the representation and ownership analysis
+   prove it safe. Linear use alone does not make an arbitrary Nim object
+   uniquely owned.
+- [ ] Compare output behavior and allocations against an immutable baseline;
+   report when the backend cannot optimize a term.
+
+**Exit criteria:**
+
+- [ ] The optimization has differential correctness coverage, does not
+  change QTT acceptance, and has measured benefit on a documented workload.
+  Do not market QTT as code-generation optimization until this lands.
+
+#### G. Improve the Nim surface and onboarding
+
+- [ ] Keep the current supported AST boundary explicit in the syntax reference.
+- [ ] Prototype a small pure Nim-looking subset (`let`, selected arithmetic,
+   and `if` expressions) by lowering it to Eponym terms. Effects, arbitrary
+   procedure calls, macros, mutation, and IO remain outside unless introduced
+   as explicit trusted bindings.
+- [ ] Decide the parameter convention: square brackets for explicit Eponym
+   binders (`A`, indices such as `n`), parentheses for term arguments, and
+   braces for implicit binders. Preserve a migration path from call-style
+   forms such as `cons(A, n, x, xs)` and `Vec(A, n)`.
+- [ ] Make installed preludes discoverable by the package without requiring
+   users to copy `.ep` files beside every source file; define deterministic
+   resolution order (source-relative, package prelude, explicit override)
+   and keep standalone file behavior reproducible.
+- [ ] Revisit the first-use time estimate after installation and editor setup
+   are streamlined.
+
+**Exit criteria:**
+
+- [ ] Examples use the documented Nim-friendly syntax; the tutorial runs
+  from a clean Nim project using the published package; `.ep` resolution
+  works from a different working directory without hidden global state.
+
+### Cross-stage validation and project claims
+
+- [ ] Add positive tests for every supported codec and callback shape, plus
+  compile-fail cases for type mismatch, missing binding, duplicate binding,
+  effectful unsupported expression, dependent-index mismatch, and linear
+  misuse.
+- [ ] Add runtime integration examples that execute the exact Eponym-checked
+  definition, not a mirrored Nim implementation.
+- [ ] Keep the README's examples classified as compile-time model checks,
+  runtime-integrated examples, or illustrative parallel implementations.
+  Remove or qualify claims when the implementation does not meet them.
+- [ ] Update `docs/known-limitations.md`, the trust model, the tutorial, syntax
+  reference, and this plan in the same change when a stage lands.
+- [ ] Preserve a supported-claims table in the docs: “checked by Eponym”,
+  “checked by Nim”, “trusted adapter”, and “not currently connected”.
+
+### Dependencies and sequencing
+
+The runtime ABI (B) precedes callable postulates (C); postulates precede the
+end-to-end protocol (D). The optimizer connection (E) can proceed after the
+runtime evaluator is general enough to interpret or compile a reified
+objective. QTT code generation (F) is independent of protocol bindings but
+depends on a runtime representation with explicit ownership/liveness.
+Surface syntax and package onboarding (G) can proceed alongside A–C, but must
+not imply that unsupported host Nim is executable inside `eponymBlock`.
 
 ## Building
 

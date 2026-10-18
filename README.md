@@ -10,6 +10,9 @@ first checked dependent type, ~15 minutes), look up any language form in the
 [trust model](docs/trust-model.md) to see what the system checks — and what
 is your problem.
 
+See [known limitations](docs/known-limitations.md) for the current Nim
+runtime boundary, supported embedding surface, and code-generation gaps.
+
 ### Deliberate points of departure
 
 QTT instead of ETT. Idris has demonstrated the 0/1/ω approach taken. This allows support for session types, and opt-in checking of the style popularized by rust.
@@ -39,6 +42,12 @@ show a few useful patterns:
 - **Interactive proof development** — explore goals and contexts in the
   editor, then refine, finish, or split a proof into cases. See the
   [shed walkthrough](examples/embedded/sheds_walkthrough.nim).
+
+These examples show compile-time checking of Eponym models. The current
+Nim runtime bridge only calls definitions over primitive `Int`; protocol
+postulates and the hand-written Nim drivers in the session, borrowing, and
+optimization examples are not yet connected to the checked definitions.
+See [known limitations](docs/known-limitations.md) for the exact boundary.
 
 ## Why embedded
 
@@ -71,8 +80,9 @@ eponymBlock:
   as Nim, and the elaborator typechecks it at compile time.
 - Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).
 - Two-layer shape: the checked definitions are the proof layer; the
-  surrounding Nim is the running layer, calling them through generated
-  wrappers.
+  surrounding Nim is the running layer. Generated runtime calls currently
+  support primitive `Int` arguments and results; other definitions are
+  checked at compile time but do not yet have typed Nim wrappers.
 - The headline demos in `examples/embedded/` are built this way:
   `paxos_session.nim` (Paxos as dependent session types with
   unforgeable promise tickets), `convex_opt_vec.nim` (DCP-checked
