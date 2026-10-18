@@ -110,8 +110,10 @@ unsupported.
 `T -> Nat`, `Nat -> A -> B`, and curried opaque postulates with up to four
 arguments. A mapped `Future[T]` may be
 returned opaquely; it is not awaited and async failure/cancellation semantics
-are undefined. Longer callback signatures, dependent structural codecs,
-collections, and call-graph reachability checks remain
+are undefined. `bindPostulatePair` supports a codec-supported named argument
+with a non-dependent Sigma result, encoded as a typed Nim tuple; dependent
+Sigma results remain rejected. Longer callback signatures, dependent
+structural codecs, collections, and call-graph reachability checks remain
 unsupported. A binding unused by all checked proc bodies is rejected during
 macro expansion. An invoked unbound
 postulate raises a runtime `ValueError` naming the postulate. Exceptions raised

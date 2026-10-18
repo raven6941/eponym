@@ -99,6 +99,63 @@ proc bindHostValue*(bindings: var RuntimeBindings, globals: Globals,
       "duplicate runtime binding for postulate: " & postulateName)
   bindings[id] = implementation
 
+proc bindHostValueAdapter*(bindings: var RuntimeBindings, globals: Globals,
+                           postulateName: string,
+                           implementation: proc(value: Value): Value) =
+  ## Bind a macro-generated, statically typed adapter whose codec handles a
+  ## structured argument or result. The public Nim callback is invoked only
+  ## after generated conversions have established its concrete Nim types.
+  bindHostValue(bindings, globals, postulateName, vHostFunc(implementation))
+
+proc opaqueTypeHeadId(ty: Term): int
+
+proc validateHostSigmaUnaryType*(globals: Globals, postulateName,
+    argTypeName, firstTypeName, secondTypeName: string) =
+  ## Validate a named argument followed by a non-dependent Sigma result:
+  ## A -> Sig(B, C). The Sigma fields are checked by their type-family heads;
+  ## indices on named families remain part of the trusted host codec boundary.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  for typeName in [argTypeName, firstTypeName, secondTypeName]:
+    if typeName notin globals or globals[typeName].tm.isNil or
+        globals[typeName].tm.kind != tR:
+      raise newException(ValueError,
+        "structured adapter type is not a declared Eponym type: " & typeName)
+  let expectedArgId = globals[argTypeName].tm.refId
+  let expectedFirstId = globals[firstTypeName].tm.refId
+  let expectedSecondId = globals[secondTypeName].tm.refId
+  let ty = entry.ty
+  let pairTy = if ty.kind == tPi: ty.scope.bdy else: nil
+  var dependent = false
+  proc containsVar(term: Term): bool =
+    if term.isNil: return false
+    if term.kind == tV: return true
+    case term.kind
+    of tPi, tSi, tLam:
+      containsVar(term.dom) or containsVar(term.scope.bdy)
+    of tApp: containsVar(term.fn) or containsVar(term.arg)
+    of tPair: containsVar(term.pFst) or containsVar(term.pSnd) or
+      containsVar(term.pScope.bdy)
+    of tFst, tSnd, tAbsurd: containsVar(term.sub)
+    of tLet: containsVar(term.letVal) or containsVar(term.letTy) or
+      containsVar(term.letScope.bdy)
+    of tR, tV, tMeta, tC, tInt, tPrim, tNatLit, tNatSing, tType: false
+  if pairTy != nil and pairTy.kind == tSi:
+    dependent = containsVar(pairTy.scope.bdy)
+  if ty.kind != tPi or ty.impl or ty.qty == q0 or
+      opaqueTypeHeadId(ty.dom) != expectedArgId or pairTy.isNil or
+      pairTy.kind != tSi or pairTy.impl or dependent or
+      opaqueTypeHeadId(pairTy.dom) != expectedFirstId or
+      opaqueTypeHeadId(pairTy.scope.bdy) != expectedSecondId:
+    raise newException(ValueError,
+      "structured unary adapter requires postulate '" & postulateName &
+      "' to have type " & argTypeName & " -> Sig(" & firstTypeName & ", " &
+      secondTypeName & ") with a non-dependent pair")
+
 proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
   ## Require an Eponym postulate with the exact runtime shape `Int -> Int`.
   ## Used at macro expansion and again at runtime before binding.
@@ -120,7 +177,6 @@ proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
       "Nim proc(int): int requires Eponym postulate '" & postulateName &
       "' to have type Int -> Int")
 
-proc opaqueTypeHeadId(ty: Term): int
 proc opaqueTypeName(globals: Globals, typeId: int,
                     postulateName: string): string
 proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int

@@ -81,6 +81,9 @@ This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
 opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`, and curried
 opaque postulates with up to four arguments.
+`bindPostulatePair` additionally binds a codec-supported named argument to a
+non-dependent `Sig(B, C)` result using recursive tuple codecs. Dependent Sigma
+results remain unsupported at this host adapter boundary.
 Opaque bindings require explicit `runtimeType(EponymType, NimType)` mappings
 to postulated Eponym types or
 type families. Nim checks adapter and generated wrapper signatures;
