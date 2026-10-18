@@ -10,13 +10,17 @@ design notes where the limit comes from.
 ### Callable definitions have an integer-only runtime bridge
 
 `eponymBlock` checks definitions at Nim compile time, then generates Nim
-wrappers for them. The current convenience wrapper ABI is `varargs[int] -> int` in
+wrappers for them. Top-level non-generic definitions whose parameters and
+result use primitive `Int` or `Nat` get fixed-arity Nim `proc` wrappers with
+`int` parameters and results. `Nat` conversions reject negative values. Other
+signatures still use the compatibility `varargs[int] -> int` wrapper in
 [`eponym_mac.nim`](../src/eponym/eponym_mac.nim). At runtime,
 [`eponym_embed.nim`](../src/eponym/eponym_embed.nim) converts Nim integers to
 Eponym's primitive `Int`, applies the checked term, and converts an `Int`
 result back. This means the checker can accept definitions over `Nat`,
 vectors, records, session types, and other Eponym types, but those definitions
-do not thereby become callable from ordinary Nim.
+do not thereby become callable from ordinary Nim with a faithful typed
+signature.
 
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values and opaque boxes for arbitrary Nim payload
