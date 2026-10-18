@@ -26,12 +26,18 @@ the postulated behavior.
 ### Callable definitions have a partial runtime bridge
 
 `eponymBlock` checks definitions at Nim compile time, then generates Nim
-wrappers for them. Top-level non-generic definitions whose parameters and
+wrappers for them. Top-level definitions whose parameters and
 result use primitive `Int` or `Nat` get fixed-arity Nim `proc` wrappers with
 `int` parameters and results. Definitions over `Bool` get Nim `bool` wrappers
 when `bool.ep` is imported; the codec uses the checked `true` and `false`
 constructors and rejects noncanonical Bool runtime values. Explicit
 `runtimeType` mappings add opaque postulated types and indexed families.
+Type-level generic binders written `[A: Univ]` also support generated Nim
+generic wrappers when `A` appears only in the checked signature and the
+remaining shape has codecs. Nim's concrete `A` values cross as opaque boxes;
+the runtime does not inspect their representation. Value-indexed binders and
+generic type parameters used by the runtime body still need explicit runtime
+representations.
 `Nat` conversions reject negative values. An explicit `proc` declaration with
 an unsupported signature remains
 checked but emits a targeted compile-time error if called. Generated names
@@ -56,8 +62,8 @@ explicitly mapped Eponym types without exposing their representation.
 `eponymBlock` can generate typed wrappers for first-order definitions over
 mapped opaque types that correspond to named Eponym postulates. Tests exercise
 user-defined values through checked definitions and generated wrappers. A
-`runtimeValue(name)` request inside `eponymBlock` exposes a non-generic
-checked definition as its runtime `Value` together with the checked globals,
+`runtimeValue(name)` request inside `eponymBlock` exposes a checked definition
+as its runtime `Value` together with the checked globals,
 for host-side interpreters of reified data. Zero-argument definitions get a
 no-argument helper. When every parameter has a runtime codec, parameterized
 definitions also get a Nim-typed overload that converts arguments and returns
@@ -84,7 +90,8 @@ Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
 bodies. Returning closures from generated wrappers remains unsupported.
 Structural codecs for collections beyond non-dependent two-field `Sig` tuples
-and named non-dependent records, dependent or generic signatures,
+and named non-dependent records, dependent signatures, value-indexed generic
+signatures, and generic binders used in runtime bodies,
 callback shapes with more than four curried opaque arguments, and structural
 inspection of closures remain unsupported. The session runtime demo includes a
 hand-written Nat LEB128 message codec, and the TCP adapter demo uses it over a

@@ -46,7 +46,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | Inside `eponymBlock` | Meaning |
 |---|---|
 | `proc f(x: T): U = term` | Eponym definition; `term` must use Eponym forms |
-| `proc f[A: Univ, n: Nat](x: A): Vec[A, n] = ...` | Explicit Eponym binders; the annotation grammar is Eponym, and generic runtime wrappers remain unsupported |
+| `proc f[A: Univ, n: Nat](x: A): Vec[A, n] = ...` | Explicit Eponym binders; type-level `[A: Univ]` runtime wrappers are supported when the binder appears only in the checked signature and the remaining types have codecs. Value-indexed runtime wrappers remain unsupported. |
 | `cons[A, n](x, xs)`, `Vec[A, n]` | Square brackets supply explicit Eponym parameters; parentheses supply term arguments. Call-style forms remain supported during migration. |
 | `let x = term` in a definition body | Eponym local binding; one or more lets may precede the final term |
 | `left + right`, `left - right`, `left * right`, `-value` | Lowered to checked Eponym `Int` primitives; the Eponym checker enforces operand types |
@@ -80,11 +80,13 @@ doAssert checkedRole(41) == 42
 For this supported shape, the macro checks that the Eponym postulate is
 `Int -> Int`, and Nim checks that the supplied procedure has type
 `proc(int): int`. The implementation is trusted to honor its contract; Eponym
-does not inspect or verify the Nim procedure body. Top-level, non-generic
-definitions over primitive `Int` and `Nat` generate fixed-arity Nim wrappers;
-`Nat` uses Nim `int` with nonnegative runtime checks. Other Eponym signatures
-need an explicit opaque mapping as shown below or an appropriate structural
-codec, which is not yet implemented. Calling an explicit `proc` definition
+does not inspect or verify the Nim procedure body. Definitions over primitive
+`Int`, `Nat`, and `Bool` generate fixed-arity Nim wrappers; `Nat` uses Nim
+`int` with nonnegative runtime checks and `Bool` requires `bool.ep`. Type-level
+generic binders `[A: Univ]` can use Nim generic values as opaque boxes when the
+binder appears only in the checked signature. Other Eponym signatures need an
+explicit opaque mapping as shown below or one of the supported structural
+codecs. Calling an explicit `proc` definition
 without a supported runtime mapping fails at compile time with the missing
 codec type in the diagnostic. A reachable postulate without a
 binding fails when evaluated; diagnostics for missing bindings at expansion

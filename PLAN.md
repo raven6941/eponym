@@ -343,9 +343,16 @@ implementations.
    definitions and round-trip both constructor cases in a 200-case property;
    runtime missing-postulate diagnostics recognize data constructors as valid
    results.
-- [ ] Add an explicit runtime type/codec description to each exported Eponym
-   definition and support user-defined/structural Nim types, dependent
-   signatures, and generic or higher-order definitions. Definitions without
+- [x] Generate typed wrappers for type-level generic binders `[A: Univ]` when
+   the binder is used only in the checked signature. Nim values of generic
+   type `A` pass through opaque boxes; runtime computation uses the same
+   checked body. A 200-case property covers primitive and user-defined Nim
+   values through both the generated wrapper and typed `runtimeValue` helper.
+   Value-indexed binders and bodies that inspect generic type arguments still
+   require an explicit runtime representation.
+- [ ] Add explicit runtime type/codec descriptions for exported Eponym
+   definitions and extend support to dependent signatures, value-indexed
+   generics, and higher-order definitions. Definitions without
    a matching explicit Nim `proc` declaration still retain the legacy
    `varargs[int]` compatibility wrapper; explicit `proc` declarations with
    unsupported signatures fail clearly when called.

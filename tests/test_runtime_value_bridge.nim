@@ -154,11 +154,17 @@ eponymBlock:
   proc generatedBoolNot(value: Bool): Bool =
     if value: false else: true
 
+eponymBlock:
+  proc generatedGenericIdentity[A: Univ](value: A): A = value
+  runtimeValue(generatedGenericIdentity)
+
 static:
   doAssert compiles(sampleTreeWithRuntimeValue(2))
   doAssert not compiles(sampleTreeWithRuntimeValue("not a Nat"))
   doAssert compiles(generatedBoolNot(true))
   doAssert not compiles(generatedBoolNot(1))
+  doAssert compiles(generatedGenericIdentity(1))
+  doAssert compiles(generatedGenericIdentity("opaque"))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -602,6 +608,31 @@ proc callbackRole : Callback -> Sample -> Sample =
     proc(r: var Rng): bool = r.genBool(),
     proc(value: bool): bool = generatedBoolNot(value) == not value)
   if not boolCodecCases:
+    quit(1)
+
+  let genericIdentityCases = forAll(
+    "polymorphic identity wrappers preserve arbitrary host values",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool = generatedGenericIdentity(value) == value and
+      valueToHost[int](generatedGenericIdentityRuntimeValue(value).value) == value,
+    shrinkInt)
+  if not genericIdentityCases:
+    quit(1)
+
+  let genericOpaqueIdentityCases = forAll(
+    "polymorphic identity wrappers round-trip boxed user objects",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let input = ChannelHandle(id: id, label: "generic/" & $id)
+      let generated = generatedGenericIdentity(input)
+      let runtime = generatedGenericIdentityRuntimeValue(input)
+      let decoded = valueToHost[ChannelHandle](runtime.value)
+      generated.id == input.id and generated.label == input.label and
+        decoded.id == input.id and decoded.label == input.label,
+    shrinkInt)
+  if not genericOpaqueIdentityCases:
     quit(1)
 
   var opaqueBindings = initRuntimeBindings()

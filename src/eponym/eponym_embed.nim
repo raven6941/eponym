@@ -578,6 +578,16 @@ proc valueToBool*(value: Value, globals: Globals): bool =
   if valueId == falseId: return false
   raise newException(ValueError, "runtime value is not a canonical Bool")
 
+proc prependErasedTypeArgs*(typeArgCount: int,
+                            args: openArray[Value]): seq[Value] =
+  ## Runtime computation does not inspect type-level generic binders. Supply
+  ## one inert universe value for each such binder before the term arguments.
+  result = newSeqOfCap[Value](typeArgCount + args.len)
+  for _ in 0 ..< typeArgCount:
+    result.add(vType(0))
+  for arg in args:
+    result.add(arg)
+
 proc hostIntUnary*(implementation: proc(x: int): int): Value =
   ## Adapt a Nim Int -> Int procedure to a runtime postulate value. Nim
   ## checks the adapter's concrete signature; the implementation's behavior
