@@ -493,7 +493,8 @@ implementations.
 
 #### G. Improve the Nim surface and onboarding
 
-- [ ] Keep the current supported AST boundary explicit in the syntax reference.
+- [x] Keep the current supported AST boundary explicit in the syntax reference,
+  tutorial, trust model, and known-limitations page.
 - [x] Lower Nim `Int` expressions using `let`, unary minus, and `+`, `-`, `*`
   to the existing checked Eponym primitives. A 200-case property test compares
   generated wrappers with Nim arithmetic over values that avoid overflow.
@@ -532,8 +533,8 @@ implementations.
   examples by what Eponym checks, what Nim checks, and what remains trusted
   or disconnected. The README links to the table; retain it as implementations
   change and qualify claims when the implementation does not meet them.
-- [ ] Update `docs/known-limitations.md`, the trust model, the tutorial, syntax
-  reference, and this plan in the same change when a stage lands.
+- [x] Update `docs/known-limitations.md`, the trust model, the tutorial, syntax
+  reference, and this plan alongside the surface-syntax stage.
 - [x] Preserve a supported-claims table in the docs: “checked by Eponym”,
   “checked by Nim”, “trusted adapter”, and “not currently connected”.
 
