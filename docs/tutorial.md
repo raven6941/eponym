@@ -79,6 +79,10 @@ What just happened:
   after the first call) and evaluates the checked term. Runtime calls
   work for definitions over `Int`; everything else in the block is still
   fully checked at compile time.
+- This integer-only runtime bridge is a known limitation, not a limit on
+  what the elaborator can check. See [known limitations](known-limitations.md)
+  and the [postulate binding experiment](postulate-nim-binding-experiment.md)
+  for the path toward callable Nim-backed operations.
 
 Now break it. Change the body to `addInt(x, y)` and recompile:
 

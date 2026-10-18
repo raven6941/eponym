@@ -1,0 +1,115 @@
+# Experiment: bind Eponym postulates to Nim procedures
+
+**Status:** design investigation; external postulate bindings are not implemented.
+This work is one item in [known limitations](known-limitations.md).
+
+## Goal
+
+Let a checked Eponym definition call an operation declared as a `postulate`,
+while a Nim procedure supplies the runtime implementation. The first use
+case is a protocol role calling transport operations whose backend uses a
+Nim networking library.
+
+The desired boundary is:
+
+```nim
+proc sendNatImpl(ch: Channel, n: int): Channel = ...
+
+eponymBlock:
+  postulate(sendNat,
+    Pi(ch: Channel, n: Int, Channel))
+  bindPostulate(sendNat, sendNatImpl)
+  # checked role definitions may call sendNat
+```
+
+This is illustrative only. The exact surface syntax and supported Nim ABI
+types remain open.
+
+## Separate guarantees
+
+1. **Eponym checks the declared contract.** A role using the postulate must
+   satisfy its Eponym type, including dependent indices and quantities.
+2. **Nim checks the adapter signature.** The generated registration or
+   wrapper must refer to a Nim procedure with an accepted parameter and
+   result signature. A raw TCP API will usually need a typed adapter that
+   converts messages and channel state to the Eponym runtime representation.
+3. **The implementation remains trusted.** Nim's type checker cannot prove
+   that the procedure obeys the dependent protocol contract, preserves
+   linear resources, or sends the bytes its declared result claims. A
+   postulate binding is an explicit trust boundary.
+
+## Current runtime obstacle
+
+`eponymBlock` currently generates wrappers only for definitions whose
+runtime ABI is `Int -> ... -> Int`. `eponym_embed` re-elaborates source and
+evaluates those terms. The evaluator represents a postulate as an inert
+global reference (`wRef`); it has no host-callable value or external symbol
+registry. Therefore a Nim signature check alone would not make a bound
+postulate executable. The runtime evaluator and wrapper ABI need a deliberate
+extension.
+
+The first groundwork is now present in `eponym_embed`: callers can invoke an
+elaborated definition with ETT `Value`s via `callValueFunc` or
+`callValueFuncDir`, and convert primitive Nim integers to/from Eponym `Int`
+and `Nat` literals. The generated `eponymBlock` wrappers still use the
+integer-only ABI, and these new calls do not yet bind postulates.
+
+## Suggested first vertical slice
+
+1. Define the target as arbitrary *user-defined* Nim values, with an
+   explicit typed adapter/codec boundary. A Nim object or socket should be
+   passable opaquely even when Eponym cannot inspect its representation.
+2. Add explicit binding syntax associating one declared postulate with one
+   typed Nim adapter. Reject missing, duplicate, or unbound runtime bindings
+   when a reachable role is invoked.
+3. Generate a typed Nim adapter at macro expansion time so incompatible Nim
+   signatures fail in the Nim compiler. Keep the Eponym declaration as the
+   source of the checked type; check supported structural correspondences
+   and make any opaque representation mapping explicit.
+4. Add a runtime host-callable value to the evaluator (or compile a callable
+   Nim wrapper) and verify that evaluating a checked definition actually
+   invokes the bound implementation.
+5. Cover a first-order scalar example, then a user-defined channel/message
+   type and an async result. Keep type-level dependent indices statically
+   checked even when the runtime value is opaque.
+6. Add negative coverage for a wrong Nim signature and for an Eponym role
+   that violates the postulate's type.
+
+### Initial runnable slice
+
+The first implementation should use an explicit binding record whose fields
+are concrete Nim proc values, plus an Eponym evaluator environment that maps
+the checked postulate reference to a host-callable value. The macro should
+generate or type-check an adapter against the declared Eponym arity and
+supported runtime codecs. Calls to that postulate then dispatch through the
+record at runtime. This keeps symbol lookup lexical to one embedding block
+and avoids a process-global registry keyed by names or unstable reference
+IDs.
+
+Start with a first-order `Int -> Int` callback so the evaluator dispatch can
+be tested independently of the ABI work. The next shape should pass an opaque
+user-defined Nim handle through a callback without exposing its fields to
+Eponym. A codec is required only when Eponym needs to inspect or construct a
+structured value. Do not treat an opaque value's runtime representation as
+evidence for a dependent index.
+
+Nim should validate the actual proc value via an assignment to the generated
+adapter type. The adapter type must reflect the Eponym contract's supported
+runtime mapping; it must not merely accept an arbitrary callback and postpone
+signature errors to runtime. Eponym continues to validate each checked caller
+against the postulate type. The callback body remains trusted.
+
+## Open questions
+
+- Is binding lexical to one `eponymBlock`, or can a library export a
+  postulate contract and let each importing application provide the backend?
+- Are bindings direct Nim symbols, explicit adapter closures, or a generated
+  record of operations?
+- How are exceptions and async results represented at the checked boundary?
+- Does a linear channel token have a runtime representation that prevents
+  accidental aliasing, or is linearity only a static contract?
+- What codecs are required for structured data whose values must be
+  inspected or serialized, versus opaque values that are only passed to and
+  returned from a postulate?
+- How should errors distinguish the checked declaration, adapter signature,
+  and trusted implementation behavior?

@@ -774,6 +774,12 @@ proc vOne(): Value =
 proc vInt*(n: int): Value =
   Value(syn: tmInt(n), whnf: Whnf(kind: wInt, intVal: n))
 
+proc vNatLit*(n: int): Value =
+  ## Construct a primitive Nat value for host/runtime adapters.
+  if n < 0:
+    raise newException(ValueError, "Nat cannot be negative")
+  Value(syn: tmNatLit(n), whnf: Whnf(kind: wNatLit, natLitVal: n))
+
 proc vPrim*(op: PrimOp, ty: Term): Value =
   ## A primitive Int operation, accumulating args (Experiment 11).
   Value(syn: tmPrim(op, ty), whnf: Whnf(kind: wPrim, op: op, pargs: @[]))

@@ -4,9 +4,9 @@
 # provides the runtime support for *calling* elaborated definitions from
 # Nim code.
 #
-# Design: the macro generates a wrapper proc for each `def` of type
-# `Int -> ... -> Int`. The wrapper converts Nim ints to ETT values,
-# evaluates the elaborated term, and converts back.
+# Design: the macro currently generates an integer wrapper for each `def`.
+# The lower-level call API accepts and returns ETT Values, allowing typed
+# Nim adapters to grow without limiting the evaluator to primitive Int.
 #
 # The elaborated terms are obtained by re-running the elaborator at
 # runtime on the embedded source (cached after first use). Compile-time
@@ -14,6 +14,7 @@
 # just for getting the evaluable terms.
 
 import tables
+import sequtils
 import elab
 import eponym_init
 
@@ -62,18 +63,37 @@ proc valueToInt*(v: Value): int =
   # Force evaluation if it's not yet a wInt
   raise newException(ValueError, "value is not an Int")
 
-proc callDefInt(d: ElabDef, args: seq[int]): int =
-  ## Evaluate an elaborated `def` of type `Int -> ... -> Int` on args.
-  ## (shared by callIntFunc and callIntFuncDir)
+proc natToValue*(n: int): Value = vNatLit(n)
+
+proc valueToNat*(v: Value): int =
+  ## Convert a primitive Eponym Nat value to a Nim int.
+  if v.whnf.kind == wNatLit:
+    return v.whnf.natLitVal
+  raise newException(ValueError, "value is not a canonical Nat literal")
+
+proc callDefValue*(d: ElabDef, args: openArray[Value]): Value =
+  ## Evaluate an elaborated definition with values from the ETT runtime.
   let t = d.tmTm
-  # Evaluate the term to a value
   var fn = eval(t, @[])
-  # Apply to each argument
-  for a in args:
-    let v = intToValue(a)
-    let w = applyWhnf(fn, v)
+  for arg in args:
+    let w = applyWhnf(fn, arg)
     fn = Value(syn: t, whnf: w)  # syn doesn't matter for result
-  valueToInt(fn)
+  fn
+
+proc callValueFunc*(src: string, name: string,
+                    args: openArray[Value]): Value =
+  ## Low-level runtime entry point over ETT values.
+  callDefValue(findDef(getDefs(src), name), args)
+
+proc callValueFuncDir*(baseDir, src: string, name: string,
+                       args: openArray[Value]): Value =
+  ## Directory-aware low-level runtime entry point over ETT values.
+  callDefValue(findDef(getDefsDir(baseDir, src), name), args)
+
+proc callDefInt(d: ElabDef, args: seq[int]): int =
+  ## Compatibility bridge for `Int -> ... -> Int` generated wrappers.
+  let values = args.mapIt(intToValue(it))
+  valueToInt(callDefValue(d, values))
 
 proc callIntFunc*(src: string, name: string, args: seq[int]): int =
   ## Call an elaborated `def` of type `Int -> ... -> Int`.
