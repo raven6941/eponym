@@ -89,6 +89,8 @@ proc prettyWhnfVal(v: Value, lvl: int, varNames: var seq[string],
   of wType:
     # Issue #52: level-annotated universe value.
     "Type " & $univIdx(v)
+  of wHost:
+    "<opaque Nim value: " & v.whnf.hostTypeName & ">"
 
 proc prettyWhnf*(v: Value, refNames: Table[int, string]): string =
   ## Issue #50: user-facing WHNF printer (entry point for `:eval`).

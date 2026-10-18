@@ -53,6 +53,8 @@ echo "=== elaboration trace (issue #83) ==="
 nim c -r --hints:off $P "tests/test_elab_trace.nim"
 echo "=== repl scripted session (issue #50) ==="
 sh tests/repl_session.sh
+echo "=== repl opaque runtime values ==="
+nim c -r --hints:off $P "tests/test_repl_values.nim"
 echo "=== kernel audit (issue #62: independent re-check) ==="
 nim c -r --hints:off $P "tests/kernel_audit.nim"
 echo "=== embedded examples (issue #149) ==="
