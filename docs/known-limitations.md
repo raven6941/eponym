@@ -38,9 +38,12 @@ mapped opaque types that correspond to named Eponym postulates. Tests exercise
 user-defined values through checked definitions and generated wrappers. A
 mapped `Future[T]` can pass through as an opaque postulate result, but Eponym
 does not await it or define async failure and cancellation semantics.
+Nim closures can be passed into checked roles as opaque callback arguments,
+where a bound Nim postulate may invoke them; Eponym does not inspect their
+bodies. Returning closures from generated wrappers remains unsupported.
 Structural codecs for records or collections, dependent or generic signatures,
-callback shapes with more than three curried opaque arguments, and closures as
-exported values remain unsupported. The session runtime demo includes a
+callback shapes with more than three curried opaque arguments, and structural
+inspection of closures remain unsupported. The session runtime demo includes a
 hand-written Nat LEB128 message codec, and the TCP adapter demo uses it over a
 loopback socket, but there is no reusable structural codec framework.
 Nim's type checker checks the concrete adapter signature, but the mapping to
