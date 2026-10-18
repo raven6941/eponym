@@ -136,6 +136,20 @@ The generated codec converts the arguments and tuple recursively. Dependent
 Sigma results are rejected because the host signature cannot establish the
 dependent index. Indices on mapped type families remain trusted by the adapter.
 
+When a host representation must cross a dependent pair, the trust is explicit:
+
+```nim
+postulate(Channel, Nat -> Univ)
+postulate(split, Channel(0) -> Sig(index: Nat, Channel(index)))
+runtimeType(Channel, ChannelHandle)
+bindPostulatePairTrusted(split, splitChannel, Channel, Nat, Channel)
+```
+
+This keeps the dependent type in the checked Eponym signature, but Nim cannot
+prove that the returned `ChannelHandle` represents `Channel(index)`. The host
+callback must uphold that relationship. Use ordinary `bindPostulatePair` for
+non-dependent results; it rejects dependent pairs.
+
 First-order wrappers also support non-dependent `Sig(A, B)` values as
 two-element Nim tuples and non-dependent named Eponym records as mapped Nim
 objects. Both recursively use primitive `Int`/`Nat` codecs and explicitly

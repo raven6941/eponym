@@ -103,7 +103,8 @@ proc bindHostValue*(bindings: var RuntimeBindings, globals: Globals,
 proc opaqueTypeHeadId(ty: Term): int
 
 proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
-    argTypeNames: openArray[string], firstTypeName, secondTypeName: string) =
+    argTypeNames: openArray[string], firstTypeName, secondTypeName: string,
+    allowDependentIndex = false) =
   ## Validate named arguments followed by a non-dependent Sigma result:
   ## A1 -> ... -> An -> Sig(B, C). The Sigma fields are checked by their
   ## type-family heads; indices on named families remain part of the trusted
@@ -153,14 +154,15 @@ proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
   if pairTy != nil and pairTy.kind == tSi:
     dependent = containsVar(pairTy.scope.bdy)
   if not validArguments or pairTy.isNil or pairTy.kind != tSi or
-      pairTy.impl or dependent or
+      pairTy.impl or (dependent and not allowDependentIndex) or
       opaqueTypeHeadId(pairTy.dom) != expectedFirstId or
       opaqueTypeHeadId(pairTy.scope.bdy) != expectedSecondId:
     let argTypeSig = argTypeNames.join(" -> ")
     raise newException(ValueError,
       "structured pair adapter requires postulate '" & postulateName &
       "' to have type " & argTypeSig & " -> Sig(" & firstTypeName & ", " &
-      secondTypeName & ") with a non-dependent pair")
+      secondTypeName & ") with " &
+      (if allowDependentIndex: "a mapped pair" else: "a non-dependent pair"))
 
 proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
   ## Require an Eponym postulate with the exact runtime shape `Int -> Int`.

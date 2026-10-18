@@ -326,6 +326,11 @@ implementations.
    Sigma shape, generates recursive codecs, and lets Nim check the callback
    signature. 200-case properties cover each arity; compile-fail fixtures
    reject dependent Sigma results and mismatched Nim tuple fields.
+- [x] Add the separate `bindPostulatePairTrusted` escape hatch for a
+   dependent Sigma result whose fields have runtime codecs. The checked
+   Eponym signature is preserved, while matching a host field to its index
+   remains explicitly trusted. A 200-case indexed-family property exercises
+   this path; the ordinary pair adapter still rejects the same shape.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
    signatures, and generic or higher-order definitions. Definitions without

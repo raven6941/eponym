@@ -84,8 +84,10 @@ opaque postulates with up to four arguments.
 `bindPostulatePair` additionally binds one to three codec-supported named
 arguments to a non-dependent `Sig(B, C)` result using recursive tuple codecs.
 It checks the declared argument type heads and tuple field type heads; indices
-on mapped type families remain trusted. Dependent Sigma results remain
-unsupported at this host adapter boundary.
+on mapped type families remain trusted. `bindPostulatePair` rejects dependent
+Sigma results. `bindPostulatePairTrusted` permits them when the declared fields
+have codecs, but the host adapter must uphold the relationship between a field
+and its index.
 Opaque bindings require explicit `runtimeType(EponymType, NimType)` mappings
 to postulated Eponym types or
 type families. Nim checks adapter and generated wrapper signatures;
