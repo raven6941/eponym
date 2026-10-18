@@ -1,8 +1,10 @@
 ## Runtime bridge checks for Eponym values that do not use the generated Int ABI.
 
-import std/[os]
+import std/[os, tables]
 import falsify
 import eponym_embed
+import elab
+import eponym_init
 
 const program = """
 postulate Int : Type 0
@@ -45,4 +47,23 @@ when isMainModule:
   if not (intRoundTrips and natRoundTrips and compat and rejectedNegativeNat):
     quit(1)
 
-  echo "test_runtime_value_bridge: Int compatibility and Nat Value calls ok"
+  # The runtime-binding work needs the exact global identities assigned by
+  # the checker. Confirm a definition body refers to the same postulate
+  # reference exposed in the returned state.
+  const identityProgram = """
+postulate Int : Type 0
+postulate hostStep : Int -> Int
+proc throughHost : Int -> Int = lam (n : Int). hostStep n
+"""
+  let checked = elabCheckDirState(identityProgram, baseDir)
+  let postulateId = checked.globals["hostStep"].tm.refId
+  let throughHost = checked.defs.findDef("throughHost")
+  let body = throughHost.tmTm.scope.bdy
+  if body.kind != tApp or body.fn.kind != tR or
+      body.fn.refId != postulateId:
+    quit(1)
+  let cachedGlobals = getGlobalsDir(baseDir, identityProgram)
+  if cachedGlobals["hostStep"].tm.refId != postulateId:
+    quit(1)
+
+  echo "test_runtime_value_bridge: Value calls, cached globals, and postulate identity ok"
