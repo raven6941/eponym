@@ -268,9 +268,11 @@ implementations.
    Eponym inspects) from opaque handles (which Eponym only passes to a
    postulate and receives back). The current opaque mappings are restricted to
    named postulated Eponym types; structural codecs remain future work.
-- [ ] Specify supported ownership, aliasing, exception, async, and lifetime
-   behavior. In particular, decide how a QTT linear channel relates to a
-   Nim `ref`, `var`, or closure that may be aliased.
+- [x] Specify supported ownership, aliasing, exception, async, and lifetime
+   behavior. QTT linearity is limited to checked Eponym terms; boxed Nim refs
+   and closures may alias or be retained. Adapters pass values by value, have
+   no `var`/`lent` or explicit ownership-transfer form, propagate synchronous
+   exceptions, and pass mapped futures through opaquely.
 - [x] Keep this contract independent of a particular TCP library. A user or
    library author writes a narrow adapter over `std/net`, `asyncnet`, or
    another backend.
