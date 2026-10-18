@@ -1,6 +1,8 @@
 # Experiment: a pure Nim subset inside `eponymBlock`
 
-**Status:** proposal for exploration; no new syntax is implemented yet.
+**Status:** the `let` form plus unary minus and `+`, `-`, `*` for Eponym
+`Int` now lower to checked primitive terms. Pure `if`, booleans, and other
+operators remain proposals.
 
 ## Motivation
 
@@ -17,12 +19,19 @@ that it was checked by Eponym.
 
 ## Initial scope to prototype
 
-Start with familiar expressions whose semantics can be represented directly
-in the current core:
+The implemented first slice covers familiar expressions whose semantics can
+be represented directly in the current core:
+
+- local `let` bindings;
+- unary minus and `+`, `-`, `*`, lowered to `subInt`, `addInt`, `subInt`, and
+  `mulInt` respectively (only when Eponym checks the expression as `Int`).
+  Overflow follows the existing primitive implementation; this syntax adds
+  no overflow proof or checked arithmetic guarantee.
+
+Potential next forms include:
 
 - integer and boolean literals (after checking how the existing Eponym
   literal forms elaborate);
-- local `let` bindings;
 - `if condition: thenExpr else: elseExpr`, translated to a Boolean
   eliminator or a core conditional;
 - integer arithmetic/comparison operators, only where corresponding Eponym

@@ -212,6 +212,21 @@ proc nimExprToEponym(n: NimNode): string =
     else: "(" & n.mapIt(nimExprToEponym(it)).join(", ") & ")"
   of nnkCommand:
     nimCommandToEponym(n)
+  of nnkInfix:
+    let prim = case $n[0]
+      of "+": "addInt"
+      of "-": "subInt"
+      of "*": "mulInt"
+      else: error("eponymBlock: unsupported pure operator '" & $n[0] & "'",
+                  n[0])
+    prim & " (" & nimExprToEponym(n[1]) & ") (" &
+      nimExprToEponym(n[2]) & ")"
+  of nnkPrefix:
+    if $n[0] == "-":
+      "subInt 0 (" & nimExprToEponym(n[1]) & ")"
+    else:
+      error("eponymBlock: unsupported pure prefix operator '" & $n[0] & "'",
+            n[0])
   of nnkDotExpr:
     # p.x -> (p).x (record projection, issue #37; the surface parser
     # resolves it against the record table at elaboration time).
