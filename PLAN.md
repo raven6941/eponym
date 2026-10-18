@@ -497,9 +497,12 @@ implementations.
 - [x] Lower Nim `Int` expressions using `let`, unary minus, and `+`, `-`, `*`
   to the existing checked Eponym primitives. A 200-case property test compares
   generated wrappers with Nim arithmetic over values that avoid overflow.
-- [ ] Add pure `if` expressions and expand the explicitly documented subset.
-  Effects, arbitrary procedure calls, macros, mutation, and IO remain outside
-  unless introduced as explicit trusted bindings.
+- [x] Lower a single-condition `if/else` expression through the polymorphic
+  `ifThenElse` definition in `lib/bool.ep`; both branches remain Eponym terms
+  and Bool eliminator computation selects the result.
+- [ ] Add chained `elif` expressions and continue expanding the explicitly
+  documented subset. Effects, arbitrary procedure calls, macros, mutation,
+  and IO remain outside unless introduced as explicit trusted bindings.
 - [ ] Decide the parameter convention: square brackets for explicit Eponym
    binders (`A`, indices such as `n`), parentheses for term arguments, and
    braces for implicit binders. Preserve a migration path from call-style
