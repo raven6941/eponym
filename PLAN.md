@@ -285,6 +285,12 @@ implementations.
 - [x] Add property-based runtime coverage for `Int` and primitive `Nat`
    values crossing the low-level call API; retain a compatibility check for
    the old integer helper and reject negative Nim values for `Nat`.
+- [x] Add an opaque boxed-value carrier for arbitrary Nim payload types and a
+   typed `T -> T` adapter for a named Eponym postulated type. Property tests
+   exercise a user-defined object through an imported checked definition,
+   type mismatch rejection, per-call binding isolation, and rejection of
+   Eponym conversion over opaque payloads. This is opaque pass-through, not a
+   structural codec or generated Nim wrapper.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition. Generate a Nim proc with declared parameter and result types
    instead of `varargs[int]`.
@@ -296,9 +302,13 @@ implementations.
    emit or register the checked core term and required static environment at
    compile time, or demonstrate why a cache is necessary and keep it outside
    the per-call path.
-- [ ] Define which runtime forms are genuinely represented (first-order data,
+- [x] Document which runtime forms are genuinely represented (first-order data,
    closures, records, dependent pairs, opaque handles) instead of implying
-   that one `Value` escape hatch makes all Nim types callable.
+   that one `Value` escape hatch makes all Nim types callable. The low-level
+   bridge now represents primitive Int/Nat, evaluator closures, and opaque
+   boxed Nim values; records and dependent pairs still lack Nim codecs and
+   generated typed wrappers. The remaining implementation is tracked in the
+   preceding ABI/codec items.
 
 **Exit criteria:**
 
@@ -333,10 +343,14 @@ implementations.
    are not diagnosed.
 - [ ] Specify exception and async behavior; add a later adapter form for
    `Future[T]` rather than conflating synchronous and asynchronous effects.
-- [ ] Start with scalar primitives, then an opaque user-defined handle plus a
-   message codec. Use the handle to bind a protocol operation through a
-   Nim adapter. A TCP adapter should be one example, not a dependency of the
-   Eponym core.
+- [x] Extend the low-level typed adapter from scalar primitives to an opaque
+   user-defined Nim value. The handle can cross a checked role and return to
+   Nim; representation and behavior are explicitly trusted. Property tests
+   cover a user-defined object through an imported definition and 200
+   generated object round trips.
+- [ ] Add a message codec and use an opaque handle to bind a protocol
+   operation through a Nim adapter. A TCP adapter should be one example, not
+   a dependency of the Eponym core.
 
 **Exit criteria:**
 

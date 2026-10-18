@@ -20,6 +20,7 @@ import eponym_init
 import preterm  # Quantity constants for validating supported adapter shapes
 
 proc hostIntUnary*(implementation: proc(x: int): int): Value
+proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
 
 # Cache: (baseDir, source) key -> checked module state. Retaining globals is
 # required for runtime postulate bindings to use the identities assigned by
@@ -102,6 +103,44 @@ proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
     raise newException(ValueError,
       "Nim proc(int): int requires Eponym postulate '" & postulateName &
       "' to have type Int -> Int")
+
+proc validateHostOpaqueUnaryType*(globals: Globals,
+                                  postulateName: string): string =
+  ## Validate a first-order `T -> T` contract over a named opaque Eponym type.
+  ## Returns that Eponym type's name for an explicit Nim adapter mapping.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  let ty = entry.ty
+  if ty.kind != tPi or ty.impl or ty.qty == q0 or ty.dom.kind != tR or
+      ty.scope.bdy.kind != tR or ty.dom.refId != ty.scope.bdy.refId:
+    raise newException(ValueError,
+      "opaque unary adapter requires postulate '" & postulateName &
+      "' to have type Opaque -> Opaque")
+  for typeName, typeEntry in globals.pairs:
+    if not typeEntry.tm.isNil and typeEntry.tm.kind == tR and
+        typeEntry.tm.refId == ty.dom.refId and typeEntry.ty.kind == tType:
+      return typeName
+  raise newException(ValueError,
+    "opaque adapter type for postulate '" & postulateName &
+    "' must be a named postulated type")
+
+proc bindHostOpaqueUnary*[T](bindings: var RuntimeBindings, globals: Globals,
+                             postulateName, eponymTypeName: string,
+                             implementation: proc(x: T): T) =
+  ## Bind a Nim `proc(T): T` to an Eponym postulate `E -> E`, with the
+  ## opaque mapping E = eponymTypeName made explicit at this boundary.
+  let requiredType = validateHostOpaqueUnaryType(globals, postulateName)
+  if requiredType != eponymTypeName:
+    raise newException(ValueError,
+      "postulate '" & postulateName & "' requires opaque Eponym type '" &
+      requiredType & "', not '" & eponymTypeName & "'")
+  bindHostValue(bindings, globals, postulateName,
+                hostOpaqueUnary[T](implementation))
+
 proc bindHostIntUnary*(bindings: var RuntimeBindings, globals: Globals,
                        postulateName: string,
                        implementation: proc(x: int): int) =
@@ -135,6 +174,12 @@ proc hostIntUnary*(implementation: proc(x: int): int): Value =
   ## remains trusted relative to the Eponym postulate.
   vHostFunc(proc(value: Value): Value =
     intToValue(implementation(valueToInt(value))))
+
+proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value =
+  ## Adapt an opaque Nim T -> T procedure. Eponym passes the value through
+  ## without inspecting it; the callback and its adapter define its meaning.
+  vHostFunc(proc(value: Value): Value =
+    toHostValue(implementation(valueToHost[T](value))))
 
 proc natToValue*(n: int): Value = vNatLit(n)
 

@@ -24,6 +24,7 @@
 import sequtils
 import tables
 import hashes
+import typetraits
 import preterm  # for Quantity (Issue #64)
 import abilities # Issue #177: operator pegs on tPi
 import elab_prof  # Issue #55: phase timers
@@ -58,7 +59,7 @@ type
     ##   <: Nat lives in the elaborator's conversion (defaultConv), not in
     ##   the kernel's symmetric conversion.
   WhnfKind* = enum wRef, wPi, wSi, wLam, wPair, wConst, wRed, wInt, wPrim,
-                     wNatLit, wNatSing, wType
+                     wNatLit, wNatSing, wType, wHost
   ## wType: a level-annotated universe value `Type l` (Issue #52).
   ## wInt: a primitive integer value (Experiment 11).
   ## wNatLit: a primitive Nat literal value (Issue #93); definitionally
@@ -164,6 +165,9 @@ type
       natLitVal*: int
     of wNatSing:
       natSingVal*: int
+    of wHost:
+      hostPayload*: RootRef
+      hostTypeName*: string
     of wPrim:
       op: PrimOp
       pargs: seq[Value]  # accumulated so far (function position order)
@@ -820,6 +824,30 @@ proc vNatLit*(n: int): Value =
     raise newException(ValueError, "Nat cannot be negative")
   Value(syn: tmNatLit(n), whnf: Whnf(kind: wNatLit, natLitVal: n))
 
+type HostBox[T] = ref object of RootObj
+  value: T
+
+proc toHostValue*[T](hostValue: T): Value =
+  ## Box any Nim value as an opaque runtime value for passage to a host
+  ## postulate. Eponym cannot inspect the payload.
+  let box = HostBox[T](value: hostValue)
+  Value(syn: tStar(),
+        whnf: Whnf(kind: wHost, hostPayload: RootRef(box),
+                   hostTypeName: name(T)))
+
+proc valueToHost*[T](value: Value): T =
+  ## Recover a value previously boxed with toHostValue[T]. Both the recorded
+  ## Nim type name and runtime box type are checked before unboxing.
+  if value.whnf.kind != wHost:
+    raise newException(ValueError, "runtime value is not an opaque Nim value")
+  if value.whnf.hostTypeName != name(T):
+    raise newException(ValueError,
+      "opaque Nim value has type " & value.whnf.hostTypeName &
+      ", not " & name(T))
+  if not (value.whnf.hostPayload of HostBox[T]):
+    raise newException(ValueError, "opaque Nim value box type mismatch")
+  cast[HostBox[T]](value.whnf.hostPayload).value
+
 proc vPrim*(op: PrimOp, ty: Term): Value =
   ## A primitive Int operation, accumulating args (Experiment 11).
   Value(syn: tmPrim(op, ty), whnf: Whnf(kind: wPrim, op: op, pargs: @[]))
@@ -1096,6 +1124,9 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
       raise newException(ValueError, "primitive op mismatch")
     for i in 0 ..< a.whnf.pargs.len:
       structuralEq(s, a.whnf.pargs[i], b.whnf.pargs[i], qtySubsumption)
+  of wHost:
+    raise newException(ValueError,
+      "opaque Nim values cannot participate in Eponym conversion")
 
 proc areEqual*(s: var Supply, ty, a, b: Value, qtySubsumption = false) =
   ## type-directed conversion (§6.7). Exported for the elaborator's

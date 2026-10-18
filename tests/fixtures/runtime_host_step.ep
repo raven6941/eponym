@@ -3,3 +3,7 @@ postulate Int : Type 0
 postulate hostStep : Int -> Int
 proc importedHelper : Int -> Int = lam (n : Int). hostStep n
 postulate hostNat : Nat -> Nat
+postulate Channel : Type 0
+postulate rotateChannel : Channel -> Channel
+proc importedChannelStep : Channel -> Channel =
+  lam (channel : Channel). rotateChannel channel
