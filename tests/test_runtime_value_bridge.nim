@@ -27,11 +27,22 @@ proc hostRotateChannel(channel: ChannelHandle): ChannelHandle =
   inc result.id
   result.label.add("*")
 
+proc hostRouteChannel(channel: ChannelHandle,
+                      message: string): ChannelHandle =
+  result = channel
+  result.label.add(":" & message)
+
+proc hostWrongRoute(channel: int, message: string): int = channel + message.len
+
 static:
   doAssert compiles(hostIntUnary(hostStepNim))
   doAssert not compiles(hostIntUnary(hostString))
   doAssert compiles(hostOpaqueUnary[ChannelHandle](hostRotateChannel))
   doAssert not compiles(hostOpaqueUnary[ChannelHandle](hostString))
+  doAssert compiles(hostOpaqueBinary[ChannelHandle, string, ChannelHandle](
+    hostRouteChannel))
+  doAssert not compiles(hostOpaqueBinary[ChannelHandle, string, ChannelHandle](
+    hostWrongRoute))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -92,9 +103,14 @@ when isMainModule:
   # reference exposed in the returned state.
   const identityProgram = """
 import "tests/fixtures/runtime_host_step.ep"
+postulate Message : Type 0
+postulate routeChannel : Channel -> Message -> Channel
 proc throughHelper : Int -> Int = lam (n : Int). importedHelper n
 proc opaqueRole : Channel -> Channel =
   lam (channel : Channel). importedChannelStep channel
+proc routeRole : Channel -> Message -> Channel =
+  lam (channel : Channel). lam (message : Message).
+    routeChannel channel message
 """
   let checked = elabCheckDirState(identityProgram, baseDir)
   let postulateId = checked.globals["hostStep"].tm.refId
@@ -129,6 +145,42 @@ proc opaqueRole : Channel -> Channel =
     @[toHostValue(originalChannel)], opaqueBindings)
   let rotatedChannel = valueToHost[ChannelHandle](opaqueResult)
   if rotatedChannel.id != 18 or rotatedChannel.label != "socket*":
+    quit(1)
+
+  var binaryOpaqueBindings = initRuntimeBindings()
+  bindHostOpaqueBinary[ChannelHandle, string, ChannelHandle](
+    binaryOpaqueBindings, cachedGlobals, "routeChannel", "Channel", "Message",
+    "Channel", hostRouteChannel)
+  let routedValue = callValueFuncDir(baseDir, identityProgram, "routeRole",
+    @[toHostValue(originalChannel), toHostValue("payload")],
+    binaryOpaqueBindings)
+  let routedChannel = valueToHost[ChannelHandle](routedValue)
+  if routedChannel.id != originalChannel.id or
+      routedChannel.label != "socket:payload":
+    quit(1)
+  var wrongBinaryMappingRejected = false
+  try:
+    var wrongBindings = initRuntimeBindings()
+    bindHostOpaqueBinary[ChannelHandle, string, ChannelHandle](wrongBindings,
+      cachedGlobals, "routeChannel", "Channel", "Channel", "Channel",
+      hostRouteChannel)
+  except ValueError:
+    wrongBinaryMappingRejected = true
+  if not wrongBinaryMappingRejected:
+    quit(1)
+  let opaqueBinaryDispatch = forAll(
+    "two-argument opaque postulate dispatch",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let channel = ChannelHandle(id: id, label: "ch")
+      let message = $id
+      let value = callValueFuncDir(baseDir, identityProgram, "routeRole",
+        @[toHostValue(channel), toHostValue(message)], binaryOpaqueBindings)
+      let actual = valueToHost[ChannelHandle](value)
+      actual.id == id and actual.label == "ch:" & message,
+    shrinkInt)
+  if not opaqueBinaryDispatch:
     quit(1)
 
   var wrongOpaqueMappingRejected = false

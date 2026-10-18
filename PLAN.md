@@ -356,6 +356,10 @@ implementations.
    Nim; representation and behavior are explicitly trusted. Property tests
    cover a user-defined object through an imported definition and 200
    generated object round trips.
+- [x] Support a curried two-argument opaque postulate adapter with explicit
+   mappings for both Eponym argument types and the result type. A checked
+   role dispatches a channel handle and a message string to a Nim callback;
+   property tests cover 200 input pairs. This remains a low-level API.
 - [ ] Add a message codec and use an opaque handle to bind a protocol
    operation through a Nim adapter. A TCP adapter should be one example, not
    a dependency of the Eponym core.
