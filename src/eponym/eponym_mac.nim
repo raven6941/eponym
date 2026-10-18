@@ -760,7 +760,8 @@ proc simpleRuntimeCodec(n: NimNode): string =
 proc runtimeSigmaComponents(n: NimNode): tuple[first, second: NimNode] =
   ## Runtime tuples represent only non-dependent two-field Sig types. Reject
   ## dependent tails rather than erasing the first component from their type.
-  if n.kind != nnkCall or n.len != 3 or n[0].kind != nnkIdent or
+  if n.kind notin {nnkCall, nnkObjConstr} or n.len != 3 or
+      n[0].kind != nnkIdent or
       $n[0] != "Sig":
     return
   if n[1].kind == nnkExprColonExpr:

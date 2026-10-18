@@ -323,8 +323,9 @@ implementations.
    arguments and a `(B, C)` result, bound to `A1 -> ... -> An -> Sig(B, C)`.
    The macro validates the postulate's argument type heads and non-dependent
    Sigma shape, generates recursive codecs, and lets Nim check the callback
-   signature. 200-case properties cover each arity; compile-fail fixtures
-   reject dependent Sigma results and mismatched Nim tuple fields.
+   signature. 200-case properties cover each arity and outer Pi-indexed
+   types; named Sigma binders are supported. Compile-fail fixtures reject
+   dependent Sigma results and mismatched Nim tuple fields.
 - [x] Add the separate `bindPostulatePairTrusted` escape hatch for a
    dependent Sigma result whose fields have runtime codecs. The checked
    Eponym signature is preserved, while matching a host field to its index
