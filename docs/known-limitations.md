@@ -96,26 +96,39 @@ protocol, preserves a linear resource, or returns a value satisfying a
 dependent index. Such implementations remain part of the trust boundary.
 See the [trust model](trust-model.md).
 
-### Checked roles are not yet wired to their Nim backends
+### Nim ownership and lifetime at the runtime boundary
 
-Several embedding examples intentionally have a checked Eponym role and a
-separate ordinary-Nim driver. `session_runtime_bindings.nim` is a minimal
-counterexample: it runs checked sender/receiver roles through Nim channel
-adapters. The larger `paxos_session.nim` still checks `proposer` and
+The current adapters take and return Nim values by value. `toHostValue[T]`
+stores a Nim value in a rooted box for the runtime call. Ordinary object
+values follow Nim's copy and destructor rules; `ref` values, pointers, and
+closures still refer to their existing storage or captured environment, so
+boxing them does not remove aliases. The host adapter may retain or duplicate
+those references, and raw pointer validity remains the adapter author's
+responsibility. There is no adapter form that accepts `var`/`lent` parameters
+or transfers ownership explicitly.
+
+Eponym enforces a linear channel's use in checked Eponym terms. It does not
+make a Nim `ref` or closure single-use, detect aliases held elsewhere, or
+prevent the adapter from retaining a handle. Generated wrappers create a
+call-local binding environment; synchronous adapter exceptions propagate
+unchanged. A mapped `Future[T]` is returned as an opaque Nim value and remains
+owned by the caller and Nim's normal lifetime rules; Eponym does not await or
+cancel it.
+
+### Some checked roles still have separate Nim drivers
+
+`session_runtime_bindings.nim` and `session_tcp_bindings.nim` run checked
+sender/receiver roles through typed Nim adapters; the latter uses a loopback
+TCP socket. The larger `paxos_session.nim` still checks `proposer` and
 `acceptor`, while `runPaxosRound` manually repeats the message sequence using
-mailboxes and assertions. `qtt_borrow.nim` checks a linear
-borrow API, while its buffer driver mirrors the operations separately.
-The Eponym roles do not invoke the backend postulates at runtime because
-postulate-to-Nim bindings are not implemented.
+mailboxes and assertions. `qtt_borrow.nim` checks a linear borrow API, while
+its buffer driver mirrors the operations separately.
 
-This means the examples demonstrate compile-time protocol/property checking,
-not yet an end-to-end application where the checked role drives a socket,
-buffer, or service implementation. A user must keep the checked protocol and
-the executable backend in sync by hand. The postulate binding experiment
-tracks the work needed to close this gap. These examples also do not prove
-anything about ordinary Nim channel aliases, sockets, or network message
-ordering until those concrete resources are represented at the Eponym/Nim
-boundary.
+The integrated session examples establish that the checked roles execute
+through their bound postulates, but the adapter and transport remain trusted.
+The Eponym checker does not establish network ordering or inspect aliases in
+ordinary Nim. Paxos and buffer execution still require manual synchronization
+with their checked Eponym descriptions.
 
 ### Some examples certify a model, not the runtime computation
 
