@@ -42,6 +42,13 @@ proc hostRotateChannel(channel: ChannelHandle): ChannelHandle =
   inc result.id
   result.label.add("*")
 
+proc hostSplitChannel(channel: ChannelHandle): tuple[count: int,
+    remainder: ChannelHandle] =
+  result.count = channel.id
+  result.remainder = channel
+  inc result.remainder.id
+  result.remainder.label.add("/split")
+
 proc hostRouteChannel(channel: ChannelHandle,
                       message: string): ChannelHandle =
   result = channel
@@ -129,6 +136,10 @@ eponymBlock:
   runtimeType(PendingResult, Future[int])
   runtimeType(Callback, NimIntCallback)
   runtimeType(Sample, int)
+  postulate(splitChannel, Channel -> Sig(Nat, Channel))
+  bindPostulatePair(splitChannel, hostSplitChannel, Channel, Nat, Channel)
+  proc generatedSplitChannel(channel: Channel): Sig(Nat, Channel) =
+    splitChannel(channel)
   record(Point):
     field(x, Nat)
     field(channel, Channel)
@@ -201,6 +212,7 @@ static:
   doAssert compiles(generatedOpaqueSigmaId((17, ChannelHandle(id: 1))))
   doAssert compiles(generatedPointId(RuntimePoint(x: 17,
     channel: ChannelHandle(id: 1))))
+  doAssert compiles(generatedSplitChannel(ChannelHandle(id: 17)))
   doAssert compiles(generatedEnvelopeId(RuntimeEnvelope(
     point: RuntimePoint(x: 17, channel: ChannelHandle(id: 1)),
     note: "ok")))
@@ -247,6 +259,18 @@ when isMainModule:
       generatedPointId(input) == input,
     shrinkInt)
   if not generatedRecordRoundTrips:
+    quit(1)
+  let generatedPairBindingCases = forAll(
+    "typed host adapters can return non-dependent Sigma values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let nat = abs(id)
+      let input = ChannelHandle(id: nat, label: "split-" & $nat)
+      let pairResult = generatedSplitChannel(input)
+      pairResult[0] == nat and pairResult[1] ==
+        ChannelHandle(id: nat + 1, label: "split-" & $nat & "/split"),
+    shrinkInt)
+  if not generatedPairBindingCases:
     quit(1)
   let generatedNestedRecordRoundTrips = forAll(
     "nested structural record codecs preserve recursive fields", r, 200,
@@ -328,6 +352,7 @@ when isMainModule:
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
       generatedRecordRoundTrips and
+      generatedPairBindingCases and
       generatedNestedRecordRoundTrips and
       generatedFutureInputPassesThrough and
       generatedPureConditionalsWork and
