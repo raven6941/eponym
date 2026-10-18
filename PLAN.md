@@ -530,8 +530,10 @@ implementations.
 - [x] Add positive property coverage for each supported codec/callback shape,
   plus compile-fail cases for type mismatch, missing and duplicate bindings,
   unsupported operators, dependent-index mismatch, and linear misuse.
-- [ ] Add runtime integration examples that execute the exact Eponym-checked
-  definition, not a mirrored Nim implementation.
+- [x] Add runtime integration examples that execute the exact Eponym-checked
+  definition, not a mirrored Nim implementation. The in-memory and TCP session
+  examples run their checked sender/receiver roles; Paxos and borrow remain
+  separate open items.
 - [x] Classify the TCP/in-memory session, Paxos, borrow, and optimizer
   examples by what Eponym checks, what Nim checks, and what remains trusted
   or disconnected. The README links to the table; retain it as implementations
