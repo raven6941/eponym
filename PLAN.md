@@ -333,6 +333,11 @@ implementations.
    Eponym signature is preserved, while matching a host field to its index
    remains explicitly trusted. A 200-case indexed-family property exercises
    this path; the ordinary pair adapter still rejects the same shape.
+- [x] Generate typed host-argument overloads for `runtimeValue(name)` when a
+   non-generic definition's parameter types have runtime codecs. Nim checks
+   the concrete mapped argument types; the result remains a runtime `Value`,
+   and correspondence between mapped host values and dependent indices is
+   trusted. Logistic regression exercises indexed matrix/vector inputs.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
    signatures, and generic or higher-order definitions. Definitions without

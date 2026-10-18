@@ -149,6 +149,10 @@ eponymBlock:
   proc runtimeResult(): Int = hostPlusSeven(35)
   runtimeValue(runtimeResult)
 
+static:
+  doAssert compiles(sampleTreeWithRuntimeValue(2))
+  doAssert not compiles(sampleTreeWithRuntimeValue("not a Nat"))
+
 eponymBlock:
   postulate(Int, Univ)
   postulate(hostFailure, Int -> Int)
@@ -311,9 +315,11 @@ when isMainModule:
   doAssert treeRuntime.value.whnfSpineLen == 2
   doAssert treeRuntime.value.whnfSpineArg(0).whnfNatLitVal == 37
   doAssert treeRuntime.value.whnfSpineArg(1).whnfRefId == leafId
-  let parameterizedTree = sampleTreeWithRuntimeValue([natToValue(91)])
+  let parameterizedTree = sampleTreeWithRuntimeValue(91)
   doAssert parameterizedTree.value.whnfRefId == nodeId
   doAssert parameterizedTree.value.whnfSpineArg(0).whnfNatLitVal == 91
+  let rawParameterizedTree = sampleTreeWithRuntimeValue([natToValue(91)])
+  doAssert rawParameterizedTree.value.whnfRefId == nodeId
   var wrongRuntimeArityRejected = false
   try:
     discard sampleTreeWithRuntimeValue([])
