@@ -1,6 +1,6 @@
 ## Runtime bridge checks for Eponym values that do not use the generated Int ABI.
 
-import std/[os, tables]
+import std/[os, tables, strutils]
 import falsify
 import eponym_mac
 import eponym_embed
@@ -165,6 +165,15 @@ proc routeRole : Channel -> Message -> Channel =
   let hostResult = callValueFuncDir(baseDir, identityProgram,
     "throughHelper", @[intToValue(35)], runtimeBindings)
   if valueToInt(hostResult) != 42:
+    quit(1)
+
+  var missingHostBindingDiagnosed = false
+  try:
+    discard callValueFuncDir(baseDir, identityProgram, "throughHelper",
+      @[intToValue(35)])
+  except ValueError as e:
+    missingHostBindingDiagnosed = "unbound runtime postulate 'hostStep'" in e.msg
+  if not missingHostBindingDiagnosed:
     quit(1)
 
   let hostDispatch = forAll("checked definitions dispatch to typed Nim postulates",
