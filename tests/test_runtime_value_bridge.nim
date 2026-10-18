@@ -1,6 +1,6 @@
 ## Runtime bridge checks for Eponym values that do not use the generated Int ABI.
 
-import std/[os, tables, strutils]
+import std/[os, tables, strutils, asyncdispatch]
 import falsify
 import eponym_mac
 import eponym_embed
@@ -39,6 +39,10 @@ proc hostRouteChannelWithId(channel: ChannelHandle, message: string,
   result = channel
   result.label.add(":" & message & "#" & $requestId)
 
+proc hostFutureForChannel(channel: ChannelHandle): Future[int] =
+  result = newFuture[int]("hostFutureForChannel")
+  result.complete(channel.id)
+
 proc hostWrongRoute(channel: int, message: string): int = channel + message.len
 
 static:
@@ -52,6 +56,8 @@ static:
     hostWrongRoute))
   doAssert compiles(hostOpaqueTernary[ChannelHandle, string, int,
     ChannelHandle](hostRouteChannelWithId))
+  doAssert compiles(hostOpaqueMapUnary[ChannelHandle, Future[int]](
+    hostFutureForChannel))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -72,9 +78,11 @@ eponymBlock:
   postulate(Channel, Univ)
   postulate(Message, Univ)
   postulate(RequestId, Univ)
+  postulate(PendingResult, Univ)
   runtimeType(Channel, ChannelHandle)
   runtimeType(Message, string)
   runtimeType(RequestId, int)
+  runtimeType(PendingResult, Future[int])
   postulate(rotateChannel, Channel -> Channel)
   bindPostulate(rotateChannel, hostRotateChannel, Channel)
   postulate(routeChannel, Channel -> Message -> Channel)
@@ -83,6 +91,8 @@ eponymBlock:
     Channel -> Message -> RequestId -> Channel)
   bindPostulate(routeChannelWithId, hostRouteChannelWithId,
     Channel, Message, RequestId, Channel)
+  postulate(startFuture, Channel -> PendingResult)
+  bindPostulate(startFuture, hostFutureForChannel, Channel, PendingResult)
   proc generatedRotateRole(channel: Channel): Channel =
     rotateChannel(channel)
   proc generatedRouteRole(channel: Channel, message: Message): Channel =
@@ -90,6 +100,8 @@ eponymBlock:
   proc generatedRouteWithIdRole(channel: Channel, message: Message,
                                 requestId: RequestId): Channel =
     routeChannelWithId(channel, message, requestId)
+  proc generatedFutureRole(channel: Channel): PendingResult =
+    startFuture(channel)
 
 static:
   doAssert compiles(generatedCheckedRole(35))
@@ -102,6 +114,7 @@ static:
   doAssert compiles(generatedRouteRole(ChannelHandle(id: 1), "hello"))
   doAssert not compiles(generatedRouteRole("not a channel", "hello"))
   doAssert compiles(generatedRouteWithIdRole(ChannelHandle(id: 1), "hello", 2))
+  doAssert compiles(generatedFutureRole(ChannelHandle(id: 1)))
 
 when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
@@ -185,10 +198,14 @@ proc routeRole : Channel -> Message -> Channel =
   lam (channel : Channel). lam (message : Message).
     routeChannel channel message
 postulate RequestId : Type 0
+postulate PendingResult : Type 0
 postulate routeChannelWithId : Channel -> Message -> RequestId -> Channel
 proc routeWithIdRole : Channel -> Message -> RequestId -> Channel =
   lam (channel : Channel). lam (message : Message). lam (requestId : RequestId).
     routeChannelWithId channel message requestId
+postulate startFuture : Channel -> PendingResult
+proc futureRole : Channel -> PendingResult =
+  lam (channel : Channel). startFuture channel
 """
   let checked = elabCheckDirState(identityProgram, baseDir)
   let postulateId = checked.globals["hostStep"].tm.refId
@@ -264,6 +281,15 @@ proc routeWithIdRole : Channel -> Message -> RequestId -> Channel =
         $requestId,
     shrinkInt)
   if not routedWithIdCases:
+    quit(1)
+  let futureAdapterCases = forAll(
+    "opaque Future[T] results from typed postulate adapters", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let future = generatedFutureRole(ChannelHandle(id: id, label: "ch"))
+      future.finished and future.read() == id,
+    shrinkInt)
+  if not futureAdapterCases:
     quit(1)
   var wrongBinaryMappingRejected = false
   try:
