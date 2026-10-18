@@ -29,7 +29,7 @@ signature.
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values and opaque boxes for arbitrary Nim payload
 types. Typed adapters support unary `T -> T`, `T -> U`, `T -> Nat`,
-`Nat -> T -> U`, binary `A -> B -> C`, and ternary `A -> B -> C -> D`
+`Nat -> A -> B`, binary `A -> B -> C`, and ternary `A -> B -> C -> D`
 postulate contracts.
 They can pass Nim objects, references, strings, or other values through
 explicitly mapped Eponym types without exposing their representation.
@@ -52,9 +52,9 @@ proves that the host value satisfies a dependent index.
 
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
-opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> T -> U`, curried
-binary opaque `A -> B -> C`, and curried ternary opaque `A -> B -> C -> D`
-postulates.
+opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`,
+curried binary opaque `A -> B -> C`, and curried ternary opaque
+`A -> B -> C -> D` postulates.
 Opaque bindings require explicit `runtimeType(EponymType, NimType)` mappings
 to postulated Eponym types or
 type families. Nim checks adapter and generated wrapper signatures;
@@ -64,8 +64,9 @@ postulate raises a `ValueError` naming the postulate. `eponymBlock` rejects a
 binding that no checked proc body references, but does not determine whether
 that proc is reachable from an application entry point. Call-graph
 reachability, callbacks longer than three opaque arguments, and structural
-codecs remain unsupported. The TCP adapter demo propagates transport and
-codec failures as exceptions rather than an explicit result type. See the
+codecs remain unsupported. The TCP demo returns transport and codec failures
+through a mapped `TransportResult` value. Other adapters may still propagate
+synchronous exceptions. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the
 supported prototype and remaining work.
 
