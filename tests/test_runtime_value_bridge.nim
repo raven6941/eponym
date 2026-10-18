@@ -30,6 +30,10 @@ type RuntimePoint = object
   x: int
   channel: ChannelHandle
 
+type RuntimeEnvelope = object
+  point: RuntimePoint
+  note: string
+
 proc hostWrongFour(channel: ChannelHandle, message: string,
                    requestId, phase: int): int = channel.id + requestId + phase
 
@@ -130,6 +134,11 @@ eponymBlock:
     field(channel, Channel)
   runtimeType(Point, RuntimePoint)
   proc generatedPointId(value: Point): Point = value
+  record(Envelope):
+    field(point, Point)
+    field(note, Message)
+  runtimeType(Envelope, RuntimeEnvelope)
+  proc generatedEnvelopeId(value: Envelope): Envelope = value
   postulate(rotateChannel, Channel -> Channel)
   bindPostulate(rotateChannel, hostRotateChannel, Channel)
   postulate(routeChannel, Channel -> Message -> Channel)
@@ -192,6 +201,9 @@ static:
   doAssert compiles(generatedOpaqueSigmaId((17, ChannelHandle(id: 1))))
   doAssert compiles(generatedPointId(RuntimePoint(x: 17,
     channel: ChannelHandle(id: 1))))
+  doAssert compiles(generatedEnvelopeId(RuntimeEnvelope(
+    point: RuntimePoint(x: 17, channel: ChannelHandle(id: 1)),
+    note: "ok")))
   doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
   doAssert not compiles(generatedCallbackRole(42, 1))
 
@@ -235,6 +247,18 @@ when isMainModule:
       generatedPointId(input) == input,
     shrinkInt)
   if not generatedRecordRoundTrips:
+    quit(1)
+  let generatedNestedRecordRoundTrips = forAll(
+    "nested structural record codecs preserve recursive fields", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let input = RuntimeEnvelope(
+        point: RuntimePoint(x: abs(n mod 1000),
+          channel: ChannelHandle(id: n, label: "nested-" & $n)),
+        note: "message-" & $n)
+      generatedEnvelopeId(input) == input,
+    shrinkInt)
+  if not generatedNestedRecordRoundTrips:
     quit(1)
   let generatedPureConditionalsWork = generatedChooseTrue() == 19 and
     generatedChooseFalse() == 17
@@ -304,6 +328,7 @@ when isMainModule:
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
       generatedRecordRoundTrips and
+      generatedNestedRecordRoundTrips and
       generatedFutureInputPassesThrough and
       generatedPureConditionalsWork and
       generatedUnaryOpaqueWorks and generatedUnaryOpaqueCases and
