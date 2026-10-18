@@ -358,9 +358,12 @@ implementations.
 - [x] Validate the `Int -> Int` Eponym contract during macro expansion and
    the Nim `proc(int): int` signature through generated calls. Compile-fail
    fixtures cover mismatches on each side.
-- [ ] Add missing/unreachable binding diagnostics. An invoked but unbound
-   postulate currently fails during runtime evaluation; unreachable bindings
-   are not diagnosed.
+- [x] Report an invoked but unbound runtime postulate by name at the call
+   boundary instead of surfacing only a later `ValueError` during result
+   conversion.
+- [ ] Diagnose unused or unreachable bindings during macro expansion; the
+   current implementation checks for a missing binding when a runtime call
+   reaches it.
 - [ ] Specify exception and async behavior; add a later adapter form for
    `Future[T]` rather than conflating synchronous and asynchronous effects.
 - [x] Extend the low-level typed adapter from scalar primitives to an opaque

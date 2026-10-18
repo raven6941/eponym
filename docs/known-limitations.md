@@ -44,9 +44,10 @@ opaque `T -> T`, `T -> Nat`, `Nat -> T -> U`, and curried binary opaque
 `A -> B -> C` postulates. Opaque bindings require explicit
 `runtimeType(EponymType, NimType)` mappings to postulated Eponym types or
 type families. Nim checks adapter and generated wrapper signatures;
-the implementation and mapping remain trusted. Longer callback shapes,
-structural codecs, and explicit missing-binding diagnostics are still
-unsupported. See the
+the implementation and mapping remain trusted. An invoked but unbound
+postulate raises a `ValueError` naming the postulate. Macro-time checks for
+missing or unreachable bindings, longer callback shapes, and structural
+codecs are still unsupported. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the
 supported prototype and remaining work.
 

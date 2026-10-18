@@ -52,6 +52,11 @@ proc getDefs*(src: string): seq[ElabDef] =
                                  globals: checked.globals)
   checked.defs
 
+proc getGlobals*(src: string): Globals =
+  ## Retrieve the checked global table for a non-directory embedded module.
+  discard getDefs(src)
+  defCache[src].globals
+
 proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
   ## Issue #131: like getDefs, but `import "path.ep"` declarations in `src`
   ## resolve relative to `baseDir` (via elabCheckDir). Used by eponymBlock
@@ -367,6 +372,21 @@ proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
     fn = Value(syn: t, whnf: w)  # syn doesn't matter for result
   fn
 
+proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
+                               bindings: RuntimeBindings,
+                               globals: Globals): Value =
+  ## Binding-aware call with a named diagnostic when an unbound postulate
+  ## leaves the result stuck at a neutral reference.
+  result = callDefValueWithBindings(d, args, bindings)
+  let refId = runtimeReferenceId(result)
+  if refId >= 0:
+    for name, entry in globals.pairs:
+      if not entry.tm.isNil and entry.tm.kind == tR and
+          not entry.tm.refIsDefn and entry.tm.refId == refId:
+        raise newException(ValueError,
+          "unbound runtime postulate '" & name & "' while evaluating '" &
+          d.name & "'")
+
 proc callDefValue*(d: ElabDef, args: openArray[Value]): Value =
   ## Evaluate an elaborated definition with values from the ETT runtime.
   callDefValueWithBindings(d, args, initTable[int, Value]())
@@ -374,19 +394,21 @@ proc callDefValue*(d: ElabDef, args: openArray[Value]): Value =
 proc callValueFunc*(src: string, name: string,
                     args: openArray[Value]): Value =
   ## Low-level runtime entry point over ETT values.
-  callDefValue(findDef(getDefs(src), name), args)
+  callDefValueWithBindings(findDef(getDefs(src), name), args,
+                           initRuntimeBindings(), getGlobals(src))
 
 proc callValueFuncDir*(baseDir, src: string, name: string,
                        args: openArray[Value]): Value =
   ## Directory-aware low-level runtime entry point over ETT values.
-  callDefValue(findDef(getDefsDir(baseDir, src), name), args)
+  callDefValueWithBindings(findDef(getDefsDir(baseDir, src), name), args,
+                           initRuntimeBindings(), getGlobalsDir(baseDir, src))
 
 proc callValueFuncDir*(baseDir, src: string, name: string,
                        args: openArray[Value],
                        bindings: RuntimeBindings): Value =
   ## Directory-aware Value call with block-local host postulate bindings.
   callDefValueWithBindings(findDef(getDefsDir(baseDir, src), name), args,
-                           bindings)
+                           bindings, getGlobalsDir(baseDir, src))
 
 proc callDefInt(d: ElabDef, args: seq[int]): int =
   ## Compatibility bridge for `Int -> ... -> Int` generated wrappers.
@@ -397,7 +419,9 @@ proc callIntFunc*(src: string, name: string, args: seq[int]): int =
   ## Call an elaborated `def` of type `Int -> ... -> Int`.
   let defs = getDefs(src)
   let d = findDef(defs, name)
-  callDefInt(d, args)
+  let values = args.mapIt(intToValue(it))
+  valueToInt(callDefValueWithBindings(d, values, initRuntimeBindings(),
+                                      getGlobals(src)))
 
 proc callIntFuncDir*(baseDir, src: string, name: string,
                      args: seq[int]): int =
@@ -405,7 +429,9 @@ proc callIntFuncDir*(baseDir, src: string, name: string,
   ## declarations resolved relative to `baseDir`.
   let defs = getDefsDir(baseDir, src)
   let d = findDef(defs, name)
-  callDefInt(d, args)
+  let values = args.mapIt(intToValue(it))
+  valueToInt(callDefValueWithBindings(d, values, initRuntimeBindings(),
+                                     getGlobalsDir(baseDir, src)))
 
 proc callIntFuncDir*(baseDir, src: string, name: string,
                      args: seq[int], bindings: RuntimeBindings): int =
@@ -413,7 +439,8 @@ proc callIntFuncDir*(baseDir, src: string, name: string,
   let defs = getDefsDir(baseDir, src)
   let d = findDef(defs, name)
   let values = args.mapIt(intToValue(it))
-  valueToInt(callDefValueWithBindings(d, values, bindings))
+  valueToInt(callDefValueWithBindings(d, values, bindings,
+                                     getGlobalsDir(baseDir, src)))
 
 proc getDefsHolesDir*(baseDir, src: string): seq[ElabDef] =
   ## Issue #133: like getDefsDir, but hole-tolerant (elabCheckHolesDir):

@@ -822,6 +822,11 @@ proc vHostFunc*(fn: proc(x: Value): Value): Value =
   Value(syn: tmLam(tStar(), scope.adv, scope.bdy),
         whnf: Whnf(kind: wLam, lscope: ScoVal(syn: scope, fn: fn)))
 
+proc runtimeReferenceId*(value: Value): int =
+  ## Return the neutral reference head if runtime evaluation is stuck on one.
+  ## Used by the embedding boundary to report missing host postulate bindings.
+  if value.whnf.kind == wRef: value.whnf.refId else: -1
+
 proc vNatLit*(n: int): Value =
   ## Construct a primitive Nat value for host/runtime adapters.
   if n < 0:
