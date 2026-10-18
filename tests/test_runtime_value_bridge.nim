@@ -225,6 +225,10 @@ proc hostIndexedChannelParts(channel: IndexedChannelHandle):
   (channel.index, IndexedChannelHandle(index: channel.index,
     label: channel.label & "/indexed"))
 
+proc hostRepeatIndexedChannel(index: int, channel: IndexedChannelHandle):
+    tuple[first: IndexedChannelHandle, second: IndexedChannelHandle] =
+  (channel, IndexedChannelHandle(index: index, label: channel.label & "/copy"))
+
 eponymBlock:
   import "../lib/nat.ep"
   postulate(Channel, Nat -> Univ)
@@ -233,8 +237,16 @@ eponymBlock:
     Channel(0) -> Sig(index: Nat, Channel(index)))
   bindPostulatePairTrusted(splitIndexedChannel, hostIndexedChannelParts,
     Channel, Nat, Channel)
+  postulate(repeatIndexedChannel,
+    Pi(index: Nat, channel: Channel(index),
+       Sig(first: Channel(index), Channel(index))))
+  bindPostulatePair(repeatIndexedChannel, hostRepeatIndexedChannel,
+    Nat, Channel, Channel, Channel)
   proc generatedIndexedChannelIndex(channel: Channel(0)): Nat =
     fst(splitIndexedChannel(channel))
+  proc generatedRepeatIndexedChannel(index: Nat, channel: Channel(index)):
+      Sig(first: Channel(index), Channel(index)) =
+    repeatIndexedChannel(index, channel)
 
 static:
   doAssert compiles(generatedCheckedRole(35))
@@ -270,6 +282,8 @@ static:
   doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
   doAssert not compiles(generatedCallbackRole(42, 1))
   doAssert compiles(generatedIndexedChannelIndex(
+    IndexedChannelHandle(index: 17, label: "indexed")))
+  doAssert compiles(generatedRepeatIndexedChannel(17,
     IndexedChannelHandle(index: 17, label: "indexed")))
 
 when isMainModule:
@@ -361,6 +375,18 @@ when isMainModule:
     shrinkInt)
   if not generatedTrustedDependentPairCases:
     quit(1)
+  let generatedPairWithExternalIndexCases = forAll(
+    "non-dependent Sigma tails may use earlier Pi indices", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 1000),
+    proc(index: int): bool =
+      let channel = IndexedChannelHandle(index: index,
+        label: "outer-" & $index)
+      let pairResult = generatedRepeatIndexedChannel(index, channel)
+      pairResult[0] == channel and pairResult[1] ==
+        IndexedChannelHandle(index: index, label: channel.label & "/copy"),
+    shrinkInt)
+  if not generatedPairWithExternalIndexCases:
+    quit(1)
   let generatedNestedRecordRoundTrips = forAll(
     "nested structural record codecs preserve recursive fields", r, 200,
     proc(r: var Rng): int = r.genInt(-1000, 1000),
@@ -445,6 +471,7 @@ when isMainModule:
       generatedBinaryPairBindingCases and
       generatedTernaryPairBindingCases and
       generatedTrustedDependentPairCases and
+      generatedPairWithExternalIndexCases and
       generatedNestedRecordRoundTrips and
       generatedFutureInputPassesThrough and
       generatedPureConditionalsWork and

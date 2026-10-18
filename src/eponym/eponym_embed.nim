@@ -138,21 +138,29 @@ proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
     current = current.scope.bdy
   let pairTy = current
   var dependent = false
-  proc containsVar(term: Term): bool =
+  proc referencesSigmaBinder(term: Term, depth: int): bool =
     if term.isNil: return false
-    if term.kind == tV: return true
+    if term.kind == tV: return term.idx == depth
     case term.kind
     of tPi, tSi, tLam:
-      containsVar(term.dom) or containsVar(term.scope.bdy)
-    of tApp: containsVar(term.fn) or containsVar(term.arg)
-    of tPair: containsVar(term.pFst) or containsVar(term.pSnd) or
-      containsVar(term.pScope.bdy)
-    of tFst, tSnd, tAbsurd: containsVar(term.sub)
-    of tLet: containsVar(term.letVal) or containsVar(term.letTy) or
-      containsVar(term.letScope.bdy)
+      referencesSigmaBinder(term.dom, depth) or
+        referencesSigmaBinder(term.scope.bdy, depth + 1)
+    of tApp:
+      referencesSigmaBinder(term.fn, depth) or
+        referencesSigmaBinder(term.arg, depth)
+    of tPair:
+      referencesSigmaBinder(term.pFst, depth) or
+        referencesSigmaBinder(term.pSnd, depth) or
+        referencesSigmaBinder(term.pScope.bdy, depth + 1)
+    of tFst, tSnd, tAbsurd:
+      referencesSigmaBinder(term.sub, depth)
+    of tLet:
+      referencesSigmaBinder(term.letVal, depth) or
+        referencesSigmaBinder(term.letTy, depth) or
+        referencesSigmaBinder(term.letScope.bdy, depth + 1)
     of tR, tV, tMeta, tC, tInt, tPrim, tNatLit, tNatSing, tType: false
   if pairTy != nil and pairTy.kind == tSi:
-    dependent = containsVar(pairTy.scope.bdy)
+    dependent = referencesSigmaBinder(pairTy.scope.bdy, 0)
   if not validArguments or pairTy.isNil or pairTy.kind != tSi or
       pairTy.impl or (dependent and not allowDependentIndex) or
       opaqueTypeHeadId(pairTy.dom) != expectedFirstId or
