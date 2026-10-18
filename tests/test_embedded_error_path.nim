@@ -62,7 +62,9 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_runtime_type_structured.nim",
      "eponymBlock runtimeType error"),
     ("tests/fixtures/embedded_err_unsupported_runtime_type.nim",
-     "no runtime codec for Eponym result type 'Thing'")]:
+     "no runtime codec for Eponym result type 'Thing'"),
+    ("tests/fixtures/embedded_err_binding_unused.nim",
+     "binding for postulate 'hostStepPostulate' is unused")]:
   if not checkFixture(path, expected):
     inc failed
 

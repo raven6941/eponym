@@ -53,9 +53,11 @@ to postulated Eponym types or
 type families. Nim checks adapter and generated wrapper signatures;
 the implementation and mapping remain trusted. Synchronous exceptions from a
 Nim adapter propagate unchanged to the caller. An invoked but unbound
-postulate raises a `ValueError` naming the postulate. Macro-time checks for
-missing or unreachable bindings, callbacks longer than three opaque arguments,
-and structural codecs are still unsupported. The TCP adapter demo propagates transport and
+postulate raises a `ValueError` naming the postulate. `eponymBlock` rejects a
+binding that no checked proc body references, but does not determine whether
+that proc is reachable from an application entry point. Call-graph
+reachability, callbacks longer than three opaque arguments, and structural
+codecs remain unsupported. The TCP adapter demo propagates transport and
 codec failures as exceptions rather than an explicit result type. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the
 supported prototype and remaining work.
