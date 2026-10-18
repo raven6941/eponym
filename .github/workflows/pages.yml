@@ -38,6 +38,10 @@ jobs:
                 target="${source%.md}.html"
                 fragment="${target}.fragment"
                 pandoc --from=gfm --to=html5 --metadata title="$(basename "${source%.md}")" -o "$fragment" "$source"
+                if grep -Eq '^<p>```|^<h[1-6]>[^<]*</h[1-6]>$' "$fragment"; then
+                  echo "Pandoc left Markdown syntax unconverted in $source" >&2
+                  exit 1
+                fi
                 python3 tools/wrap_markdown_page.py "$source" "$fragment" "$target" _site
                 rm "$fragment"
               done
