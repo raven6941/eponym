@@ -833,6 +833,13 @@ proc vNatLit*(n: int): Value =
     raise newException(ValueError, "Nat cannot be negative")
   Value(syn: tmNatLit(n), whnf: Whnf(kind: wNatLit, natLitVal: n))
 
+proc pairValue*(first, second: Value): Value =
+  ## Construct a runtime Eponym pair for explicit structural codecs. As with
+  ## opaque host boxes, the synthetic term is only a placeholder: the Sigma
+  ## type was checked before the runtime call and is not reconstructed here.
+  Value(syn: tStar(),
+        whnf: Whnf(kind: wPair, fstV: first, sndV: second))
+
 type HostBox[T] = ref object of RootObj
   value: T
 
