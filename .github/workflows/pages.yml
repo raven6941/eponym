@@ -42,6 +42,10 @@ jobs:
                   echo "Pandoc left Markdown syntax unconverted in $source" >&2
                   exit 1
                 fi
+                if grep -Fq '```' "$fragment"; then
+                  echo "Pandoc left a Markdown fence in $source" >&2
+                  exit 1
+                fi
                 python3 tools/wrap_markdown_page.py "$source" "$fragment" "$target" _site
                 rm "$fragment"
               done
