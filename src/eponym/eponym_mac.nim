@@ -638,6 +638,11 @@ proc blockToEponym*(body: NimNode): string =
         # wrapper generator and never interpreted as an Eponym declaration.
         if st.len != 3 or st[1].kind != nnkIdent:
           error("runtimeType expects (EponymType, NimType)", st)
+      elif head == "runtimeValue":
+        # Request an explicitly unboxed Eponym Value for a zero-argument
+        # definition, typically for a host interpreter of reified data.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("runtimeValue expects (zeroArgumentDefinition)", st)
       else:
         error("eponymBlock: unsupported call: " & head, st)
     else:
@@ -1113,6 +1118,14 @@ macro eponymBlock*(body: untyped): untyped =
   ## explicitly mapped opaque postulated types. Unsupported legacy shapes
   ## retain the varargs[int] compatibility wrapper.
   let src = blockToEponym(body)
+  var runtimeValueNames = initHashSet[string]()
+  for st in body:
+    if st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
+        $st[0] == "runtimeValue":
+      let name = $st[1]
+      if name in runtimeValueNames:
+        error("duplicate runtimeValue request for '" & name & "'", st)
+      runtimeValueNames.incl(name)
   # Issue #131: imports resolve relative to the calling Nim file's dir.
   let baseDir = callerDir(body)
   var defs: seq[ElabDef]
@@ -1125,6 +1138,22 @@ macro eponymBlock*(body: untyped): untyped =
     error("eponymBlock elaboration error: " & e.msg, body)
   except ParseError as e:
     error("eponymBlock parse error: " & e.msg, body)
+
+  for requested in runtimeValueNames:
+    var found = false
+    for d in defs:
+      if d.name == requested: found = true
+    if not found:
+      error("runtimeValue names no checked definition: " & requested, body)
+    var declaration: NimNode = nil
+    for st in body:
+      if st.kind == nnkProcDef and $st[0] == requested:
+        declaration = st
+        break
+    if declaration.isNil or declaration[3].len != 1 or
+        declaration[3][0].kind == nnkEmpty:
+      error("runtimeValue requires a declared zero-argument definition with a result: " &
+        requested, body)
 
   let bindings = hostPostulateBindings(body)
   for binding in bindings:
@@ -1205,6 +1234,17 @@ macro eponymBlock*(body: untyped): untyped =
         procDecl = st
         break
     if not procDecl.isNil:
+      if d.name in runtimeValueNames:
+        let params = procDecl[3]
+        if params.len != 1 or params[0].kind == nnkEmpty:
+          error("runtimeValue requires a zero-argument definition with a result: " & d.name,
+            procDecl)
+        let runtimeName = ident(d.name & "RuntimeValue")
+        result.add quote do:
+          proc `runtimeName`*(): tuple[value: Value, globals: Globals] =
+            let globals = getGlobalsDir(`dirLit`, `srcLit`)
+            let defs = getDefsDir(`dirLit`, `srcLit`)
+            (callDefValue(findDef(defs, `nameLit`), []), globals)
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
                                              bindings, runtimeTypes, records)
       if not typedWrapper.isNil:

@@ -14,7 +14,8 @@ design notes where the limit comes from.
 | `session_runtime_bindings.nim`, `session_tcp_bindings.nim` | The sender/receiver role and its session-indexed postulate calls | Generated wrapper and adapter signatures | Adapter behavior, message codec, and TCP transport |
 | `paxos_session.nim` | Proposer/acceptor session descriptions and roles | The hand-written mailbox driver compiles | Driver repeats the protocol; it does not call the checked roles |
 | `qtt_borrow.nim` | The modeled linear owner/borrow use and postulated operation sequence | The separate buffer driver compiles | Buffer exclusivity/lifetime and synchronization between driver and model |
-| `convex_opt.nim`, `convex_opt_vec.nim` | The reified objective and DCP certificate | Separate numeric implementation compiles | No connection from checked objective to the executed loss/gradient |
+| `convex_opt.nim` | The reified objective and DCP certificate | Nim interpreter and ternary search consume the runtime value of checked `prob()` | Integer interpreter and search are trusted |
+| `convex_opt_vec.nim` | The reified objective and DCP certificate | Separate numeric implementation compiles | Logistic loss and gradient are still restated in Nim |
 | `bindPostulate` runtime bridge | Checked callers match the Eponym postulate type | Generated wrapper and Nim adapter signatures match declared mappings | Adapter implementation and opaque mappings uphold the postulate semantics |
 
 “Checked” in this table means the Eponym layer elaborates the definition and
@@ -51,6 +52,11 @@ explicitly mapped Eponym types without exposing their representation.
 `eponymBlock` can generate typed wrappers for first-order definitions over
 mapped opaque types that correspond to named Eponym postulates. Tests exercise
 user-defined values through checked definitions and generated wrappers. A
+`runtimeValue(name)` request inside `eponymBlock` exposes a zero-argument
+checked definition as its runtime `Value` together with the checked globals,
+for host-side interpreters of reified data. It does not generate a structural
+Nim type or bind host postulates; callers must handle unsupported constructors
+and neutral values explicitly. A
 non-dependent `Sig(A, B)` runtime type is structurally mapped to a two-element
 Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque
 leaves. Named non-dependent `record` declarations map to Nim objects via
@@ -166,16 +172,16 @@ with their checked Eponym descriptions.
 
 ### Some examples certify a model, not the runtime computation
 
-The convex optimization demos check a reified objective and a certificate
-against DCP-style constructors at compile time. The Nim optimizer does not
-consume that checked Eponym value: `convex_opt.nim` separately implements
-the formula as `f`, while `convex_opt_vec.nim` separately implements the
-loss and gradient over Nim `seq[float]`. The examples illustrate how a
-dependent certificate can validate a model, but they do not yet connect that
-certificate to or generate the optimizer's runtime calculation. Keeping
-those two representations synchronized is currently the user's
-responsibility; the checker does not establish that the numerical driver
-implements the certified symbolic expression.
+The single-variable `convex_opt.nim` demo now opts into `runtimeValue(prob)`.
+Its Nim interpreter reads the constructor tree from the evaluated Eponym
+`Value`, so the ternary search consumes the exact expression whose convexity
+certificate was checked. The interpreter supports only the constructors used
+by that objective and fails on an unknown constructor. The vector-valued
+`convex_opt_vec.nim` logistic regression demo still restates the loss and
+gradient over Nim `seq[float]`; its checked certificate is not connected to
+that numerical calculation. The integer interpreter, ternary search,
+floating-point behavior, and gradient implementation remain trusted host
+code.
 
 ### Linear checks apply to modeled Eponym values
 
