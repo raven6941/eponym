@@ -481,8 +481,9 @@ implementations.
 
 #### F. Evaluate QTT-guided code generation
 
-- [ ] Keep usage checking as the correctness feature, independently of any
-   optimization.
+- [x] Keep usage checking as the correctness feature, independently of any
+  optimization. No code-generation optimizer is wired into acceptance; the
+  QTT usage property suite passes independently.
 - [ ] Prototype destination-passing or slot reuse for a narrow first-order
    expression language where liveness and aliasing are explicit.
 - [ ] Generate mutation only when the representation and ownership analysis
