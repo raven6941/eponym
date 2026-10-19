@@ -1537,6 +1537,26 @@ proc runtimeValueTerm(value: Value, globals: Globals): Term =
   else:
     value.syn
 
+proc toHostValueAtRuntimeType*[T](hostValue: T, expectedType: Value,
+                                  globals: Globals): Value =
+  ## Box an opaque Nim value while retaining the checked Eponym type that the
+  ## runtime mapping assigns to it. The mapping remains trusted semantically.
+  let typeTerm = runtimeValueTerm(expectedType, globals)
+  if typeTerm.isNil:
+    raise newException(ValueError,
+      "cannot retain an incomplete Eponym type for an opaque Nim value")
+  result = toHostValue(hostValue)
+  result.whnf.hostEponymType = typeTerm
+
+proc valueToHostAtRuntimeType*[T](value, expectedType: Value,
+    globals: Globals): T =
+  ## Check an opaque runtime value's Eponym type witness and Nim box type.
+  validateRuntimeValueType(value, expectedType, globals)
+  if value.whnfKind == wHost and value.whnf.hostEponymType.isNil:
+    raise newException(ValueError,
+      "opaque Nim value has no Eponym type witness")
+  valueToHost[T](value)
+
 proc inferRuntimeValueType(value: Value, globals: Globals,
                           supply: var Supply): Value =
   if value.isNil:
@@ -1552,6 +1572,10 @@ proc inferRuntimeValueType(value: Value, globals: Globals,
       raise newException(ValueError,
         "cannot infer a Nat Value without the Nat declaration")
     return eval(globals["Nat"].tm, @[])
+  of wHost:
+    if value.whnf.hostEponymType.isNil:
+      return nil
+    return eval(value.whnf.hostEponymType, @[])
   of wRef:
     var term: Term = nil
     for _, entry in globals.pairs:
@@ -1584,6 +1608,7 @@ proc validateRuntimeValueType*(value, expectedType: Value,
     raise newException(ValueError, "cannot validate an incomplete runtime Value")
   var supply = Supply()
   let inferred = inferRuntimeValueType(value, globals, supply)
+  if inferred.isNil: return # legacy opaque values remain trusted in recursive codecs
   areEqual(supply, vStar(), inferred, expectedType)
 
 proc prependErasedTypeArgs*(typeArgCount: int,

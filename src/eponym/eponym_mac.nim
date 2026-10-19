@@ -740,6 +740,7 @@ type HostRuntimeType = object
   isRuntimeVariant: bool
   isRuntimeStructuredVariant: bool
   isRuntimeCodec: bool
+  isRuntimeIndexedType: bool
   encoder: NimNode
   decoder: NimNode
 
@@ -800,7 +801,7 @@ proc findHostRecord(records: seq[HostRecord], name: string): int =
     if record.name == name: return i
   -1
 
-proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
+proc hostRuntimeTypes(body: NimNode, globals: Globals): seq[HostRuntimeType] =
   var seen = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
@@ -842,6 +843,8 @@ proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
         isRuntimeOption: isOption, isRuntimeVariant: isVariant,
         isRuntimeStructuredVariant: isStructuredVariant,
         isRuntimeCodec: isCodec,
+        isRuntimeIndexedType: not isCodec and name in globals and
+          not globals[name].ty.isNil and globals[name].ty.kind == tPi,
         encoder: if isCodec: st[3] else: nil,
         decoder: if isCodec: st[4] else: nil))
 
@@ -1430,6 +1433,9 @@ proc rawRuntimeValueCheck(eponymType, value, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]],
     mappings: seq[HostRuntimeType], records: seq[HostRecord]): NimNode
 
+proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]]): NimNode
+
 proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                toValue: bool,
                                mappings: seq[HostRuntimeType],
@@ -1569,6 +1575,22 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           body.add(check)
           body.add(codecCall)
         return newTree(nnkBlockExpr, newEmptyNode(), body)
+      if eponymType.kind in {nnkIdent, nnkSym} and
+          mapping.eponymName == $typeHead and not mapping.isSynthetic and
+          not mapping.isRuntimeVector and not mapping.isRuntimeList and
+          not mapping.isRuntimeOption and not mapping.isRuntimeVariant and
+          not mapping.isRuntimeStructuredVariant and
+          not mapping.isRuntimeIndexedType and
+          findHostRecord(records, mapping.eponymName) < 0:
+        let expectedType = runtimeTypeValueExpr(eponymType, globals,
+          indexOverrides)
+        if expectedType.isNil: return nil
+        let converterSym = if toValue:
+          bindSym"toHostValueAtRuntimeType"
+        else:
+          bindSym"valueToHostAtRuntimeType"
+        return newCall(newTree(nnkBracketExpr, converterSym, nimType), value,
+          expectedType, globals)
       if mapping.isRuntimeVariant and mapping.eponymName == $typeHead:
         let familyName = newLit(mapping.eponymName)
         let constructors = newCall(bindSym"runtimeVariantConstructorNames",
@@ -1847,7 +1869,7 @@ proc genericRuntimeInfo(decl: NimNode,
         result.genericBoolArgs.add(false)
         result.genericIntArgs.add(false)
         result.codecMappings.add(HostRuntimeType(eponymName: name,
-          nimType: copyNimTree(param[i])))
+          nimType: copyNimTree(param[i]), isSynthetic: true))
       elif binderType == "Nat":
         let staticInt = newTree(nnkBracketExpr, ident"static", ident"int")
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticInt,
@@ -2818,7 +2840,7 @@ macro eponymBlock*(body: untyped): untyped =
                                checkedGlobals):
       error("eponymBlock binding error: binding for postulate '" &
         binding.postulateName & "' is unused by every proc body", body)
-  let runtimeTypes = hostRuntimeTypes(body)
+  let runtimeTypes = hostRuntimeTypes(body, checkedGlobals)
   let trustedRuntimeRecords = trustedRuntimeRecordNames(body)
   let records = hostRecords(body, trustedRuntimeRecords)
   for requested in trustedRuntimeRecords:

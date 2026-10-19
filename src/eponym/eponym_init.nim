@@ -168,6 +168,7 @@ type
     of wHost:
       hostPayload*: RootRef
       hostTypeName*: string
+      hostEponymType*: Term
     of wPrim:
       op: PrimOp
       pargs: seq[Value]  # accumulated so far (function position order)

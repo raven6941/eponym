@@ -85,6 +85,13 @@ explicitly mapped Eponym types without exposing their representation.
 `eponymBlock` can generate typed wrappers for first-order definitions over
 mapped opaque types that correspond to named Eponym postulates. Tests exercise
 user-defined values through checked definitions and generated wrappers. A
+simple named `runtimeType(Postulate, NimType)` mapping carries an Eponym type
+witness with opaque runtime boxes. A typed wrapper rejects a returned box that
+lacks the witness or carries a different Eponym type, in addition to checking
+its Nim box type. This does not prove that the Nim payload semantically
+represents that Eponym value: the mapping and host implementation remain
+trusted. Indexed type-family mappings and opaque leaves traversed inside
+recursive structural codecs retain their existing trusted behavior.
 `runtimeValue(name)` request inside `eponymBlock` exposes a checked definition
 as its runtime `Value` together with the checked globals,
 for host-side interpreters of reified data. Zero-argument definitions get a

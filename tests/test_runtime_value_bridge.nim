@@ -61,6 +61,10 @@ type ChannelHandle = object
   id: int
   label: string
 
+proc rawRuntimeDropTypeWitness(args: seq[Value],
+                               globals: Globals): Value =
+  toHostValue(valueToHost[ChannelHandle](args[0]))
+
 type MutableCounter = ref object
   value: int
 
@@ -324,6 +328,15 @@ eponymBlock:
   proc checkedMalformedRuntimeHandle(value: RuntimeHandle): RuntimeHandle =
     malformedRuntimeHandle(value)
   runtimeValue(checkedMalformedRuntimeHandle)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  runtimeType(RuntimeOpaqueToken, ChannelHandle)
+  postulate(dropOpaqueTypeWitness,
+    RuntimeOpaqueToken -> RuntimeOpaqueToken)
+  bindPostulateValue(dropOpaqueTypeWitness, rawRuntimeDropTypeWitness)
+  proc checkedOpaqueTypeWitness(value: RuntimeOpaqueToken):
+      RuntimeOpaqueToken = dropOpaqueTypeWitness(value)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -1103,6 +1116,20 @@ when isMainModule:
       rejected and runtimeHandleDecodeCalls == 0,
     shrinkInt)
   if not wrongTopLevelDecodeCases:
+    quit(1)
+  let missingOpaqueWitnessCases = forAll(
+    "typed opaque mappings reject missing Eponym type witnesses", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      var rejected = false
+      try:
+        discard checkedOpaqueTypeWitness(ChannelHandle(id: id,
+          label: $id))
+      except ValueError:
+        rejected = true
+      rejected,
+    shrinkInt)
+  if not missingOpaqueWitnessCases:
     quit(1)
   let appliedGenericTypeCases = forAll(
     "mapped applied generic domains check their runtime indices", r, 200,

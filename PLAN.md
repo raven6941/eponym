@@ -319,6 +319,12 @@ implementations.
    Mappings are accepted only for named postulated types/families, never
    transparent data definitions. Coverage includes a generated
    `proc(ChannelHandle, string): ChannelHandle` role with 200 property cases.
+- [x] Preserve an Eponym type witness on values crossing simple named opaque
+   `runtimeType` mappings, and reject a typed wrapper result if the witness is
+   absent or disagrees with the declared Eponym type. A 200-case negative
+   property strips the witness in a raw postulate adapter. Indexed family
+   mappings and opaque leaves traversed recursively retain their trusted
+   correspondence behavior.
 - [x] Add structural codecs for non-dependent `Sig(A, B)` values as nested
    runtime pairs and Nim two-element tuples. Recursively support primitive
    `Int`/`Nat` and explicitly mapped opaque leaves; 200-case properties cover
