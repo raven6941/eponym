@@ -727,6 +727,10 @@ implementations.
    checked Eponym closures return as callable Nim closures. A 200-case property
    covers each direction, including a captured Nim callback; mismatched Nim
    callback signatures fail compilation.
+- [x] Verify that named noncapturing Nim procedures using the default
+  `nimcall` convention can be passed to generated wrappers expecting closure
+  proc types. A 200-case embedded callback property exercises the actual
+  runtime bridge.
 - [x] Expose unary opaque and binary opaque bindings through `eponymBlock`;
    explicit `runtimeType` mappings connect Eponym postulates to Nim types.
    Nim checks adapter and generated wrapper signatures, and compile-fail

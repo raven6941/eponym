@@ -201,7 +201,10 @@ argument and the existing future-result case.
 Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
 bodies. Nim proc types with supported leaf codecs also bridge to and from
-Eponym function values. A multi-argument Nim proc is represented as a curried
+Eponym function values. Named noncapturing Nim procedures with the default
+`nimcall` convention can be passed where a generated wrapper expects a
+closure proc type; Nim converts the procedure value. A 200-case embedded
+property checks this through the runtime bridge. A multi-argument Nim proc is represented as a curried
 chain of Eponym functions; arguments and results use the same recursive codecs
 as generated wrappers. A 200-case property covers multi-argument callbacks
 with primitive and mapped opaque values in both directions. Add `{.rawValue.}`
