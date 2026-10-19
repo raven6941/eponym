@@ -277,6 +277,8 @@ proc nimExprToEponym(n: NimNode): string =
   of nnkPrefix:
     if $n[0] == "-":
       "subInt 0 (" & nimExprToEponym(n[1]) & ")"
+    elif $n[0] == "not":
+      "not (" & nimExprToEponym(n[1]) & ")"
     else:
       error("eponymBlock: unsupported pure prefix operator '" & $n[0] & "'",
             n[0])

@@ -1,8 +1,8 @@
 # Experiment: a pure Nim subset inside `eponymBlock`
 
-**Status:** `let`, unary minus, `+`, `-`, and `*` for Eponym `Int`, plus a
-single-condition `if/else` expression for imported `Bool`, lower to checked
-Eponym terms. Chained `elif`, effects, and other operators remain unsupported.
+**Status:** `let`, unary minus, `+`, `-`, and `*` for Eponym `Int`, `not` for
+Eponym `Bool`, and `if`/`elif`/`else` expressions lower to checked Eponym
+terms. Other operators, effects, and arbitrary Nim calls remain unsupported.
 
 ## Motivation
 
@@ -30,10 +30,12 @@ represented directly in the current core:
 - `if condition: thenExpr else: elseExpr`, lowered to the polymorphic
   `ifThenElse` definition from `lib/bool.ep`; the condition must check as
   `Bool` and each branch must be one expression.
+- `not condition`, lowered to `not` from `lib/bool.ep`; the operand must check
+  as `Bool`.
 
 Potential next forms include:
 
-- chained `elif` branches and broader statement forms;
+- broader statement forms;
 - integer arithmetic/comparison operators, only where corresponding Eponym
   operations and types exist;
 - parentheses and ordinary function application.
@@ -45,11 +47,11 @@ evaluation for an unrecognized expression.
 
 ## First vertical slice
 
-The boundary, integer operators, and single-condition `if/else` are
+The boundary, integer operators, Boolean negation, and `if`/`elif`/`else` are
 implemented and documented. Property tests compare arithmetic wrappers with
-Nim for bounded values; both Boolean branches run through the checked Bool
-eliminator. Compile-fail fixtures cover unsupported integer division and
-chained `elif`.
+Nim for bounded values and Boolean negation with Nim; conditional branches
+run through the checked Bool eliminator. Compile-fail fixtures cover
+unsupported integer division.
 
 Continue with additional pure syntax only when the matching Eponym term and
 runtime behavior already exist or can be added with separate soundness review.

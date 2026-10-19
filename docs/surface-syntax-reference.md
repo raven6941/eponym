@@ -52,6 +52,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `cons[A, n](x, xs)`, `Vec[A, n]` | Square brackets supply explicit Eponym parameters; parentheses supply term arguments. Call-style forms remain supported during migration. |
 | `let x = term` in a definition body | Eponym local binding; one or more lets may precede the final term |
 | `left + right`, `left - right`, `left * right`, `-value` | Lowered to checked Eponym `Int` primitives; the Eponym checker enforces operand types |
+| `not condition` | Lowered to the checked `not` definition from `lib/bool.ep`; the operand must have type `Bool` |
 | `if condition: yes elif other: maybe else: no` | Pure conditional chain lowered to nested `ifThenElse` calls from `lib/bool.ep`; import that file, use `Bool` conditions, and provide one expression per branch |
 | `addInt(x, y)`, `suc(n)`, `f x`, `lam(x, T, body)` | Eponym applications and lambda forms, translated by the macro |
 | `import "nat.ep"` | Eponym module import; relative to the source file first, then the installed package prelude. Absolute paths select an explicit file. |
@@ -64,9 +65,9 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 Put ordinary computation, IO, control flow, and Nim library calls outside
 the block. Call the generated wrappers from Nim, and pass values across the
 wrapper boundary using the supported runtime types. See the
-[tutorial](tutorial.md) for a complete example. This is the current
-boundary; a planned experiment may add a small *pure* expression subset
-whose forms translate to checked Eponym terms rather than running as Nim.
+[tutorial](tutorial.md) for a complete example. The implemented pure expression
+subset is listed above; each form translates to checked Eponym terms rather
+than running as Nim.
 
 ### `bindPostulate` — trusted runtime adapter
 

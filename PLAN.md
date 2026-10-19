@@ -832,6 +832,8 @@ implementations.
 - [x] Lower Nim `Int` expressions using `let`, unary minus, and `+`, `-`, `*`
   to the existing checked Eponym primitives. A 200-case property test compares
   generated wrappers with Nim arithmetic over values that avoid overflow.
+- [x] Lower Nim `not` on `Bool` to the checked `not` definition in
+  `lib/bool.ep`; a 200-case property compares the generated wrapper with Nim.
 - [x] Lower a single-condition `if/else` expression through the polymorphic
   `ifThenElse` definition in `lib/bool.ep`; both branches remain Eponym terms
   and Bool eliminator computation selects the result.

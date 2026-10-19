@@ -383,7 +383,7 @@ eponymBlock:
 eponymBlock:
   import "../lib/bool.ep"
   proc generatedBoolNot(value: Bool): Bool =
-    if value: false else: true
+    not value
 
 eponymBlock:
   proc generatedGenericIdentity[A: Univ](value: A): A = value
