@@ -276,11 +276,11 @@ eponymBlock:
 
 eponymBlock:
   postulate(Nat, Univ)
-  proc generatedGenericNatValueRaw[n: Nat](): Nat = n
-  runtimeValue(generatedGenericNatValueRaw)
+  proc generatedGenericNatProjection[n: Nat](): Nat = n
+  runtimeValue(generatedGenericNatProjection)
 
 proc rawGenericNatAt(index: int): bool =
-  let runtime = generatedGenericNatValueRawRuntimeValueRaw(
+  let runtime = generatedGenericNatProjectionRuntimeValueRaw(
     [vNatLit(index)], [])
   valueToNat(runtime.value, runtime.globals) == index
 
