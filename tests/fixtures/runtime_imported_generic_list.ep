@@ -1,0 +1,5 @@
+import "../../lib/list.ep"
+import "runtime_variant.ep"
+proc importedGenericListCallbackApply (A : Type 0)
+    (callback : List A -> List A) (value : List A) : List A =
+    callback value

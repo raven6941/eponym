@@ -411,6 +411,7 @@ eponymBlock:
   runtimeValue(importedGenericIdentity)
   runtimeValue(importedGenericCallbackApply)
   runtimeValue(importedGenericDependentVectorCallbackApply)
+  runtimeValue(importedGenericOptionCallbackApply)
   runtimeValue(importedImplicitGenericIdentity)
   runtimeValue(importedImplicitNatVecIdentity)
   runtimeValue(importedImplicitBoolIdentity)
@@ -425,6 +426,13 @@ eponymBlock:
   runtimeValue(importedDependentCallbackApply)
   runtimePairTrusted(importedDependentPairIdentity)
   runtimeValue(importedDependentPairIdentity)
+
+eponymBlock:
+  import "fixtures/runtime_imported_generic_list.ep"
+  runtimeList(List)
+  runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
+    decodeRuntimeHandle)
+  runtimeValue(importedGenericListCallbackApply)
 
 eponymBlock:
   postulate(Counter, Univ)
@@ -1790,6 +1798,61 @@ when isMainModule:
         vecValueToSeq[ChannelHandle](runtime.value, input.length,
           runtime.globals, "Vec", decodeRuntimeHandle) == expected)
   if not importedGenericDependentVectorCallbackCases:
+    quit(1)
+  let importedGenericOptionContainerCallbackCases = forAll(
+    "imported generic callbacks preserve Option custom codecs", r, 200,
+    proc(r: var Rng): tuple[present: bool, seed, delta: int] =
+      (r.genBool(), r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[present: bool, seed, delta: int]): bool =
+      let value = if input.present:
+        some(ChannelHandle(id: input.seed, label: "option-input"))
+      else: none(ChannelHandle)
+      let expected = if input.present:
+        some(ChannelHandle(id: input.seed + input.delta,
+          label: "decoded-" & $(input.seed + input.delta)))
+      else: none(ChannelHandle)
+      let callback: proc(value: Option[ChannelHandle]): Option[ChannelHandle]
+          {.closure.} =
+        proc(value: Option[ChannelHandle]): Option[ChannelHandle] =
+          if value.isSome:
+            some(ChannelHandle(id: value.get.id + input.delta,
+              label: value.get.label & "/mapped"))
+          else:
+            none(ChannelHandle)
+      let typed = importedGenericOptionCallbackApply(callback, value)
+      let runtime = importedGenericOptionCallbackApplyRuntimeValue(callback,
+        value)
+      typed == expected and
+        valueToOption[ChannelHandle](runtime.value, runtime.globals, "Option",
+          decodeRuntimeHandle) == expected)
+  if not importedGenericOptionContainerCallbackCases:
+    quit(1)
+  let importedGenericListContainerCallbackCases = forAll(
+    "imported generic callbacks preserve List custom codecs", r, 200,
+    proc(r: var Rng): tuple[length, seed, delta: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[length, seed, delta: int]): bool =
+      var value: seq[ChannelHandle] = @[]
+      var expected: seq[ChannelHandle] = @[]
+      for i in 0 ..< input.length:
+        value.add(ChannelHandle(id: input.seed + i, label: "list-input"))
+        expected.add(ChannelHandle(id: input.seed + i + input.delta,
+          label: "decoded-" & $(input.seed + i + input.delta)))
+      let callback: proc(value: seq[ChannelHandle]): seq[ChannelHandle]
+          {.closure.} =
+        proc(value: seq[ChannelHandle]): seq[ChannelHandle] =
+          var mapped: seq[ChannelHandle] = @[]
+          for item in value:
+            mapped.add(ChannelHandle(id: item.id + input.delta,
+              label: item.label & "/mapped"))
+          mapped
+      let typed = importedGenericListCallbackApply(callback, value)
+      let runtime = importedGenericListCallbackApplyRuntimeValue(callback,
+        value)
+      typed == expected and
+        listValueToSeq[ChannelHandle](runtime.value, runtime.globals, "List",
+          decodeRuntimeHandle) == expected)
+  if not importedGenericListContainerCallbackCases:
     quit(1)
   let importedImplicitNatVecCases = forAll(
     "imported implicit Nat binders have static and dynamic Nim wrappers",

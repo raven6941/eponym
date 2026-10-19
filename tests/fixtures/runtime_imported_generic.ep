@@ -10,6 +10,9 @@ proc importedGenericCallbackApply (A : Type 0) (callback : A -> A)
 proc importedGenericDependentVectorCallbackApply (A : Type 0)
     (callback : Pi (n : Nat). Vec A n -> Vec A n) (n : Nat)
     (values : Vec A n) : Vec A n = callback n values
+proc importedGenericOptionCallbackApply (A : Type 0)
+    (callback : Option A -> Option A) (value : Option A) : Option A =
+    callback value
 proc importedImplicitGenericIdentity {A : Type 0} (value : A) : A = value
 proc importedImplicitNatVecIdentity {n : Nat} (values : Vec Int n) : Vec Int n = values
 proc importedImplicitBoolIdentity {flag : Bool} : Bool = flag

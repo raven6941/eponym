@@ -322,9 +322,10 @@ explicit trusted opt-ins described above.
 Imported generic definitions can also accept callbacks whose generic leaf type
 appears inside a mapped `Vec`, `List`, or `Option`; the direct leaf
 `runtimeType` or `runtimeCodec` mapping is carried into the recursive callback
-adapter. A 200-case property covers a dependent Vec callback over a custom
-mapped object. Other structural callback families and generic leaf types
-without a unique direct mapping remain unsupported.
+adapter. Separate 200-case properties cover a dependent Vec callback and
+Option and List callbacks over a custom mapped object. Other structural
+callback families and generic leaf types without a unique direct mapping
+remain unsupported.
 More complex generic domain expressions outside the supported type-expression
 forms and structural inspection of closures are unsupported.
 Non-dependent function domains written with `->` are now supported for dynamic
