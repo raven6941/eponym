@@ -199,21 +199,21 @@ and the [pure subset experiment](pure-nim-subset-experiment.md).
 
 ## Checking and code generation
 
-### QTT quantities are checked, not used for mutable code generation
+### QTT-guided code generation has a narrow opt-in path
 
-Linear and erased quantities constrain usage during elaboration and
-typechecking. The current runtime bridge does not use linearity to generate
-in-place mutation, destination-passing code, or other ownership-based
-optimizations. An isolated prototype in
-[`src/experimental/qtt_dps.nim`](../src/experimental/qtt_dps.nim) evaluates a
-first-order Int expression language. It mutates a destination slot only after
-an ownership check proves the expression graph is an exclusive tree; shared
-graphs fall back to immutable evaluation, and cycles are rejected. A
-200-case differential property keeps results equal to an immutable reference.
-On the documented 500-add chain, the immutable evaluator allocated 1,001
-runtime cells and the destination-passing evaluator allocated zero. This
-prototype uses its own tree ownership analysis, does not change QTT acceptance,
-and is not connected to Eponym wrapper code generation.
+`runtimeDps(name)` emits an additional `<name>Dps` Nim procedure for a checked,
+non-generic Int function whose parameters are all marked `{.linear.}` and whose
+body uses each exactly once. The current compiler handles Int literals,
+parameters, and primitive `+`, `-`, `*` expressions. It lowers the checked term
+through the destination-passing IR in
+[`src/eponym/qtt_dps.nim`](../src/eponym/qtt_dps.nim), after checking the QTT
+quantities, Int representation, supported term shape, and exclusive-tree
+ownership. Generated code uses mutable stack slots and reports the number of
+slots plus zero heap-backed Eponym value cells (a generated-code count, not a
+process-wide allocation profiler); properties compare its results with the
+regular checked evaluator. Other term forms, generic functions, and non-Int
+values remain on the normal wrapper/evaluator path. This opt-in does not change
+QTT acceptance or claim unique ownership for arbitrary Nim objects.
 
 ### Host implementations remain trusted
 

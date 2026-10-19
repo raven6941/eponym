@@ -654,10 +654,14 @@ implementations.
 
 **Exit criteria:**
 
-- [ ] Connect the prototype to Eponym's generated Nim code, use QTT usage
-  information together with representation and ownership checks, and measure
-  generated-code behavior and allocations. The current prototype is isolated;
-  QTT still affects checking only.
+- [x] Connect the destination-passing IR to Eponym's generated Nim code through
+  `runtimeDps(name)`. The opt-in requires checked quantity-1 Int parameters,
+  verifies each is used once, checks the supported Int term representation and
+  exclusive-tree shape, and emits mutable local slots. Two 200-case properties
+  compare one- and two-argument generated code to the ordinary checked wrapper;
+  generated code uses stack slots and contains no heap-backed Eponym value
+  cells. This is limited to non-generic literal/parameter/`+`/`-`/`*`
+  expressions; QTT remains a checking feature for all other generated code.
 
 #### G. Improve the Nim surface and onboarding
 

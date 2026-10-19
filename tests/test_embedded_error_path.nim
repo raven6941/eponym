@@ -90,7 +90,11 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_unsupported_operator.nim",
      "unsupported pure operator 'div'"),
     ("tests/fixtures/embedded_err_if_missing_else.nim",
-     "requires a condition and an else branch")]:
+     "requires a condition and an else branch"),
+    ("tests/fixtures/embedded_err_runtime_dps_quantity.nim",
+     "runtimeDps requires every parameter to be marked {.linear.}"),
+    ("tests/fixtures/embedded_err_runtime_dps_term.nim",
+     "runtimeDps supports only fully applied Int primitives")]:
   if not checkFixture(path, expected):
     inc failed
 

@@ -10,6 +10,8 @@ import std/tables
 import elab
 import eponym_embed  # runtime wrapper helpers and adapter-shape validation
 import eponym_init # opaque Value conversion helpers
+import preterm
+import qtt_dps
 import parse_surf
 import os  # issue #131: parentDir of the eponymBlock call site
 import strutils
@@ -688,6 +690,10 @@ proc blockToEponym*(body: NimNode): string =
         # typically for a host interpreter of reified data.
         if st.len != 2 or st[1].kind != nnkIdent:
           error("runtimeValue expects (checkedDefinition)", st)
+      elif head == "runtimeDps":
+        # Request direct destination-passing code for a checked definition.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("runtimeDps expects (checkedDefinition)", st)
       elif head == "runtimePairTrusted":
         # Explicitly trust the host correspondence for dependent Sigma indices
         # in one generated definition's typed runtime interface.
@@ -1956,6 +1962,7 @@ macro eponymBlock*(body: untyped): untyped =
   ## retain the varargs[int] compatibility wrapper.
   let src = blockToEponym(body)
   var runtimeValueNames = initHashSet[string]()
+  var runtimeDpsNames = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
         $st[0] == "runtimeValue":
@@ -1963,6 +1970,12 @@ macro eponymBlock*(body: untyped): untyped =
       if name in runtimeValueNames:
         error("duplicate runtimeValue request for '" & name & "'", st)
       runtimeValueNames.incl(name)
+    elif st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
+        $st[0] == "runtimeDps":
+      let name = $st[1]
+      if name in runtimeDpsNames:
+        error("duplicate runtimeDps request for '" & name & "'", st)
+      runtimeDpsNames.incl(name)
   # Issue #131: imports resolve relative to the calling Nim file's dir.
   let baseDir = callerDir(body)
   var defs: seq[ElabDef]
@@ -2003,6 +2016,52 @@ macro eponymBlock*(body: untyped): untyped =
       if declaration[3][i].kind != nnkIdentDefs:
         error("runtimeValue supports ordinary fixed-arity parameters: " & requested,
           declaration)
+
+  for requested in runtimeDpsNames:
+    var checkedDef: ElabDef
+    for d in defs:
+      if d.name == requested:
+        checkedDef = d
+        break
+    if checkedDef.name.len == 0:
+      error("runtimeDps requires a locally declared checked definition: " &
+        requested, body)
+    var declaration: NimNode = nil
+    for st in body:
+      if st.kind == nnkProcDef and $st[0] == requested:
+        declaration = st
+        break
+    if declaration.isNil:
+      error("runtimeDps requires an explicit Nim proc declaration: " &
+        requested, body)
+    if declaration[2].kind != nnkEmpty:
+      error("runtimeDps does not yet support generic procedures", declaration)
+    let params = declaration[3]
+    if params.len < 2 or params[0].kind == nnkEmpty or
+        $params[0] != "Int":
+      error("runtimeDps currently requires an Int result", declaration)
+    var valueArity = 0
+    for i in 1 ..< params.len:
+      let p = params[i]
+      if p.kind != nnkIdentDefs or $p[^2] != "Int":
+        error("runtimeDps currently requires Int parameters", p)
+      valueArity += p.len - 2
+    if valueArity == 0:
+      error("runtimeDps requires at least one linear Int parameter",
+        declaration)
+    var term = checkedDef.tmTm
+    for i in 0 ..< valueArity:
+      if term.isNil or term.kind != tLam:
+        error("runtimeDps checked definition has an unexpected lambda shape",
+          declaration)
+      if term.qty != q1:
+        error("runtimeDps requires every parameter to be marked {.linear.}",
+          declaration)
+      term = term.scope.bdy
+    let lowered = tryLowerCheckedLinearInt(term, valueArity)
+    if lowered.error.len > 0:
+      error("runtimeDps cannot compile '" & requested & "': " &
+        lowered.error, declaration)
 
   let bindings = hostPostulateBindings(body)
   for binding in bindings:
@@ -2248,6 +2307,22 @@ macro eponymBlock*(body: untyped): untyped =
       else:
         result.add(unsupportedRuntimeWrapper(procDecl, d.name, runtimeTypes,
           records, allowDependentSigma))
+      if d.name in runtimeDpsNames:
+        var parameterNames: seq[string] = @[]
+        for i in 1 ..< procDecl[3].len:
+          let p = procDecl[3][i]
+          for j in 0 ..< p.len - 2:
+            let nameNode = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
+            parameterNames.add($nameNode)
+        var term = d.tmTm
+        for _ in 0 ..< parameterNames.len:
+          term = term.scope.bdy
+        let lowered = tryLowerCheckedLinearInt(term, parameterNames.len)
+        if lowered.error.len > 0:
+          error("runtimeDps cannot compile '" & d.name & "': " &
+            lowered.error, procDecl)
+        result.add(generateLinearIntDpsProc(d.name & "Dps", parameterNames,
+                                             lowered.expression))
       continue
     if d.name in runtimeValueNames:
       result.add(rawRuntimeValueWrapper(baseDir, src, d.name,

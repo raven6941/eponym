@@ -38,6 +38,7 @@ installDirs   = @["lib"]
 # issue #189, release packaging excludes experiment code. src/repl.nim
 # is a dev tool, not part of the installed library.)
 installFiles  = @["abilities.nim",
+                  "qtt_dps.nim",
                   "eponym_init.nim",
                   "preterm.nim",
                   "parse_surf.nim",
@@ -69,7 +70,7 @@ task test, "Run the full CI matrix (same matrix GitHub CI runs)":
 # by a custom task -- `nimble build` runs the built-in and reports
 # "Nothing to build" for a library with no `bin`.)
 task buildall, "Build all production modules":
-  for f in ["abilities", "eponym_init", "preterm", "parse_surf", "elab", "elab_prof", "unify", "usage_check", "eponym_mac", "lsp", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout", "mutual_termination"]:
+  for f in ["abilities", "qtt_dps", "eponym_init", "preterm", "parse_surf", "elab", "elab_prof", "unify", "usage_check", "eponym_mac", "lsp", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout", "mutual_termination"]:
     echo "=== build " & f & " ==="
     exec "nim c --hints:off --path:src --path:src/eponym src/eponym/" & f & ".nim"
   echo "=== build repl (issue #50) ==="
