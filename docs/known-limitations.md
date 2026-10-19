@@ -172,8 +172,12 @@ and its index. A generated wrapper can expose a dependent Sigma result as a
 Nim tuple when that checked definition is explicitly marked
 `runtimePairTrusted(definition)`. The recursive codecs check each field's Nim
 representation, while the relationship between the field values and dependent
-indices remains trusted. Without this marker, generated wrappers continue to
-reject dependent Sigma signatures.
+indices remains trusted. Nested dependent Sigma values propagate named
+indices through recursive codecs; supported field codecs such as `Vec` still
+check their represented constraints (for example, sequence length against the
+bound Nat). Shadowed binder names resolve to the innermost Sigma binder.
+Without this marker, generated wrappers continue to reject dependent Sigma
+signatures.
 Opaque bindings require explicit `runtimeType(EponymType, NimType)` mappings
 to postulated Eponym types or
 type families. Nim checks adapter and generated wrapper signatures;
@@ -182,7 +186,7 @@ Nim adapter propagate unchanged to the caller. An invoked but unbound
 postulate raises a `ValueError` naming the postulate. `eponymBlock` rejects a
 binding that no checked proc body references, but does not determine whether
 that proc is reachable from an application entry point. Call-graph
-reachability and structural codecs remain unsupported. The TCP demo returns
+reachability remains unsupported. The TCP demo returns
 transport and codec failures through a mapped `TransportResult` value. Other
 adapters may still propagate synchronous exceptions. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the

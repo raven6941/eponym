@@ -250,8 +250,11 @@ Nim checks the named object fields and their types. Records with dependent
 fields require `runtimeRecordTrusted(Record)` and a mapped Nim object. Earlier
 field names feed later codecs; structural codecs can validate relationships
 they represent, while any remaining index correspondence is trusted.
-Dependent `Sig` values still require the separate `runtimePairTrusted`
-definition opt-in.
+Dependent `Sig` values require the separate `runtimePairTrusted` definition
+opt-in. Named indices propagate through nested pairs. For example, a nested
+`Vec[Int, length]` field checks that its Nim sequence length matches the
+nearest enclosing `length` binder; host correspondence for other index
+relationships remains trusted.
 
 ## Sheds: `shedsBlock` (hole-driven development)
 
