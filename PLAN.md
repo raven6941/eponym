@@ -1238,8 +1238,9 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   `C(scrutinee)` do not make an eliminator's scrutinee inferable. Ambiguous
   binder names and result forms without a usable expected type remain
   unsupported. Compile-time callback regressions cover inferred,
-  result-inferred, and bracket-supplied indices, and the runtime bridge property
-  suite passes with dependent callback calls omitting their inferable index. The syntax guard
+  result-inferred (including an index nested in a `Sig` field), and
+  bracket-supplied indices, and the runtime bridge property suite passes with
+  dependent callback calls omitting their inferable index. The syntax guard
   rejects positional call-style index arguments when their signature is known
   and leaves ordinary inferred applications alone. Local and imported vector
   constructor regressions plus direct-index and compound-index family

@@ -155,6 +155,14 @@ eponymBlock:
       callback: Pi(n: Nat, Vec[Nat, n])): Vec[Nat, 0] =
     callback[zero()]()
 
+  proc inferredCallbackResultIndexInSigma(
+      callback: Pi(n: Nat, Sig(marker: Nat, Vec[Nat, n]))):
+      Sig(marker: Nat, Vec[Nat, 0]) = callback()
+
+  proc bracketCallbackResultIndexInSigma(
+      callback: Pi(n: Nat, Sig(marker: Nat, Vec[Nat, n]))):
+      Sig(marker: Nat, Vec[Nat, 0]) = callback[zero()]()
+
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =
     handler.identity(value)
