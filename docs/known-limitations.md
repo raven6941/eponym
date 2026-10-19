@@ -320,12 +320,12 @@ convenience `bindPostulatePair` form remains specialized to two result fields.
 Records with dependent fields and dependent `Sig` results are available only through their
 explicit trusted opt-ins described above.
 Imported generic definitions can also accept callbacks whose generic leaf type
-appears inside a mapped `Vec`, `List`, or `Option`; the direct leaf
-`runtimeType` or `runtimeCodec` mapping is carried into the recursive callback
-adapter. Separate 200-case properties cover a dependent Vec callback and
-Option and List callbacks over a custom mapped object. Other structural
-callback families and generic leaf types without a unique direct mapping
-remain unsupported.
+appears inside a mapped `Vec`, `List`, or `Option`, or a supported nondependent
+`Sig` tuple; the direct leaf `runtimeType` or `runtimeCodec` mapping is carried
+into the recursive callback adapter. Separate 200-case properties cover these
+four callback shapes over a custom mapped object. Other structural callback
+families and generic leaf types without a unique direct mapping remain
+unsupported.
 More complex generic domain expressions outside the supported type-expression
 forms and structural inspection of closures are unsupported.
 Non-dependent function domains written with `->` are now supported for dynamic

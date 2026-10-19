@@ -412,6 +412,7 @@ eponymBlock:
   runtimeValue(importedGenericCallbackApply)
   runtimeValue(importedGenericDependentVectorCallbackApply)
   runtimeValue(importedGenericOptionCallbackApply)
+  runtimeValue(importedGenericSigmaCallbackApply)
   runtimeValue(importedImplicitGenericIdentity)
   runtimeValue(importedImplicitNatVecIdentity)
   runtimeValue(importedImplicitBoolIdentity)
@@ -1853,6 +1854,36 @@ when isMainModule:
         listValueToSeq[ChannelHandle](runtime.value, runtime.globals, "List",
           decodeRuntimeHandle) == expected)
   if not importedGenericListContainerCallbackCases:
+    quit(1)
+  let importedGenericSigmaCallbackCases = forAll(
+    "imported generic callbacks preserve Sigma custom codecs", r, 200,
+    proc(r: var Rng): tuple[left, right, delta: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[left, right, delta: int]): bool =
+      let value = (ChannelHandle(id: input.left, label: "sigma-left"),
+        ChannelHandle(id: input.right, label: "sigma-right"))
+      let expected = (
+        ChannelHandle(id: input.left + input.delta,
+          label: "decoded-" & $(input.left + input.delta)),
+        ChannelHandle(id: input.right + input.delta,
+          label: "decoded-" & $(input.right + input.delta)))
+      let callback: proc(value: tuple[left, right: ChannelHandle]):
+          tuple[left, right: ChannelHandle] {.closure.} =
+        proc(value: tuple[left, right: ChannelHandle]):
+            tuple[left, right: ChannelHandle] =
+          (ChannelHandle(id: value[0].id + input.delta,
+             label: value[0].label & "/mapped"),
+           ChannelHandle(id: value[1].id + input.delta,
+             label: value[1].label & "/mapped"))
+      let typed = importedGenericSigmaCallbackApply(callback, value)
+      let runtime = importedGenericSigmaCallbackApplyRuntimeValue(callback,
+        value)
+      let first = decodeRuntimeHandle(runtimePairFirst(runtime.value),
+        runtime.globals)
+      let second = decodeRuntimeHandle(runtimePairSecond(runtime.value),
+        runtime.globals)
+      typed == expected and (first, second) == expected)
+  if not importedGenericSigmaCallbackCases:
     quit(1)
   let importedImplicitNatVecCases = forAll(
     "imported implicit Nat binders have static and dynamic Nim wrappers",

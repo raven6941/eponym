@@ -621,11 +621,11 @@ implementations.
      Compile-time checking rejects a callback whose type does not match the
      inferred generic type. When a generic type appears under a mapped
      structural family (`Vec`, `List`, or `Option`) in an imported callback
-     signature, the wrapper now carries the direct mapped type witness into
-     recursive callback codecs. Separate 200-case properties cover a custom
-     `runtimeCodec` value inside dependent Vec, Option, and List callbacks
-     through generated and typed `RuntimeValue` wrappers; the Vec index is
-     checked.
+     signature or a supported `Sig` tuple, the wrapper now carries the direct
+     mapped type witness into recursive callback codecs. Separate 200-case
+     properties cover a custom `runtimeCodec` value inside dependent Vec,
+     Option, List, and nondependent Sigma callbacks through generated and
+     typed `RuntimeValue` wrappers; the Vec index is checked.
    - [x] Reconstruct typed wrappers for local clause-compiled definitions
      from their checked Pi signatures. A 200-case property calls a `Nat -> Nat`
      identity through its generated `int` wrapper. Runtime application helpers

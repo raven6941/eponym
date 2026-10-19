@@ -1724,11 +1724,11 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
   let generic = if toValue: bindSym"toHostValue" else: bindSym"valueToHost"
   newTree(nnkBracketExpr, generic, nimType)
 
-proc genericTypeUsedByStructuredCallback(decl: NimNode, name: string,
+proc genericTypeUsedByCodecCallback(decl: NimNode, name: string,
     mappings: seq[HostRuntimeType]): bool =
   ## Imported definitions do not have a Nim body AST from which to discover
-  ## runtime uses of a generic type. When that type occurs beneath a mapped
-  ## structural family in a callback signature, preserve its explicit runtime
+  ## runtime uses of a generic type. When that type occurs beneath a supported
+  ## structural codec in a callback signature, preserve its explicit runtime
   ## type witness so the callback adapter can recursively apply the leaf codec.
   if decl.kind != nnkProcDef or decl[3].kind != nnkFormalParams:
     return false
@@ -1745,6 +1745,8 @@ proc genericTypeUsedByStructuredCallback(decl: NimNode, name: string,
         let current = pending.pop()
         if not mentionsName(current, name): continue
         let head = runtimeTypeHead(current)
+        if head.kind == nnkIdent and $head == "Sig":
+          return true
         if head.kind == nnkIdent:
           for mapping in mappings:
             if mapping.eponymName == $head and
@@ -2333,7 +2335,7 @@ proc genericRuntimeInfo(decl: NimNode,
       let typeUsedByBody = binderType == "Type 0" and
         ((decl.len > 6 and not decl[6].isNil and
           mentionsName(decl[6], name)) or
-         genericTypeUsedByStructuredCallback(decl, name, mappings))
+         genericTypeUsedByCodecCallback(decl, name, mappings))
       if typeUsedByBody:
         var representedTypes: seq[string] = @[]
         for mapping in mappings:
