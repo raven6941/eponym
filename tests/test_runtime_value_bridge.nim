@@ -417,6 +417,7 @@ eponymBlock:
   runtimeValue(importedGenericCallbackApply)
   runtimeValue(importedGenericDependentVectorCallbackApply)
   runtimeValue(importedGenericOptionCallbackApply)
+  runtimeValue(importedGenericNestedOptionVectorCallbackApply)
   runtimeValue(importedGenericSigmaCallbackApply)
   runtimePairTrusted(importedGenericDependentPairCallbackApply)
   runtimeValue(importedGenericDependentPairCallbackApply)
@@ -1853,6 +1854,47 @@ when isMainModule:
         valueToOption[ChannelHandle](runtime.value, runtime.globals, "Option",
           decodeRuntimeHandle) == expected)
   if not importedGenericOptionContainerCallbackCases:
+    quit(1)
+  let importedGenericNestedOptionVectorCallbackCases = forAll(
+    "imported generic callbacks compose Option and Vec codecs", r, 200,
+    proc(r: var Rng): tuple[first, second, delta: int, present: bool] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000),
+       r.genInt(-100, 100), r.genBool),
+    proc(input: tuple[first, second, delta: int, present: bool]): bool =
+      let value = if input.present:
+        some(@[
+          ChannelHandle(id: input.first, label: "nested-first"),
+          ChannelHandle(id: input.second, label: "nested-second")])
+        else: none[seq[ChannelHandle]]()
+      let expected = if input.present:
+        some(@[
+          ChannelHandle(id: input.first + input.delta,
+            label: "decoded-" & $(input.first + input.delta)),
+          ChannelHandle(id: input.second + input.delta,
+            label: "decoded-" & $(input.second + input.delta))])
+        else: none[seq[ChannelHandle]]()
+      let callback: proc(value: Option[seq[ChannelHandle]]):
+          Option[seq[ChannelHandle]] {.closure.} =
+        proc(value: Option[seq[ChannelHandle]]):
+            Option[seq[ChannelHandle]] =
+          if value.isNone: return none[seq[ChannelHandle]]()
+          var updated = value.get
+          for item in updated.mitems:
+            inc item.id, input.delta
+            item.label.add("/nested")
+          some(updated)
+      let typed = importedGenericNestedOptionVectorCallbackApply[
+        ChannelHandle](callback, value)
+      let runtime = importedGenericNestedOptionVectorCallbackApplyRuntimeValue[
+        ChannelHandle](callback, value)
+      let decoded = valueToOption(runtime.value, runtime.globals, "Option",
+        proc(item: Value, globals: Globals): seq[ChannelHandle] =
+          vecValueToSeq[ChannelHandle](item, 2, globals, "Vec",
+            decodeRuntimeHandle))
+      typed == expected and decoded == expected,
+    proc(input: tuple[first, second, delta: int, present: bool]):
+        seq[tuple[first, second, delta: int, present: bool]] = @[])
+  if not importedGenericNestedOptionVectorCallbackCases:
     quit(1)
   let importedGenericListContainerCallbackCases = forAll(
     "imported generic callbacks preserve List custom codecs", r, 200,

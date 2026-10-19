@@ -630,6 +630,9 @@ implementations.
      `runtimeVectorArray` representation. Imported dependent Sigma callbacks
      are supported with `runtimePairTrusted`; a 200-case property checks both
      wrappers and rejects wrong Vec lengths in inputs and callback results.
+     A nested `Option[Vec[A,2]]` callback composes Option and Vec codecs,
+     including `none` and `some` cases, through generated and typed
+     `RuntimeValue` wrappers (200 cases).
    - [x] Reconstruct typed wrappers for local clause-compiled definitions
      from their checked Pi signatures. A 200-case property calls a `Nat -> Nat`
      identity through its generated `int` wrapper. Runtime application helpers
@@ -727,6 +730,11 @@ implementations.
       and indexed-family representations remain unsupported because Nim types
       such as `int` cannot identify an Eponym type without a unique explicit
       mapping.
+   - [ ] Support generic callbacks over indexed-family mappings when the Nim
+     value representation alone cannot identify the Eponym family index. This
+     needs an explicit runtime witness or equivalent value-level type
+     selection; the current unique direct mapping path intentionally skips
+     indexed families.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.
