@@ -534,10 +534,11 @@ implementations.
   entry points. A generic callback returning a mapped `Future[T]` also carries
   the same Future object through generated and `RuntimeValue` dynamic wrappers
   without awaiting it. Nim `{.async.}` procedures returning a mapped
-  `Future[T]` also satisfy these dynamic callback parameters; a 200-case
-  property calls the async procedure through both wrapper paths and awaits the
-  returned futures from ordinary Nim code. Dependent Pi expressions outside the supported
-  named-binder/runtime-type grammar remain unsupported.
+  `Future[T]` also satisfy typed postulate adapters and dynamic generic
+  callback parameters. A 200-case property calls the async procedure through
+  generated and `RuntimeValue` wrappers for both paths, then awaits the
+  returned futures from ordinary Nim code. Dependent Pi expressions outside
+  the supported named-binder/runtime-type grammar remain unsupported.
 - [x] Add `{.rawValue.}` callback proc types that pass callback arguments and
   results as Eponym `Value`s, without requiring codecs for the function's leaf
   types. The checked Eponym callback type remains explicit, and the Nim callback

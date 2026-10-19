@@ -226,9 +226,10 @@ The same opaque result can cross a callback supplied to a dynamic generic
 binder; a 200-case property checks that generated and `RuntimeValue` dynamic
 wrappers return the exact Future object unchanged.
 Nim `{.async.}` procedures returning that mapped `Future[T]` also satisfy
-dynamic generic callback parameters. A 200-case property invokes an async
-procedure through both wrappers and confirms its result after Nim awaits each
-Future. Async scheduling and failure behavior remain owned by Nim.
+typed postulate adapters and dynamic generic callback parameters. A 200-case
+property invokes an async procedure through generated and `RuntimeValue`
+wrappers for both paths and confirms each result after Nim awaits the Future.
+Async scheduling and failure behavior remain owned by Nim.
 Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
 bodies. Nim proc types with supported leaf codecs also bridge to and from

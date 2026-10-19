@@ -2988,7 +2988,8 @@ proc callbackRole : Callback -> Sample -> Sample =
   if not genericFutureCallbackCases:
     quit(1)
   let asyncGenericCallbackCases = forAll(
-    "async Nim callbacks cross dynamic generic binders", r, 200,
+    "async Nim callbacks cross typed postulates and dynamic generic binders",
+    r, 200,
     proc(r: var Rng): int = r.genInt(-1000, 1000),
     proc(channelId: int): bool =
       let channel = ChannelHandle(id: channelId, label: "async-generic")
@@ -2999,7 +3000,17 @@ proc callbackRole : Callback -> Sample -> Sample =
       let resultType = runtimeGlobalValue(runtime.globals, "PendingResult")
       let runtimeFuture = valueToHostAtRuntimeType[Future[int]](runtime.value,
         resultType, runtime.globals)
-      waitFor(generated) == channelId and waitFor(runtimeFuture) == channelId)
+      let postulateResult = generatedInvokeFutureCallback(hostAsyncChannelResult,
+        channel)
+      let postulateRuntime = generatedInvokeFutureCallbackRuntimeValue(
+        hostAsyncChannelResult, channel)
+      let postulateType = runtimeGlobalValue(postulateRuntime.globals,
+        "PendingResult")
+      let postulateRuntimeFuture = valueToHostAtRuntimeType[Future[int]](
+        postulateRuntime.value, postulateType, postulateRuntime.globals)
+      waitFor(generated) == channelId and waitFor(runtimeFuture) == channelId and
+        waitFor(postulateResult) == channelId and
+        waitFor(postulateRuntimeFuture) == channelId)
   if not asyncGenericCallbackCases:
     quit(1)
   let voidCallbackCases = forAll(
