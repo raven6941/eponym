@@ -616,6 +616,12 @@ implementations.
      carries earlier callback arguments into dependent codecs. Negative checks
      reject wrong-family inputs and results through generated and reified
      closures; unsupported type expressions remain explicitly trusted.
+   - [x] Support nullary Nim callbacks by representing them as Eponym
+     `Pi (_ : 1). Result` functions. The bridge checks the unit argument,
+     adapts calls in both directions, and compares callback signatures against
+     the checked Pi telescope. A 200-case property covers host callbacks,
+     typed `RuntimeValue` calls, and callbacks returned from checked Eponym;
+     a compile-error fixture rejects a unary callback for a nullary contract.
    - [x] Support Nim `var` parameters in typed postulate adapters. Adapters
      decode into mutable call-local variables and let Nim check the concrete
      `var T` signature. A 200-case property checks mutation through a mapped

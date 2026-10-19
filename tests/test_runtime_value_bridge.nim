@@ -119,6 +119,10 @@ proc hostInvokeFutureCallback(callback: proc(channel: ChannelHandle):
 
 proc hostInvokeVoidCallback(callback: proc(value: int) {.closure.},
                             value: int) = callback(value)
+proc hostInvokeNullaryCallback(callback: proc(): int {.closure.}): int =
+  callback()
+proc hostInvokeRawNullaryCallback(
+    callback: proc(): Value {.closure.}): int = valueToInt(callback())
 
 proc hostIncrementRuntimeHandles(length: int,
     values: seq[ChannelHandle]): seq[ChannelHandle] =
@@ -812,6 +816,27 @@ eponymBlock:
                                    value: Int): unitTy =
     invokeVoidCallback(callback, value)
   runtimeValue(generatedInvokeVoidCallback)
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(invokeNullaryCallback,
+    Pi(callback: proc(): Int {.closure.}, Int))
+  bindPostulate(invokeNullaryCallback, hostInvokeNullaryCallback,
+    proc(): Int {.closure.}, Int)
+  proc generatedInvokeNullaryCallback(
+      callback: proc(): Int {.closure.}): Int =
+    invokeNullaryCallback(callback)
+  runtimeValue(generatedInvokeNullaryCallback)
+  proc generatedReturnNullaryInt(): proc(): Int {.closure.} =
+    lam(unit, unitTy, addInt(17, 0))
+  runtimeValue(generatedReturnNullaryInt)
+  postulate(invokeRawNullaryCallback,
+    Pi(callback: proc(): Int {.closure, rawValue.}, Int))
+  bindPostulate(invokeRawNullaryCallback, hostInvokeRawNullaryCallback,
+    proc(): Int {.closure, rawValue.}, Int)
+  proc generatedInvokeRawNullaryCallback(
+      callback: proc(): Int {.closure, rawValue.}): Int =
+    invokeRawNullaryCallback(callback)
+  runtimeValue(generatedInvokeRawNullaryCallback)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -2563,6 +2588,27 @@ proc callbackRole : Callback -> Sample -> Sample =
       seen == @[value, value + 1],
     shrinkInt)
   if not voidCallbackCases:
+    quit(1)
+  let nullaryCallbackCases = forAll(
+    "typed callback adapters support nullary Nim callbacks", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let callback: proc(): int {.closure.} = proc(): int = value
+      let generated = generatedInvokeNullaryCallback(callback)
+      let runtime = generatedInvokeNullaryCallbackRuntimeValue(callback)
+      let returned = generatedReturnNullaryInt()
+      let returnedRuntime = generatedReturnNullaryIntRuntimeValue()
+      let rawCallback: proc(): Value {.closure.} = proc(): Value =
+        intToValue(value)
+      let rawGenerated = generatedInvokeRawNullaryCallback(rawCallback)
+      let rawRuntime = generatedInvokeRawNullaryCallbackRuntimeValue(rawCallback)
+      generated == value and valueToInt(runtime.value) == value and
+        returned() == 17 and
+        valueToInt(callRuntimeValue(returnedRuntime.value,
+          @[vUnit()])) == 17 and rawGenerated == value and
+        valueToInt(rawRuntime.value) == value,
+    shrinkInt)
+  if not nullaryCallbackCases:
     quit(1)
   let importedBoundCallbackCases = forAll(
     "imported postulates invoke checked Nim callbacks", r, 200,

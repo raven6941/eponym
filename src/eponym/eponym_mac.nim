@@ -366,8 +366,8 @@ proc nimTypeToEponym(n: NimNode): string =
         args.add(nimTypeToEponym(a))
     head & " " & args.join(" ")
   of nnkProcTy:
-    if n.len != 2 or n[0].kind != nnkFormalParams or n[0].len < 2:
-      error("runtime proc types require at least one named argument", n)
+    if n.len != 2 or n[0].kind != nnkFormalParams or n[0].len < 1:
+      error("runtime proc types require ordinary arguments", n)
     var resultType = nimTypeToEponym(n[0][0])
     var params: seq[(string, NimNode)] = @[]
     for i in 1 ..< n[0].len:
@@ -378,6 +378,8 @@ proc nimTypeToEponym(n: NimNode): string =
         let name = if p[j].kind == nnkEmpty: "callbackArg" & $params.len
                    else: $p[j]
         params.add((name, p[^2]))
+    if params.len == 0:
+      return "Pi (_ : 1). " & resultType
     for i in countdown(params.high, 0):
       resultType = "Pi (" & params[i][0] & " : " &
         nimTypeToEponym(params[i][1]) & "). " & resultType
@@ -1160,7 +1162,7 @@ proc checkedTypeMatches(term: Term, typeExpr: NimNode, ctx: Ctx,
     return stripOuterTypeParens(prettyTerm(term, ctx, refNames)) ==
       nimTypeToEponym(typeExpr)
   if typeExpr.len != 2 or typeExpr[0].kind != nnkFormalParams or
-      typeExpr[0].len < 2:
+      typeExpr[0].len < 1:
     return false
   var current = term
   var callbackCtx = ctx
@@ -1185,6 +1187,12 @@ proc checkedTypeMatches(term: Term, typeExpr: NimNode, ctx: Ctx,
         qty: current.qty)] & callbackCtx
       current = current.scope.bdy
       inc argIndex
+  if argIndex == 0:
+    if current.isNil or current.kind != tPi or current.impl or
+        current.qty == q0 or current.dom.kind != tC or
+        current.dom.c != cOne:
+      return false
+    current = current.scope.bdy
   stripOuterTypeParens(prettyTerm(current, callbackCtx, refNames)) ==
     nimTypeToEponym(typeExpr[0][0])
 
@@ -1395,10 +1403,11 @@ type RuntimeProcParts = object
   argTypes: seq[NimNode]
   argNames: seq[string]
   resultType: NimNode
+  isNullary: bool
 
 proc runtimeProcParts(n: NimNode): RuntimeProcParts =
   if n.kind != nnkProcTy or n.len != 2 or n[0].kind != nnkFormalParams or
-      n[0].len < 2:
+      n[0].len < 1:
     return
   for i in 1 ..< n[0].len:
     let p = n[0][i]
@@ -1408,8 +1417,8 @@ proc runtimeProcParts(n: NimNode): RuntimeProcParts =
       result.argTypes.add(p[^2])
       result.argNames.add(if p[j].kind == nnkEmpty: "callbackArg" &
         $result.argNames.len else: binderName(p[j]))
-  if result.argTypes.len > 0:
-    result.resultType = n[0][0]
+  result.isNullary = result.argTypes.len == 0
+  result.resultType = n[0][0]
 
 proc hasClosurePragma(n: NimNode): bool =
   if n.kind == nnkProcTy and n.len == 2 and n[1].kind == nnkPragma:
@@ -1622,6 +1631,13 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         if not resultCheck.isNil: callbackBody.add(resultCheck)
         callbackBody.add(hostResult)
         var callbackValue = newStmtList(callbackBody)
+        if procParts.isNullary:
+          let unitValue = genSym(nskParam, "rawCallbackUnit")
+          let checkedUnit = newCall(bindSym"validateRuntimeUnitValue", unitValue)
+          let hostCallback = newProc(params = @[bindSym"Value",
+            newIdentDefs(unitValue, bindSym"Value", newEmptyNode())],
+            body = newStmtList(checkedUnit, callbackValue))
+          return newCall(bindSym"vHostFunc", hostCallback)
         for i in countdown(argValueSyms.high, 0):
           let hostCallback = newProc(params = @[bindSym"Value",
             newIdentDefs(argValueSyms[i], bindSym"Value", newEmptyNode())],
@@ -1633,6 +1649,8 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       for argSym in argSyms:
         callbackArgs.add(argSym)
         formal.add(newIdentDefs(argSym, bindSym"Value", newEmptyNode()))
+      if procParts.isNullary:
+        callbackArgs.add(newCall(bindSym"vUnit"))
       var callbackBody = newStmtList()
       var callbackIndexOverrides = indexOverrides
       for i, argType in procParts.argTypes:
@@ -1679,6 +1697,13 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         allowDependentSigma, callbackIndexOverrides)
       if encodedResult.isNil: return nil
       var callbackValue = encodedResult
+      if procParts.isNullary:
+        let unitValue = genSym(nskParam, "runtimeCallbackUnit")
+        let checkedUnit = newCall(bindSym"validateRuntimeUnitValue", unitValue)
+        let hostCallback = newProc(params = @[bindSym"Value",
+          newIdentDefs(unitValue, bindSym"Value", newEmptyNode())],
+          body = newStmtList(checkedUnit, callbackValue))
+        return newCall(bindSym"vHostFunc", hostCallback)
       for i in countdown(argValueSyms.high, 0):
         let callbackBody = newStmtList(callbackValue)
         let hostCallback = newProc(params = @[bindSym"Value",
@@ -1697,6 +1722,8 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       encodedArgs.add(encodedArg)
       formal.add(newIdentDefs(argSyms[i], argNimTypes[i], newEmptyNode()))
       callbackIndexOverrides.add((procParts.argNames[i], argSyms[i]))
+    if procParts.isNullary:
+      encodedArgs.add(newCall(bindSym"vUnit"))
     let applied = newCall(bindSym"callRuntimeValue", value,
       newTree(nnkPrefix, ident"@", encodedArgs))
     let decodedResult = runtimeValueConversionExpr(procParts.resultType,

@@ -235,6 +235,11 @@ invoke a callback returning `Vec[Int, length]`, and the bridge rejects a
 wrong-length result. A Nim callback with an omitted `void` result maps to
 Eponym unit; its side effects run at the host boundary and the checked result is
 validated as unit.
+Nullary Nim callbacks map to Eponym functions from unit (`1`) to the callback
+result. The adapter supplies a unit argument when invoking a checked Eponym
+function and validates that unit when a host callback enters the evaluator.
+The checked Pi signature is compared with the nullary Nim proc type; a unary
+callback cannot satisfy it.
 Dynamic generic wrappers accept unmapped value-indexed binders as `Value`
 parameters; `nameRuntimeValueDynamic` returns the checked result and globals.
 This lets a caller pass an existing Eponym value, including a payload-bearing
