@@ -2653,6 +2653,8 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
     var sourceOptionFamily = ""
     var sourceOptionElementType: NimNode = nil
     var sourceOptionNestedVector = false
+    var sourceVectorFamily = ""
+    var sourceVectorType: NimNode = nil
     for i, eponymType in argEponymTypes:
       if eponymType.kind in {nnkIdent, nnkSym} and
           $eponymType == genericName:
@@ -2680,7 +2682,28 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
           sourceOptionFamily = optionMapping.eponymName
           sourceOptionElementType = elementType
           sourceOptionNestedVector = nestedVector
+          if nestedVector:
+            for vectorMapping in generic.codecMappings:
+              if not vectorMapping.isRuntimeVector: continue
+              let vector = runtimeVectorComponents(elementType,
+                vectorMapping.eponymName)
+              if not vector.elementType.isNil and
+                  mentionsName(vector.elementType, genericName):
+                sourceVectorFamily = vectorMapping.eponymName
+                sourceVectorType = elementType
+                break
           break
+      if sourceIndex < 0:
+        for vectorMapping in generic.codecMappings:
+          if not vectorMapping.isRuntimeVector: continue
+          let vector = runtimeVectorComponents(eponymType,
+            vectorMapping.eponymName)
+          if not vector.elementType.isNil and
+              mentionsName(vector.elementType, genericName):
+            sourceIndex = i
+            sourceVectorFamily = vectorMapping.eponymName
+            sourceVectorType = eponymType
+            break
       if sourceIndex >= 0: break
     if sourceIndex < 0: continue
 
@@ -2702,25 +2725,27 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
     for mapping in witnessMappings:
       if sourceOptionFamily.len > 0 and not mapping.isRuntimeIndexedType:
         continue
-      let optionElementNimType = if sourceOptionNestedVector:
-        let inferred = runtimeNimType(sourceOptionElementType,
+      let sourceVectorNimType = if sourceVectorFamily.len > 0:
+        let inferred = runtimeNimType(sourceVectorType,
           generic.codecMappings, records)
         if inferred.isNil: continue
         replaceTypeIdentifier(inferred, genericName, mapping.nimType)
         else: nil
       let sourceType = if sourceOptionFamily.len > 0:
         newTree(nnkBracketExpr, bindSym"Option",
-          if sourceOptionNestedVector: optionElementNimType
+          if sourceOptionNestedVector: sourceVectorNimType
           else: copyNimTree(mapping.nimType))
+        elif sourceVectorFamily.len > 0:
+          sourceVectorNimType
         else: copyNimTree(mapping.nimType)
       let condition = newTree(nnkInfix, ident"is",
         copyNimTree(argNimTypes[sourceIndex]), sourceType)
       let sourceValue = if sourceOptionFamily.len > 0:
         newCall(bindSym"get", copyNimTree(argSyms[sourceIndex]))
         else: copyNimTree(argSyms[sourceIndex])
-      var encoded = if sourceOptionNestedVector:
-        runtimeValueConversionExpr(sourceOptionElementType,
-          optionElementNimType, copyNimTree(sourceValue), true,
+      var encoded = if sourceVectorFamily.len > 0:
+        runtimeValueConversionExpr(sourceVectorType,
+          sourceVectorNimType, copyNimTree(sourceValue), true,
           generic.codecMappings, records, globals)
       elif mapping.isRuntimeCodec:
         newCall(copyNimTree(mapping.encoder),
@@ -2746,18 +2771,10 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         newCall(bindSym"runtimeValueTypeOf", copyNimTree(encodedSym),
           copyNimTree(globals))))
       var genericWitnessExpr = copyNimTree(witnessSym)
-      if sourceOptionNestedVector:
-        for vectorMapping in generic.codecMappings:
-          if not vectorMapping.isRuntimeVector: continue
-          let vector = runtimeVectorComponents(sourceOptionElementType,
-            vectorMapping.eponymName)
-          if not vector.elementType.isNil and
-              mentionsName(vector.elementType, genericName):
-            genericWitnessExpr = newCall(
-              bindSym"runtimeValueTypeArgumentOf", copyNimTree(encodedSym),
-              copyNimTree(globals), newLit(vectorMapping.eponymName),
-              newLit(0))
-            break
+      if sourceVectorFamily.len > 0:
+        genericWitnessExpr = newCall(
+          bindSym"runtimeValueTypeArgumentOf", copyNimTree(encodedSym),
+          copyNimTree(globals), newLit(sourceVectorFamily), newLit(0))
       let genericWitnessSym = genSym(nskLet, "indexedGenericTypeWitness")
       packageBody.add(newLetStmt(genericWitnessSym, genericWitnessExpr))
       var packagedValue = copyNimTree(encodedSym)

@@ -477,6 +477,8 @@ eponymBlock:
   runtimeDataVariant(SizedTree)
   runtimeValue(importedGenericIndexedNestedOptionVectorCallbackApply)
   runtimeValue(importedGenericIndexedEmptyOptionVectorCallbackApply)
+  runtimeValue(importedGenericIndexedVectorCallbackApply)
+  runtimeValue(importedGenericIndexedEmptyVectorCallbackApply)
 
 eponymBlock:
   import "fixtures/runtime_imported_generic_variant.ep"
@@ -1913,6 +1915,51 @@ when isMainModule:
           callback, some(newSeq[RuntimeStructuredVariant]()))
       except ValueError as error:
         emptyRuntimeWitnessRejected = "empty sequence" in error.msg
+      let vectorValue = @[tree(length), tree(length)]
+      let vectorCallback: proc(value: seq[RuntimeStructuredVariant]):
+          seq[RuntimeStructuredVariant] {.closure.} =
+        proc(value: seq[RuntimeStructuredVariant]):
+            seq[RuntimeStructuredVariant] = value
+      let vectorTyped = importedGenericIndexedVectorCallbackApply(
+        vectorCallback, vectorValue)
+      let vectorRuntime = importedGenericIndexedVectorCallbackApplyRuntimeValue(
+        vectorCallback, vectorValue)
+      let vectorExpectedType = callRuntimeValue(
+        runtimeGlobalValue(vectorRuntime.globals, "Vec"),
+        [treeType, natToValue(2, vectorRuntime.globals)])
+      validateRuntimeValueType(vectorRuntime.value, vectorExpectedType,
+        vectorRuntime.globals)
+      let wrongVectorCallback:
+          proc(value: seq[RuntimeStructuredVariant]):
+            seq[RuntimeStructuredVariant] {.closure.} =
+        proc(value: seq[RuntimeStructuredVariant]):
+            seq[RuntimeStructuredVariant] =
+          result = value
+          inc result[0].arguments[0].natValue
+      var vectorMismatchRejected = false
+      try:
+        discard importedGenericIndexedVectorCallbackApply(wrongVectorCallback,
+          vectorValue)
+      except ValueError:
+        vectorMismatchRejected = true
+      var vectorRuntimeMismatchRejected = false
+      try:
+        discard importedGenericIndexedVectorCallbackApplyRuntimeValue(
+          wrongVectorCallback, vectorValue)
+      except ValueError:
+        vectorRuntimeMismatchRejected = true
+      var emptyDirectVectorRejected = false
+      try:
+        discard importedGenericIndexedEmptyVectorCallbackApply(vectorCallback,
+          newSeq[RuntimeStructuredVariant]())
+      except ValueError as error:
+        emptyDirectVectorRejected = "empty sequence" in error.msg
+      var emptyDirectVectorRuntimeRejected = false
+      try:
+        discard importedGenericIndexedEmptyVectorCallbackApplyRuntimeValue(
+          vectorCallback, newSeq[RuntimeStructuredVariant]())
+      except ValueError as error:
+        emptyDirectVectorRuntimeRejected = "empty sequence" in error.msg
       var decodedIndicesMatch = decoded.isSome and decoded.get.len == 2
       if decodedIndicesMatch:
         for item in decoded.get:
@@ -1921,13 +1968,17 @@ when isMainModule:
       if not (typed.isSome and typed.get.len == 2 and decodedIndicesMatch and
           typedMismatchRejected and runtimeMismatchRejected and noneRejected and
           noneRuntimeRejected and emptyRejected and emptyWitnessRejected and
-          emptyRuntimeWitnessRejected):
+          emptyRuntimeWitnessRejected and vectorMismatchRejected and
+          vectorRuntimeMismatchRejected and emptyDirectVectorRejected and
+          emptyDirectVectorRuntimeRejected):
         echo "nested indexed Option/Vec property failed at length ", length
       typed.isSome and typed.get.len == 2 and
         decodedIndicesMatch and
         typedMismatchRejected and runtimeMismatchRejected and noneRejected and
         noneRuntimeRejected and emptyRejected and emptyWitnessRejected and
-        emptyRuntimeWitnessRejected,
+        emptyRuntimeWitnessRejected and vectorTyped.len == 2 and
+        vectorMismatchRejected and vectorRuntimeMismatchRejected and
+        emptyDirectVectorRejected and emptyDirectVectorRuntimeRejected,
     shrinkInt)
   if not nestedIndexedOptionCallbackCases:
     quit(1)
