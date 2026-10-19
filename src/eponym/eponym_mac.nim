@@ -352,20 +352,54 @@ proc surfaceCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
       inc result.termCount
       if result.explicitCount == 0: inc result.leadingTermCount
 
+proc mentionsPretermName(term: PreTerm, name: string): bool
+
 proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
+  var binders: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
   var current = ty
   while not current.isNil and current.kind == pkPi:
-    let isType = current.c1.kind in {pkUniv, pkUnivN}
-    if current.impl or isType:
+    binders.add((current.name, current.c1, current.impl))
+    current = current.c2
+
+  var inferable = initHashSet[string]()
+  for i, binder in binders:
+    # Family-valued arguments such as an eliminator motive (`C : A -> Type`)
+    # are ordinary callable arguments. Their use in later domains/results
+    # must not make the function itself disappear into an inferred hole.
+    if binder.impl or binder.ty.kind in {pkUniv, pkUnivN, pkPi}:
+      continue
+    var nameCount = 0
+    for other in binders:
+      if other.name == binder.name: inc nameCount
+    if nameCount != 1: continue
+    # A value argument is inferable here only when a later argument's type
+    # carries it. Merely occurring in the result type is insufficient: for
+    # example, an eliminator's final scrutinee is still a required input even
+    # though the motive result is `C(scrutinee)`.
+    var dependent = false
+    for j in i + 1 ..< binders.len:
+      if mentionsPretermName(binders[j].ty, binder.name):
+        dependent = true
+        break
+    if dependent: inferable.incl(binder.name)
+
+  var termPosition = 0
+  for binder in binders:
+    let isType = binder.ty.kind in {pkUniv, pkUnivN}
+    if binder.impl or isType:
       inc result.explicitCount
       if result.explicitCount == 1: result.firstExplicitType = isType
-      if isType and not current.impl:
+      if isType and not binder.impl:
         inc result.requiredBracketCount
         result.requiresBrackets = true
-    elif not current.impl:
+    elif binder.name in inferable:
+      inc result.explicitCount
+      inc result.inferableIndexCount
+      result.inferableIndexPositions.add(termPosition)
+    elif not binder.impl:
       inc result.termCount
+      inc termPosition
       if result.explicitCount == 0: inc result.leadingTermCount
-    current = current.c2
 
 proc surfaceFamilyCallInfo(params: seq[tuple[name: string, ty: PreTerm,
     impl: bool, erased: bool, qty: Qty]]): LegacyCallInfo =

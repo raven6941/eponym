@@ -136,6 +136,17 @@ eponymBlock:
     let afterFlag = localMiddleIndex(flag)
     afterFlag[zero()](values)
 
+  proc inferredCallbackIndex(
+      callback: Pi(flag: Bool, n: Nat, values: Vec[Nat, n], LocalAt[n]),
+      flag: Bool, values: Vec[Nat, 0]): LocalAt[0] =
+    callback(flag, values)
+
+  proc bracketCallbackIndexAfterPartial(
+      callback: Pi(flag: Bool, n: Nat, values: Vec[Nat, n], LocalAt[n]),
+      flag: Bool, values: Vec[Nat, 0]): LocalAt[0] =
+    let afterFlag = callback(flag)
+    afterFlag[zero()](values)
+
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =
     handler.identity(value)

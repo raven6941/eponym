@@ -375,7 +375,7 @@ eponymBlock:
     Nat, Vec[Int, length], Vec[Int, length])
   proc generatedIndexedIntVectorIdentity(length: Nat,
       values: Vec[Int, length]): Vec[Int, length] =
-    indexedIntVectorIdentity(length, values)
+    indexedIntVectorIdentity(values)
   runtimeValue(generatedIndexedIntVectorIdentity)
 
 eponymBlock:
@@ -391,7 +391,7 @@ eponymBlock:
     Vec[Int, length])
   proc generatedApplyIndexedVectorCallback(length: Nat,
       callback: proc(index: Nat): Vec[Int, length] {.closure.}):
-      Vec[Int, length] = callIndexedVectorCallback(length, callback)
+      Vec[Int, length] = callIndexedVectorCallback(callback)
   runtimeValue(generatedApplyIndexedVectorCallback)
 
 eponymBlock:
@@ -411,7 +411,7 @@ eponymBlock:
     Vec[RuntimeHandle, length])
   proc generatedIndexedRuntimeHandleVectorAdapter(length: Nat,
       values: Vec[RuntimeHandle, length]): Vec[RuntimeHandle, length] =
-    indexedRuntimeHandleVectorAdapter(length, values)
+    indexedRuntimeHandleVectorAdapter(values)
   runtimeValue(generatedIndexedRuntimeHandleVectorAdapter)
 
 eponymBlock:
@@ -947,7 +947,7 @@ eponymBlock:
   runtimeValue(generatedApplyIndexedCallback)
   proc generatedApplyDependentVectorCallback(
       callback: proc(length: Nat, values: Vec[Int, length]): Nat {.closure.},
-      length: Nat, values: Vec[Int, length]): Nat = callback(length, values)
+      length: Nat, values: Vec[Int, length]): Nat = callback(values)
   proc generatedDependentVectorCallback():
       proc(length: Nat, values: Vec[Int, length]): Nat {.closure.} =
     lam(length, Nat, lam(values, Vec[Int, length], length))
@@ -1265,7 +1265,7 @@ eponymBlock:
     splitIndexedChannel(channel)
   proc generatedRepeatIndexedChannel(index: Nat, channel: Channel[index]):
       Sig(first: Channel[index], Channel[index]) =
-    repeatIndexedChannel(index, channel)
+    repeatIndexedChannel(channel)
 
 eponymBlock:
   import "../lib/vec.ep"

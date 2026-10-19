@@ -1232,8 +1232,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   macro inserts holes at the corresponding argument positions. A later
   inferable index can be supplied in brackets after partially applying earlier
   value arguments, or omitted so the checker infers it from later arguments.
-  Ambiguous binder names and callback types whose result indices should be
-  inferred remain unsupported. The syntax guard
+  Callback Pi signatures receive the same treatment when a later argument
+  type carries the binder; result-only callback indices and ambiguous binder
+  names remain unsupported. Compile-time callback regressions cover inferred
+  and bracket-supplied indices, and the runtime bridge property suite passes
+  with dependent callback calls omitting their inferable index. The syntax guard
   rejects positional call-style index arguments when their signature is known
   and leaves ordinary inferred applications alone. Local and imported vector
   constructor regressions plus direct-index and compound-index family
