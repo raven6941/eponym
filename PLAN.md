@@ -1138,8 +1138,9 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   declarations when diagnosing legacy applications. A fixture checks bracket
   `protocolSend[Nat](...)` and rejects the call-style spelling.
 - [x] Extend partial index detection to top-level let-bound values explicitly
-  annotated as Nat or initialized by a recognized Nat constructor/function. A
-  compile-fail fixture covers `let index = zero(); indexHead(index)`.
+  annotated as Nat or initialized by a recognized Nat constructor/function;
+  parenthesized expressions and aliases of known Nat locals are followed. A
+  compile-fail fixture covers a parenthesized `zero()` and a local alias.
 - [ ] Extend detection to other inferred expression forms and nested scopes
   that cannot be identified from the current declaration metadata.
 - [x] Migrate the optimizer examples' type-family applications and indexed

@@ -585,8 +585,9 @@ are compile-time errors. Detection reads local Nim declarations and imported
 applications, partial applications beginning with a known data type or
 in-scope `Type 0` binder, and recognizable Nat arguments when the callee's
 first explicit binder is Nat. Top-level let-bound Nat values are recognized
-when explicitly annotated or initialized by a known Nat constructor/function.
-Other inferred expression forms and nested scopes may still evade detection.
+when explicitly annotated or initialized by a known Nat constructor/function;
+parenthesized forms and aliases are also followed. Other inferred expression
+forms and nested scopes may still evade detection.
 Supported
 generic definitions have generated Nim wrappers for type parameters, Nat and
 Int indices, Bool indices, and values with explicit runtime mappings. Other

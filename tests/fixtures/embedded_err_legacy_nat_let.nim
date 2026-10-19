@@ -7,5 +7,6 @@ eponymBlock:
 
   proc oldIndexCall():
       Vec[Nat, 0] -> Vec[Nat, 0] -> Vec[Nat, 0] =
-    let index = zero()
-    indexHead(index)
+    let index = (zero())
+    let alias = index
+    indexHead(alias)
