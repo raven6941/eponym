@@ -1,0 +1,8 @@
+import "../../lib/vec.ep"
+import "runtime_variant.ep"
+
+proc importedGenericArrayCallbackApply (A : Type 0)
+    (callback : (Vec A (suc (suc zero))) ->
+      (Vec A (suc (suc zero))))
+    (value : Vec A (suc (suc zero))) :
+    Vec A (suc (suc zero)) = callback value

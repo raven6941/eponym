@@ -626,9 +626,10 @@ implementations.
      codecs. Separate 200-case properties cover a custom `runtimeCodec` value
      inside dependent Vec, Option, List, nondependent Sigma, and data-variant
      callbacks through generated and typed `RuntimeValue` wrappers; the Vec
-     index is checked. Imported dependent Sigma callbacks are also supported
-     with `runtimePairTrusted`; a 200-case property checks both wrappers and
-     rejects wrong Vec lengths in inputs and callback results.
+     index is checked. A fixed-length Vec callback also works with the
+     `runtimeVectorArray` representation. Imported dependent Sigma callbacks
+     are supported with `runtimePairTrusted`; a 200-case property checks both
+     wrappers and rejects wrong Vec lengths in inputs and callback results.
    - [x] Reconstruct typed wrappers for local clause-compiled definitions
      from their checked Pi signatures. A 200-case property calls a `Nat -> Nat`
      identity through its generated `int` wrapper. Runtime application helpers

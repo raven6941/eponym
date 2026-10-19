@@ -451,6 +451,13 @@ eponymBlock:
   runtimeValue(importedGenericBoxCallbackApply)
 
 eponymBlock:
+  import "fixtures/runtime_imported_generic_array.ep"
+  runtimeVectorArray(Vec)
+  runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
+    decodeRuntimeHandle)
+  runtimeValue(importedGenericArrayCallbackApply)
+
+eponymBlock:
   postulate(Counter, Univ)
   postulate(incrementCounter, Counter -> Counter)
   postulate(inspectCounter, Counter -> Counter)
@@ -2021,6 +2028,36 @@ when isMainModule:
         runtimeStructuredOpaqueAs[ChannelHandle](decoded.arguments[1]) ==
           runtimeStructuredOpaqueAs[ChannelHandle](expected.arguments[1]))
   if not importedGenericStructuredVariantCallbackCases:
+    quit(1)
+  let importedGenericArrayCallbackCases = forAll(
+    "imported generic callbacks preserve fixed-array Vec codecs", r, 200,
+    proc(r: var Rng): tuple[first, second, delta: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[first, second, delta: int]): bool =
+      let value = [
+        ChannelHandle(id: input.first, label: "array-first"),
+        ChannelHandle(id: input.second, label: "array-second")]
+      let expected = [
+        ChannelHandle(id: input.first + input.delta,
+          label: "decoded-" & $(input.first + input.delta)),
+        ChannelHandle(id: input.second + input.delta,
+          label: "decoded-" & $(input.second + input.delta))]
+      let callback: proc(value: array[2, ChannelHandle]):
+          array[2, ChannelHandle] {.closure.} =
+        proc(value: array[2, ChannelHandle]): array[2, ChannelHandle] =
+          [
+            ChannelHandle(id: value[0].id + input.delta,
+              label: value[0].label & "/mapped"),
+            ChannelHandle(id: value[1].id + input.delta,
+              label: value[1].label & "/mapped")]
+      let typed = importedGenericArrayCallbackApply[ChannelHandle](callback,
+        value)
+      let runtime = importedGenericArrayCallbackApplyRuntimeValue[
+        ChannelHandle](callback, value)
+      typed == expected and
+        vecValueToArray[2, ChannelHandle](runtime.value, 2, runtime.globals,
+          "Vec", decodeRuntimeHandle) == expected)
+  if not importedGenericArrayCallbackCases:
     quit(1)
   let importedImplicitNatVecCases = forAll(
     "imported implicit Nat binders have static and dynamic Nim wrappers",

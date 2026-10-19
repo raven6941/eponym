@@ -330,6 +330,8 @@ Separate 200-case properties cover these shapes over a custom mapped object.
 An imported dependent `Sig` callback can opt into typed tuple codecs with
 `runtimePairTrusted`; recursive Vec codecs still check represented lengths.
 Properties reject wrong Vec lengths in both callback inputs and results.
+For fixed vector lengths, the same generic callback bridge also supports Nim
+arrays through `runtimeVectorArray(Vec)`.
 Other structural callback families and generic leaf types without a unique
 direct mapping remain unsupported.
 More complex generic domain expressions outside the supported type-expression
