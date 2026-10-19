@@ -67,8 +67,10 @@ What just happened:
   Nim. The macro does not execute Nim library calls, IO, loops, or mutation
   inside checked definitions. A pure `if`/`elif`/`else` chain is translated
   into checked Eponym `ifThenElse` calls when `lib/bool.ep` is imported; it
-  does not enable effectful Nim control flow. The current boundary is listed
-  in the [surface-syntax reference](surface-syntax-reference.md).
+  does not enable effectful Nim control flow. Boolean `and` and `or` use
+  checked Bool elimination and preserve short-circuiting of their right side.
+  The current boundary is listed in the
+  [surface-syntax reference](surface-syntax-reference.md).
 - `postulate(Int, Univ)` takes `Int` as given (`Univ` is Nim-friendly
   syntax for `Type 0`). Universes are explicit: `Type 0 : Type 1 : ...`.
   In surface syntax, `?` introduces a hole to fill, and `_` discards a

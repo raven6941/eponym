@@ -1,8 +1,10 @@
 # Experiment: a pure Nim subset inside `eponymBlock`
 
 **Status:** `let`, unary minus, `+`, `-`, and `*` for Eponym `Int`, `not` for
-Eponym `Bool`, and `if`/`elif`/`else` expressions lower to checked Eponym
-terms. Other operators, effects, and arbitrary Nim calls remain unsupported.
+Eponym `Bool`, Boolean `and`/`or`, and `if`/`elif`/`else` expressions lower to
+checked Eponym terms. Boolean `and`/`or` use delayed branches so bound
+postulates on the right preserve Nim short-circuit behavior. Other operators,
+effects, and arbitrary Nim calls remain unsupported.
 
 ## Motivation
 
@@ -32,6 +34,10 @@ represented directly in the current core:
   `Bool` and each branch must be one expression.
 - `not condition`, lowered to `not` from `lib/bool.ep`; the operand must check
   as `Bool`.
+- `left and right` and `left or right`, lowered to checked Bool elimination
+  with unit thunks so only the selected branch evaluates. A 200-case property
+  verifies both results and that a side-effecting bound postulate on the right
+  runs only when Nim would evaluate it.
 
 Potential next forms include:
 
@@ -47,11 +53,11 @@ evaluation for an unrecognized expression.
 
 ## First vertical slice
 
-The boundary, integer operators, Boolean negation, and `if`/`elif`/`else` are
-implemented and documented. Property tests compare arithmetic wrappers with
-Nim for bounded values and Boolean negation with Nim; conditional branches
-run through the checked Bool eliminator. Compile-fail fixtures cover
-unsupported integer division.
+The boundary, integer operators, Boolean negation and short-circuit operators,
+and `if`/`elif`/`else` are implemented and documented. Property tests compare
+arithmetic wrappers with Nim for bounded values and Boolean operations with
+Nim; conditional branches run through the checked Bool eliminator. Compile-
+fail fixtures cover unsupported integer division.
 
 Continue with additional pure syntax only when the matching Eponym term and
 runtime behavior already exist or can be added with separate soundness review.

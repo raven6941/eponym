@@ -442,5 +442,7 @@ wrappers and produce compile-time diagnostics when explicitly requested.
 
 Pure `if`/`elif`/`else` expressions lower to nested checked `ifThenElse`
 calls when `lib/bool.ep` is imported. Each condition must have type `Bool`,
-and each branch must be one Eponym expression. This does not enable ordinary
-effectful Nim control flow inside the block.
+and each branch must be one Eponym expression. Boolean `and` and `or` lower
+through checked Bool elimination with unit thunks, preserving Nim's
+short-circuit behavior even if the right side calls a bound postulate. These
+forms do not enable ordinary effectful Nim control flow inside the block.

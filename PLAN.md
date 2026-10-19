@@ -856,6 +856,10 @@ implementations.
   generated wrappers with Nim arithmetic over values that avoid overflow.
 - [x] Lower Nim `not` on `Bool` to the checked `not` definition in
   `lib/bool.ep`; a 200-case property compares the generated wrapper with Nim.
+- [x] Lower Nim Boolean `and` and `or` through checked Bool elimination while
+  preserving Nim short-circuit behavior with unit thunks. A 200-case generated
+  wrapper property compares results and observes that a side-effecting bound
+  postulate on the right runs only for the selected branch.
 - [x] Lower a single-condition `if/else` expression through the polymorphic
   `ifThenElse` definition in `lib/bool.ep`; both branches remain Eponym terms
   and Bool eliminator computation selects the result.

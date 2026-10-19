@@ -52,6 +52,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `cons[A, n](x, xs)`, `Vec[A, n]` | Square brackets supply explicit Eponym parameters; parentheses supply term arguments. Call-style forms remain supported during migration. |
 | `let x = term` in a definition body | Eponym local binding; one or more lets may precede the final term |
 | `left + right`, `left - right`, `left * right`, `-value` | Lowered to checked Eponym `Int` primitives; the Eponym checker enforces operand types |
+| `left and right`, `left or right` | Lowered through checked Bool elimination and unit thunks, preserving Nim short-circuit behavior even when the right side calls a bound postulate |
 | `not condition` | Lowered to the checked `not` definition from `lib/bool.ep`; the operand must have type `Bool` |
 | `if condition: yes elif other: maybe else: no` | Pure conditional chain lowered to nested `ifThenElse` calls from `lib/bool.ep`; import that file, use `Bool` conditions, and provide one expression per branch |
 | `addInt(x, y)`, `suc(n)`, `f x`, `lam(x, T, body)` | Eponym applications and lambda forms, translated by the macro |
