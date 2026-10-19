@@ -417,7 +417,8 @@ implementations.
    now retains imported definition bodies. A checked-term reference scan lets
    bindings used only by imported bodies pass unused-binding validation. Two
    200-case properties call an imported checked identity and dispatch an
-   imported postulate to a bound Nim implementation through this ABI.
+   imported postulate to a bound Nim implementation through this ABI; an
+   additional negative runtime check rejects a mismatched imported raw arity.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly

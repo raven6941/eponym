@@ -1878,7 +1878,16 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   result.add(newEmptyNode())
   result.add(body)
 
+proc checkedLambdaArity(definition: ElabDef): int =
+  ## Imported definitions have no Nim declaration from which to get arity.
+  ## Their checked lambda telescope is the source of truth for the raw ABI.
+  var body = definition.tmTm
+  while not body.isNil and body.kind == tLam:
+    inc result
+    body = body.scope.bdy
+
 proc rawRuntimeValueWrapper(baseDir, src, defName: string,
+    expectedArity: int,
     bindings: seq[HostPostulateBinding], mappings: seq[HostRuntimeType],
     records: seq[HostRecord]): NimNode =
   ## Expose an imported checked definition when no local Nim signature is
@@ -1891,7 +1900,12 @@ proc rawRuntimeValueWrapper(baseDir, src, defName: string,
   let dirLit = newLit(baseDir)
   let srcLit = newLit(src)
   let nameLit = newLit(defName)
+  let arityLit = newLit(expectedArity)
   var body = newStmtList()
+  body.add quote do:
+    if `argsSym`.len != `arityLit`:
+      raise newException(ValueError,
+        "runtimeValue argument count mismatch for " & `nameLit`)
   body.add(newLetStmt(globalsSym,
     newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
   body.add(newLetStmt(defsSym,
@@ -2237,7 +2251,8 @@ macro eponymBlock*(body: untyped): untyped =
           records, allowDependentSigma))
       continue
     if d.name in runtimeValueNames:
-      result.add(rawRuntimeValueWrapper(baseDir, src, d.name, bindings,
+      result.add(rawRuntimeValueWrapper(baseDir, src, d.name,
+        checkedLambdaArity(d), bindings,
         runtimeTypes, records))
     if bindings.len == 0:
       result.add(quote do:
@@ -2265,14 +2280,20 @@ macro eponymBlock*(body: untyped): untyped =
       wrapper[6] = wrapperBody
       result.add(wrapper)
   for requested in runtimeValueNames:
-    var isLocalDef = false
+    var localDef = false
     for d in defs:
       if d.name == requested:
-        isLocalDef = true
+        localDef = true
         break
-    if not isLocalDef:
-      result.add(rawRuntimeValueWrapper(baseDir, src, requested, bindings,
-        runtimeTypes, records))
+    if not localDef:
+      var importedDef: ElabDef
+      for d in allDefs:
+        if d.name == requested:
+          importedDef = d
+          break
+      if importedDef.name.len > 0:
+        result.add(rawRuntimeValueWrapper(baseDir, src, requested,
+          checkedLambdaArity(importedDef), bindings, runtimeTypes, records))
 
 macro eponym*(src: string): untyped =
   ## Elaborate and typecheck a surface program at compile time.
