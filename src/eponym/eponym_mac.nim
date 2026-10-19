@@ -1237,9 +1237,16 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         let resolvedLength = substituteRuntimeIndices(vector.length,
                                                        indexOverrides)
         let expectedLength = runtimeNatIndexExpr(resolvedLength)
+        # The original index syntax is restricted to the supported Nat
+        # expression grammar. Substitution may replace a named Sigma/record
+        # index with a host expression (for example, value[0] or a decoded
+        # Nat temporary), which is executable Nim but not surface syntax.
+        let checkedOriginalLength = runtimeNatIndexExpr(vector.length)
+        let checkedExpectedLength = if expectedLength.isNil and
+            not checkedOriginalLength.isNil: resolvedLength else: expectedLength
         let elementNimType = runtimeNimType(vector.elementType, mappings,
           records, allowDependentSigma)
-        if expectedLength.isNil or elementNimType.isNil: return nil
+        if checkedExpectedLength.isNil or elementNimType.isNil: return nil
         let itemSym = genSym(nskParam, "runtimeVectorItem")
         let codecGlobalsSym = genSym(nskParam, "runtimeVectorGlobals")
         if toValue:
@@ -1251,7 +1258,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
-          return newCall(bindSym"seqToVecValue", value, expectedLength,
+          return newCall(bindSym"seqToVecValue", value, checkedExpectedLength,
             globals, newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(vector.elementType,
           elementNimType, itemSym, false, mappings, records,
@@ -1261,7 +1268,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           newIdentDefs(itemSym, bindSym"Value", newEmptyNode()),
           newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
           body = newStmtList(decodedItem))
-        return newCall(bindSym"vecValueToSeq", value, expectedLength,
+        return newCall(bindSym"vecValueToSeq", value, checkedExpectedLength,
           globals, newLit(mapping.eponymName), decoder)
     elif mapping.isRuntimeList:
       let elementType = runtimeListElementType(eponymType, mapping.eponymName)

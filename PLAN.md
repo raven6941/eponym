@@ -432,9 +432,11 @@ implementations.
    definitions, `runtimeValue` access to checked results, callback values with
    recursive codecs, and explicit trusted opt-ins for dependent records and
    pairs. A reusable explicit descriptor now exists through `runtimeCodec`;
-   remaining gaps include nested dependent Sigma values, broader
-   automatic/structural codec coverage, additional dependent forms, unmapped
-   value-indexed generics, and other higher-order signatures. Unsupported
+   Nested dependent Sigma values now propagate named indices through recursive
+   codecs, with a 200-case property covering a dependent Vec and rejecting
+   mismatched lengths. Remaining gaps include broader automatic/structural
+   codec coverage, additional dependent forms, unmapped value-indexed
+   generics, and other higher-order signatures. Unsupported
    cases must continue to fail with a precise compile-time diagnostic.
    Definitions without a matching explicit Nim `proc` declaration still
    retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`

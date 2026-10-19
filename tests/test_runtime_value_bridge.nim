@@ -204,6 +204,10 @@ eponymBlock:
   proc generatedNestedVectorIdentity[m, n: Nat](
       values: Vec[Vec[Int, m], n]): Vec[Vec[Int, m], n] = values
   runtimeValue(generatedNestedVectorIdentity)
+  proc generatedDependentPairVecIdentity(
+      value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
+      Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
+  runtimePairTrusted(generatedDependentPairVecIdentity)
   record(SizedVec):
     field(prefixLength, Nat)
     field(suffixLength, Nat)
@@ -748,6 +752,23 @@ when isMainModule:
       pairOutput[0] == index and pairOutput[1] == IndexedChannelHandle(
         index: index, label: "wrapper-" & $index & "/indexed"),
     shrinkInt)
+  let generatedDependentPairVecCases = forAll(
+    "trusted dependent Sigma checks its Vec length", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(n: int): bool =
+      let length = n mod 20
+      var values: seq[int] = @[]
+      for i in 0 ..< length: values.add(i + n)
+      let input = (length, (n, values))
+      let roundTrips = generatedDependentPairVecIdentity(input) == input
+      let badValues = if values.len == 0: @[n] else: values[0 ..< values.len - 1]
+      var mismatchRejected = false
+      try:
+        discard generatedDependentPairVecIdentity((length, (n, badValues)))
+      except ValueError:
+        mismatchRejected = true
+      roundTrips and mismatchRejected,
+    shrinkInt)
   if not generatedTrustedDependentResultCases:
     quit(1)
   let generatedPairWithExternalIndexCases = forAll(
@@ -846,6 +867,7 @@ when isMainModule:
       generatedBinaryPairBindingCases and
       generatedTernaryPairBindingCases and
       generatedTrustedDependentPairCases and
+      generatedDependentPairVecCases and
       generatedPairWithExternalIndexCases and
       generatedNestedRecordRoundTrips and
       generatedFutureInputPassesThrough and
