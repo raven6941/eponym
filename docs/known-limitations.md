@@ -116,13 +116,15 @@ remain trusted.
 from `.ep` files without a local Nim signature. When the checked Pi signature
 has runtime codecs, the macro derives a typed Nim wrapper and typed
 `RuntimeValue` overload from the checked globals; otherwise it exposes only the
-raw Value interface, with arity checked from the imported lambda telescope.
-Imported checked bodies can invoke postulates bound by `bindPostulate` in the
-same block. Tests cover typed and raw imported identity calls, a typed call
-through a bound imported postulate, and an imported length-indexed Vec wrapper
-that checks the sequence length against its Nat argument. Callers of raw
-wrappers still supply well-formed Values. Callers
-must handle unsupported constructors and neutral values explicitly. A
+raw Value interface. When its Pi signature can be reconstructed, the raw
+interface also validates arguments against that signature, including
+dependent Vec lengths. Signatures with unsupported implicit, generic, or
+higher-order binders retain arity-only validation. Imported checked bodies can
+invoke postulates bound by `bindPostulate` in the same block. Tests cover
+typed and raw imported identity calls, a typed call through a bound imported
+postulate, and an imported length-indexed Vec wrapper that rejects the wrong
+length through both typed and raw interfaces. Callers must handle unsupported
+constructors and neutral values explicitly. A
 non-dependent `Sig(A, B)` runtime type is structurally mapped to a two-element
 Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque
 leaves. Named non-dependent `record` declarations map to Nim objects via

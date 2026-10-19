@@ -480,7 +480,9 @@ implementations.
      runtime codecs. A 200-case property covers an imported identity and a
      bound imported postulate through both typed and raw APIs; another covers
      a dependent imported Vec identity and rejects a sequence with the wrong
-     length. Unsupported imported signatures retain the raw `Value` interface.
+     length. Reconstructed imported Pi signatures also validate raw Values,
+      including a dependent Vec length; signatures with unsupported implicit,
+      generic, or higher-order binders retain the arity-only raw interface.
    - [x] Add recursive structural codecs for payload-bearing indexed data
      constructors with `runtimeDataVariant(Family)`. `RuntimeStructuredVariant`
      maps Int, Nat, and Bool fields to Nim values, recursively maps nested data

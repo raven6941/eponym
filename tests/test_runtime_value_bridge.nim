@@ -1095,9 +1095,15 @@ when isMainModule:
       let values = makeIndexedRuntimeValues(length)
       let direct = importedVectorIdentity(length, values)
       let runtime = importedVectorIdentityRuntimeValue(length, values)
+      let rawRuntime = importedVectorIdentityRuntimeValue(
+        [natToValue(length, runtime.globals),
+         runtimeIntVector(values, runtime.globals)])
       let decoded = vecValueToSeq[int](runtime.value, length, runtime.globals,
         "Vec", proc(item: Value, _: Globals): int = valueToInt(item))
-      direct == values and decoded == values,
+      let decodedRaw = vecValueToSeq[int](rawRuntime.value, length,
+        rawRuntime.globals, "Vec",
+        proc(item: Value, _: Globals): int = valueToInt(item))
+      direct == values and decoded == values and decodedRaw == values,
     shrinkInt)
   if not importedDependentVectorCases:
     quit(1)
@@ -1108,6 +1114,16 @@ when isMainModule:
     importedVectorMismatchRejected =
       "runtime Vec length mismatch" in error.msg
   doAssert importedVectorMismatchRejected
+  let importedVectorGlobals = importedVectorIdentityRuntimeValue(3,
+    @[1, 2, 3]).globals
+  var importedRawVectorMismatchRejected = false
+  try:
+    discard importedVectorIdentityRuntimeValue(
+      [natToValue(3, importedVectorGlobals),
+       runtimeIntVector(@[1, 2], importedVectorGlobals)])
+  except ValueError:
+    importedRawVectorMismatchRejected = true
+  doAssert importedRawVectorMismatchRejected
 
   let tokenValue = makeRuntimeTokenRuntimeValue().value
   let unmappedGenericCases = forAll(

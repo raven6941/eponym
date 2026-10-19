@@ -2516,9 +2516,9 @@ proc checkedLambdaArity(definition: ElabDef): int =
 proc rawRuntimeValueWrapper(baseDir, src, defName: string,
     expectedArity: int,
     bindings: seq[HostPostulateBinding], mappings: seq[HostRuntimeType],
-    records: seq[HostRecord]): NimNode =
-  ## Expose an imported checked definition when no local Nim signature is
-  ## available. Callers explicitly pass its arguments as Eponym Values.
+    records: seq[HostRecord], runtimeDecl: NimNode = nil): NimNode =
+  ## Expose a checked definition when no local Nim signature is available.
+  ## Callers explicitly pass its arguments as Eponym Values.
   let argsSym = genSym(nskParam, "runtimeArguments")
   let globalsSym = genSym(nskLet, "runtimeGlobals")
   let defsSym = genSym(nskLet, "runtimeDefs")
@@ -2535,6 +2535,24 @@ proc rawRuntimeValueWrapper(baseDir, src, defName: string,
         "runtimeValue argument count mismatch for " & `nameLit`)
   body.add(newLetStmt(globalsSym,
     newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+  if not runtimeDecl.isNil and runtimeDecl.kind == nnkProcDef and
+      runtimeDecl[3].kind == nnkFormalParams:
+    var overrides: seq[tuple[name: string, value: NimNode]] = @[]
+    var argIndex = 0
+    for i in 1 ..< runtimeDecl[3].len:
+      let parameter = runtimeDecl[3][i]
+      if parameter.kind != nnkIdentDefs: continue
+      for parameterOffset in 0 ..< parameter.len - 2:
+        let parameterName = if parameter[parameterOffset].kind ==
+            nnkPragmaExpr: parameter[parameterOffset][0]
+          else: parameter[parameterOffset]
+        let rawValue = newTree(nnkBracketExpr, copyNimTree(argsSym),
+          newLit(argIndex))
+        let check = rawRuntimeValueCheck(parameter[^2], rawValue, globalsSym,
+          overrides, mappings, records)
+        if not check.isNil: body.add(check)
+        overrides.add(($parameterName, rawValue))
+        inc argIndex
   body.add(newLetStmt(defsSym,
     newCall(bindSym"getDefsDir", dirLit, srcLit)))
   body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))
@@ -3093,9 +3111,10 @@ macro eponymBlock*(body: untyped): untyped =
                                              lowered.expression))
       continue
     if d.name in runtimeValueNames:
+      let rawDecl = importedRuntimeProcDecl(d, checkedGlobals)
       result.add(rawRuntimeValueWrapper(baseDir, src, d.name,
         checkedLambdaArity(d), bindings,
-        runtimeTypes, records))
+        runtimeTypes, records, rawDecl))
     if bindings.len == 0:
       result.add(quote do:
         proc `procName`*(args: varargs[int]): int =
@@ -3147,7 +3166,8 @@ macro eponymBlock*(body: untyped): untyped =
           if not typedImportedValueWrapper.isNil:
             result.add(typedImportedValueWrapper)
         result.add(rawRuntimeValueWrapper(baseDir, src, requested,
-          checkedLambdaArity(importedDef), bindings, runtimeTypes, records))
+          checkedLambdaArity(importedDef), bindings, runtimeTypes, records,
+          importedDecl))
 
 macro eponym*(src: string): untyped =
   ## Elaborate and typecheck a surface program at compile time.
