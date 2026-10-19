@@ -882,6 +882,13 @@ when isMainModule:
     shrinkInt)
   if not unmappedGenericCases:
     quit(1)
+  var unmappedGenericTypeRejected = false
+  try:
+    discard genericRuntimeTokenProjectionRuntimeValueDynamic(
+      intToValue(42), 0)
+  except ValueError as error:
+    unmappedGenericTypeRejected = "mismatch" in error.msg
+  doAssert unmappedGenericTypeRejected
 
   let rawGenericNatCases = forAll(
     "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,

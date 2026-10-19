@@ -1115,6 +1115,31 @@ proc valueToRuntimeVariant*(value: Value, globals: Globals,
   raise newException(ValueError,
     "runtime value is not a constructor of '" & familyName & "'")
 
+proc validateRuntimeValueType*(value: Value, globals: Globals,
+                               typeName: string) =
+  ## Check an unmapped generic Value against a named Eponym type. This is a
+  ## runtime type check, not a host representation mapping.
+  if typeName notin globals or value.isNil or value.syn.isNil:
+    raise newException(ValueError,
+      "cannot validate runtime Value against Eponym type '" & typeName & "'")
+  var supply = Supply()
+  var inferred: Value
+  case value.whnfKind
+  of wInt:
+    if "Int" notin globals:
+      raise newException(ValueError,
+        "cannot validate an Int Value without the Int declaration")
+    inferred = eval(globals["Int"].tm, @[])
+  of wNatLit:
+    if "Nat" notin globals:
+      raise newException(ValueError,
+        "cannot validate a Nat Value without the Nat declaration")
+    inferred = eval(globals["Nat"].tm, @[])
+  else:
+    inferred = infer(supply, value.syn)
+  let expected = eval(globals[typeName].tm, @[])
+  areEqual(supply, vStar(), inferred, expected)
+
 proc prependErasedTypeArgs*(typeArgCount: int,
                             args: openArray[Value]): seq[Value] =
   ## Runtime computation does not inspect type-level generic binders. Supply

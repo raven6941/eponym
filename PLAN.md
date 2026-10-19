@@ -477,14 +477,17 @@ implementations.
      constructor arity, and runtime spine shape. 200 generated nested-tree
      cases cover direct and generated wrapper round trips, with negative
      arity and wrong-family checks. Typed recursive payload codecs remain open.
-   - [ ] Add typed host wrappers for value-indexed generic binders without a
-     Nim runtime mapping. `RuntimeValueRaw` and the dynamic `RuntimeValue`
-     wrapper accept their Eponym arguments as Values, with type membership
-     left to the caller.
+   - [x] Generate dynamic host wrappers for value-indexed generic binders
+     whose domain is a named, unmapped Eponym type. The wrapper accepts a
+     `Value` and checks its inferred Eponym type against the checked globals;
+     a 200-case token property and a wrong-type Int rejection cover the path.
+     The result remains a `Value` when no host representation is mapped.
+   - [ ] Extend this type check to applied/indexed binder domains and provide
+     typed host representations where a Nim mapping is available.
    - [x] Add dynamic runtime wrappers that accept unmapped value-indexed
-     binders as `Value` parameters. A 200-case property checks round-tripping a
-     payload-bearing token index. Type membership remains the caller's
-     responsibility, so this does not complete the typed wrapper item above.
+     binders as `Value` parameters. Named binder types are checked against
+     their Eponym type; callers remain responsible for applied/indexed binder
+     domains that the bridge cannot yet reconstruct.
    - [x] Preserve the full locally declared Sigma result type when generating
      `bindPostulatePairTrusted`, so recursive codecs can enforce represented
      constraints such as a Vec length indexed by the first field. A 200-case

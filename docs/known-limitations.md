@@ -171,9 +171,11 @@ Dynamic generic wrappers accept unmapped value-indexed binders as `Value`
 parameters; `nameRuntimeValueDynamic` returns the checked result and globals.
 This lets a caller pass an existing Eponym value, including a payload-bearing
 constructor, through an index and retrieve it from the checked body. The bridge
-does not verify that the value inhabits the binder's Eponym type. The caller
-must construct a well-typed `Value`; typed host representations and membership
-checking remain future work.
+checks membership when the binder domain is a named Eponym type. A property
+test exercises a payload-bearing token and rejects an Int supplied at the
+Token index. Applied or indexed binder domains are not reconstructed for
+membership checking yet, and the result remains a raw `Value` when no host
+representation is mapped.
 
 The low-level `RuntimeVariant` API provides a checked structural view for any
 declared data family when the caller supplies its constructor names. It

@@ -1637,6 +1637,7 @@ proc genericRuntimeInfo(decl: NimNode,
     genericNames: seq[NimNode], genericNatArgs: seq[bool],
     genericBoolArgs: seq[bool], genericIntArgs: seq[bool],
     genericValueArgs: seq[bool],
+    genericValueTypeNames: seq[string],
     genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
     codecMappings: seq[HostRuntimeType], error: string] =
   result.genericParams = newEmptyNode()
@@ -1678,6 +1679,7 @@ proc genericRuntimeInfo(decl: NimNode,
       result.genericMappedTypes.add(nil)
       result.genericMappedNimTypes.add(nil)
       result.genericValueArgs.add(false)
+      result.genericValueTypeNames.add("")
       if binderType == "Type 0":
         result.typeNames.add(name)
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]),
@@ -1720,17 +1722,23 @@ proc genericRuntimeInfo(decl: NimNode,
           result.genericMappedTypes[^1] = ident(binderType)
           result.genericMappedNimTypes[^1] = copyNimTree(mappedBinder.nimType)
           continue
+        if param[^2].kind != nnkIdent:
+          result.error = "unmapped runtime generic binders currently require " &
+            "a named Eponym type"
+          return
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]), bindSym"Value",
           newEmptyNode()))
         result.genericNatArgs.add(false)
         result.genericBoolArgs.add(false)
         result.genericIntArgs.add(false)
         result.genericValueArgs[^1] = true
+        result.genericValueTypeNames[^1] = binderType
 
 proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     typeNames: seq[string], genericNames: seq[NimNode],
     genericNatArgs: seq[bool], genericBoolArgs: seq[bool],
     genericIntArgs: seq[bool], genericValueArgs: seq[bool],
+    genericValueTypeNames: seq[string],
     genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
     codecMappings: seq[HostRuntimeType],
     error: string], globals: NimNode, mappings: seq[HostRuntimeType],
@@ -2112,6 +2120,10 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
   var body = newStmtList()
   body.add(newLetStmt(globalsSym,
     newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+  for i, genericSym in genericSyms:
+    if generic.genericValueArgs[i]:
+      body.add(newCall(bindSym"validateRuntimeValueType", genericSym,
+        globalsSym, newLit(generic.genericValueTypeNames[i])))
   body.add(newLetStmt(defsSym,
     newCall(bindSym"getDefsDir", dirLit, srcLit)))
   body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))
