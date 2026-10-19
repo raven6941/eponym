@@ -68,25 +68,15 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
       if returnedHead.kind in {nnkIdent, nnkSym} and
           $returnedHead in legacyResultCallInfo:
         return (true, legacyResultCallInfo[$returnedHead])
-      if returnedHead.kind in {nnkIdent, nnkSym} and
-          $returnedHead in scopedLegacyCallInfo:
-        var remaining = scopedLegacyCallInfo[$returnedHead]
-        let supplied = head.len - 1
+      let base = callInfoForHead(head[0])
+      let supplied = head.len - 1
+      if base.found and base.info.explicitCount > 0 and
+          supplied <= base.info.leadingTermCount:
+        var remaining = base.info
         remaining.termCount = max(0, remaining.termCount - supplied)
         remaining.leadingTermCount =
           max(0, remaining.leadingTermCount - supplied)
-        if remaining.explicitCount > 0: return (true, remaining)
-      if returnedHead.kind == nnkDotExpr and returnedHead.len == 2 and
-          returnedHead[1].kind in {nnkIdent, nnkSym}:
-        let field = $returnedHead[1]
-        if field in legacyFieldCallInfo and
-            field notin ambiguousLegacyFieldNames:
-          var remaining = legacyFieldCallInfo[field]
-          let supplied = head.len - 1
-          remaining.termCount = max(0, remaining.termCount - supplied)
-          remaining.leadingTermCount =
-            max(0, remaining.leadingTermCount - supplied)
-          if remaining.explicitCount > 0: return (true, remaining)
+        return (true, remaining)
   of nnkDotExpr:
     if head.len == 2 and head[1].kind in {nnkIdent, nnkSym}:
       let field = $head[1]

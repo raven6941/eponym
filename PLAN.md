@@ -1210,10 +1210,15 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   function signatures when no record field of that name is registered. Field
   metadata takes precedence, and a regression covers an ordinary callable
   field whose name collides with a generic function.
-- [ ] Audit further AST wrappers around callees beyond parenthesized
-  projections, type-family calls, immediate call results, local aliases,
-  callback parameters, conditional expressions, type ascriptions, and
-  qualified member calls.
+- [ ] Finish the callable callee audit for partial bracket applications.
+  Bracket heads may have inferable constructor indices after their explicit
+  type arguments, so subtracting a simple argument count creates false
+  positives. The guard currently avoids guessing; complete this with binder
+  position/inferability metadata before claiming the wrapper audit is done.
+  Other relevant supported forms—identifiers, parenthesized and qualified
+  calls, returned calls, callback aliases, conditionals, type ascriptions, and
+  statement-list expressions—have focused coverage. Unsupported Nim AST forms
+  remain compile-time errors in the converter.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.
