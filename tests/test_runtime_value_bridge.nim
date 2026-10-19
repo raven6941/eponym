@@ -636,6 +636,14 @@ when isMainModule:
   if not importedRuntimeCases:
     quit(1)
 
+  var importedArityRejected = false
+  try:
+    discard importedIdentityRuntimeValue([])
+  except ValueError as error:
+    importedArityRejected =
+      "runtimeValue argument count mismatch for importedIdentity" in error.msg
+  doAssert importedArityRejected
+
   let importedPostulateCases = forAll(
     "imported checked definitions dispatch bound host postulates", r, 200,
     proc(r: var Rng): int = r.genInt(-1000, 1000),
