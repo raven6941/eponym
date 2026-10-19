@@ -68,7 +68,7 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_bool_without_prelude.nim",
      "Bool constructor 'true' is not declared; import bool.ep"),
     ("tests/fixtures/embedded_err_generic_runtime_index.nim",
-     "only type-level generic binders annotated with Univ"),
+     "value indices annotated with Nat"),
     ("tests/fixtures/embedded_err_binding_quinary_nim_type.nim",
      "type mismatch"),
     ("tests/fixtures/embedded_err_binding_senary_eponym_type.nim",

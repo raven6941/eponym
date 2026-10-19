@@ -36,12 +36,15 @@ Nullary, unindexed `data` declarations can map to Nim enums with the same
 constructor names; constructor values are translated through their checked
 runtime identities. Data constructors with arguments or indexed results do
 not have an enum codec.
-Type-level generic binders written `[A: Univ]` also support generated Nim
-generic wrappers when `A` appears only in the checked signature and the
-remaining shape has codecs. Nim's concrete `A` values cross as opaque boxes;
-the runtime does not inspect their representation. Value-indexed binders and
-generic type parameters used by the runtime body still need explicit runtime
-representations.
+Type-level generic binders written `[A: Univ]` support generated Nim generic
+wrappers when `A` appears only in the checked signature and the remaining
+shape has codecs. Nim's concrete `A` values cross as opaque boxes; the runtime
+does not inspect their representation. Value-indexed Nat binders written
+`[n: Nat]` map to Nim `static[int]` parameters and cross as canonical checked
+Nat constructors when the Nat prelude is available. These binders can appear
+in signatures and checked runtime bodies; tests cover typed wrappers and both
+typed and raw `runtimeValue` overloads. Other value-indexed binders remain
+unsupported.
 `Nat` conversions reject negative values. An explicit `proc` declaration with
 an unsupported signature remains
 checked but emits a targeted compile-time error if called. Generated names
