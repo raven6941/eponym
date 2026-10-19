@@ -431,10 +431,12 @@ implementations.
    Current support includes checked Nim wrappers for supported generic
    definitions, `runtimeValue` access to checked results, callback values with
    recursive codecs, and explicit trusted opt-ins for dependent records and
-   pairs. A reusable explicit descriptor now exists through `runtimeCodec`;
+   pairs. A reusable explicit descriptor now exists through `runtimeCodec`.
    Nested dependent Sigma values now propagate named indices through recursive
-   codecs, honoring nearest-binder shadowing. Two 200-case properties cover a
-   dependent Vec, shadowed indices, and rejection of mismatched lengths. Remaining gaps include broader automatic/structural
+   codecs, honoring nearest-binder shadowing and composing with trusted record
+   fields. Three 200-case properties cover a dependent Vec, shadowed indices,
+   record/Sigma index composition, and rejection of mismatched lengths.
+   Remaining gaps include broader automatic/structural
    codec coverage, additional dependent forms, unmapped value-indexed
    generics, and other higher-order signatures. Unsupported
    cases must continue to fail with a precise compile-time diagnostic.

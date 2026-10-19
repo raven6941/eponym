@@ -175,9 +175,10 @@ representation, while the relationship between the field values and dependent
 indices remains trusted. Nested dependent Sigma values propagate named
 indices through recursive codecs; supported field codecs such as `Vec` still
 check their represented constraints (for example, sequence length against the
-bound Nat). Shadowed binder names resolve to the innermost Sigma binder.
-Without this marker, generated wrappers continue to reject dependent Sigma
-signatures.
+bound Nat). A trusted record opt-in also carries through dependent Sigma
+fields, and shadowed binder names resolve to the innermost Sigma binder.
+Without the required pair or record marker, generated wrappers continue to
+reject dependent signatures.
 Opaque bindings require explicit `runtimeType(EponymType, NimType)` mappings
 to postulated Eponym types or
 type families. Nim checks adapter and generated wrapper signatures;

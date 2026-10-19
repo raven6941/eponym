@@ -951,8 +951,9 @@ proc trustedRuntimeRecordNames(body: NimNode): HashSet[string] =
 
 proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
     tuple[first, second: NimNode, binder: string] =
-  ## Runtime tuples represent only non-dependent two-field Sig types. Reject
-  ## dependent tails rather than erasing the first component from their type.
+  ## Runtime tuples represent two-field Sig types. Unless the enclosing
+  ## definition or record explicitly trusts dependent indices, reject a
+  ## dependent tail rather than erase the first component from its type.
   if n.kind notin {nnkCall, nnkObjConstr} or n.len != 3 or
       n[0].kind != nnkIdent or
       $n[0] != "Sig":
@@ -988,9 +989,15 @@ proc runtimeTypeHead(n: NimNode): NimNode =
   while result.kind in {nnkCall, nnkCommand, nnkBracketExpr} and result.len > 0:
     result = result[0]
 
-proc runtimeNatIndexExpr(n: NimNode): NimNode =
-  ## Lower the supported Nat index expressions to checked Nim int arithmetic.
+proc runtimeNatIndexExpr(n: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]] = @[]): NimNode =
+  ## Lower supported Nat index expressions to checked Nim int arithmetic,
+  ## substituting nearer Sigma/record binders as ordinary Nim operands.
   if n.kind in {nnkIdent, nnkSym}:
+    if overrides.len > 0:
+      for i in countdown(overrides.high, 0):
+        if $n == overrides[i].name:
+          return copyNimTree(overrides[i].value)
     if $n == "zero": return newLit(0)
     return copyNimTree(n)
   if n.kind == nnkDotExpr:
@@ -1003,30 +1010,17 @@ proc runtimeNatIndexExpr(n: NimNode): NimNode =
     case $n[0]
     of "suc":
       if n.len != 2: return nil
-      let index = runtimeNatIndexExpr(n[1])
+      let index = runtimeNatIndexExpr(n[1], overrides)
       if index.isNil: return nil
       return newCall(bindSym"natIndexSucc", index)
     of "add", "mul":
       if n.len != 3: return nil
-      let left = runtimeNatIndexExpr(n[1])
-      let right = runtimeNatIndexExpr(n[2])
+      let left = runtimeNatIndexExpr(n[1], overrides)
+      let right = runtimeNatIndexExpr(n[2], overrides)
       if left.isNil or right.isNil: return nil
       return newCall(if $n[0] == "add": bindSym"natIndexAdd" else:
         bindSym"natIndexMul", left, right)
   nil
-
-proc substituteRuntimeIndices(n: NimNode,
-    overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
-  if n.kind in {nnkIdent, nnkSym}:
-    # Later entries are lexically nearer binders and shadow earlier ones.
-    if overrides.len > 0:
-      for i in countdown(overrides.high, 0):
-        if $n == overrides[i].name:
-          return copyNimTree(overrides[i].value)
-    return copyNimTree(n)
-  result = copyNimTree(n)
-  for i in 0 ..< n.len:
-    result[i] = substituteRuntimeIndices(n[i], overrides)
 
 type RuntimeProcParts = object
   argTypes: seq[NimNode]
@@ -1127,9 +1121,11 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
       if (record.hasDependentField and not record.trustDependentFields) or
           record.fields.len == 0:
         return nil
+      let recordAllowsDependentFields = allowDependentSigma or
+        record.trustDependentFields
       for field in record.fields:
         if runtimeNimType(field.eponymType, mappings, records,
-                          allowDependentSigma).isNil:
+                          recordAllowsDependentFields).isNil:
           return nil
       for mapping in mappings:
         if mapping.eponymName == $head:
@@ -1236,19 +1232,14 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
       if not vector.elementType.isNil:
-        let resolvedLength = substituteRuntimeIndices(vector.length,
-                                                       indexOverrides)
-        let expectedLength = runtimeNatIndexExpr(resolvedLength)
-        # The original index syntax is restricted to the supported Nat
-        # expression grammar. Substitution may replace a named Sigma/record
-        # index with a host expression (for example, value[0] or a decoded
-        # Nat temporary), which is executable Nim but not surface syntax.
-        let checkedOriginalLength = runtimeNatIndexExpr(vector.length)
-        let checkedExpectedLength = if expectedLength.isNil and
-            not checkedOriginalLength.isNil: resolvedLength else: expectedLength
+        # Lower the original supported Nat grammar while substituting named
+        # Sigma/record indices as Nim operands. This keeps Eponym `add`/`mul`
+        # mapped to checked integer helpers even when an operand is a host
+        # field or tuple projection.
+        let expectedLength = runtimeNatIndexExpr(vector.length, indexOverrides)
         let elementNimType = runtimeNimType(vector.elementType, mappings,
           records, allowDependentSigma)
-        if checkedExpectedLength.isNil or elementNimType.isNil: return nil
+        if expectedLength.isNil or elementNimType.isNil: return nil
         let itemSym = genSym(nskParam, "runtimeVectorItem")
         let codecGlobalsSym = genSym(nskParam, "runtimeVectorGlobals")
         if toValue:
@@ -1260,7 +1251,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
-          return newCall(bindSym"seqToVecValue", value, checkedExpectedLength,
+          return newCall(bindSym"seqToVecValue", value, expectedLength,
             globals, newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(vector.elementType,
           elementNimType, itemSym, false, mappings, records,
@@ -1270,7 +1261,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           newIdentDefs(itemSym, bindSym"Value", newEmptyNode()),
           newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
           body = newStmtList(decodedItem))
-        return newCall(bindSym"vecValueToSeq", value, checkedExpectedLength,
+        return newCall(bindSym"vecValueToSeq", value, expectedLength,
           globals, newLit(mapping.eponymName), decoder)
     elif mapping.isRuntimeList:
       let elementType = runtimeListElementType(eponymType, mapping.eponymName)
@@ -1379,17 +1370,19 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       if (record.hasDependentField and not record.trustDependentFields) or
           record.fields.len == 0:
         return nil
+      let recordAllowsDependentFields = allowDependentSigma or
+        record.trustDependentFields
       if toValue:
         var convertedFields: seq[NimNode] = @[]
         var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
         for field in record.fields:
           let fieldType = runtimeNimType(field.eponymType, mappings, records,
-                                         allowDependentSigma)
+                                         recordAllowsDependentFields)
           if fieldType.isNil: return nil
           let fieldValue = newTree(nnkDotExpr, value, ident(field.name))
           let converted = runtimeValueConversionExpr(field.eponymType,
             fieldType, fieldValue, true, mappings, records, globals,
-            allowDependentSigma, indexOverrides)
+            recordAllowsDependentFields, indexOverrides)
           if converted.isNil: return nil
           convertedFields.add(converted)
           indexOverrides.add((field.name, fieldValue))
@@ -1404,12 +1397,13 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
       for field in record.fields:
         let fieldType = runtimeNimType(field.eponymType, mappings, records,
-                                       allowDependentSigma)
+                                       recordAllowsDependentFields)
         if fieldType.isNil: return nil
         let fieldSym = genSym(nskLet, field.name)
         let converted = runtimeValueConversionExpr(field.eponymType,
           fieldType, newCall(bindSym"runtimePairFirst", current), false,
-          mappings, records, globals, allowDependentSigma, indexOverrides)
+          mappings, records, globals, recordAllowsDependentFields,
+          indexOverrides)
         if converted.isNil: return nil
         decodeBody.add(newLetStmt(fieldSym, converted))
         fields.add(newTree(nnkExprColonExpr, ident(field.name), fieldSym))

@@ -39,6 +39,10 @@ type RuntimeSizedVec = object
   suffixLength: int
   values: seq[int]
 
+type RuntimeDependentPairEnvelope = object
+  base: int
+  payload: tuple[count: int, values: seq[int]]
+
 type IndexedChannelHandle = object
   index: int
   label: string
@@ -220,6 +224,19 @@ eponymBlock:
   runtimeRecordTrusted(SizedVec)
   proc generatedSizedVecIdentity(value: SizedVec): SizedVec = value
   runtimeValue(generatedSizedVecIdentity)
+
+eponymBlock:
+  import "../lib/nat.ep"
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  record(DependentPairEnvelope):
+    field(base, Nat)
+    field(payload, Sig(count: Nat, Vec[Int, add(base, count)]))
+  runtimeType(DependentPairEnvelope, RuntimeDependentPairEnvelope)
+  runtimeRecordTrusted(DependentPairEnvelope)
+  proc generatedDependentPairEnvelopeIdentity(
+      value: DependentPairEnvelope): DependentPairEnvelope = value
 
 eponymBlock:
   import "../lib/list.ep"
@@ -773,6 +790,26 @@ when isMainModule:
         mismatchRejected = true
       roundTrips and mismatchRejected,
     shrinkInt)
+  let generatedDependentPairEnvelopeCases = forAll(
+    "dependent record and Sigma indices compose through Vec codecs", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(n: int): bool =
+      let base = n mod 10
+      let count = (n div 3) mod 10
+      var values: seq[int] = @[]
+      for i in 0 ..< base + count: values.add(i + n)
+      let input = RuntimeDependentPairEnvelope(base: base,
+        payload: (count, values))
+      let roundTrips = generatedDependentPairEnvelopeIdentity(input) == input
+      var mismatchRejected = false
+      try:
+        var bad = input
+        bad.payload.values.add(n)
+        discard generatedDependentPairEnvelopeIdentity(bad)
+      except ValueError:
+        mismatchRejected = true
+      roundTrips and mismatchRejected,
+    shrinkInt)
   let generatedShadowedDependentPairVecCases = forAll(
     "nested Sigma index shadowing uses the nearest binder", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),
@@ -890,6 +927,7 @@ when isMainModule:
       generatedTernaryPairBindingCases and
       generatedTrustedDependentPairCases and
       generatedDependentPairVecCases and
+      generatedDependentPairEnvelopeCases and
       generatedShadowedDependentPairVecCases and
       generatedPairWithExternalIndexCases and
       generatedNestedRecordRoundTrips and
