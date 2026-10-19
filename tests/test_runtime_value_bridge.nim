@@ -199,6 +199,24 @@ eponymBlock:
   proc generatedGenericIntValue[index: Int](ignored: Int): Int = index
   runtimeValue(generatedGenericIntValue)
 
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
+  proc generatedGenericChannelValue[channel: Channel](ignored: Int):
+      Channel = channel
+  runtimeValue(generatedGenericChannelValue)
+
+proc checkGenericChannelValueAt[channel: static[ChannelHandle]](
+    ignored: int): bool =
+  let typedResult = generatedGenericChannelValue[channel](ignored)
+  let runtime = generatedGenericChannelValueRuntimeValue[channel](ignored)
+  let rawRuntime = generatedGenericChannelValueRuntimeValue[channel](
+    [intToValue(ignored)])
+  typedResult == channel and
+    valueToHost[ChannelHandle](runtime.value) == channel and
+    valueToHost[ChannelHandle](rawRuntime.value) == channel
+
 proc checkGenericIntValueAt[index: static[int]](ignored: int): bool =
   let typedResult = generatedGenericIntValue[index](ignored)
   let runtime = generatedGenericIntValueRuntimeValue[index](ignored)
@@ -229,12 +247,27 @@ eponymBlock:
     sumSix(a, b, c, d, e, f)
 
 eponymBlock:
+  postulate(Int, Univ)
   data(Signal, Univ):
     proc signalStop(): Signal
     proc signalCaution(): Signal
     proc signalGo(): Signal
   runtimeType(Signal, RuntimeSignal)
   proc generatedSignalIdentity(value: Signal): Signal = value
+  proc generatedGenericSignalValue[signal: Signal](ignored: Int): Signal =
+    signal
+  runtimeValue(generatedGenericSignalValue)
+
+proc checkGenericSignalValueAt[signal: static[RuntimeSignal]](
+    ignored: int): bool =
+  let typedResult = generatedGenericSignalValue[signal](ignored)
+  let runtime = generatedGenericSignalValueRuntimeValue[signal](ignored)
+  let rawRuntime = generatedGenericSignalValueRuntimeValue[signal](
+    [intToValue(ignored)])
+  let names = @["signalStop", "signalCaution", "signalGo"]
+  typedResult == signal and
+    valueToEnum[RuntimeSignal](runtime.value, runtime.globals, names) == signal and
+    valueToEnum[RuntimeSignal](rawRuntime.value, rawRuntime.globals, names) == signal
 
 static:
   doAssert compiles(sampleTreeWithRuntimeValue(2))
@@ -257,6 +290,9 @@ static:
   doAssert compiles(generatedGenericBoolValueRuntimeValue[true](1))
   doAssert compiles(generatedGenericIntValue[-17](1))
   doAssert compiles(generatedGenericIntValueRuntimeValue[-17](1))
+  doAssert compiles(generatedGenericChannelValue[
+    ChannelHandle(id: 7, label: "generic")](1))
+  doAssert not compiles(generatedGenericChannelValue[17](1))
   doAssert compiles(generatedApplyNimCallback(proc(value: int): int = value, 1))
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
@@ -268,6 +304,7 @@ static:
   doAssert not compiles(generatedSumSix(1, 2, 3, 4, 5))
   doAssert compiles(generatedSignalIdentity(signalGo))
   doAssert not compiles(generatedSignalIdentity(1))
+  doAssert compiles(generatedGenericSignalValue[signalGo](1))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -866,6 +903,34 @@ proc callbackRole : Callback -> Sample -> Sample =
       of 3: checkGenericIntValueAt[23](input.ignored)
       else: checkGenericIntValueAt[1000](input.ignored))
   if not genericIntCases:
+    quit(1)
+
+  let genericMappedCases = forAll(
+    "explicitly mapped opaque values are available as runtime generics",
+    r, 200,
+    proc(r: var Rng): tuple[selector: int, ignored: int] =
+      (r.genInt(0, 2), r.genInt(-1000, 1000)),
+    proc(input: tuple[selector: int, ignored: int]): bool =
+      case input.selector
+      of 0: checkGenericChannelValueAt[
+        ChannelHandle(id: 0, label: "generic-zero")](input.ignored)
+      of 1: checkGenericChannelValueAt[
+        ChannelHandle(id: 17, label: "generic-seventeen")](input.ignored)
+      else: checkGenericChannelValueAt[
+        ChannelHandle(id: -9, label: "generic-negative")](input.ignored))
+  if not genericMappedCases:
+    quit(1)
+
+  let genericEnumCases = forAll(
+    "mapped data constructors are available as runtime generics", r, 200,
+    proc(r: var Rng): tuple[selector: int, ignored: int] =
+      (r.genInt(0, 2), r.genInt(-1000, 1000)),
+    proc(input: tuple[selector: int, ignored: int]): bool =
+      case input.selector
+      of 0: checkGenericSignalValueAt[signalStop](input.ignored)
+      of 1: checkGenericSignalValueAt[signalCaution](input.ignored)
+      else: checkGenericSignalValueAt[signalGo](input.ignored))
+  if not genericEnumCases:
     quit(1)
 
   let callbackBridgeCases = forAll(

@@ -366,7 +366,12 @@ implementations.
    type arguments remain unsupported. Add Int-indexed binders `[i: Int]` as
    Nim `static[int]`, encoded with Eponym integer values; a 200-case property
    covers negative and positive indices through typed wrappers and typed/raw
-   `runtimeValue` calls. Other value-indexed binder types remain unsupported.
+   `runtimeValue` calls. Add value binders over explicitly mapped runtime
+   types as Nim static generic values, encoded through the mapped codec. A
+   200-case property covers mapped opaque objects and nullary data enum values
+   through typed wrappers and typed/raw `runtimeValue` calls. The value must
+   be representable as a Nim compile-time constant; other unmapped value
+   binders remain unsupported.
 - [x] Add a structural codec for nullary, unindexed `data` declarations mapped
    to same-named Nim enum members. The codec translates through checked
    constructor reference identities; a 200-case property covers every variant,
