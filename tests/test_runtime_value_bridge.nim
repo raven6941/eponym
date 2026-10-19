@@ -550,6 +550,15 @@ eponymBlock:
   runtimeValue(generatedGenericNatValue)
 
 eponymBlock:
+  import "../lib/nat.ep"
+  import "../lib/bool.ep"
+  postulate(Int, Univ)
+  proc generatedFourFieldSigmaIdentity(
+      value: Sig(a: Int, Sig(b: Nat, Sig(c: Int, Bool)))):
+      Sig(a: Int, Sig(b: Nat, Sig(c: Int, Bool))) = value
+  runtimeValue(generatedFourFieldSigmaIdentity)
+
+eponymBlock:
   import "../lib/vec.ep"
   postulate(Int, Univ)
   runtimeVector(Vec)
@@ -2165,7 +2174,7 @@ when isMainModule:
       let length = n mod 20
       var values: seq[int] = @[]
       for i in 0 ..< length: values.add(i + n)
-      let input = (length, (n, values))
+      let input = (length, n, values)
       let roundTrips = generatedDependentPairVecIdentity(input) == input
       let runtime = generatedDependentPairVecIdentityRuntimeValue(input)
       let rawRuntime = generatedDependentPairVecIdentityRuntimeValue(
@@ -2173,7 +2182,7 @@ when isMainModule:
       let badValues = if values.len == 0: @[n] else: values[0 ..< values.len - 1]
       var mismatchRejected = false
       try:
-        discard generatedDependentPairVecIdentity((length, (n, badValues)))
+        discard generatedDependentPairVecIdentity((length, n, badValues))
       except ValueError:
         mismatchRejected = true
       var rawMismatchRejected = false
@@ -2216,17 +2225,36 @@ when isMainModule:
       let innerLength = (n div 3) mod 20
       var values: seq[int] = @[]
       for i in 0 ..< innerLength: values.add(i + n)
-      let input = (outerLength, (innerLength, values))
+      let input = (outerLength, innerLength, values)
       let roundTrips = generatedShadowedDependentPairVecIdentity(input) == input
       var mismatchRejected = false
       try:
         discard generatedShadowedDependentPairVecIdentity(
-          (outerLength, (innerLength, values & @[n])))
+          (outerLength, innerLength, values & @[n]))
       except ValueError:
         mismatchRejected = true
       roundTrips and mismatchRejected,
     shrinkInt)
   if not generatedTrustedDependentResultCases:
+    quit(1)
+  let fourFieldSigmaCases = forAll(
+    "nested Sigma values map to flat four-field Nim tuples", r, 200,
+    proc(r: var Rng): tuple[a, b, c: int, flag: bool] =
+      (r.genInt(-1000, 1000), r.genInt(0, 100), r.genInt(-1000, 1000),
+       r.genBool()),
+    proc(input: tuple[a, b, c: int, flag: bool]): bool =
+      let runtime = generatedFourFieldSigmaIdentityRuntimeValue(input)
+      let rawRuntime = generatedFourFieldSigmaIdentityRuntimeValue(
+        [runtime.value])
+      generatedFourFieldSigmaIdentity(input) == input and
+        generatedFourFieldSigmaIdentityRuntimeValue(input).value.whnfKind ==
+          wPair and rawRuntime.value.whnfKind == wPair,
+    proc(input: tuple[a, b, c: int, flag: bool]):
+        seq[tuple[a, b, c: int, flag: bool]] =
+      @[(0, input.b, input.c, input.flag),
+        (input.a, input.b, 0, input.flag),
+        (input.a, input.b, input.c, not input.flag)])
+  if not fourFieldSigmaCases:
     quit(1)
   let generatedPairWithExternalIndexCases = forAll(
     "non-dependent Sigma tails may use earlier Pi indices", r, 200,

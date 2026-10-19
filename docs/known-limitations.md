@@ -159,8 +159,9 @@ wrong-length callback results are rejected. Imported definitions can also
 return callable Nim closures when callback leaf types have codecs; a property
 covers typed wrappers and raw `RuntimeValue` closures. Callers must handle unsupported
 constructors and neutral values explicitly. A
-non-dependent `Sig(A, B)` runtime type is structurally mapped to a two-element
-Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque
+Right-nested `Sig` values map to flat Nim tuples with the same field order and
+arity, while their runtime representation remains right-associated pairs.
+Recursive codecs support `Int`, `Nat`, Bool, and explicitly mapped opaque
 leaves. Named non-dependent `record` declarations map to Nim objects via
 `runtimeType`, using the same recursive codecs in declaration order. Property
 tests cover primitive and opaque tuple fields and mixed primitive and opaque

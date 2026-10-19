@@ -1342,6 +1342,26 @@ proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
     return (n[1][1], n[2], $n[1][0])
   (n[1], n[2], "")
 
+proc runtimeSigmaFields(n: NimNode, allowDependent = false):
+    seq[tuple[fieldType: NimNode, binder: string]] =
+  ## Flatten a right-nested Sigma telescope for Nim tuple codecs. The final
+  ## field is the non-Sigma tail; each preceding binder scopes over later
+  ## fields, matching Eponym's right-associated pair representation.
+  var current = n
+  while current.kind in {nnkCall, nnkObjConstr} and current.len == 3 and
+      current[0].kind == nnkIdent and $current[0] == "Sig":
+    let binder = current[1]
+    if binder.kind == nnkExprColonExpr:
+      if binder.len != 2 or binder[0].kind != nnkIdent or
+          (mentionsName(current[2], $binder[0]) and not allowDependent):
+        return @[]
+      result.add((current[1][1], $binder[0]))
+    else:
+      result.add((current[1], ""))
+    current = current[2]
+  if result.len == 0: return
+  result.add((current, ""))
+
 proc runtimeVectorComponents(n: NimNode, familyName: string):
     tuple[elementType, length: NimNode] =
   if n.kind notin {nnkCall, nnkObjConstr, nnkBracketExpr} or n.len != 3 or
@@ -1494,16 +1514,14 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
           allowDependentSigma)
         if nimElementType.isNil: return nil
         return newTree(nnkBracketExpr, bindSym"Option", nimElementType)
-  let sigma = runtimeSigmaComponents(n, allowDependentSigma)
-  if not sigma.first.isNil:
-    let first = runtimeNimType(sigma.first, mappings, records,
-                               allowDependentSigma)
-    let second = runtimeNimType(sigma.second, mappings, records,
-                                allowDependentSigma)
-    if first.isNil or second.isNil: return nil
+  let sigmaFields = runtimeSigmaFields(n, allowDependentSigma)
+  if sigmaFields.len >= 2:
     result = newNimNode(nnkTupleConstr)
-    result.add(first)
-    result.add(second)
+    for field in sigmaFields:
+      let fieldType = runtimeNimType(field.fieldType, mappings, records,
+        allowDependentSigma)
+      if fieldType.isNil: return nil
+      result.add(fieldType)
     return
   var head = n
   while head.kind in {nnkCall, nnkCommand, nnkBracketExpr} and head.len > 0:
@@ -1882,36 +1900,46 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           body = newStmtList(decodedItem))
         return newCall(bindSym"valueToOption", value, globals,
           newLit(mapping.eponymName), decoder)
-  let sigma = runtimeSigmaComponents(eponymType, allowDependentSigma)
-  if not sigma.first.isNil:
-    if nimType.kind notin {nnkTupleConstr, nnkTupleTy} or nimType.len != 2:
+  let sigmaFields = runtimeSigmaFields(eponymType, allowDependentSigma)
+  if sigmaFields.len >= 2:
+    if nimType.kind notin {nnkTupleConstr, nnkTupleTy} or
+        nimType.len != sigmaFields.len:
       return nil
     if toValue:
-      let firstValue = newTree(nnkBracketExpr, value, newLit(0))
-      let first = runtimeValueConversionExpr(sigma.first, nimType[0],
-        firstValue, true, mappings, records,
-        globals, allowDependentSigma, indexOverrides)
-      var secondOverrides = indexOverrides
-      if sigma.binder.len > 0:
-        secondOverrides.add((sigma.binder, firstValue))
-      let second = runtimeValueConversionExpr(sigma.second, nimType[1],
-        newTree(nnkBracketExpr, value, newLit(1)), true, mappings, records,
-        globals, allowDependentSigma, secondOverrides)
-      if first.isNil or second.isNil: return nil
-      return newCall(bindSym"pairValue", first, second)
-    let firstValue = newCall(bindSym"runtimePairFirst", value)
-    let secondValue = newCall(bindSym"runtimePairSecond", value)
-    let first = runtimeValueConversionExpr(sigma.first, nimType[0],
-      firstValue, false, mappings, records, globals, allowDependentSigma,
-      indexOverrides)
-    var secondOverrides = indexOverrides
-    if sigma.binder.len > 0:
-      secondOverrides.add((sigma.binder, first))
-    let second = runtimeValueConversionExpr(sigma.second, nimType[1],
-      secondValue, false, mappings, records, globals, allowDependentSigma,
-      secondOverrides)
-    if first.isNil or second.isNil: return nil
-    return newTree(nnkTupleConstr, first, second)
+      var encodedFields: seq[NimNode] = @[]
+      var fieldOverrides = indexOverrides
+      for i, field in sigmaFields:
+        let fieldValue = newTree(nnkBracketExpr, value, newLit(i))
+        let encoded = runtimeValueConversionExpr(field.fieldType, nimType[i],
+          fieldValue, true, mappings, records, globals, allowDependentSigma,
+          fieldOverrides)
+        if encoded.isNil: return nil
+        encodedFields.add(encoded)
+        if field.binder.len > 0:
+          fieldOverrides.add((field.binder, fieldValue))
+      result = encodedFields[^1]
+      for i in countdown(encodedFields.high - 1, 0):
+        result = newCall(bindSym"pairValue", encodedFields[i], result)
+      return
+    var current = copyNimTree(value)
+    var decodedFields: seq[NimNode] = @[]
+    var fieldOverrides = indexOverrides
+    for i, field in sigmaFields:
+      let fieldValue = if i < sigmaFields.high:
+        newCall(bindSym"runtimePairFirst", current)
+      else: current
+      let decoded = runtimeValueConversionExpr(field.fieldType, nimType[i],
+        fieldValue, false, mappings, records, globals, allowDependentSigma,
+        fieldOverrides)
+      if decoded.isNil: return nil
+      decodedFields.add(decoded)
+      if field.binder.len > 0:
+        fieldOverrides.add((field.binder, decoded))
+      if i < sigmaFields.high:
+        current = newCall(bindSym"runtimePairSecond", current)
+    result = newNimNode(nnkTupleConstr)
+    for field in decodedFields: result.add(field)
+    return
   if eponymType.kind == nnkIdent:
     let recordIndex = findHostRecord(records, $eponymType)
     if recordIndex >= 0:

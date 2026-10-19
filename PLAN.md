@@ -328,11 +328,12 @@ implementations.
    properties strip the witness or replace it with a different mapped Eponym
    type in a raw postulate adapter. Indexed family mappings and opaque leaves
    traversed recursively retain their trusted correspondence behavior.
-- [x] Add structural codecs for non-dependent `Sig(A, B)` values as nested
-   runtime pairs and Nim two-element tuples. Recursively support primitive
-   `Int`/`Nat` and explicitly mapped opaque leaves; 200-case properties cover
-   primitive and opaque pair fields. Dependent pairs fail wrapper generation
-   rather than losing indices.
+- [x] Add structural codecs for nested `Sig` values as right-associated
+   runtime pairs and flat Nim tuples of matching field arity. Recursively
+   support primitive `Int`/`Nat`, Bool, and explicitly mapped opaque leaves;
+   preserve named dependent indices under `runtimePairTrusted`. A 200-case
+   property covers a four-field tuple, while dependent three-field properties
+   check index validation and shadowing.
 - [x] Add structural codecs for non-dependent named `record` declarations as
    mapped Nim objects. Fields encode in declaration order using nested pairs;
    primitive, opaque, and nested non-dependent record fields recurse through
