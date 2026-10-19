@@ -1138,6 +1138,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [ ] Extend partial index detection to locally inferred Nat values and other
   expression forms that cannot be identified from the current declaration
   metadata.
+- [x] Migrate the optimizer examples' type-family applications and indexed
+  `VAffine` constructor applications to square brackets. Their generated
+  checked objectives still pass the 300-case and 200-case runtime properties.
+- [ ] Migrate the remaining warning-producing embedded examples and tests,
+  then remove the legacy parser/lowering path.
 - [ ] Remove the legacy call-style parser/lowering path and update examples,
   tests, and documentation to use square brackets for explicit parameters.
 - [ ] Add positive coverage for bracket syntax and compile-fail coverage for
