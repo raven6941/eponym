@@ -743,6 +743,7 @@ type HostPostulateBinding = object
   postulateName: string
   implementation: NimNode
   eponymTypes: seq[string]
+  eponymTypeExprs: seq[NimNode]
   pairResultType: NimNode
   pairResultArgNames: seq[string]
   pairResult: bool
@@ -1086,10 +1087,11 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
         error("duplicate bindPostulate for '" & name & "'", st)
       seen.incl(name)
       var typeNames: seq[string] = @[]
+      var typeExprs: seq[NimNode] = @[]
       for i in 3 ..< st.len:
-        if st[i].kind != nnkIdent:
-          error("bindPostulate Eponym type mappings must be identifiers", st[i])
-        typeNames.add($st[i])
+        typeExprs.add(copyNimTree(st[i]))
+        typeNames.add(if st[i].kind == nnkIdent: $st[i]
+          else: nimTypeToEponym(st[i]))
       var pairResultType: NimNode = nil
       var pairResultArgNames: seq[string] = @[]
       if pairResult:
@@ -1105,6 +1107,7 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
       result.add(HostPostulateBinding(postulateName: name,
                                      implementation: st[2],
                                      eponymTypes: typeNames,
+                                     eponymTypeExprs: typeExprs,
                                      pairResultType: pairResultType,
                                      pairResultArgNames: pairResultArgNames,
                                      pairResult: pairResult,
@@ -1112,6 +1115,31 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
                                        typeNames.len - 2 else: 0,
                                      trustedPairIndex: trustedPairIndex,
                                      rawValue: rawValue))
+
+proc localPostulateArrowTypes(body: NimNode,
+                              postulateName: string): seq[NimNode] =
+  for declaration in body:
+    if declaration.kind == nnkCall and declaration.len == 3 and
+        declaration[0].kind == nnkIdent and $declaration[0] == "postulate" and
+        declaration[1].kind == nnkIdent and $declaration[1] == postulateName:
+      result.add(declaration[2])
+      return
+
+proc validateLocalBindingTypeExpressions(body: NimNode,
+                                         binding: HostPostulateBinding) =
+  if binding.eponymTypeExprs.len == 0 or binding.pairResult or
+      binding.rawValue: return
+  let declared = localPostulateArrowTypes(body, binding.postulateName)
+  if declared.len == 0: return # imported or explicitly Pi-encoded declaration
+  var provided = binding.eponymTypeExprs.mapIt(nimTypeToEponym(it))
+  if binding.eponymTypeExprs.len == 1:
+    provided = @[provided[0], provided[0]]
+  let providedType = provided.join(" -> ")
+  let declaredType = nimTypeToEponym(declared[0])
+  if providedType != declaredType:
+    raise newException(ValueError,
+      "typed adapter type '" & providedType & "' does not match postulate '" &
+      binding.postulateName & "' (" & declaredType & ")")
 
 proc mentionsName(node: NimNode, name: string): bool =
   if node.kind in {nnkIdent, nnkSym} and $node == name:
@@ -2025,35 +2053,49 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
         adapterValue = newCall(bindSym"vHostFunc", partialProc)
     return newCall(bindSym"bindHostValue", bindingsSym, globalsSym,
                    nameLit, adapterValue)
-  var adapterTypes = binding.eponymTypes
-  if binding.eponymTypes.len == 1:
-    adapterTypes = @[binding.eponymTypes[0], binding.eponymTypes[0]]
-  if binding.eponymTypes.len > 0:
+  var adapterTypes = binding.eponymTypeExprs
+  if adapterTypes.len == 0:
+    for typeName in binding.eponymTypes:
+      adapterTypes.add(ident(typeName))
+  if adapterTypes.len == 1:
+    adapterTypes = @[adapterTypes[0], adapterTypes[0]]
+  # Explicit type arguments have always used the general typed codec path,
+  # which also supports var parameters. Preserve that for simple identifiers
+  # while allowing applied structural types in the same path.
+  var needsGeneralCodec = adapterTypes.len > 0
+  for typeExpr in adapterTypes:
+    if typeExpr.kind != nnkIdent: needsGeneralCodec = true
+    let typeHead = runtimeTypeHead(typeExpr)
+    for mapping in mappings:
+      if mapping.isRuntimeCodec and not typeHead.isNil and
+          typeHead.kind == nnkIdent and mapping.eponymName == $typeHead:
+        needsGeneralCodec = true
+  if needsGeneralCodec and adapterTypes.len > 0:
     let argumentCount = adapterTypes.len - 1
     var decodedArgs: seq[NimNode] = @[]
     var adapterBody = newStmtList()
     for i in 0 ..< argumentCount:
-      let eponymType = ident(adapterTypes[i])
+      let eponymType = adapterTypes[i]
       let nimType = runtimeNimType(eponymType, mappings, records)
       if nimType.isNil:
         error("bindPostulate for '" & binding.postulateName &
           "' needs a runtime codec for argument type '" &
-          adapterTypes[i] & "'")
+          repr(eponymType) & "'")
       let decoded = runtimeValueConversionExpr(eponymType, nimType,
         newTree(nnkBracketExpr, ident"runtimeArguments", newLit(i)), false,
         mappings, records, ident"runtimeGlobals")
       if decoded.isNil:
         error("bindPostulate could not build a runtime codec for argument '" &
-          adapterTypes[i] & "'")
+          repr(adapterTypes[i]) & "'")
       let decodedArg = genSym(nskVar, "hostArgument" & $i)
       adapterBody.add(newVarStmt(decodedArg, decoded))
       decodedArgs.add(decodedArg)
-    let resultEponymType = ident(adapterTypes[^1])
+    let resultEponymType = adapterTypes[^1]
     let resultNimType = runtimeNimType(resultEponymType, mappings, records)
     if resultNimType.isNil:
       error("bindPostulate for '" & binding.postulateName &
         "' needs a runtime codec for result type '" &
-        adapterTypes[^1] & "'")
+        repr(resultEponymType) & "'")
     var implementationCall = newCall(binding.implementation)
     for decodedArg in decodedArgs:
       implementationCall.add(decodedArg)
@@ -2062,7 +2104,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       ident"runtimeGlobals")
     if encodedResult.isNil:
       error("bindPostulate could not build a runtime codec for result '" &
-        adapterTypes[^1] & "'")
+        repr(adapterTypes[^1]) & "'")
     let runtimeArgsSym = ident"runtimeArguments"
     let runtimeGlobalsSym = ident"runtimeGlobals"
     adapterBody.add(encodedResult)
@@ -2940,6 +2982,7 @@ macro eponymBlock*(body: untyped): untyped =
       error("eponymBlock runtimeType error: " & e.msg, body)
   for binding in bindings:
     try:
+      validateLocalBindingTypeExpressions(body, binding)
       if binding.rawValue:
         discard validateHostValueNaryType(checkedGlobals,
                                           binding.postulateName)
@@ -2957,12 +3000,26 @@ macro eponymBlock*(body: untyped): untyped =
         for mapping in runtimeTypes:
           if mapping.eponymName == typeName and mapping.isRuntimeCodec:
             usesCustomCodec = true
+      for typeExpr in binding.eponymTypeExprs:
+        if typeExpr.kind != nnkIdent: usesCustomCodec = true
       if binding.eponymTypes.len >= 7 or usesCustomCodec:
         var adapterTypes = binding.eponymTypes
         if binding.eponymTypes.len == 1:
           adapterTypes = @[binding.eponymTypes[0], binding.eponymTypes[0]]
-        validateHostMappedNaryType(checkedGlobals, binding.postulateName,
-                                   adapterTypes)
+        if binding.eponymTypeExprs.len > 0:
+          var typeHeads: seq[string] = @[]
+          for typeExpr in binding.eponymTypeExprs:
+            let head = runtimeTypeHead(typeExpr)
+            if head.isNil or head.kind != nnkIdent:
+              raise newException(ValueError,
+                "typed adapter Eponym type needs a named family head")
+            typeHeads.add($head)
+          if typeHeads.len == 1: typeHeads = @[typeHeads[0], typeHeads[0]]
+          validateHostMappedNaryType(checkedGlobals, binding.postulateName,
+                                     typeHeads)
+        else:
+          validateHostMappedNaryType(checkedGlobals, binding.postulateName,
+                                     adapterTypes)
         continue
       case binding.eponymTypes.len
       of 0:

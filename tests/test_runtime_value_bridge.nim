@@ -101,6 +101,9 @@ proc decodeRuntimeHandle(value: Value, globals: Globals): ChannelHandle =
 proc hostRuntimeHandleAdapter(value: ChannelHandle): ChannelHandle =
   ChannelHandle(id: value.id + 1, label: value.label & "/adapter")
 
+proc hostRuntimeHandleOptionAdapter(
+    value: Option[ChannelHandle]): Option[ChannelHandle] = value
+
 proc decodedRuntimeHandles(values: openArray[ChannelHandle]):
     seq[ChannelHandle] =
   for value in values:
@@ -312,6 +315,14 @@ eponymBlock:
     runtimeHandleAdapter(value)
   runtimeValue(generatedRuntimeHandleAdapter)
   runtimeOption(Option)
+  postulate(runtimeHandleOptionAdapter,
+    Option[RuntimeHandle] -> Option[RuntimeHandle])
+  bindPostulate(runtimeHandleOptionAdapter, hostRuntimeHandleOptionAdapter,
+    Option[RuntimeHandle], Option[RuntimeHandle])
+  proc generatedRuntimeHandleOptionAdapter(
+      value: Option[RuntimeHandle]): Option[RuntimeHandle] =
+    runtimeHandleOptionAdapter(value)
+  runtimeValue(generatedRuntimeHandleOptionAdapter)
   runtimeType(RuntimeOpaqueToken, ChannelHandle)
   runtimeType(RuntimeOtherToken, ChannelHandle)
   runtimeType(RuntimeIndexedToken, ChannelHandle)
@@ -2481,6 +2492,30 @@ proc callbackRole : Callback -> Sample -> Sample =
         decodeRuntimeHandle(raw.value, raw.globals) == expected,
     shrinkInt)
   if not customCodecPostulateCases:
+    quit(1)
+  let customCodecOptionPostulateCases = forAll(
+    "typed postulates accept applied structural codec types", r, 200,
+    proc(r: var Rng): tuple[present: bool, id: int] =
+      (r.genBool(), r.genInt(-1000, 1000)),
+    proc(input: tuple[present: bool, id: int]): bool =
+      let host = if input.present:
+        some(ChannelHandle(id: input.id, label: "host-option"))
+      else:
+        none(ChannelHandle)
+      let expected = if input.present:
+        some(ChannelHandle(id: input.id, label: "decoded-" & $input.id))
+      else:
+        none(ChannelHandle)
+      let typed = generatedRuntimeHandleOptionAdapter(host)
+      let runtime = generatedRuntimeHandleOptionAdapterRuntimeValue(host)
+      let raw = generatedRuntimeHandleOptionAdapterRuntimeValue([
+        optionToValue(host, runtime.globals, "Option", encodeRuntimeHandle)])
+      typed == expected and
+        valueToOption[ChannelHandle](runtime.value, runtime.globals, "Option",
+          decodeRuntimeHandle) == expected and
+        valueToOption[ChannelHandle](raw.value, raw.globals, "Option",
+          decodeRuntimeHandle) == expected)
+  if not customCodecOptionPostulateCases:
     quit(1)
   let customCodecOptionCases = forAll(
     "runtimeOption recursively applies a custom runtimeCodec", r, 200,
