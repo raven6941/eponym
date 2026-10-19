@@ -573,6 +573,13 @@ implementations.
      confirms that an ordinary object stays unchanged at the call site while
      the updated result crosses back. Value updates must be returned by the
      adapter.
+   - [x] Validate custom `runtimeCodec` values against their checked Eponym
+     type on encode and before decode whenever the runtime shape is
+     checkable. A 200-case property rejects a wrongly typed top-level encoded
+     value through both generated and `RuntimeValue` wrappers; the checked
+     function deliberately ignores the bad argument to prove validation occurs
+     at the boundary. Another 200-case property confirms a malformed runtime
+     result is rejected before the custom decoder runs.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.

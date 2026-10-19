@@ -1554,7 +1554,21 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     for mapping in mappings:
       if mapping.isRuntimeCodec and mapping.eponymName == $typeHead:
         let codec = copyNimTree(if toValue: mapping.encoder else: mapping.decoder)
-        return newCall(codec, value, globals)
+        let codecCall = newCall(codec, value, globals)
+        let validatedValue = genSym(nskLet, "runtimeCodecValue")
+        let valueToCheck = if toValue: validatedValue else: value
+        let check = rawRuntimeValueCheck(eponymType, valueToCheck, globals,
+          indexOverrides, mappings, records)
+        if check.isNil: return codecCall
+        var body = newStmtList()
+        if toValue:
+          body.add(newLetStmt(validatedValue, codecCall))
+          body.add(check)
+          body.add(validatedValue)
+        else:
+          body.add(check)
+          body.add(codecCall)
+        return newTree(nnkBlockExpr, newEmptyNode(), body)
       if mapping.isRuntimeVariant and mapping.eponymName == $typeHead:
         let familyName = newLit(mapping.eponymName)
         let constructors = newCall(bindSym"runtimeVariantConstructorNames",

@@ -22,6 +22,9 @@ proc hostFailureNim(value: int): int =
 proc rawRuntimeIdentity(value: Value): Value = value
 proc rawRuntimeWrongToken(value: Value): Value = intToValue(42)
 proc rawRuntimeReturnLength(length, values: Value): Value = length
+proc rawRuntimeBadHandle(args: seq[Value], globals: Globals): Value =
+  intToValue(0)
+var runtimeHandleDecodeCalls = 0
 proc makeIndexedRuntimeValues(length: int): seq[int] =
   for i in 0 ..< length: result.add(i - length)
 proc makeWrongIndexedRuntimeValues(length: int): seq[int] =
@@ -84,6 +87,11 @@ proc decodeRuntimeHandle(value: Value, globals: Globals): ChannelHandle =
     ["runtimeHandle"])
   let id = valueToInt(variant.arguments[0])
   ChannelHandle(id: id, label: "decoded-" & $id)
+
+proc decodeTrackingRuntimeHandle(value: Value,
+                                 globals: Globals): ChannelHandle =
+  inc runtimeHandleDecodeCalls
+  decodeRuntimeHandle(value, globals)
 
 proc encodeWrongRuntimeHandle(value: ChannelHandle, globals: Globals): Value =
   intToValue(value.id)
@@ -298,6 +306,24 @@ eponymBlock:
   proc genericUnmappedSizedTreeProjection[length: Nat,
       tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
   runtimeValue(genericUnmappedSizedTreeProjection)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  runtimeCodec(RuntimeHandle, ChannelHandle, encodeWrongRuntimeHandle,
+    decodeRuntimeHandle)
+  proc runtimeHandleConstant(value: RuntimeHandle): RuntimeHandle =
+    runtimeHandle(0)
+  runtimeValue(runtimeHandleConstant)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
+    decodeTrackingRuntimeHandle)
+  postulate(malformedRuntimeHandle, RuntimeHandle -> RuntimeHandle)
+  bindPostulateValue(malformedRuntimeHandle, rawRuntimeBadHandle)
+  proc checkedMalformedRuntimeHandle(value: RuntimeHandle): RuntimeHandle =
+    malformedRuntimeHandle(value)
+  runtimeValue(checkedMalformedRuntimeHandle)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -1044,6 +1070,40 @@ when isMainModule:
   except ValueError:
     wrongOpaqueEncodingRejected = true
   doAssert wrongOpaqueEncodingRejected
+  let wrongTopLevelCodecCases = forAll(
+    "custom runtimeCodec rejects wrongly typed top-level encodings", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let value = ChannelHandle(id: id, label: $id)
+      var wrapperRejected = false
+      try:
+        discard runtimeHandleConstant(value)
+      except ValueError:
+        wrapperRejected = true
+      var runtimeValueRejected = false
+      try:
+        discard runtimeHandleConstantRuntimeValue(value)
+      except ValueError:
+        runtimeValueRejected = true
+      wrapperRejected and runtimeValueRejected,
+    shrinkInt)
+  if not wrongTopLevelCodecCases:
+    quit(1)
+  let wrongTopLevelDecodeCases = forAll(
+    "custom runtimeCodec validates Values before decoding", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      runtimeHandleDecodeCalls = 0
+      var rejected = false
+      try:
+        discard checkedMalformedRuntimeHandle(ChannelHandle(id: id,
+          label: $id))
+      except ValueError:
+        rejected = true
+      rejected and runtimeHandleDecodeCalls == 0,
+    shrinkInt)
+  if not wrongTopLevelDecodeCases:
+    quit(1)
   let appliedGenericTypeCases = forAll(
     "mapped applied generic domains check their runtime indices", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),

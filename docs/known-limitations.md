@@ -251,11 +251,13 @@ cover common recursive shapes; a user can provide a codec for a named
 Eponym type or family with `runtimeCodec(Type, NimType, encode, decode)`.
 Encoder and decoder procedures receive `Globals` and translate between the
 Nim representation and runtime `Value`s. The Nim compiler checks their
-concrete signatures when a wrapper or typed postulate binding uses them; the
-codec implementation and any dependent-index correspondence remain trusted.
-Nim's type checker checks the concrete adapter signature, but the mapping to
-the Eponym type and the adapter behavior remain trusted. Neither compiler
-proves that the host value satisfies a dependent index.
+concrete signatures when a wrapper or typed postulate binding uses them.
+Generated wrappers also validate custom encoded and decoded Values against the
+checked Eponym type when its runtime shape is checkable, including supported
+dependent indices. The codec's semantic relationship between the Nim payload
+and Eponym value remains trusted, as do indices the runtime shape cannot
+represent. Nim's type checker checks the concrete adapter signature but does
+not prove that host code obeys the Eponym contract.
 
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
