@@ -147,6 +147,14 @@ eponymBlock:
     let afterFlag = callback(flag)
     afterFlag[zero()](values)
 
+  proc inferredCallbackResultIndex(
+      callback: Pi(n: Nat, Vec[Nat, n])): Vec[Nat, 0] =
+    callback()
+
+  proc bracketCallbackResultIndex(
+      callback: Pi(n: Nat, Vec[Nat, n])): Vec[Nat, 0] =
+    callback[zero()]()
+
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =
     handler.identity(value)

@@ -372,11 +372,21 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
     for other in binders:
       if other.name == binder.name: inc nameCount
     if nameCount != 1: continue
-    # A value argument is inferable here only when a later argument's type
-    # carries it. Merely occurring in the result type is insufficient: for
-    # example, an eliminator's final scrutinee is still a required input even
-    # though the motive result is `C(scrutinee)`.
-    var dependent = false
+    # A later argument type can determine this value binder. Its result-type
+    # occurrence can also be enough when the result is a named indexed family;
+    # a function-valued motive such as `C(scrutinee)` must not turn an
+    # eliminator's ordinary scrutinee into an inferred argument.
+    var resultHead = current
+    while not resultHead.isNil and resultHead.kind == pkApp:
+      resultHead = resultHead.c1
+    var motiveResult = false
+    if not resultHead.isNil and resultHead.kind == pkVar:
+      for other in binders:
+        if other.name == resultHead.name and other.ty.kind == pkPi:
+          motiveResult = true
+          break
+    var dependent = not motiveResult and
+      mentionsPretermName(current, binder.name)
     for j in i + 1 ..< binders.len:
       if mentionsPretermName(binders[j].ty, binder.name):
         dependent = true

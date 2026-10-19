@@ -12,3 +12,7 @@ eponymBlock:
       callback: Pi(flag: Bool, n: Nat, values: Vec[Nat, n], LocalAt[n]),
       flag: Bool, values: Vec[Nat, 0]): LocalAt[0] =
     callback(flag, zero(), values)
+
+  proc oldResultOnlyCallbackApplication(
+      callback: Pi(n: Nat, Vec[Nat, n])): Vec[Nat, 0] =
+    callback(zero())

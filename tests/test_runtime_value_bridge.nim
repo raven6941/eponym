@@ -943,7 +943,7 @@ eponymBlock:
   runtimeVector(Vec)
   proc generatedApplyIndexedCallback(
       callback: proc(length: Nat): Vec[Int, length] {.closure.},
-      length: Nat): Vec[Int, length] = callback(length)
+      length: Nat): Vec[Int, length] = callback()
   runtimeValue(generatedApplyIndexedCallback)
   proc generatedApplyDependentVectorCallback(
       callback: proc(length: Nat, values: Vec[Int, length]): Nat {.closure.},
@@ -1291,7 +1291,7 @@ eponymBlock:
       values: Vec[Int, index]): Vec[Int, index] = values
   runtimeValue(generatedVectorArgIdentity)
   proc generatedVectorForIndex(index: Nat, seed: Int):
-      Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(index, seed)
+      Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(seed)
   runtimePairTrusted(generatedVectorForIndex)
 
 eponymBlock:
@@ -1300,7 +1300,7 @@ eponymBlock:
   bindPostulatePairTrusted(makeVectorForIndex, hostMakeVectorForIndex,
     Nat, Int, Int, Vec)
   proc generatedImportedVectorForIndex(index: Nat, seed: Int):
-      Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(index, seed)
+      Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(seed)
   runtimePairTrusted(generatedImportedVectorForIndex)
 
 static:
