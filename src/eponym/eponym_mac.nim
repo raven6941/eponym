@@ -45,6 +45,57 @@ proc unwrapParens(n: NimNode): NimNode =
   while result.kind == nnkPar and result.len == 1:
     result = result[0]
 
+proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
+  ## Resolve callable metadata through expression wrappers accepted by the
+  ## embedded-expression converter. In particular, a conditional can select
+  ## between function values and must not hide their explicit binders.
+  let head = unwrapParens(n)
+  case head.kind
+  of nnkStmtListExpr:
+    if head.len == 1: return callInfoForHead(head[0])
+  of nnkIdent, nnkSym:
+    let name = $head
+    if name in scopedLegacyCallInfo:
+      return (true, scopedLegacyCallInfo[name])
+    if name in legacyCallInfo:
+      return (true, legacyCallInfo[name])
+  of nnkCall, nnkCommand:
+    if head.len > 0:
+      let returnedHead = unwrapParens(head[0])
+      if returnedHead.kind in {nnkIdent, nnkSym} and
+          $returnedHead in legacyResultCallInfo:
+        return (true, legacyResultCallInfo[$returnedHead])
+  of nnkDotExpr:
+    if head.len == 2 and head[1].kind in {nnkIdent, nnkSym}:
+      let field = $head[1]
+      if field in legacyFieldCallInfo and field notin ambiguousLegacyFieldNames:
+        return (true, legacyFieldCallInfo[field])
+  of nnkIfExpr, nnkIfStmt:
+    var selected: LegacyCallInfo
+    var haveSelected = false
+    for branch in head:
+      var body: NimNode
+      if branch.kind in {nnkElifExpr, nnkElifBranch} and branch.len == 2:
+        body = branch[1]
+      elif branch.kind in {nnkElseExpr, nnkElse} and branch.len == 1:
+        body = branch[0]
+      else:
+        return
+      if body.kind == nnkStmtList and body.len == 1:
+        body = body[0]
+      let candidate = callInfoForHead(body)
+      if not candidate.found: return
+      if haveSelected and (candidate.info.explicitCount != selected.explicitCount or
+          candidate.info.termCount != selected.termCount or
+          candidate.info.requiresBrackets != selected.requiresBrackets or
+          candidate.info.firstExplicitType != selected.firstExplicitType):
+        return
+      selected = candidate.info
+      haveSelected = true
+    if haveSelected: return (true, selected)
+  else:
+    discard
+
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
 # and generates wrapper procs. Uses call syntax:
@@ -75,30 +126,9 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
   ## and unambiguous type arguments to distinguish legacy applications.
   if n.kind notin {nnkCall, nnkCommand} or n.len < 1:
     return
-  var info: LegacyCallInfo
-  var found = false
-  let callee = unwrapParens(n[0])
-  if callee.kind in {nnkIdent, nnkSym}:
-    let head = $callee
-    if head in scopedLegacyCallInfo:
-      info = scopedLegacyCallInfo[head]
-      found = true
-    elif head in legacyCallInfo:
-      info = legacyCallInfo[head]
-      found = true
-  elif callee.kind in {nnkCall, nnkCommand} and callee.len > 0:
-    let returnedHead = unwrapParens(callee[0])
-    if returnedHead.kind in {nnkIdent, nnkSym} and
-        $returnedHead in legacyResultCallInfo:
-      info = legacyResultCallInfo[$returnedHead]
-      found = true
-  elif callee.kind == nnkDotExpr and callee.len == 2 and
-      callee[1].kind in {nnkIdent, nnkSym}:
-    let field = $callee[1]
-    if field in legacyFieldCallInfo and field notin ambiguousLegacyFieldNames:
-      info = legacyFieldCallInfo[field]
-      found = true
-  if not found: return
+  let resolved = callInfoForHead(n[0])
+  if not resolved.found: return
+  let info = resolved.info
   let supplied = n.len - 1
   if info.explicitCount == 0: return
   if not info.requiresBrackets and supplied <= info.termCount and
@@ -584,6 +614,10 @@ proc nimExprToEponym(n: NimNode): string =
       let (nm, ty, vl) = lets[i]
       res = "let " & nm & ty & " = " & vl & " in " & res
     res
+  of nnkStmtListExpr:
+    if n.len != 1:
+      error("eponymBlock: expression block must contain one expression", n)
+    nimExprToEponym(n[0])
   of nnkObjConstr:
     # Pi(...)/Sig(...) type expressions in body position: Nim parses
     # them as object constructors, not calls. They are types, so route
@@ -631,7 +665,10 @@ proc nimExprToEponym(n: NimNode): string =
   of nnkBracketExpr:
     if n.len < 2:
       error("eponymBlock: bracket application needs explicit arguments", n)
-    var parts = @[nimExprToEponym(n[0])]
+    let head = nimExprToEponym(n[0])
+    var parts = @[if n[0].kind in {nnkIfExpr, nnkIfStmt, nnkStmtListExpr}:
+                    "(" & head & ")"
+                  else: head]
     for i in 1 ..< n.len:
       let arg = n[i]
       let value = nimExprToEponym(arg)

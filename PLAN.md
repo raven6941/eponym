@@ -1198,9 +1198,13 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   Callback-parameter and returned-function-alias fixtures cover bracket and
   legacy forms without leaking signatures between procedures; local shadowing
   also replaces stale callback metadata.
+- [x] Follow callable signatures through conditional expression callees
+  (including Nim's `StmtListExpr` wrapper). A compile-fail fixture verifies
+  that a conditional selecting a returned function cannot hide legacy
+  explicit arguments.
 - [ ] Audit further AST wrappers around callees beyond parenthesized
-  projections, type-family calls, immediate call results, local aliases, and
-  callback parameters.
+  projections, type-family calls, immediate call results, local aliases,
+  callback parameters, and conditional expressions.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.

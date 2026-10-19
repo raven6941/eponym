@@ -31,6 +31,7 @@ for fixture in [
     "tests/fixtures/embedded_err_legacy_parenthesized_type_family.nim",
     "tests/fixtures/embedded_err_legacy_higher_order_result_application.nim",
     "tests/fixtures/embedded_err_legacy_higher_order_alias_application.nim",
+    "tests/fixtures/embedded_err_legacy_conditional_higher_order_application.nim",
     "tests/fixtures/embedded_err_legacy_imported_result_application.nim",
     "tests/fixtures/embedded_err_legacy_callback_param_application.nim",
     "tests/fixtures/embedded_err_legacy_command_application.nim"]:
