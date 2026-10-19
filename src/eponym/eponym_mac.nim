@@ -667,6 +667,10 @@ proc blockToEponym*(body: NimNode): string =
         # constructor names.
         if st.len != 2 or st[1].kind != nnkIdent:
           error("runtimeVector expects (VecFamily)", st)
+      elif head == "runtimeList":
+        # Structural runtime codec for a List family with canonical nil/cons.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("runtimeList expects (ListFamily)", st)
       elif head == "runtimeValue":
         # Request a raw Eponym Value wrapper for a checked definition,
         # typically for a host interpreter of reified data.
@@ -700,6 +704,7 @@ type HostRuntimeType = object
   eponymName: string
   nimType: NimNode
   isRuntimeVector: bool
+  isRuntimeList: bool
 
 proc mentionsName(node: NimNode, name: string): bool
 
@@ -762,19 +767,22 @@ proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
   var seen = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
-        $st[0] in ["runtimeType", "runtimeVector"]:
+        $st[0] in ["runtimeType", "runtimeVector", "runtimeList"]:
       let isVector = $st[0] == "runtimeVector"
-      if (isVector and (st.len != 2 or st[1].kind != nnkIdent)) or
-          (not isVector and (st.len != 3 or st[1].kind != nnkIdent)):
-        error(if isVector: "runtimeVector expects (VecFamily)" else:
-          "runtimeType expects (EponymType, NimType)", st)
+      let isList = $st[0] == "runtimeList"
+      if ((isVector or isList) and (st.len != 2 or st[1].kind != nnkIdent)) or
+          (not isVector and not isList and
+            (st.len != 3 or st[1].kind != nnkIdent)):
+        error(if isVector: "runtimeVector expects (VecFamily)"
+          elif isList: "runtimeList expects (ListFamily)"
+          else: "runtimeType expects (EponymType, NimType)", st)
       let name = $st[1]
       if name in seen:
         error("duplicate runtime type mapping for '" & name & "'", st)
       seen.incl(name)
       result.add(HostRuntimeType(eponymName: name,
-        nimType: if isVector: ident"seq" else: st[2],
-        isRuntimeVector: isVector))
+        nimType: if isVector or isList: ident"seq" else: st[2],
+        isRuntimeVector: isVector, isRuntimeList: isList))
 
 proc validateHostBoolCodec(globals: Globals) =
   if "Bool" notin globals:
@@ -890,6 +898,12 @@ proc runtimeVectorComponents(n: NimNode, familyName: string):
     return
   (n[1], n[2])
 
+proc runtimeListElementType(n: NimNode, familyName: string): NimNode =
+  if n.kind notin {nnkCall, nnkObjConstr, nnkBracketExpr} or n.len != 2 or
+      n[0].kind != nnkIdent or $n[0] != familyName:
+    return nil
+  n[1]
+
 proc runtimeNatIndexExpr(n: NimNode): NimNode =
   ## Lower the supported Nat index expressions to checked Nim int arithmetic.
   if n.kind in {nnkIdent, nnkSym}:
@@ -978,6 +992,13 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
         if runtimeNatIndexExpr(vector.length).isNil: return nil
         let elementType = runtimeNimType(vector.elementType, mappings,
           records, allowDependentSigma)
+        if elementType.isNil: return nil
+        return newTree(nnkBracketExpr, ident"seq", elementType)
+    elif mapping.isRuntimeList:
+      let listElement = runtimeListElementType(n, mapping.eponymName)
+      if not listElement.isNil:
+        let elementType = runtimeNimType(listElement, mappings, records,
+          allowDependentSigma)
         if elementType.isNil: return nil
         return newTree(nnkBracketExpr, ident"seq", elementType)
   let sigma = runtimeSigmaComponents(n, allowDependentSigma)
@@ -1140,6 +1161,35 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           body = newStmtList(decodedItem))
         return newCall(bindSym"vecValueToSeq", value, expectedLength,
           globals, newLit(mapping.eponymName), decoder)
+    elif mapping.isRuntimeList:
+      let elementType = runtimeListElementType(eponymType, mapping.eponymName)
+      if not elementType.isNil:
+        let elementNimType = runtimeNimType(elementType, mappings, records,
+          allowDependentSigma)
+        if elementNimType.isNil: return nil
+        let itemSym = genSym(nskParam, "runtimeListItem")
+        let codecGlobalsSym = genSym(nskParam, "runtimeListGlobals")
+        if toValue:
+          let encodedItem = runtimeValueConversionExpr(elementType,
+            elementNimType, itemSym, true, mappings, records,
+            codecGlobalsSym, allowDependentSigma, indexOverrides)
+          if encodedItem.isNil: return nil
+          let encoder = newProc(params = @[bindSym"Value",
+            newIdentDefs(itemSym, elementNimType, newEmptyNode()),
+            newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
+            body = newStmtList(encodedItem))
+          return newCall(bindSym"seqToListValue", value, globals,
+            newLit(mapping.eponymName), encoder)
+        let decodedItem = runtimeValueConversionExpr(elementType,
+          elementNimType, itemSym, false, mappings, records,
+          codecGlobalsSym, allowDependentSigma, indexOverrides)
+        if decodedItem.isNil: return nil
+        let decoder = newProc(params = @[elementNimType,
+          newIdentDefs(itemSym, bindSym"Value", newEmptyNode()),
+          newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
+          body = newStmtList(decodedItem))
+        return newCall(bindSym"listValueToSeq", value, globals,
+          newLit(mapping.eponymName), decoder)
   let sigma = runtimeSigmaComponents(eponymType, allowDependentSigma)
   if not sigma.first.isNil:
     if nimType.kind notin {nnkTupleConstr, nnkTupleTy} or nimType.len != 2:
@@ -1779,7 +1829,8 @@ macro eponymBlock*(body: untyped): untyped =
       error("runtimeRecordTrusted names no record: " & requested, body)
     var hasRuntimeMapping = false
     for mapping in runtimeTypes:
-      if mapping.eponymName == requested and not mapping.isRuntimeVector:
+      if mapping.eponymName == requested and not mapping.isRuntimeVector and
+          not mapping.isRuntimeList:
         hasRuntimeMapping = true
     if not hasRuntimeMapping:
       error("runtimeRecordTrusted requires runtimeType(" & requested & ", NimType)",
@@ -1813,6 +1864,8 @@ macro eponymBlock*(body: untyped): untyped =
     try:
       if mapping.isRuntimeVector:
         validateHostVectorCodec(checkedGlobals, mapping.eponymName)
+      elif mapping.isRuntimeList:
+        validateHostListCodec(checkedGlobals, mapping.eponymName)
       else:
         let recordIndex = findHostRecord(records, mapping.eponymName)
         if recordIndex >= 0:

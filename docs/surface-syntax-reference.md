@@ -149,6 +149,21 @@ expressions support a static Nat index, `zero`, `suc`,
 `add`, and `mul`. The codec requires the canonical `nil` and `cons` shape from
 `lib/vec.ep`; other indexed data families need their own codecs.
 
+The standard unindexed `List[A]` family has a matching sequence codec:
+
+```nim
+eponymBlock:
+  import "lib/list.ep"
+  runtimeList(List)
+  proc keepList[A: Univ](values: List[A]): List[A] = values
+
+doAssert keepList[int](@[2, 3, 5]) == @[2, 3, 5]
+```
+
+List elements use their recursive codecs, and runtime values must have the
+checked `nil`/`cons` constructor shape. Other payload-bearing data families
+need their own codec.
+
 For a postulate with one to three arguments and a non-dependent pair result,
 `bindPostulatePair` lets a Nim callback return a typed tuple. The macro checks
 the declared argument and pair field type heads and builds the runtime pair:
