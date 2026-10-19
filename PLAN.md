@@ -1144,6 +1144,9 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [x] Migrate the dependent-index example's family applications and constructors
   to brackets, including zero-argument bracket calls nested inside a dependent
   index. Fix the type converter to preserve the nested application boundary.
+- [x] Migrate the deforestation and map-fusion example's generic calls and
+  `Eq`/`List` type applications to square brackets; its checked laws still
+  elaborate and the example runs.
 - [ ] Migrate the remaining warning-producing embedded examples and tests,
   then remove the legacy parser/lowering path.
 - [ ] Remove the legacy call-style parser/lowering path and update examples,
