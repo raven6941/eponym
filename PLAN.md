@@ -271,9 +271,12 @@ implementations.
    evaluation. Separate structural codecs (which translate data that
    Eponym inspects) from opaque handles (which Eponym only passes to a
    postulate and receives back). The current opaque mappings are restricted to
-   named postulated Eponym types. Structural runtime codecs support
-   non-dependent two-field Sigma tuples and named records represented as
-   mapped Nim objects. Dependent structures remain future work.
+   named postulated Eponym types. Structural runtime codecs support primitive
+   values, Bool and nullary enums, opaque mapped types, standard `List` and
+   indexed `Vec` sequences, two-field Sigma tuples, and named records
+   represented as mapped Nim objects. Dependent records and pairs have
+   explicit trusted opt-ins; the remaining dependent runtime forms stay open
+   under stage B.
 - [x] Specify supported ownership, aliasing, exception, async, and lifetime
    behavior. QTT linearity is limited to checked Eponym terms; boxed Nim refs
    and closures may alias or be retained. Adapters pass values by value, have
@@ -402,6 +405,12 @@ implementations.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
+   Current support includes checked Nim wrappers for supported generic
+   definitions, `runtimeValue` access to checked results, callback values with
+   recursive codecs, and explicit trusted opt-ins for dependent records and
+   pairs. The remaining gap is a general reusable descriptor mechanism and
+   codec coverage beyond the built-in forms below; unsupported cases must
+   continue to fail with a precise compile-time diagnostic.
    Definitions without a matching explicit Nim `proc` declaration still
    retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`
    declarations with unsupported signatures fail clearly when called.

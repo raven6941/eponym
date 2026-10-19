@@ -49,11 +49,11 @@ show a few useful patterns:
   [shed walkthrough](examples/embedded/sheds_walkthrough.nim).
 
 Most examples show compile-time checking of Eponym models. The runtime bridge
-generates fixed-arity wrappers for first-order `Int`, `Nat`, and explicitly
-mapped opaque postulated types. The new session runtime demo connects checked
-roles to Nim adapters, and `paxos_session.nim` runs its checked proposer and
-acceptor through bound TCP adapters. The borrowing and optimization examples
-still have separate hand-written drivers. The
+generates typed wrappers when each argument and result has a supported
+runtime codec, including primitive values, mapped opaque types, collections,
+records, and supported generic signatures. Session and Paxos examples run
+their checked roles through bound Nim adapters. The borrowing and optimization
+examples still rely on trusted host-side operations. The
 [support table](docs/known-limitations.md#what-each-layer-establishes)
 classifies what each example checks, what Nim validates, and what remains
 trusted or disconnected.

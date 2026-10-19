@@ -130,10 +130,12 @@ as generated wrappers. A 200-case property covers multi-argument callbacks
 with primitive and mapped opaque values in both directions. Returned callback
 types must use Nim's `{.closure.}` calling convention. Callback effects and
 behavior remain trusted host semantics.
-Structural codecs for collections beyond `Vec`, non-dependent two-field `Sig`
-tuples, and named non-dependent records remain unsupported. Other
-payload-bearing data constructors, dependent records, non-Nat value-indexed
-generic signatures, and structural inspection of closures are also unsupported.
+Structural codecs are currently limited to `Vec`, `List`, two-field `Sig`
+tuples, and named records. Records with dependent fields
+and dependent `Sig` results are available only through their explicit trusted
+opt-ins described above. Other payload-bearing data constructors,
+non-Nat value-indexed generic signatures without a supported runtime mapping,
+and structural inspection of closures are unsupported.
 The session runtime demo includes a hand-written Nat LEB128 message codec, and
 the TCP adapter demo uses it over a loopback socket, but there is no general
 structural codec framework.
@@ -276,9 +278,11 @@ file. Clean-install resolution is covered by a separate-project test. See
 
 The embedded syntax is Nim-shaped but is not ordinary Nim semantics. Explicit
 Eponym parameters can use Nim square brackets, as in `Vec[A, n]` and
-`cons[A, n](x, xs)`; legacy call-style forms remain accepted. Generic Eponym
-definitions can be checked, but the generated Nim runtime wrapper for a
-generic definition is not implemented yet.
+`cons[A, n](x, xs)`; legacy call-style forms remain accepted. Supported
+generic definitions have generated Nim wrappers for type parameters, Nat and
+Int indices, Bool indices, and values with explicit runtime mappings. Other
+value-indexed binders and unsupported argument/result codecs still lack
+wrappers and produce compile-time diagnostics when explicitly requested.
 
 Pure `if`/`elif`/`else` expressions lower to nested checked `ifThenElse`
 calls when `lib/bool.ep` is imported. Each condition must have type `Bool`,
