@@ -98,6 +98,11 @@ proc decodeRuntimeHandle(value: Value, globals: Globals): ChannelHandle =
   let id = valueToInt(variant.arguments[0])
   ChannelHandle(id: id, label: "decoded-" & $id)
 
+proc decodedRuntimeHandles(values: openArray[ChannelHandle]):
+    seq[ChannelHandle] =
+  for value in values:
+    result.add(ChannelHandle(id: value.id, label: "decoded-" & $value.id))
+
 proc decodeTrackingRuntimeHandle(value: Value,
                                  globals: Globals): ChannelHandle =
   inc runtimeHandleDecodeCalls
@@ -294,8 +299,10 @@ eponymBlock:
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
+  import "../lib/option.ep"
   runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
     decodeRuntimeHandle)
+  runtimeOption(Option)
   runtimeType(RuntimeOpaqueToken, ChannelHandle)
   runtimeType(RuntimeOtherToken, ChannelHandle)
   runtimeType(RuntimeIndexedToken, ChannelHandle)
@@ -307,12 +314,35 @@ eponymBlock:
   runtimeValue(treeIdentity)
   runtimeValue(decisionIdentity)
   runtimeValue(handleEnvelopeIdentity)
+  proc generatedRuntimeHandleOptionIdentity(
+      value: Option[RuntimeHandle]): Option[RuntimeHandle] = value
+  runtimeValue(generatedRuntimeHandleOptionIdentity)
   proc generatedSizedTreeRawIdentity(length: Nat,
       tree: SizedTree[length]): SizedTree[length] = tree
   runtimeValue(generatedSizedTreeRawIdentity)
   proc genericIndexedTreeProjection[length: Nat,
       tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
   runtimeValue(genericIndexedTreeProjection)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  import "../lib/vec.ep"
+  runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
+    decodeRuntimeHandle)
+  runtimeVector(Vec)
+  proc generatedRuntimeHandleVectorIdentity(length: Nat,
+      values: Vec[RuntimeHandle, length]): Vec[RuntimeHandle, length] = values
+  runtimeValue(generatedRuntimeHandleVectorIdentity)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  import "../lib/list.ep"
+  runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
+    decodeRuntimeHandle)
+  runtimeList(List)
+  proc generatedRuntimeHandleListIdentity(
+      values: List[RuntimeHandle]): List[RuntimeHandle] = values
+  runtimeValue(generatedRuntimeHandleListIdentity)
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
@@ -2425,6 +2455,73 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded == value and rawDecoded == value and primitiveDecoded == value,
     )
   if not optionCodecCases:
+    quit(1)
+  let customCodecOptionCases = forAll(
+    "runtimeOption recursively applies a custom runtimeCodec", r, 200,
+    proc(r: var Rng): tuple[present: bool, id: int] =
+      (r.genBool(), r.genInt(-1000, 1000)),
+    proc(input: tuple[present: bool, id: int]): bool =
+      let payload = ChannelHandle(id: input.id, label: "option/" & $input.id)
+      let host = if input.present: some(payload) else: none(ChannelHandle)
+      let expected = if input.present:
+        some(ChannelHandle(id: input.id, label: "decoded-" & $input.id))
+      else:
+        none(ChannelHandle)
+      let wrapperResult = generatedRuntimeHandleOptionIdentity(host)
+      let runtime = generatedRuntimeHandleOptionIdentityRuntimeValue(host)
+      let rawRuntime = generatedRuntimeHandleOptionIdentityRuntimeValue(
+        [runtime.value])
+      let decoded = valueToOption[ChannelHandle](runtime.value,
+        runtime.globals, "Option", decodeRuntimeHandle)
+      let rawDecoded = valueToOption[ChannelHandle](rawRuntime.value,
+        rawRuntime.globals, "Option", decodeRuntimeHandle)
+      wrapperResult == expected and decoded == expected and
+        rawDecoded == expected)
+  if not customCodecOptionCases:
+    quit(1)
+  let customCodecVectorCases = forAll(
+    "runtimeVector recursively applies a custom runtimeCodec", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var host: seq[ChannelHandle] = @[]
+      for i in 0 ..< input.length:
+        host.add(ChannelHandle(id: input.seed + i, label: $i))
+      let expected = decodedRuntimeHandles(host)
+      let wrapper = generatedRuntimeHandleVectorIdentity(input.length, host)
+      let runtime = generatedRuntimeHandleVectorIdentityRuntimeValue(
+        input.length, host)
+      let decoded = vecValueToSeq[ChannelHandle](runtime.value, input.length,
+        runtime.globals, "Vec", decodeRuntimeHandle)
+      let rawVector = seqToVecValue(host, input.length, runtime.globals, "Vec",
+        encodeRuntimeHandle)
+      let rawRuntime = generatedRuntimeHandleVectorIdentityRuntimeValue(
+        [natToValue(input.length, runtime.globals), rawVector])
+      let rawDecoded = vecValueToSeq[ChannelHandle](rawRuntime.value,
+        input.length, rawRuntime.globals, "Vec", decodeRuntimeHandle)
+      wrapper == expected and decoded == expected and rawDecoded == expected)
+  if not customCodecVectorCases:
+    quit(1)
+  let customCodecListCases = forAll(
+    "runtimeList recursively applies a custom runtimeCodec", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var host: seq[ChannelHandle] = @[]
+      for i in 0 ..< input.length:
+        host.add(ChannelHandle(id: input.seed + i, label: $i))
+      let expected = decodedRuntimeHandles(host)
+      let wrapper = generatedRuntimeHandleListIdentity(host)
+      let runtime = generatedRuntimeHandleListIdentityRuntimeValue(host)
+      let decoded = listValueToSeq[ChannelHandle](runtime.value,
+        runtime.globals, "List", decodeRuntimeHandle)
+      let rawList = seqToListValue(host, runtime.globals, "List",
+        encodeRuntimeHandle)
+      let rawRuntime = generatedRuntimeHandleListIdentityRuntimeValue([rawList])
+      let rawDecoded = listValueToSeq[ChannelHandle](rawRuntime.value,
+        rawRuntime.globals, "List", decodeRuntimeHandle)
+      wrapper == expected and decoded == expected and rawDecoded == expected)
+  if not customCodecListCases:
     quit(1)
   let optionGlobals = generatedPrimitiveOptionIdentityRuntimeValue(
     none(int)).globals

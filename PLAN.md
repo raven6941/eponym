@@ -396,7 +396,9 @@ implementations.
    each runtime `cons` tail index are checked, and elements recurse through
    their runtime codecs, including nested `Vec` values. A 200-case property
    covers primitive and opaque elements, empty vectors, length mismatches, and
-   nested vectors through typed and raw `runtimeValue` interfaces. Preserve
+   nested vectors through typed and raw `runtimeValue` interfaces. Custom
+   `runtimeCodec` leaves are also property-tested inside Vec values through
+   generated wrappers and typed/raw `RuntimeValue` paths. Preserve
    grouping for nested bracketed type and term applications in the Nim AST
    translator; a nested-vector type exposed a precedence bug in that path.
 - [x] Add `runtimeRecordTrusted(Record)` for mapped records with dependent
@@ -408,12 +410,16 @@ implementations.
    It maps recursively codec-supported elements to `seq[A]` and validates
    `nil`/`cons` constructor identities and application spines. A 200-case
    property covers primitive and opaque elements, empty lists, and typed/raw
-   `runtimeValue` paths.
+   `runtimeValue` paths. Custom `runtimeCodec` leaves are also property-tested
+   inside List values through generated wrappers and typed/raw `RuntimeValue`
+   paths.
 - [x] Add `runtimeOption(Option)` for a unary Option family with canonical
    `none` and `some` constructors. It maps `Option[A]` to `std/options.Option[A]`
    and recursively encodes the payload. A 200-case property covers `none`,
    `some`, primitive and opaque generic payloads, nested options, and typed/raw
-   `runtimeValue` paths.
+   `runtimeValue` paths. Custom `runtimeCodec` leaves are also property-tested
+   inside `Option` values through generated wrappers and typed/raw `RuntimeValue`
+   paths.
 - [x] Add `runtimeCodec(EponymType, NimType, encoder, decoder)` for explicitly
    mapped named Eponym types and families. The typed encoder and decoder
    receive the module's `Globals`; generated wrappers and typed postulate

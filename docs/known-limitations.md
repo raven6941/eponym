@@ -189,7 +189,9 @@ The standard unindexed `List[A]` family also has a `runtimeList(List)` codec
 that maps to `seq[A]`, checks constructor identities and spines, and recursively
 uses the element codec. A unary family with canonical `none` and `some`
 constructors can opt into `runtimeOption(Option)`, which maps recursively
-codec-supported payloads to `std/options.Option[A]`. Other collections and
+codec-supported payloads to `std/options.Option[A]`. Custom `runtimeCodec`
+leaves are property-tested through all three codecs, including generated
+wrappers and typed and raw `RuntimeValue` calls. Other collections and
 payload-bearing data types need an explicit codec when no built-in mapping is
 available.
 A mapped `Future[T]` can pass through an opaque postulate adapter as either an
