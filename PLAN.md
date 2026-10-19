@@ -334,6 +334,12 @@ implementations.
    Eponym signature is preserved, while matching a host field to its index
    remains explicitly trusted. A 200-case indexed-family property exercises
    this path; the ordinary pair adapter still rejects the same shape.
+- [x] Generate typed wrappers for dependent Sigma results only when the
+   definition opts in with `runtimePairTrusted(definition)`. The fields use
+   their recursive runtime codecs, and the host relationship between values
+   and dependent indices remains explicitly trusted. A 200-case indexed
+   family property covers the generated wrapper; an unmarked dependent
+   signature remains a compile-time error.
 - [x] Generate typed host-argument overloads for `runtimeValue(name)` when a
    non-generic definition's parameter types have runtime codecs. Nim checks
    the concrete mapped argument types; the result remains a runtime `Value`,
