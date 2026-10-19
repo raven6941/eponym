@@ -24,6 +24,7 @@ template rawValue* {.pragma.}
 type LegacyCallInfo = object
   explicitCount: int
   termCount: int
+  leadingTermCount: int
   requiresBrackets: bool
   firstExplicitType: bool
 
@@ -67,6 +68,25 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
       if returnedHead.kind in {nnkIdent, nnkSym} and
           $returnedHead in legacyResultCallInfo:
         return (true, legacyResultCallInfo[$returnedHead])
+      if returnedHead.kind in {nnkIdent, nnkSym} and
+          $returnedHead in scopedLegacyCallInfo:
+        var remaining = scopedLegacyCallInfo[$returnedHead]
+        let supplied = head.len - 1
+        remaining.termCount = max(0, remaining.termCount - supplied)
+        remaining.leadingTermCount =
+          max(0, remaining.leadingTermCount - supplied)
+        if remaining.explicitCount > 0: return (true, remaining)
+      if returnedHead.kind == nnkDotExpr and returnedHead.len == 2 and
+          returnedHead[1].kind in {nnkIdent, nnkSym}:
+        let field = $returnedHead[1]
+        if field in legacyFieldCallInfo and
+            field notin ambiguousLegacyFieldNames:
+          var remaining = legacyFieldCallInfo[field]
+          let supplied = head.len - 1
+          remaining.termCount = max(0, remaining.termCount - supplied)
+          remaining.leadingTermCount =
+            max(0, remaining.leadingTermCount - supplied)
+          if remaining.explicitCount > 0: return (true, remaining)
   of nnkDotExpr:
     if head.len == 2 and head[1].kind in {nnkIdent, nnkSym}:
       let field = $head[1]
@@ -97,6 +117,7 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
       if not candidate.found: return
       if haveSelected and (candidate.info.explicitCount != selected.explicitCount or
           candidate.info.termCount != selected.termCount or
+          candidate.info.leadingTermCount != selected.leadingTermCount or
           candidate.info.requiresBrackets != selected.requiresBrackets or
           candidate.info.firstExplicitType != selected.firstExplicitType):
         return
@@ -154,6 +175,8 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
     supplied = flattened.len
     if flattened.len > 0: firstArg = flattened[0]
   if info.explicitCount == 0: return
+  if info.requiresBrackets and supplied <= info.leadingTermCount:
+    return
   if not info.requiresBrackets and supplied <= info.termCount and
       not (info.firstExplicitType and supplied > 0 and
         isLegacyTypeName(firstArg)):
@@ -255,6 +278,7 @@ proc surfaceCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
       if isType and not binder.impl: result.requiresBrackets = true
     elif not binder.impl:
       inc result.termCount
+      if result.explicitCount == 0: inc result.leadingTermCount
 
 proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
   var current = ty
@@ -266,6 +290,7 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
       if isType and not current.impl: result.requiresBrackets = true
     elif not current.impl:
       inc result.termCount
+      if result.explicitCount == 0: inc result.leadingTermCount
     current = current.c2
 
 proc surfaceFamilyCallInfo(params: seq[tuple[name: string, ty: PreTerm,
@@ -298,6 +323,7 @@ proc isSurfaceTypeFamily(ty: PreTerm): bool =
 proc nimGenericCallInfo(params, formal: NimNode): LegacyCallInfo =
   result.explicitCount = nimGenericParamCount(params)
   result.termCount = nimFormalArgCount(formal)
+  result.leadingTermCount = 0
   result.requiresBrackets = result.explicitCount > 0
   if result.explicitCount > 0 and params.len > 0 and
       params[0].kind == nnkIdentDefs:
@@ -314,12 +340,15 @@ proc nimBinderIsUniverse(binder: NimNode): bool =
 proc mergeCallInfo(a, b: LegacyCallInfo): LegacyCallInfo =
   result.explicitCount = a.explicitCount + b.explicitCount
   result.termCount = a.termCount + b.termCount
+  result.leadingTermCount = if a.explicitCount > 0: a.leadingTermCount
+    else: a.termCount + b.leadingTermCount
   result.requiresBrackets = a.requiresBrackets or b.requiresBrackets
   result.firstExplicitType = if a.explicitCount > 0: a.firstExplicitType
     else: b.firstExplicitType
 
 proc sameCallInfo(a, b: LegacyCallInfo): bool =
   a.explicitCount == b.explicitCount and a.termCount == b.termCount and
+    a.leadingTermCount == b.leadingTermCount and
     a.requiresBrackets == b.requiresBrackets and
     a.firstExplicitType == b.firstExplicitType
 

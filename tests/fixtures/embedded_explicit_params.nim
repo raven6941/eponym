@@ -17,6 +17,7 @@ eponymBlock:
   record(OrdinaryIdentityField):
     field(identity, Nat -> Nat)
 
+
   proc localLegacyConstructor(): Protocol = protocolSend[Nat](zero())
   proc localBracketConstructor(): Protocol = protocolSend[Nat](zero())
 
@@ -76,6 +77,10 @@ eponymBlock:
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =
     handler.identity(value)
+
+  proc bracketCallbackAfterTerm(
+      callback: Nat -> Pi(A: Univ, value: A, A), argument, value: Nat): Nat =
+    callback(argument)[Nat](value)
 
   proc legacyAppend(left, right: Vec[Nat, suc(zero())]):
       Vec[Nat, add(suc(zero()), suc(zero()))] =

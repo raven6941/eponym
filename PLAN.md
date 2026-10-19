@@ -1197,7 +1197,9 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   procedure scope, so callback applications cannot bypass the bracket guard.
   Callback-parameter and returned-function-alias fixtures cover bracket and
   legacy forms without leaking signatures between procedures; local shadowing
-  also replaces stale callback metadata.
+  also replaces stale callback metadata. Calls may consume leading term
+  arguments before reaching a later explicit binder; bracket-positive and
+  legacy-negative callback fixtures cover that partial application shape.
 - [x] Follow callable signatures through conditional expression callees
   (including Nim's `StmtListExpr` wrapper). A compile-fail fixture verifies
   that a conditional selecting a returned function cannot hide legacy
