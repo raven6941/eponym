@@ -807,6 +807,9 @@ proc vType*(lvl: int): Value =
   Value(syn: tmType(lvl), whnf: Whnf(kind: wType, lvl: lvl))
 proc vOne(): Value =
   Value(syn: tOne(), whnf: Whnf(kind: wConst, c: cOne))
+proc vUnit*(): Value =
+  ## Runtime inhabitant of the Eponym unit type `1`.
+  Value(syn: tTt(), whnf: Whnf(kind: wConst, c: cVoid))
 
 proc vInt*(n: int): Value =
   Value(syn: tmInt(n), whnf: Whnf(kind: wInt, intVal: n))

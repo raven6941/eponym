@@ -117,6 +117,9 @@ proc hostInvokeFutureCallback(callback: proc(channel: ChannelHandle):
     Future[int] {.closure.}, channel: ChannelHandle): Future[int] =
   callback(channel)
 
+proc hostInvokeVoidCallback(callback: proc(value: int) {.closure.},
+                            value: int) = callback(value)
+
 proc hostIncrementRuntimeHandles(length: int,
     values: seq[ChannelHandle]): seq[ChannelHandle] =
   result = values
@@ -798,6 +801,17 @@ eponymBlock:
       callback: proc(channel: Channel): PendingResult {.closure.},
       channel: Channel): PendingResult = invokeFutureCallback(callback, channel)
   runtimeValue(generatedInvokeFutureCallback)
+
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(invokeVoidCallback,
+    Pi(callback: proc(value: Int) {.closure.}, value: Int, unitTy))
+  bindPostulate(invokeVoidCallback, hostInvokeVoidCallback,
+    proc(value: Int) {.closure.}, Int, unitTy)
+  proc generatedInvokeVoidCallback(callback: proc(value: Int) {.closure.},
+                                   value: Int): unitTy =
+    invokeVoidCallback(callback, value)
+  runtimeValue(generatedInvokeVoidCallback)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -2535,6 +2549,20 @@ proc callbackRole : Callback -> Sample -> Sample =
       generated == future and generated.read == input.channelId + input.offset and
         valueToHost[Future[int]](runtime.value) == future)
   if not futureCallbackCases:
+    quit(1)
+  let voidCallbackCases = forAll(
+    "typed callback adapters support Nim void callbacks", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      var seen: seq[int] = @[]
+      let callback: proc(value: int) {.closure.} =
+        proc(value: int) = seen.add(value)
+      generatedInvokeVoidCallback(callback, value)
+      let runtime = generatedInvokeVoidCallbackRuntimeValue(callback, value + 1)
+      validateRuntimeUnitValue(runtime.value)
+      seen == @[value, value + 1],
+    shrinkInt)
+  if not voidCallbackCases:
     quit(1)
   let importedBoundCallbackCases = forAll(
     "imported postulates invoke checked Nim callbacks", r, 200,

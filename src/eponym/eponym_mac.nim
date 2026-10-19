@@ -328,6 +328,8 @@ proc piSigToEponym(n: NimNode): string
 proc nimTypeToEponym(n: NimNode): string =
   ## Convert a Nim type AST to Eponym type string.
   case n.kind
+  of nnkEmpty:
+    "1" # Nim's omitted proc result type is Eponym unit.
   of nnkIdent:
     var s = $n
     # Map Nim-safe names to Eponym names (issue #144: same mapping as
@@ -336,6 +338,7 @@ proc nimTypeToEponym(n: NimNode): string =
     if s == "vecnil": s = "nil"
     if s == "unitv": s = "<>"   # issue #151: `<>` is not valid Nim syntax
     if s == "unitTy": s = "1"   # issue #151: the unit *type* (QTT)
+    if s == "void": s = "1"
     if s == "emptyTy": s = "O"  # issue #151: the empty type
     if s == "Univ": "Type 0" else: s
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
@@ -1429,6 +1432,8 @@ proc rawValueCallbackType(n: NimNode): NimNode =
 proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
                     records: seq[HostRecord],
                     allowDependentSigma = false): NimNode =
+  if n.kind == nnkEmpty or (n.kind == nnkIdent and $n in ["void", "unitTy"]):
+    return newEmptyNode()
   let procParts = runtimeProcParts(n)
   if not procParts.resultType.isNil:
     if not hasClosurePragma(n): return nil
@@ -1582,6 +1587,12 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                allowDependentSigma = false,
                                indexOverrides: seq[tuple[name: string,
                                  value: NimNode]] = @[]): NimNode =
+  if eponymType.kind == nnkEmpty or
+      (eponymType.kind == nnkIdent and $eponymType in ["void", "unitTy"]):
+    if toValue:
+      return newTree(nnkBlockExpr, newEmptyNode(), newStmtList(value,
+        newCall(bindSym"vUnit")))
+    return newCall(bindSym"validateRuntimeUnitValue", value)
   let procParts = runtimeProcParts(eponymType)
   if not procParts.resultType.isNil:
     let rawValueCallback = hasRawValuePragma(nimType)

@@ -232,7 +232,9 @@ callback, while macro expansion checks its full function signature; a property
 covers captured callbacks and a compile-error fixture rejects mismatched leaf
 types. Outer Pi indices also reach the callback codec: a host adapter can
 invoke a callback returning `Vec[Int, length]`, and the bridge rejects a
-wrong-length result.
+wrong-length result. A Nim callback with an omitted `void` result maps to
+Eponym unit; its side effects run at the host boundary and the checked result is
+validated as unit.
 Dynamic generic wrappers accept unmapped value-indexed binders as `Value`
 parameters; `nameRuntimeValueDynamic` returns the checked result and globals.
 This lets a caller pass an existing Eponym value, including a payload-bearing

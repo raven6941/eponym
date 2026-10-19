@@ -761,6 +761,10 @@ implementations.
    checked Eponym closures return as callable Nim closures. A 200-case property
    covers each direction, including a captured Nim callback; mismatched Nim
    callback signatures fail compilation.
+- [x] Map Nim callbacks with an omitted `void` result to Eponym's unit type.
+   A 200-case property passes a side-effecting callback through a typed
+   postulate adapter and verifies that the checked result is a valid unit value
+   through both generated and `RuntimeValue` wrappers.
 - [x] Verify that named noncapturing Nim procedures using the default
   `nimcall` convention can be passed to generated wrappers expecting closure
   proc types. A 200-case embedded callback property exercises the actual
