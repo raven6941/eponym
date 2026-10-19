@@ -1751,7 +1751,7 @@ proc genericTypeUsedByStructuredSignature(decl: NimNode, name: string,
         for mapping in mappings:
           if mapping.eponymName == $head and
               (mapping.isRuntimeVector or mapping.isRuntimeList or
-               mapping.isRuntimeOption):
+               mapping.isRuntimeOption or mapping.isRuntimeStructuredVariant):
             return true
       for child in current:
         pending.add(child)

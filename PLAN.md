@@ -620,12 +620,13 @@ implementations.
      `Option[int]` values and callbacks, including both `none` and `some`.
      Compile-time checking rejects a callback whose type does not match the
      inferred generic type. When a generic type appears under a mapped
-     structural family (`Vec`, `List`, or `Option`) in an imported callback
-     signature or a supported `Sig` tuple, the wrapper now carries the direct
-     mapped type witness into recursive callback codecs. Separate 200-case
-     properties cover a custom `runtimeCodec` value inside dependent Vec,
-     Option, List, and nondependent Sigma callbacks through generated and
-     typed `RuntimeValue` wrappers; the Vec index is checked.
+     structural family (`Vec`, `List`, `Option`, or a `runtimeDataVariant`)
+     in an imported callback signature or a supported `Sig` tuple, the wrapper
+     now carries the direct mapped type witness into recursive callback
+     codecs. Separate 200-case properties cover a custom `runtimeCodec` value
+     inside dependent Vec, Option, List, nondependent Sigma, and data-variant
+     callbacks through generated and typed `RuntimeValue` wrappers; the Vec
+     index is checked.
    - [x] Reconstruct typed wrappers for local clause-compiled definitions
      from their checked Pi signatures. A 200-case property calls a `Nat -> Nat`
      identity through its generated `int` wrapper. Runtime application helpers

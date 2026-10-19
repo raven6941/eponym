@@ -1,0 +1,8 @@
+import "runtime_variant.ep"
+
+data RuntimeBox (A : Type 0) : Type 0 where
+| runtimeBox (value : A) : RuntimeBox A
+
+proc importedGenericBoxCallbackApply (A : Type 0)
+    (callback : RuntimeBox A -> RuntimeBox A) (value : RuntimeBox A) :
+    RuntimeBox A = callback value

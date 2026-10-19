@@ -442,6 +442,13 @@ eponymBlock:
   runtimeValue(importedGenericListCallbackApply)
 
 eponymBlock:
+  import "fixtures/runtime_imported_generic_variant.ep"
+  runtimeDataVariant(RuntimeBox)
+  runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
+    decodeRuntimeHandle)
+  runtimeValue(importedGenericBoxCallbackApply)
+
+eponymBlock:
   postulate(Counter, Univ)
   postulate(incrementCounter, Counter -> Counter)
   postulate(inspectCounter, Counter -> Counter)
@@ -1317,6 +1324,10 @@ when isMainModule:
 
   let variantSrc = readFile(baseDir / "tests/fixtures/runtime_variant.ep")
   let variantGlobals = getGlobalsDir(baseDir, variantSrc)
+  let importedGenericVariantSrc = readFile(
+    baseDir / "tests/fixtures/runtime_imported_generic_variant.ep")
+  let importedGenericVariantGlobals = getGlobalsDir(
+    baseDir / "tests/fixtures", importedGenericVariantSrc)
   const runtimeTreeConstructors = ["treeEmpty", "treeNode"]
   let rawVariantCases = forAll(
     "generic structural codecs preserve payload-bearing data constructors",
@@ -1901,6 +1912,46 @@ when isMainModule:
         vecValueToSeq[int](runtime.value, 1, runtime.globals, "Vec",
           decodeRuntimeScalar) == @[value])
   if not importedGenericExplicitScalarMappingCases:
+    quit(1)
+  let importedGenericStructuredVariantCallbackCases = forAll(
+    "imported generic callbacks preserve data-variant leaf codecs", r, 200,
+    proc(r: var Rng): tuple[id, delta: int] =
+      (r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[id, delta: int]): bool =
+      let typeArgument = RuntimeStructuredValue(kind: rsvRaw,
+        rawValue: runtimeGlobalValue(importedGenericVariantGlobals,
+          "RuntimeHandle"))
+      let value = RuntimeStructuredVariant(constructor: "runtimeBox",
+        arguments: @[typeArgument,
+          runtimeStructuredOpaque(ChannelHandle(id: input.id,
+            label: "variant-input"))])
+      let expected = RuntimeStructuredVariant(constructor: "runtimeBox",
+        arguments: @[typeArgument,
+          runtimeStructuredOpaque(ChannelHandle(id: input.id + input.delta,
+            label: "decoded-" & $(input.id + input.delta)))])
+      let callback: proc(value: RuntimeStructuredVariant):
+          RuntimeStructuredVariant {.closure.} =
+        proc(value: RuntimeStructuredVariant): RuntimeStructuredVariant =
+          let handle = runtimeStructuredOpaqueAs[ChannelHandle](
+            value.arguments[1])
+          RuntimeStructuredVariant(constructor: "runtimeBox",
+            arguments: @[value.arguments[0], runtimeStructuredOpaque(
+              ChannelHandle(id: handle.id + input.delta,
+                label: handle.label & "/mapped"))])
+      let typed = importedGenericBoxCallbackApply[ChannelHandle](callback,
+        value)
+      let runtime = importedGenericBoxCallbackApplyRuntimeValue[ChannelHandle](
+        callback, value)
+      let decoded = valueToRuntimeStructuredVariant(runtime.value,
+        runtime.globals, "RuntimeBox", ["runtimeBox"],
+        [runtimeStructuredCustomCodec[ChannelHandle]("RuntimeHandle",
+          encodeRuntimeHandle, decodeRuntimeHandle)])
+      typed.constructor == expected.constructor and
+        runtimeStructuredOpaqueAs[ChannelHandle](typed.arguments[1]) ==
+          runtimeStructuredOpaqueAs[ChannelHandle](expected.arguments[1]) and
+        runtimeStructuredOpaqueAs[ChannelHandle](decoded.arguments[1]) ==
+          runtimeStructuredOpaqueAs[ChannelHandle](expected.arguments[1]))
+  if not importedGenericStructuredVariantCallbackCases:
     quit(1)
   let importedImplicitNatVecCases = forAll(
     "imported implicit Nat binders have static and dynamic Nim wrappers",
