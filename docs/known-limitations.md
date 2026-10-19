@@ -222,6 +222,9 @@ and cancellation remain Nim runtime behavior: Eponym does not observe or
 transform them. Future values can also be the result of a Nim callback passed
 through a typed postulate adapter; a property checks that the same Future
 object crosses generated and typed `RuntimeValue` calls without being awaited.
+The same opaque result can cross a callback supplied to a dynamic generic
+binder; a 200-case property checks that generated and `RuntimeValue` dynamic
+wrappers return the exact Future object unchanged.
 Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
 bodies. Nim proc types with supported leaf codecs also bridge to and from

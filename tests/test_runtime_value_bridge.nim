@@ -889,6 +889,10 @@ eponymBlock:
       callback: proc(channel: Channel): PendingResult {.closure.},
       channel: Channel): PendingResult = invokeFutureCallback(callback, channel)
   runtimeValue(generatedInvokeFutureCallback)
+  proc generatedApplyGenericFutureCallback[
+      callback: Pi(channel: Channel, PendingResult)](
+      channel: Channel): PendingResult = callback(channel)
+  runtimeValue(generatedApplyGenericFutureCallback)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -2959,6 +2963,26 @@ proc callbackRole : Callback -> Sample -> Sample =
       generated == future and generated.read == input.channelId + input.offset and
         valueToHost[Future[int]](runtime.value) == future)
   if not futureCallbackCases:
+    quit(1)
+  let genericFutureCallbackCases = forAll(
+    "generic Nim callbacks preserve opaque Future results", r, 200,
+    proc(r: var Rng): tuple[channelId, resultValue: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[channelId, resultValue: int]): bool =
+      let channel = ChannelHandle(id: input.channelId, label: "generic-future")
+      let future = newFuture[int]("genericFutureCallbackProperty")
+      future.complete(input.resultValue)
+      let callback: proc(channel: ChannelHandle): Future[int] {.closure.} =
+        proc(channel: ChannelHandle): Future[int] = future
+      let generated = generatedApplyGenericFutureCallbackDynamic(callback,
+        channel)
+      let runtime = generatedApplyGenericFutureCallbackRuntimeValueDynamic(
+        callback, channel)
+      let resultType = runtimeGlobalValue(runtime.globals, "PendingResult")
+      generated == future and generated.read == input.resultValue and
+        valueToHostAtRuntimeType[Future[int]](runtime.value, resultType,
+          runtime.globals) == future)
+  if not genericFutureCallbackCases:
     quit(1)
   let voidCallbackCases = forAll(
     "typed callback adapters support Nim void callbacks", r, 200,

@@ -531,8 +531,10 @@ implementations.
   type, and a compile-error fixture rejects a Nim `bool -> bool` callback
   where `Int -> Int` is required. A named noncapturing Nim `nimcall` callback
   also passes directly to the synthesized closure parameter in both dynamic
-  entry points. Dependent Pi expressions outside the supported named-binder/
-  runtime-type grammar remain unsupported.
+  entry points. A generic callback returning a mapped `Future[T]` also carries
+  the same Future object through generated and `RuntimeValue` dynamic wrappers
+  without awaiting it. Dependent Pi expressions outside the supported
+  named-binder/runtime-type grammar remain unsupported.
 - [x] Add `{.rawValue.}` callback proc types that pass callback arguments and
   results as Eponym `Value`s, without requiring codecs for the function's leaf
   types. The checked Eponym callback type remains explicit, and the Nim callback
