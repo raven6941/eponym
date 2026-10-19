@@ -442,7 +442,9 @@ implementations.
 - [x] Thread earlier named Pi arguments through typed `bindPostulate` codecs
    for later applied argument and result types. A 200-case property covers
    `Nat -> Vec[Int, length] -> Vec[Int, length]` through generated, typed
-   `RuntimeValue`, and raw `RuntimeValue` calls.
+   `RuntimeValue`, and raw `RuntimeValue` calls. A second 200-case property
+   covers custom `runtimeCodec` elements inside a dependent Vec postulate and
+   rejects mismatched lengths through all three entry paths.
 - [x] Permit `runtimeValue(importedDefinition)` when a checked definition
    comes from an imported `.ep` module and has no local Nim `proc` declaration.
    It exposes a raw `openArray[Value] -> (Value, Globals)` wrapper; typed Nim

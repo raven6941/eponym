@@ -109,6 +109,12 @@ proc hostIntOptionIdentity(value: Option[int]): Option[int] = value
 proc hostIndexedIntVectorIdentity(length: int,
     values: seq[int]): seq[int] = values
 
+proc hostIncrementRuntimeHandles(length: int,
+    values: seq[ChannelHandle]): seq[ChannelHandle] =
+  result = values
+  for value in result.mitems:
+    inc value.id
+
 proc decodedRuntimeHandles(values: openArray[ChannelHandle]):
     seq[ChannelHandle] =
   for value in values:
@@ -288,6 +294,23 @@ eponymBlock:
       values: Vec[Int, length]): Vec[Int, length] =
     indexedIntVectorIdentity(length, values)
   runtimeValue(generatedIndexedIntVectorIdentity)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  import "../lib/vec.ep"
+  runtimeVector(Vec)
+  runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
+    decodeRuntimeHandle)
+  postulate(indexedRuntimeHandleVectorAdapter,
+    Pi(length: Nat, values: Vec[RuntimeHandle, length],
+       Vec[RuntimeHandle, length]))
+  bindPostulate(indexedRuntimeHandleVectorAdapter,
+    hostIncrementRuntimeHandles, Nat, Vec[RuntimeHandle, length],
+    Vec[RuntimeHandle, length])
+  proc generatedIndexedRuntimeHandleVectorAdapter(length: Nat,
+      values: Vec[RuntimeHandle, length]): Vec[RuntimeHandle, length] =
+    indexedRuntimeHandleVectorAdapter(length, values)
+  runtimeValue(generatedIndexedRuntimeHandleVectorAdapter)
 
 eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
@@ -2582,6 +2605,55 @@ proc callbackRole : Callback -> Sample -> Sample =
         vecValueToSeq[int](raw.value, input.length, raw.globals, "Vec",
           proc(value: Value, globals: Globals): int = valueToInt(value)) == values)
   if not dependentPostulateCodecCases:
+    quit(1)
+  let dependentOpaquePostulateCodecCases = forAll(
+    "dependent postulate codecs preserve opaque Vec element mappings", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var values: seq[ChannelHandle] = @[]
+      var expected: seq[ChannelHandle] = @[]
+      for i in 0 ..< input.length:
+        values.add(ChannelHandle(id: input.seed + i, label: "input/" & $i))
+        expected.add(ChannelHandle(id: input.seed + i + 1,
+          label: "decoded-" & $(input.seed + i + 1)))
+      let typed = generatedIndexedRuntimeHandleVectorAdapter(
+        input.length, values)
+      let runtime = generatedIndexedRuntimeHandleVectorAdapterRuntimeValue(
+        input.length, values)
+      let rawVector = seqToVecValue(values, input.length, runtime.globals,
+        "Vec", encodeRuntimeHandle)
+      let raw = generatedIndexedRuntimeHandleVectorAdapterRuntimeValue([
+        natToValue(input.length, runtime.globals), rawVector])
+      var wrongTypedRejected = false
+      var wrongRuntimeRejected = false
+      var wrongRawRejected = false
+      try:
+        discard generatedIndexedRuntimeHandleVectorAdapter(input.length,
+          values & @[ChannelHandle(id: input.seed, label: "extra")])
+      except ValueError:
+        wrongTypedRejected = true
+      try:
+        discard generatedIndexedRuntimeHandleVectorAdapterRuntimeValue(
+          input.length, values & @[ChannelHandle(id: input.seed, label: "extra")])
+      except ValueError:
+        wrongRuntimeRejected = true
+      let wrongValues = values & @[
+        ChannelHandle(id: input.seed, label: "extra")]
+      let wrongRawVector = seqToVecValue(wrongValues, wrongValues.len,
+        runtime.globals, "Vec", encodeRuntimeHandle)
+      try:
+        discard generatedIndexedRuntimeHandleVectorAdapterRuntimeValue([
+          natToValue(input.length, runtime.globals), wrongRawVector])
+      except ValueError:
+        wrongRawRejected = true
+      typed == expected and wrongTypedRejected and wrongRuntimeRejected and
+        wrongRawRejected and
+        vecValueToSeq[ChannelHandle](runtime.value, input.length,
+          runtime.globals, "Vec", decodeRuntimeHandle) == expected and
+        vecValueToSeq[ChannelHandle](raw.value, input.length,
+          raw.globals, "Vec", decodeRuntimeHandle) == expected)
+  if not dependentOpaquePostulateCodecCases:
     quit(1)
   let customCodecOptionCases = forAll(
     "runtimeOption recursively applies a custom runtimeCodec", r, 200,
