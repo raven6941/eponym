@@ -70,7 +70,9 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
     return
   var info: LegacyCallInfo
   var found = false
-  let callee = n[0]
+  var callee = n[0]
+  while callee.kind == nnkPar and callee.len == 1:
+    callee = callee[0]
   if callee.kind in {nnkIdent, nnkSym}:
     let head = $callee
     if head in legacyCallInfo:
@@ -342,6 +344,13 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
               registerLegacyInfo($constructor[0], explicitCount,
                 nimFormalArgCount(constructor[3]) - typeCount,
                 explicitCount > 0, firstType)
+      elif head == "record" and statement.len == 3 and
+          statement[2].kind == nnkStmtList:
+        for field in statement[2]:
+          if field.kind == nnkCall and field.len == 3 and
+              field[0].kind in {nnkIdent, nnkSym} and $field[0] == "field" and
+              field[1].kind in {nnkIdent, nnkSym}:
+            registerLegacyFieldInfo($field[1], nimTypeCallInfo(field[2]))
     of nnkImportStmt:
       for imported in statement:
         if imported.kind != nnkStrLit: continue

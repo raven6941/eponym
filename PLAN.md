@@ -1170,8 +1170,13 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   reject call-style explicit arguments through record projections. Field-name
   collisions with differing signatures disable the diagnostic for that name
   to avoid false positives.
-- [ ] Audit local embedded record fields and additional qualified/parenthesized
-  call-head forms; these are not covered by imported `.ep` record metadata.
+- [x] Register callable field signatures from local embedded record
+  declarations, strip parenthesized call heads, and reject call-style explicit
+  arguments through those projections. Local and imported field regressions
+  cover direct and parenthesized projection calls.
+- [ ] Audit further AST wrappers around callees and add bracket-form compile
+  coverage for callable record fields once function-valued record fields
+  elaborate through the runtime wrapper pipeline.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.

@@ -4,4 +4,4 @@ eponymBlock:
   import "callable_record_field.ep"
 
   proc legacyField(handler: Handler, value: Nat): Nat =
-    handler.apply(zero(), value)
+    (handler.apply)(zero(), value)
