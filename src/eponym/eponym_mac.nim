@@ -2555,6 +2555,10 @@ proc rawRuntimeValueWrapper(baseDir, src, defName: string,
         inc argIndex
   body.add(newLetStmt(defsSym,
     newCall(bindSym"getDefsDir", dirLit, srcLit)))
+  if runtimeDecl.isNil:
+    body.add(newCall(bindSym"validateRuntimeRawArguments",
+      newCall(bindSym"findDef", defsSym, nameLit), argsSym, globalsSym,
+      runtimeStructuredCodecsExpr(mappings, records)))
   body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))
   for binding in bindings:
     body.add(bindingCall(binding, bindingsSym, globalsSym, mappings, records))

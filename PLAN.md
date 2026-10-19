@@ -481,8 +481,12 @@ implementations.
      bound imported postulate through both typed and raw APIs; another covers
      a dependent imported Vec identity and rejects a sequence with the wrong
      length. Reconstructed imported Pi signatures also validate raw Values,
-      including a dependent Vec length; signatures with unsupported implicit,
-      generic, or higher-order binders retain the arity-only raw interface.
+      including a dependent Vec length. Reconstructed generic signatures with
+      explicit type binders also validate their type and value arguments by
+      instantiating the checked Pi telescope; negative checks reject a wrong
+      generic type or value. Unsupported implicit or higher-order binders,
+      function-valued arguments, and unmapped host boxes retain trusted or
+      arity-only escape hatches.
    - [x] Add recursive structural codecs for payload-bearing indexed data
      constructors with `runtimeDataVariant(Family)`. `RuntimeStructuredVariant`
      maps Int, Nat, and Bool fields to Nim values, recursively maps nested data
@@ -565,7 +569,9 @@ implementations.
   `runtimeValue(name)` exposes a checked definition's Value for a host-side
   interpreter, including raw Value arguments with arity checking. Local raw
   arguments are checked recursively when their Eponym structure is supported;
-  imported definitions without a local signature still check only arity. This
+  imported definitions without a local signature now instantiate their
+  checked Pi telescope for raw argument validation, including explicit generic
+  type binders and dependent Vec arguments. This
   interface does not generate a Nim data type. Dependent pairs
   still lack general codecs and generated typed wrappers. The remaining
   implementation is tracked in the

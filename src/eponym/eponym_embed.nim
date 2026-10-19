@@ -1476,6 +1476,29 @@ proc validateRuntimeRawValue*(value, expectedType: Value, globals: Globals,
     raise newException(ValueError,
       "runtime constructor result does not match its declared Eponym type")
 
+proc validateRuntimeRawArguments*(definition: ElabDef,
+    arguments: openArray[Value], globals: Globals,
+    codecs: openArray[RuntimeStructuredCodec] = []) =
+  ## Validate raw arguments against a checked Pi telescope. Function-valued
+  ## arguments and unmapped host boxes remain trusted escape hatches.
+  var functionType = eval(definition.tyTm, @[])
+  for argument in arguments:
+    if functionType.whnfKind != wPi:
+      raise newException(ValueError,
+        "runtimeValue argument count exceeds the checked Pi telescope")
+    let domain = functionType.whnfDom
+    var hasOpaqueCodec = false
+    if argument.whnfKind == wHost:
+      let domainName = runtimeDomainTypeName(domain, globals)
+      for codec in codecs:
+        if codec.eponymName == domainName and codec.opaqueHost:
+          hasOpaqueCodec = true
+          break
+    if argument.whnfKind != wHost or hasOpaqueCodec:
+      if domain.whnfKind != wPi:
+        validateRuntimeRawValue(argument, domain, globals, codecs)
+    functionType = whnfScopeApply(functionType, argument)
+
 
 
 proc validateRuntimeValueType*(value: Value, globals: Globals,

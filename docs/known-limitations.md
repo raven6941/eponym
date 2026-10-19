@@ -118,8 +118,10 @@ has runtime codecs, the macro derives a typed Nim wrapper and typed
 `RuntimeValue` overload from the checked globals; otherwise it exposes only the
 raw Value interface. When its Pi signature can be reconstructed, the raw
 interface also validates arguments against that signature, including
-dependent Vec lengths. Signatures with unsupported implicit, generic, or
-higher-order binders retain arity-only validation. Imported checked bodies can
+dependent Vec lengths. Generic imported signatures with explicit type binders
+are checked by instantiating the checked Pi telescope at runtime. Unsupported
+implicit or higher-order binders retain arity-only validation. Function-valued
+arguments and unmapped host boxes remain trusted escape hatches. Imported checked bodies can
 invoke postulates bound by `bindPostulate` in the same block. Tests cover
 typed and raw imported identity calls, a typed call through a bound imported
 postulate, and an imported length-indexed Vec wrapper that rejects the wrong

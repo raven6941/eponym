@@ -212,6 +212,11 @@ eponymBlock:
   runtimeValue(importedVectorIdentity)
 
 eponymBlock:
+  import "fixtures/runtime_imported_generic.ep"
+  runtimeValue(importedIntIdentity)
+  runtimeValue(importedGenericIdentity)
+
+eponymBlock:
   import "fixtures/runtime_variant.ep"
   runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
     decodeRuntimeHandle)
@@ -1107,6 +1112,34 @@ when isMainModule:
     shrinkInt)
   if not importedDependentVectorCases:
     quit(1)
+  let importedGenericRawCases = forAll(
+    "imported generic raw signatures validate type and value arguments", r,
+    200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let globals = importedIntIdentityRuntimeValue(n).globals
+      let intType = runtimeGlobalValue(globals, "Int")
+      let runtime = importedGenericIdentityRuntimeValue(
+        [intType, intToValue(n)])
+      valueToInt(runtime.value) == n,
+    shrinkInt)
+  if not importedGenericRawCases:
+    quit(1)
+  let importedGenericGlobals = importedIntIdentityRuntimeValue(0).globals
+  var importedGenericWrongValueRejected = false
+  try:
+    discard importedGenericIdentityRuntimeValue([
+      runtimeGlobalValue(importedGenericGlobals, "Int"), natToValue(3)])
+  except ValueError:
+    importedGenericWrongValueRejected = true
+  doAssert importedGenericWrongValueRejected
+  var importedGenericWrongTypeRejected = false
+  try:
+    discard importedGenericIdentityRuntimeValue([
+      natToValue(3), intToValue(3)])
+  except ValueError:
+    importedGenericWrongTypeRejected = true
+  doAssert importedGenericWrongTypeRejected
   var importedVectorMismatchRejected = false
   try:
     discard importedVectorIdentity(3, @[1, 2])
