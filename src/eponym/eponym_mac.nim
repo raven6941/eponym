@@ -22,6 +22,9 @@ import std/options
 
 template rawValue* {.pragma.}
 
+type ExplicitBinderKind = enum
+  ebkOther, ebkType, ebkIndex
+
 type LegacyCallInfo = object
   explicitCount: int
   termCount: int
@@ -30,6 +33,7 @@ type LegacyCallInfo = object
   inferableIndexCount: int
   inferableIndexPositions: seq[int]
   inferableResultIndexFlags: seq[bool]
+  explicitBinderKinds: seq[ExplicitBinderKind]
   requiresBrackets: bool
   firstExplicitType: bool
 
@@ -49,8 +53,13 @@ proc sameCallInfo(a, b: LegacyCallInfo): bool =
     a.inferableIndexCount == b.inferableIndexCount and
     a.inferableIndexPositions == b.inferableIndexPositions and
     a.inferableResultIndexFlags == b.inferableResultIndexFlags and
+    a.explicitBinderKinds == b.explicitBinderKinds and
     a.requiresBrackets == b.requiresBrackets and
     a.firstExplicitType == b.firstExplicitType
+
+proc refreshFirstExplicitType(info: var LegacyCallInfo) =
+  if info.explicitBinderKinds.len > 0:
+    info.firstExplicitType = info.explicitBinderKinds[0] == ebkType
 
 proc isLegacyTypeName(n: NimNode): bool =
   n.kind in {nnkIdent, nnkSym} and
@@ -135,8 +144,17 @@ proc callInfoForHead(n: NimNode,
         remaining.inferableIndexPositions = pendingPositions
         remaining.inferableIndexCount = pendingPositions.len
         remaining.inferableResultIndexFlags = pendingResultFlags
+        var pendingKinds: seq[ExplicitBinderKind] = @[]
+        var indicesToRemove = insertedIndices
+        for kind in remaining.explicitBinderKinds:
+          if kind == ebkIndex and indicesToRemove > 0:
+            dec indicesToRemove
+          else:
+            pendingKinds.add(kind)
+        remaining.explicitBinderKinds = pendingKinds
         remaining.explicitCount = max(0,
           remaining.explicitCount - insertedIndices)
+        refreshFirstExplicitType(remaining)
         if remaining.requiredBracketCount == 0:
           remaining.leadingTermCount = if pendingPositions.len > 0:
             pendingPositions[0]
@@ -162,18 +180,37 @@ proc callInfoForHead(n: NimNode,
       if base.found and base.info.explicitCount > 0:
         var remaining = base.info
         let supplied = head.len - 1
-        let requiredSupplied = min(remaining.requiredBracketCount, supplied)
-        remaining.explicitCount = max(0,
-          remaining.explicitCount - requiredSupplied)
-        remaining.requiredBracketCount -= requiredSupplied
-        let indexRequested = max(0, supplied - requiredSupplied)
         var indexConsumed = 0
-        while indexConsumed < indexRequested and
-            indexConsumed < remaining.inferableIndexPositions.len and
-            remaining.inferableIndexPositions[indexConsumed] == 0:
-          inc indexConsumed
+        var requiredConsumed = 0
+        var explicitConsumed = 0
+        if remaining.explicitBinderKinds.len == remaining.explicitCount:
+          for kind in remaining.explicitBinderKinds:
+            if explicitConsumed >= supplied: break
+            if kind == ebkIndex:
+              if indexConsumed >= remaining.inferableIndexPositions.len or
+                  remaining.inferableIndexPositions[indexConsumed] != 0:
+                break
+              inc indexConsumed
+            elif kind == ebkType:
+              inc requiredConsumed
+            inc explicitConsumed
+          var pendingKinds: seq[ExplicitBinderKind] = @[]
+          for i in explicitConsumed ..< remaining.explicitBinderKinds.len:
+            pendingKinds.add(remaining.explicitBinderKinds[i])
+          remaining.explicitBinderKinds = pendingKinds
+        else:
+          requiredConsumed = min(remaining.requiredBracketCount, supplied)
+          explicitConsumed = requiredConsumed
+          let indexRequested = max(0, supplied - requiredConsumed)
+          while indexConsumed < indexRequested and
+              indexConsumed < remaining.inferableIndexPositions.len and
+              remaining.inferableIndexPositions[indexConsumed] == 0:
+            inc indexConsumed
+          explicitConsumed += indexConsumed
         remaining.explicitCount = max(0,
-          remaining.explicitCount - indexConsumed)
+          remaining.explicitCount - explicitConsumed)
+        remaining.requiredBracketCount = max(0,
+          remaining.requiredBracketCount - requiredConsumed)
         var remainingPositions: seq[int] = @[]
         for i in indexConsumed ..< remaining.inferableIndexPositions.len:
           remainingPositions.add(remaining.inferableIndexPositions[i])
@@ -184,10 +221,16 @@ proc callInfoForHead(n: NimNode,
         for i in indexConsumed ..< remaining.inferableResultIndexFlags.len:
           remainingResultFlags.add(remaining.inferableResultIndexFlags[i])
         remaining.inferableResultIndexFlags = remainingResultFlags
+        refreshFirstExplicitType(remaining)
         if remaining.requiredBracketCount == 0:
           remaining.requiresBrackets = false
-          remaining.firstExplicitType = false
-          remaining.leadingTermCount = remaining.termCount
+          if remaining.explicitBinderKinds.len == 0:
+            remaining.firstExplicitType = false
+          remaining.leadingTermCount =
+            if remaining.inferableIndexPositions.len > 0:
+              remaining.inferableIndexPositions[0]
+            else:
+              remaining.termCount
         return (true, remaining)
   of nnkIfExpr, nnkIfStmt:
     var selected: LegacyCallInfo
@@ -381,6 +424,8 @@ proc surfaceCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
     if binder.impl or isType:
       inc result.explicitCount
       if result.explicitCount == 1: result.firstExplicitType = isType
+      result.explicitBinderKinds.add(if binder.impl: ebkOther else:
+        (if isType: ebkType else: ebkOther))
       if isType and not binder.impl:
         inc result.requiredBracketCount
         result.requiresBrackets = true
@@ -474,6 +519,8 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
     if binder.impl or isType:
       inc result.explicitCount
       if result.explicitCount == 1: result.firstExplicitType = isType
+      result.explicitBinderKinds.add(if binder.impl: ebkOther else:
+        (if isType: ebkType else: ebkOther))
       if isType and not binder.impl:
         inc result.requiredBracketCount
         result.requiresBrackets = true
@@ -482,6 +529,7 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
       inc result.inferableIndexCount
       result.inferableIndexPositions.add(termPosition)
       result.inferableResultIndexFlags.add(i in resultOnly)
+      result.explicitBinderKinds.add(ebkIndex)
     elif not binder.impl:
       inc result.termCount
       inc termPosition
@@ -494,6 +542,8 @@ proc surfaceFamilyCallInfo(params: seq[tuple[name: string, ty: PreTerm,
     if param.impl or isType:
       inc result.explicitCount
       if result.explicitCount == 1: result.firstExplicitType = isType
+      result.explicitBinderKinds.add(if param.impl: ebkOther else:
+        (if isType: ebkType else: ebkOther))
       if isType and not param.impl:
         inc result.requiredBracketCount
         result.requiresBrackets = true
@@ -572,6 +622,10 @@ proc surfaceConstructorCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
         inc result.inferableIndexCount
         result.inferableIndexPositions.add(termPosition)
         result.inferableResultIndexFlags.add(binderIndex in resultOnly)
+        result.explicitBinderKinds.add(ebkIndex)
+      else:
+        result.explicitBinderKinds.add(if binder.impl: ebkOther else:
+          (if isType: ebkType else: ebkOther))
       if isType and not binder.impl:
         inc result.requiredBracketCount
         result.requiresBrackets = true
@@ -600,6 +654,8 @@ proc isSurfaceTypeFamily(ty: PreTerm): bool =
 
 proc nimGenericCallInfo(params, formal: NimNode): LegacyCallInfo =
   result.explicitCount = nimGenericParamCount(params)
+  for _ in 0 ..< result.explicitCount:
+    result.explicitBinderKinds.add(ebkType)
   result.termCount = nimFormalArgCount(formal)
   result.leadingTermCount = 0
   result.requiredBracketCount = result.explicitCount
@@ -629,6 +685,8 @@ proc mergeCallInfo(a, b: LegacyCallInfo): LegacyCallInfo =
     result.inferableIndexPositions.add(a.termCount + position)
   result.inferableResultIndexFlags = a.inferableResultIndexFlags
   result.inferableResultIndexFlags.add(b.inferableResultIndexFlags)
+  result.explicitBinderKinds = a.explicitBinderKinds
+  result.explicitBinderKinds.add(b.explicitBinderKinds)
   result.requiresBrackets = a.requiresBrackets or b.requiresBrackets
   result.firstExplicitType = if a.explicitCount > 0: a.firstExplicitType
     else: b.firstExplicitType

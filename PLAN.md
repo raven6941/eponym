@@ -1244,7 +1244,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   forms without a usable expected type remain unsupported. Callable metadata
   uses binder positions and respects shadowing in nested Pi types; a callback
   whose inner `n` shadows an earlier `n` infers only the inner index, and its
-  positional legacy spelling is rejected.
+  positional legacy spelling is rejected. Callable metadata also preserves
+  the declaration order of required type binders and inferable indices, so a
+  partial bracket application cannot make a later type argument appear
+  positional; an interleaved `n, A, value` callback has positive full-bracket
+  and negative partial-bracket coverage.
   Compile-time callback regressions cover inferred, result-inferred (including
   an index nested in a `Sig` field), and bracket-supplied indices. The runtime
   bridge property suite passes with dependent callback calls omitting their

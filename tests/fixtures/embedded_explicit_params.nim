@@ -163,6 +163,10 @@ eponymBlock:
       m, n: Nat, left: Vec[Nat, m], right: Vec[Nat, n]):
       LocalPairIndex[add(m, n)] = localIndexedPair[m, n](left, right)
 
+  proc bracketInterleavedCallbackBinders(
+      callback: Pi(n: Nat, A: Univ, value: A, Vec[A, n]),
+      value: Nat): Vec[Nat, 0] = callback[zero(), Nat](value)
+
   proc inferredCompoundIndex(left: Vec[Nat, 1], right: Vec[Nat, 2]):
       LocalPairIndex[add(1, 2)] = localPairIndex(left, right)
 
