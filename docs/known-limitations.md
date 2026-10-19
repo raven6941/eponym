@@ -199,7 +199,8 @@ mapping behavior is trusted in the same way as top-level runtime codecs. A
 200-case property covers both custom and opaque `ChannelHandle` mappings nested
 beside an integer field, in addition to nested trees and indexed `SizedTree`
 wrappers. Custom codec values are checked against the field's Eponym type on
-both encode and decode; opaque `runtimeType` boxes remain trusted.
+both encode and decode; wrong-type custom encodings and malformed decoded
+fields are rejected. Opaque `runtimeType` boxes remain trusted.
 
 Typed structural codecs include `Vec`, `List`, `Option`, two-field `Sig`
 tuples, named records, and recursive `runtimeDataVariant` values. Records with

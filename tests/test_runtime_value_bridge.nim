@@ -52,6 +52,9 @@ proc decodeRuntimeHandle(value: Value, globals: Globals): ChannelHandle =
   let id = valueToInt(variant.arguments[0])
   ChannelHandle(id: id, label: "decoded-" & $id)
 
+proc encodeWrongRuntimeHandle(value: ChannelHandle, globals: Globals): Value =
+  intToValue(value.id)
+
 type NimIntCallback = proc(value: int): int {.closure.}
 type RawRuntimeCallback = proc(value: Value): Value {.closure.}
 
@@ -911,6 +914,21 @@ when isMainModule:
   except ValueError:
     malformedOpaqueFieldRejected = true
   doAssert malformedOpaqueFieldRejected
+  var wrongOpaqueEncodingRejected = false
+  try:
+    discard runtimeStructuredVariantToValue(
+      RuntimeStructuredVariant(constructor: "handleEnvelope",
+        arguments: @[runtimeStructuredOpaque(ChannelHandle(id: 1,
+          label: "wrong")),
+          runtimeStructuredOpaque(ChannelHandle(id: 2, label: "token")),
+          RuntimeStructuredValue(kind: rsvInt, intValue: 3)]),
+      variantGlobals, "HandleEnvelope", ["handleEnvelope"],
+      [runtimeStructuredCustomCodec[ChannelHandle]("RuntimeHandle",
+        encodeWrongRuntimeHandle, decodeRuntimeHandle),
+       runtimeStructuredHostCodec[ChannelHandle]("RuntimeOpaqueToken")])
+  except ValueError:
+    wrongOpaqueEncodingRejected = true
+  doAssert wrongOpaqueEncodingRejected
   let appliedGenericTypeCases = forAll(
     "mapped applied generic domains check their runtime indices", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),
