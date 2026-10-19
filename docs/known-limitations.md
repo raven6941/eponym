@@ -194,8 +194,10 @@ For fixed-size Nim data, `runtimeVectorArray(Vec)` instead maps
 Static Nat generic binders are inferred from the array argument. Dynamic
 siblings are not generated when their runtime Nat argument would have to
 change a Nim type. Arrays can also cross supported checked Nim closure
-arguments and results. Tests cover primitive and explicitly mapped opaque
-elements. The same element codecs and Eponym tail-index checks apply.
+arguments and results, including nested fixed-size arrays such as
+`array[3, array[2, int]]`. Primitive and explicitly mapped opaque elements
+are covered by tests. The same element codecs and Eponym tail-index checks
+apply recursively.
 The standard unindexed `List[A]` family also has a `runtimeList(List)` codec
 that maps to `seq[A]`, checks constructor identities and spines, and recursively
 uses the element codec. A unary family with canonical `none` and `some`

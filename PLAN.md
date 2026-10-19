@@ -411,11 +411,11 @@ implementations.
 - [x] Add `runtimeVectorArray(Vec)` as an alternative Nim representation for
    the canonical length-indexed Vec family. It maps `Vec[A,n]` to
    `array[n,A]`, infers static Nat lengths through generated wrappers, and
-   reuses recursive element codecs and runtime tail-index checks. Three
-   200-case properties cover primitive and explicitly mapped opaque elements
-   through generated and typed `RuntimeValue` calls, and arrays as callback
-   arguments and results. Dynamic wrappers are omitted when a runtime Nat
-   would need to determine a Nim array type.
+   reuses recursive element codecs and runtime tail-index checks. Four
+   200-case properties cover primitive elements, nested arrays, and explicitly
+   mapped opaque elements through generated and typed `RuntimeValue` calls,
+   plus arrays as callback arguments and results. Dynamic wrappers are omitted
+   when a runtime Nat would need to determine a Nim array type.
 - [x] Add `runtimeRecordTrusted(Record)` for mapped records with dependent
    fields. Earlier field names are substituted into later codecs; supported
    codecs still check constraints they represent (for example, a Vec field

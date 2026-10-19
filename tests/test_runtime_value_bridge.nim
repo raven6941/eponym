@@ -245,6 +245,7 @@ proc hostBoolPredicateNim(value: int): bool =
   value mod 2 == 0
 
 type TestIntArray = array[3, int]
+type TestIntMatrixArray = array[3, array[2, int]]
 type TestChannelArray = array[3, ChannelHandle]
 
 static:
@@ -314,12 +315,15 @@ eponymBlock:
   runtimeType(Channel, ChannelHandle)
   proc generatedArrayVecIdentity[n: Nat](values: Vec[Int, n]): Vec[Int, n] =
     values
+  proc generatedArrayMatrixIdentity(
+      values: Vec[Vec[Int, 2], 3]): Vec[Vec[Int, 2], 3] = values
   proc generatedChannelArrayIdentity[n: Nat](
       values: Vec[Channel, n]): Vec[Channel, n] = values
   proc generatedArrayVecCallback(
       callback: proc(values: Vec[Int, 3]): Vec[Int, 3] {.closure.},
       values: Vec[Int, 3]): Vec[Int, 3] = callback(values)
   runtimeValue(generatedArrayVecIdentity)
+  runtimeValue(generatedArrayMatrixIdentity)
   runtimeValue(generatedChannelArrayIdentity)
 
 eponymBlock:
@@ -2632,6 +2636,28 @@ proc callbackRole : Callback -> Sample -> Sample =
       for i in low(smaller) .. high(smaller): smaller[i] = 0
       @[smaller])
   if not vectorArrayCases:
+    quit(1)
+  let nestedVectorArrayCases = forAll(
+    "nested length-indexed vectors bridge to nested Nim arrays", r, 200,
+    proc(r: var Rng): TestIntMatrixArray =
+      for row in low(result) .. high(result):
+        for column in low(result[row]) .. high(result[row]):
+          result[row][column] = r.genInt(-1000, 1000),
+    proc(input: TestIntMatrixArray): bool =
+      let checked = generatedArrayMatrixIdentity(input)
+      let runtime = generatedArrayMatrixIdentityRuntimeValue(input)
+      let decoded = vecValueToArray[3, array[2, int]](runtime.value, 3,
+        runtime.globals, "Vec", proc(row: Value, globals: Globals):
+        array[2, int] = vecValueToArray[2, int](row, 2, globals, "Vec",
+          proc(item: Value, _: Globals): int = valueToInt(item)))
+      checked == input and decoded == input,
+    proc(input: TestIntMatrixArray): seq[TestIntMatrixArray] =
+      var smaller = input
+      for row in low(smaller) .. high(smaller):
+        for column in low(smaller[row]) .. high(smaller[row]):
+          smaller[row][column] = 0
+      @[smaller])
+  if not nestedVectorArrayCases:
     quit(1)
   let vectorArrayOpaqueCases = forAll(
     "fixed Nim arrays preserve explicitly mapped opaque elements", r, 200,
