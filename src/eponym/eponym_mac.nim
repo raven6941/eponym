@@ -2763,6 +2763,27 @@ macro eponymBlock*(body: untyped): untyped =
                 "runtimeValue argument count mismatch for " & `nameLit`)
           rawBody.add(newLetStmt(globalsSym,
             newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+          var genericTypeOverrides: seq[tuple[name: string,
+            value: NimNode]] = @[]
+          var genericArgIndex = 0
+          for genericParam in procDecl[2]:
+            for binderOffset in 0 ..< genericParam.len - 2:
+              let binderName = if genericParam[binderOffset].kind ==
+                  nnkPragmaExpr: genericParam[binderOffset][0]
+                else: genericParam[binderOffset]
+              let binderType = genericParam[^2]
+              if nimTypeToEponym(binderType) != "Type 0":
+                let expectedType = runtimeTypeValueExpr(binderType,
+                  globalsSym, genericTypeOverrides)
+                if not expectedType.isNil:
+                  let genericValue = newTree(nnkBracketExpr,
+                    copyNimTree(genericArgsSym), newLit(genericArgIndex))
+                  rawBody.add(newCall(bindSym"validateRuntimeValueType",
+                    genericValue, expectedType, copyNimTree(globalsSym)))
+              let genericValue = newTree(nnkBracketExpr,
+                copyNimTree(genericArgsSym), newLit(genericArgIndex))
+              genericTypeOverrides.add(($binderName, genericValue))
+              inc genericArgIndex
           rawBody.add(newLetStmt(defsSym,
             newCall(bindSym"getDefsDir", dirLit, srcLit)))
           rawBody.add(newVarStmt(bindingsSym,

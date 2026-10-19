@@ -966,8 +966,8 @@ when isMainModule:
         constructor: "sizedTree",
         arguments: @[natToValue(length, variantGlobals), tree]),
         variantGlobals, "SizedTree", ["sizedTree"])
-      let runtimeResult = genericUnmappedSizedTreeProjectionRuntimeValueDynamic(
-        length, indexed, 0)
+      let runtimeResult = genericUnmappedSizedTreeProjectionRuntimeValueRaw(
+        [natToValue(length, variantGlobals), indexed], [intToValue(0)])
       let decoded = valueToRuntimeVariant(runtimeResult.value,
         runtimeResult.globals,
         "SizedTree", ["sizedTree"])
@@ -1000,8 +1000,8 @@ when isMainModule:
       constructor: "sizedTree",
       arguments: @[natToValue(4, variantGlobals), tree]), variantGlobals,
       "SizedTree", ["sizedTree"])
-    discard genericUnmappedSizedTreeProjectionRuntimeValueDynamic(
-      3, wrongIndexedTree, 0)
+    discard genericUnmappedSizedTreeProjectionRuntimeValueRaw(
+      [natToValue(3, variantGlobals), wrongIndexedTree], [intToValue(0)])
   except ValueError:
     rawAppliedGenericIndexRejected = true
   doAssert rawAppliedGenericIndexRejected
@@ -1063,8 +1063,12 @@ when isMainModule:
     proc(ignored: int): bool =
       let tokenProjection = genericRuntimeTokenProjectionRuntimeValueDynamic(
         tokenValue, ignored)
+      let rawProjection = genericRuntimeTokenProjectionRuntimeValueRaw(
+        [tokenValue], [intToValue(ignored)])
       tokenProjection.value.whnfKind == tokenValue.whnfKind and
-        tokenProjection.value.whnfRefId == tokenValue.whnfRefId,
+        tokenProjection.value.whnfRefId == tokenValue.whnfRefId and
+        rawProjection.value.whnfKind == tokenValue.whnfKind and
+        rawProjection.value.whnfRefId == tokenValue.whnfRefId,
     shrinkInt)
   if not unmappedGenericCases:
     quit(1)
@@ -1075,6 +1079,13 @@ when isMainModule:
   except ValueError as error:
     unmappedGenericTypeRejected = "mismatch" in error.msg
   doAssert unmappedGenericTypeRejected
+  var rawUnmappedGenericTypeRejected = false
+  try:
+    discard genericRuntimeTokenProjectionRuntimeValueRaw(
+      [intToValue(42)], [intToValue(0)])
+  except ValueError as error:
+    rawUnmappedGenericTypeRejected = "mismatch" in error.msg
+  doAssert rawUnmappedGenericTypeRejected
 
   let rawGenericNatCases = forAll(
     "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,

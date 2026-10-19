@@ -95,11 +95,11 @@ indices. A raw `openArray[Value]` overload remains available and checks only
 argument count for definitions with a local Nim signature; callers must
 construct those values correctly. Generic local definitions also get
 `nameRuntimeValueRaw(genericArgs, valueArgs)`, which accepts all generic
-arguments and ordinary arguments as `openArray[Value]`. This supports generic
-binder types without a Nim runtime mapping; callers construct and validate the
-generic values themselves. The checked definition has been type-checked, but
-the raw bridge does not verify that supplied Values inhabit its generic binder
-types. `runtimeValue(importedDefinition)` also works for definitions imported
+arguments and ordinary arguments as `openArray[Value]`. It checks generic
+values against supported binder type expressions, including applied domains
+that refer to earlier generic arguments. More complex binder expressions and
+ordinary raw `Value` arguments still need caller-side validation.
+`runtimeValue(importedDefinition)` also works for definitions imported
 from `.ep` files without a local Nim signature. When the checked Pi signature
 has runtime codecs, the macro derives a typed Nim wrapper and typed
 `RuntimeValue` overload from the checked globals; otherwise it exposes only the
