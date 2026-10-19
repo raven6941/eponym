@@ -43,6 +43,8 @@ proc isLegacyNatExpr(n: NimNode): bool =
     n.intVal >= 0
   of nnkIdent, nnkSym:
     $n in scopedNatNames
+  of nnkPar:
+    n.len == 1 and isLegacyNatExpr(n[0])
   of nnkCall, nnkCommand:
     n.len > 0 and n[0].kind in {nnkIdent, nnkSym} and
       ($n[0] in legacyNatConstructors or $n[0] in legacyNatFunctions)
