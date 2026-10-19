@@ -441,6 +441,9 @@ implementations.
   parameters and thread them into dependent argument/result codecs. 200-case
   properties cover primitive and mapped values, plus a Nat-indexed Vec
   argument.
+- [x] Propagate earlier callback arguments into dependent callback result
+  codecs. A 200-case property checks a Nim `Nat -> Vec[Int, n]` callback through
+  both generated and reified runtime wrappers, including Vec length checks.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

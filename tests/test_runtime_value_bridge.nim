@@ -20,6 +20,8 @@ proc hostString(value: string): string = value
 proc hostFailureNim(value: int): int =
   raise newException(IOError, "host adapter failed")
 proc rawRuntimeIdentity(value: Value): Value = value
+proc makeIndexedRuntimeValues(length: int): seq[int] =
+  for i in 0 ..< length: result.add(i - length)
 
 type ChannelHandle = object
   id: int
@@ -393,6 +395,15 @@ eponymBlock:
       callback: proc(value: Token): Token {.closure, rawValue.}):
       proc(value: Token): Token {.closure, rawValue.} = callback
   runtimeValue(generatedRawTokenCallbackEcho)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  proc generatedApplyIndexedCallback(
+      callback: proc(length: Nat): Vec[Int, length] {.closure.},
+      length: Nat): Vec[Int, length] = callback(length)
+  runtimeValue(generatedApplyIndexedCallback)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -1236,6 +1247,21 @@ proc callbackRole : Callback -> Sample -> Sample =
         generatedVectorIdentity[ChannelHandle, 4](handles) == handles,
     shrinkInt)
   if not vectorCodecCases:
+    quit(1)
+  let dependentCallbackCases = forAll(
+    "callback result codecs receive their dependent Nat argument", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let expected = makeIndexedRuntimeValues(length)
+      let typed = generatedApplyIndexedCallback(makeIndexedRuntimeValues,
+        length)
+      let runtime = generatedApplyIndexedCallbackRuntimeValue(
+        makeIndexedRuntimeValues, length)
+      typed == expected and vecValueToSeq[int](runtime.value, length,
+        runtime.globals, "Vec", proc(item: Value, _: Globals): int =
+          valueToInt(item)) == expected,
+    shrinkInt)
+  if not dependentCallbackCases:
     quit(1)
   let dynamicGenericVectorCases = forAll(
     "dynamic Nat generics index dependent Vec wrappers", r, 200,

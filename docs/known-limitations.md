@@ -151,9 +151,14 @@ alongside `{.closure.}` on a proc type to expose its arguments and result as
 raw `Value`s instead. This supports callback signatures whose Eponym leaf types
 have no Nim codec; the callback implementation is responsible for interpreting
 those Values. A 200-case property covers an unmapped `Token -> Token` callback
-through a generated wrapper and a reified runtime callback. Returned callback
-types must use Nim's `{.closure.}` calling convention. Callback effects and
-behavior remain trusted host semantics.
+through a generated wrapper and a reified runtime callback. Codec-backed
+callback results can depend on an earlier callback argument: a Nim
+`proc(length: int): seq[int]` can implement Eponym's
+`Nat -> Vec[Int, length]` when the Eponym proc type names that binder. The
+bridge carries the runtime argument into the recursive result codec, which
+checks the vector length; a 200-case property covers generated and reified
+wrappers. Returned callback types must use Nim's `{.closure.}` calling
+convention. Callback effects and behavior remain trusted host semantics.
 Structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
 `Sig` tuples, and named records. Records with dependent fields
 and dependent `Sig` results are available only through their explicit trusted

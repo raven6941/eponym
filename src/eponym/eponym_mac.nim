@@ -1127,6 +1127,7 @@ proc runtimeNatIndexExpr(n: NimNode,
 
 type RuntimeProcParts = object
   argTypes: seq[NimNode]
+  argNames: seq[string]
   resultType: NimNode
 
 proc runtimeProcParts(n: NimNode): RuntimeProcParts =
@@ -1137,8 +1138,10 @@ proc runtimeProcParts(n: NimNode): RuntimeProcParts =
     let p = n[0][i]
     if p.kind != nnkIdentDefs or p.len < 3:
       return RuntimeProcParts()
-    for _ in 0 ..< p.len - 2:
+    for j in 0 ..< p.len - 2:
       result.argTypes.add(p[^2])
+      result.argNames.add(if p[j].kind == nnkEmpty: "callbackArg" &
+        $result.argNames.len else: binderName(p[j]))
   if result.argTypes.len > 0:
     result.resultType = n[0][0]
 
@@ -1327,18 +1330,20 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       argSyms.add(genSym(nskParam, "runtimeCallbackArgument" & $i))
     if toValue:
       var decodedArgs: seq[NimNode] = @[]
+      var callbackIndexOverrides = indexOverrides
       for i, argType in procParts.argTypes:
         let decodedArg = runtimeValueConversionExpr(argType, argNimTypes[i],
           argValueSyms[i], false, mappings, records, globals,
-          allowDependentSigma, indexOverrides)
+          allowDependentSigma, callbackIndexOverrides)
         if decodedArg.isNil: return nil
         decodedArgs.add(decodedArg)
+        callbackIndexOverrides.add((procParts.argNames[i], decodedArg))
       var hostResult = newCall(value)
       for decodedArg in decodedArgs:
         hostResult.add(decodedArg)
       let encodedResult = runtimeValueConversionExpr(procParts.resultType,
         resultNimType, hostResult, true, mappings, records, globals,
-        allowDependentSigma, indexOverrides)
+        allowDependentSigma, callbackIndexOverrides)
       if encodedResult.isNil: return nil
       var callbackValue = encodedResult
       for i in countdown(argValueSyms.high, 0):
@@ -1350,18 +1355,20 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       return callbackValue
     var encodedArgs = newNimNode(nnkBracket)
     var formal: seq[NimNode] = @[resultNimType]
+    var callbackIndexOverrides = indexOverrides
     for i, argType in procParts.argTypes:
       let encodedArg = runtimeValueConversionExpr(argType, argNimTypes[i],
         argSyms[i], true, mappings, records, globals, allowDependentSigma,
-        indexOverrides)
+        callbackIndexOverrides)
       if encodedArg.isNil: return nil
       encodedArgs.add(encodedArg)
       formal.add(newIdentDefs(argSyms[i], argNimTypes[i], newEmptyNode()))
+      callbackIndexOverrides.add((procParts.argNames[i], argSyms[i]))
     let applied = newCall(bindSym"callRuntimeValue", value,
       newTree(nnkPrefix, ident"@", encodedArgs))
     let decodedResult = runtimeValueConversionExpr(procParts.resultType,
       resultNimType, applied, false, mappings, records, globals,
-      allowDependentSigma, indexOverrides)
+      allowDependentSigma, callbackIndexOverrides)
     if decodedResult.isNil: return nil
     return newProc(params = formal, body = newStmtList(decodedResult))
   let typeHead = runtimeTypeHead(eponymType)
