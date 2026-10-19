@@ -415,8 +415,10 @@ implementations.
    comes from an imported `.ep` module and has no local Nim `proc` declaration.
    It exposes a raw `openArray[Value] -> (Value, Globals)` wrapper; typed Nim
    wrappers still require a local signature. Directory-aware runtime state
-   now retains imported definition bodies. A 200-case property calls an
-   imported checked identity through this ABI.
+   now retains imported definition bodies. A checked-term reference scan lets
+   bindings used only by imported bodies pass unused-binding validation. Two
+   200-case properties call an imported checked identity and dispatch an
+   imported postulate to a bound Nim implementation through this ABI.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly

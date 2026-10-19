@@ -88,9 +88,10 @@ indices. A raw `openArray[Value]` overload remains available and checks only
 argument count for definitions with a local Nim signature; callers must
 construct those values correctly. `runtimeValue(importedDefinition)` also
 works for definitions imported from `.ep` files without a local Nim signature
-and exposes only the raw Value interface. The helper applies the block's
-declared `bindPostulate` adapters; unbound postulates remain neutral. It does
-not generate a structural Nim result type, so callers
+and exposes only the raw Value interface. Imported checked bodies can invoke
+postulates bound by `bindPostulate` in the same block. The helper applies the
+block's declared adapters; unbound postulates remain neutral. It does not
+generate a structural Nim result type, so callers
 must handle unsupported constructors and neutral values explicitly. A
 non-dependent `Sig(A, B)` runtime type is structurally mapped to a two-element
 Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque
