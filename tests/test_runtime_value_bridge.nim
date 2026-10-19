@@ -199,7 +199,11 @@ eponymBlock:
 eponymBlock:
   import "fixtures/runtime_variant.ep"
   runtimeVariant(RuntimeTree)
+  runtimeVariant(SizedTree)
   runtimeValue(treeIdentity)
+  proc genericIndexedTreeProjection[length: Nat,
+      tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
+  runtimeValue(genericIndexedTreeProjection)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -900,6 +904,43 @@ when isMainModule:
     shrinkInt)
   if not rawVariantCases:
     quit(1)
+  let appliedGenericTypeCases = forAll(
+    "unmapped applied generic domains check their runtime indices", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let tree = runtimeVariantToValue(RuntimeVariant(
+        constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+        runtimeTreeConstructors)
+      let indexed = runtimeVariantToValue(RuntimeVariant(
+        constructor: "sizedTree",
+        arguments: @[natToValue(length, variantGlobals), tree]),
+        variantGlobals, "SizedTree", ["sizedTree"])
+      let projected = genericIndexedTreeProjectionRuntimeValueDynamic(
+        length, valueToRuntimeVariant(indexed, variantGlobals,
+          "SizedTree", ["sizedTree"]), 0)
+      let decoded = valueToRuntimeVariant(projected.value, variantGlobals,
+        "SizedTree", ["sizedTree"])
+      decoded.constructor == "sizedTree" and
+        valueToNat(decoded.arguments[0], variantGlobals) == length and
+        decoded.arguments[1].whnfRefId == tree.whnfRefId,
+    shrinkInt)
+  if not appliedGenericTypeCases:
+    quit(1)
+  var appliedGenericIndexRejected = false
+  try:
+    let tree = runtimeVariantToValue(RuntimeVariant(
+      constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+      runtimeTreeConstructors)
+    let wrongIndexedTree = runtimeVariantToValue(RuntimeVariant(
+      constructor: "sizedTree",
+      arguments: @[natToValue(4, variantGlobals), tree]), variantGlobals,
+      "SizedTree", ["sizedTree"])
+    discard genericIndexedTreeProjectionRuntimeValueDynamic(3,
+      valueToRuntimeVariant(wrongIndexedTree, variantGlobals,
+        "SizedTree", ["sizedTree"]), 0)
+  except ValueError:
+    appliedGenericIndexRejected = true
+  doAssert appliedGenericIndexRejected
   var variantArityRejected = false
   try:
     discard runtimeVariantToValue(RuntimeVariant(
@@ -963,6 +1004,13 @@ when isMainModule:
     shrinkInt)
   if not unmappedGenericCases:
     quit(1)
+  var unmappedGenericTypeRejected = false
+  try:
+    discard genericRuntimeTokenProjectionRuntimeValueDynamic(
+      intToValue(42), 0)
+  except ValueError as error:
+    unmappedGenericTypeRejected = "mismatch" in error.msg
+  doAssert unmappedGenericTypeRejected
 
   let rawGenericNatCases = forAll(
     "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,

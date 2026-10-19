@@ -478,6 +478,11 @@ implementations.
   structural representation for payload-bearing and indexed constructors.
   A 200-case property covers direct and generated wrapper round trips; typed
   recursive payload codecs remain future work.
+- [x] Validate dynamic generic `Value` arguments against applied type
+  expressions built from named types, earlier generic indices, applications,
+  and integer literals. A 200-case `SizedTree[length]` property checks raw and
+  mapped variant values and rejects an embedded length that differs from the
+  generic index. More complex type expressions remain unsupported.
 - [x] Lower conditional Nat indices of the form `if b: n else: m` in dynamic
    generic Vec and non-dependent Sigma value codecs. The Bool condition is a
    generic runtime parameter; both branch lengths are checked. A 200-case

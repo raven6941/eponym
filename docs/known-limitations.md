@@ -172,9 +172,12 @@ before checked evaluation. `nameRuntimeValueDynamic` returns the checked
 result and globals without requiring a result codec. The generated signatures
 use the public `RuntimeValue`, `RuntimeGlobals`, and `RuntimeValueResult`
 aliases from `eponym_embed`, so callers need not import internal runtime types.
-Applied or indexed binder domains still need runtime type-expression
-validation; use the raw `RuntimeValue` interface when that check is
-unavailable.
+Applied family domains are checked when their type expressions use named
+references, earlier
+generic indices, applications, and integer literals. More complex type
+expressions remain unsupported. A 200-case `SizedTree[length]` property checks
+raw `Value` and mapped `RuntimeVariant` arguments and rejects an embedded
+length that differs from the generic index.
 
 The low-level `RuntimeVariant` API provides a checked structural view for any
 declared data family when the caller supplies its constructor names. It
