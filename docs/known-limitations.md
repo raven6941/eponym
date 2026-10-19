@@ -278,9 +278,11 @@ witness and a mismatched index on an opaque family field. Custom codec values
 are checked against the field's Eponym type on both encode and decode;
 wrong-type custom encodings and malformed decoded fields are rejected.
 
-Typed structural codecs include `Vec`, `List`, `Option`, two-field `Sig`
-tuples, named records, and recursive `runtimeDataVariant` values. Records with
-dependent fields and dependent `Sig` results are available only through their
+Typed structural codecs include `Vec`, `List`, `Option`, nested `Sig` tuples,
+named records, and recursive `runtimeDataVariant` values. The general typed
+`bindPostulate` codec path supports these tuples at arbitrary field arity; the
+convenience `bindPostulatePair` form remains specialized to two result fields.
+Records with dependent fields and dependent `Sig` results are available only through their
 explicit trusted opt-ins described above.
 More complex generic domain expressions outside the supported type-expression
 forms and structural inspection of closures are unsupported.

@@ -351,6 +351,12 @@ implementations.
    Eponym signature is preserved, while matching a host field to its index
    remains explicitly trusted. A 200-case indexed-family property exercises
    this path; the ordinary pair adapter still rejects the same shape.
+- [x] Let the general typed `bindPostulate` codec path accept nested Sigma
+   argument/result annotations at any tuple arity. Compare Sigma fields and
+   binders structurally against the checked telescope, rather than comparing
+   normalized terms as strings. A 200-case property exercises a four-field
+   tuple returned by a Nim adapter; a compile-error fixture rejects a Nat/Int
+   field mismatch.
 - [x] Generate typed wrappers for dependent Sigma results only when the
    definition opts in with `runtimePairTrusted(definition)`. The fields use
    their recursive runtime codecs, and the host relationship between values

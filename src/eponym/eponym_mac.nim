@@ -1159,6 +1159,25 @@ proc stripOuterTypeParens(value: string): string =
 proc checkedTypeMatches(term: Term, typeExpr: NimNode, ctx: Ctx,
                         refNames: Table[int, string]): bool =
   if typeExpr.kind != nnkProcTy:
+    if typeExpr.kind in {nnkCall, nnkObjConstr} and typeExpr.len == 3 and
+        typeExpr[0].kind == nnkIdent and $typeExpr[0] == "Sig":
+      if term.isNil or term.kind != tSi: return false
+      let binder = typeExpr[1]
+      var domainType: NimNode
+      var name = ""
+      if binder.kind == nnkExprColonExpr and binder.len == 2:
+        domainType = binder[1]
+        name = binderName(binder[0])
+      else:
+        domainType = binder
+      if not checkedTypeMatches(term.dom, domainType, ctx, refNames):
+        return false
+      let checkedName = if term.scope.adv == "_": name
+                        else: term.scope.adv
+      let nestedCtx = if checkedName.len == 0: ctx else:
+        @[CtxEntry(name: checkedName, ty: term.dom, qty: qOmega)] & ctx
+      return checkedTypeMatches(term.scope.bdy, typeExpr[2], nestedCtx,
+        refNames)
     return stripOuterTypeParens(prettyTerm(term, ctx, refNames)) ==
       nimTypeToEponym(typeExpr)
   if typeExpr.len != 2 or typeExpr[0].kind != nnkFormalParams or

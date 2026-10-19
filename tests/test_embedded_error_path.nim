@@ -64,6 +64,8 @@ for (path, expected) in [
      "does not match type 1 of postulate 'applyCallback'"),
     ("tests/fixtures/embedded_err_nullary_callback_arity.nim",
      "does not match type 1 of postulate 'invokeNullary'"),
+    ("tests/fixtures/embedded_err_nested_sigma_adapter_type.nim",
+     "does not match the result of postulate 'makeNestedSigma'"),
     ("tests/fixtures/embedded_err_binding_nim_type.nim", "type mismatch"),
     ("tests/fixtures/embedded_err_binding_opaque_nim_type.nim",
      "type mismatch"),

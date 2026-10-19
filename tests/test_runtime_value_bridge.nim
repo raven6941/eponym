@@ -123,6 +123,8 @@ proc hostInvokeNullaryCallback(callback: proc(): int {.closure.}): int =
   callback()
 proc hostInvokeRawNullaryCallback(
     callback: proc(): Value {.closure.}): int = valueToInt(callback())
+proc hostMakeFourSigma(seed: int): tuple[a: int, b: int, c: int,
+    flag: bool] = (seed, seed mod 101, -seed, (seed mod 2) == 0)
 
 proc hostIncrementRuntimeHandles(length: int,
     values: seq[ChannelHandle]): seq[ChannelHandle] =
@@ -553,6 +555,13 @@ eponymBlock:
   import "../lib/nat.ep"
   import "../lib/bool.ep"
   postulate(Int, Univ)
+  postulate(makeFourSigma,
+    Int -> Sig(a: Int, Sig(b: Nat, Sig(c: Int, Bool))))
+  bindPostulate(makeFourSigma, hostMakeFourSigma, Int,
+    Sig(a: Int, Sig(b: Nat, Sig(c: Int, Bool))))
+  proc generatedMakeFourSigma(seed: Int):
+      Sig(a: Int, Sig(b: Nat, Sig(c: Int, Bool))) = makeFourSigma(seed)
+  runtimeValue(generatedMakeFourSigma)
   proc generatedFourFieldSigmaIdentity(
       value: Sig(a: Int, Sig(b: Nat, Sig(c: Int, Bool)))):
       Sig(a: Int, Sig(b: Nat, Sig(c: Int, Bool))) = value
@@ -2248,7 +2257,19 @@ when isMainModule:
         [runtime.value])
       generatedFourFieldSigmaIdentity(input) == input and
         generatedFourFieldSigmaIdentityRuntimeValue(input).value.whnfKind ==
-          wPair and rawRuntime.value.whnfKind == wPair,
+          wPair and rawRuntime.value.whnfKind == wPair and
+        generatedMakeFourSigma(abs(input.a)) ==
+          hostMakeFourSigma(abs(input.a)) and
+        (block:
+          let seed = abs(input.a)
+          let pair = generatedMakeFourSigmaRuntimeValue(seed)
+          let tail1 = runtimePairSecond(pair.value)
+          let tail2 = runtimePairSecond(tail1)
+          let tail3 = runtimePairSecond(tail2)
+          valueToInt(runtimePairFirst(pair.value)) == seed and
+          valueToNat(runtimePairFirst(tail1), pair.globals) == seed mod 101 and
+          valueToInt(runtimePairFirst(tail2)) == -seed and
+          valueToBool(tail3, pair.globals) == ((seed mod 2) == 0)),
     proc(input: tuple[a, b, c: int, flag: bool]):
         seq[tuple[a, b, c: int, flag: bool]] =
       @[(0, input.b, input.c, input.flag),
