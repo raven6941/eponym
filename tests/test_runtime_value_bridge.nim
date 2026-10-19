@@ -514,6 +514,8 @@ eponymBlock:
   proc generatedRuntimeHandleOptionIdentity(
       value: Option[RuntimeHandle]): Option[RuntimeHandle] = value
   runtimeValue(generatedRuntimeHandleOptionIdentity)
+  proc generatedGenericRuntimeValueIdentity[A: Univ](value: A): A = value
+  runtimeValue(generatedGenericRuntimeValueIdentity)
   proc generatedSizedTreeRawIdentity(length: Nat,
       tree: SizedTree[length]): SizedTree[length] = tree
   runtimeValue(generatedSizedTreeRawIdentity)
@@ -1602,6 +1604,10 @@ when isMainModule:
         [natToValue(length, variantGlobals)])
       validateRuntimeValueType(indexed, inferredType, variantGlobals)
       validateRuntimeValueType(indexed, expectedType, variantGlobals)
+      let rawIdentity = generatedGenericRuntimeValueIdentityRuntimeValueRaw(
+        [inferredType], [indexed])
+      validateRuntimeValueType(rawIdentity.value, expectedType,
+        rawIdentity.globals)
       var wrongIndexRejected = false
       try:
         validateRuntimeValueType(indexed,
@@ -1616,6 +1622,9 @@ when isMainModule:
         variantGlobals,
         "SizedTree", ["sizedTree"])
       not inferredType.isNil and wrongIndexRejected and
+      valueToRuntimeStructuredVariant(rawIdentity.value,
+        rawIdentity.globals, "SizedTree", ["sizedTree"]).arguments[0].natValue ==
+          length and
       decoded.constructor == "sizedTree" and
       decoded.arguments.len == 2 and
         decoded.arguments[0].kind == rsvNat and

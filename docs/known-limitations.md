@@ -340,6 +340,9 @@ yet use it to select the erased type argument for indexed-family mappings. A
 Nim type may represent several indices of one Eponym family, so the wrapper
 needs a representative value or an explicit witness. The behavior for values
 with no representative, such as `none` or an empty collection, remains open.
+Callers using the raw generic `RuntimeValue` interface can pass the inferred
+type Value as a generic argument; a property test covers an indexed
+`SizedTree` identity this way.
 More complex generic domain expressions outside the supported type-expression
 forms and structural inspection of closures are unsupported.
 Non-dependent function domains written with `->` are now supported for dynamic

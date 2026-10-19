@@ -733,7 +733,8 @@ implementations.
    - [x] Expose `runtimeValueTypeOf(value, globals)` to recover the checked
      Eponym type of a runtime Value, including represented family indices. A
      200-case property infers `SizedTree[length]`, validates that index, and
-     rejects a different index.
+     rejects a different index. The inferred witness also supplies the generic
+     argument to a raw `RuntimeValue` call, whose result retains that index.
    - [ ] Support generic callbacks over indexed-family mappings. Thread a type
      witness inferred from a corresponding runtime value into the erased type
      argument and callback codecs. Define the behavior when no representative
