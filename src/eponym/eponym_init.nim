@@ -814,7 +814,7 @@ proc vOne(): Value =
 proc vInt*(n: int): Value =
   Value(syn: tmInt(n), whnf: Whnf(kind: wInt, intVal: n))
 
-proc vHostFunc*(fn: proc(x: Value): Value): Value =
+proc vHostFunc*(fn: proc(x: Value): Value {.closure.}): Value =
   ## Runtime-only unary host function value. It is intentionally not used by
   ## the elaborator or kernel; the postulate contract remains the trusted
   ## declaration at the host boundary.

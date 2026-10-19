@@ -86,7 +86,8 @@ does not inspect or verify the Nim procedure body. Definitions over primitive
 generic binders `[A: Univ]` can use Nim generic values as opaque boxes when the
 binder appears only in the checked signature. Other Eponym signatures need an
 explicit opaque mapping as shown below or one of the supported structural
-codecs. Calling an explicit `proc` definition
+codecs. Unary Nim proc types with supported leaf codecs can cross in either
+direction when annotated with `{.closure.}`. Calling an explicit `proc` definition
 without a supported runtime mapping fails at compile time with the missing
 codec type in the diagnostic. A reachable postulate without a
 binding fails when evaluated; diagnostics for missing bindings at expansion

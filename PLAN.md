@@ -460,6 +460,11 @@ implementations.
 - [x] Accept a Nim closure as an explicitly mapped opaque callback argument to
   a checked role. The generated Nim wrapper checks the closure signature, and
   the bound adapter can invoke it; Eponym treats the closure body as trusted.
+- [x] Generate codecs for unary Nim `{.closure.}` proc types at the checked
+   wrapper boundary. Nim callbacks enter Eponym as runtime host functions, and
+   checked Eponym closures return as callable Nim closures. A 200-case property
+   covers each direction, including a captured Nim callback; mismatched Nim
+   callback signatures fail compilation.
 - [x] Expose unary opaque and binary opaque bindings through `eponymBlock`;
    explicit `runtimeType` mappings connect Eponym postulates to Nim types.
    Nim checks adapter and generated wrapper signatures, and compile-fail

@@ -88,7 +88,12 @@ transform them. The runtime bridge tests identity pass-through for a future
 argument and the existing future-result case.
 Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
-bodies. Returning closures from generated wrappers remains unsupported.
+bodies. Unary Nim proc types with supported leaf codecs
+also bridge to and from Eponym function values: Nim callbacks become runtime
+host functions, and checked Eponym closures become callable Nim closures.
+Returned callback types must use Nim's `{.closure.}` calling convention.
+Multi-argument Nim proc types and effectful callback behavior remain outside
+this bridge.
 Structural codecs for collections beyond non-dependent two-field `Sig` tuples
 and named non-dependent records, dependent signatures, value-indexed generic
 signatures, and generic binders used in runtime bodies,

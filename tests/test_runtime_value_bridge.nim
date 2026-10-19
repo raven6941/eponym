@@ -164,6 +164,14 @@ eponymBlock:
   proc generatedGenericIdentity[A: Univ](value: A): A = value
   runtimeValue(generatedGenericIdentity)
 
+eponymBlock:
+  postulate(Int, Univ)
+  proc generatedApplyNimCallback(
+      callback: proc(value: Int): Int {.closure.}, value: Int): Int =
+    callback(value)
+  proc generatedAdder(seed: Int): proc(value: Int): Int {.closure.} =
+    lam(value, Int, addInt(seed, value))
+
 static:
   doAssert compiles(sampleTreeWithRuntimeValue(2))
   doAssert not compiles(sampleTreeWithRuntimeValue("not a Nat"))
@@ -171,6 +179,10 @@ static:
   doAssert not compiles(generatedBoolNot(1))
   doAssert compiles(generatedGenericIdentity(1))
   doAssert compiles(generatedGenericIdentity("opaque"))
+  doAssert compiles(generatedApplyNimCallback(proc(value: int): int = value, 1))
+  doAssert not compiles(generatedApplyNimCallback(
+    proc(value: string): string = value, 1))
+  doAssert compiles(generatedAdder(3)(4))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -647,6 +659,33 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded.id == input.id and decoded.label == input.label,
     shrinkInt)
   if not genericOpaqueIdentityCases:
+    quit(1)
+
+  let callbackBridgeCases = forAll(
+    "Nim closures cross into checked function arguments",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let factor = 3
+      let callback: proc(value: int): int {.closure.} =
+        proc(value: int): int = value * factor + 7
+      generatedApplyNimCallback(callback, value) == value * factor + 7,
+    shrinkInt)
+  if not callbackBridgeCases:
+    quit(1)
+
+  let returnedClosureCases = forAll(
+    "checked function results become callable Nim closures",
+    r, 200,
+    proc(r: var Rng): (int, int) = r.genPair(
+      proc(r: var Rng): int = r.genInt(-1000, 1000),
+      proc(r: var Rng): int = r.genInt(-1000, 1000)),
+    proc(pair: (int, int)): bool =
+      let adder = generatedAdder(pair[0])
+      adder(pair[1]) == pair[0] + pair[1],
+    proc(pair: (int, int)): seq[(int, int)] =
+      pair.shrinkPair(shrinkInt, shrinkInt))
+  if not returnedClosureCases:
     quit(1)
 
   let quinaryWrapperCases = forAll(
