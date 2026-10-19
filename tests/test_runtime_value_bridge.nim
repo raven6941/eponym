@@ -22,6 +22,8 @@ proc hostFailureNim(value: int): int =
 proc rawRuntimeIdentity(value: Value): Value = value
 proc makeIndexedRuntimeValues(length: int): seq[int] =
   for i in 0 ..< length: result.add(i - length)
+proc makeWrongIndexedRuntimeValues(length: int): seq[int] =
+  newSeq[int](length + 1)
 
 type ChannelHandle = object
   id: int
@@ -1265,6 +1267,12 @@ proc callbackRole : Callback -> Sample -> Sample =
     shrinkInt)
   if not dependentCallbackCases:
     quit(1)
+  var dependentCallbackMismatchRejected = false
+  try:
+    discard generatedApplyIndexedCallback(makeWrongIndexedRuntimeValues, 3)
+  except ValueError as error:
+    dependentCallbackMismatchRejected = "runtime Vec length mismatch" in error.msg
+  doAssert dependentCallbackMismatchRejected
   let dynamicGenericVectorCases = forAll(
     "dynamic Nat generics index dependent Vec wrappers", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),
@@ -1275,6 +1283,12 @@ proc callbackRole : Callback -> Sample -> Sample =
     shrinkInt)
   if not dynamicGenericVectorCases:
     quit(1)
+  var dynamicGenericMismatchRejected = false
+  try:
+    discard generatedVectorSucIndexDynamic(3, @[1, 2])
+  except ValueError as error:
+    dynamicGenericMismatchRejected = "runtime Vec length mismatch" in error.msg
+  doAssert dynamicGenericMismatchRejected
   doAssert generatedVectorIdentity[int, 0](@[]) == @[]
   doAssert generatedVectorSucIndex[3](@[1, 2, 3, 4]) == 3
   doAssert generatedVectorAddIndex[2, 3](@[1, 2, 3, 4, 5]) == 0

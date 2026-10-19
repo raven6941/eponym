@@ -440,14 +440,15 @@ implementations.
   explicitly mapped binders. These accept generic values as ordinary Nim
   parameters and thread them into dependent argument/result codecs. 200-case
   properties cover primitive and mapped values, plus a Nat-indexed Vec
-  argument.
+  argument; negative checks reject mismatched indexed vectors.
 - [x] Generate `nameRuntimeValueDynamic` for supported value-indexed binders
   when `runtimeValue(name)` is requested. It accepts the generic value as an
   ordinary Nim argument and returns `(Value, Globals)`, including when the
   result has no typed Nim codec. A 200-case property checks a generic Nat result.
 - [x] Propagate earlier callback arguments into dependent callback result
   codecs. A 200-case property checks a Nim `Nat -> Vec[Int, n]` callback through
-  both generated and reified runtime wrappers, including Vec length checks.
+  both generated and reified runtime wrappers. A negative runtime check rejects
+  a callback result with the wrong Vec length.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
