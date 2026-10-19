@@ -1167,7 +1167,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [x] Audit and migrate remaining test and fixture call sites exposed by the
   embedded error-path suite. Three legacy spellings in runtime-bridge
   diagnostics now use brackets so those tests reach their intended errors.
-- [ ] Run the full local CI gate before the first release.
+- [x] Run the full local CI gate before the first release. The complete CI
+  script's build and test stages passed in a sandbox-compatible temporary
+  copy, including embedded examples, loopback integrations, PBT suites, and
+  the VS Code smoke test. It used the already-cached `falsify` package and
+  temporary Nim caches; only the dependency-install bootstrap was skipped.
 - [x] Migrate remaining legacy indexed type applications in the runtime bridge
   test to brackets, and make generic-signature registration tolerate Nim
   function-type binders. The runtime bridge suite passes, including the
