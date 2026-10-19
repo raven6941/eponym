@@ -689,9 +689,14 @@ implementations.
 
 **Exit criteria:**
 
-- [ ] Examples use the documented Nim-friendly syntax; the tutorial runs
-  from a clean Nim project using the published package; `.ep` resolution
-  works from a different working directory without hidden global state.
+- [x] Compile the marked hello and vector snippets extracted directly from
+  `docs/tutorial.md` against a clean package-shaped install, and resolve `.ep`
+  imports from a different working directory; `tests/test_package_prelude_install.sh`
+  verifies these paths without hidden global state.
+- [ ] Verify the actual `nimble install` path from a clean Nim project and
+  revisit the first-use estimate after editor setup is streamlined. An
+  isolated offline install attempt is currently blocked because Nimble needs
+  its remote package index to resolve the `falsify` dependency.
 
 ### Cross-stage validation and project claims
 
