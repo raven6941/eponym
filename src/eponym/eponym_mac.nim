@@ -1018,9 +1018,11 @@ proc runtimeNatIndexExpr(n: NimNode): NimNode =
 proc substituteRuntimeIndices(n: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
   if n.kind in {nnkIdent, nnkSym}:
-    for override in overrides:
-      if $n == override.name:
-        return copyNimTree(override.value)
+    # Later entries are lexically nearer binders and shadow earlier ones.
+    if overrides.len > 0:
+      for i in countdown(overrides.high, 0):
+        if $n == overrides[i].name:
+          return copyNimTree(overrides[i].value)
     return copyNimTree(n)
   result = copyNimTree(n)
   for i in 0 ..< n.len:

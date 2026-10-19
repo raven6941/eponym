@@ -208,6 +208,10 @@ eponymBlock:
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
   runtimePairTrusted(generatedDependentPairVecIdentity)
+  proc generatedShadowedDependentPairVecIdentity(
+      value: Sig(length: Nat, Sig(length: Nat, Vec[Int, length]))):
+      Sig(length: Nat, Sig(length: Nat, Vec[Int, length])) = value
+  runtimePairTrusted(generatedShadowedDependentPairVecIdentity)
   record(SizedVec):
     field(prefixLength, Nat)
     field(suffixLength, Nat)
@@ -769,6 +773,24 @@ when isMainModule:
         mismatchRejected = true
       roundTrips and mismatchRejected,
     shrinkInt)
+  let generatedShadowedDependentPairVecCases = forAll(
+    "nested Sigma index shadowing uses the nearest binder", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(n: int): bool =
+      let outerLength = n mod 20
+      let innerLength = (n div 3) mod 20
+      var values: seq[int] = @[]
+      for i in 0 ..< innerLength: values.add(i + n)
+      let input = (outerLength, (innerLength, values))
+      let roundTrips = generatedShadowedDependentPairVecIdentity(input) == input
+      var mismatchRejected = false
+      try:
+        discard generatedShadowedDependentPairVecIdentity(
+          (outerLength, (innerLength, values & @[n])))
+      except ValueError:
+        mismatchRejected = true
+      roundTrips and mismatchRejected,
+    shrinkInt)
   if not generatedTrustedDependentResultCases:
     quit(1)
   let generatedPairWithExternalIndexCases = forAll(
@@ -868,6 +890,7 @@ when isMainModule:
       generatedTernaryPairBindingCases and
       generatedTrustedDependentPairCases and
       generatedDependentPairVecCases and
+      generatedShadowedDependentPairVecCases and
       generatedPairWithExternalIndexCases and
       generatedNestedRecordRoundTrips and
       generatedFutureInputPassesThrough and
