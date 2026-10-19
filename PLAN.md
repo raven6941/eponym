@@ -373,8 +373,8 @@ implementations.
    types as Nim static generic values, encoded through the mapped codec. A
    200-case property covers mapped opaque objects and nullary data enum values
    through typed wrappers and typed/raw `runtimeValue` calls. The value must
-   be representable as a Nim compile-time constant; other unmapped value
-   binders remain unsupported.
+   be representable as a Nim compile-time constant; unmapped values are
+   available through dynamic `Value` wrappers when their Eponym type is named.
 - [x] Add a structural codec for nullary, unindexed `data` declarations mapped
    to same-named Nim enum members. The codec translates through checked
    constructor reference identities; a 200-case property covers every variant,
@@ -463,6 +463,11 @@ implementations.
    are composed, and indexed Vec fields are length-checked. A 200-case
    property exercises typed and `RuntimeValue` dynamic wrappers and rejects a
    Sigma containing a Vec of the wrong length.
+- [x] Accept unmapped named Eponym values as `Value` arguments in dynamic
+  generic wrappers. Validate that each value inhabits its declared named type
+  before checked evaluation. A 200-case property passes an unmapped data
+  constructor through a generic projection; applied/indexed binder domains
+  still need runtime type-expression validation.
 - [x] Lower conditional Nat indices of the form `if b: n else: m` in dynamic
    generic Vec and non-dependent Sigma value codecs. The Bool condition is a
    generic runtime parameter; both branch lengths are checked. A 200-case
