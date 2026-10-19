@@ -181,6 +181,17 @@ eponymBlock:
   runtimeValue(generatedGenericNatValue)
 
 eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  proc generatedVectorIdentity[A: Univ, n: Nat](
+      values: Vec[A, n]): Vec[A, n] = values
+  proc generatedVectorSucIndex[n: Nat](
+      values: Vec[Int, suc(n)]): Nat = n
+  proc generatedVectorAddIndex[m, n: Nat](
+      values: Vec[Int, add(m, n)]): Int = addInt(0, 0)
+
+eponymBlock:
   postulate(Int, Univ)
   proc generatedApplyNimCallback(
       callback: proc(value: Int): Int {.closure.}, value: Int): Int =
@@ -222,6 +233,9 @@ static:
     IndexedChannelHandle(index: 3, label: "generic-index")))
   doAssert compiles(generatedGenericNatValue[17](3))
   doAssert compiles(generatedGenericNatValueRuntimeValue[17](3))
+  doAssert compiles(generatedVectorIdentity[int, 4](@[1, 2, 3, 4]))
+  doAssert compiles(generatedVectorSucIndex[3](@[1, 2, 3, 4]))
+  doAssert compiles(generatedVectorAddIndex[2, 3](@[1, 2, 3, 4, 5]))
   doAssert compiles(generatedApplyNimCallback(proc(value: int): int = value, 1))
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
@@ -770,6 +784,31 @@ proc callbackRole : Callback -> Sample -> Sample =
     shrinkInt)
   if not genericNatBodyCases:
     quit(1)
+
+  let vectorCodecCases = forAll(
+    "length-indexed Vec values cross as checked Nim sequences", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(seed: int): bool =
+      let values = @[seed, seed + 1, seed + 2, seed + 3]
+      let handles = @[
+        ChannelHandle(id: seed, label: "vec/" & $seed),
+        ChannelHandle(id: seed + 1, label: "vec/" & $(seed + 1)),
+        ChannelHandle(id: seed + 2, label: "vec/" & $(seed + 2)),
+        ChannelHandle(id: seed + 3, label: "vec/" & $(seed + 3))]
+      generatedVectorIdentity[int, 4](values) == values and
+        generatedVectorIdentity[ChannelHandle, 4](handles) == handles,
+    shrinkInt)
+  if not vectorCodecCases:
+    quit(1)
+  doAssert generatedVectorIdentity[int, 0](@[]) == @[]
+  doAssert generatedVectorSucIndex[3](@[1, 2, 3, 4]) == 3
+  doAssert generatedVectorAddIndex[2, 3](@[1, 2, 3, 4, 5]) == 0
+  var wrongVectorLengthRejected = false
+  try:
+    discard generatedVectorIdentity[int, 4](@[1, 2, 3])
+  except ValueError as error:
+    wrongVectorLengthRejected = "runtime Vec length mismatch" in error.msg
+  doAssert wrongVectorLengthRejected
 
   let callbackBridgeCases = forAll(
     "Nim closures cross into checked function arguments",
