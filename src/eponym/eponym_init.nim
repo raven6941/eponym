@@ -897,6 +897,15 @@ proc runtimeArrowType*(domain, codomain: Value): Value =
   let scope = Scope(adv: "_", bdy: codomain.syn)
   vPi(domain, ScoVal(syn: scope,
     fn: proc(argument: Value): Value = codomain))
+proc runtimeDependentPiType*(domain, argument, codomain: Value,
+    codomainFn: proc(argument: Value): Value {.closure.}): Value =
+  ## Build a dependent Pi runtime type after probing its codomain with a fresh
+  ## parameter. The supplied function remains the authoritative scope.
+  if domain.isNil or argument.isNil or codomain.isNil or
+      argument.whnf.kind != wRef:
+    raise newException(ValueError, "cannot build an incomplete dependent Pi")
+  let scope = abstractR(argument.whnf.refId, "_", codomain.syn)
+  vPi(domain, ScoVal(syn: scope, fn: codomainFn))
 proc vSi(dom: Value, sc: ScoVal, qty = qOmega): Value =
   Value(syn: tmSi(dom.syn, sc.syn.adv, sc.syn.bdy, false, false, qty),
         whnf: Whnf(kind: wSi, dom: dom, tscope: sc, qty: qty))

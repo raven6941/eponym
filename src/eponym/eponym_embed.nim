@@ -1552,6 +1552,18 @@ proc runtimeGlobalValue*(globals: Globals, name: string): Value =
       "runtime type expression refers to unknown Eponym name '" & name & "'")
   eval(globals[name].tm, @[])
 
+proc runtimeDependentArrowType*(domain: Value, globals: Globals,
+    codomainFn: proc(argument: Value): Value {.closure.}): Value =
+  ## Build a Pi type whose codomain can refer to its parameter. Seed the
+  ## fresh-parameter supply after all checked global reference IDs.
+  var supply = Supply()
+  for _, entry in globals.pairs:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      reserveFreshIdsThrough(supply, entry.tm.refId)
+  let argument = freshPara(supply, domain)
+  let codomain = codomainFn(argument)
+  runtimeDependentPiType(domain, argument, codomain, codomainFn)
+
 proc runtimeValueTerm(value: Value, globals: Globals): Term =
   if value.isNil: return nil
   case value.whnfKind

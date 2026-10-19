@@ -699,6 +699,17 @@ eponymBlock:
   runtimeValue(generatedApplyGenericFunction)
 
 eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  proc generatedDependentTypeAnchor(): Univ = Int
+  proc generatedApplyDependentVectorFunction[
+      callback: Pi(n: Nat, Vec[Int, n])](length: Nat): Vec[Int, length] =
+    callback(length)
+  runtimeValue(generatedDependentTypeAnchor)
+  runtimeValue(generatedApplyDependentVectorFunction)
+
+eponymBlock:
   postulate(Nat, Univ)
   proc generatedGenericNatProjection[n: Nat](): Nat = n
   runtimeValue(generatedGenericNatProjection)
@@ -2010,6 +2021,53 @@ when isMainModule:
   except ValueError:
     hostFunctionTypeRejected = true
   doAssert hostFunctionTypeRejected
+
+  let dependentTypeGlobals = generatedDependentTypeAnchorRuntimeValue().globals
+  let natTypeForCallback = runtimeGlobalValue(dependentTypeGlobals, "Nat")
+  let intTypeForCallback = runtimeGlobalValue(dependentTypeGlobals, "Int")
+  let expectedDependentCallbackType = runtimeDependentArrowType(
+    natTypeForCallback, dependentTypeGlobals,
+    proc(length: Value): Value =
+      callRuntimeValue(eval(dependentTypeGlobals["Vec"].tm, @[]),
+        [intTypeForCallback, length]))
+  let dependentHostCallback = setRuntimeHostFunctionType(
+    vHostFunc(proc(length: Value): Value =
+      runtimeIntVector(makeIndexedRuntimeValues(valueToNat(
+        length, dependentTypeGlobals)), dependentTypeGlobals)),
+    expectedDependentCallbackType, dependentTypeGlobals)
+  let genericDependentFunctionCases = forAll(
+    "dynamic generic binders validate dependent host callback types", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 16),
+    proc(length: int): bool =
+      let expected = makeIndexedRuntimeValues(length)
+      let checked = generatedApplyDependentVectorFunctionDynamic(
+        dependentHostCallback, length)
+      let runtime = generatedApplyDependentVectorFunctionRuntimeValueDynamic(
+        dependentHostCallback, length)
+      checked == expected and vecValueToSeq[int](runtime.value, length,
+        runtime.globals, "Vec",
+        proc(value: Value, globals: Globals): int = valueToInt(value)) ==
+          expected,
+    shrinkInt)
+  if not genericDependentFunctionCases:
+    quit(1)
+  let wrongDependentCallbackType = runtimeDependentArrowType(
+    natTypeForCallback, dependentTypeGlobals,
+    proc(length: Value): Value =
+      callRuntimeValue(eval(dependentTypeGlobals["Vec"].tm, @[]),
+        [natTypeForCallback, length]))
+  let wrongDependentHostCallback = setRuntimeHostFunctionType(
+    vHostFunc(proc(length: Value): Value =
+      runtimeIntVector(makeIndexedRuntimeValues(valueToNat(
+        length, dependentTypeGlobals)), dependentTypeGlobals)),
+    wrongDependentCallbackType, dependentTypeGlobals)
+  var dependentCallbackTypeRejected = false
+  try:
+    discard generatedApplyDependentVectorFunctionDynamic(
+      wrongDependentHostCallback, 0)
+  except ValueError:
+    dependentCallbackTypeRejected = true
+  doAssert dependentCallbackTypeRejected
 
   let rawGenericNatCases = forAll(
     "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,

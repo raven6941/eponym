@@ -1713,6 +1713,38 @@ proc rawRuntimeValueCheck(eponymType, value, globals: NimNode,
 proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode
 
+proc runtimePiTypeValueExpr(n, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
+  if n.kind notin {nnkCall, nnkObjConstr} or n.len < 3 or
+      n[0].kind notin {nnkIdent, nnkSym} or $n[0] != "Pi":
+    return nil
+  var binders: seq[tuple[name: string, domain: NimNode]] = @[]
+  for i in 1 ..< n.len - 1:
+    let binder = n[i]
+    if binder.kind != nnkExprColonExpr or binder.len != 2 or
+        binder[0].kind notin {nnkIdent, nnkSym}:
+      return nil
+    binders.add(($binder[0], binder[1]))
+  proc build(index: int,
+      localOverrides: seq[tuple[name: string, value: NimNode]]): NimNode =
+    let domain = runtimeTypeValueExpr(binders[index].domain, globals,
+      localOverrides)
+    if domain.isNil: return nil
+    let argument = genSym(nskParam, "runtimePiArgument")
+    var codomainOverrides = localOverrides
+    codomainOverrides.add((binders[index].name, argument))
+    let codomain = if index + 1 < binders.len:
+      build(index + 1, codomainOverrides)
+    else:
+      runtimeTypeValueExpr(n[^1], globals, codomainOverrides)
+    if codomain.isNil: return nil
+    let callback = newProc(
+      params = @[bindSym"Value",
+        newIdentDefs(argument, bindSym"Value", newEmptyNode())],
+      body = newStmtList(codomain))
+    newCall(bindSym"runtimeDependentArrowType", domain, globals, callback)
+  build(0, overrides)
+
 proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                toValue: bool,
                                mappings: seq[HostRuntimeType],
@@ -2692,6 +2724,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
 proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
   if n.isNil: return nil
+  if n.kind in {nnkCall, nnkObjConstr} and n.len > 0 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Pi":
+    return runtimePiTypeValueExpr(n, globals, overrides)
   if n.kind == nnkInfix and n.len == 3 and $n[0] == "->":
     let domain = runtimeTypeValueExpr(n[1], globals, overrides)
     let codomain = runtimeTypeValueExpr(n[2], globals, overrides)
