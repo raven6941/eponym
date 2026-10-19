@@ -279,9 +279,12 @@ implementations.
    dedicated coverage under stage B.
 - [x] Specify supported ownership, aliasing, exception, async, and lifetime
    behavior. QTT linearity is limited to checked Eponym terms; boxed Nim refs
-   and closures may alias or be retained. Adapters pass values by value, have
-   no `var`/`lent` or explicit ownership-transfer form, propagate synchronous
-   exceptions, and pass mapped futures through opaquely.
+   and closures may alias or be retained. Typed adapters accept Nim `var`
+   parameters through mutable call-local decoded values; changes to referenced
+   storage are visible, while updates to ordinary object values must be
+   returned to cross back into Eponym. Adapters have no explicit
+   ownership-transfer form, propagate synchronous exceptions, and pass mapped
+   futures through opaquely.
 - [x] Keep this contract independent of a particular TCP library. A user or
    library author writes a narrow adapter over `std/net`, `asyncnet`, or
    another backend.
@@ -563,6 +566,13 @@ implementations.
      carries earlier callback arguments into dependent codecs. Negative checks
      reject wrong-family inputs and results through generated and reified
      closures; unsupported type expressions remain explicitly trusted.
+   - [x] Support Nim `var` parameters in typed postulate adapters. Adapters
+     decode into mutable call-local variables and let Nim check the concrete
+     `var T` signature. A 200-case property checks mutation through a mapped
+     reference object via generated and `RuntimeValue` wrappers, and another
+     confirms that an ordinary object stays unchanged at the call site while
+     the updated result crosses back. Value updates must be returned by the
+     adapter.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.

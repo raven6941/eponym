@@ -338,14 +338,17 @@ See the [trust model](trust-model.md).
 
 ### Nim ownership and lifetime at the runtime boundary
 
-The current adapters take and return Nim values by value. `toHostValue[T]`
-stores a Nim value in a rooted box for the runtime call. Ordinary object
-values follow Nim's copy and destructor rules; `ref` values, pointers, and
-closures still refer to their existing storage or captured environment, so
-boxing them does not remove aliases. The host adapter may retain or duplicate
-those references, and raw pointer validity remains the adapter author's
-responsibility. There is no adapter form that accepts `var`/`lent` parameters
-or transfers ownership explicitly.
+Typed postulate adapters may declare Nim `var` parameters. The bridge decodes
+each Eponym argument into a mutable call-local Nim variable before invoking
+the adapter. A mutation to an ordinary object value crosses back only if the
+adapter returns the updated object; mutation through a `ref` value is visible
+through other aliases to the same referenced storage. Ordinary adapter
+parameters remain by value. `toHostValue[T]` stores a Nim value in a rooted
+box for the runtime call. `ref` values, pointers, and closures still refer to
+their existing storage or captured environment, so boxing them does not
+remove aliases. The host adapter may retain or duplicate those references,
+and raw pointer validity remains the adapter author's responsibility. There
+is no explicit ownership-transfer adapter form.
 
 Eponym enforces a linear channel's use in checked Eponym terms. It does not
 make a Nim `ref` or closure single-use, detect aliases held elsewhere, or

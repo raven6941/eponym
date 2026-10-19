@@ -58,6 +58,22 @@ type ChannelHandle = object
   id: int
   label: string
 
+type MutableCounter = ref object
+  value: int
+
+type ValueCounter = object
+  value: int
+
+proc incrementCounterNim(counter: var MutableCounter): MutableCounter =
+  inc counter.value
+  counter
+
+proc inspectCounterNim(counter: MutableCounter): MutableCounter = counter
+
+proc incrementValueCounterNim(counter: var ValueCounter): ValueCounter =
+  inc counter.value
+  counter
+
 proc encodeRuntimeHandle(value: ChannelHandle, globals: Globals): Value =
   runtimeVariantToValue(RuntimeVariant(constructor: "runtimeHandle",
     arguments: @[intToValue(value.id)]), globals, "RuntimeHandle",
@@ -228,12 +244,35 @@ eponymBlock:
   runtimeValue(importedImplicitBoolIdentity)
   runtimeValue(importedImplicitIntIdentity)
   runtimeValue(importedImplicitTokenIdentity)
+
   runtimeValue(importedCallbackApply)
   runtimeValue(importedCallbackApply2)
   runtimeValue(importedCallbackIdentity)
   runtimeValue(importedDependentCallbackApply)
   runtimePairTrusted(importedDependentPairIdentity)
   runtimeValue(importedDependentPairIdentity)
+
+eponymBlock:
+  postulate(Counter, Univ)
+  postulate(incrementCounter, Counter -> Counter)
+  postulate(inspectCounter, Counter -> Counter)
+  runtimeType(Counter, MutableCounter)
+  bindPostulate(incrementCounter, incrementCounterNim, Counter)
+  bindPostulate(inspectCounter, inspectCounterNim, Counter)
+  proc incrementChecked(counter: Counter): Counter =
+    incrementCounter(counter)
+  proc inspectChecked(counter: Counter): Counter = inspectCounter(counter)
+  runtimeValue(incrementChecked)
+  runtimeValue(inspectChecked)
+
+eponymBlock:
+  postulate(ValueCounterType, Univ)
+  postulate(incrementValueCounter, ValueCounterType -> ValueCounterType)
+  runtimeType(ValueCounterType, ValueCounter)
+  bindPostulate(incrementValueCounter, incrementValueCounterNim,
+    ValueCounterType)
+  proc incrementValueCounterChecked(counter: ValueCounterType):
+      ValueCounterType = incrementValueCounter(counter)
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
@@ -2611,6 +2650,35 @@ proc callbackRole : Callback -> Sample -> Sample =
       decoded.id == value.id and decoded.label == value.label,
     shrinkInt)
   if not opaqueRoundTrips:
+    quit(1)
+
+  let mutableHostAdapter = forAll(
+    "var Nim postulate adapters mutate mapped reference values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(initial: int): bool =
+      let counter = MutableCounter(value: initial)
+      let inspected = inspectChecked(counter)
+      let generated = incrementChecked(counter)
+      let runtimeInspection = inspectCheckedRuntimeValue(counter)
+      let runtime = incrementCheckedRuntimeValue(counter)
+      let runtimeCounter = valueToHost[MutableCounter](runtime.value)
+      inspected == counter and
+        valueToHost[MutableCounter](runtimeInspection.value) == counter and
+        generated == counter and runtimeCounter == counter and
+        counter.value == initial + 2,
+    shrinkInt)
+  if not mutableHostAdapter:
+    quit(1)
+
+  let mutableObjectAdapter = forAll(
+    "var adapter returns updates to value objects", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(initial: int): bool =
+      let counter = ValueCounter(value: initial)
+      let updated = incrementValueCounterChecked(counter)
+      counter.value == initial and updated.value == initial + 1,
+    shrinkInt)
+  if not mutableObjectAdapter:
     quit(1)
 
   let alternateHostDispatch = forAll("runtime bindings stay local to each call",

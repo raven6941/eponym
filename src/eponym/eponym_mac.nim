@@ -1939,8 +1939,8 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
         runtimeArg, false, mappings, records, globalsSym)
       if decoded.isNil:
         error("bindPostulatePair could not build an argument codec")
-      let decodedArg = genSym(nskLet, "hostPairArgument")
-      adapterBody.add(newLetStmt(decodedArg, decoded))
+      let decodedArg = genSym(nskVar, "hostPairArgument")
+      adapterBody.add(newVarStmt(decodedArg, decoded))
       decodedArgs.add(decodedArg)
       if i < binding.pairResultArgNames.len and
           binding.pairResultArgNames[i].len > 0:
@@ -1970,16 +1970,12 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
     return newCall(bindSym"bindHostValue", bindingsSym, globalsSym,
                    nameLit, adapterValue)
   var adapterTypes = binding.eponymTypes
-  var usesCustomCodec = false
-  for typeName in binding.eponymTypes:
-    for mapping in mappings:
-      if mapping.eponymName == typeName and mapping.isRuntimeCodec:
-        usesCustomCodec = true
-  if binding.eponymTypes.len == 1 and usesCustomCodec:
+  if binding.eponymTypes.len == 1:
     adapterTypes = @[binding.eponymTypes[0], binding.eponymTypes[0]]
-  if binding.eponymTypes.len >= 7 or usesCustomCodec:
+  if binding.eponymTypes.len > 0:
     let argumentCount = adapterTypes.len - 1
     var decodedArgs: seq[NimNode] = @[]
+    var adapterBody = newStmtList()
     for i in 0 ..< argumentCount:
       let eponymType = ident(adapterTypes[i])
       let nimType = runtimeNimType(eponymType, mappings, records)
@@ -1993,7 +1989,9 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       if decoded.isNil:
         error("bindPostulate could not build a runtime codec for argument '" &
           adapterTypes[i] & "'")
-      decodedArgs.add(decoded)
+      let decodedArg = genSym(nskVar, "hostArgument" & $i)
+      adapterBody.add(newVarStmt(decodedArg, decoded))
+      decodedArgs.add(decodedArg)
     let resultEponymType = ident(adapterTypes[^1])
     let resultNimType = runtimeNimType(resultEponymType, mappings, records)
     if resultNimType.isNil:
@@ -2011,7 +2009,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
         adapterTypes[^1] & "'")
     let runtimeArgsSym = ident"runtimeArguments"
     let runtimeGlobalsSym = ident"runtimeGlobals"
-    let adapterBody = newStmtList(encodedResult)
+    adapterBody.add(encodedResult)
     let adapter = newProc(params = @[bindSym"Value",
       newIdentDefs(runtimeArgsSym,
         newTree(nnkBracketExpr, ident"seq", bindSym"Value"), newEmptyNode()),
