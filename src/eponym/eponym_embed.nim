@@ -395,10 +395,15 @@ proc natIndexMul*(a, b: int): int =
     raise newException(ValueError, "Nat index multiplication is outside Nim int range")
   a * b
 
+proc runtimeValueTypeOf*(value: Value, globals: Globals): Value
+proc validateRuntimeValueType*(value, expectedType: Value,
+                               globals: Globals)
+
 proc seqToVecValue*[T](items: seq[T], expectedLength: int, globals: Globals,
     familyName: string,
     encode: proc(item: T, globals: Globals): Value,
-    elementType: Value = nil): Value =
+    elementType: Value = nil,
+    inferElementType = false): Value =
   if expectedLength < 0:
     raise newException(ValueError, "Vec length cannot be negative")
   if items.len != expectedLength:
@@ -406,16 +411,25 @@ proc seqToVecValue*[T](items: seq[T], expectedLength: int, globals: Globals,
       "runtime Vec length mismatch: expected " & $expectedLength &
       ", got " & $items.len)
   validateHostVectorCodec(globals, familyName)
-  let representedType = if elementType.isNil: vType(0) else: elementType
-  result = callRuntimeValue(eval(globals["nil"].tm, @[]), @[representedType])
+  var encodedItems = newSeq[Value](items.len)
   for i in countdown(items.high, 0):
-    let encodedItem = encode(items[i], globals)
+    encodedItems[i] = encode(items[i], globals)
+  var representedType = elementType
+  if representedType.isNil and inferElementType:
+    if encodedItems.len == 0:
+      raise newException(ValueError,
+        "cannot infer the indexed Vec element type from an empty sequence; " &
+        "use a raw RuntimeValue call with an explicit type witness")
+    representedType = runtimeValueTypeOf(encodedItems[0], globals)
+  if representedType.isNil: representedType = vType(0)
+  if inferElementType:
+    for encodedItem in encodedItems:
+      validateRuntimeValueType(encodedItem, representedType, globals)
+  result = callRuntimeValue(eval(globals["nil"].tm, @[]), @[representedType])
+  for i in countdown(encodedItems.high, 0):
     let tailLength = natToValue(items.high - i, globals)
     result = callRuntimeValue(eval(globals["cons"].tm, @[]),
-      @[representedType, tailLength, encodedItem, result])
-
-proc validateRuntimeValueType*(value, expectedType: Value,
-                               globals: Globals)
+      @[representedType, tailLength, encodedItems[i], result])
 
 proc vecValueToSeq*[T](value: Value, expectedLength: int, globals: Globals,
     familyName: string,
@@ -450,7 +464,8 @@ proc vecValueToSeq*[T](value: Value, expectedLength: int, globals: Globals,
 proc arrayToVecValue*[N: static[int], T](items: array[N, T],
     expectedLength: int, globals: Globals, familyName: string,
     encode: proc(item: T, globals: Globals): Value,
-    elementType: Value = nil): Value =
+    elementType: Value = nil,
+    inferElementType = false): Value =
   if expectedLength != N:
     raise newException(ValueError,
       "runtime Vec length mismatch: expected " & $expectedLength &
@@ -458,7 +473,7 @@ proc arrayToVecValue*[N: static[int], T](items: array[N, T],
   var sequence = newSeqOfCap[T](N)
   for item in items: sequence.add(item)
   seqToVecValue(sequence, expectedLength, globals, familyName, encode,
-    elementType)
+    elementType, inferElementType)
 
 proc vecValueToArray*[N: static[int], T](value: Value,
     expectedLength: int, globals: Globals, familyName: string,
@@ -1696,6 +1711,28 @@ proc runtimeValueTypeOf*(value: Value, globals: Globals): Value =
   if result.isNil:
     raise newException(ValueError,
       "runtime Value has no inferable Eponym type witness")
+
+proc runtimeValueTypeArgumentOf*(value: Value, globals: Globals,
+    familyName: string, argumentIndex: int): Value =
+  ## Infer a value's type and project one explicit argument from a named
+  ## family application such as Vec A n.
+  if argumentIndex < 0:
+    raise newException(ValueError, "runtime type argument index cannot be negative")
+  let representedType = runtimeValueTypeOf(value, globals)
+  if familyName notin globals or globals[familyName].tm.isNil or
+      representedType.whnfKind != wRef or
+      representedType.whnfRefId != globals[familyName].tm.refId:
+    raise newException(ValueError,
+      "runtime Value does not have a type headed by '" & familyName & "'")
+  if argumentIndex >= representedType.whnfSpineLen:
+    raise newException(ValueError,
+      "runtime type for '" & familyName & "' has no argument " &
+      $argumentIndex)
+  for i in 0 .. representedType.whnfSpineLen - 1:
+    if representedType.whnfSpineKind(i) != eApp:
+      raise newException(ValueError,
+        "runtime type for '" & familyName & "' has a non-application spine")
+  representedType.whnfSpineArg(argumentIndex)
 
 proc validateRuntimeValueType*(value, expectedType: Value,
                                globals: Globals) =

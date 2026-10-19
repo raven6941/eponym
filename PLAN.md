@@ -752,10 +752,13 @@ implementations.
      generated and typed `RuntimeValue` wrappers and rejects callbacks that
      change the index. `none` reports that it cannot infer the witness and
      directs callers to pass `some(value)` or use an explicit raw type witness.
-   - [ ] Infer indexed witnesses when they are nested more deeply, such as an
-     indexed `A` inside `Option[Vec[A, n]]`. Empty collections and `none` still
-     require an explicit type witness; the wrapper must not guess an index
-     from the Nim type alone.
+   - [x] Infer indexed witnesses when a nonempty `Vec[A, n]` is nested in
+      `Option[Vec[A, n]]`. A 50-case property checks the full result type and
+      rejects callbacks that change an element index through generated and
+      typed `RuntimeValue` wrappers. `none` and an empty `Vec[A, zero]` still
+      report that the index cannot be inferred; callers must provide an
+      explicit type witness. A `some(empty-sequence)` for a positive fixed
+      length is rejected by the ordinary Vec length check.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.

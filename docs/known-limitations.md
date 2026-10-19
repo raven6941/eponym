@@ -349,8 +349,12 @@ representative exists (`none` or an empty collection), callers still need an
 explicit witness, except for a direct `Option.some(value)` argument with a
 mapped indexed payload. The wrapper infers that payload's index; `none` reports
 that it cannot infer one and directs callers to use `some(value)` or the raw
-generic `RuntimeValue` interface with an explicit type Value. Indexed types
-nested more deeply, such as `A` inside `Option[Vec[A,n]]`, remain unsupported.
+generic `RuntimeValue` interface with an explicit type Value. A nonempty
+vector nested in `Option[Vec[A,n]]` also provides a witness from its encoded
+elements; generated and typed `RuntimeValue` wrappers validate callback
+indices. An empty `Vec[A, zero]` has no representative element and still needs
+an explicit witness. A vector with the wrong declared length is rejected by
+the ordinary length check.
 A property covers an indexed `SizedTree` identity through the raw generic
 `RuntimeValue` interface.
 More complex generic domain expressions outside the supported type-expression

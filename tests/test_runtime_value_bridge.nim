@@ -471,6 +471,14 @@ eponymBlock:
   runtimeValue(importedGenericIndexedOptionCallbackApply)
 
 eponymBlock:
+  import "fixtures/runtime_imported_generic.ep"
+  runtimeVector(Vec)
+  runtimeOption(Option)
+  runtimeDataVariant(SizedTree)
+  runtimeValue(importedGenericIndexedNestedOptionVectorCallbackApply)
+  runtimeValue(importedGenericIndexedEmptyOptionVectorCallbackApply)
+
+eponymBlock:
   import "fixtures/runtime_imported_generic_variant.ep"
   runtimeCodec(SizedTree, RuntimeStructuredVariant, encodeRuntimeSizedTree,
     decodeRuntimeSizedTree)
@@ -1816,6 +1824,112 @@ when isMainModule:
     proc(input: tuple[length: int, present: bool]):
         seq[tuple[length: int, present: bool]] = @[])
   if not indexedOptionCallbackCases:
+    quit(1)
+  let nestedIndexedOptionCallbackCases = forAll(
+    "generic callbacks infer indexed witnesses inside Option and Vec", r, 50,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      proc tree(index: int): RuntimeStructuredVariant =
+        RuntimeStructuredVariant(constructor: "sizedTree", arguments: @[
+          RuntimeStructuredValue(kind: rsvNat, natValue: index),
+          RuntimeStructuredValue(kind: rsvVariant,
+            variantValue: RuntimeStructuredVariant(
+              constructor: "treeEmpty"))])
+      let value = some(@[tree(length), tree(length)])
+      let callback: proc(value: Option[seq[RuntimeStructuredVariant]]):
+          Option[seq[RuntimeStructuredVariant]] {.closure.} =
+        proc(value: Option[seq[RuntimeStructuredVariant]]):
+            Option[seq[RuntimeStructuredVariant]] = value
+      let typed = importedGenericIndexedNestedOptionVectorCallbackApply(
+        callback, value)
+      let runtime =
+        importedGenericIndexedNestedOptionVectorCallbackApplyRuntimeValue(
+          callback, value)
+      let treeType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "SizedTree"),
+        [natToValue(length, runtime.globals)])
+      let vectorType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [treeType, natToValue(2, runtime.globals)])
+      let expectedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Option"), [vectorType])
+      validateRuntimeValueType(runtime.value, expectedType, runtime.globals)
+      let decoded = valueToOption(runtime.value, runtime.globals, "Option",
+        proc(item: Value, globals: Globals): seq[RuntimeStructuredVariant] =
+          vecValueToSeq[RuntimeStructuredVariant](item, 2, globals, "Vec",
+            proc(element: Value, elementGlobals: Globals):
+                RuntimeStructuredVariant =
+              valueToRuntimeStructuredVariant(element, elementGlobals,
+                "SizedTree", ["sizedTree"])))
+      let wrongIndexCallback:
+          proc(value: Option[seq[RuntimeStructuredVariant]]):
+            Option[seq[RuntimeStructuredVariant]] {.closure.} =
+        proc(value: Option[seq[RuntimeStructuredVariant]]):
+            Option[seq[RuntimeStructuredVariant]] =
+          if value.isNone: return none[seq[RuntimeStructuredVariant]]()
+          var changed = value.get
+          inc changed[0].arguments[0].natValue
+          some(changed)
+      var typedMismatchRejected = false
+      try:
+        discard importedGenericIndexedNestedOptionVectorCallbackApply(
+          wrongIndexCallback, value)
+      except ValueError:
+        typedMismatchRejected = true
+      var runtimeMismatchRejected = false
+      try:
+        discard importedGenericIndexedNestedOptionVectorCallbackApplyRuntimeValue(
+          wrongIndexCallback, value)
+      except ValueError:
+        runtimeMismatchRejected = true
+      let noneValue = none[seq[RuntimeStructuredVariant]]()
+      var noneRejected = false
+      try:
+        discard importedGenericIndexedNestedOptionVectorCallbackApply(
+          callback, noneValue)
+      except ValueError as error:
+        noneRejected = "cannot infer indexed Eponym type argument" in error.msg
+      var noneRuntimeRejected = false
+      try:
+        discard importedGenericIndexedNestedOptionVectorCallbackApplyRuntimeValue(
+          callback, noneValue)
+      except ValueError as error:
+        noneRuntimeRejected = "cannot infer indexed Eponym type argument" in error.msg
+      var emptyRejected = false
+      try:
+        discard importedGenericIndexedNestedOptionVectorCallbackApply(
+          callback, some(newSeq[RuntimeStructuredVariant]()))
+      except ValueError as error:
+        emptyRejected = "length mismatch" in error.msg
+      var emptyWitnessRejected = false
+      try:
+        discard importedGenericIndexedEmptyOptionVectorCallbackApply(
+          callback, some(newSeq[RuntimeStructuredVariant]()))
+      except ValueError as error:
+        emptyWitnessRejected = "empty sequence" in error.msg
+      var emptyRuntimeWitnessRejected = false
+      try:
+        discard importedGenericIndexedEmptyOptionVectorCallbackApplyRuntimeValue(
+          callback, some(newSeq[RuntimeStructuredVariant]()))
+      except ValueError as error:
+        emptyRuntimeWitnessRejected = "empty sequence" in error.msg
+      var decodedIndicesMatch = decoded.isSome and decoded.get.len == 2
+      if decodedIndicesMatch:
+        for item in decoded.get:
+          if item.arguments[0].natValue != length:
+            decodedIndicesMatch = false
+      if not (typed.isSome and typed.get.len == 2 and decodedIndicesMatch and
+          typedMismatchRejected and runtimeMismatchRejected and noneRejected and
+          noneRuntimeRejected and emptyRejected and emptyWitnessRejected and
+          emptyRuntimeWitnessRejected):
+        echo "nested indexed Option/Vec property failed at length ", length
+      typed.isSome and typed.get.len == 2 and
+        decodedIndicesMatch and
+        typedMismatchRejected and runtimeMismatchRejected and noneRejected and
+        noneRuntimeRejected and emptyRejected and emptyWitnessRejected and
+        emptyRuntimeWitnessRejected,
+    shrinkInt)
+  if not nestedIndexedOptionCallbackCases:
     quit(1)
   let rawAppliedGenericTypeCases = forAll(
     "raw Values for applied generic domains are type checked", r, 200,
