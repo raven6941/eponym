@@ -947,6 +947,12 @@ eponymBlock:
     let selected = callback
     selected()
   runtimeValue(generatedApplyIndexedCallback)
+  proc generatedApplyTrailingIndexedCallback(
+      callback: proc(seed: Int, length: Nat): Vec[Int, length] {.closure.},
+      seed: Int, length: Nat): Vec[Int, length] =
+    let selected = callback
+    selected(seed)
+  runtimeValue(generatedApplyTrailingIndexedCallback)
   proc generatedApplyDependentVectorCallback(
       callback: proc(length: Nat, values: Vec[Int, length]): Nat {.closure.},
       length: Nat, values: Vec[Int, length]): Nat = callback(values)
@@ -3921,6 +3927,19 @@ proc callbackRole : Callback -> Sample -> Sample =
           valueToInt(item)) == expected,
     shrinkInt)
   if not dependentCallbackCases:
+    quit(1)
+  let trailingDependentCallbackCases = forAll(
+    "callback result-only trailing indices infer through aliases", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let seed = length * 3 - 50
+      let callback = proc(seedArg, callbackLength: int): seq[int] {.closure.} =
+        for i in 0 ..< callbackLength: result.add(seedArg + i)
+      var expected: seq[int] = @[]
+      for i in 0 ..< length: expected.add(seed + i)
+      generatedApplyTrailingIndexedCallback(callback, seed, length) == expected,
+    shrinkInt)
+  if not trailingDependentCallbackCases:
     quit(1)
   var dependentCallbackMismatchRejected = false
   try:

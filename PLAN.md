@@ -1232,6 +1232,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   macro inserts holes at the corresponding argument positions. A later
   inferable index can be supplied in brackets after partially applying earlier
   value arguments, or omitted so the checker infers it from later arguments.
+  A result-only index after the final ordinary argument is also inserted when
+  the call supplies all ordinary arguments, allowing the expected result type
+  to determine it; the same trailing index remains pending when the call is
+  used as the head of an explicit bracket application.
   Callback Pi signatures receive the same treatment when a later argument
   type carries the binder or when a named indexed-family result determines it
   from the expected result type. Function-valued motive results such as
@@ -1244,7 +1248,8 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   Compile-time callback regressions cover inferred, result-inferred (including
   an index nested in a `Sig` field), and bracket-supplied indices. The runtime
   bridge property suite passes with dependent callback calls omitting their
-  inferable index. The syntax guard
+  inferable index, including a trailing result-only index after an ordinary
+  callback argument. The syntax guard
   rejects positional call-style index arguments when their signature is known
   and leaves ordinary inferred applications alone. Local and imported vector
   constructor regressions plus direct-index and compound-index family

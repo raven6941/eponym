@@ -38,6 +38,8 @@ for fixture in [
     "tests/fixtures/embedded_err_legacy_compound_index.nim",
     "tests/fixtures/embedded_err_legacy_middle_index.nim",
     "tests/fixtures/embedded_err_legacy_callback_index.nim",
+    "tests/fixtures/embedded_err_legacy_trailing_callback_index.nim",
+    "tests/fixtures/embedded_err_legacy_trailing_constructor_index.nim",
     "tests/fixtures/embedded_err_legacy_local_postulate.nim",
     "tests/fixtures/embedded_err_legacy_command_application.nim"]:
   let (legacyOutput, legacyCode) = compileFixture(fixture, fixture.splitFile.name)

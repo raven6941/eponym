@@ -19,6 +19,9 @@ eponymBlock:
   data(LocalAt, Nat -> Univ):
     proc localAt(n: Nat, value: Nat): LocalAt[n]
 
+  data(LocalLastAt, Nat -> Univ):
+    proc localLastAt(value: Nat, n: Nat): LocalLastAt[n]
+
   data(LocalPairIndex, Nat -> Univ):
     proc localPairIndex(m: Nat, n: Nat,
         left: Vec[Nat, m], right: Vec[Nat, n]): LocalPairIndex[add(m, n)]
@@ -117,6 +120,12 @@ eponymBlock:
   proc inferredDirectIndex(value: Nat): LocalAt[zero()] =
     localAt(value)
 
+  proc inferredTrailingConstructorIndex(value: Nat): LocalLastAt[0] =
+    localLastAt(value)
+
+  proc bracketTrailingConstructorIndex(value: Nat): LocalLastAt[0] =
+    localLastAt(value)[zero()]
+
   proc inferredCommandIndex(value: Nat): LocalAt[zero()] =
     localAt value
 
@@ -158,6 +167,10 @@ eponymBlock:
   proc inferredCallbackResultIndex(
       callback: Pi(n: Nat, Vec[Nat, n])): Vec[Nat, 0] =
     callback()
+
+  proc inferredTrailingCallbackResultIndex(
+      callback: Pi(value: Nat, n: Nat, LocalAt[n]), value: Nat): LocalAt[0] =
+    callback(value)
 
   proc bracketCallbackResultIndex(
       callback: Pi(n: Nat, Vec[Nat, n])): Vec[Nat, 0] =
