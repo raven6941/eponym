@@ -94,7 +94,9 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_runtime_dps_quantity.nim",
      "runtimeDps requires every parameter to be marked {.linear.}"),
     ("tests/fixtures/embedded_err_runtime_dps_term.nim",
-     "runtimeDps supports only fully applied Int primitives")]:
+     "runtimeDps supports only fully applied Int primitives"),
+    ("tests/fixtures/embedded_err_unmapped_clause_wrapper.nim",
+     "no runtime codec for Eponym result type 'LocalToken'")]:
   if not checkFixture(path, expected):
     inc failed
 

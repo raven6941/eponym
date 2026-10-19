@@ -43,8 +43,10 @@ the macro elaborates it at compile time and splices ordinary Nim code
 back. The target is for proof terms and static evidence to have no runtime
 cost, with runtime values crossing an explicit typed boundary. Current
 wrappers support first-order `Int`/`Nat` and explicitly mapped opaque
-postulated types; unsupported signatures retain the legacy
-`varargs[int] -> int` wrapper. The first runtime call re-elaborates the block
+postulated types. Local clause-style definitions with reconstructable checked
+signatures also receive typed wrappers; unsupported signatures report a
+compile-time diagnostic instead of getting an integer-shaped fallback. The
+first runtime call re-elaborates the block
 and caches its checked terms and globals for subsequent calls. External
 postulates can be bound for unary Int, unary opaque, mixed Nat/opaque, and
 typed opaque adapters of arbitrary curried arity when every argument and
@@ -518,6 +520,11 @@ implementations.
       reconstructable imported dependent Sigma signatures into typed tuple
       wrappers; a 200-case identity property covers typed and `RuntimeValue`
       calls, and rejects a tuple whose Vec length disagrees with its Nat field.
+   - [x] Reconstruct typed wrappers for local clause-compiled definitions
+     from their checked Pi signatures. A 200-case property calls a `Nat -> Nat`
+     identity through its generated `int` wrapper. Runtime application helpers
+     retain the applied syntax so eliminator reductions can substitute clause
+     arguments correctly.
    - [x] Add recursive structural codecs for payload-bearing indexed data
      constructors with `runtimeDataVariant(Family)`. `RuntimeStructuredVariant`
      maps Int, Nat, and Bool fields to Nim values, recursively maps nested data
@@ -592,17 +599,18 @@ implementations.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.
-   Definitions without a matching explicit Nim `proc` declaration still
-   retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`
-   declarations with unsupported signatures fail clearly when called.
+   Definitions whose signatures cannot be reconstructed expose the raw
+   `Value` interface when requested; calling their generated name produces a
+   compile-time diagnostic. Explicit `proc` declarations with unsupported
+   signatures also fail clearly when called.
 - [x] Validate each currently supported Eponym adapter shape during macro
    expansion and the concrete Nim adapter signature during compilation.
    Unsupported generated wrapper shapes produce a compile-time diagnostic;
    no unchecked cast is used for a signature mismatch. Generic and structural
    codecs remain part of the preceding open item.
-- [x] For explicit `proc` declarations with no runtime codec, emit a
-   compile-time error template naming the unsupported Eponym result or
-   parameter type instead of silently generating a `varargs[int]` wrapper.
+- [x] For explicit `proc` declarations with no runtime codec, and definitions
+   whose Nim signature cannot be reconstructed, emit a compile-time error
+   template instead of silently generating a `varargs[int]` wrapper.
      Negative fixtures cover a missing opaque mapping and a generic value
      binder without a mapped runtime representation. The latter names the
      supported binder categories and the missing `runtimeType` mapping.

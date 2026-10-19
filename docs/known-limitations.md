@@ -62,16 +62,16 @@ construct the Eponym generic argument as a `Value` themselves. When
 values and returns `(Value, Globals)` without requiring a codec for the result.
 `Nat` conversions reject negative values. An explicit `proc` declaration with
 an unsupported signature remains
-checked but emits a targeted compile-time error if called. Generated names
-without a matching `proc` declaration retain the compatibility
-`varargs[int] -> int` wrapper in
-[`eponym_mac.nim`](../src/eponym/eponym_mac.nim). At runtime,
+checked but emits a targeted compile-time error if called. Local clause-style
+definitions whose checked Pi signatures can be reconstructed also get typed
+wrappers. If reconstruction fails, calling the generated name produces a
+compile-time diagnostic; a requested `runtimeValue(name)` still exposes the
+raw `Value` interface. Runtime applications retain their applied syntax so
+clause eliminators can substitute arguments correctly. At runtime,
 [`eponym_embed.nim`](../src/eponym/eponym_embed.nim) converts Nim integers to
 Eponym's primitive `Int`, applies the checked term, and converts an `Int`
-result back. This means the checker can accept definitions over `Nat`,
-vectors, records, session types, and other Eponym types, but those definitions
-do not thereby become callable from ordinary Nim with a faithful typed
-signature.
+result back. Definitions with unsupported codecs still need a mapped runtime
+representation or the raw `Value` interface.
 
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values, canonical Bool constructors, nullary

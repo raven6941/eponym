@@ -1812,7 +1812,9 @@ proc callRuntimeValue*(fn: Value, args: openArray[Value]): Value =
   ## from its definition, including block-local postulate adapters.
   result = fn
   for arg in args:
-    result = Value(syn: result.syn, whnf: applyWhnf(result, arg))
+    let application = if result.syn.isNil or arg.syn.isNil: nil
+      else: tmApp(result.syn, arg.syn)
+    result = Value(syn: application, whnf: applyWhnf(result, arg))
 
 proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
                                bindings: RuntimeBindings): Value =
@@ -1821,7 +1823,9 @@ proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
   var fn = evalWithBindings(t, @[], bindings)
   for arg in args:
     let w = applyWhnf(fn, arg)
-    fn = Value(syn: t, whnf: w)  # syn doesn't matter for result
+    let application = if fn.syn.isNil or arg.syn.isNil: nil
+      else: tmApp(fn.syn, arg.syn)
+    fn = Value(syn: application, whnf: w)
   fn
 
 proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],

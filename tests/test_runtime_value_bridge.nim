@@ -386,6 +386,12 @@ eponymBlock:
     not value
 
 eponymBlock:
+  import "../lib/nat.ep"
+  def(generatedClauseNatIdentity, Nat -> Nat):
+    clause([zero], zero)
+    clause([suc(n)], suc(n))
+
+eponymBlock:
   proc generatedGenericIdentity[A: Univ](value: A): A = value
   runtimeValue(generatedGenericIdentity)
 
@@ -2198,6 +2204,15 @@ proc callbackRole : Callback -> Sample -> Sample =
     proc(r: var Rng): bool = r.genBool(),
     proc(value: bool): bool = generatedBoolNot(value) == not value)
   if not boolCodecCases:
+    quit(1)
+  let clauseNatWrapperCases = forAll(
+    "clause definitions get typed Nat wrappers from checked signatures", r,
+    200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(value: int): bool =
+      generatedClauseNatIdentity(value) == value,
+    shrinkInt)
+  if not clauseNatWrapperCases:
     quit(1)
 
   let genericIdentityCases = forAll(

@@ -3008,6 +3008,8 @@ macro eponymBlock*(body: untyped): untyped =
       if st.kind == nnkProcDef and $st[0] == d.name:
         procDecl = st
         break
+    if procDecl.isNil:
+      procDecl = importedRuntimeProcDecl(d, checkedGlobals)
     if not procDecl.isNil:
       if d.name in runtimeValueNames:
         let params = procDecl[3]
@@ -3249,35 +3251,17 @@ macro eponymBlock*(body: untyped): untyped =
                                              lowered.expression))
       continue
     if d.name in runtimeValueNames:
-      let rawDecl = importedRuntimeProcDecl(d, checkedGlobals)
       result.add(rawRuntimeValueWrapper(baseDir, src, d.name,
-        checkedLambdaArity(d), bindings,
-        runtimeTypes, records, rawDecl))
-    if bindings.len == 0:
-      result.add(quote do:
-        proc `procName`*(args: varargs[int]): int =
-          callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @args)
-      )
-    else:
-      var wrapper = quote do:
-        proc `procName`*(args: varargs[int]): int = discard
-      let argsIdent = wrapper[3][1][0]
-      let globalsId = genSym(nskLet, "checkedGlobals")
-      let runtimeBindingsId = genSym(nskVar, "runtimeBindings")
-      var wrapperBody = newStmtList()
-      wrapperBody.add(quote do:
-        let `globalsId` = getGlobalsDir(`dirLit`, `srcLit`)
-        var `runtimeBindingsId` = initRuntimeBindings()
-      )
-      for binding in bindings:
-        wrapperBody.add(bindingCall(binding, runtimeBindingsId, globalsId,
-                                    runtimeTypes, records))
-      wrapperBody.add(quote do:
-        callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @`argsIdent`,
-                       `runtimeBindingsId`)
-      )
-      wrapper[6] = wrapperBody
-      result.add(wrapper)
+        checkedLambdaArity(d), bindings, runtimeTypes, records))
+    let name = ident(d.name)
+    let message = newLit("eponymBlock wrapper '" & d.name &
+      "': no Nim signature could be reconstructed for this definition; " &
+      "declare a typed proc signature or expose it with runtimeValue and " &
+      "use the raw Value interface")
+    result.add(quote do:
+      template `name`*(args: varargs[untyped]): untyped =
+        {.error: `message`.}
+    )
   for requested in runtimeValueNames:
     var localDef = false
     for d in defs:
