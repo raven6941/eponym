@@ -7,6 +7,7 @@ eponymBlock:
   import "callable_record_field.ep"
   import "callable_record_field_value.ep"
   import "returned_identity_factory.ep"
+  import "ambiguous_callable_records.ep"
 
   data(Protocol, Univ):
     proc protocolSend(A: Univ, payload: Nat): Protocol
@@ -123,6 +124,10 @@ eponymBlock:
     handler.apply[zero()](value)
 
   proc bracketNestedCallableRecordField(bundle: LocalHandlerBundle,
+      value: Vec[Nat, 0]): Vec[Nat, 0] =
+    bundle.inner.apply[zero()](value)
+
+  proc bracketNestedImportedCallableRecordField(bundle: HandlerBundle,
       value: Vec[Nat, 0]): Vec[Nat, 0] =
     bundle.inner.apply[zero()](value)
 

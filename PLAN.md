@@ -1224,6 +1224,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   resolving callable-field signatures. Positive bracket-call and negative
   positional-call regressions cover `bundle.inner.apply` when another record
   declares a different `apply` signature.
+- [x] Preserve record-specific callable field metadata from imported `.ep`
+  records, including nested named record fields. Positive and compile-fail
+  regressions cover imported `bundle.inner.apply` with colliding `apply`
+  signatures.
 - [x] Track the required type-binder count through bracket-applied call heads.
   A compile-fail fixture verifies that a partially bracketed two-type generic
   cannot receive the next required type argument in parentheses. A positive

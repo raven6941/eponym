@@ -1,0 +1,8 @@
+record PolymorphicHandler:
+| apply : Pi (n : Nat). Pi (value : Vec Nat n). Vec Nat n
+
+record NumericHandler:
+| apply : Nat -> Nat
+
+record HandlerBundle:
+| inner : PolymorphicHandler

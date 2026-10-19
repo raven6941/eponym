@@ -798,7 +798,12 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
           registerLegacyInfo("vecnil", ctorInfo)
     of dkRecord:
       for field in declaration.fields:
-        registerLegacyFieldInfo(field.name, surfaceTypeCallInfo(field.ty))
+        let info = surfaceTypeCallInfo(field.ty)
+        registerLegacyFieldInfo(field.name, info)
+        registerLegacyRecordFieldInfo(declaration.rname, field.name, info)
+        if field.ty.kind == pkVar:
+          registerLegacyRecordFieldType(declaration.rname, field.name,
+            field.ty.name)
     of dkImport:
       let importedPath = normalized.parentDir / declaration.ipath
       if fileExists(importedPath):
