@@ -164,6 +164,24 @@ List elements use their recursive codecs, and runtime values must have the
 checked `nil`/`cons` constructor shape. Other payload-bearing data families
 need their own codec.
 
+For an optional value, `runtimeOption(Option)` maps a unary Eponym family with
+canonical `none` and `some` constructors to `std/options.Option`:
+
+```nim
+import std/options
+
+eponymBlock:
+  import "lib/option.ep"
+  runtimeOption(Option)
+  proc keepOption[A: Univ](value: Option[A]): Option[A] = value
+
+doAssert keepOption[int](some(7)) == some(7)
+doAssert keepOption[int](none(int)).isNone
+```
+
+The payload uses its recursive runtime codec. Other payload-bearing data
+constructors need their own explicit codecs.
+
 For a postulate with one to three arguments and a non-dependent pair result,
 `bindPostulatePair` lets a Nim callback return a typed tuple. The macro checks
 the declared argument and pair field type heads and builds the runtime pair:
