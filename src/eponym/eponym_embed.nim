@@ -623,6 +623,33 @@ proc valueToBool*(value: Value, globals: Globals): bool =
   if valueId == falseId: return false
   raise newException(ValueError, "runtime value is not a canonical Bool")
 
+proc enumToValue*[T: enum](hostValue: T, globals: Globals,
+                            constructors: openArray[string]): Value =
+  ## Encode a Nim enum using same-named, nullary Eponym constructors.
+  let constructorName = $hostValue
+  if constructorName notin constructors or constructorName notin globals or
+      not globals[constructorName].isDataConstructor:
+    raise newException(ValueError,
+      "Nim enum member '" & constructorName &
+      "' has no matching Eponym data constructor")
+  eval(globals[constructorName].tm, @[])
+
+proc valueToEnum*[T: enum](value: Value, globals: Globals,
+                           constructors: openArray[string]): T =
+  ## Decode only the mapped nullary Eponym constructors.
+  let valueId = runtimeReferenceId(value)
+  for constructorName in constructors:
+    if constructorName in globals and
+        globals[constructorName].tm.refId == valueId and
+        globals[constructorName].isDataConstructor:
+      try:
+        return parseEnum[T](constructorName)
+      except ValueError:
+        raise newException(ValueError,
+          "Nim enum type has no member named '" & constructorName & "'")
+  raise newException(ValueError,
+    "runtime value is not one of the mapped Eponym constructors")
+
 proc prependErasedTypeArgs*(typeArgCount: int,
                             args: openArray[Value]): seq[Value] =
   ## Runtime computation does not inspect type-level generic binders. Supply
