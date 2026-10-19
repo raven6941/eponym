@@ -1133,14 +1133,16 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [x] Detect partial legacy applications whose first explicit binder is `Nat`
   and whose first argument is a Nat literal, known Nat constructor/function,
   or in-scope `Nat` binder. The regression fixture covers a generic index
-  binder and `zero()`; ordinary Nat-valued function calls remain warning-free.
+  binder and `zero()`; ordinary Nat-valued calls without explicit binders remain
+  valid.
 - [x] Count leading `Univ` parameters on constructors in local Nim `data(...)`
   declarations when diagnosing legacy applications. A fixture checks bracket
   `protocolSend[Nat](...)` and rejects the call-style spelling.
 - [x] Extend partial index detection to top-level let-bound values explicitly
   annotated as Nat or initialized by a recognized Nat constructor/function;
-  parenthesized expressions and aliases of known Nat locals are followed. A
-  compile-fail fixture covers a parenthesized `zero()` and a local alias.
+  parenthesized expressions, aliases of known Nat locals, and conditional
+  expressions whose branches are all Nat are followed. Compile-fail and
+  positive bracket fixtures cover these forms.
 - [ ] Extend detection to other inferred expression forms and nested scopes
   that cannot be identified from the current declaration metadata.
 - [x] Migrate the optimizer examples' type-family applications and indexed
