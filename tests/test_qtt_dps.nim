@@ -42,8 +42,24 @@ eponymBlock:
   proc checkedLinearPlusSeven(x {.linear.}: Int): Int = addInt(x, 7)
   proc checkedLinearArithmetic(left {.linear.}, right {.linear.}: Int): Int =
     subInt(mulInt(left, 2), right)
+  proc checkedLinearRightSkew(a {.linear.}, b {.linear.}, c {.linear.},
+      d {.linear.}: Int): Int = addInt(a, addInt(b, addInt(c, d)))
+  proc checkedLinearNestedSubtraction(a {.linear.}, b {.linear.},
+      c {.linear.}, d {.linear.}: Int): Int =
+    subInt(a, subInt(b, subInt(c, d)))
+  proc checkedLinearBalanced(a {.linear.}, b {.linear.}, c {.linear.},
+      d {.linear.}: Int): Int = addInt(addInt(a, b), addInt(c, d))
+  proc checkedLinearBalanced8(a {.linear.}, b {.linear.}, c {.linear.},
+      d {.linear.}, e {.linear.}, f {.linear.}, g {.linear.},
+      h {.linear.}: Int): Int =
+    addInt(addInt(addInt(a, b), addInt(c, d)),
+      addInt(addInt(e, f), addInt(g, h)))
   runtimeDps(checkedLinearPlusSeven)
   runtimeDps(checkedLinearArithmetic)
+  runtimeDps(checkedLinearRightSkew)
+  runtimeDps(checkedLinearNestedSubtraction)
+  runtimeDps(checkedLinearBalanced)
+  runtimeDps(checkedLinearBalanced8)
 
 var rng = initRng(0xD05)
 let cases = forAll(
@@ -127,6 +143,56 @@ let arithmeticCases = forAll(
       generated.heapCells == 0,
   shrinkInt)
 if not arithmeticCases:
+  quit(1)
+
+let rightSkewCases = forAll(
+  "right-skewed QTT expressions reuse one generated slot", rng, 200,
+  proc(r: var Rng): array[4, int] =
+    [r.genInt(-100, 100), r.genInt(-100, 100), r.genInt(-100, 100),
+      r.genInt(-100, 100)],
+  proc(values: array[4, int]): bool =
+    let (a, b, c, d) = (values[0], values[1], values[2], values[3])
+    let sum = checkedLinearRightSkew(a, b, c, d)
+    let sumDps = checkedLinearRightSkewDps(a, b, c, d)
+    let difference = checkedLinearNestedSubtraction(a, b, c, d)
+    let differenceDps = checkedLinearNestedSubtractionDps(a, b, c, d)
+    sumDps.value == sum and sumDps.value == a + b + c + d and
+      differenceDps.value == difference and
+      differenceDps.value == a - (b - (c - d)) and
+      sumDps.stackSlots == 1 and differenceDps.stackSlots == 1 and
+      sumDps.heapCells == 0 and differenceDps.heapCells == 0)
+if not rightSkewCases:
+  quit(1)
+
+let balancedCases = forAll(
+  "balanced QTT expressions allocate only the live temporary", rng, 200,
+  proc(r: var Rng): array[4, int] =
+    [r.genInt(-100, 100), r.genInt(-100, 100), r.genInt(-100, 100),
+      r.genInt(-100, 100)],
+  proc(values: array[4, int]): bool =
+    let (a, b, c, d) = (values[0], values[1], values[2], values[3])
+    let ordinary = checkedLinearBalanced(a, b, c, d)
+    let optimized = checkedLinearBalancedDps(a, b, c, d)
+    optimized.value == ordinary and optimized.value == a + b + c + d and
+      optimized.stackSlots == 2 and optimized.heapCells == 0)
+if not balancedCases:
+  quit(1)
+
+let deeperBalancedCases = forAll(
+  "nested balanced QTT expressions reuse a logarithmic slot pool", rng, 200,
+  proc(r: var Rng): array[8, int] =
+    [r.genInt(-100, 100), r.genInt(-100, 100), r.genInt(-100, 100),
+      r.genInt(-100, 100), r.genInt(-100, 100), r.genInt(-100, 100),
+      r.genInt(-100, 100), r.genInt(-100, 100)],
+  proc(values: array[8, int]): bool =
+    let ordinary = checkedLinearBalanced8(values[0], values[1], values[2],
+      values[3], values[4], values[5], values[6], values[7])
+    let optimized = checkedLinearBalanced8Dps(values[0], values[1],
+      values[2], values[3], values[4], values[5], values[6], values[7])
+    optimized.value == ordinary and optimized.value == values[0] + values[1] +
+      values[2] + values[3] + values[4] + values[5] + values[6] + values[7] and
+      optimized.stackSlots == 3 and optimized.heapCells == 0)
+if not deeperBalancedCases:
   quit(1)
 
 echo "test_qtt_dps: differential properties and ownership fallback passed"

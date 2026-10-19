@@ -223,9 +223,6 @@ proc lowerCheckedLinearInt*(term: Term, arity: int): IntExpr =
     raise newException(ValueError, lowered.error)
   lowered.expression
 
-proc emitInto(node: IntExpr, args: openArray[NimNode], destination: NimNode,
-              statements: NimNode, slots: var int)
-
 proc inlineValue(node: IntExpr, args: openArray[NimNode]): NimNode =
   ## Leaves have no effects, so use them directly instead of spending a local
   ## slot just to copy a literal or an input parameter.
@@ -239,8 +236,28 @@ proc inlineValue(node: IntExpr, args: openArray[NimNode]): NimNode =
   of ieAdd, ieSub, ieMul:
     error("inlineValue expects an Int literal or parameter")
 
+proc isLeaf(node: IntExpr): bool = node.kind in {ieLiteral, ieVariable}
+
+proc requiredTempSlots(node: IntExpr): int =
+  ## Minimum reusable locals needed beyond the destination slot. Leaves can
+  ## be used inline; compound operands need distinct live destinations only
+  ## while the other operand is being evaluated.
+  if isLeaf(node): return 0
+  let leftLeaf = isLeaf(node.left)
+  let rightLeaf = isLeaf(node.right)
+  if leftLeaf: return requiredTempSlots(node.right)
+  if rightLeaf: return requiredTempSlots(node.left)
+  let leftFirst = max(requiredTempSlots(node.left),
+                      1 + requiredTempSlots(node.right))
+  let rightFirst = max(requiredTempSlots(node.right),
+                       1 + requiredTempSlots(node.left))
+  min(leftFirst, rightFirst)
+
 proc emitInto(node: IntExpr, args: openArray[NimNode], destination: NimNode,
-              statements: NimNode, slots: var int) =
+              freeSlots: openArray[NimNode], statements: NimNode)
+
+proc emitInto(node: IntExpr, args: openArray[NimNode], destination: NimNode,
+              freeSlots: openArray[NimNode], statements: NimNode) =
   case node.kind
   of ieLiteral:
     statements.add(newAssignment(copyNimTree(destination), newLit(node.literal)))
@@ -250,22 +267,43 @@ proc emitInto(node: IntExpr, args: openArray[NimNode], destination: NimNode,
     statements.add(newAssignment(copyNimTree(destination),
       copyNimTree(args[node.variableIndex])))
   of ieAdd, ieSub, ieMul:
-    emitInto(node.left, args, destination, statements, slots)
-    var right: NimNode
-    if node.right.kind in {ieLiteral, ieVariable}:
-      right = inlineValue(node.right, args)
-    else:
-      right = genSym(nskVar, "dpsRight")
-      statements.add(newVarStmt(right, newLit(0)))
-      inc slots
-      emitInto(node.right, args, right, statements, slots)
     let op = case node.kind
       of ieAdd: ident"+"
       of ieSub: ident"-"
       of ieMul: ident"*"
       else: ident"+"
-    statements.add(newAssignment(copyNimTree(destination),
-      newTree(nnkInfix, op, copyNimTree(destination), right)))
+    if isLeaf(node.left) and isLeaf(node.right):
+      statements.add(newAssignment(copyNimTree(destination),
+        newTree(nnkInfix, op, inlineValue(node.left, args),
+          inlineValue(node.right, args))))
+    elif isLeaf(node.left):
+      emitInto(node.right, args, destination, freeSlots, statements)
+      statements.add(newAssignment(copyNimTree(destination),
+        newTree(nnkInfix, op, inlineValue(node.left, args),
+          copyNimTree(destination))))
+    elif isLeaf(node.right):
+      emitInto(node.left, args, destination, freeSlots, statements)
+      statements.add(newAssignment(copyNimTree(destination),
+        newTree(nnkInfix, op, copyNimTree(destination),
+          inlineValue(node.right, args))))
+    else:
+      if freeSlots.len == 0:
+        error("runtimeDps slot analysis produced too few temporary slots")
+      let leftFirst = max(requiredTempSlots(node.left),
+                          1 + requiredTempSlots(node.right)) <=
+                      max(requiredTempSlots(node.right),
+                          1 + requiredTempSlots(node.left))
+      let temp = freeSlots[0]
+      if leftFirst:
+        emitInto(node.left, args, destination, freeSlots, statements)
+        emitInto(node.right, args, temp, freeSlots[1 .. ^1], statements)
+        statements.add(newAssignment(copyNimTree(destination),
+          newTree(nnkInfix, op, copyNimTree(destination), copyNimTree(temp))))
+      else:
+        emitInto(node.right, args, destination, freeSlots, statements)
+        emitInto(node.left, args, temp, freeSlots[1 .. ^1], statements)
+        statements.add(newAssignment(copyNimTree(destination),
+          newTree(nnkInfix, op, copyNimTree(temp), copyNimTree(destination))))
 
 proc generateLinearIntDpsProc*(name: string, parameterNames: seq[string],
                                expression: IntExpr): NimNode =
@@ -282,10 +320,14 @@ proc generateLinearIntDpsProc*(name: string, parameterNames: seq[string],
     args.add(arg)
     formal.add(newIdentDefs(arg, ident"int", newEmptyNode()))
   var body = newStmtList()
-  var slots = 1
-  let valueSlot = genSym(nskVar, "dpsResult")
-  body.add(newVarStmt(valueSlot, newLit(0)))
-  emitInto(expression, args, valueSlot, body, slots)
+  let slots = requiredTempSlots(expression) + 1
+  var slotNames: seq[NimNode] = @[]
+  for i in 0 ..< slots:
+    let slot = genSym(nskVar, if i == 0: "dpsResult" else: "dpsTemp")
+    slotNames.add(slot)
+    body.add(newVarStmt(slot, newLit(0)))
+  let valueSlot = slotNames[0]
+  emitInto(expression, args, valueSlot, slotNames[1 .. ^1], body)
   body.add(newAssignment(newTree(nnkDotExpr, ident"result", ident"value"),
                          valueSlot))
   body.add(newAssignment(newTree(nnkDotExpr, ident"result", ident"stackSlots"),

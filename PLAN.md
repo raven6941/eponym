@@ -825,6 +825,11 @@ implementations.
   subtree. Generated wrapper properties verify the representative one- and
   two-argument arithmetic bodies need one mutable slot (previously three and
   five).
+- [x] Allocate a reusable slot pool and choose pure operand evaluation order
+  to minimize live slots without changing subtraction's operand order.
+  Generated 200-case properties cover right-skewed addition and nested
+  subtraction using one slot, balanced four-argument arithmetic using two,
+  and balanced eight-argument arithmetic using three.
 - [x] Compare results and tracked runtime-cell allocations against an immutable
    baseline. The 200-case differential property passes; a 500-add chain uses
    1,001 immutable cells and zero destination-passing cells.
@@ -836,10 +841,11 @@ implementations.
   verifies each is used once, checks the supported Int term representation and
   exclusive-tree shape, and emits reusable mutable local slots. Two 200-case
   properties compare one- and two-argument generated code to the ordinary
-  checked wrapper; the tested expressions use one slot and contain no
-  heap-backed Eponym value cells. This is limited to non-generic
-  literal/parameter/`+`/`-`/`*` expressions; QTT remains a checking feature for
-  all other generated code.
+  checked wrapper; further properties cover right-skewed and balanced trees,
+  whose generated slot counts match the small expression tree's live storage
+  needs, and contain no heap-backed Eponym value cells. This is limited to
+  non-generic literal/parameter/`+`/`-`/`*` expressions; QTT remains a checking
+  feature for all other generated code.
 
 #### G. Improve the Nim surface and onboarding
 
