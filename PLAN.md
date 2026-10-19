@@ -436,6 +436,11 @@ implementations.
   types. The checked Eponym callback type remains explicit, and the Nim callback
   implementation owns Value interpretation. A 200-case property covers an
   unmapped `Token -> Token` callback through generated and reified wrappers.
+- [x] Generate `nameDynamic` siblings for value-indexed Nat, Bool, Int, and
+  explicitly mapped binders. These accept generic values as ordinary Nim
+  parameters and thread them into dependent argument/result codecs. 200-case
+  properties cover primitive and mapped values, plus a Nat-indexed Vec
+  argument.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

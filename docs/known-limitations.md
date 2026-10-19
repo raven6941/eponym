@@ -50,9 +50,13 @@ Int binders `[i: Int]` map to Nim `static[int]` and cross as integer values;
 typed wrappers and typed/raw `runtimeValue` overloads are covered, including
 negative indices. A binder over an explicitly mapped runtime type uses
 `static[NimType]` and crosses through that type's runtime codec; tests cover
-opaque object and nullary enum values. The value must be representable as a
-Nim compile-time constant, and other unmapped value-indexed binders remain
-unsupported.
+opaque object and nullary enum values. These wrappers require a Nim
+compile-time constant. A sibling `nameDynamic` wrapper is generated for
+value-indexed Nat, Bool, Int, and explicitly mapped binders; it takes those
+generic values as ordinary Nim parameters. Property tests cover dynamic Int,
+Bool, mapped object, and Nat-indexed Vec values. Binder types without a runtime
+mapping remain available through `nameRuntimeValueRaw` for callers that
+construct the Eponym generic argument as a `Value` themselves.
 `Nat` conversions reject negative values. An explicit `proc` declaration with
 an unsupported signature remains
 checked but emits a targeted compile-time error if called. Generated names

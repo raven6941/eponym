@@ -1968,6 +1968,114 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   result.add(newEmptyNode())
   result.add(wrapperBody)
 
+proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
+    defName: string, bindings: seq[HostPostulateBinding],
+    mappings: seq[HostRuntimeType], records: seq[HostRecord],
+    allowDependentSigma = false): NimNode =
+  ## Emit a sibling wrapper where supported value-indexed generics are
+  ## ordinary runtime parameters instead of Nim `static` parameters.
+  let generic = genericRuntimeInfo(decl, mappings)
+  if generic.error.len > 0 or generic.genericNames.len == 0 or
+      generic.typeNames.len > 0:
+    return nil
+  let params = decl[3]
+  if params.len == 0 or params[0].kind == nnkEmpty: return nil
+  let resultType = runtimeNimType(params[0], generic.codecMappings, records,
+                                  allowDependentSigma)
+  if resultType.isNil: return nil
+  var formal = newNimNode(nnkFormalParams)
+  formal.add(resultType)
+  var genericSyms: seq[NimNode] = @[]
+  var genericNimTypes: seq[NimNode] = @[]
+  for i, genericName in generic.genericNames:
+    var dynamicType: NimNode = nil
+    if generic.genericNatArgs[i] or generic.genericIntArgs[i]:
+      dynamicType = ident"int"
+    elif generic.genericBoolArgs[i]:
+      dynamicType = ident"bool"
+    elif not generic.genericMappedTypes[i].isNil:
+      dynamicType = copyNimTree(generic.genericMappedNimTypes[i])
+    if dynamicType.isNil: return nil
+    let sym = genSym(nskParam, "dynamicGeneric" & $genericName)
+    formal.add(newIdentDefs(sym, dynamicType, newEmptyNode()))
+    genericSyms.add(sym)
+    genericNimTypes.add(dynamicType)
+  var argSyms: seq[NimNode] = @[]
+  var argNames: seq[string] = @[]
+  var argEponymTypes: seq[NimNode] = @[]
+  var argNimTypes: seq[NimNode] = @[]
+  for i in 1 ..< params.len:
+    let p = params[i]
+    if p.kind != nnkIdentDefs: return nil
+    let argType = runtimeNimType(p[^2], generic.codecMappings, records,
+                                 allowDependentSigma)
+    if argType.isNil: return nil
+    for j in 0 ..< p.len - 2:
+      let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
+      let argSym = genSym(nskParam, $argName)
+      formal.add(newIdentDefs(argSym, argType, newEmptyNode()))
+      argSyms.add(argSym)
+      argNames.add($argName)
+      argEponymTypes.add(p[^2])
+      argNimTypes.add(argType)
+  let globalsSym = genSym(nskLet, "dynamicGlobals")
+  let defsSym = genSym(nskLet, "dynamicDefs")
+  let bindingsSym = genSym(nskVar, "dynamicBindings")
+  let dirLit = newLit(baseDir)
+  let srcLit = newLit(src)
+  let nameLit = newLit(defName)
+  var body = newStmtList()
+  body.add(newLetStmt(globalsSym,
+    newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+  body.add(newLetStmt(defsSym,
+    newCall(bindSym"getDefsDir", dirLit, srcLit)))
+  body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))
+  for binding in bindings:
+    body.add(bindingCall(binding, bindingsSym, globalsSym,
+                         generic.codecMappings, records))
+  var values = newNimNode(nnkBracket)
+  var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
+  for i, genericName in generic.genericNames:
+    var encoded: NimNode
+    if generic.genericNatArgs[i]:
+      encoded = newCall(bindSym"natToValue", genericSyms[i], globalsSym)
+    elif generic.genericBoolArgs[i]:
+      encoded = newCall(bindSym"boolToValue", genericSyms[i], globalsSym)
+    elif generic.genericIntArgs[i]:
+      encoded = newCall(bindSym"intToValue", genericSyms[i])
+    else:
+      encoded = runtimeValueConversionExpr(generic.genericMappedTypes[i],
+        genericNimTypes[i], genericSyms[i], true, generic.codecMappings,
+        records, globalsSym, allowDependentSigma, indexOverrides)
+    if encoded.isNil: return nil
+    values.add(encoded)
+    indexOverrides.add(($genericName, genericSyms[i]))
+  for i, argSym in argSyms:
+    let encoded = runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i],
+      argSym, true, generic.codecMappings, records, globalsSym,
+      allowDependentSigma, indexOverrides)
+    if encoded.isNil: return nil
+    values.add(encoded)
+    indexOverrides.add((argNames[i], argSym))
+  let runtimeResult = genSym(nskLet, "dynamicRuntimeResult")
+  let call = newCall(bindSym"callDefValueWithBindings",
+    newCall(bindSym"findDef", defsSym, nameLit),
+    newTree(nnkPrefix, ident"@", values), bindingsSym, globalsSym)
+  body.add(newLetStmt(runtimeResult, call))
+  let decoded = runtimeValueConversionExpr(params[0], resultType,
+    runtimeResult, false, generic.codecMappings, records, globalsSym,
+    allowDependentSigma, indexOverrides)
+  if decoded.isNil: return nil
+  body.add(decoded)
+  result = newNimNode(nnkProcDef)
+  result.add(newTree(nnkPostfix, ident"*", ident(defName & "Dynamic")))
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(formal)
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(body)
+
 proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
                               bindings: seq[HostPostulateBinding],
                               mappings: seq[HostRuntimeType],
@@ -2544,6 +2652,10 @@ macro eponymBlock*(body: untyped): untyped =
       else:
         result.add(unsupportedRuntimeWrapper(procDecl, d.name, runtimeTypes,
           records, allowDependentSigma))
+      let dynamicWrapper = dynamicGenericRuntimeWrapper(procDecl, baseDir,
+        src, d.name, bindings, runtimeTypes, records, allowDependentSigma)
+      if not dynamicWrapper.isNil:
+        result.add(dynamicWrapper)
       if d.name in runtimeDpsNames:
         var parameterNames: seq[string] = @[]
         for i in 1 ..< procDecl[3].len:

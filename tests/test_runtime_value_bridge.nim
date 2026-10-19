@@ -284,7 +284,8 @@ eponymBlock:
 proc rawGenericNatAt(index: int): bool =
   let runtime = generatedGenericNatProjectionRuntimeValueRaw(
     [vNatLit(index)], [])
-  valueToNat(runtime.value, runtime.globals) == index
+  valueToNat(runtime.value, runtime.globals) == index and
+    generatedGenericNatProjectionDynamic(index) == index
 
 proc checkGenericChannelValueAt[channel: static[ChannelHandle]](
     ignored: int): bool =
@@ -293,6 +294,7 @@ proc checkGenericChannelValueAt[channel: static[ChannelHandle]](
   let rawRuntime = generatedGenericChannelValueRuntimeValue[channel](
     [intToValue(ignored)])
   typedResult == channel and
+    generatedGenericChannelValueDynamic(channel, ignored) == channel and
     valueToHost[ChannelHandle](runtime.value) == channel and
     valueToHost[ChannelHandle](rawRuntime.value) == channel
 
@@ -302,7 +304,8 @@ proc checkGenericIntValueAt[index: static[int]](ignored: int): bool =
   let rawRuntime = generatedGenericIntValueRuntimeValue[index](
     [intToValue(ignored)])
   typedResult == index and valueToInt(runtime.value) == index and
-    valueToInt(rawRuntime.value) == index
+    valueToInt(rawRuntime.value) == index and
+    generatedGenericIntValueDynamic(index, ignored) == index
 
 proc decodeRuntimeIntVector(value: Value, length: int,
                             globals: Globals): seq[int] =
@@ -1234,6 +1237,16 @@ proc callbackRole : Callback -> Sample -> Sample =
     shrinkInt)
   if not vectorCodecCases:
     quit(1)
+  let dynamicGenericVectorCases = forAll(
+    "dynamic Nat generics index dependent Vec wrappers", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(index: int): bool =
+      var values: seq[int] = @[]
+      for i in 0 .. index: values.add(i - index)
+      generatedVectorSucIndexDynamic(index, values) == index,
+    shrinkInt)
+  if not dynamicGenericVectorCases:
+    quit(1)
   doAssert generatedVectorIdentity[int, 0](@[]) == @[]
   doAssert generatedVectorSucIndex[3](@[1, 2, 3, 4]) == 3
   doAssert generatedVectorAddIndex[2, 3](@[1, 2, 3, 4, 5]) == 0
@@ -1403,6 +1416,8 @@ proc callbackRole : Callback -> Sample -> Sample =
       else:
         generatedGenericBoolValue[false](input.ignored)
       typedResult == input.expected and
+        generatedGenericBoolValueDynamic(input.expected, input.ignored) ==
+          input.expected and
         valueToBool(runtime.value, runtime.globals) == input.expected and
         valueToBool(rawRuntime.value, rawRuntime.globals) == input.expected)
   if not genericBoolCases:
