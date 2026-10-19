@@ -20,6 +20,13 @@ import std/options
 
 template rawValue* {.pragma.}
 
+type LegacyCallInfo = object
+  explicitCount: int
+  termCount: int
+
+var legacyCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
+var legacyTypeFamilies {.compileTime.} = initHashSet[string]()
+
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
 # and generates wrapper procs. Uses call syntax:
@@ -43,6 +50,133 @@ proc binderName(n: NimNode): string =
   ## Param/binder name, unwrapping a quantity pragma: `ch {.linear.}` -> "ch".
   if n.kind == nnkPragmaExpr: $n[0]
   else: $n
+
+proc warnCallStyleExplicitArgs(n: NimNode) =
+  ## Legacy eponymBlock calls put explicit type/index parameters in the same
+  ## parentheses as value arguments. Only warn when the declared callable has
+  ## extra type/index binders beyond its ordinary Nim-facing term arguments.
+  if n.kind != nnkCall or n.len < 2 or n[0].kind notin {nnkIdent, nnkSym}:
+    return
+  let head = $n[0]
+  if head notin legacyCallInfo: return
+  let info = legacyCallInfo[head]
+  let supplied = n.len - 1
+  if info.explicitCount == 0 or supplied <= info.termCount: return
+  warning("eponymBlock: call-style explicit parameters are deprecated; " &
+    "use square brackets for Eponym type/index arguments", n)
+
+proc warnCallStyleTypeArgs(n: NimNode) =
+  if n.kind == nnkCall and n.len > 1 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] in legacyTypeFamilies:
+    warning("eponymBlock: call-style explicit type/index arguments are " &
+      "deprecated; use square brackets", n)
+
+proc nimFormalArgCount(formal: NimNode): int =
+  if formal.kind != nnkFormalParams: return 0
+  for i in 1 ..< formal.len:
+    let param = formal[i]
+    if param.kind == nnkIdentDefs:
+      result += param.len - 2
+
+proc nimGenericParamCount(params: NimNode): int =
+  if params.kind == nnkGenericParams:
+    for param in params:
+      if param.kind == nnkIdentDefs:
+        result += param.len - 2
+
+proc nimIndexArity(kind: NimNode): int =
+  var current = kind
+  while current.kind == nnkInfix and current.len == 3 and
+      $current[0] == "->":
+    inc result
+    current = current[2]
+
+proc registerLegacyInfo(name: string, explicitCount, termCount: int) =
+  if explicitCount > 0:
+    legacyCallInfo[name] = LegacyCallInfo(explicitCount: explicitCount,
+      termCount: termCount)
+
+proc surfaceExplicitCount(tele: seq[tuple[name: string, ty: PreTerm,
+    impl: bool, erased: bool, qty: Qty]]): int =
+  for binder in tele:
+    if binder.impl or binder.ty.kind in {pkUniv, pkUnivN}:
+      inc result
+
+proc surfaceIndexArity(ty: PreTerm): int =
+  var current = ty
+  while not current.isNil and current.kind == pkPi:
+    inc result
+    current = current.c2
+
+proc registerSurfaceLegacyInfo(source: string, path: string,
+    seen: var HashSet[string]) =
+  let normalized = normalizedPath(path)
+  if normalized in seen or not fileExists(normalized): return
+  seen.incl(normalized)
+  let declarations = parseProgram(source)
+  for declaration in declarations:
+    case declaration.kind
+    of dkDef:
+      let explicitCount = surfaceExplicitCount(declaration.def.tele)
+      registerLegacyInfo(declaration.def.name, explicitCount,
+        declaration.def.tele.len - explicitCount)
+    of dkData:
+      let familyParams = declaration.params.len
+      if familyParams + surfaceIndexArity(declaration.indexTy) > 0:
+        legacyTypeFamilies.incl(declaration.dname)
+      for constructor in declaration.ctors:
+        let extraImplicit = surfaceExplicitCount(constructor.tele)
+        registerLegacyInfo(constructor.name, familyParams + extraImplicit,
+          constructor.tele.len - extraImplicit)
+        if constructor.name == "nil":
+          registerLegacyInfo("vecnil", familyParams + extraImplicit,
+            constructor.tele.len - extraImplicit)
+    of dkImport:
+      let importedPath = normalized.parentDir / declaration.ipath
+      if fileExists(importedPath):
+        registerSurfaceLegacyInfo(readFile(importedPath), importedPath, seen)
+    else:
+      discard
+
+proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
+  legacyCallInfo.clear()
+  legacyTypeFamilies.clear()
+  var seen = initHashSet[string]()
+  for statement in body:
+    case statement.kind
+    of nnkProcDef:
+      let genericCount = nimGenericParamCount(statement[2])
+      registerLegacyInfo($statement[0], genericCount,
+        nimFormalArgCount(statement[3]))
+    of nnkCall:
+      if statement.len > 0 and statement[0].kind == nnkIdent and
+          $statement[0] == "data" and statement.len >= 4:
+        var params: NimNode = nil
+        var kind: NimNode
+        var constructors: NimNode
+        if statement[2].kind == nnkBracket:
+          params = statement[2]
+          kind = statement[3]
+          if statement.len > 4: constructors = statement[4]
+        else:
+          kind = statement[2]
+          if statement.len > 3: constructors = statement[3]
+        let paramCount = if params.isNil: 0 else: params.len
+        if paramCount + nimIndexArity(kind) > 0:
+          legacyTypeFamilies.incl($statement[1])
+        if not constructors.isNil and constructors.kind == nnkStmtList:
+          for constructor in constructors:
+            if constructor.kind == nnkProcDef:
+              let termCount = nimFormalArgCount(constructor[3])
+              registerLegacyInfo($constructor[0], paramCount, termCount)
+    of nnkImportStmt:
+      for imported in statement:
+        if imported.kind != nnkStrLit: continue
+        let importedPath = normalizedPath(sourceDir / imported.strVal)
+        if fileExists(importedPath):
+          registerSurfaceLegacyInfo(readFile(importedPath), importedPath, seen)
+    else:
+      discard
 
 proc qtyPrefix(n: NimNode): string =
   ## Eponym quantity prefix from a Nim param pragma:
@@ -232,6 +366,7 @@ proc nimExprToEponym(n: NimNode): string =
         error("lam expects (binder, type, body)", n)
       return "lam (" & qtyPrefix(n[1]) & binderName(n[1]) & " : " &
              nimTypeToEponym(n[2]) & "). " & nimExprToEponym(n[3])
+    warnCallStyleExplicitArgs(n)
     # f(a, b) -> f a b (with parens for nested calls to preserve grouping)
     let head = nimExprToEponym(n[0])
     var args: seq[string] = @[]
@@ -372,6 +507,7 @@ proc nimTypeToEponym(n: NimNode): string =
         error("lam expects (binder, type, body)", n)
       return "lam (" & qtyPrefix(n[1]) & binderName(n[1]) & " : " &
              nimTypeToEponym(n[2]) & "). " & nimTypeToEponym(n[3])
+    warnCallStyleTypeArgs(n)
     let head = nimTypeToEponym(n[0])
     if n.len == 1:
       head
@@ -515,8 +651,10 @@ proc defCallToEponym(st: NimNode): string =
     for p in c[1]: pats.add(patToEponym(p))
     result.add("| " & pats.join(" ") & " = " & nimExprToEponym(c[2]) & "\n")
 
-proc blockToEponym*(body: NimNode): string =
+proc blockToEponym*(body: NimNode, sourceDir = ""): string =
   ## Convert a block of Nim AST to Eponym source program.
+  let baseDir = if sourceDir.len > 0: sourceDir else: callerDir(body)
+  registerNimLegacyInfo(body, baseDir)
   result = ""
   for st in body:
     case st.kind
@@ -2288,7 +2426,8 @@ macro eponymBlock*(body: untyped): untyped =
   ## Generates callable fixed-arity wrappers for primitive Int/Nat and
   ## explicitly mapped opaque postulated types. Unsupported legacy shapes
   ## retain the varargs[int] compatibility wrapper.
-  let src = blockToEponym(body)
+  let baseDir = callerDir(body)
+  let src = blockToEponym(body, baseDir)
   var runtimeValueNames = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
@@ -2298,7 +2437,6 @@ macro eponymBlock*(body: untyped): untyped =
         error("duplicate runtimeValue request for '" & name & "'", st)
       runtimeValueNames.incl(name)
   # Issue #131: imports resolve relative to the calling Nim file's dir.
-  let baseDir = callerDir(body)
   var defs: seq[ElabDef]
   var allDefs: seq[ElabDef]
   var checkedGlobals: Globals
