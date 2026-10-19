@@ -1106,11 +1106,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   and onboarding work. Split review and merge into independently verifiable
   slices. The QTT destination-passing prototype is deferred until after the
   first release and should be proposed separately from required runtime work.
-- Square-bracket explicit parameters are the canonical syntax. Legacy
-  call-style explicit applications are temporary migration syntax. Before the
-  first release, emit a compiler deprecation diagnostic at each legacy
-  application and remove acceptance of that syntax. Do not ship 1.0 with two
-  explicit-parameter syntaxes.
+- Square-bracket explicit parameters are the canonical syntax. Recognized
+  call-style explicit applications now fail with a compiler error. Before the
+  first release, close the remaining detection gaps and remove the legacy
+  call-style lowering path. Do not ship 1.0 with two accepted syntaxes.
 - The high-level `bindPostulate` is no longer limited to `Int -> Int`: typed
   curried adapters support codec-backed arguments and results, including the
   `Nat -> Chan -> SendOutcome` and `Chan -> ReceiveOutcome` operations used by
@@ -1122,10 +1121,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 
 ### First-release syntax completion
 
-- [x] Add a signature-aware compile-time warning for complete call-style
-  explicit applications and known data-family type applications. It reads
-  local Nim declarations and imported `.ep` signatures, and the regression
-  test confirms ordinary calls such as `suc(zero())` stay warning-free.
+- [x] Add signature-aware detection for complete call-style explicit
+  applications and known data-family type applications. It reads local Nim
+  declarations and imported `.ep` signatures, and ordinary calls such as
+  `suc(zero())` remain valid.
 - [x] Detect partial legacy applications whose first explicit argument is a
   known Eponym data type name, even when the supplied arity is within the
   callable's ordinary term arity. The regression fixture covers partial
@@ -1136,8 +1135,8 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   or in-scope `Nat` binder. The regression fixture covers a generic index
   binder and `zero()`; ordinary Nat-valued function calls remain warning-free.
 - [x] Count leading `Univ` parameters on constructors in local Nim `data(...)`
-  declarations when diagnosing legacy applications. A fixture checks both a
-  warning for `protocolSend(Nat, ...)` and warning-free `protocolSend[Nat](...)`.
+  declarations when diagnosing legacy applications. A fixture checks bracket
+  `protocolSend[Nat](...)` and rejects the call-style spelling.
 - [ ] Extend partial index detection to locally inferred Nat values and other
   expression forms that cannot be identified from the current declaration
   metadata.
@@ -1162,12 +1161,14 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   its roles (its loopback runtime test is covered separately).
 - [x] Migrate the runtime-bound and TCP session examples' `Chan` types and
   nested `sendS`/`recvS` session applications to brackets; both modules compile.
-- [ ] Migrate the remaining warning-producing embedded examples and tests,
-  then remove the legacy parser/lowering path.
+- [ ] Migrate the remaining embedded examples and tests that still use
+  call-style explicit applications, then remove the legacy parser/lowering
+  path. Known legacy applications are now compile-time errors.
 - [ ] Remove the legacy call-style parser/lowering path and update examples,
   tests, and documentation to use square brackets for explicit parameters.
-- [ ] Add positive coverage for bracket syntax and compile-fail coverage for
-  the removed spelling; run the local CI gate before the first release.
+- [x] Add positive coverage for bracket syntax and compile-fail coverage for
+  legacy term and type application spellings. The full local CI gate remains
+  required before the first release.
 
 ### Deferred after the first release
 
