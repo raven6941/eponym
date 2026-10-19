@@ -523,10 +523,13 @@ implementations.
   checked global reference IDs to avoid collisions with local parameters.
   Typed Nim callback adapters retain an Eponym type witness, and unwitnessed
   runtime-only host callbacks are rejected instead of inferring from
-  placeholder syntax. 200-case properties pass checked, host, and dependent
-  vector callbacks through generated and raw `RuntimeValue` calls; negative
-  cases reject values with the wrong callback type. Dependent Pi expressions
-  outside the supported named-binder/runtime-type grammar remain unsupported.
+  placeholder syntax. Dynamic wrappers accept Nim closure types synthesized
+  from supported Arrow/Pi binders and preserve an overloaded `Value` entry
+  point for low-level callers. 200-case properties pass checked, typed Nim,
+  and raw dependent vector callbacks through generated and `RuntimeValue`
+  calls; negative cases reject values with the wrong callback type. Dependent
+  Pi expressions outside the supported named-binder/runtime-type grammar
+  remain unsupported.
 - [x] Add `{.rawValue.}` callback proc types that pass callback arguments and
   results as Eponym `Value`s, without requiring codecs for the function's leaf
   types. The checked Eponym callback type remains explicit, and the Nim callback

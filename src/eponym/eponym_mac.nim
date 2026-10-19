@@ -1528,19 +1528,45 @@ type RuntimeProcParts = object
   isNullary: bool
 
 proc runtimeProcParts(n: NimNode): RuntimeProcParts =
-  if n.kind != nnkProcTy or n.len != 2 or n[0].kind != nnkFormalParams or
-      n[0].len < 1:
+  if n.kind == nnkProcTy:
+    if n.len != 2 or n[0].kind != nnkFormalParams or n[0].len < 1:
+      return
+    for i in 1 ..< n[0].len:
+      let p = n[0][i]
+      if p.kind != nnkIdentDefs or p.len < 3:
+        return RuntimeProcParts()
+      for j in 0 ..< p.len - 2:
+        result.argTypes.add(p[^2])
+        result.argNames.add(if p[j].kind == nnkEmpty: "callbackArg" &
+          $result.argNames.len else: binderName(p[j]))
+    result.resultType = n[0][0]
+    result.isNullary = result.argTypes.len == 0
     return
-  for i in 1 ..< n[0].len:
-    let p = n[0][i]
-    if p.kind != nnkIdentDefs or p.len < 3:
-      return RuntimeProcParts()
-    for j in 0 ..< p.len - 2:
-      result.argTypes.add(p[^2])
-      result.argNames.add(if p[j].kind == nnkEmpty: "callbackArg" &
-        $result.argNames.len else: binderName(p[j]))
+  var current = n
+  var foundFunctionType = false
+  while true:
+    if current.kind == nnkInfix and current.len == 3 and
+        $current[0] == "->":
+      foundFunctionType = true
+      result.argTypes.add(current[1])
+      result.argNames.add("callbackArg" & $result.argNames.len)
+      current = current[2]
+      continue
+    if current.kind in {nnkCall, nnkObjConstr} and current.len >= 3 and
+        current[0].kind in {nnkIdent, nnkSym} and $current[0] == "Pi":
+      foundFunctionType = true
+      for i in 1 ..< current.len - 1:
+        let binder = current[i]
+        if binder.kind != nnkExprColonExpr or binder.len != 2:
+          return RuntimeProcParts()
+        result.argTypes.add(binder[1])
+        result.argNames.add(binderName(binder[0]))
+      current = current[^1]
+      continue
+    break
+  if not foundFunctionType: return RuntimeProcParts()
+  result.resultType = current
   result.isNullary = result.argTypes.len == 0
-  result.resultType = n[0][0]
 
 proc hasClosurePragma(n: NimNode): bool =
   if n.kind == nnkProcTy and n.len == 2 and n[1].kind == nnkPragma:
@@ -1567,21 +1593,33 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
     return newEmptyNode()
   let procParts = runtimeProcParts(n)
   if not procParts.resultType.isNil:
-    if not hasClosurePragma(n): return nil
-    if hasRawValuePragma(n): return rawValueCallbackType(n)
+    if n.kind == nnkProcTy and not hasClosurePragma(n): return nil
+    if n.kind == nnkProcTy and hasRawValuePragma(n):
+      return rawValueCallbackType(n)
     let resultType = runtimeNimType(procParts.resultType, mappings, records,
                                     allowDependentSigma)
     if resultType.isNil: return nil
-    result = copyNimTree(n)
-    result[0][0] = resultType
-    var argIndex = 0
-    for i in 1 ..< result[0].len:
-      let param = result[0][i]
-      let argType = runtimeNimType(procParts.argTypes[argIndex], mappings,
-        records, allowDependentSigma)
+    if n.kind == nnkProcTy:
+      result = copyNimTree(n)
+      result[0][0] = resultType
+      var argIndex = 0
+      for i in 1 ..< result[0].len:
+        let param = result[0][i]
+        let argType = runtimeNimType(procParts.argTypes[argIndex], mappings,
+          records, allowDependentSigma)
+        if argType.isNil: return nil
+        param[^2] = argType
+        argIndex += param.len - 2
+      return
+    var formal = newTree(nnkFormalParams, resultType)
+    for i, eponymArgType in procParts.argTypes:
+      let argType = runtimeNimType(eponymArgType, mappings, records,
+        allowDependentSigma)
       if argType.isNil: return nil
-      param[^2] = argType
-      argIndex += param.len - 2
+      formal.add(newIdentDefs(ident(procParts.argNames[i]), argType,
+        newEmptyNode()))
+    result = newTree(nnkProcTy, formal,
+      newTree(nnkPragma, ident"closure"))
     return
   let typeHead = runtimeTypeHead(n)
   if typeHead.kind == nnkIdent:
@@ -2884,11 +2922,23 @@ proc rawRuntimeValueCheck(eponymType, value, globals: NimNode,
     expectedType, copyNimTree(globals), runtimeStructuredCodecsExpr(mappings,
       records))
 
+proc hasTypedGenericCallback(decl: NimNode,
+    mappings: seq[HostRuntimeType], records: seq[HostRecord],
+    allowDependentSigma: bool): bool =
+  let generic = genericRuntimeInfo(decl, mappings, allowUnmappedValue = true)
+  if generic.error.len > 0: return false
+  for i, isValue in generic.genericValueArgs:
+    if not isValue: continue
+    let nimType = runtimeNimType(generic.genericValueTypeExprs[i],
+      generic.codecMappings, records, allowDependentSigma)
+    if not nimType.isNil and nimType.kind == nnkProcTy: return true
+
 proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     defName: string, bindings: seq[HostPostulateBinding],
     mappings: seq[HostRuntimeType], records: seq[HostRecord],
     allowDependentSigma = false,
-    returnRuntimeValue = false): NimNode =
+    returnRuntimeValue = false,
+    rawGenericValues = false): NimNode =
   ## Emit a sibling wrapper where supported value-indexed generics are
   ## ordinary runtime parameters instead of Nim `static` parameters.
   let generic = genericRuntimeInfo(decl, mappings,
@@ -2925,7 +2975,10 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     elif generic.genericBoolArgs[i]:
       dynamicType = ident"bool"
     elif generic.genericValueArgs[i]:
-      dynamicType = bindSym"Value"
+      if not rawGenericValues:
+        dynamicType = runtimeNimType(generic.genericValueTypeExprs[i],
+          generic.codecMappings, records, allowDependentSigma)
+      if dynamicType.isNil: dynamicType = bindSym"Value"
     elif not generic.genericMappedTypes[i].isNil:
       dynamicType = copyNimTree(generic.genericMappedNimTypes[i])
     if dynamicType.isNil: return nil
@@ -2970,7 +3023,13 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     elif generic.genericIntArgs[i]:
       encodedGeneric = newCall(bindSym"intToValue", genericSym)
     elif generic.genericValueArgs[i]:
-      encodedGeneric = copyNimTree(genericSym)
+      if genericNimTypes[i].kind == nnkProcTy and not rawGenericValues:
+        encodedGeneric = runtimeValueConversionExpr(
+          generic.genericValueTypeExprs[i], genericNimTypes[i], genericSym,
+          true, generic.codecMappings, records, globalsSym,
+          allowDependentSigma)
+      else:
+        encodedGeneric = copyNimTree(genericSym)
     elif not generic.genericMappedTypes[i].isNil:
       encodedGeneric = runtimeValueConversionExpr(
         generic.genericMappedTypes[i], generic.genericMappedNimTypes[i],
@@ -2991,7 +3050,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
         generic.genericValueTypeExprs[i], globalsSym, typeIndexOverrides)
       if expectedType.isNil: return nil
       body.add(newCall(bindSym"validateRuntimeValueType",
-        if generic.genericValueArgs[i]: genericSym else: encodedGeneric,
+        encodedGeneric,
         expectedType, globalsSym))
     typeIndexOverrides.add(($generic.genericNames[i], encodedGeneric))
   body.add(newLetStmt(defsSym,
@@ -3011,7 +3070,13 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     elif generic.genericIntArgs[i]:
       encoded = newCall(bindSym"intToValue", genericSyms[i])
     elif generic.genericValueArgs[i]:
-      encoded = copyNimTree(genericSyms[i])
+      if genericNimTypes[i].kind == nnkProcTy and not rawGenericValues:
+        encoded = runtimeValueConversionExpr(
+          generic.genericValueTypeExprs[i], genericNimTypes[i],
+          genericSyms[i], true, generic.codecMappings, records, globalsSym,
+          allowDependentSigma, indexOverrides)
+      else:
+        encoded = copyNimTree(genericSyms[i])
     else:
       encoded = runtimeValueConversionExpr(generic.genericMappedTypes[i],
         genericNimTypes[i], genericSyms[i], true, generic.codecMappings,
@@ -3758,12 +3823,26 @@ macro eponymBlock*(body: untyped): untyped =
         src, d.name, bindings, runtimeTypes, records, allowDependentSigma)
       if not dynamicWrapper.isNil:
         result.add(dynamicWrapper)
+      if hasTypedGenericCallback(procDecl, runtimeTypes, records,
+                                 allowDependentSigma):
+        let rawDynamicWrapper = dynamicGenericRuntimeWrapper(procDecl,
+          baseDir, src, d.name, bindings, runtimeTypes, records,
+          allowDependentSigma, rawGenericValues = true)
+        if not rawDynamicWrapper.isNil: result.add(rawDynamicWrapper)
       if d.name in runtimeValueNames:
         let dynamicRuntimeValueWrapper = dynamicGenericRuntimeWrapper(procDecl,
           baseDir, src, d.name, bindings, runtimeTypes, records,
           allowDependentSigma, returnRuntimeValue = true)
         if not dynamicRuntimeValueWrapper.isNil:
           result.add(dynamicRuntimeValueWrapper)
+        if hasTypedGenericCallback(procDecl, runtimeTypes, records,
+                                   allowDependentSigma):
+          let rawDynamicRuntimeValueWrapper = dynamicGenericRuntimeWrapper(
+            procDecl, baseDir, src, d.name, bindings, runtimeTypes, records,
+            allowDependentSigma, returnRuntimeValue = true,
+            rawGenericValues = true)
+          if not rawDynamicRuntimeValueWrapper.isNil:
+            result.add(rawDynamicRuntimeValueWrapper)
       if d.name in runtimeDpsNames:
         var parameterNames: seq[string] = @[]
         for i in 1 ..< procDecl[3].len:
@@ -3825,12 +3904,28 @@ macro eponymBlock*(body: untyped): untyped =
             records, allowDependentSigma)
           if not importedDynamicWrapper.isNil:
             result.add(importedDynamicWrapper)
+          if hasTypedGenericCallback(importedDecl, runtimeTypes, records,
+                                     allowDependentSigma):
+            let importedRawDynamicWrapper = dynamicGenericRuntimeWrapper(
+              importedDecl, baseDir, src, requested, bindings, runtimeTypes,
+              records, allowDependentSigma, rawGenericValues = true)
+            if not importedRawDynamicWrapper.isNil:
+              result.add(importedRawDynamicWrapper)
           let importedDynamicRuntimeValueWrapper =
             dynamicGenericRuntimeWrapper(importedDecl, baseDir, src,
               requested, bindings, runtimeTypes, records, allowDependentSigma,
               returnRuntimeValue = true)
           if not importedDynamicRuntimeValueWrapper.isNil:
             result.add(importedDynamicRuntimeValueWrapper)
+          if hasTypedGenericCallback(importedDecl, runtimeTypes, records,
+                                     allowDependentSigma):
+            let importedRawDynamicRuntimeValueWrapper =
+              dynamicGenericRuntimeWrapper(importedDecl, baseDir, src,
+                requested, bindings, runtimeTypes, records,
+                allowDependentSigma, returnRuntimeValue = true,
+                rawGenericValues = true)
+            if not importedRawDynamicRuntimeValueWrapper.isNil:
+              result.add(importedRawDynamicRuntimeValueWrapper)
         var rawImportedDecl = importedDecl
         var rawRuntimeValueSuffix = "RuntimeValue"
         if not rawImportedDecl.isNil and

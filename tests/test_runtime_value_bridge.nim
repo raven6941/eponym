@@ -2036,16 +2036,23 @@ when isMainModule:
         length, dependentTypeGlobals)), dependentTypeGlobals)),
     expectedDependentCallbackType, dependentTypeGlobals)
   let genericDependentFunctionCases = forAll(
-    "dynamic generic binders validate dependent host callback types", r, 200,
+    "dynamic generic binders accept Nim callbacks with dependent Pi types", r, 200,
     proc(r: var Rng): int = r.genInt(0, 16),
     proc(length: int): bool =
       let expected = makeIndexedRuntimeValues(length)
+      let nimCallback: proc(length: int): seq[int] {.closure.} =
+        proc(length: int): seq[int] = makeIndexedRuntimeValues(length)
       let checked = generatedApplyDependentVectorFunctionDynamic(
-        dependentHostCallback, length)
+        nimCallback, length)
       let runtime = generatedApplyDependentVectorFunctionRuntimeValueDynamic(
-        dependentHostCallback, length)
+        nimCallback, length)
+      let rawRuntime = generatedApplyDependentVectorFunctionRuntimeValueRaw(
+        [dependentHostCallback], [natToValue(length, dependentTypeGlobals)])
       checked == expected and vecValueToSeq[int](runtime.value, length,
         runtime.globals, "Vec",
+        proc(value: Value, globals: Globals): int = valueToInt(value)) ==
+          expected and vecValueToSeq[int](rawRuntime.value, length,
+        rawRuntime.globals, "Vec",
         proc(value: Value, globals: Globals): int = valueToInt(value)) ==
           expected,
     shrinkInt)
