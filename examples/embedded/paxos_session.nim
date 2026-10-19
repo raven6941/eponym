@@ -217,20 +217,20 @@ eponymBlock:
 
   proc proposer(ballot: Nat, ch {.linear.}: Chan[propProto()]):
       Sig(accepted: Nat, Chan[endS()]) =
-    let ch1 = sendPrepare(ballot, ch)
-    let promiseAndChannel = recvPromise(ballot, ch1)
-    let ch3 = sendAccept(fst(promiseAndChannel),
-      promiseTicket(fst(promiseAndChannel)), snd(promiseAndChannel))
-    recvAccepted(fst(promiseAndChannel),
-      promiseTicket(fst(promiseAndChannel)), ch3)
+    let ch1 = sendPrepare[ballot](ch)
+    let promiseAndChannel = recvPromise[ballot](ch1)
+    let ch3 = sendAccept[fst(promiseAndChannel)](
+      promiseTicket[fst(promiseAndChannel)](), snd(promiseAndChannel))
+    recvAccepted[fst(promiseAndChannel)](
+      promiseTicket[fst(promiseAndChannel)](), ch3)
 
   proc acceptor(stored: Nat, ch {.linear.}: Chan[accProto()]): Chan[endS()] =
     let ballotAndChannel = recvPrepare(ch)
-    let promiseAndChannel = sendPromise(fst(ballotAndChannel), stored,
+    let promiseAndChannel = sendPromise[fst(ballotAndChannel)](stored,
       snd(ballotAndChannel))
-    let ticketAndChannel = recvAccept(fst(promiseAndChannel),
+    let ticketAndChannel = recvAccept[fst(promiseAndChannel)](
       snd(promiseAndChannel))
-    sendAccepted(fst(promiseAndChannel), fst(ticketAndChannel),
+    sendAccepted[fst(promiseAndChannel)](fst(ticketAndChannel),
       snd(ticketAndChannel))
 
 proc runPaxosAcceptor*(port, stored: int) =

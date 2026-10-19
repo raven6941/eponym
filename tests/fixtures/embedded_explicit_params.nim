@@ -39,6 +39,10 @@ eponymBlock:
   record(LocalIndexedCallableField):
     field(make, Pi(value: Nat, n: Nat, LocalAt[n]))
 
+  postulate(localIndexedPair,
+    Pi(m: Nat, n: Nat, left: Vec[Nat, m], right: Vec[Nat, n],
+      LocalPairIndex[add(m, n)]))
+
 
   proc localLegacyConstructor(): Protocol = protocolSend[Nat](zero())
   proc localBracketConstructor(): Protocol = protocolSend[Nat](zero())
@@ -154,6 +158,10 @@ eponymBlock:
       second: Pi(value: Nat, n: Nat, LocalAt[n]),
       value: Nat): LocalAt[0] =
     ((if chooseFirst: first(value) else: second(value)))[zero()]
+
+  proc bracketMultipleIndicesAndOrdinaryValues(
+      m, n: Nat, left: Vec[Nat, m], right: Vec[Nat, n]):
+      LocalPairIndex[add(m, n)] = localIndexedPair[m, n](left, right)
 
   proc inferredCompoundIndex(left: Vec[Nat, 1], right: Vec[Nat, 2]):
       LocalPairIndex[add(1, 2)] = localPairIndex(left, right)

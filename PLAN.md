@@ -1277,6 +1277,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   it still defers constraints that depend on an ambiguous duplicated variable.
   Compile-time fixtures and the runtime bridge property cover the alias paths,
   and unifier properties cover both prunable and genuinely ambiguous spines.
+  Callable metadata infers only atomic index-domain binders, leaving ordinary
+  values with family-applied domains (such as matrices and vector expressions)
+  as value arguments. A two-index postulate regression covers this distinction;
+  the convex-vector and Paxos examples use brackets for explicit protocol
+  indices.
   Extend the same boundary-preserving approach to remaining inferable-binder
   forms before closing this audit.
   Other relevant supported forms—identifiers, parenthesized and qualified
@@ -1284,8 +1289,8 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   statement-list expressions—have focused coverage. Unsupported Nim AST forms
   remain compile-time errors in the converter.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
-  legacy term and type application spellings. The full local CI gate remains
-  required before the first release.
+  legacy term and type application spellings. The full local CI gate passed on
+  this branch snapshot; rerun it before merging later changes.
 - [x] Add a deprecation diagnostic while temporarily preserving legacy lowering
   in an earlier PR in the release stack. The diagnostic identifies legacy
   term and type/index applications, and regression fixtures confirm accepted

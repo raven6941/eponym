@@ -419,13 +419,19 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
     binders.add((current.name, current.c1, current.impl))
     current = current.c2
 
+  var typeBinderNames = initHashSet[string]()
+  for binder in binders:
+    if binder.ty.kind in {pkUniv, pkUnivN}:
+      typeBinderNames.incl(binder.name)
+
   var inferable = initHashSet[int]()
   var resultOnly = initHashSet[int]()
   for i, binder in binders:
     # Family-valued arguments such as an eliminator motive (`C : A -> Type`)
     # are ordinary callable arguments. Their use in later domains/results
     # must not make the function itself disappear into an inferred hole.
-    if binder.impl or binder.ty.kind in {pkUniv, pkUnivN, pkPi}:
+    if binder.impl or binder.ty.kind != pkVar or
+        binder.ty.name in typeBinderNames:
       continue
     # A later argument type can determine this value binder. Its result-type
     # occurrence can also be enough when the result is a named indexed family;
