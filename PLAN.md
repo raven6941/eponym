@@ -441,6 +441,10 @@ implementations.
   parameters and thread them into dependent argument/result codecs. 200-case
   properties cover primitive and mapped values, plus a Nat-indexed Vec
   argument.
+- [x] Generate `nameRuntimeValueDynamic` for supported value-indexed binders
+  when `runtimeValue(name)` is requested. It accepts the generic value as an
+  ordinary Nim argument and returns `(Value, Globals)`, including when the
+  result has no typed Nim codec. A 200-case property checks a generic Nat result.
 - [x] Propagate earlier callback arguments into dependent callback result
   codecs. A 200-case property checks a Nim `Nat -> Vec[Int, n]` callback through
   both generated and reified runtime wrappers, including Vec length checks.

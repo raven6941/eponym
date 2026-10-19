@@ -286,7 +286,9 @@ eponymBlock:
 proc rawGenericNatAt(index: int): bool =
   let runtime = generatedGenericNatProjectionRuntimeValueRaw(
     [vNatLit(index)], [])
+  let dynamicRuntime = generatedGenericNatProjectionRuntimeValueDynamic(index)
   valueToNat(runtime.value, runtime.globals) == index and
+    valueToNat(dynamicRuntime.value, dynamicRuntime.globals) == index and
     generatedGenericNatProjectionDynamic(index) == index
 
 proc checkGenericChannelValueAt[channel: static[ChannelHandle]](

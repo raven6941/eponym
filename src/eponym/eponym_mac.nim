@@ -1978,7 +1978,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
 proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     defName: string, bindings: seq[HostPostulateBinding],
     mappings: seq[HostRuntimeType], records: seq[HostRecord],
-    allowDependentSigma = false): NimNode =
+    allowDependentSigma = false,
+    returnRuntimeValue = false): NimNode =
   ## Emit a sibling wrapper where supported value-indexed generics are
   ## ordinary runtime parameters instead of Nim `static` parameters.
   let generic = genericRuntimeInfo(decl, mappings)
@@ -1987,11 +1988,15 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     return nil
   let params = decl[3]
   if params.len == 0 or params[0].kind == nnkEmpty: return nil
-  let resultType = runtimeNimType(params[0], generic.codecMappings, records,
-                                  allowDependentSigma)
-  if resultType.isNil: return nil
+  let resultType = if returnRuntimeValue:
+    nil
+  else:
+    runtimeNimType(params[0], generic.codecMappings, records,
+                   allowDependentSigma)
+  if not returnRuntimeValue and resultType.isNil: return nil
   var formal = newNimNode(nnkFormalParams)
-  formal.add(resultType)
+  formal.add(if returnRuntimeValue:
+    parseExpr("tuple[value: Value, globals: Globals]") else: resultType)
   var genericSyms: seq[NimNode] = @[]
   var genericNimTypes: seq[NimNode] = @[]
   for i, genericName in generic.genericNames:
@@ -2069,13 +2074,17 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     newCall(bindSym"findDef", defsSym, nameLit),
     newTree(nnkPrefix, ident"@", values), bindingsSym, globalsSym)
   body.add(newLetStmt(runtimeResult, call))
-  let decoded = runtimeValueConversionExpr(params[0], resultType,
-    runtimeResult, false, generic.codecMappings, records, globalsSym,
-    allowDependentSigma, indexOverrides)
-  if decoded.isNil: return nil
-  body.add(decoded)
+  if returnRuntimeValue:
+    body.add(newTree(nnkTupleConstr, runtimeResult, globalsSym))
+  else:
+    let decoded = runtimeValueConversionExpr(params[0], resultType,
+      runtimeResult, false, generic.codecMappings, records, globalsSym,
+      allowDependentSigma, indexOverrides)
+    if decoded.isNil: return nil
+    body.add(decoded)
   result = newNimNode(nnkProcDef)
-  result.add(newTree(nnkPostfix, ident"*", ident(defName & "Dynamic")))
+  result.add(newTree(nnkPostfix, ident"*", ident(if returnRuntimeValue:
+    defName & "RuntimeValueDynamic" else: defName & "Dynamic")))
   result.add(newEmptyNode())
   result.add(newEmptyNode())
   result.add(formal)
@@ -2663,6 +2672,12 @@ macro eponymBlock*(body: untyped): untyped =
         src, d.name, bindings, runtimeTypes, records, allowDependentSigma)
       if not dynamicWrapper.isNil:
         result.add(dynamicWrapper)
+      if d.name in runtimeValueNames:
+        let dynamicRuntimeValueWrapper = dynamicGenericRuntimeWrapper(procDecl,
+          baseDir, src, d.name, bindings, runtimeTypes, records,
+          allowDependentSigma, returnRuntimeValue = true)
+        if not dynamicRuntimeValueWrapper.isNil:
+          result.add(dynamicRuntimeValueWrapper)
       if d.name in runtimeDpsNames:
         var parameterNames: seq[string] = @[]
         for i in 1 ..< procDecl[3].len:

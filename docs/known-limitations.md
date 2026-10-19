@@ -56,7 +56,10 @@ value-indexed Nat, Bool, Int, and explicitly mapped binders; it takes those
 generic values as ordinary Nim parameters. Property tests cover dynamic Int,
 Bool, mapped object, and Nat-indexed Vec values. Binder types without a runtime
 mapping remain available through `nameRuntimeValueRaw` for callers that
-construct the Eponym generic argument as a `Value` themselves.
+construct the Eponym generic argument as a `Value` themselves. When
+`runtimeValue(name)` is requested, supported dynamic generic binders also get a
+`nameRuntimeValueDynamic` sibling. It accepts those binders as ordinary Nim
+values and returns `(Value, Globals)` without requiring a codec for the result.
 `Nat` conversions reject negative values. An explicit `proc` declaration with
 an unsupported signature remains
 checked but emits a targeted compile-time error if called. Generated names
