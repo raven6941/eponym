@@ -747,10 +747,15 @@ implementations.
      A 200-case property checks a generic Vec's mapped element type, and the
      nested `Option[Vec[A, 2]]` callback property validates the full runtime
      result type with `validateRuntimeValueType`.
-   - [ ] Infer indexed witnesses when the only representative is nested in a
-     structural value, and define behavior when no representative exists,
-     such as `none` or an empty collection. These cases need an explicit type
-     witness; the wrapper must not guess an index from the Nim type alone.
+   - [x] Infer an indexed witness from a direct `Option.some(value)` argument
+     when its payload uses a mapped indexed family. A 50-case property checks
+     generated and typed `RuntimeValue` wrappers and rejects callbacks that
+     change the index. `none` reports that it cannot infer the witness and
+     directs callers to pass `some(value)` or use an explicit raw type witness.
+   - [ ] Infer indexed witnesses when they are nested more deeply, such as an
+     indexed `A` inside `Option[Vec[A, n]]`. Empty collections and `none` still
+     require an explicit type witness; the wrapper must not guess an index
+     from the Nim type alone.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.

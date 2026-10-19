@@ -346,9 +346,13 @@ erased type argument and check callback inputs/results. Both
 properties, including rejection of a callback result with the wrong index.
 When the only representative is nested in a structural value, or no
 representative exists (`none` or an empty collection), callers still need an
-explicit witness; those wrapper forms are unsupported. Callers using the raw
-generic `RuntimeValue` interface can pass an inferred type Value directly; a
-property covers an indexed `SizedTree` identity this way.
+explicit witness, except for a direct `Option.some(value)` argument with a
+mapped indexed payload. The wrapper infers that payload's index; `none` reports
+that it cannot infer one and directs callers to use `some(value)` or the raw
+generic `RuntimeValue` interface with an explicit type Value. Indexed types
+nested more deeply, such as `A` inside `Option[Vec[A,n]]`, remain unsupported.
+A property covers an indexed `SizedTree` identity through the raw generic
+`RuntimeValue` interface.
 More complex generic domain expressions outside the supported type-expression
 forms and structural inspection of closures are unsupported.
 Non-dependent function domains written with `->` are now supported for dynamic

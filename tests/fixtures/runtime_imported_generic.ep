@@ -19,6 +19,9 @@ proc importedGenericNestedOptionVectorCallbackApply (A : Type 0)
       Option (Vec A (suc (suc zero))))
     (value : Option (Vec A (suc (suc zero)))) :
     Option (Vec A (suc (suc zero))) = callback value
+proc importedGenericIndexedOptionCallbackApply (A : Type 0)
+    (callback : Option A -> Option A) (value : Option A) : Option A =
+    callback value
 proc importedGenericSigmaCallbackApply (A : Type 0)
     (callback : (Sig (left : A). A) -> (Sig (left : A). A))
     (value : Sig (left : A). A) : Sig (left : A). A = callback value

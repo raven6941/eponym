@@ -2619,11 +2619,22 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         not generic.genericTypeBodyArgs[genericIndex]:
       continue
     var sourceIndex = -1
+    var sourceOptionFamily = ""
     for i, eponymType in argEponymTypes:
       if eponymType.kind in {nnkIdent, nnkSym} and
           $eponymType == genericName:
         sourceIndex = i
         break
+      for optionMapping in generic.codecMappings:
+        if not optionMapping.isRuntimeOption: continue
+        let elementType = runtimeOptionElementType(eponymType,
+          optionMapping.eponymName)
+        if not elementType.isNil and elementType.kind in {nnkIdent, nnkSym} and
+            $elementType == genericName:
+          sourceIndex = i
+          sourceOptionFamily = optionMapping.eponymName
+          break
+      if sourceIndex >= 0: break
     if sourceIndex < 0: continue
 
     var witnessMappings: seq[HostRuntimeType] = @[]
@@ -2642,28 +2653,59 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
 
     var branches = newNimNode(nnkWhenStmt)
     for mapping in witnessMappings:
+      if sourceOptionFamily.len > 0 and not mapping.isRuntimeIndexedType:
+        continue
+      let sourceType = if sourceOptionFamily.len > 0:
+        newTree(nnkBracketExpr, bindSym"Option", copyNimTree(mapping.nimType))
+        else: copyNimTree(mapping.nimType)
       let condition = newTree(nnkInfix, ident"is",
-        copyNimTree(argNimTypes[sourceIndex]), copyNimTree(mapping.nimType))
-      let encoded = if mapping.isRuntimeCodec:
+        copyNimTree(argNimTypes[sourceIndex]), sourceType)
+      let sourceValue = if sourceOptionFamily.len > 0:
+        newCall(bindSym"get", copyNimTree(argSyms[sourceIndex]))
+        else: copyNimTree(argSyms[sourceIndex])
+      var encoded = if mapping.isRuntimeCodec:
         newCall(copyNimTree(mapping.encoder),
-          copyNimTree(argSyms[sourceIndex]), copyNimTree(globals))
+          copyNimTree(sourceValue), copyNimTree(globals))
         else:
           runtimeValueConversionExpr(ident(mapping.eponymName),
-            mapping.nimType, copyNimTree(argSyms[sourceIndex]), true,
+            mapping.nimType, copyNimTree(sourceValue), true,
             generic.codecMappings, records, globals)
       if encoded.isNil: continue
       let encodedSym = genSym(nskLet, "indexedGenericValue")
-      let package = newTree(nnkBlockExpr, newEmptyNode(), newStmtList(
-        newLetStmt(encodedSym, encoded),
+      var packageBody = newStmtList()
+      if sourceOptionFamily.len > 0:
+        let noneMessage = newLit("cannot infer indexed Eponym type argument '" &
+          genericName & "' from none; pass a some(value) or use the raw " &
+          "RuntimeValue API with an explicit type argument")
+        packageBody.add(newTree(nnkIfStmt, newTree(nnkElifBranch,
+          newCall(bindSym"isNone", copyNimTree(argSyms[sourceIndex])),
+          newStmtList(newTree(nnkRaiseStmt, newCall(ident"newException",
+            ident"ValueError", noneMessage))))))
+      packageBody.add(newLetStmt(encodedSym, encoded))
+      let witnessSym = genSym(nskLet, "indexedGenericType")
+      packageBody.add(newLetStmt(witnessSym,
+        newCall(bindSym"runtimeValueTypeOf", copyNimTree(encodedSym),
+          copyNimTree(globals))))
+      var packagedValue = copyNimTree(encodedSym)
+      if sourceOptionFamily.len > 0:
+        let optionValueSym = genSym(nskLet, "indexedOptionValue")
+        packageBody.add(newLetStmt(optionValueSym,
+          newCall(bindSym"callRuntimeValue",
+            newCall(bindSym"runtimeGlobalValue", copyNimTree(globals),
+              newLit("some")),
+            newTree(nnkBracket, copyNimTree(witnessSym),
+              copyNimTree(encodedSym)))))
+        packagedValue = copyNimTree(optionValueSym)
+      packageBody.add(
         newTree(nnkTupleConstr,
-          newTree(nnkExprColonExpr, ident"value", copyNimTree(encodedSym)),
+          newTree(nnkExprColonExpr, ident"value", packagedValue),
           newTree(nnkExprColonExpr, ident"type",
-            newCall(bindSym"runtimeValueTypeOf", copyNimTree(encodedSym),
-              copyNimTree(globals))))))
+            copyNimTree(witnessSym))))
+      let package = newTree(nnkBlockExpr, newEmptyNode(), packageBody)
       branches.add(newTree(nnkElifBranch, condition, newStmtList(package)))
     if branches.len == 0: continue
     let errorMessage = newLit("generic type parameter '" & genericName &
-      "' needs a direct value argument with a runtimeCodec or " &
+      "' needs a direct value argument or some(value) with a runtimeCodec or " &
       "runtimeDataVariant mapping to infer its Eponym type")
     branches.add(newTree(nnkElse, newStmtList(newTree(nnkPragma,
       newTree(nnkExprColonExpr, ident"error", errorMessage)))))

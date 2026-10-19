@@ -465,6 +465,12 @@ eponymBlock:
   runtimeValue(importedGenericIndexedVariantCallbackApply)
 
 eponymBlock:
+  import "fixtures/runtime_imported_generic.ep"
+  runtimeOption(Option)
+  runtimeDataVariant(SizedTree)
+  runtimeValue(importedGenericIndexedOptionCallbackApply)
+
+eponymBlock:
   import "fixtures/runtime_imported_generic_variant.ep"
   runtimeCodec(SizedTree, RuntimeStructuredVariant, encodeRuntimeSizedTree,
     decodeRuntimeSizedTree)
@@ -1741,6 +1747,75 @@ when isMainModule:
         runtimeMismatchRejected,
     shrinkInt)
   if not indexedCodecCallbackCases:
+    quit(1)
+  let indexedOptionCallbackCases = forAll(
+    "generic callbacks infer indexed witnesses from Option.some", r, 50,
+    proc(r: var Rng): tuple[length: int, present: bool] =
+      (r.genInt(0, 100), r.genBool),
+    proc(input: tuple[length: int, present: bool]): bool =
+      let treeValue = RuntimeStructuredVariant(constructor: "sizedTree",
+        arguments: @[
+          RuntimeStructuredValue(kind: rsvNat, natValue: input.length),
+          RuntimeStructuredValue(kind: rsvVariant,
+            variantValue: RuntimeStructuredVariant(constructor: "treeEmpty"))])
+      let value = if input.present: some(treeValue)
+        else: none[RuntimeStructuredVariant]()
+      let callback: proc(value: Option[RuntimeStructuredVariant]):
+          Option[RuntimeStructuredVariant] {.closure.} =
+        proc(value: Option[RuntimeStructuredVariant]):
+            Option[RuntimeStructuredVariant] = value
+      if not input.present:
+        var typedRejected = false
+        try:
+          discard importedGenericIndexedOptionCallbackApply(callback, value)
+        except ValueError as error:
+          typedRejected = "cannot infer indexed Eponym type argument" in error.msg
+        var runtimeRejected = false
+        try:
+          discard importedGenericIndexedOptionCallbackApplyRuntimeValue(
+            callback, value)
+        except ValueError as error:
+          runtimeRejected = "cannot infer indexed Eponym type argument" in error.msg
+        return typedRejected and runtimeRejected
+      let typed = importedGenericIndexedOptionCallbackApply(callback, value)
+      let runtime = importedGenericIndexedOptionCallbackApplyRuntimeValue(
+        callback, value)
+      let treeType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "SizedTree"),
+        [natToValue(input.length, runtime.globals)])
+      let expectedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Option"), [treeType])
+      validateRuntimeValueType(runtime.value, expectedType, runtime.globals)
+      let decoded = valueToOption(runtime.value, runtime.globals, "Option",
+        proc(item: Value, globals: Globals): RuntimeStructuredVariant =
+          valueToRuntimeStructuredVariant(item, globals, "SizedTree",
+            ["sizedTree"]))
+      let wrongIndexCallback: proc(value: Option[RuntimeStructuredVariant]):
+          Option[RuntimeStructuredVariant] {.closure.} =
+        proc(value: Option[RuntimeStructuredVariant]):
+            Option[RuntimeStructuredVariant] =
+          if value.isNone: return none[RuntimeStructuredVariant]()
+          var resultValue = value.get
+          inc resultValue.arguments[0].natValue
+          some(resultValue)
+      var typedMismatchRejected = false
+      try:
+        discard importedGenericIndexedOptionCallbackApply(wrongIndexCallback,
+          value)
+      except ValueError:
+        typedMismatchRejected = true
+      var runtimeMismatchRejected = false
+      try:
+        discard importedGenericIndexedOptionCallbackApplyRuntimeValue(
+          wrongIndexCallback, value)
+      except ValueError:
+        runtimeMismatchRejected = true
+      typed.isSome and typed.get.arguments[0].natValue == input.length and
+        decoded.isSome and decoded.get.arguments[0].natValue == input.length and
+        typedMismatchRejected and runtimeMismatchRejected,
+    proc(input: tuple[length: int, present: bool]):
+        seq[tuple[length: int, present: bool]] = @[])
+  if not indexedOptionCallbackCases:
     quit(1)
   let rawAppliedGenericTypeCases = forAll(
     "raw Values for applied generic domains are type checked", r, 200,
