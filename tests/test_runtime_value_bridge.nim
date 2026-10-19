@@ -483,8 +483,10 @@ eponymBlock:
 eponymBlock:
   import "fixtures/runtime_imported_generic_list.ep"
   runtimeList(List)
+  runtimeOption(Option)
   runtimeDataVariant(SizedTree)
   runtimeValue(importedGenericIndexedListCallbackApply)
+  runtimeValue(importedGenericIndexedOptionListCallbackApply)
 
 eponymBlock:
   import "fixtures/runtime_imported_generic_variant.ep"
@@ -2055,6 +2057,73 @@ when isMainModule:
         emptyRuntimeRejected,
     shrinkInt)
   if not indexedListCallbackCases:
+    quit(1)
+  let indexedOptionListCallbackCases = forAll(
+    "generic callbacks infer indexed witnesses from nonempty Option Lists",
+    r, 50,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      proc tree(index: int): RuntimeStructuredVariant =
+        RuntimeStructuredVariant(constructor: "sizedTree", arguments: @[
+          RuntimeStructuredValue(kind: rsvNat, natValue: index),
+          RuntimeStructuredValue(kind: rsvVariant,
+            variantValue: RuntimeStructuredVariant(
+              constructor: "treeEmpty"))])
+      let value = some(@[tree(length), tree(length)])
+      let callback:
+          proc(value: Option[seq[RuntimeStructuredVariant]]):
+            Option[seq[RuntimeStructuredVariant]] {.closure.} =
+        proc(value: Option[seq[RuntimeStructuredVariant]]):
+            Option[seq[RuntimeStructuredVariant]] = value
+      let typed = importedGenericIndexedOptionListCallbackApply(callback,
+        value)
+      let runtime = importedGenericIndexedOptionListCallbackApplyRuntimeValue(
+        callback, value)
+      let treeType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "SizedTree"),
+        [natToValue(length, runtime.globals)])
+      let listType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "List"), [treeType])
+      let expectedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Option"), [listType])
+      validateRuntimeValueType(runtime.value, expectedType, runtime.globals)
+      var mismatchRejected = false
+      let wrongCallback:
+          proc(value: Option[seq[RuntimeStructuredVariant]]):
+            Option[seq[RuntimeStructuredVariant]] {.closure.} =
+        proc(value: Option[seq[RuntimeStructuredVariant]]):
+            Option[seq[RuntimeStructuredVariant]] =
+          if value.isNone: return none[seq[RuntimeStructuredVariant]]()
+          var changed = value.get
+          inc changed[0].arguments[0].natValue
+          some(changed)
+      try:
+        discard importedGenericIndexedOptionListCallbackApply(wrongCallback,
+          value)
+      except ValueError:
+        mismatchRejected = true
+      var runtimeMismatchRejected = false
+      try:
+        discard importedGenericIndexedOptionListCallbackApplyRuntimeValue(
+          wrongCallback, value)
+      except ValueError:
+        runtimeMismatchRejected = true
+      var noneRejected = false
+      try:
+        discard importedGenericIndexedOptionListCallbackApply(callback,
+          none[seq[RuntimeStructuredVariant]]())
+      except ValueError as error:
+        noneRejected = "cannot infer indexed Eponym type argument" in error.msg
+      var emptyRejected = false
+      try:
+        discard importedGenericIndexedOptionListCallbackApply(callback,
+          some(newSeq[RuntimeStructuredVariant]()))
+      except ValueError as error:
+        emptyRejected = "empty sequence" in error.msg
+      typed.isSome and mismatchRejected and runtimeMismatchRejected and
+        noneRejected and emptyRejected,
+    shrinkInt)
+  if not indexedOptionListCallbackCases:
     quit(1)
   let rawAppliedGenericTypeCases = forAll(
     "raw Values for applied generic domains are type checked", r, 200,

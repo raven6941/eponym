@@ -753,11 +753,10 @@ implementations.
      change the index. `none` reports that it cannot infer the witness and
      directs callers to pass `some(value)` or use an explicit raw type witness.
    - [x] Infer indexed witnesses from nonempty `Vec[A, n]` and `List[A]`
-      arguments, directly and for `Vec` nested in `Option`. A 50-case property
-      checks full runtime result types and rejects callbacks that change
-      element indices through generated and typed `RuntimeValue` wrappers.
-      `none`, empty `Vec[A, zero]`, and empty `List[A]` still report that the
-      index cannot be inferred; callers must provide an explicit type witness.
+      arguments, directly and nested in `Option`. Separate 50-case properties
+      check full runtime result types and reject callbacks that change element
+      indices through generated and typed `RuntimeValue` wrappers. `none`,
+      empty `Vec[A, zero]`, and empty `List[A]` require an explicit witness.
       A `some(empty-sequence)` for positive fixed Vec length is rejected by
       the ordinary Vec length check.
    Other higher-order and dependent signatures still need explicit runtime
@@ -1043,7 +1042,8 @@ implementations.
 - [x] Use square brackets for explicit Eponym binders (`A`, indices such as
   `n`), parentheses for term arguments, and braces for implicit binders.
   Generic declarations, bracketed type applications, and bracketed term
-  applications are covered; call-style forms remain supported for migration.
+  applications are covered; legacy call-style support is tracked under
+  First-release syntax completion below.
 - [x] Resolve relative `.ep` imports source-relative first, then from the
   installed package's `lib/` directory. Absolute paths remain explicit
   overrides; a prelude-resolution test checks nested imports without vendoring.
@@ -1103,26 +1103,39 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 
 - Keep implementation commits fine-grained, as this branch's history does.
   Do not make one merge approval cover all protocol, bridge, surface-syntax,
-  onboarding, and QTT code-generation work. Split review and merge into
-  independently verifiable slices; the QTT destination-passing prototype is
-  separable and should be proposed separately from runtime bridge work.
+  and onboarding work. Split review and merge into independently verifiable
+  slices. The QTT destination-passing prototype is deferred until after the
+  first release and should be proposed separately from required runtime work.
 - Square-bracket explicit parameters are the canonical syntax. Legacy
-  call-style explicit applications remain accepted throughout the 0.x
-  series. Deprecate them with a compiler diagnostic before removing them in
-  1.0; do not silently turn the migration spelling into a permanent second
-  canonical syntax.
+  call-style explicit applications are temporary migration syntax. Before the
+  first release, emit a compiler deprecation diagnostic at each legacy
+  application and remove acceptance of that syntax. Do not ship 1.0 with two
+  explicit-parameter syntaxes.
 - The high-level `bindPostulate` is no longer limited to `Int -> Int`: typed
   curried adapters support codec-backed arguments and results, including the
   `Nat -> Chan -> SendOutcome` and `Chan -> ReceiveOutcome` operations used by
   the TCP example. Continue to document where low-level runtime APIs are still
   required; do not describe the flagship TCP adapter as requiring the raw API.
-- `runtimeDps(name)` is opt-in. QTT usage checking does not automatically
-  select destination-passing code generation. Keep this distinction explicit:
-  the current lowering supports only non-generic linear `Int` expressions
-  composed from literals, parameters, and `+`, `-`, `*`.
 - Before merging an implementation slice, run `sh tools/ci-local.sh` and
   record its result. A partial focused test pass is useful during development
   but does not replace the full local CI gate.
+
+### First-release syntax completion
+
+- [ ] Emit a compile-time warning or error with a migration hint whenever an
+  explicit parameter application uses legacy call-style syntax.
+- [ ] Remove the legacy call-style parser/lowering path and update examples,
+  tests, and documentation to use square brackets for explicit parameters.
+- [ ] Add positive coverage for bracket syntax and compile-fail coverage for
+  the removed spelling; run the local CI gate before the first release.
+
+### Deferred after the first release
+
+- [ ] Generalize QTT-guided destination-passing code generation beyond the
+  current `runtimeDps(name)` prototype, which handles non-generic linear
+  `Int` expressions over literals, parameters, and `+`, `-`, `*`. It remains
+  opt-in and is a performance improvement, not a requirement for the
+  internally consistent first release.
 
 ## Building
 

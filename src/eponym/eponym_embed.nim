@@ -1530,7 +1530,12 @@ proc validateRuntimeRawValue*(value, expectedType: Value, globals: Globals,
     validateRuntimeOptionRawValue(value, expectedType.whnfSpineArg(0),
       globals, headName, codecs)
     return
-  let raw = valueToRuntimeVariant(value, globals, headName, constructors)
+  var raw: RuntimeVariant
+  try:
+    raw = valueToRuntimeVariant(value, globals, headName, constructors)
+  except ValueError:
+    raise newException(ValueError,
+      "runtime value type mismatch for Eponym family '" & headName & "'")
   let constructor = globals[raw.constructor]
   var constructorType = eval(constructor.ty, @[])
   for argument in raw.arguments:
@@ -1545,7 +1550,19 @@ proc validateRuntimeRawValue*(value, expectedType: Value, globals: Globals,
     areEqual(supply, vStar(), constructorType, expectedType)
   except ValueError:
     raise newException(ValueError,
-      "runtime constructor result does not match its declared Eponym type")
+      "runtime constructor result type mismatch with its declared Eponym type")
+
+proc validateRuntimeValueAgainstType*(value, expectedType: Value,
+    globals: Globals, codecs: openArray[RuntimeStructuredCodec] = []) =
+  ## Use structural checking whenever the expected type has a supported
+  ## runtime representation. Function values still use inference because
+  ## their checked lambda type is not a first-order runtime shape.
+  if expectedType.isNil:
+    raise newException(ValueError, "cannot validate an incomplete runtime Value")
+  if expectedType.whnfKind == wPi:
+    validateRuntimeValueType(value, expectedType, globals)
+  else:
+    validateRuntimeRawValue(value, expectedType, globals, codecs)
 
 proc validateRuntimeRawArguments*(definition: ElabDef,
     arguments: openArray[Value], globals: Globals,
@@ -1733,6 +1750,21 @@ proc runtimeValueTypeArgumentOf*(value: Value, globals: Globals,
   ## family application such as Vec A n.
   if argumentIndex < 0:
     raise newException(ValueError, "runtime type argument index cannot be negative")
+  if familyName in ["Vec", "List"] and familyName in globals and
+      "cons" in globals and
+      value.whnfKind == wRef and
+      value.whnfRefId == globals["cons"].tm.refId:
+    let expectedSpine = if familyName == "Vec": 4 else: 3
+    if value.whnfSpineLen != expectedSpine or
+        argumentIndex >= value.whnfSpineLen - 1:
+      raise newException(ValueError,
+        "runtime " & familyName & " constructor has no type argument " &
+        $argumentIndex)
+    for i in 0 ..< value.whnfSpineLen:
+      if value.whnfSpineKind(i) != eApp:
+        raise newException(ValueError,
+          "runtime " & familyName & " constructor has an invalid spine")
+    return value.whnfSpineArg(argumentIndex)
   let representedType = runtimeValueTypeOf(value, globals)
   if familyName notin globals or globals[familyName].tm.isNil or
       representedType.whnfKind != wRef or
@@ -1748,6 +1780,26 @@ proc runtimeValueTypeArgumentOf*(value: Value, globals: Globals,
       raise newException(ValueError,
         "runtime type for '" & familyName & "' has a non-application spine")
   representedType.whnfSpineArg(argumentIndex)
+
+proc runtimeIndexedContainerTypeOf*(value: Value, globals: Globals,
+    familyName: string): Value =
+  ## Recover List A or Vec A n from a nonempty constructor spine without
+  ## synthesizing the type of the full recursive runtime value.
+  if familyName notin globals:
+    raise newException(ValueError,
+      "runtime type expression refers to unknown Eponym name '" &
+      familyName & "'")
+  let elementType = runtimeValueTypeArgumentOf(value, globals, familyName, 0)
+  if familyName == "Vec":
+    if value.whnfKind != wRef or value.whnfSpineLen != 4:
+      raise newException(ValueError,
+        "cannot infer the indexed Vec type from an empty sequence")
+    let tailLength = value.whnfSpineArg(1)
+    let length = callRuntimeValue(runtimeGlobalValue(globals, "suc"),
+      [tailLength])
+    return callRuntimeValue(runtimeGlobalValue(globals, familyName),
+      [elementType, length])
+  callRuntimeValue(runtimeGlobalValue(globals, familyName), [elementType])
 
 proc validateRuntimeValueType*(value, expectedType: Value,
                                globals: Globals) =

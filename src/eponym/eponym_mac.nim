@@ -2394,17 +2394,33 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           else: runtimeTypeValueExpr(eponymType, globals,
             runtimeValueTypeOverrides(typeOverrides, indexOverrides))
         if not expectedType.isNil:
+          let validator = if mapping.isRuntimeStructuredVariant:
+            bindSym"validateRuntimeValueAgainstType"
+          else:
+            bindSym"validateRuntimeValueType"
           if toValue:
             let encodedSym = genSym(nskLet, "indexedGenericEncoded")
-            checkedValue = newTree(nnkBlockExpr, newEmptyNode(),
-              newStmtList(newLetStmt(encodedSym, mappedValue),
-                newCall(bindSym"validateRuntimeValueType",
-                  copyNimTree(encodedSym), expectedType, copyNimTree(globals)),
-                copyNimTree(encodedSym)))
+            var checks = newStmtList(newLetStmt(encodedSym, mappedValue))
+            if mapping.isRuntimeStructuredVariant:
+              checks.add(newCall(validator, copyNimTree(encodedSym),
+                expectedType, copyNimTree(globals),
+                runtimeStructuredCodecsExpr(mappings, records)))
+            else:
+              checks.add(newCall(validator, copyNimTree(encodedSym),
+                expectedType, copyNimTree(globals)))
+            checks.add(copyNimTree(encodedSym))
+            checkedValue = newTree(nnkBlockExpr, newEmptyNode(), checks)
           else:
-            checkedValue = newTree(nnkBlockExpr, newEmptyNode(), newStmtList(
-              newCall(bindSym"validateRuntimeValueType", copyNimTree(value),
-                expectedType, copyNimTree(globals)), mappedValue))
+            var checks = newStmtList()
+            if mapping.isRuntimeStructuredVariant:
+              checks.add(newCall(validator, copyNimTree(value), expectedType,
+                copyNimTree(globals),
+                runtimeStructuredCodecsExpr(mappings, records)))
+            else:
+              checks.add(newCall(validator, copyNimTree(value), expectedType,
+                copyNimTree(globals)))
+            checks.add(mappedValue)
+            checkedValue = newTree(nnkBlockExpr, newEmptyNode(), checks)
       whenBranches.add(newTree(nnkElifBranch, condition,
                                newStmtList(checkedValue)))
     let errorMessage = newLit("generic Nim type '" & repr(nimType) &
@@ -2666,6 +2682,7 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
     var sourceOptionFamily = ""
     var sourceOptionElementType: NimNode = nil
     var sourceOptionNestedVector = false
+    var sourceOptionNestedList = false
     var sourceVectorFamily = ""
     var sourceVectorType: NimNode = nil
     var sourceListFamily = ""
@@ -2683,6 +2700,7 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         let directGeneric = elementType.kind in {nnkIdent, nnkSym} and
           $elementType == genericName
         var nestedVector = false
+        var nestedList = false
         if not directGeneric:
           for vectorMapping in generic.codecMappings:
             if not vectorMapping.isRuntimeVector: continue
@@ -2692,11 +2710,21 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
                 mentionsName(vector.elementType, genericName):
               nestedVector = true
               break
-        if directGeneric or nestedVector:
+          if not nestedVector:
+            for listMapping in generic.codecMappings:
+              if not listMapping.isRuntimeList: continue
+              let listElement = runtimeListElementType(elementType,
+                listMapping.eponymName)
+              if not listElement.isNil and mentionsName(listElement,
+                  genericName):
+                nestedList = true
+                break
+        if directGeneric or nestedVector or nestedList:
           sourceIndex = i
           sourceOptionFamily = optionMapping.eponymName
           sourceOptionElementType = elementType
           sourceOptionNestedVector = nestedVector
+          sourceOptionNestedList = nestedList
           if nestedVector:
             for vectorMapping in generic.codecMappings:
               if not vectorMapping.isRuntimeVector: continue
@@ -2706,6 +2734,16 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
                   mentionsName(vector.elementType, genericName):
                 sourceVectorFamily = vectorMapping.eponymName
                 sourceVectorType = elementType
+                break
+          elif nestedList:
+            for listMapping in generic.codecMappings:
+              if not listMapping.isRuntimeList: continue
+              let listElement = runtimeListElementType(elementType,
+                listMapping.eponymName)
+              if not listElement.isNil and mentionsName(listElement,
+                  genericName):
+                sourceListFamily = listMapping.eponymName
+                sourceListType = elementType
                 break
           break
       if sourceIndex < 0:
@@ -2765,6 +2803,7 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
       let sourceType = if sourceOptionFamily.len > 0:
         newTree(nnkBracketExpr, bindSym"Option",
           if sourceOptionNestedVector: sourceVectorNimType
+          elif sourceOptionNestedList: sourceListNimType
           else: copyNimTree(mapping.nimType))
         elif sourceVectorFamily.len > 0:
           sourceVectorNimType
@@ -2804,9 +2843,18 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
             ident"ValueError", noneMessage))))))
       packageBody.add(newLetStmt(encodedSym, encoded))
       let witnessSym = genSym(nskLet, "indexedGenericType")
-      packageBody.add(newLetStmt(witnessSym,
+      let inferredContainerType = if sourceVectorFamily.len > 0:
+        newCall(bindSym"runtimeIndexedContainerTypeOf",
+          copyNimTree(encodedSym), copyNimTree(globals),
+          newLit(sourceVectorFamily))
+      elif sourceListFamily.len > 0:
+        newCall(bindSym"runtimeIndexedContainerTypeOf",
+          copyNimTree(encodedSym), copyNimTree(globals),
+          newLit(sourceListFamily))
+      else:
         newCall(bindSym"runtimeValueTypeOf", copyNimTree(encodedSym),
-          copyNimTree(globals))))
+          copyNimTree(globals))
+      packageBody.add(newLetStmt(witnessSym, inferredContainerType))
       var genericWitnessExpr = copyNimTree(witnessSym)
       if sourceVectorFamily.len > 0:
         genericWitnessExpr = newCall(
@@ -3468,9 +3516,9 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
       let expectedType = runtimeTypeValueExpr(
         generic.genericValueTypeExprs[i], globalsSym, typeIndexOverrides)
       if expectedType.isNil: return nil
-      body.add(newCall(bindSym"validateRuntimeValueType",
-        encodedGeneric,
-        expectedType, globalsSym))
+      body.add(newCall(bindSym"validateRuntimeValueAgainstType",
+        encodedGeneric, expectedType, globalsSym,
+        runtimeStructuredCodecsExpr(generic.codecMappings, records)))
     typeIndexOverrides.add(($generic.genericNames[i], encodedGeneric))
   body.add(newLetStmt(defsSym,
     newCall(bindSym"getDefsDir", dirLit, srcLit)))
