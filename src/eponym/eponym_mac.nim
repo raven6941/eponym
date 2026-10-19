@@ -201,7 +201,9 @@ proc nimGenericCallInfo(params, formal: NimNode): LegacyCallInfo =
   result.requiresBrackets = result.explicitCount > 0
   if result.explicitCount > 0 and params.len > 0 and
       params[0].kind == nnkIdentDefs:
-    result.firstExplicitType = $params[0][^2] == "Univ"
+    let firstType = params[0][^2]
+    result.firstExplicitType = firstType.kind in {nnkIdent, nnkSym} and
+      $firstType == "Univ"
 
 proc nimBinderIsUniverse(binder: NimNode): bool =
   if binder.kind == nnkIdentDefs and binder.len >= 3:

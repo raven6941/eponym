@@ -172,6 +172,9 @@ type RuntimeEnvelope = object
   point: RuntimePoint
   note: string
 
+type RuntimeCallbackRecord = object
+  callback: NimIntCallback
+
 type RuntimeSizedVec = object
   prefixLength: int
   suffixLength: int
@@ -288,7 +291,7 @@ eponymBlock:
   postulate(Int, Univ)
   postulate(Nat, Univ)
   postulate(IntIndexed, Int -> Univ)
-  postulate(IntIndexedOneIdentity, IntIndexed(1) -> IntIndexed(1))
+  postulate(IntIndexedOneIdentity, IntIndexed[1] -> IntIndexed[1])
   postulate(hostBoolTick, Int -> Bool)
   bindPostulate(hostBoolTick, hostBoolPredicateNim, Int, Bool)
   postulate(hostPlusSeven, Int -> Int)
@@ -1107,6 +1110,16 @@ eponymBlock:
   proc generatedFailureRole(value: Int): Int = hostFailure(value)
 
 eponymBlock:
+  postulate(Int, Univ)
+  record(CallbackRecord):
+    field(callback, Int -> Int)
+  runtimeType(CallbackRecord, RuntimeCallbackRecord)
+  proc generatedApplyRecordCallback(box: CallbackRecord,
+                                   value: Int): Int =
+    box.callback(value)
+  runtimeValue(generatedApplyRecordCallback)
+
+eponymBlock:
   postulate(Nat, Univ)
   postulate(Channel, Univ)
   postulate(Message, Univ)
@@ -1236,22 +1249,22 @@ eponymBlock:
   postulate(Channel, Nat -> Univ)
   runtimeType(Channel, IndexedChannelHandle)
   postulate(splitIndexedChannel,
-    Channel(0) -> Sig(index: Nat, Channel(index)))
+    Channel[0] -> Sig(index: Nat, Channel[index]))
   bindPostulatePairTrusted(splitIndexedChannel, hostIndexedChannelParts,
     Channel, Nat, Channel)
   runtimePairTrusted(generatedSplitIndexedChannel)
   postulate(repeatIndexedChannel,
-    Pi(index: Nat, channel: Channel(index),
-       Sig(first: Channel(index), Channel(index))))
+    Pi(index: Nat, channel: Channel[index],
+       Sig(first: Channel[index], Channel[index])))
   bindPostulatePair(repeatIndexedChannel, hostRepeatIndexedChannel,
     Nat, Channel, Channel, Channel)
-  proc generatedIndexedChannelIndex(channel: Channel(0)): Nat =
+  proc generatedIndexedChannelIndex(channel: Channel[0]): Nat =
     fst(splitIndexedChannel(channel))
-  proc generatedSplitIndexedChannel(channel: Channel(0)):
-      Sig(index: Nat, Channel(index)) =
+  proc generatedSplitIndexedChannel(channel: Channel[0]):
+      Sig(index: Nat, Channel[index]) =
     splitIndexedChannel(channel)
-  proc generatedRepeatIndexedChannel(index: Nat, channel: Channel(index)):
-      Sig(first: Channel(index), Channel(index)) =
+  proc generatedRepeatIndexedChannel(index: Nat, channel: Channel[index]):
+      Sig(first: Channel[index], Channel[index]) =
     repeatIndexedChannel(index, channel)
 
 eponymBlock:
@@ -4580,6 +4593,22 @@ proc callbackRole : Callback -> Sample -> Sample =
       generatedApplyNimCallback(callback, value) == value * factor + 7,
     shrinkInt)
   if not callbackBridgeCases:
+    quit(1)
+
+  let recordCallbackCases = forAll(
+    "callable fields in mapped Nim records cross into Eponym",
+    r, 200,
+    proc(r: var Rng): tuple[input, multiplier, offset: int] =
+      (r.genInt(-1000, 1000), r.genInt(-10, 10), r.genInt(-1000, 1000)),
+    proc(input: tuple[input, multiplier, offset: int]): bool =
+      let callback: NimIntCallback = proc(value: int): int =
+        value * input.multiplier + input.offset
+      let host = RuntimeCallbackRecord(callback: callback)
+      let expected = input.input * input.multiplier + input.offset
+      let typed = generatedApplyRecordCallback(host, input.input)
+      let runtime = generatedApplyRecordCallbackRuntimeValue(host, input.input)
+      typed == expected and valueToInt(runtime.value) == expected)
+  if not recordCallbackCases:
     quit(1)
 
   let returnedClosureCases = forAll(

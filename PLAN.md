@@ -1166,6 +1166,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   forms or qualified call heads the guard does not yet recognize.
 - [ ] Audit remaining test and fixture call sites and run the full local CI
   gate before the first release.
+- [x] Migrate remaining legacy indexed type applications in the runtime bridge
+  test to brackets, and make generic-signature registration tolerate Nim
+  function-type binders. The runtime bridge suite passes, including the
+  callable record closure property.
 - [x] Register callable field signatures from imported `.ep` records and
   reject call-style explicit arguments through record projections. Field-name
   collisions with differing signatures disable the diagnostic for that name
@@ -1180,6 +1184,8 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   ordinary implicit insertion.
 - [x] Add bracket-form compile coverage for callable record fields declared
   locally and imported from `.ep` files, including an implicit function field.
+- [x] Property-test a mapped Nim record containing a closure, invoking it from
+  checked Eponym and through the `RuntimeValue` wrapper (200 generated cases).
 - [ ] Audit further AST wrappers around callees beyond parenthesized
   projections.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for

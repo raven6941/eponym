@@ -199,6 +199,10 @@ definitions and imported definitions whose signatures can be reconstructed;
 an imported dependent-pair identity is property-tested through typed and
 `RuntimeValue` wrappers, including rejection of a mismatched Vec length.
 Without the opt-in, dependent `Sig` wrapper signatures remain unsupported.
+Non-dependent record fields may also contain function values. When the field
+type has supported runtime codecs and the Nim field is a closure, generated
+record codecs pass that closure into checked Eponym code; a 200-case property
+tests both the typed call and `RuntimeValue` wrapper.
 The canonical length-indexed `Vec` family has
 an explicit
 `runtimeVector(Vec)` codec that maps `Vec[A, n]` to `seq[A]`. It checks the
