@@ -142,7 +142,12 @@ bodies. Nim proc types with supported leaf codecs also bridge to and from
 Eponym function values. A multi-argument Nim proc is represented as a curried
 chain of Eponym functions; arguments and results use the same recursive codecs
 as generated wrappers. A 200-case property covers multi-argument callbacks
-with primitive and mapped opaque values in both directions. Returned callback
+with primitive and mapped opaque values in both directions. Add `{.rawValue.}`
+alongside `{.closure.}` on a proc type to expose its arguments and result as
+raw `Value`s instead. This supports callback signatures whose Eponym leaf types
+have no Nim codec; the callback implementation is responsible for interpreting
+those Values. A 200-case property covers an unmapped `Token -> Token` callback
+through a generated wrapper and a reified runtime callback. Returned callback
 types must use Nim's `{.closure.}` calling convention. Callback effects and
 behavior remain trusted host semantics.
 Structural codecs are currently limited to `Vec`, `List`, `Option`, two-field

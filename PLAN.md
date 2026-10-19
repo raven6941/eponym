@@ -431,6 +431,11 @@ implementations.
   responsible for constructing Values of the declared binder types. A 200-case
   property passes an unmapped generic Nat value and checks that the definition
   returns that value.
+- [x] Add `{.rawValue.}` callback proc types that pass callback arguments and
+  results as Eponym `Value`s, without requiring codecs for the function's leaf
+  types. The checked Eponym callback type remains explicit, and the Nim callback
+  implementation owns Value interpretation. A 200-case property covers an
+  unmapped `Token -> Token` callback through generated and reified wrappers.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

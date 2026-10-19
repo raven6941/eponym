@@ -19,6 +19,8 @@ import sequtils
 import sets
 import std/options
 
+template rawValue* {.pragma.}
+
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
 # and generates wrapper procs. Uses call syntax:
@@ -1146,12 +1148,25 @@ proc hasClosurePragma(n: NimNode): bool =
       if pragma.kind in {nnkIdent, nnkSym} and $pragma == "closure":
         return true
 
+proc hasRawValuePragma(n: NimNode): bool =
+  if n.kind == nnkProcTy and n.len == 2 and n[1].kind == nnkPragma:
+    for pragma in n[1]:
+      if pragma.kind in {nnkIdent, nnkSym} and $pragma == "rawValue":
+        return true
+
+proc rawValueCallbackType(n: NimNode): NimNode =
+  result = copyNimTree(n)
+  result[0][0] = bindSym"Value"
+  for i in 1 ..< result[0].len:
+    result[0][i][^2] = bindSym"Value"
+
 proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
                     records: seq[HostRecord],
                     allowDependentSigma = false): NimNode =
   let procParts = runtimeProcParts(n)
   if not procParts.resultType.isNil:
     if not hasClosurePragma(n): return nil
+    if hasRawValuePragma(n): return rawValueCallbackType(n)
     let resultType = runtimeNimType(procParts.resultType, mappings, records,
                                     allowDependentSigma)
     if resultType.isNil: return nil
@@ -1271,6 +1286,32 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                  value: NimNode]] = @[]): NimNode =
   let procParts = runtimeProcParts(eponymType)
   if not procParts.resultType.isNil:
+    let rawValueCallback = hasRawValuePragma(nimType)
+    if rawValueCallback:
+      var argValueSyms: seq[NimNode] = @[]
+      var argSyms: seq[NimNode] = @[]
+      for i, _ in procParts.argTypes:
+        argValueSyms.add(genSym(nskParam, "rawCallbackValue" & $i))
+        argSyms.add(genSym(nskParam, "rawCallbackArgument" & $i))
+      if toValue:
+        var hostCall = newCall(value)
+        for argSym in argValueSyms:
+          hostCall.add(argSym)
+        var callbackValue = hostCall
+        for i in countdown(argValueSyms.high, 0):
+          let hostCallback = newProc(params = @[bindSym"Value",
+            newIdentDefs(argValueSyms[i], bindSym"Value", newEmptyNode())],
+            body = newStmtList(callbackValue))
+          callbackValue = newCall(bindSym"vHostFunc", hostCallback)
+        return callbackValue
+      var callbackArgs = newNimNode(nnkBracket)
+      var formal: seq[NimNode] = @[bindSym"Value"]
+      for argSym in argSyms:
+        callbackArgs.add(argSym)
+        formal.add(newIdentDefs(argSym, bindSym"Value", newEmptyNode()))
+      let applied = newCall(bindSym"callRuntimeValue", value,
+        newTree(nnkPrefix, ident"@", callbackArgs))
+      return newProc(params = formal, body = newStmtList(applied))
     let resultNimType = runtimeNimType(procParts.resultType, mappings, records,
                                        allowDependentSigma)
     if resultNimType.isNil: return nil

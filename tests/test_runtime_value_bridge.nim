@@ -19,12 +19,14 @@ proc hostTripleNim(value: int): int = value * 3
 proc hostString(value: string): string = value
 proc hostFailureNim(value: int): int =
   raise newException(IOError, "host adapter failed")
+proc rawRuntimeIdentity(value: Value): Value = value
 
 type ChannelHandle = object
   id: int
   label: string
 
 type NimIntCallback = proc(value: int): int {.closure.}
+type RawRuntimeCallback = proc(value: Value): Value {.closure.}
 
 type RuntimePoint = object
   x: int
@@ -383,6 +385,14 @@ eponymBlock:
 
 eponymBlock:
   postulate(Int, Univ)
+  postulate(Token, Univ)
+  proc generatedRawTokenCallbackEcho(
+      callback: proc(value: Token): Token {.closure, rawValue.}):
+      proc(value: Token): Token {.closure, rawValue.} = callback
+  runtimeValue(generatedRawTokenCallbackEcho)
+
+eponymBlock:
+  postulate(Int, Univ)
   postulate(sumSix, Int -> Int -> Int -> Int -> Int -> Int -> Int)
   bindPostulate(sumSix, hostSumSix, Int, Int, Int, Int, Int, Int, Int)
   proc generatedSumSix(a, b, c, d, e, f: Int): Int =
@@ -730,6 +740,22 @@ when isMainModule:
     proc(index: int): bool = rawGenericNatAt(index),
     shrinkInt)
   if not rawGenericNatCases:
+    quit(1)
+
+  let rawCallbackCases = forAll(
+    "raw Value callbacks bridge unmapped higher-order types", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let callback: RawRuntimeCallback =
+        generatedRawTokenCallbackEcho(rawRuntimeIdentity)
+      let wrapperResult = valueToInt(callback(intToValue(value))) == value
+      let runtime = generatedRawTokenCallbackEchoRuntimeValue(
+        rawRuntimeIdentity)
+      let runtimeResult = valueToInt(callRuntimeValue(runtime.value,
+        [intToValue(value)])) == value
+      wrapperResult and runtimeResult,
+    shrinkInt)
+  if not rawCallbackCases:
     quit(1)
 
   var importedArityRejected = false
