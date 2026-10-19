@@ -853,7 +853,7 @@ proc runtimeTypeAfterArgs(n: NimNode, count: int,
     for i in 1 ..< n.len - 1:
       let binder = n[i]
       if binder.kind == nnkExprColonExpr:
-        argNames.add($binder[0])
+        argNames.add(binderName(binder[0]))
         dec remaining
       elif binder.kind == nnkTableConstr:
         for _ in binder: argNames.add("")
