@@ -922,6 +922,45 @@ proc runtimeTermTypeAfterArgs(ty: Term, count: int, globals: Globals):
       "runtimePairArg" & $i else: name
   result.resultType = runtimeTermTypeAst(current, ctx, refNames)
 
+proc importedRuntimeProcDecl(definition: ElabDef,
+                             globals: Globals): NimNode =
+  ## Rebuild a simple imported Pi signature as a synthetic Nim proc AST so
+  ## the ordinary codec generator can emit typed wrappers for it.
+  var refNames = initTable[int, string]()
+  for name, entry in globals:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      refNames[entry.tm.refId] = name
+  var current = definition.tyTm
+  var ctx: seq[string] = @[]
+  var formal = newNimNode(nnkFormalParams)
+  formal.add(newEmptyNode())
+  var argumentIndex = 0
+  while not current.isNil and current.kind == tPi:
+    if current.impl or current.qty != qOmega or
+        current.dom.isNil or current.dom.kind == tType:
+      return nil
+    let name = if current.scope.adv.len > 0 and
+        current.scope.adv != "_": current.scope.adv
+      else: "runtimeArg" & $argumentIndex
+    let argType = runtimeTermTypeAst(current.dom, ctx, refNames)
+    if argType.isNil: return nil
+    formal.add(newIdentDefs(ident(name), argType, newEmptyNode()))
+    ctx = @[name] & ctx
+    current = current.scope.bdy
+    inc argumentIndex
+  if argumentIndex == 0: return nil
+  let resultType = runtimeTermTypeAst(current, ctx, refNames)
+  if resultType.isNil: return nil
+  formal[0] = resultType
+  result = newNimNode(nnkProcDef)
+  result.add(ident(definition.name))
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(formal)
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+
 proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   var seen = initHashSet[string]()
   for st in body:
@@ -2737,6 +2776,18 @@ macro eponymBlock*(body: untyped): untyped =
           importedDef = d
           break
       if importedDef.name.len > 0:
+        let importedDecl = importedRuntimeProcDecl(importedDef,
+          checkedGlobals)
+        if not importedDecl.isNil:
+          let typedImportedWrapper = typedRuntimeWrapper(importedDecl,
+            baseDir, src, requested, bindings, runtimeTypes, records)
+          if not typedImportedWrapper.isNil:
+            result.add(typedImportedWrapper)
+          let typedImportedValueWrapper = typedRuntimeValueWrapper(
+            importedDecl, baseDir, src, requested, bindings, runtimeTypes,
+            records)
+          if not typedImportedValueWrapper.isNil:
+            result.add(typedImportedValueWrapper)
         result.add(rawRuntimeValueWrapper(baseDir, src, requested,
           checkedLambdaArity(importedDef), bindings, runtimeTypes, records))
 

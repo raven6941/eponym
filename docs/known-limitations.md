@@ -100,12 +100,13 @@ binder types without a Nim runtime mapping; callers construct and validate the
 generic values themselves. The checked definition has been type-checked, but
 the raw bridge does not verify that supplied Values inhabit its generic binder
 types. `runtimeValue(importedDefinition)` also works for definitions imported
-from `.ep` files without a local Nim signature and exposes only the raw Value
-interface. Imported checked bodies can invoke
-postulates bound by `bindPostulate` in the same block. The helper applies the
-block's declared adapters; unbound postulates remain neutral. It does not
-generate a structural Nim result type, but checks the imported definition's
-fixed argument count from its checked lambda telescope. Callers still supply
+from `.ep` files without a local Nim signature. When the checked Pi signature
+has runtime codecs, the macro derives a typed Nim wrapper and typed
+`RuntimeValue` overload from the checked globals; otherwise it exposes only the
+raw Value interface, with arity checked from the imported lambda telescope.
+Imported checked bodies can invoke postulates bound by `bindPostulate` in the
+same block. Tests cover typed and raw imported identity calls and a typed call
+through a bound imported postulate. Callers of raw wrappers still supply
 well-formed Values. Callers
 must handle unsupported constructors and neutral values explicitly. A
 non-dependent `Sig(A, B)` runtime type is structurally mapped to a two-element
