@@ -440,6 +440,10 @@ implementations.
      `bindPostulatePairTrusted`, so recursive codecs can enforce represented
      constraints such as a Vec length indexed by the first field. A 200-case
      property checks valid results and rejects a mismatched host result.
+   - [x] Propagate named outer Pi argument values into later typed arguments,
+     dependent results, and trusted pair adapter result codecs. A 200-case
+     property covers the generated wrapper, typed `runtimeValue`, host adapter
+     results, and rejection of mismatched vector lengths.
    - [ ] Preserve the full dependent result type for pair adapters whose
      postulate declaration comes from an imported `.ep` module.
    Remaining gaps include broader automatic/structural

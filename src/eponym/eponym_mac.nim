@@ -714,6 +714,7 @@ type HostPostulateBinding = object
   implementation: NimNode
   eponymTypes: seq[string]
   pairResultType: NimNode
+  pairResultArgNames: seq[string]
   pairResult: bool
   pairArgCount: int
   trustedPairIndex: bool
@@ -834,27 +835,31 @@ proc validateHostBoolCodec(globals: Globals) =
       raise newException(ValueError,
         "Bool codec requires '" & constructorName & "' to construct Bool")
 
-proc runtimeTypeAfterArgs(n: NimNode, count: int): NimNode =
+proc runtimeTypeAfterArgs(n: NimNode, count: int,
+    argNames: var seq[string]): NimNode =
   ## Extract the result type after the explicit arrows/Pi binders accepted by
   ## a typed pair adapter. Keep this original type AST so dependent Sigma
   ## codecs can see the actual index expressions from the postulate.
   if count < 0: return nil
   if count == 0: return copyNimTree(n)
   if n.kind == nnkInfix and n.len == 3 and $n[0] == "->":
-    return runtimeTypeAfterArgs(n[2], count - 1)
+    argNames.add("")
+    return runtimeTypeAfterArgs(n[2], count - 1, argNames)
   if n.kind in {nnkCall, nnkObjConstr} and n.len >= 3 and
       n[0].kind == nnkIdent and $n[0] == "Pi":
     var remaining = count
     for i in 1 ..< n.len - 1:
       let binder = n[i]
       if binder.kind == nnkExprColonExpr:
+        argNames.add($binder[0])
         dec remaining
       elif binder.kind == nnkTableConstr:
+        for _ in binder: argNames.add("")
         remaining -= binder.len
       else:
         return nil
       if remaining < 0: return nil
-    return runtimeTypeAfterArgs(n[^1], remaining)
+    return runtimeTypeAfterArgs(n[^1], remaining, argNames)
   nil
 
 proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
@@ -881,6 +886,7 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
           error("bindPostulate Eponym type mappings must be identifiers", st[i])
         typeNames.add($st[i])
       var pairResultType: NimNode = nil
+      var pairResultArgNames: seq[string] = @[]
       if pairResult:
         for declaration in body:
           if declaration.kind == nnkCall and declaration.len == 3 and
@@ -889,12 +895,13 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
               declaration[1].kind == nnkIdent and
               $declaration[1] == name:
             pairResultType = runtimeTypeAfterArgs(declaration[2],
-              typeNames.len - 2)
+              typeNames.len - 2, pairResultArgNames)
             break
       result.add(HostPostulateBinding(postulateName: name,
                                      implementation: st[2],
                                      eponymTypes: typeNames,
                                      pairResultType: pairResultType,
+                                     pairResultArgNames: pairResultArgNames,
                                      pairResult: pairResult,
                                      pairArgCount: if pairResult:
                                        typeNames.len - 2 else: 0,
@@ -1592,6 +1599,8 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       error("bindPostulatePair needs runtime codecs for both pair fields")
     var runtimeArgs: seq[NimNode] = @[]
     var decodedArgs: seq[NimNode] = @[]
+    var adapterBody = newStmtList()
+    var pairIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
     for i in 0 ..< binding.pairArgCount:
       let eponymArgType = ident(binding.eponymTypes[i])
       let nimArgType = runtimeNimType(eponymArgType, mappings, records)
@@ -1604,14 +1613,18 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
         runtimeArg, false, mappings, records, globalsSym)
       if decoded.isNil:
         error("bindPostulatePair could not build an argument codec")
-      decodedArgs.add(decoded)
+      let decodedArg = genSym(nskLet, "hostPairArgument")
+      adapterBody.add(newLetStmt(decodedArg, decoded))
+      decodedArgs.add(decodedArg)
+      if i < binding.pairResultArgNames.len and
+          binding.pairResultArgNames[i].len > 0:
+        pairIndexOverrides.add((binding.pairResultArgNames[i], decodedArg))
     let hostResult = genSym(nskLet, "hostPairResult")
     let encodedResult = runtimeValueConversionExpr(pairType, pairNimType,
       hostResult, true, mappings, records, globalsSym,
-      binding.trustedPairIndex)
+      binding.trustedPairIndex, pairIndexOverrides)
     if encodedResult.isNil:
       error("bindPostulatePair could not build a value codec")
-    var adapterBody = newStmtList()
     var implementationCall = newCall(binding.implementation)
     for decodedArg in decodedArgs:
       implementationCall.add(decodedArg)
@@ -1788,6 +1801,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   var formal = newNimNode(nnkFormalParams)
   formal.add(ident("int"))
   var argSyms: seq[NimNode] = @[]
+  var argNames: seq[string] = @[]
   var argEponymTypes: seq[NimNode] = @[]
   var argNimTypes: seq[NimNode] = @[]
   for i in 1 ..< params.len:
@@ -1801,6 +1815,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
       let argSym = genSym(nskParam, $argName)
       formal.add(newIdentDefs(argSym, argType, newEmptyNode()))
       argSyms.add(argSym)
+      argNames.add($argName)
       argEponymTypes.add(p[^2])
       argNimTypes.add(argType)
 
@@ -1826,11 +1841,13 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   for genericArg in genericRuntimeValueArgs(generic, globalsSym,
       codecMappings, records):
     values.add(genericArg)
+  var wrapperIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, argSym in argSyms:
     values.add(runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i],
       argSym, true, codecMappings, records, globalsSym,
-      allowDependentSigma))
+      allowDependentSigma, wrapperIndexOverrides))
     if values[^1].isNil: return nil
+    wrapperIndexOverrides.add((argNames[i], argSym))
   let valuesSeq = newTree(nnkPrefix, ident("@"), values)
   var callArgs = @[dirLit, srcLit, nameLit, valuesSeq]
   if not bindingSym.isNil: callArgs.add(bindingSym)
@@ -1839,7 +1856,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     newCall(bindSym"callValueFuncDir", callArgs)))
   let resultExpr = runtimeValueConversionExpr(params[0], resultType,
     runtimeValue, false, codecMappings, records, globalsSym,
-    allowDependentSigma)
+    allowDependentSigma, wrapperIndexOverrides)
   if resultExpr.isNil: return nil
   wrapperBody.add(resultExpr)
 
@@ -1872,6 +1889,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   var formal = newNimNode(nnkFormalParams)
   formal.add(parseExpr("tuple[value: Value, globals: Globals]"))
   var argSyms: seq[NimNode] = @[]
+  var argNames: seq[string] = @[]
   var eponymTypes: seq[NimNode] = @[]
   var nimTypes: seq[NimNode] = @[]
   for i in 1 ..< params.len:
@@ -1885,6 +1903,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
       let argSym = genSym(nskParam, $argName)
       formal.add(newIdentDefs(argSym, nimType, newEmptyNode()))
       argSyms.add(argSym)
+      argNames.add($argName)
       eponymTypes.add(p[^2])
       nimTypes.add(nimType)
 
@@ -1893,12 +1912,14 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   for genericArg in genericRuntimeValueArgs(generic, globalsSym,
       codecMappings, records):
     values.add(genericArg)
+  var runtimeValueIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, argSym in argSyms:
     let converted = runtimeValueConversionExpr(eponymTypes[i], nimTypes[i],
       argSym, true, codecMappings, records, globalsSym,
-      allowDependentSigma)
+      allowDependentSigma, runtimeValueIndexOverrides)
     if converted.isNil: return nil
     values.add(converted)
+    runtimeValueIndexOverrides.add((argNames[i], argSym))
   let valuesSeq = newTree(nnkPrefix, ident("@"), values)
   let dirLit = newLit(baseDir)
   let srcLit = newLit(src)

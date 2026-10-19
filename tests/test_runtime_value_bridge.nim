@@ -566,6 +566,15 @@ proc hostMakeIndexedVector(seed: int): tuple[count: int, values: seq[int]] =
     if result.values.len > 0: result.values.setLen(result.values.len - 1)
     else: result.values.add(seed)
 
+proc hostMakeVectorForIndex(index, seed: int):
+    tuple[marker: int, values: seq[int]] =
+  result.marker = seed
+  for i in 0 ..< index:
+    result.values.add(seed + i)
+  if seed == low(int):
+    if result.values.len > 0: result.values.setLen(result.values.len - 1)
+    else: result.values.add(seed)
+
 eponymBlock:
   import "../lib/nat.ep"
   postulate(Channel, Nat -> Univ)
@@ -600,6 +609,21 @@ eponymBlock:
   proc generatedMakeIndexedVector(seed: Int):
       Sig(count: Nat, Vec[Int, count]) = makeIndexedVector(seed)
   runtimePairTrusted(generatedMakeIndexedVector)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  postulate(makeVectorForIndex,
+    Pi(index: Nat, seed: Int, Sig(marker: Int, Vec[Int, index])))
+  bindPostulatePairTrusted(makeVectorForIndex, hostMakeVectorForIndex,
+    Nat, Int, Int, Vec)
+  proc generatedVectorArgIdentity(index: Nat,
+      values: Vec[Int, index]): Vec[Int, index] = values
+  runtimeValue(generatedVectorArgIdentity)
+  proc generatedVectorForIndex(index: Nat, seed: Int):
+      Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(index, seed)
+  runtimePairTrusted(generatedVectorForIndex)
 
 static:
   doAssert compiles(generatedCheckedRole(35))
@@ -791,6 +815,34 @@ when isMainModule:
         pairResult[1].len == pairResult[0] and
         pairResult[1] == hostMakeIndexedVector(seed).values,
     shrinkInt)
+  let generatedOuterDependentVectorCases = forAll(
+    "function arguments and host pair results share an outer Nat index", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(index: int): bool =
+      var values: seq[int] = @[]
+      for i in 0 ..< index: values.add(i - index)
+      let wrapperRoundTrip =
+        generatedVectorArgIdentity(index, values) == values
+      let runtime = generatedVectorArgIdentityRuntimeValue(index, values)
+      let runtimeRoundTrip = vecValueToSeq[int](runtime.value, index,
+        runtime.globals, "Vec",
+        proc(value: Value, globals: Globals): int = valueToInt(value)) == values
+      let pairResult = generatedVectorForIndex(index, -index)
+      let pairRoundTrip = pairResult[0] == -index and
+        pairResult[1].len == index
+      var inputMismatchRejected = false
+      try:
+        discard generatedVectorArgIdentity(index, values & @[index])
+      except ValueError:
+        inputMismatchRejected = true
+      var adapterMismatchRejected = false
+      try:
+        discard generatedVectorForIndex(index, low(int))
+      except ValueError:
+        adapterMismatchRejected = true
+      wrapperRoundTrip and runtimeRoundTrip and pairRoundTrip and
+        inputMismatchRejected and adapterMismatchRejected,
+    shrinkInt)
   var dependentPairAdapterMismatchRejected = false
   try:
     discard generatedMakeIndexedVector(low(int))
@@ -961,6 +1013,7 @@ when isMainModule:
       generatedTernaryPairBindingCases and
       generatedTrustedDependentPairCases and
       generatedTrustedDependentPairAdapterCases and
+      generatedOuterDependentVectorCases and
       dependentPairAdapterMismatchRejected and
       generatedDependentPairVecCases and
       generatedDependentPairEnvelopeCases and

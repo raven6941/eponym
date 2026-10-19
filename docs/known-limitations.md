@@ -181,6 +181,10 @@ indices through recursive codecs; supported field codecs such as `Vec` still
 check their represented constraints (for example, sequence length against the
 bound Nat). A trusted record opt-in also carries through dependent Sigma
 fields, and shadowed binder names resolve to the innermost Sigma binder.
+Typed wrapper arguments are encoded in declaration order, so a later Vec
+argument and the dependent result can use an earlier named Nat argument. A
+trusted pair adapter for a locally declared Pi signature uses those same
+argument values when encoding its dependent result.
 Without the required pair or record marker, generated wrappers continue to
 reject dependent signatures.
 Opaque bindings require explicit `runtimeType(EponymType, NimType)` mappings
