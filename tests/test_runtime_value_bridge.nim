@@ -117,6 +117,9 @@ proc hostInvokeFutureCallback(callback: proc(channel: ChannelHandle):
     Future[int] {.closure.}, channel: ChannelHandle): Future[int] =
   callback(channel)
 
+proc hostAsyncChannelResult(channel: ChannelHandle): Future[int] {.async.} =
+  return channel.id
+
 proc hostInvokeVoidCallback(callback: proc(value: int) {.closure.},
                             value: int) = callback(value)
 proc hostInvokeNullaryCallback(callback: proc(): int {.closure.}): int =
@@ -2983,6 +2986,21 @@ proc callbackRole : Callback -> Sample -> Sample =
         valueToHostAtRuntimeType[Future[int]](runtime.value, resultType,
           runtime.globals) == future)
   if not genericFutureCallbackCases:
+    quit(1)
+  let asyncGenericCallbackCases = forAll(
+    "async Nim callbacks cross dynamic generic binders", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(channelId: int): bool =
+      let channel = ChannelHandle(id: channelId, label: "async-generic")
+      let generated = generatedApplyGenericFutureCallbackDynamic(
+        hostAsyncChannelResult, channel)
+      let runtime = generatedApplyGenericFutureCallbackRuntimeValueDynamic(
+        hostAsyncChannelResult, channel)
+      let resultType = runtimeGlobalValue(runtime.globals, "PendingResult")
+      let runtimeFuture = valueToHostAtRuntimeType[Future[int]](runtime.value,
+        resultType, runtime.globals)
+      waitFor(generated) == channelId and waitFor(runtimeFuture) == channelId)
+  if not asyncGenericCallbackCases:
     quit(1)
   let voidCallbackCases = forAll(
     "typed callback adapters support Nim void callbacks", r, 200,
