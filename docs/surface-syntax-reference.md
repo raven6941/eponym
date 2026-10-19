@@ -118,8 +118,10 @@ eponymBlock:
 This generates a fixed-arity Nim wrapper for `checkedSend` and checks the
 adapter's Nim signature. Eponym can pass the opaque boxes to the postulate,
 but cannot inspect a `ChannelHandle` or prove that the Nim implementation
-follows a protocol. `runtimeType` mappings must name postulated Eponym types or
-indexed type families. Opaque bindings support `T -> T`, `T -> U`, `T -> Nat`,
+follows a protocol. Opaque `runtimeType` mappings must name postulated Eponym
+types or indexed type families. A nullary, unindexed `data` declaration may
+instead map to a Nim enum whose members use the same constructor names.
+Opaque bindings support `T -> T`, `T -> U`, `T -> Nat`,
 `Nat -> T -> U`, and curried opaque contracts with up to five arguments when
 every opaque type is explicitly mapped. These shapes cover resource handles
 with primitive message values. Other structured values, dependent signatures,
