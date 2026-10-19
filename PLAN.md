@@ -859,7 +859,8 @@ implementations.
 - [x] Lower Nim Boolean `and` and `or` through checked Bool elimination while
   preserving Nim short-circuit behavior with unit thunks. A 200-case generated
   wrapper property compares results and observes that a side-effecting bound
-  postulate on the right runs only for the selected branch.
+  postulate on the right runs only for the selected branch; the property is
+  included in `tools/ci-local.sh`.
 - [x] Lower a single-condition `if/else` expression through the polymorphic
   `ifThenElse` definition in `lib/bool.ep`; both branches remain Eponym terms
   and Bool eliminator computation selects the result.
