@@ -172,7 +172,8 @@ covers typed wrappers and raw `RuntimeValue` closures. Imported generic
 definitions can accept typed Nim callbacks when the generic Nim type has a
 direct `runtimeType` or `runtimeCodec` mapping; a 200-case property covers an
 `A -> A` callback over a mapped Nim enum through generated and `RuntimeValue`
-wrappers, and a compile-time check rejects a mismatched callback signature.
+wrappers and another covers a custom-`runtimeCodec` mapped Nim object. A
+compile-time check rejects a mismatched callback signature.
 Callers must handle unsupported constructors and neutral values explicitly. A
 Right-nested `Sig` values map to flat Nim tuples with the same field order and
 arity, while their runtime representation remains right-associated pairs.

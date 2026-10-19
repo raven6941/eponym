@@ -2,6 +2,7 @@ import "../../lib/vec.ep"
 import "../../lib/bool.ep"
 postulate Int : Type 0
 postulate Token : Type 0
+postulate RuntimeHandle : Type 0
 proc importedIntIdentity : Int -> Int = lam (value : Int). value
 proc importedNullaryInt : Pi (_ : 1). Int = lam (_ : 1). addInt 40 2
 proc importedGenericIdentity (A : Type 0) (value : A) : A = value

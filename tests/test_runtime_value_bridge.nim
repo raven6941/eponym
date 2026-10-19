@@ -403,6 +403,8 @@ eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
   runtimeVector(Vec)
   runtimeType(Token, ImportedToken)
+  runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
+    decodeRuntimeHandle)
   runtimeValue(importedIntIdentity)
   runtimeValue(importedNullaryInt)
   runtimeValue(importedGenericIdentity)
@@ -1721,6 +1723,23 @@ when isMainModule:
       typed == expected and
         valueToHost[ImportedToken](runtime.value) == expected)
   if not importedGenericCallbackCases:
+    quit(1)
+  let importedGenericCodecCallbackCases = forAll(
+    "imported generic callbacks use custom runtimeCodec mappings", r, 200,
+    proc(r: var Rng): tuple[id, delta: int, label, suffix: string] =
+      (r.genInt(-1000, 1000), r.genInt(-100, 100), "handle", "-mapped"),
+    proc(input: tuple[id, delta: int, label, suffix: string]): bool =
+      let value = ChannelHandle(id: input.id, label: input.label)
+      let callback: proc(value: ChannelHandle): ChannelHandle {.closure.} =
+        proc(value: ChannelHandle): ChannelHandle =
+          ChannelHandle(id: value.id + input.delta,
+            label: value.label & input.suffix)
+      let expected = callback(value)
+      let typed = importedGenericCallbackApply(callback, value)
+      let runtime = importedGenericCallbackApplyRuntimeValue(callback, value)
+      typed == expected and
+        valueToHost[ChannelHandle](runtime.value) == expected)
+  if not importedGenericCodecCallbackCases:
     quit(1)
   let importedImplicitNatVecCases = forAll(
     "imported implicit Nat binders have static and dynamic Nim wrappers",
