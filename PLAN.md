@@ -1250,7 +1250,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   bridge property suite passes with dependent callback calls omitting their
   inferable index, including a trailing result-only index after an ordinary
   callback argument. Callable record fields also cover inferred and explicitly
-  bracketed trailing result-only indices, with positional syntax rejected. The syntax guard
+  bracketed trailing result-only indices, with positional syntax rejected.
+  Parentheses, statement-list wrappers, and conditional callees preserve
+  trailing indices until a later bracket application; compile-time positives
+  and a legacy-form rejection cover the conditional path. The syntax guard
   rejects positional call-style index arguments when their signature is known
   and leaves ordinary inferred applications alone. Local and imported vector
   constructor regressions plus direct-index and compound-index family

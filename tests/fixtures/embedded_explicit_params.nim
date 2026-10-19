@@ -148,6 +148,13 @@ eponymBlock:
       flag: Bool, value: Nat): Nat =
     (callback flag value)[Nat](value)
 
+  proc bracketConditionalTrailingIndex(
+      chooseFirst: Bool,
+      first: Pi(value: Nat, n: Nat, LocalAt[n]),
+      second: Pi(value: Nat, n: Nat, LocalAt[n]),
+      value: Nat): LocalAt[0] =
+    ((if chooseFirst: first else: second)(value))[zero()]
+
   proc inferredCompoundIndex(left: Vec[Nat, 1], right: Vec[Nat, 2]):
       LocalPairIndex[add(1, 2)] = localPairIndex(left, right)
 

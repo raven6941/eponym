@@ -90,7 +90,8 @@ proc callInfoForHead(n: NimNode,
   let head = unwrapParens(n)
   case head.kind
   of nnkStmtListExpr:
-    if head.len == 1: return callInfoForHead(head[0])
+    if head.len == 1:
+      return callInfoForHead(head[0], preserveTrailingResultIndex)
   of nnkIdent, nnkSym:
     let name = $head
     if name in scopedLegacyCallInfo:
@@ -103,7 +104,7 @@ proc callInfoForHead(n: NimNode,
       if returnedHead.kind in {nnkIdent, nnkSym} and
           $returnedHead in legacyResultCallInfo:
         return (true, legacyResultCallInfo[$returnedHead])
-      let base = callInfoForHead(head[0])
+      let base = callInfoForHead(head[0], preserveTrailingResultIndex)
       let supplied = commandArgumentCount(head)
       if base.found and base.info.explicitCount > 0 and
           (supplied <= base.info.leadingTermCount or
@@ -201,7 +202,7 @@ proc callInfoForHead(n: NimNode,
         return
       if body.kind == nnkStmtList and body.len == 1:
         body = body[0]
-      let candidate = callInfoForHead(body)
+      let candidate = callInfoForHead(body, preserveTrailingResultIndex)
       if not candidate.found: return
       if haveSelected and not sameCallInfo(candidate.info, selected):
         return
@@ -241,7 +242,7 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
   ## and unambiguous type arguments to distinguish legacy applications.
   if n.kind notin {nnkCall, nnkCommand} or n.len < 1:
     return
-  let resolved = callInfoForHead(n[0])
+  let resolved = callInfoForHead(n[0], preserveTrailingResultIndex = true)
   if not resolved.found: return
   let info = resolved.info
   var supplied = n.len - 1
@@ -1020,7 +1021,7 @@ proc nimExprToEponym(n: NimNode,
   of nnkStmtListExpr:
     if n.len != 1:
       error("eponymBlock: expression block must contain one expression", n)
-    nimExprToEponym(n[0])
+    nimExprToEponym(n[0], preserveTrailingResultIndex)
   of nnkObjConstr:
     # Pi(...)/Sig(...) type expressions in body position: Nim parses
     # them as object constructors, not calls. They are types, so route
@@ -1069,7 +1070,7 @@ proc nimExprToEponym(n: NimNode,
     else: head & " " & appliedArgs.join(" ")
   of nnkPar:
     # (x) -> x (parenthesized)
-    if n.len == 1: nimExprToEponym(n[0])
+    if n.len == 1: nimExprToEponym(n[0], preserveTrailingResultIndex)
     else: "(" & n.mapIt(nimExprToEponym(it)).join(", ") & ")"
   of nnkCommand:
     nimCommandToEponym(n, preserveTrailingResultIndex)
