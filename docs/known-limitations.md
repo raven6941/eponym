@@ -487,6 +487,8 @@ allocation profiler); properties compare its results with the regular checked
 evaluator. Other term forms, generic functions, and non-Int values remain on
 the normal wrapper/evaluator path. This opt-in does not change QTT acceptance
 or claim unique ownership for arbitrary Nim objects.
+The usage checker does not automatically select this backend, even when it
+proves a term linear; users must request it explicitly with `runtimeDps(name)`.
 
 ### Host implementations remain trusted
 
@@ -569,7 +571,8 @@ file. Clean-install resolution is covered by a separate-project test. See
 
 The embedded syntax is Nim-shaped but is not ordinary Nim semantics. Explicit
 Eponym parameters can use Nim square brackets, as in `Vec[A, n]` and
-`cons[A, n](x, xs)`; legacy call-style forms remain accepted. Supported
+`cons[A, n](x, xs)`; legacy call-style forms remain accepted through the 0.x
+series and will be deprecated before removal in 1.0. Supported
 generic definitions have generated Nim wrappers for type parameters, Nat and
 Int indices, Bool indices, and values with explicit runtime mappings. Other
 value-indexed binders and unsupported argument/result codecs still lack

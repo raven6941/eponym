@@ -44,13 +44,16 @@ are listed in the current references linked above.
 
 ## Current implementation and remaining obstacle
 
-`eponymBlock` now accepts `bindPostulate(name, nimProc)` for postulates whose
-exact Eponym type is `Int -> Int`. Generated wrappers use a call-local runtime
-binding table keyed by the checked postulate reference ID; cached definitions
-are not mutated. This works through imported definitions too. The Nim
-adapter has the concrete signature `proc(x: int): int`, and Eponym's
-postulate type is checked during macro expansion. The adapter's behavior
-remains trusted.
+The first prototype accepted `bindPostulate(name, nimProc)` only for
+`Int -> Int`. The current high-level form supports typed curried postulates
+when every argument and result has a runtime codec, including the typed
+channel and transport-result adapters used by the TCP session example. The
+macro checks the Nim procedure signature against the declared Eponym
+postulate, and generated wrappers use a call-local runtime binding table keyed
+by the checked postulate reference ID; cached definitions are not mutated.
+The adapter's behavior remains trusted. The earlier Int-only restriction
+describes the prototype, not current support; see [known
+limitations](known-limitations.md) for exact shapes and remaining gaps.
 
 The current low-level API looks like this:
 

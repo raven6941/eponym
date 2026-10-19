@@ -1095,6 +1095,31 @@ depends on a runtime representation with explicit ownership/liveness.
 Surface syntax and package onboarding (G) can proceed alongside A–C, but must
 not imply that unsupported host Nim is executable inside `eponymBlock`.
 
+### Branch review and merge boundaries
+
+- Keep implementation commits fine-grained, as this branch's history does.
+  Do not make one merge approval cover all protocol, bridge, surface-syntax,
+  onboarding, and QTT code-generation work. Split review and merge into
+  independently verifiable slices; the QTT destination-passing prototype is
+  separable and should be proposed separately from runtime bridge work.
+- Square-bracket explicit parameters are the canonical syntax. Legacy
+  call-style explicit applications remain accepted throughout the 0.x
+  series. Deprecate them with a compiler diagnostic before removing them in
+  1.0; do not silently turn the migration spelling into a permanent second
+  canonical syntax.
+- The high-level `bindPostulate` is no longer limited to `Int -> Int`: typed
+  curried adapters support codec-backed arguments and results, including the
+  `Nat -> Chan -> SendOutcome` and `Chan -> ReceiveOutcome` operations used by
+  the TCP example. Continue to document where low-level runtime APIs are still
+  required; do not describe the flagship TCP adapter as requiring the raw API.
+- `runtimeDps(name)` is opt-in. QTT usage checking does not automatically
+  select destination-passing code generation. Keep this distinction explicit:
+  the current lowering supports only non-generic linear `Int` expressions
+  composed from literals, parameters, and `+`, `-`, `*`.
+- Before merging an implementation slice, run `sh tools/ci-local.sh` and
+  record its result. A partial focused test pass is useful during development
+  but does not replace the full local CI gate.
+
 ## Building
 
 Requires Nim 2.x (built with 2.2.12 via choosenim):
