@@ -19,6 +19,10 @@ eponymBlock:
   data(LocalAt, Nat -> Univ):
     proc localAt(n: Nat, value: Nat): LocalAt[n]
 
+  data(LocalPairIndex, Nat -> Univ):
+    proc localPairIndex(m: Nat, n: Nat,
+        left: Vec[Nat, m], right: Vec[Nat, n]): LocalPairIndex[add(m, n)]
+
   record(LocalCallableField):
     field(apply, Nat -> Nat -> Nat)
 
@@ -111,6 +115,9 @@ eponymBlock:
 
   proc inferredCommandIndex(value: Nat): LocalAt[zero()] =
     localAt value
+
+  proc inferredCompoundIndex(left: Vec[Nat, 1], right: Vec[Nat, 2]):
+      LocalPairIndex[add(1, 2)] = localPairIndex(left, right)
 
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =

@@ -366,20 +366,13 @@ proc surfaceApplicationArgs(term: PreTerm): seq[PreTerm] =
     current = current.c1
   result.reverse()
 
-proc unaryIndexExpression(term: PreTerm): bool =
-  if term.kind == pkVar: return true
-  if term.kind != pkApp: return false
-  let args = surfaceApplicationArgs(term)
-  args.len == 1 and unaryIndexExpression(args[0])
-
 proc constructorIndexBinders(params: int, indexTy, resultTy: PreTerm,
     tele: seq[tuple[name: string, ty: PreTerm, impl: bool]]): HashSet[string] =
   ## Identify constructor arguments that determine the indexed-family result.
-  ## A direct index argument, or a unary constructor around one binder (such
-  ## as `suc(n)`), identifies a corresponding constructor binder when its type
-  ## matches the index domain. Compound indices remain inferable from their
-  ## value arguments; guessing which of several binders should be bracketed
-  ## would reject valid Nim-shaped calls.
+  ## Any binders mentioned in a result index can be inferred by the elaborator
+  ## from constructor argument types. Holes are currently inserted before the
+  ## ordinary arguments, so only infer binders in the leading constructor
+  ## telescope (after any type binders); later binders need positional holes.
   result = initHashSet[string]()
   let resultArgs = surfaceApplicationArgs(resultTy)
   let indexCount = surfaceIndexArity(indexTy)
@@ -391,18 +384,25 @@ proc constructorIndexBinders(params: int, indexTy, resultTy: PreTerm,
     current = current.c2
   for i in 0 ..< indexCount:
     let indexExpr = resultArgs[params + i]
-    if not unaryIndexExpression(indexExpr): continue
-    var candidate = ""
-    var ambiguous = false
     for binder in tele:
-      if not binder.impl and mentionsPretermName(indexExpr, binder.name) and
-          $binder.ty == $domains[i]:
-        if candidate.len > 0:
-          ambiguous = true
-          break
-        candidate = binder.name
-    if candidate.len > 0 and not ambiguous:
-      result.incl(candidate)
+      if binder.impl or not mentionsPretermName(indexExpr, binder.name) or
+          $binder.ty != $domains[i]:
+        continue
+      var sameNameCount = 0
+      for other in tele:
+        if other.name == binder.name: inc sameNameCount
+      if sameNameCount == 1:
+        result.incl(binder.name)
+
+  var sawValueBinder = false
+  var leadingCandidates = initHashSet[string]()
+  for binder in tele:
+    let isType = binder.ty.kind in {pkUniv, pkUnivN}
+    if binder.name in result:
+      if not sawValueBinder: leadingCandidates.incl(binder.name)
+    elif not binder.impl and not isType:
+      sawValueBinder = true
+  result = leadingCandidates
 
 proc surfaceConstructorCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
     impl: bool, erased: bool, qty: Qty]],

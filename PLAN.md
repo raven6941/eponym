@@ -1227,15 +1227,21 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   type parameters and inferable indices: it inserts an Eponym hole at a
   recognized index binder, allowing forms such as `cons[Nat](x, xs)` to infer
   the length from `xs` without consuming `x` as the index. Direct index
-  variables and unary constructor expressions such as `suc(n)` are recognized;
-  compound index expressions, ambiguous matching binders, and callback types
-  whose result indices should be inferred remain unsupported. The syntax guard
+  variables, unary constructors such as `suc(n)`, and compound expressions
+  such as `add(m, n)` are recognized when the referenced binders form a leading
+  constructor telescope and their holes can be solved from argument types or
+  the expected result. Ambiguous binder names, index binders after ordinary
+  value binders, and callback types whose result indices should be inferred
+  remain unsupported. The syntax guard
   rejects positional call-style index arguments when their signature is known
   and leaves ordinary inferred applications alone. Local and imported vector
-  constructor regressions plus a direct-index family regression cover the
-  supported cases. Scoped callable metadata preserves index inference through
-  aliases of bracketed constructors and partially applied constructors, and
-  command-call syntax follows the same inference path. Extend the same
+  constructor regressions plus direct-index and compound-index family
+  regressions cover the supported cases; a compile-fail case keeps positional
+  compound-index arguments rejected. The scalar and vector DCP runtime
+  properties still pass (300 and 200 cases). Scoped callable metadata preserves
+  index inference through aliases of bracketed constructors and partially
+  applied constructors, and command-call syntax follows the same inference
+  path. Extend the same
   boundary-preserving approach to the remaining inferable-binder forms before
   closing this audit.
   Other relevant supported forms—identifiers, parenthesized and qualified

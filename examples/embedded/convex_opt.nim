@@ -92,10 +92,10 @@ eponymBlock:
   # x-3 affine, sq of affine convex, nonneg scale of convex convex,
   # x affine hence convex, sum of convex convex.
   proc quadConvex(): Convex[quadExpr()] =
-    cvPlus(eScaleN(2, eSq(eMinus(eVar(), eConst(3)))), eVar(),
+    cvPlus(
       cvScaleN(2, eSq(eMinus(eVar(), eConst(3))),
         cvSq[eMinus(eVar(), eConst(3))](
-          afMinus(eVar(), eConst(3), afVar(), afConst(3)))),
+          afMinus(afVar(), afConst(3)))),
       cvAffine[eVar()](afVar()))
 
   # The problem: accepted only because the certificate checks.
@@ -103,7 +103,7 @@ eponymBlock:
   runtimeValue(prob)
   proc shiftedExpr(): CExpr = ePlus(quadExpr(), eConst(11))
   proc shiftedCert(): Convex[shiftedExpr()] =
-    cvPlus(quadExpr(), eConst(11), quadConvex(),
+    cvPlus(quadConvex(),
       cvAffine[eConst(11)](afConst(11)))
   proc shiftedProb(): CExpr = minimize(shiftedExpr(), shiftedCert())
   runtimeValue(shiftedProb)

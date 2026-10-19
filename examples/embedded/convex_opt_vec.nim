@@ -154,7 +154,7 @@ eponymBlock:
   proc lrCert(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]):
       Convex[lrTerm(m, n, A, b)] =
     cvLogSum(m, vMinus[m](vMatVec[m](n, A, vVar[n]()), vData[m](b)),
-      vafMinus[m](vMatVec[m](n, A, vVar[n]()), vData[m](b),
+      vafMinus[m](
         vafMatVec[m, n](A, vVar[n](), vafVar[n]()),
         vafData[m](b)))
 
@@ -166,7 +166,7 @@ eponymBlock:
       CExpr = ePlus(lrTerm(m, n, A, b), eConst(5))
   proc shiftedLrCert(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]):
       Convex[shiftedLrTerm(m, n, A, b)] =
-    cvPlus(lrTerm(m, n, A, b), eConst(5), lrCert(m, n, A, b),
+    cvPlus(lrCert(m, n, A, b),
       cvAffine[eConst(5)](afConst(5)))
   proc shiftedLrProb(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]):
       CExpr = minimize(shiftedLrTerm(m, n, A, b),
@@ -182,10 +182,9 @@ eponymBlock:
 
   proc twoVarCert(p: Nat, n: Nat, m: Nat, A: Mat[p, n]):
       Convex[twoVarTerm(p, n, m, A)] =
-    cvPlus(vLogSum(p, vMinus[p](vMatVec[p](n, A, vVar[n]()), vConstV[p]())),
-           norm1(m, vVar[m]()),
+    cvPlus(
       cvLogSum(p, vMinus[p](vMatVec[p](n, A, vVar[n]()), vConstV[p]()),
-        vafMinus[p](vMatVec[p](n, A, vVar[n]()), vConstV[p](),
+        vafMinus[p](
           vafMatVec[p, n](A, vVar[n](), vafVar[n]()),
           vafConstV[p]())),
       cvNorm1(m, vVar[m](), vafVar[m]()))
