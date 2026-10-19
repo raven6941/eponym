@@ -897,6 +897,20 @@ when isMainModule:
       @[])
   if not opaqueStructuredCases:
     quit(1)
+  let malformedHandleEnvelope = callRuntimeValue(
+    eval(variantGlobals["handleEnvelope"].tm, @[]),
+    [intToValue(23),
+      toHostValue(ChannelHandle(id: 24, label: "malformed")),
+      intToValue(25)])
+  var malformedOpaqueFieldRejected = false
+  try:
+    discard valueToRuntimeStructuredVariant(malformedHandleEnvelope,
+      variantGlobals, "HandleEnvelope", ["handleEnvelope"],
+      [runtimeStructuredCustomCodec[ChannelHandle]("RuntimeHandle",
+        encodeRuntimeHandle, decodeRuntimeHandle)])
+  except ValueError:
+    malformedOpaqueFieldRejected = true
+  doAssert malformedOpaqueFieldRejected
   let appliedGenericTypeCases = forAll(
     "mapped applied generic domains check their runtime indices", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),

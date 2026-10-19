@@ -480,7 +480,8 @@ implementations.
      telescope still supplies each field's Eponym type; the matching mapping
      encodes or decodes the Nim leaf. A 200-case property covers both a custom
      `runtimeCodec` and an opaque `runtimeType` for `ChannelHandle` values
-     nested beside an `Int` field.
+     nested beside an `Int` field; a malformed custom-coded field is rejected
+     before decoding.
    - [x] Add a `runtimeVariant(Family)` representation and generate wrappers
      for payload-bearing and indexed constructors. `RuntimeVariant` preserves
      constructor names and raw argument Values; it checks family membership,

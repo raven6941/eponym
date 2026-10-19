@@ -1172,6 +1172,8 @@ proc valueToRuntimeStructuredValue(value, domain: Value,
       boolValue: valueToBool(value, globals))
   for codec in codecs:
     if codec.eponymName == typeName:
+      if not codec.opaqueHost:
+        validateRuntimeValueType(value, domain, globals)
       return codec.decode(value, globals)
   if typeName.len > 0:
     if domain.whnfSpineLen > 0:
