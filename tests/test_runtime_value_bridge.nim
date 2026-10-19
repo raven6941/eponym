@@ -113,6 +113,10 @@ proc hostInvokeIndexedVectorCallback(length: int,
     callback: proc(index: int): seq[int] {.closure.}): seq[int] =
   callback(length)
 
+proc hostInvokeFutureCallback(callback: proc(channel: ChannelHandle):
+    Future[int] {.closure.}, channel: ChannelHandle): Future[int] =
+  callback(channel)
+
 proc hostIncrementRuntimeHandles(length: int,
     values: seq[ChannelHandle]): seq[ChannelHandle] =
   result = values
@@ -779,6 +783,21 @@ eponymBlock:
       callback: proc(value: Int): Int {.closure.}, value: Int): Int =
     applyCheckedIntCallback(callback, value)
   runtimeValue(generatedApplyCheckedIntCallback)
+
+eponymBlock:
+  postulate(Channel, Univ)
+  postulate(PendingResult, Univ)
+  runtimeType(Channel, ChannelHandle)
+  runtimeType(PendingResult, Future[int])
+  postulate(invokeFutureCallback,
+    Pi(callback: proc(channel: Channel): PendingResult {.closure.},
+       channel: Channel, PendingResult))
+  bindPostulate(invokeFutureCallback, hostInvokeFutureCallback,
+    proc(channel: Channel): PendingResult {.closure.}, Channel, PendingResult)
+  proc generatedInvokeFutureCallback(
+      callback: proc(channel: Channel): PendingResult {.closure.},
+      channel: Channel): PendingResult = invokeFutureCallback(callback, channel)
+  runtimeValue(generatedInvokeFutureCallback)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -2500,6 +2519,22 @@ proc callbackRole : Callback -> Sample -> Sample =
         callback, input.input)
       typed == expected and valueToInt(runtime.value) == expected)
   if not boundCheckedCallbackCases:
+    quit(1)
+  let futureCallbackCases = forAll(
+    "typed callback adapters pass Future results through opaquely", r, 200,
+    proc(r: var Rng): tuple[channelId, offset: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[channelId, offset: int]): bool =
+      let channel = ChannelHandle(id: input.channelId, label: "future-callback")
+      let future = newFuture[int]("futureCallbackProperty")
+      future.complete(input.channelId + input.offset)
+      let callback: proc(channel: ChannelHandle): Future[int] {.closure.} =
+        proc(channel: ChannelHandle): Future[int] = future
+      let generated = generatedInvokeFutureCallback(callback, channel)
+      let runtime = generatedInvokeFutureCallbackRuntimeValue(callback, channel)
+      generated == future and generated.read == input.channelId + input.offset and
+        valueToHost[Future[int]](runtime.value) == future)
+  if not futureCallbackCases:
     quit(1)
   let importedBoundCallbackCases = forAll(
     "imported postulates invoke checked Nim callbacks", r, 200,

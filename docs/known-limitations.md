@@ -198,8 +198,9 @@ A mapped `Future[T]` can pass through an opaque postulate adapter as either an
 argument or result; the bridge preserves the same Nim future value. Eponym
 has no async effect, await, or cancellation operation. Completion, failure,
 and cancellation remain Nim runtime behavior: Eponym does not observe or
-transform them. The runtime bridge tests identity pass-through for a future
-argument and the existing future-result case.
+transform them. Future values can also be the result of a Nim callback passed
+through a typed postulate adapter; a property checks that the same Future
+object crosses generated and typed `RuntimeValue` calls without being awaited.
 Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
 bodies. Nim proc types with supported leaf codecs also bridge to and from

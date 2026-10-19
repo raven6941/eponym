@@ -750,7 +750,9 @@ implementations.
 - [x] Bind unary callbacks between distinct opaque mappings (`A -> B`) and
   return a mapped `Future[T]` through an ordinary typed wrapper. Property tests
   verify the future object and its result pass through unchanged; Eponym does
-  not await it.
+  not await it. A 200-case property also passes a Future-returning callback
+  through a typed postulate adapter and verifies that the exact Future object
+  crosses generated and `RuntimeValue` calls.
 - [x] Accept a Nim closure as an explicitly mapped opaque callback argument to
   a checked role. The generated Nim wrapper checks the closure signature, and
   the bound adapter can invoke it; Eponym treats the closure body as trusted.
