@@ -469,6 +469,11 @@ implementations.
   constructor through a generic projection; applied/indexed binder domains
   still need runtime type-expression validation. Generated signatures use the
   public `RuntimeValue` and `RuntimeValueResult` aliases from `eponym_embed`.
+- [x] Add a low-level `RuntimeVariant` representation for data-family values.
+  It preserves constructor identity and raw argument Values, checking family
+  membership, constructor arity, and runtime spine shape. A 200-case property
+  round-trips generated nested trees; negative checks reject wrong arity and
+  constructors from another family.
 - [x] Lower conditional Nat indices of the form `if b: n else: m` in dynamic
    generic Vec and non-dependent Sigma value codecs. The Bool condition is a
    generic runtime parameter; both branch lengths are checked. A 200-case

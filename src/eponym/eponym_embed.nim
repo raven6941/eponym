@@ -1031,6 +1031,87 @@ proc valueToEnum*[T: enum](value: Value, globals: Globals,
   raise newException(ValueError,
     "runtime value is not one of the mapped Eponym constructors")
 
+type RuntimeVariant* = object
+  ## Generic structural view of an Eponym data constructor application.
+  ## Payloads stay as Values so callers can recursively decode only the fields
+  ## they understand.
+  constructor*: string
+  arguments*: seq[Value]
+
+proc runtimeVariantArity(entry: GEntry): int =
+  var ty = entry.ty
+  while not ty.isNil and ty.kind == tPi:
+    inc result
+    ty = ty.scope.bdy
+
+proc validateRuntimeVariantConstructors*(globals: Globals,
+    familyName: string, constructors: openArray[string]) =
+  if familyName notin globals or constructors.len == 0:
+    raise newException(ValueError,
+      "runtimeVariant requires a declared family and constructors")
+  let family = globals[familyName]
+  if family.tm.isNil or family.tm.kind != tR or family.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtimeVariant requires a declared data family")
+  for name in constructors:
+    if name notin globals:
+      raise newException(ValueError,
+        "runtimeVariant constructor '" & name & "' is not declared")
+    let ctor = globals[name]
+    if not ctor.isDataConstructor or ctor.ty.isNil:
+      raise newException(ValueError,
+        "runtimeVariant member '" & name & "' is not a data constructor")
+    var resultType = ctor.ty
+    while not resultType.isNil and resultType.kind == tPi:
+      resultType = resultType.scope.bdy
+    if resultType.isNil or opaqueTypeHeadId(resultType) != family.tm.refId:
+      raise newException(ValueError,
+        "runtimeVariant constructor '" & name &
+        "' does not return family '" & familyName & "'")
+
+proc runtimeVariantToValue*(variant: RuntimeVariant, globals: Globals,
+    familyName: string, constructors: openArray[string]): Value =
+  validateRuntimeVariantConstructors(globals, familyName, constructors)
+  if variant.constructor notin constructors or
+      variant.constructor notin globals:
+    raise newException(ValueError,
+      "runtime variant constructor is not a member of '" & familyName & "'")
+  let ctor = globals[variant.constructor]
+  let expectedArity = runtimeVariantArity(ctor)
+  if variant.arguments.len != expectedArity:
+    raise newException(ValueError,
+      "runtime variant constructor '" & variant.constructor &
+      "' expects " & $expectedArity & " arguments, got " &
+      $variant.arguments.len)
+  result = callRuntimeValue(eval(ctor.tm, @[]), variant.arguments)
+  if result.whnfKind != wRef or result.whnfRefId != ctor.tm.refId or
+      result.whnfSpineLen != expectedArity:
+    raise newException(ValueError,
+      "runtime variant constructor application has an invalid spine")
+
+proc valueToRuntimeVariant*(value: Value, globals: Globals,
+    familyName: string, constructors: openArray[string]): RuntimeVariant =
+  validateRuntimeVariantConstructors(globals, familyName, constructors)
+  if value.whnfKind != wRef:
+    raise newException(ValueError,
+      "runtime value is not a constructor of '" & familyName & "'")
+  for name in constructors:
+    let ctor = globals[name]
+    if value.whnfRefId != ctor.tm.refId: continue
+    let expectedArity = runtimeVariantArity(ctor)
+    if value.whnfSpineLen != expectedArity:
+      raise newException(ValueError,
+        "runtime variant constructor '" & name & "' has an invalid spine")
+    result.constructor = name
+    for i in 0 ..< value.whnfSpineLen:
+      if value.whnfSpineKind(i) != eApp:
+        raise newException(ValueError,
+          "runtime variant constructor spine contains a non-argument field")
+      result.arguments.add(value.whnfSpineArg(i))
+    return
+  raise newException(ValueError,
+    "runtime value is not a constructor of '" & familyName & "'")
+
 proc validateRuntimeValueType*(value: Value, globals: Globals,
                                typeName: string) =
   ## Check an unmapped generic Value against a named Eponym type. This is a
