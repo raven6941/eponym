@@ -159,9 +159,12 @@ callback results can depend on an earlier callback argument: a Nim
 `proc(length: int): seq[int]` can implement Eponym's
 `Nat -> Vec[Int, length]` when the Eponym proc type names that binder. The
 bridge carries the runtime argument into the recursive result codec, which
-checks the vector length; a 200-case property covers generated and reified
-wrappers. Returned callback types must use Nim's `{.closure.}` calling
-convention. Callback effects and behavior remain trusted host semantics.
+checks the vector length. Earlier callback arguments also flow into later
+argument codecs, so `Nat -> Vec[Int, length] -> Nat` validates both input and
+output. 200-case properties cover these paths through generated and reified
+wrappers, and negative checks reject mismatched Vec lengths. Returned callback
+types must use Nim's `{.closure.}` calling convention. Callback effects and
+behavior remain trusted host semantics.
 Structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
 `Sig` tuples, and named records. Records with dependent fields
 and dependent `Sig` results are available only through their explicit trusted

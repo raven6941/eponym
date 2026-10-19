@@ -446,9 +446,10 @@ implementations.
   ordinary Nim argument and returns `(Value, Globals)`, including when the
   result has no typed Nim codec. A 200-case property checks a generic Nat result.
 - [x] Propagate earlier callback arguments into dependent callback result
-  codecs. A 200-case property checks a Nim `Nat -> Vec[Int, n]` callback through
-  both generated and reified runtime wrappers. A negative runtime check rejects
-  a callback result with the wrong Vec length.
+  codecs and later callback argument codecs. 200-case properties check Nim
+  `Nat -> Vec[Int, n]` and `Nat -> Vec[Int, n] -> Nat` callbacks through
+  generated and reified runtime wrappers. Negative runtime checks reject a
+  callback result or argument with the wrong Vec length.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

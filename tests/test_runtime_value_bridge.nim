@@ -24,6 +24,10 @@ proc makeIndexedRuntimeValues(length: int): seq[int] =
   for i in 0 ..< length: result.add(i - length)
 proc makeWrongIndexedRuntimeValues(length: int): seq[int] =
   newSeq[int](length + 1)
+proc checkDependentVectorCallback(length: int, values: seq[int]): int =
+  if values.len != length:
+    raise newException(ValueError, "callback Vec length mismatch")
+  length
 
 type ChannelHandle = object
   id: int
@@ -408,6 +412,14 @@ eponymBlock:
       callback: proc(length: Nat): Vec[Int, length] {.closure.},
       length: Nat): Vec[Int, length] = callback(length)
   runtimeValue(generatedApplyIndexedCallback)
+  proc generatedApplyDependentVectorCallback(
+      callback: proc(length: Nat, values: Vec[Int, length]): Nat {.closure.},
+      length: Nat, values: Vec[Int, length]): Nat = callback(length, values)
+  proc generatedDependentVectorCallback():
+      proc(length: Nat, values: Vec[Int, length]): Nat {.closure.} =
+    lam(length, Nat, lam(values, Vec(Int, length), length))
+  runtimeValue(generatedApplyDependentVectorCallback)
+  runtimeValue(generatedDependentVectorCallback)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -1273,6 +1285,37 @@ proc callbackRole : Callback -> Sample -> Sample =
   except ValueError as error:
     dependentCallbackMismatchRejected = "runtime Vec length mismatch" in error.msg
   doAssert dependentCallbackMismatchRejected
+  let dependentCallbackArgumentCases = forAll(
+    "callback arguments carry earlier indices into dependent codecs", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let values = makeIndexedRuntimeValues(length)
+      let applied = generatedApplyDependentVectorCallback(
+        checkDependentVectorCallback, length, values)
+      let runtimeApplied = generatedApplyDependentVectorCallbackRuntimeValue(
+        checkDependentVectorCallback, length, values)
+      let returned = generatedDependentVectorCallback()
+      let returnedValue = returned(length, values)
+      let runtimeReturned = generatedDependentVectorCallbackRuntimeValue()
+      let runtimeReturnedValue = valueToNat(callRuntimeValue(
+        runtimeReturned.value, [natToValue(length, runtimeReturned.globals),
+          seqToVecValue[int](values, length, runtimeReturned.globals, "Vec",
+            proc(item: int, _: Globals): Value = intToValue(item))]),
+        runtimeReturned.globals)
+      applied == length and valueToNat(runtimeApplied.value,
+        runtimeApplied.globals) == length and
+        returnedValue == length and runtimeReturnedValue == length,
+    shrinkInt)
+  if not dependentCallbackArgumentCases:
+    quit(1)
+  var dependentCallbackArgumentMismatchRejected = false
+  try:
+    discard generatedApplyDependentVectorCallback(checkDependentVectorCallback,
+      3, @[1, 2])
+  except ValueError as error:
+    dependentCallbackArgumentMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert dependentCallbackArgumentMismatchRejected
   let dynamicGenericVectorCases = forAll(
     "dynamic Nat generics index dependent Vec wrappers", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),
