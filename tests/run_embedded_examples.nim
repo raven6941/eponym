@@ -22,8 +22,10 @@ createDir(tmpDir)
 proc compileAndRun(path: string): bool =
   let name = path.splitFile().name
   let bin = tmpDir / name
+  let cache = tmpDir / (name & "_nimcache")
   let (cOut, cCode) = execCmdEx("nim c --hints:off " & pathFlags &
-    " --out:" & quoteShell(bin) & " " & quoteShell(path))
+    " --nimcache:" & quoteShell(cache) & " --out:" & quoteShell(bin) &
+    " " & quoteShell(path))
   if cCode != 0:
     echo "FAIL (compile): ", path
     echo cOut
