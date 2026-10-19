@@ -349,6 +349,28 @@ proc surfaceCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
 
 proc mentionsPretermName(term: PreTerm, name: string): bool
 
+proc mentionsScopedPretermName(term: PreTerm, name: string,
+    shadowed = false): bool =
+  ## Search for a reference to an outer Pi binder without counting variables
+  ## hidden by a nested binder with the same source name.
+  if term.isNil: return false
+  case term.kind
+  of pkVar:
+    return not shadowed and term.name == name
+  of pkPi, pkLam, pkSigma:
+    return mentionsScopedPretermName(term.c1, name, shadowed) or
+      mentionsScopedPretermName(term.c2, name,
+        shadowed or term.name == name)
+  of pkLet:
+    return mentionsScopedPretermName(term.c1, name, shadowed) or
+      mentionsScopedPretermName(term.c2, name, shadowed) or
+      mentionsScopedPretermName(term.c3, name,
+        shadowed or term.name == name)
+  else:
+    mentionsScopedPretermName(term.c1, name, shadowed) or
+      mentionsScopedPretermName(term.c2, name, shadowed) or
+      mentionsScopedPretermName(term.c3, name, shadowed)
+
 proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
   var binders: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
   var current = ty
@@ -356,17 +378,13 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
     binders.add((current.name, current.c1, current.impl))
     current = current.c2
 
-  var inferable = initHashSet[string]()
+  var inferable = initHashSet[int]()
   for i, binder in binders:
     # Family-valued arguments such as an eliminator motive (`C : A -> Type`)
     # are ordinary callable arguments. Their use in later domains/results
     # must not make the function itself disappear into an inferred hole.
     if binder.impl or binder.ty.kind in {pkUniv, pkUnivN, pkPi}:
       continue
-    var nameCount = 0
-    for other in binders:
-      if other.name == binder.name: inc nameCount
-    if nameCount != 1: continue
     # A later argument type can determine this value binder. Its result-type
     # occurrence can also be enough when the result is a named indexed family;
     # a function-valued motive such as `C(scrutinee)` must not turn an
@@ -376,20 +394,32 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
       resultHead = resultHead.c1
     var motiveResult = false
     if not resultHead.isNil and resultHead.kind == pkVar:
-      for other in binders:
-        if other.name == resultHead.name and other.ty.kind == pkPi:
-          motiveResult = true
-          break
-    var dependent = not motiveResult and
-      mentionsPretermName(current, binder.name)
+      if binders.len > 0:
+        for k in countdown(binders.high, 0):
+          if binders[k].name == resultHead.name:
+            motiveResult = binders[k].ty.kind == pkPi
+            break
+    var resultShadowed = false
+    for k in i + 1 ..< binders.len:
+      if binders[k].name == binder.name:
+        resultShadowed = true
+        break
+    var dependent = not motiveResult and not resultShadowed and
+      mentionsScopedPretermName(current, binder.name)
     for j in i + 1 ..< binders.len:
-      if mentionsPretermName(binders[j].ty, binder.name):
+      var shadowed = false
+      for k in i + 1 ..< j:
+        if binders[k].name == binder.name:
+          shadowed = true
+          break
+      if not shadowed and
+          mentionsScopedPretermName(binders[j].ty, binder.name):
         dependent = true
         break
-    if dependent: inferable.incl(binder.name)
+    if dependent: inferable.incl(i)
 
   var termPosition = 0
-  for binder in binders:
+  for i, binder in binders:
     let isType = binder.ty.kind in {pkUniv, pkUnivN}
     if binder.impl or isType:
       inc result.explicitCount
@@ -397,7 +427,7 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
       if isType and not binder.impl:
         inc result.requiredBracketCount
         result.requiresBrackets = true
-    elif binder.name in inferable:
+    elif i in inferable:
       inc result.explicitCount
       inc result.inferableIndexCount
       result.inferableIndexPositions.add(termPosition)
@@ -436,11 +466,11 @@ proc surfaceApplicationArgs(term: PreTerm): seq[PreTerm] =
   result.reverse()
 
 proc constructorIndexBinders(params: int, indexTy, resultTy: PreTerm,
-    tele: seq[tuple[name: string, ty: PreTerm, impl: bool]]): HashSet[string] =
+    tele: seq[tuple[name: string, ty: PreTerm, impl: bool]]): HashSet[int] =
   ## Identify constructor arguments that determine the indexed-family result.
-  ## Any uniquely named, nonimplicit binder mentioned in a result index can be
+  ## The innermost nonimplicit binder referenced by a result index can be
   ## inferred by the elaborator from constructor argument types.
-  result = initHashSet[string]()
+  result = initHashSet[int]()
   let resultArgs = surfaceApplicationArgs(resultTy)
   let indexCount = surfaceIndexArity(indexTy)
   if resultArgs.len < params + indexCount: return
@@ -451,23 +481,25 @@ proc constructorIndexBinders(params: int, indexTy, resultTy: PreTerm,
     current = current.c2
   for i in 0 ..< indexCount:
     let indexExpr = resultArgs[params + i]
-    for binder in tele:
-      if binder.impl or not mentionsPretermName(indexExpr, binder.name) or
+    for binderIndex, binder in tele:
+      var shadowed = false
+      for later in binderIndex + 1 ..< tele.len:
+        if tele[later].name == binder.name:
+          shadowed = true
+          break
+      if binder.impl or shadowed or
+          not mentionsScopedPretermName(indexExpr, binder.name) or
           $binder.ty != $domains[i]:
         continue
-      var sameNameCount = 0
-      for other in tele:
-        if other.name == binder.name: inc sameNameCount
-      if sameNameCount == 1:
-        result.incl(binder.name)
+      result.incl(binderIndex)
 
 proc surfaceConstructorCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
     impl: bool, erased: bool, qty: Qty]],
-    indexBinders: HashSet[string]): LegacyCallInfo =
+    indexBinders: HashSet[int]): LegacyCallInfo =
   var termPosition = 0
-  for binder in tele:
+  for binderIndex, binder in tele:
     let isType = binder.ty.kind in {pkUniv, pkUnivN}
-    let isIndexedArg = binder.name in indexBinders
+    let isIndexedArg = binderIndex in indexBinders
     if binder.impl or isType or isIndexedArg:
       inc result.explicitCount
       if result.explicitCount == 1: result.firstExplicitType = isType
@@ -662,8 +694,8 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
             nimTypePreTerm(kind), nimTypePreTerm(constructor[3][0]), tele)
           var inferablePositions: seq[int] = @[]
           var termPosition = 0
-          for binder in tele:
-            if binder.name in indexBinders:
+          for binderIndex, binder in tele:
+            if binderIndex in indexBinders:
               inferablePositions.add(termPosition)
             elif not binder.impl and
                 binder.ty.kind notin {pkUniv, pkUnivN}:

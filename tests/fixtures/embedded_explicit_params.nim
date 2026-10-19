@@ -141,6 +141,14 @@ eponymBlock:
       flag: Bool, values: Vec[Nat, 0]): LocalAt[0] =
     callback(flag, values)
 
+  proc inferredShadowedCallbackIndex(
+      callback: Pi(n: Nat, Pi(n: Nat, Vec[Nat, n]))): Vec[Nat, 0] =
+    callback(zero())()
+
+  proc bracketShadowedCallbackIndex(
+      callback: Pi(n: Nat, Pi(n: Nat, Vec[Nat, n]))): Vec[Nat, 0] =
+    callback(zero())[zero()]()
+
   proc bracketCallbackIndexAfterPartial(
       callback: Pi(flag: Bool, n: Nat, values: Vec[Nat, n], LocalAt[n]),
       flag: Bool, values: Vec[Nat, 0]): LocalAt[0] =

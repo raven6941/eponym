@@ -1236,11 +1236,15 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   type carries the binder or when a named indexed-family result determines it
   from the expected result type. Function-valued motive results such as
   `C(scrutinee)` do not make an eliminator's scrutinee inferable. Ambiguous
-  binder names and result forms without a usable expected type remain
-  unsupported. Compile-time callback regressions cover inferred,
-  result-inferred (including an index nested in a `Sig` field), and
-  bracket-supplied indices, and the runtime bridge property suite passes with
-  dependent callback calls omitting their inferable index. The syntax guard
+  binder references that cannot be resolved from lexical scope and result
+  forms without a usable expected type remain unsupported. Callable metadata
+  uses binder positions and respects shadowing in nested Pi types; a callback
+  whose inner `n` shadows an earlier `n` infers only the inner index, and its
+  positional legacy spelling is rejected.
+  Compile-time callback regressions cover inferred, result-inferred (including
+  an index nested in a `Sig` field), and bracket-supplied indices. The runtime
+  bridge property suite passes with dependent callback calls omitting their
+  inferable index. The syntax guard
   rejects positional call-style index arguments when their signature is known
   and leaves ordinary inferred applications alone. Local and imported vector
   constructor regressions plus direct-index and compound-index family

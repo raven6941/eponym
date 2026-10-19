@@ -21,3 +21,7 @@ eponymBlock:
       left, right: Pi(n: Nat, Vec[Nat, n]), flag: Bool): Vec[Nat, 0] =
     let selected = if flag: left else: right
     selected(zero())
+
+  proc oldShadowedCallbackApplication(
+      callback: Pi(n: Nat, Pi(n: Nat, Vec[Nat, n]))): Vec[Nat, 0] =
+    callback(zero(), zero())
