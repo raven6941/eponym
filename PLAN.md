@@ -410,6 +410,12 @@ implementations.
    a checked `Tree -> Tree` postulate. A compile-fail fixture rejects a Nim
    encoder with the wrong signature. Index relationships remain the codec
    author's responsibility.
+- [x] Permit `runtimeValue(importedDefinition)` when a checked definition
+   comes from an imported `.ep` module and has no local Nim `proc` declaration.
+   It exposes a raw `openArray[Value] -> (Value, Globals)` wrapper; typed Nim
+   wrappers still require a local signature. Directory-aware runtime state
+   now retains imported definition bodies. A 200-case property calls an
+   imported checked identity through this ABI.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly

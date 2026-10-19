@@ -89,10 +89,10 @@ proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
   let key = cacheKey(baseDir, src)
   if key in defCache:
     return defCache[key].defs
-  let checked = elabCheckDirState(src, baseDir)
-  defCache[key] = CheckedRuntime(defs: checked.defs,
+  let checked = elabCheckDirStateAll(src, baseDir)
+  defCache[key] = CheckedRuntime(defs: checked.allDefs,
                                  globals: checked.globals)
-  checked.defs
+  checked.allDefs
 
 proc getGlobalsDir*(baseDir, src: string): Globals =
   ## Retrieve the checked globals associated with the same runtime module
