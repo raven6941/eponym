@@ -471,6 +471,9 @@ implementations.
    200-case properties call an imported checked identity and dispatch an
    imported postulate to a bound Nim implementation through this ABI; an
    additional negative runtime check rejects a mismatched imported raw arity.
+- [x] Reconstruct imported Eponym functions with a sole unit argument as
+   zero-argument Nim procedures. Typed and `RuntimeValue` wrappers supply the
+   unit internally; a 200-case property covers both calls.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly

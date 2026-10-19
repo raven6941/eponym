@@ -362,6 +362,7 @@ eponymBlock:
   runtimeVector(Vec)
   runtimeType(Token, ImportedToken)
   runtimeValue(importedIntIdentity)
+  runtimeValue(importedNullaryInt)
   runtimeValue(importedGenericIdentity)
   runtimeValue(importedImplicitGenericIdentity)
   runtimeValue(importedImplicitNatVecIdentity)
@@ -1708,6 +1709,16 @@ when isMainModule:
         seq[tuple[flag: bool, number: int]] =
       @[(not input.flag, input.number), (input.flag, 0)])
   if not importedImplicitScalarCases:
+    quit(1)
+  let importedNullaryDefinitionCases = forAll(
+    "imported nullary Eponym functions become zero-argument Nim procs", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(seed: int): bool =
+      discard seed
+      importedNullaryInt() == 42 and
+        valueToInt(importedNullaryIntRuntimeValue().value) == 42,
+    shrinkInt)
+  if not importedNullaryDefinitionCases:
     quit(1)
   let importedGenericGlobals = importedIntIdentityRuntimeValue(0).globals
   var importedGenericWrongValueRejected = false

@@ -993,6 +993,15 @@ proc runtimeTermNimTypeAst(term: Term, ctx: seq[string],
   formal.insert(0, resultType)
   result = newTree(nnkProcTy, formal, newTree(nnkPragma, ident"closure"))
 
+proc hasImportedNullaryUnitArgument(decl: NimNode): bool =
+  if decl.kind != nnkProcDef or decl.len < 5 or
+      decl[4].kind != nnkPragma:
+    return false
+  for pragma in decl[4]:
+    if pragma.kind in {nnkIdent, nnkSym} and
+        $pragma == "eponymRuntimeNullaryUnit":
+      return true
+
 proc runtimeTermTypeAfterArgs(ty: Term, count: int, globals: Globals):
     tuple[resultType: NimNode, argNames: seq[string]] =
   var current = ty
@@ -1028,6 +1037,7 @@ proc importedRuntimeProcDecl(definition: ElabDef,
   formal.add(newEmptyNode())
   var argumentIndex = 0
   var lambdaIndex = 0
+  var nullaryUnitArgument = false
   var checkedBody = definition.tmTm
   var argumentCount = 0
   while not checkedBody.isNil and checkedBody.kind == tLam:
@@ -1060,6 +1070,15 @@ proc importedRuntimeProcDecl(definition: ElabDef,
       continue
     if current.qty != qOmega:
       return nil
+    if current.dom.kind == tC and current.dom.c == cOne:
+      if argumentCount != 1 or lambdaIndex != 0 or argumentIndex != 0 or
+          genericParams.len != 0:
+        return nil
+      nullaryUnitArgument = true
+      current = current.scope.bdy
+      ctx = @[name] & ctx
+      inc lambdaIndex
+      continue
     let argType = runtimeTermNimTypeAst(current.dom, ctx, refNames)
     if argType.isNil: return nil
     formal.add(newIdentDefs(ident(name), argType, newEmptyNode()))
@@ -1067,7 +1086,8 @@ proc importedRuntimeProcDecl(definition: ElabDef,
     current = current.scope.bdy
     inc lambdaIndex
     inc argumentIndex
-  if argumentIndex == 0 and genericParams.len == 0: return nil
+  if argumentIndex == 0 and genericParams.len == 0 and
+      not nullaryUnitArgument: return nil
   let resultType = runtimeTermNimTypeAst(current, ctx, refNames)
   if resultType.isNil: return nil
   formal[0] = resultType
@@ -1079,6 +1099,8 @@ proc importedRuntimeProcDecl(definition: ElabDef,
   result.add(newEmptyNode())
   result.add(newEmptyNode())
   result.add(newEmptyNode())
+  if nullaryUnitArgument:
+    result[4] = newTree(nnkPragma, ident"eponymRuntimeNullaryUnit")
 
 proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   var seen = initHashSet[string]()
@@ -2452,6 +2474,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   for genericArg in genericRuntimeValueArgs(generic, globalsSym,
       codecMappings, records):
     values.add(genericArg)
+  if hasImportedNullaryUnitArgument(decl):
+    values.add(newCall(bindSym"vUnit"))
   var wrapperIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, argSym in argSyms:
     values.add(runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i],
@@ -2834,6 +2858,8 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   for genericArg in genericRuntimeValueArgs(generic, globalsSym,
       codecMappings, records):
     values.add(genericArg)
+  if hasImportedNullaryUnitArgument(decl):
+    values.add(newCall(bindSym"vUnit"))
   var runtimeValueIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, argSym in argSyms:
     let converted = runtimeValueConversionExpr(eponymTypes[i], nimTypes[i],
@@ -3397,6 +3423,8 @@ macro eponymBlock*(body: untyped): untyped =
           for genericArg in genericRuntimeValueArgs(generic, globalsSym,
               runtimeTypes, records):
             genericValues.add(copyNimTree(genericArg))
+        if hasImportedNullaryUnitArgument(procDecl):
+          genericValues.add(newCall(bindSym"vUnit"))
         let runtimeArgsSym = newCall(bindSym"prependRuntimeArgs",
           newTree(nnkPrefix, ident"@", genericValues), argsSym)
         let expectedArity = newLit(valueArity)

@@ -144,6 +144,9 @@ generate static and dynamic wrappers. Properties cover length-indexed vectors
 and scalar values through typed, dynamic, `RuntimeValue`, and raw `Value`
 paths. Higher-order signatures with supported Nim callback leaf codecs generate
 typed closure wrappers.
+Imported definitions whose sole argument is Eponym's unit type also generate
+zero-argument Nim procedures; typed and `RuntimeValue` wrappers supply the unit
+internally.
 Unsupported implicit binder domains and callback signatures
 without codecs retain the raw interface. Raw-Value callback arguments and
 results are checked against their Eponym function type when the runtime shape
