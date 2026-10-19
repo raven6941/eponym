@@ -1180,7 +1180,7 @@ proc genericRuntimeInfo(decl: NimNode,
                         mappings: seq[HostRuntimeType]): tuple[
     genericParams: NimNode, typeNames: seq[string],
     genericNames: seq[NimNode], genericNatArgs: seq[bool],
-    genericBoolArgs: seq[bool],
+    genericBoolArgs: seq[bool], genericIntArgs: seq[bool],
     codecMappings: seq[HostRuntimeType], error: string] =
   result.genericParams = newEmptyNode()
   result.codecMappings = mappings
@@ -1192,9 +1192,9 @@ proc genericRuntimeInfo(decl: NimNode,
       result.error = "runtime wrappers require explicitly typed generic binders"
       return
     let binderType = nimTypeToEponym(param[^2])
-    if binderType notin ["Type 0", "Nat", "Bool"]:
+    if binderType notin ["Type 0", "Nat", "Bool", "Int"]:
       result.error = "runtime wrappers currently support only type-level " &
-        "binders annotated with Univ and value indices annotated with Nat or Bool"
+        "binders annotated with Univ and value indices annotated with Int, Nat, or Bool"
       return
     for i in 0 ..< param.len - 2:
       let name = $param[i]
@@ -1215,6 +1215,7 @@ proc genericRuntimeInfo(decl: NimNode,
           newEmptyNode(), newEmptyNode()))
         result.genericNatArgs.add(false)
         result.genericBoolArgs.add(false)
+        result.genericIntArgs.add(false)
         result.codecMappings.add(HostRuntimeType(eponymName: name,
           nimType: copyNimTree(param[i])))
       elif binderType == "Nat":
@@ -1223,16 +1224,26 @@ proc genericRuntimeInfo(decl: NimNode,
           newEmptyNode()))
         result.genericNatArgs.add(true)
         result.genericBoolArgs.add(false)
-      else:
+        result.genericIntArgs.add(false)
+      elif binderType == "Bool":
         let staticBool = newTree(nnkBracketExpr, ident"static", ident"bool")
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticBool,
           newEmptyNode()))
         result.genericNatArgs.add(false)
         result.genericBoolArgs.add(true)
+        result.genericIntArgs.add(false)
+      else:
+        let staticInt = newTree(nnkBracketExpr, ident"static", ident"int")
+        result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticInt,
+          newEmptyNode()))
+        result.genericNatArgs.add(false)
+        result.genericBoolArgs.add(false)
+        result.genericIntArgs.add(true)
 
 proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     typeNames: seq[string], genericNames: seq[NimNode],
     genericNatArgs: seq[bool], genericBoolArgs: seq[bool],
+    genericIntArgs: seq[bool],
     codecMappings: seq[HostRuntimeType],
     error: string], globals: NimNode): seq[NimNode] =
   for i, genericName in generic.genericNames:
@@ -1242,6 +1253,8 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     elif generic.genericBoolArgs[i]:
       result.add(newCall(bindSym"boolToValue", copyNimTree(genericName),
                          globals))
+    elif generic.genericIntArgs[i]:
+      result.add(newCall(bindSym"intToValue", copyNimTree(genericName)))
     else:
       result.add(newCall(bindSym"vType", newLit(0)))
 

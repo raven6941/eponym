@@ -196,6 +196,16 @@ eponymBlock:
   postulate(Int, Univ)
   proc generatedGenericBoolValue[b: Bool](ignored: Int): Bool = b
   runtimeValue(generatedGenericBoolValue)
+  proc generatedGenericIntValue[index: Int](ignored: Int): Int = index
+  runtimeValue(generatedGenericIntValue)
+
+proc checkGenericIntValueAt[index: static[int]](ignored: int): bool =
+  let typedResult = generatedGenericIntValue[index](ignored)
+  let runtime = generatedGenericIntValueRuntimeValue[index](ignored)
+  let rawRuntime = generatedGenericIntValueRuntimeValue[index](
+    [intToValue(ignored)])
+  typedResult == index and valueToInt(runtime.value) == index and
+    valueToInt(rawRuntime.value) == index
 
 eponymBlock:
   postulate(Int, Univ)
@@ -245,6 +255,8 @@ static:
   doAssert compiles(generatedGenericBoolValue[true](1))
   doAssert compiles(generatedGenericBoolValue[false](1))
   doAssert compiles(generatedGenericBoolValueRuntimeValue[true](1))
+  doAssert compiles(generatedGenericIntValue[-17](1))
+  doAssert compiles(generatedGenericIntValueRuntimeValue[-17](1))
   doAssert compiles(generatedApplyNimCallback(proc(value: int): int = value, 1))
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
@@ -840,6 +852,20 @@ proc callbackRole : Callback -> Sample -> Sample =
         valueToBool(runtime.value, runtime.globals) == input.expected and
         valueToBool(rawRuntime.value, rawRuntime.globals) == input.expected)
   if not genericBoolCases:
+    quit(1)
+
+  let genericIntCases = forAll(
+    "Int generic values are available in checked runtime bodies", r, 200,
+    proc(r: var Rng): tuple[selector: int, ignored: int] =
+      (r.genInt(0, 4), r.genInt(-1000, 1000)),
+    proc(input: tuple[selector: int, ignored: int]): bool =
+      case input.selector
+      of 0: checkGenericIntValueAt[-17](input.ignored)
+      of 1: checkGenericIntValueAt[-1](input.ignored)
+      of 2: checkGenericIntValueAt[0](input.ignored)
+      of 3: checkGenericIntValueAt[23](input.ignored)
+      else: checkGenericIntValueAt[1000](input.ignored))
+  if not genericIntCases:
     quit(1)
 
   let callbackBridgeCases = forAll(

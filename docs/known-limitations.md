@@ -46,7 +46,9 @@ in signatures and checked runtime bodies; tests cover typed wrappers and both
 typed and raw `runtimeValue` overloads. Bool binders `[b: Bool]` map to Nim
 `static[bool]` and are encoded with the checked `true` and `false` constructors;
 typed wrappers and both typed and raw `runtimeValue` overloads are covered.
-Other value-indexed binders remain unsupported.
+Int binders `[i: Int]` map to Nim `static[int]` and cross as integer values;
+typed wrappers and typed/raw `runtimeValue` overloads are covered, including
+negative indices. Other value-indexed binders remain unsupported.
 `Nat` conversions reject negative values. An explicit `proc` declaration with
 an unsupported signature remains
 checked but emits a targeted compile-time error if called. Generated names
