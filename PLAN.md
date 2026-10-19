@@ -613,8 +613,10 @@ implementations.
      callbacks when the generic Nim type has a direct runtime mapping. A
      200-case property applies an imported `A -> A` callback to mapped Nim
      enum values and a custom-`runtimeCodec` mapped object through generated
-     and typed `RuntimeValue` wrappers; a compile-time check rejects a callback
-     whose type does not match the inferred generic type.
+     and typed `RuntimeValue` wrappers. Another 200-case property covers
+     `Option[int]` values and callbacks, including both `none` and `some`.
+     Compile-time checking rejects a callback whose type does not match the
+     inferred generic type.
    - [x] Reconstruct typed wrappers for local clause-compiled definitions
      from their checked Pi signatures. A 200-case property calls a `Nat -> Nat`
      identity through its generated `int` wrapper. Runtime application helpers

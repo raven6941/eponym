@@ -173,7 +173,9 @@ definitions can accept typed Nim callbacks when the generic Nim type has a
 direct `runtimeType` or `runtimeCodec` mapping; a 200-case property covers an
 `A -> A` callback over a mapped Nim enum through generated and `RuntimeValue`
 wrappers and another covers a custom-`runtimeCodec` mapped Nim object. A
-compile-time check rejects a mismatched callback signature.
+third 200-case property exercises `Option[int]` callbacks through the
+recursive structural codec, including `none` and `some`. A compile-time check
+rejects a mismatched callback signature.
 Callers must handle unsupported constructors and neutral values explicitly. A
 Right-nested `Sig` values map to flat Nim tuples with the same field order and
 arity, while their runtime representation remains right-associated pairs.

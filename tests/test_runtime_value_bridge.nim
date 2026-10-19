@@ -402,6 +402,7 @@ eponymBlock:
 eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
   runtimeVector(Vec)
+  runtimeOption(Option)
   runtimeType(Token, ImportedToken)
   runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
     decodeRuntimeHandle)
@@ -1740,6 +1741,21 @@ when isMainModule:
       typed == expected and
         valueToHost[ChannelHandle](runtime.value) == expected)
   if not importedGenericCodecCallbackCases:
+    quit(1)
+  let importedGenericOptionCallbackCases = forAll(
+    "imported generic callbacks recurse through Option codecs", r, 200,
+    proc(r: var Rng): tuple[present: bool, value, delta: int] =
+      (r.genBool(), r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[present: bool, value, delta: int]): bool =
+      let value = if input.present: some(input.value) else: none(int)
+      let callback: proc(value: Option[int]): Option[int] {.closure.} =
+        proc(value: Option[int]): Option[int] =
+          if value.isSome: some(value.get + input.delta) else: none(int)
+      let expected = callback(value)
+      let typed = importedGenericCallbackApply(callback, value)
+      let runtime = importedGenericCallbackApplyRuntimeValue(callback, value)
+      typed == expected and valueToHost[Option[int]](runtime.value) == expected)
+  if not importedGenericOptionCallbackCases:
     quit(1)
   let importedImplicitNatVecCases = forAll(
     "imported implicit Nat binders have static and dynamic Nim wrappers",
