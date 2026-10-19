@@ -12,5 +12,9 @@ proc importedImplicitTokenIdentity {token : Token} : Token = token
 proc importedCallbackApply (f : Int -> Int) (value : Int) : Int = f value
 proc importedCallbackApply2 (f : Int -> Int -> Int) (left : Int) (right : Int) : Int = f left right
 proc importedCallbackIdentity (f : Int -> Int) : Int -> Int = f
+proc applyNullaryCallback (callback : Pi (_ : 1). Int) : Int =
+  callback <>
+proc nullaryCallbackIdentity (callback : Pi (_ : 1). Int) :
+    Pi (_ : 1). Int = callback
 proc importedDependentCallbackApply (f : Pi (n : Nat). Vec Int n) (n : Nat) : Vec Int n = f n
 proc importedDependentPairIdentity (pair : Sig (n : Nat). Vec Int n) : Sig (n : Nat). Vec Int n = pair

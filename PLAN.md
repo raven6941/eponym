@@ -548,7 +548,8 @@ implementations.
       callback whose Vec result length depends on its Nat argument, through
       both generated wrappers and typed `RuntimeValue` calls. Imported
       definitions that return callbacks are also covered through both wrapper
-      paths. A negative check rejects a callback returning the wrong Vec
+      paths, including nullary Nim callbacks in both argument and result
+      positions. A negative check rejects a callback returning the wrong Vec
       length. Raw-Value callbacks now validate arguments and results against
       their checked Eponym function type whenever the runtime shape is
       supported; tests reject wrong-family arguments and results in generated

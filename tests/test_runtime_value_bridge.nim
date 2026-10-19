@@ -372,6 +372,8 @@ eponymBlock:
   runtimeValue(importedCallbackApply)
   runtimeValue(importedCallbackApply2)
   runtimeValue(importedCallbackIdentity)
+  runtimeValue(applyNullaryCallback)
+  runtimeValue(nullaryCallbackIdentity)
   runtimeValue(importedDependentCallbackApply)
   runtimePairTrusted(importedDependentPairIdentity)
   runtimeValue(importedDependentPairIdentity)
@@ -1770,6 +1772,27 @@ when isMainModule:
     proc(input: tuple[value, bias: int]): seq[tuple[value, bias: int]] =
       @[(0, input.bias), (input.value, 0)])
   if not importedReturnedCallbackCases:
+    quit(1)
+  let importedNullaryCallbackCases = forAll(
+    "imported definitions bridge nullary Nim callbacks", r, 200,
+    proc(r: var Rng): tuple[value, offset: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[value, offset: int]): bool =
+      let expected = input.value + input.offset
+      let callback: proc(): int {.closure.} =
+        proc(): int = expected
+      let applied = applyNullaryCallback(callback)
+      let appliedRuntime = applyNullaryCallbackRuntimeValue(callback)
+      let returned = nullaryCallbackIdentity(callback)
+      let returnedRuntime = nullaryCallbackIdentityRuntimeValue(callback)
+      applied == expected and valueToInt(appliedRuntime.value) == expected and
+        returned() == expected and
+        valueToInt(callRuntimeValue(returnedRuntime.value, [vUnit()])) ==
+          expected,
+    proc(input: tuple[value, offset: int]):
+        seq[tuple[value, offset: int]] =
+      @[(0, input.offset), (input.value, 0)])
+  if not importedNullaryCallbackCases:
     quit(1)
   let importedDependentCallbackCases = forAll(
     "imported callbacks preserve dependent Vec result indices", r, 200,

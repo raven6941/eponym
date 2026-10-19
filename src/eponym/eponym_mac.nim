@@ -966,7 +966,13 @@ proc runtimeTermNimTypeAst(term: Term, ctx: seq[string],
   var callbackCtx = ctx
   var formal = newNimNode(nnkFormalParams)
   var argumentIndex = 0
+  var nullary = false
   while not current.isNil and current.kind == tPi:
+    if current.dom.kind == tC and current.dom.c == cOne:
+      if argumentIndex == 0:
+        nullary = true
+        current = current.scope.bdy
+      break
     if current.impl or current.qty != qOmega or current.dom.isNil or
         current.dom.kind == tType:
       return nil
@@ -981,7 +987,7 @@ proc runtimeTermNimTypeAst(term: Term, ctx: seq[string],
     callbackCtx = @[argumentName] & callbackCtx
     current = current.scope.bdy
     inc argumentIndex
-  if argumentIndex == 0: return nil
+  if argumentIndex == 0 and not nullary: return nil
   let resultType = runtimeTermNimTypeAst(current, callbackCtx, refNames)
   if resultType.isNil: return nil
   formal.insert(0, resultType)
