@@ -11,4 +11,4 @@ eponymBlock:
       first: Pi(value: Nat, n: Nat, LocalAt[n]),
       second: Pi(value: Nat, n: Nat, LocalAt[n]),
       value: Nat): LocalAt[0] =
-    ((if chooseFirst: first else: second)(value))(zero())
+    ((if chooseFirst: first(value) else: second(value)))(zero())

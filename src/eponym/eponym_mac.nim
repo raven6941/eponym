@@ -866,7 +866,8 @@ proc qtyPrefix(n: NimNode): string =
 proc nimExprToEponym(n: NimNode,
     preserveTrailingResultIndex = false): string
 
-proc ifExprToEponym(n: NimNode): string =
+proc ifExprToEponym(n: NimNode,
+    preserveTrailingResultIndex = false): string =
   var branches: seq[(NimNode, NimNode)] = @[]
   var elseBranch: NimNode = nil
   for branch in n:
@@ -893,11 +894,12 @@ proc ifExprToEponym(n: NimNode): string =
     if elseBranch.len != 1:
       error("eponymBlock: else branch must be one expression", elseBranch)
     elseBranch = elseBranch[0]
-  var fallback = nimExprToEponym(elseBranch)
+  var fallback = nimExprToEponym(elseBranch, preserveTrailingResultIndex)
   for i in countdown(branches.high, 0):
     let (condition, body) = branches[i]
     fallback = "ifThenElse (" & nimExprToEponym(condition) & ") (" &
-      nimExprToEponym(branchExpr(body)) & ") (" & fallback & ")"
+      nimExprToEponym(branchExpr(body), preserveTrailingResultIndex) &
+      ") (" & fallback & ")"
   fallback
 
 proc nimCommandLamToEponym(n: NimNode): string =
@@ -1134,7 +1136,7 @@ proc nimExprToEponym(n: NimNode,
       error("eponymBlock: unsupported pure prefix operator '" & $n[0] & "'",
             n[0])
   of nnkIfExpr, nnkIfStmt:
-    ifExprToEponym(n)
+    ifExprToEponym(n, preserveTrailingResultIndex)
   of nnkDotExpr:
     # p.x -> (p).x (record projection, issue #37; the surface parser
     # resolves it against the record table at elaboration time).
