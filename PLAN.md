@@ -478,10 +478,11 @@ implementations.
    The operands are each evaluated once, matching Nim's eager `xor`; a
    200-case property compares the generated result with Nim.
 - [x] Preserve Nim integer literal `1` as Eponym's unambiguous `01` token.
-   This lets expected-type overloading choose `Int` or `Nat` and avoids
-   translating an Int argument into the unrelated Nat successor term. A
-   runtime assertion covers an Int result and an Int postulate call with
-   literal `1`.
+   This works in term and type positions, lets expected-type overloading
+   choose `Int` or `Nat`, and avoids translating an Int argument into the
+   unrelated Nat successor term. Runtime assertions cover an Int result and
+   an Int postulate call with literal `1`; a dependent postulate signature
+   checks the type-position spelling during elaboration.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly

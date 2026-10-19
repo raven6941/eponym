@@ -354,11 +354,12 @@ proc nimTypeToEponym(n: NimNode): string =
     # Integer literal in type position: passed through verbatim; the
     # elaborator overloads it against the expected type (Nat or Int),
     # exactly as in string syntax (Issues #8, #115).
-    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so
-    # the Nat literal one is spelled `suc zero` (as in string syntax).
+    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so use
+    # the parser's unambiguous integer spelling `01`; expected-type
+    # overloading still selects Nat or Int.
     let v = n.intVal
     if v < 0: error("negative integer literal in type", n)
-    if v == 1: "(suc zero)" else: $v
+    if v == 1: "01" else: $v
   of nnkBracketExpr:
     if n.len < 2:
       error("eponymBlock: bracket type application needs explicit arguments", n)

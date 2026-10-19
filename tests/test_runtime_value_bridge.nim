@@ -268,6 +268,8 @@ eponymBlock:
   import "../lib/bool.ep"
   postulate(Int, Univ)
   postulate(Nat, Univ)
+  postulate(IntIndexed, Int -> Univ)
+  postulate(IntIndexedOneIdentity, IntIndexed(1) -> IntIndexed(1))
   postulate(hostBoolTick, Int -> Bool)
   bindPostulate(hostBoolTick, hostBoolPredicateNim, Int, Bool)
   postulate(hostPlusSeven, Int -> Int)

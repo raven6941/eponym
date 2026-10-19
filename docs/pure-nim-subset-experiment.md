@@ -28,7 +28,8 @@ represented directly in the current core:
 
 - local `let` bindings;
 - integer literals including `1` (lowered as the parser's unambiguous `01`
-  spelling) and unary minus and `+`, `-`, `*`, lowered to `subInt`, `addInt`, `subInt`, and
+  spelling in both terms and type expressions) and unary minus and `+`, `-`,
+  `*`, lowered to `subInt`, `addInt`, `subInt`, and
   `mulInt` respectively (only when Eponym checks the expression as `Int`).
   Overflow follows the existing primitive implementation; this syntax adds
   no overflow proof or checked arithmetic guarantee.
