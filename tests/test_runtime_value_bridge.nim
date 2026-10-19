@@ -382,6 +382,9 @@ eponymBlock:
   runtimeVector(Vec)
   runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
     decodeRuntimeHandle)
+  proc generatedCodecTypeAwareSingleton[A: Univ](value: A):
+      Vec[A, suc(zero)] = cons(A, zero, value, vecnil(A))
+  runtimeValue(generatedCodecTypeAwareSingleton)
   postulate(indexedRuntimeHandleVectorAdapter,
     Pi(length: Nat, values: Vec[RuntimeHandle, length],
        Vec[RuntimeHandle, length]))
@@ -2678,6 +2681,20 @@ proc callbackRole : Callback -> Sample -> Sample =
       checked == @[input] and decoded == @[input],
     shrinkInt)
   if not mappedGenericTypeCases:
+    quit(1)
+  let mappedGenericCodecCases = forAll(
+    "custom runtimeCodec mappings apply to generic checked bodies", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(seed: int): bool =
+      let input = ChannelHandle(id: seed, label: "codec-generic/" & $seed)
+      let expected = @[ChannelHandle(id: seed, label: "decoded-" & $seed)]
+      let checked = generatedCodecTypeAwareSingleton(input)
+      let runtime = generatedCodecTypeAwareSingletonRuntimeValue(input)
+      let decoded = vecValueToSeq[ChannelHandle](runtime.value, 1,
+        runtime.globals, "Vec", decodeRuntimeHandle)
+      checked == expected and decoded == expected,
+    shrinkInt)
+  if not mappedGenericCodecCases:
     quit(1)
   let vectorArrayOpaqueCases = forAll(
     "fixed Nim arrays preserve explicitly mapped opaque elements", r, 200,

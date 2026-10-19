@@ -666,14 +666,14 @@ implementations.
      at the boundary. Another 200-case property confirms a malformed runtime
      result is rejected before the custom decoder runs.
    - [x] Reify a used `[A: Univ]` type argument for checked runtime bodies
-      when its Nim type has a unique explicit opaque `runtimeType`
+      when its Nim type has a unique direct `runtimeType` or `runtimeCodec`
       mapping. Generated wrappers and typed `RuntimeValue` calls pass the
-      mapped Eponym type witness; a 200-case property constructs an indexed
-      Vec value inside the generic body using a mapped opaque element type.
-      Unmapped, ambiguous, or primitive Nim type representations remain
-      rejected because Nim types such as `int` cannot identify whether Eponym
-      intended `Int`, `Nat`, or another explicitly mapped type. Custom
-      `runtimeCodec` representations are not inferred for generic `A`.
+      mapped Eponym type witness and use the selected codec for generic values.
+      200-case properties cover both an opaque host type and a custom-codec
+      type inside an indexed Vec. Unmapped, ambiguous, indexed-family, or
+      primitive Nim type representations remain rejected because Nim types
+      such as `int` cannot identify whether Eponym intended `Int`, `Nat`, or
+      another explicitly mapped type.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.

@@ -40,12 +40,13 @@ Type-level generic binders written `[A: Univ]` support generated Nim generic
 wrappers when the remaining signature has codecs. Nim values of generic type
 `A` cross as opaque boxes. If the checked runtime body uses `A` as a type
 argument, the wrapper passes its Eponym type witness when the concrete Nim
-type has a unique explicit opaque `runtimeType` mapping. A 200-case
-property covers constructing a Vec inside such a generic body through both
-the generated wrapper and typed `RuntimeValue` API. Unmapped and ambiguous
-Nim types remain unsupported; scalar Nim types such as `int` cannot identify
-whether Eponym intended `Int`, `Nat`, or another explicitly mapped type.
-Custom `runtimeCodec` representations are not inferred for a generic `A`.
+type has a unique direct `runtimeType` or `runtimeCodec` mapping; generic
+values use the selected codec. 200-case properties cover constructing a Vec
+inside such a generic body through both the generated wrapper and typed
+`RuntimeValue` API, for opaque and custom-codec host types. Unmapped,
+ambiguous, and indexed-family mappings remain unsupported; scalar Nim types
+such as `int` cannot identify whether Eponym intended `Int`, `Nat`, or another
+explicitly mapped type.
 Value-indexed Nat binders written
 `[n: Nat]` map to Nim `static[int]` parameters and cross as canonical checked
 Nat constructors when the Nat prelude is available. These binders can appear

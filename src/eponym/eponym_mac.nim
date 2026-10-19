@@ -784,6 +784,7 @@ type HostRuntimeType = object
   isRuntimeCodec: bool
   isRuntimeIndexedType: bool
   isOpaqueRuntimeType: bool
+  isGenericTypeBody: bool
   encoder: NimNode
   decoder: NimNode
 
@@ -890,7 +891,7 @@ proc hostRuntimeTypes(body: NimNode, globals: Globals): seq[HostRuntimeType] =
         isRuntimeOption: isOption, isRuntimeVariant: isVariant,
         isRuntimeStructuredVariant: isStructuredVariant,
         isRuntimeCodec: isCodec,
-        isRuntimeIndexedType: not isCodec and name in globals and
+        isRuntimeIndexedType: name in globals and
           not globals[name].ty.isNil and globals[name].ty.kind == tPi,
         isOpaqueRuntimeType: not isCodec and name in globals and
           not globals[name].tm.isNil and not globals[name].tm.refIsDefn,
@@ -2116,6 +2117,40 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         current = newCall(bindSym"runtimePairSecond", current)
       decodeBody.add(fields)
       return newBlockStmt(decodeBody)
+  var genericTypeBody = false
+  if eponymType.kind == nnkIdent:
+    for mapping in mappings:
+      if mapping.isSynthetic and mapping.isGenericTypeBody and
+          mapping.eponymName == $eponymType:
+        genericTypeBody = true
+        break
+  if genericTypeBody:
+    var whenBranches = newNimNode(nnkWhenStmt)
+    for mapping in mappings:
+      if not mapping.isOpaqueRuntimeType and not mapping.isRuntimeCodec:
+        continue
+      if mapping.isRuntimeIndexedType: continue
+      if mapping.nimType.kind == nnkIdent and $mapping.nimType in
+          ["int", "int8", "int16", "int32", "int64", "uint",
+           "uint8", "uint16", "uint32", "uint64", "bool", "char",
+           "string", "cstring", "float", "float32", "float64"]:
+        continue
+      let condition = newTree(nnkInfix, ident"is", copyNimTree(nimType),
+                              copyNimTree(mapping.nimType))
+      let mappedValue = runtimeValueConversionExpr(
+        ident(mapping.eponymName), mapping.nimType, value, toValue, mappings,
+        records, globals, allowDependentSigma, indexOverrides)
+      if mappedValue.isNil: return nil
+      whenBranches.add(newTree(nnkElifBranch, condition,
+                               newStmtList(mappedValue)))
+    let errorMessage = newLit("generic Nim type '" & repr(nimType) &
+      "' has no runtimeType/runtimeCodec mapping")
+    whenBranches.add(newTree(nnkElse, newStmtList(newTree(nnkPragma,
+      newTree(nnkExprColonExpr, ident"error", errorMessage)))))
+    var mappedValue = newNimNode(nnkBlockExpr)
+    mappedValue.add(newEmptyNode())
+    mappedValue.add(newStmtList(whenBranches))
+    return mappedValue
   let valueFn = runtimeValueConverter(eponymType, nimType, toValue, records)
   if valueFn.isNil: return nil
   if simpleRuntimeCodec(eponymType) == "bool":
@@ -2174,7 +2209,8 @@ proc genericRuntimeInfo(decl: NimNode,
       if typeUsedByBody:
         var representedTypes: seq[string] = @[]
         for mapping in mappings:
-          if not mapping.isOpaqueRuntimeType or mapping.isRuntimeIndexedType or
+          if mapping.isRuntimeIndexedType or
+              (not mapping.isOpaqueRuntimeType and not mapping.isRuntimeCodec) or
               mapping.isRuntimeVector or mapping.isRuntimeList or
               mapping.isRuntimeOption or mapping.isRuntimeVariant or
               mapping.isRuntimeStructuredVariant:
@@ -2215,7 +2251,8 @@ proc genericRuntimeInfo(decl: NimNode,
         result.genericBoolArgs.add(false)
         result.genericIntArgs.add(false)
         result.codecMappings.add(HostRuntimeType(eponymName: name,
-          nimType: copyNimTree(param[i]), isSynthetic: true))
+          nimType: copyNimTree(param[i]), isSynthetic: true,
+          isGenericTypeBody: typeUsedByBody))
       elif binderType == "Nat":
         let staticInt = newTree(nnkBracketExpr, ident"static", ident"int")
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticInt,
@@ -2280,7 +2317,8 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     elif generic.genericTypeBodyArgs[i]:
       var whenBranches = newNimNode(nnkWhenStmt)
       for mapping in mappings:
-        if not mapping.isOpaqueRuntimeType or mapping.isRuntimeIndexedType or
+        if mapping.isRuntimeIndexedType or
+            (not mapping.isOpaqueRuntimeType and not mapping.isRuntimeCodec) or
             mapping.isRuntimeVector or mapping.isRuntimeList or
             mapping.isRuntimeOption or mapping.isRuntimeVariant or
             mapping.isRuntimeStructuredVariant:
