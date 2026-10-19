@@ -74,9 +74,8 @@ proc binderName(n: NimNode): string =
   else: $n
 
 proc warnCallStyleExplicitArgs(n: NimNode) =
-  ## Legacy eponymBlock calls put explicit type/index parameters in the same
-  ## parentheses as value arguments. Only warn when the declared callable has
-  ## extra type/index binders beyond its ordinary Nim-facing term arguments.
+  ## Reject legacy eponymBlock calls that put explicit type/index parameters
+  ## in the same parentheses as value arguments.
   if n.kind != nnkCall or n.len < 2 or n[0].kind notin {nnkIdent, nnkSym}:
     return
   let head = $n[0]
@@ -88,14 +87,14 @@ proc warnCallStyleExplicitArgs(n: NimNode) =
   let beginsWithNatIndex = info.firstExplicitNat and isLegacyNatExpr(n[1])
   if supplied <= info.termCount and not beginsWithTypeName and
       not beginsWithNatIndex: return
-  warning("eponymBlock: call-style explicit parameters are deprecated; " &
+  error("eponymBlock: call-style explicit parameters have been removed; " &
     "use square brackets for Eponym type/index arguments", n)
 
 proc warnCallStyleTypeArgs(n: NimNode) =
   if n.kind == nnkCall and n.len > 1 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] in legacyTypeFamilies:
-    warning("eponymBlock: call-style explicit type/index arguments are " &
-      "deprecated; use square brackets", n)
+    error("eponymBlock: call-style explicit type/index arguments have been " &
+      "removed; use square brackets", n)
 
 proc nimFormalArgCount(formal: NimNode): int =
   if formal.kind != nnkFormalParams: return 0
