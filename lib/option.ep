@@ -1,0 +1,6 @@
+# Eponym common library: optional values.
+#
+data Option (A : Type 0) : Type 0 where
+| none : Option A
+| some (value : A) : Option A
+

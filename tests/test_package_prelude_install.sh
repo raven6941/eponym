@@ -50,6 +50,19 @@ eponymBlock:
 
 doAssert keepList(@[2, 3, 5]) == @[2, 3, 5]
 EOF
+cat > "$eponymTmpDir/project/options.nim" <<'EOF'
+import std/options
+import eponym_mac
+import eponym_embed
+
+eponymBlock:
+  import "lib/option.ep"
+  runtimeOption(Option)
+  proc keepOption[A: Univ](value: Option[A]): Option[A] = value
+
+doAssert keepOption[int](some(7)) == some(7)
+doAssert keepOption[int](none(int)).isNone
+EOF
 
 cd "$eponymTmpDir/project"
 nim c -r --path:"$eponymTmpDir/package/src/eponym" \
@@ -64,3 +77,6 @@ nim c --path:"$eponymTmpDir/package/src/eponym" \
 nim c -r --path:"$eponymTmpDir/package/src/eponym" \
   --nimcache:"$eponymTmpDir/lists-cache" \
   --out:"$eponymTmpDir/lists" lists.nim
+nim c -r --path:"$eponymTmpDir/package/src/eponym" \
+  --nimcache:"$eponymTmpDir/options-cache" \
+  --out:"$eponymTmpDir/options" options.nim

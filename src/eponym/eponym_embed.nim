@@ -17,6 +17,7 @@
 import tables
 import sequtils
 import strutils
+import options
 import elab
 import eponym_init
 import preterm  # Quantity constants for validating supported adapter shapes
@@ -328,6 +329,56 @@ proc validateHostListCodec*(globals: Globals, familyName: string) =
     raise newException(ValueError,
       "runtimeList cons must take a tail and return " & familyName)
 
+proc validateHostOptionCodec*(globals: Globals, familyName: string) =
+  ## Accept the canonical unary Option family with none and some constructors.
+  if familyName notin globals or "none" notin globals or "some" notin globals:
+    raise newException(ValueError,
+      "runtimeOption requires the family, none, and some declarations")
+  let family = globals[familyName]
+  let noneCtor = globals["none"]
+  let someCtor = globals["some"]
+  if family.tm.isNil or family.tm.kind != tR or family.tm.refIsDefn or
+      noneCtor.tm.isNil or someCtor.tm.isNil or
+      not noneCtor.isDataConstructor or not someCtor.isDataConstructor or
+      family.ty.isNil or family.ty.kind != tPi or
+      family.ty.dom.isNil or family.ty.dom.kind != tType or
+      family.ty.scope.bdy.isNil or family.ty.scope.bdy.kind != tType:
+    raise newException(ValueError,
+      "runtimeOption requires a Type -> Type family and its constructors")
+  let familyId = family.tm.refId
+  proc appArgs(term: Term): seq[Term] =
+    if term.isNil: return
+    if term.kind == tApp:
+      result = appArgs(term.fn)
+      result.add(term.arg)
+  proc isVar(term: Term, index: int): bool =
+    not term.isNil and term.kind == tV and term.idx == index
+  proc isFamilyApp(term: Term, index: int): bool =
+    if term.isNil or term.kind != tApp or opaqueTypeHeadId(term) != familyId:
+      return false
+    let args = appArgs(term)
+    args.len == 1 and isVar(args[0], index)
+  let noneTy = noneCtor.ty
+  let someTy = someCtor.ty
+  if noneTy.isNil or noneTy.kind != tPi or noneTy.dom.isNil or
+      noneTy.dom.kind != tType or
+      noneTy.impl or noneTy.qty == q0 or
+      not isFamilyApp(noneTy.scope.bdy, 0):
+    raise newException(ValueError,
+      "runtimeOption none must take a type and return " & familyName)
+  if someTy.isNil or someTy.kind != tPi or someTy.dom.isNil or
+      someTy.dom.kind != tType or
+      someTy.impl or someTy.qty == q0:
+    raise newException(ValueError,
+      "runtimeOption some must take a type parameter")
+  let valueBinder = someTy.scope.bdy
+  if valueBinder.isNil or valueBinder.kind != tPi or valueBinder.dom.isNil or
+      valueBinder.dom.kind != tV or
+      valueBinder.dom.idx != 0 or valueBinder.impl or valueBinder.qty == q0 or
+      not isFamilyApp(valueBinder.scope.bdy, 1):
+    raise newException(ValueError,
+      "runtimeOption some must take a value and return " & familyName)
+
 proc natIndexSucc*(n: int): int =
   if n < 0 or n == high(int):
     raise newException(ValueError, "Nat index is outside Nim int range")
@@ -422,6 +473,34 @@ proc listValueToSeq*[T](value: Value, globals: Globals,
           "runtime List constructor has an invalid spine")
     result.add(decode(current.whnfSpineArg(1), globals))
     current = current.whnfSpineArg(2)
+
+proc optionToValue*[T](hostValue: Option[T], globals: Globals,
+    familyName: string,
+    encode: proc(item: T, globals: Globals): Value): Value =
+  validateHostOptionCodec(globals, familyName)
+  if hostValue.isSome:
+    let encoded = encode(hostValue.get, globals)
+    return callRuntimeValue(eval(globals["some"].tm, @[]),
+      @[vType(0), encoded])
+  callRuntimeValue(eval(globals["none"].tm, @[]), @[vType(0)])
+
+proc valueToOption*[T](value: Value, globals: Globals,
+    familyName: string,
+    decode: proc(value: Value, globals: Globals): T): Option[T] =
+  validateHostOptionCodec(globals, familyName)
+  if value.whnfKind != wRef:
+    raise newException(ValueError, "runtime value is not an Option")
+  let noneId = globals["none"].tm.refId
+  let someId = globals["some"].tm.refId
+  if value.whnfRefId == noneId:
+    if value.whnfSpineLen != 1 or value.whnfSpineKind(0) != eApp:
+      raise newException(ValueError,
+        "runtime Option none constructor has invalid spine")
+    return none(T)
+  if value.whnfRefId != someId or value.whnfSpineLen != 2 or
+      value.whnfSpineKind(0) != eApp or value.whnfSpineKind(1) != eApp:
+    raise newException(ValueError, "runtime value is not an Option")
+  some(decode(value.whnfSpineArg(1), globals))
 
 proc validateHostMappedNaryType*(globals: Globals, postulateName: string,
                                  typeNames: openArray[string]) =

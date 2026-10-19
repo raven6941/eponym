@@ -113,8 +113,10 @@ expressions made from a static index, `zero`, `suc`, `add`, and `mul`. It
 requires the standard `nil` and `cons` constructor shape from `lib/vec.ep`.
 The standard unindexed `List[A]` family also has a `runtimeList(List)` codec
 that maps to `seq[A]`, checks constructor identities and spines, and recursively
-uses the element codec. Other collections and payload-bearing data types remain
-unsupported.
+uses the element codec. A unary family with canonical `none` and `some`
+constructors can opt into `runtimeOption(Option)`, which maps recursively
+codec-supported payloads to `std/options.Option[A]`. Other collections and
+payload-bearing data types remain unsupported.
 A mapped `Future[T]` can pass through an opaque postulate adapter as either an
 argument or result; the bridge preserves the same Nim future value. Eponym
 has no async effect, await, or cancellation operation. Completion, failure,
@@ -130,8 +132,8 @@ as generated wrappers. A 200-case property covers multi-argument callbacks
 with primitive and mapped opaque values in both directions. Returned callback
 types must use Nim's `{.closure.}` calling convention. Callback effects and
 behavior remain trusted host semantics.
-Structural codecs are currently limited to `Vec`, `List`, two-field `Sig`
-tuples, and named records. Records with dependent fields
+Structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
+`Sig` tuples, and named records. Records with dependent fields
 and dependent `Sig` results are available only through their explicit trusted
 opt-ins described above. Other payload-bearing data constructors,
 non-Nat value-indexed generic signatures without a supported runtime mapping,

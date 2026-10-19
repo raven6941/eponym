@@ -273,7 +273,7 @@ implementations.
    postulate and receives back). The current opaque mappings are restricted to
    named postulated Eponym types. Structural runtime codecs support primitive
    values, Bool and nullary enums, opaque mapped types, standard `List` and
-   indexed `Vec` sequences, two-field Sigma tuples, and named records
+   `Option` values, indexed `Vec` sequences, two-field Sigma tuples, and named records
    represented as mapped Nim objects. Dependent records and pairs have
    explicit trusted opt-ins; the remaining dependent runtime forms stay open
    under stage B.
@@ -396,6 +396,11 @@ implementations.
    It maps recursively codec-supported elements to `seq[A]` and validates
    `nil`/`cons` constructor identities and application spines. A 200-case
    property covers primitive and opaque elements, empty lists, and typed/raw
+   `runtimeValue` paths.
+- [x] Add `runtimeOption(Option)` for a unary Option family with canonical
+   `none` and `some` constructors. It maps `Option[A]` to `std/options.Option[A]`
+   and recursively encodes the payload. A 200-case property covers `none`,
+   `some`, primitive and opaque generic payloads, nested options, and typed/raw
    `runtimeValue` paths.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
