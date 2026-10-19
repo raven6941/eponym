@@ -1678,6 +1678,19 @@ proc inferRuntimeValueType(value: Value, globals: Globals,
         "runtime Value has no syntax for type inference")
     infer(supply, value.syn)
 
+proc runtimeValueTypeOf*(value: Value, globals: Globals): Value =
+  ## Infer a runtime value's checked Eponym type, preserving any represented
+  ## family indices. Opaque host values need an explicit type witness and
+  ## values whose type cannot be inferred raise ValueError.
+  var supply = Supply()
+  for _, entry in globals.pairs:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      reserveFreshIdsThrough(supply, entry.tm.refId)
+  result = inferRuntimeValueType(value, globals, supply)
+  if result.isNil:
+    raise newException(ValueError,
+      "runtime Value has no inferable Eponym type witness")
+
 proc validateRuntimeValueType*(value, expectedType: Value,
                                globals: Globals) =
   if value.isNil or expectedType.isNil:

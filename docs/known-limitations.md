@@ -334,10 +334,12 @@ For fixed vector lengths, the same generic callback bridge also supports Nim
 arrays through `runtimeVectorArray(Vec)`.
 Other structural callback families and generic leaf types without a unique
 direct mapping remain unsupported.
-Generic callback type witnesses currently skip indexed-family mappings. A Nim
-value representation may encode several indices of one Eponym family, so the
-wrapper needs an explicit value-level family witness before it can select and
-validate the correct indexed type.
+`runtimeValueTypeOf(value, globals)` recovers the checked type of a runtime
+Value, including represented family indices. Generic callback wrappers do not
+yet use it to select the erased type argument for indexed-family mappings. A
+Nim type may represent several indices of one Eponym family, so the wrapper
+needs a representative value or an explicit witness. The behavior for values
+with no representative, such as `none` or an empty collection, remains open.
 More complex generic domain expressions outside the supported type-expression
 forms and structural inspection of closures are unsupported.
 Non-dependent function domains written with `->` are now supported for dynamic

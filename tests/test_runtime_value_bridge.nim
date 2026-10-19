@@ -1596,12 +1596,26 @@ when isMainModule:
         constructor: "sizedTree",
         arguments: @[natToValue(length, variantGlobals), tree]),
         variantGlobals, "SizedTree", ["sizedTree"])
+      let inferredType = runtimeValueTypeOf(indexed, variantGlobals)
+      let expectedType = callRuntimeValue(
+        eval(variantGlobals["SizedTree"].tm, @[]),
+        [natToValue(length, variantGlobals)])
+      validateRuntimeValueType(indexed, inferredType, variantGlobals)
+      validateRuntimeValueType(indexed, expectedType, variantGlobals)
+      var wrongIndexRejected = false
+      try:
+        validateRuntimeValueType(indexed,
+          callRuntimeValue(eval(variantGlobals["SizedTree"].tm, @[]),
+            [natToValue(length + 1, variantGlobals)]), variantGlobals)
+      except ValueError:
+        wrongIndexRejected = true
       let projected = genericIndexedTreeProjectionRuntimeValueDynamic(
         length, valueToRuntimeStructuredVariant(indexed, variantGlobals,
           "SizedTree", ["sizedTree"]), 0)
       let decoded = valueToRuntimeStructuredVariant(projected.value,
         variantGlobals,
         "SizedTree", ["sizedTree"])
+      not inferredType.isNil and wrongIndexRejected and
       decoded.constructor == "sizedTree" and
       decoded.arguments.len == 2 and
         decoded.arguments[0].kind == rsvNat and

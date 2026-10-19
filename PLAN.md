@@ -730,11 +730,15 @@ implementations.
       and indexed-family representations remain unsupported because Nim types
       such as `int` cannot identify an Eponym type without a unique explicit
       mapping.
-   - [ ] Support generic callbacks over indexed-family mappings when the Nim
-     value representation alone cannot identify the Eponym family index. This
-     needs an explicit runtime witness or equivalent value-level type
-     selection; the current unique direct mapping path intentionally skips
-     indexed families.
+   - [x] Expose `runtimeValueTypeOf(value, globals)` to recover the checked
+     Eponym type of a runtime Value, including represented family indices. A
+     200-case property infers `SizedTree[length]`, validates that index, and
+     rejects a different index.
+   - [ ] Support generic callbacks over indexed-family mappings. Thread a type
+     witness inferred from a corresponding runtime value into the erased type
+     argument and callback codecs. Define the behavior when no representative
+     value exists, such as `none` or an empty collection; do not guess an index
+     from the Nim type alone.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.
