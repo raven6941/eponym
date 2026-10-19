@@ -38,6 +38,18 @@ eponymBlock:
       lam(i, Nat, lam(x, A, lam(xs, Vec[A, i], lam(ih, Nat, suc(ih))))),
       n, v)
 EOF
+cat > "$eponymTmpDir/project/lists.nim" <<'EOF'
+import eponym_mac
+import eponym_embed
+
+eponymBlock:
+  import "lib/list.ep"
+  postulate(Int, Univ)
+  runtimeList(List)
+  proc keepList(values: List[Int]): List[Int] = values
+
+doAssert keepList(@[2, 3, 5]) == @[2, 3, 5]
+EOF
 
 cd "$eponymTmpDir/project"
 nim c -r --path:"$eponymTmpDir/package/src/eponym" \
@@ -49,3 +61,6 @@ nim c -r --path:"$eponymTmpDir/package/src/eponym" \
 nim c --path:"$eponymTmpDir/package/src/eponym" \
   --nimcache:"$eponymTmpDir/vecs-cache" \
   --out:"$eponymTmpDir/vecs" vecs.nim
+nim c -r --path:"$eponymTmpDir/package/src/eponym" \
+  --nimcache:"$eponymTmpDir/lists-cache" \
+  --out:"$eponymTmpDir/lists" lists.nim

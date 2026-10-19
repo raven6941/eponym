@@ -123,6 +123,18 @@ passed through a generic type parameter; nested vectors map to nested Nim
 sequences. Nat length expressions support indices, `zero`, `suc`, `add`, and
 `mul`.
 
+For an unindexed collection, `runtimeList(List)` maps the standard `List[A]`
+family to `seq[A]` and applies the element codec recursively:
+
+```nim
+eponymBlock:
+  import "lib/list.ep"
+  runtimeList(List)
+  proc keepList[A: Univ](values: List[A]): List[A] = values
+
+doAssert keepList[int](@[2, 3, 5]) == @[2, 3, 5]
+```
+
 Now break it. Change the body to `addInt(x, y)` and recompile:
 
 ```
