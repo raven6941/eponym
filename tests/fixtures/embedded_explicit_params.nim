@@ -36,6 +36,9 @@ eponymBlock:
   record(OrdinaryIdentityField):
     field(identity, Nat -> Nat)
 
+  record(LocalIndexedCallableField):
+    field(make, Pi(value: Nat, n: Nat, LocalAt[n]))
+
 
   proc localLegacyConstructor(): Protocol = protocolSend[Nat](zero())
   proc localBracketConstructor(): Protocol = protocolSend[Nat](zero())
@@ -123,8 +126,19 @@ eponymBlock:
   proc inferredTrailingConstructorIndex(value: Nat): LocalLastAt[0] =
     localLastAt(value)
 
+  proc inferredTrailingCommandIndex(value: Nat): LocalLastAt[0] =
+    localLastAt value
+
   proc bracketTrailingConstructorIndex(value: Nat): LocalLastAt[0] =
     localLastAt(value)[zero()]
+
+  proc inferredTrailingCallableFieldIndex(
+      handler: LocalIndexedCallableField, value: Nat): LocalAt[0] =
+    handler.make(value)
+
+  proc bracketTrailingCallableFieldIndex(
+      handler: LocalIndexedCallableField, value: Nat): LocalAt[0] =
+    handler.make(value)[zero()]
 
   proc inferredCommandIndex(value: Nat): LocalAt[zero()] =
     localAt value
