@@ -245,6 +245,7 @@ proc hostBoolPredicateNim(value: int): bool =
   value mod 2 == 0
 
 type TestIntArray = array[3, int]
+type TestChannelArray = array[3, ChannelHandle]
 
 static:
   doAssert compiles(hostIntUnary(hostStepNim))
@@ -308,13 +309,18 @@ eponymBlock:
 eponymBlock:
   import "../lib/vec.ep"
   postulate(Int, Univ)
+  postulate(Channel, Univ)
   runtimeVectorArray(Vec)
+  runtimeType(Channel, ChannelHandle)
   proc generatedArrayVecIdentity[n: Nat](values: Vec[Int, n]): Vec[Int, n] =
     values
+  proc generatedChannelArrayIdentity[n: Nat](
+      values: Vec[Channel, n]): Vec[Channel, n] = values
   proc generatedArrayVecCallback(
       callback: proc(values: Vec[Int, 3]): Vec[Int, 3] {.closure.},
       values: Vec[Int, 3]): Vec[Int, 3] = callback(values)
   runtimeValue(generatedArrayVecIdentity)
+  runtimeValue(generatedChannelArrayIdentity)
 
 eponymBlock:
   import "fixtures/runtime_imported_option.ep"
@@ -2626,6 +2632,26 @@ proc callbackRole : Callback -> Sample -> Sample =
       for i in low(smaller) .. high(smaller): smaller[i] = 0
       @[smaller])
   if not vectorArrayCases:
+    quit(1)
+  let vectorArrayOpaqueCases = forAll(
+    "fixed Nim arrays preserve explicitly mapped opaque elements", r, 200,
+    proc(r: var Rng): TestChannelArray =
+      for i in low(result) .. high(result):
+        let id = r.genInt(-1000, 1000)
+        result[i] = ChannelHandle(id: id, label: "array-channel-" & $id),
+    proc(input: TestChannelArray): bool =
+      let checked = generatedChannelArrayIdentity(input)
+      let runtime = generatedChannelArrayIdentityRuntimeValue(input)
+      let decoded = vecValueToArray[3, ChannelHandle](runtime.value, 3,
+        runtime.globals, "Vec", proc(value: Value, globals: Globals):
+        ChannelHandle = valueToHost[ChannelHandle](value))
+      checked == input and decoded == input,
+    proc(input: TestChannelArray): seq[TestChannelArray] =
+      var smaller = input
+      for i in low(smaller) .. high(smaller):
+        smaller[i] = ChannelHandle(id: 0, label: "array-channel-0")
+      @[smaller])
+  if not vectorArrayOpaqueCases:
     quit(1)
   let vectorArrayCallbackCases = forAll(
     "fixed Nim arrays cross checked closure arguments and results", r, 200,
