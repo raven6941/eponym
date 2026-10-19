@@ -75,6 +75,8 @@ for (path, expected) in [
      "no runtime codec for Eponym result type 'Thing'"),
     ("tests/fixtures/embedded_err_generic_runtime_type.nim",
      "runtime wrappers currently support only type-level binders annotated with Univ"),
+    ("tests/fixtures/embedded_err_indexed_generic_callback_no_value.nim",
+     "provide a direct value argument with a runtimeCodec or runtimeDataVariant mapping"),
     ("tests/fixtures/embedded_err_unmapped_generic_type_body.nim",
      "generic type parameter 'A' is used by the runtime body; add a runtimeType mapping for its opaque Nim type"),
     ("tests/fixtures/embedded_err_ambiguous_generic_scalar_mapping.nim",

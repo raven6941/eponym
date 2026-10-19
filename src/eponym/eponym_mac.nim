@@ -1756,6 +1756,26 @@ proc genericTypeUsedByStructuredSignature(decl: NimNode, name: string,
       for child in current:
         pending.add(child)
 
+proc genericTypeUsedByCallbackSignature(decl: NimNode,
+    name: string): bool =
+  ## An imported generic type used as a callback leaf needs a concrete runtime
+  ## witness when its Nim representation is an indexed Eponym family.
+  if decl.kind != nnkProcDef or decl[3].kind != nnkFormalParams or
+      decl.len <= 6 or decl[6].kind != nnkEmpty:
+    return false
+  for i in 0 ..< decl[3].len:
+    let parameter = decl[3][i]
+    let typeNode = if i == 0: parameter
+      elif parameter.kind == nnkIdentDefs: parameter[^2]
+      else: newEmptyNode()
+    var pending = @[typeNode]
+    while pending.len > 0:
+      let current = pending.pop()
+      if current.kind == nnkProcTy and mentionsName(current, name):
+        return true
+      for child in current:
+        pending.add(child)
+
 proc runtimeStructuredCodecsExpr(mappings: seq[HostRuntimeType],
                                  records: seq[HostRecord]): NimNode =
   result = newNimNode(nnkBracket)
@@ -2258,16 +2278,42 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     var whenBranches = newNimNode(nnkWhenStmt)
     for mapping in mappings:
       if not mapping.isOpaqueRuntimeType and not mapping.isRuntimeCodec:
+        if not (mapping.isRuntimeIndexedType and
+            mapping.isRuntimeStructuredVariant):
+          continue
+      if mapping.isRuntimeIndexedType and
+          not (mapping.isRuntimeStructuredVariant or mapping.isRuntimeCodec):
         continue
-      if mapping.isRuntimeIndexedType: continue
       let condition = newTree(nnkInfix, ident"is", copyNimTree(nimType),
                               copyNimTree(mapping.nimType))
-      let mappedValue = runtimeValueConversionExpr(
-        ident(mapping.eponymName), mapping.nimType, value, toValue, mappings,
-        records, globals, allowDependentSigma, indexOverrides)
+      let mappedValue = if mapping.isRuntimeIndexedType and
+          mapping.isRuntimeCodec:
+        newCall(if toValue: copyNimTree(mapping.encoder)
+          else: copyNimTree(mapping.decoder), value, globals)
+        else:
+          runtimeValueConversionExpr(ident(mapping.eponymName),
+            mapping.nimType, value, toValue, mappings, records, globals,
+            allowDependentSigma, indexOverrides)
       if mappedValue.isNil: return nil
+      var checkedValue = mappedValue
+      if mapping.isRuntimeIndexedType and
+          (mapping.isRuntimeStructuredVariant or mapping.isRuntimeCodec):
+        let expectedType = runtimeTypeValueExpr(eponymType, globals,
+          indexOverrides)
+        if not expectedType.isNil:
+          if toValue:
+            let encodedSym = genSym(nskLet, "indexedGenericEncoded")
+            checkedValue = newTree(nnkBlockExpr, newEmptyNode(),
+              newStmtList(newLetStmt(encodedSym, mappedValue),
+                newCall(bindSym"validateRuntimeValueType",
+                  copyNimTree(encodedSym), expectedType, copyNimTree(globals)),
+                copyNimTree(encodedSym)))
+          else:
+            checkedValue = newTree(nnkBlockExpr, newEmptyNode(), newStmtList(
+              newCall(bindSym"validateRuntimeValueType", copyNimTree(value),
+                expectedType, copyNimTree(globals)), mappedValue))
       whenBranches.add(newTree(nnkElifBranch, condition,
-                               newStmtList(mappedValue)))
+                               newStmtList(checkedValue)))
     let errorMessage = newLit("generic Nim type '" & repr(nimType) &
       "' has no runtimeType/runtimeCodec mapping")
     whenBranches.add(newTree(nnkElse, newStmtList(newTree(nnkPragma,
@@ -2332,15 +2378,23 @@ proc genericRuntimeInfo(decl: NimNode,
       let typeUsedByBody = binderType == "Type 0" and
         ((decl.len > 6 and not decl[6].isNil and
           mentionsName(decl[6], name)) or
-         genericTypeUsedByStructuredSignature(decl, name, mappings))
+         genericTypeUsedByStructuredSignature(decl, name, mappings) or
+         (genericTypeUsedByCallbackSignature(decl, name) and
+          mappings.anyIt(it.isRuntimeIndexedType and
+            (it.isRuntimeCodec or it.isRuntimeStructuredVariant))))
       if typeUsedByBody:
         var representedTypes: seq[string] = @[]
         for mapping in mappings:
-          if mapping.isRuntimeIndexedType or
-              (not mapping.isOpaqueRuntimeType and not mapping.isRuntimeCodec) or
+          if (mapping.isRuntimeIndexedType and
+              not (mapping.isRuntimeCodec or
+                mapping.isRuntimeStructuredVariant)) or
+              (not mapping.isOpaqueRuntimeType and not mapping.isRuntimeCodec and
+                not (mapping.isRuntimeIndexedType and
+                  mapping.isRuntimeStructuredVariant)) or
               mapping.isRuntimeVector or mapping.isRuntimeList or
               mapping.isRuntimeOption or mapping.isRuntimeVariant or
-              mapping.isRuntimeStructuredVariant:
+              (mapping.isRuntimeStructuredVariant and
+                not mapping.isRuntimeIndexedType):
             continue
           if not mapping.isRuntimeCodec and mapping.nimType.kind == nnkIdent and
               $mapping.nimType == "seq":
@@ -2426,7 +2480,9 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
     codecMappings: seq[HostRuntimeType],
     error: string], globals: NimNode, mappings: seq[HostRuntimeType],
-    records: seq[HostRecord]): seq[NimNode] =
+    records: seq[HostRecord],
+    indexedTypeWitnesses: seq[tuple[name: string, value: NimNode]] = @[]):
+    seq[NimNode] =
   for i, genericName in generic.genericNames:
     if generic.genericNatArgs[i]:
       result.add(newCall(bindSym"natToValue", copyNimTree(genericName),
@@ -2437,6 +2493,14 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     elif generic.genericIntArgs[i]:
       result.add(newCall(bindSym"intToValue", copyNimTree(genericName)))
     elif generic.genericTypeBodyArgs[i]:
+      var hasIndexedWitness = false
+      for witness in indexedTypeWitnesses:
+        if i < generic.typeNames.len and
+            witness.name == generic.typeNames[i]:
+          result.add(copyNimTree(witness.value))
+          hasIndexedWitness = true
+          break
+      if hasIndexedWitness: continue
       var whenBranches = newNimNode(nnkWhenStmt)
       for mapping in mappings:
         if mapping.isRuntimeIndexedType or
@@ -2453,8 +2517,14 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
         let value = newCall(bindSym"runtimeGlobalValue", globals,
                             newLit(mapping.eponymName))
         whenBranches.add(newTree(nnkElifBranch, condition, newStmtList(value)))
-      let errorMessage = newLit("generic Nim type '" & $genericName &
-        "' has no runtimeType mapping")
+      let hasIndexedMapping = mappings.anyIt(it.isRuntimeIndexedType and
+        (it.isRuntimeCodec or it.isRuntimeStructuredVariant))
+      let errorMessage = newLit(if hasIndexedMapping:
+        "generic Nim type '" & $genericName & "' uses an indexed Eponym " &
+        "family; provide a direct value argument with a runtimeCodec or " &
+        "runtimeDataVariant mapping so its type witness can be inferred"
+        else: "generic Nim type '" & $genericName &
+          "' has no runtimeType mapping")
       whenBranches.add(newTree(nnkElse, newStmtList(newTree(nnkPragma,
         newTree(nnkExprColonExpr, ident"error", errorMessage)))))
       var mappedTypeValue = newNimNode(nnkBlockExpr)
@@ -2471,6 +2541,83 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
       result.add(encoded)
     else:
       result.add(newCall(bindSym"vType", newLit(0)))
+
+proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
+    typeNames: seq[string], genericNames: seq[NimNode], genericNatArgs: seq[bool],
+    genericBoolArgs: seq[bool], genericIntArgs: seq[bool],
+    genericValueArgs: seq[bool], genericTypeBodyArgs: seq[bool],
+    genericValueTypeNames: seq[string], genericValueTypeExprs: seq[NimNode],
+    genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
+    codecMappings: seq[HostRuntimeType], error: string],
+    argSyms, argEponymTypes, argNimTypes: seq[NimNode], globals: NimNode,
+    records: seq[HostRecord]): tuple[statements: NimNode,
+      witnesses: seq[tuple[name: string, value: NimNode]],
+      encodedArgs: seq[tuple[index: int, value: NimNode]]] =
+  ## For a generic type used by a callback, infer indexed family arguments
+  ## from a direct value argument of that same generic type. Cache the
+  ## conversion so a user codec is invoked only once for that value.
+  result.statements = newStmtList()
+  for genericIndex, genericName in generic.typeNames:
+    if genericIndex >= generic.genericTypeBodyArgs.len or
+        not generic.genericTypeBodyArgs[genericIndex]:
+      continue
+    var sourceIndex = -1
+    for i, eponymType in argEponymTypes:
+      if eponymType.kind in {nnkIdent, nnkSym} and
+          $eponymType == genericName:
+        sourceIndex = i
+        break
+    if sourceIndex < 0: continue
+
+    var witnessMappings: seq[HostRuntimeType] = @[]
+    for mapping in generic.codecMappings:
+      if mapping.isSynthetic or mapping.isRuntimeVector or
+          mapping.isRuntimeList or mapping.isRuntimeOption:
+        continue
+      if mapping.isRuntimeIndexedType:
+        if mapping.isRuntimeStructuredVariant or mapping.isRuntimeCodec:
+          witnessMappings.add(mapping)
+      elif (mapping.isOpaqueRuntimeType or mapping.isRuntimeCodec) and
+          not mapping.isRuntimeVariant and
+          not mapping.isRuntimeStructuredVariant:
+        witnessMappings.add(mapping)
+    if not witnessMappings.anyIt(it.isRuntimeIndexedType): continue
+
+    var branches = newNimNode(nnkWhenStmt)
+    for mapping in witnessMappings:
+      let condition = newTree(nnkInfix, ident"is",
+        copyNimTree(argNimTypes[sourceIndex]), copyNimTree(mapping.nimType))
+      let encoded = if mapping.isRuntimeCodec:
+        newCall(copyNimTree(mapping.encoder),
+          copyNimTree(argSyms[sourceIndex]), copyNimTree(globals))
+        else:
+          runtimeValueConversionExpr(ident(mapping.eponymName),
+            mapping.nimType, copyNimTree(argSyms[sourceIndex]), true,
+            generic.codecMappings, records, globals)
+      if encoded.isNil: continue
+      let encodedSym = genSym(nskLet, "indexedGenericValue")
+      let package = newTree(nnkBlockExpr, newEmptyNode(), newStmtList(
+        newLetStmt(encodedSym, encoded),
+        newTree(nnkTupleConstr,
+          newTree(nnkExprColonExpr, ident"value", copyNimTree(encodedSym)),
+          newTree(nnkExprColonExpr, ident"type",
+            newCall(bindSym"runtimeValueTypeOf", copyNimTree(encodedSym),
+              copyNimTree(globals))))))
+      branches.add(newTree(nnkElifBranch, condition, newStmtList(package)))
+    if branches.len == 0: continue
+    let errorMessage = newLit("generic type parameter '" & genericName &
+      "' needs a direct value argument with a runtimeCodec or " &
+      "runtimeDataVariant mapping to infer its Eponym type")
+    branches.add(newTree(nnkElse, newStmtList(newTree(nnkPragma,
+      newTree(nnkExprColonExpr, ident"error", errorMessage)))))
+    let packageSym = genSym(nskLet, "indexedGenericWitness")
+    var packageExpr = newTree(nnkBlockExpr, newEmptyNode(),
+      newStmtList(branches))
+    result.statements.add(newLetStmt(packageSym, packageExpr))
+    result.witnesses.add((genericName,
+      newDotExpr(copyNimTree(packageSym), ident"type")))
+    result.encodedArgs.add((sourceIndex,
+      newDotExpr(copyNimTree(packageSym), ident"value")))
 
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
                  mappings: seq[HostRuntimeType],
@@ -2750,17 +2897,27 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
       wrapperBody.add(bindingCall(binding, bindingSym, globalsSym, codecMappings,
                                   records))
 
+  let indexedWitnesses = indexedGenericTypeWitnesses(generic, argSyms,
+    argEponymTypes, argNimTypes, globalsSym, records)
+  wrapperBody.add(indexedWitnesses.statements)
   var values = newNimNode(nnkBracket)
   for genericArg in genericRuntimeValueArgs(generic, globalsSym,
-      codecMappings, records):
+      codecMappings, records, indexedWitnesses.witnesses):
     values.add(genericArg)
   if hasImportedNullaryUnitArgument(decl):
     values.add(newCall(bindSym"vUnit"))
-  var wrapperIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
+  var wrapperIndexOverrides = indexedWitnesses.witnesses
   for i, argSym in argSyms:
-    values.add(runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i],
-      argSym, true, codecMappings, records, globalsSym,
-      allowDependentSigma, wrapperIndexOverrides))
+    var encodedArg: NimNode = nil
+    for cached in indexedWitnesses.encodedArgs:
+      if cached.index == i:
+        encodedArg = cached.value
+        break
+    values.add(if encodedArg.isNil:
+      runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i], argSym,
+        true, codecMappings, records, globalsSym, allowDependentSigma,
+        wrapperIndexOverrides)
+      else: encodedArg)
     if values[^1].isNil: return nil
     wrapperIndexOverrides.add((argNames[i], argSym))
   let valuesSeq = newTree(nnkPrefix, ident("@"), values)
@@ -3178,17 +3335,25 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
       nimTypes.add(nimType)
 
   let globalsSym = genSym(nskLet, "runtimeGlobals")
+  let indexedWitnesses = indexedGenericTypeWitnesses(generic, argSyms,
+    eponymTypes, nimTypes, globalsSym, records)
   var values = newNimNode(nnkBracket)
   for genericArg in genericRuntimeValueArgs(generic, globalsSym,
-      codecMappings, records):
+      codecMappings, records, indexedWitnesses.witnesses):
     values.add(genericArg)
   if hasImportedNullaryUnitArgument(decl):
     values.add(newCall(bindSym"vUnit"))
-  var runtimeValueIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
+  var runtimeValueIndexOverrides = indexedWitnesses.witnesses
   for i, argSym in argSyms:
-    let converted = runtimeValueConversionExpr(eponymTypes[i], nimTypes[i],
-      argSym, true, codecMappings, records, globalsSym,
-      allowDependentSigma, runtimeValueIndexOverrides)
+    var converted: NimNode = nil
+    for cached in indexedWitnesses.encodedArgs:
+      if cached.index == i:
+        converted = cached.value
+        break
+    if converted.isNil:
+      converted = runtimeValueConversionExpr(eponymTypes[i], nimTypes[i],
+        argSym, true, codecMappings, records, globalsSym,
+        allowDependentSigma, runtimeValueIndexOverrides)
     if converted.isNil: return nil
     values.add(converted)
     runtimeValueIndexOverrides.add((argNames[i], argSym))
@@ -3201,6 +3366,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   var body = newStmtList()
   body.add(newLetStmt(globalsSym,
     newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+  body.add(indexedWitnesses.statements)
   body.add(newLetStmt(defsSym,
     newCall(bindSym"getDefsDir", dirLit, srcLit)))
   var bindingSym: NimNode = nil

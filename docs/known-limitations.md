@@ -335,14 +335,16 @@ arrays through `runtimeVectorArray(Vec)`.
 Other structural callback families and generic leaf types without a unique
 direct mapping remain unsupported.
 `runtimeValueTypeOf(value, globals)` recovers the checked type of a runtime
-Value, including represented family indices. Generic callback wrappers do not
-yet use it to select the erased type argument for indexed-family mappings. A
-Nim type may represent several indices of one Eponym family, so the wrapper
-needs a representative value or an explicit witness. The behavior for values
-with no representative, such as `none` or an empty collection, remains open.
-Callers using the raw generic `RuntimeValue` interface can pass the inferred
-type Value as a generic argument; a property test covers an indexed
-`SizedTree` identity this way.
+Value, including represented family indices. Imported generic callback
+wrappers can use a direct value argument of the same generic type to infer the
+erased type argument and check callback inputs/results. Both
+`runtimeDataVariant` and indexed `runtimeCodec` mappings are covered by
+properties, including rejection of a callback result with the wrong index.
+When the only representative is nested in a structural value, or no
+representative exists (`none` or an empty collection), callers still need an
+explicit witness; those wrapper forms are unsupported. Callers using the raw
+generic `RuntimeValue` interface can pass an inferred type Value directly; a
+property covers an indexed `SizedTree` identity this way.
 More complex generic domain expressions outside the supported type-expression
 forms and structural inspection of closures are unsupported.
 Non-dependent function domains written with `->` are now supported for dynamic

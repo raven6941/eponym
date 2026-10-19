@@ -735,11 +735,16 @@ implementations.
      200-case property infers `SizedTree[length]`, validates that index, and
      rejects a different index. The inferred witness also supplies the generic
      argument to a raw `RuntimeValue` call, whose result retains that index.
-   - [ ] Support generic callbacks over indexed-family mappings. Thread a type
-     witness inferred from a corresponding runtime value into the erased type
-     argument and callback codecs. Define the behavior when no representative
-     value exists, such as `none` or an empty collection; do not guess an index
-     from the Nim type alone.
+   - [x] Infer indexed generic type arguments for imported callback wrappers
+     from a direct value argument of the same generic type. The witness is
+     passed as the erased type argument and validates callback inputs/results.
+     A 200-case property covers `runtimeDataVariant`; a 50-case property covers
+     a custom `runtimeCodec`. Both reject callbacks that change the index via
+     generated and typed `RuntimeValue` wrappers.
+   - [ ] Infer indexed witnesses when the only representative is nested in a
+     structural value, and define behavior when no representative exists,
+     such as `none` or an empty collection. These cases need an explicit type
+     witness; the wrapper must not guess an index from the Nim type alone.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.

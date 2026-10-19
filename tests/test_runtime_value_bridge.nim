@@ -42,6 +42,14 @@ proc runtimeTreePayloads(value: Value, globals: Globals): seq[int] =
     result.add(valueToInt(variant.arguments[0]))
     current = variant.arguments[1]
 
+proc encodeRuntimeSizedTree(value: RuntimeStructuredVariant,
+                           globals: Globals): Value =
+  runtimeStructuredVariantToValue(value, globals, "SizedTree", ["sizedTree"])
+
+proc decodeRuntimeSizedTree(value: Value,
+                           globals: Globals): RuntimeStructuredVariant =
+  valueToRuntimeStructuredVariant(value, globals, "SizedTree", ["sizedTree"])
+
 proc runtimeIntVector(values: seq[int], globals: Globals): Value =
   let intType = runtimeGlobalValue(globals, "Int")
   result = callRuntimeValue(eval(globals["nil"].tm, @[]), [intType])
@@ -450,6 +458,17 @@ eponymBlock:
   runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
     decodeRuntimeHandle)
   runtimeValue(importedGenericBoxCallbackApply)
+
+eponymBlock:
+  import "fixtures/runtime_imported_generic_variant.ep"
+  runtimeDataVariant(SizedTree)
+  runtimeValue(importedGenericIndexedVariantCallbackApply)
+
+eponymBlock:
+  import "fixtures/runtime_imported_generic_variant.ep"
+  runtimeCodec(SizedTree, RuntimeStructuredVariant, encodeRuntimeSizedTree,
+    decodeRuntimeSizedTree)
+  runtimeValue(importedGenericIndexedCodecCallbackApply)
 
 eponymBlock:
   import "fixtures/runtime_imported_generic_array.ep"
@@ -1633,6 +1652,95 @@ when isMainModule:
         decoded.arguments[1].variantValue.constructor == "treeEmpty",
     shrinkInt)
   if not appliedGenericTypeCases:
+    quit(1)
+  let indexedVariantCallbackCases = forAll(
+    "generic callbacks infer and enforce indexed variant type arguments", r,
+    200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let empty = RuntimeStructuredValue(kind: rsvVariant,
+        variantValue: RuntimeStructuredVariant(constructor: "treeEmpty"))
+      let value = RuntimeStructuredVariant(constructor: "sizedTree",
+        arguments: @[RuntimeStructuredValue(kind: rsvNat,
+          natValue: length), empty])
+      let callback: proc(value: RuntimeStructuredVariant):
+          RuntimeStructuredVariant {.closure.} =
+        proc(value: RuntimeStructuredVariant): RuntimeStructuredVariant =
+          value
+      let typed = importedGenericIndexedVariantCallbackApply(callback, value)
+      let runtime = importedGenericIndexedVariantCallbackApplyRuntimeValue(
+        callback, value)
+      let decoded = valueToRuntimeStructuredVariant(runtime.value,
+        runtime.globals, "SizedTree", ["sizedTree"])
+      let wrongIndexCallback: proc(value: RuntimeStructuredVariant):
+          RuntimeStructuredVariant {.closure.} =
+        proc(value: RuntimeStructuredVariant): RuntimeStructuredVariant =
+          result = value
+          inc result.arguments[0].natValue
+      var typedMismatchRejected = false
+      try:
+        discard importedGenericIndexedVariantCallbackApply(
+          wrongIndexCallback, value)
+      except ValueError:
+        typedMismatchRejected = true
+      var runtimeMismatchRejected = false
+      try:
+        discard importedGenericIndexedVariantCallbackApplyRuntimeValue(
+          wrongIndexCallback, value)
+      except ValueError:
+        runtimeMismatchRejected = true
+      typed.constructor == "sizedTree" and typed.arguments.len == 2 and
+        typed.arguments[0].kind == rsvNat and
+        typed.arguments[0].natValue == length and
+        typed.arguments[1].variantValue.constructor == "treeEmpty" and
+        decoded.constructor == "sizedTree" and decoded.arguments.len == 2 and
+        decoded.arguments[0].kind == rsvNat and
+        decoded.arguments[0].natValue == length and
+        decoded.arguments[1].variantValue.constructor == "treeEmpty" and
+        typedMismatchRejected and
+        runtimeMismatchRejected,
+    shrinkInt)
+  if not indexedVariantCallbackCases:
+    quit(1)
+  let indexedCodecCallbackCases = forAll(
+    "generic callbacks infer indexed custom-codec type arguments", r, 50,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let value = RuntimeStructuredVariant(constructor: "sizedTree",
+        arguments: @[
+          RuntimeStructuredValue(kind: rsvNat, natValue: length),
+          RuntimeStructuredValue(kind: rsvVariant,
+            variantValue: RuntimeStructuredVariant(constructor: "treeEmpty"))])
+      let callback: proc(value: RuntimeStructuredVariant):
+          RuntimeStructuredVariant {.closure.} =
+        proc(value: RuntimeStructuredVariant): RuntimeStructuredVariant =
+          value
+      let typed = importedGenericIndexedCodecCallbackApply(callback, value)
+      let runtime = importedGenericIndexedCodecCallbackApplyRuntimeValue(
+        callback, value)
+      let decoded = decodeRuntimeSizedTree(runtime.value, runtime.globals)
+      let wrongIndexCallback: proc(value: RuntimeStructuredVariant):
+          RuntimeStructuredVariant {.closure.} =
+        proc(value: RuntimeStructuredVariant): RuntimeStructuredVariant =
+          result = value
+          inc result.arguments[0].natValue
+      var typedMismatchRejected = false
+      try:
+        discard importedGenericIndexedCodecCallbackApply(
+          wrongIndexCallback, value)
+      except ValueError:
+        typedMismatchRejected = true
+      var runtimeMismatchRejected = false
+      try:
+        discard importedGenericIndexedCodecCallbackApplyRuntimeValue(
+          wrongIndexCallback, value)
+      except ValueError:
+        runtimeMismatchRejected = true
+      typed.arguments[0].natValue == length and
+        decoded.arguments[0].natValue == length and typedMismatchRejected and
+        runtimeMismatchRejected,
+    shrinkInt)
+  if not indexedCodecCallbackCases:
     quit(1)
   let rawAppliedGenericTypeCases = forAll(
     "raw Values for applied generic domains are type checked", r, 200,

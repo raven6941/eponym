@@ -6,3 +6,9 @@ data RuntimeBox (A : Type 0) : Type 0 where
 proc importedGenericBoxCallbackApply (A : Type 0)
     (callback : RuntimeBox A -> RuntimeBox A) (value : RuntimeBox A) :
     RuntimeBox A = callback value
+proc importedGenericIndexedVariantCallbackApply (A : Type 0)
+    (callback : A -> A) (value : A) : A = callback value
+proc importedGenericIndexedCodecCallbackApply (A : Type 0)
+    (callback : A -> A) (value : A) : A = callback value
+proc importedGenericIndexedCallbackReturn (A : Type 0)
+    (callback : A -> A) : A -> A = callback
