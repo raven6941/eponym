@@ -706,8 +706,12 @@ eponymBlock:
   proc generatedApplyDependentVectorFunction[
       callback: Pi(n: Nat, Vec[Int, n])](length: Nat): Vec[Int, length] =
     callback(length)
+  proc generatedApplyGenericBinaryFunction[
+      callback: Pi(x: Int, y: Int, Int)](x: Int, y: Int): Int =
+    callback(x, y)
   runtimeValue(generatedDependentTypeAnchor)
   runtimeValue(generatedApplyDependentVectorFunction)
+  runtimeValue(generatedApplyGenericBinaryFunction)
 
 eponymBlock:
   postulate(Nat, Univ)
@@ -2075,6 +2079,25 @@ when isMainModule:
   except ValueError:
     dependentCallbackTypeRejected = true
   doAssert dependentCallbackTypeRejected
+  let genericBinaryCallbackCases = forAll(
+    "dynamic generic binders bridge multi-argument Nim callbacks", r, 200,
+    proc(r: var Rng): tuple[left, right, bias: int] =
+      (r.genInt(-500, 500), r.genInt(-500, 500), r.genInt(-100, 100)),
+    proc(input: tuple[left, right, bias: int]): bool =
+      let callback: proc(left, right: int): int {.closure.} =
+        proc(left, right: int): int = left + right + input.bias
+      let expected = input.left + input.right + input.bias
+      generatedApplyGenericBinaryFunctionDynamic(callback, input.left,
+        input.right) == expected and
+        valueToInt(generatedApplyGenericBinaryFunctionRuntimeValueDynamic(
+          callback, input.left, input.right).value) == expected,
+    proc(input: tuple[left, right, bias: int]):
+        seq[tuple[left, right, bias: int]] =
+      @[(input.left div 2, input.right, input.bias),
+        (input.left, input.right div 2, input.bias),
+        (input.left, input.right, 0)])
+  if not genericBinaryCallbackCases:
+    quit(1)
 
   let rawGenericNatCases = forAll(
     "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,

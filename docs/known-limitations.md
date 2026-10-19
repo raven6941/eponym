@@ -321,7 +321,9 @@ outside the supported runtime type grammar, and hand-built host closures
 without an Eponym type witness, still cannot be checked this way. For supported
 callback binders, generated `nameDynamic` and `nameRuntimeValueDynamic`
 overloads accept the corresponding Nim closure type directly; a `Value`
-overload remains available for callers using the low-level runtime API.
+overload remains available for callers using the low-level runtime API. Nim
+multi-argument callbacks map to their curried Pi telescope and are property-
+tested through both generated dynamic entry points.
 The session runtime demo includes a hand-written Nat LEB128 message codec, and
 the TCP adapter demo uses it over a loopback socket. The structural codecs
 cover common recursive shapes; a user can provide a codec for a named
