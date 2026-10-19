@@ -116,8 +116,9 @@ doAssert keepVector[int, 3](@[2, 3, 5]) == @[2, 3, 5]
 ```
 
 Vector elements use their own runtime codec, including opaque Nim values
-passed through a generic type parameter. Nat length expressions support
-indices, `zero`, `suc`, `add`, and `mul`.
+passed through a generic type parameter; nested vectors map to nested Nim
+sequences. Nat length expressions support indices, `zero`, `suc`, `add`, and
+`mul`.
 
 Now break it. Change the body to `addInt(x, y)` and recompile:
 

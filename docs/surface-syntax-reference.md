@@ -144,7 +144,8 @@ doAssert keepVector[int, 3](@[2, 3, 5]) == @[2, 3, 5]
 
 `Vec[A, n]` maps to `seq[A]`. The wrapper checks that input and output
 sequence lengths match the declared Nat index and recursively applies the
-element codec. Length expressions support a static Nat index, `zero`, `suc`,
+element codec, so nested `Vec` values map to nested Nim sequences. Length
+expressions support a static Nat index, `zero`, `suc`,
 `add`, and `mul`. The codec requires the canonical `nil` and `cons` shape from
 `lib/vec.ep`; other indexed data families need their own codecs.
 

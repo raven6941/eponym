@@ -254,7 +254,8 @@ proc nimExprToEponym(n: NimNode): string =
     for i in 1 ..< n.len:
       let arg = n[i]
       let value = nimExprToEponym(arg)
-      if arg.kind in {nnkCall, nnkCommand, nnkObjConstr, nnkInfix, nnkPrefix}:
+      if arg.kind in {nnkCall, nnkCommand, nnkObjConstr, nnkBracketExpr,
+                      nnkInfix, nnkPrefix}:
         parts.add("(" & value & ")")
       else:
         parts.add(value)
@@ -328,7 +329,8 @@ proc nimTypeToEponym(n: NimNode): string =
     var args: seq[string] = @[]
     for i in 1 ..< n.len:
       let a = n[i]
-      if (a.kind == nnkCall and a.len > 1) or a.kind == nnkObjConstr or
+      if (a.kind == nnkCall and a.len > 1) or a.kind in
+          {nnkObjConstr, nnkBracketExpr} or
           a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
                      nnkInt64Lit}:
         args.add("(" & nimTypeToEponym(a) & ")")
