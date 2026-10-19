@@ -543,7 +543,10 @@ implementations.
   expressions that call checked library definitions. A 200-case property
   passes a Nim `Nat -> Vec[Int, add(n, 1)]` callback through both generated and
   `RuntimeValue` dynamic wrappers and rejects a callback result with the wrong
-  computed length.
+  computed length. Nested telescope binders now reserve distinct runtime
+  reference IDs; a 200-case `Pi(left: Nat, right: Nat,
+  Vec[Int, add(left, right)])` property checks both wrappers and rejects
+  mismatched results through both paths.
 - [x] Add `{.rawValue.}` callback proc types that pass callback arguments and
   results as Eponym `Value`s, without requiring codecs for the function's leaf
   types. The checked Eponym callback type remains explicit, and the Nim callback

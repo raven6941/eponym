@@ -1780,7 +1780,11 @@ proc runtimePiTypeValueExpr(n, globals: NimNode,
       params = @[bindSym"Value",
         newIdentDefs(argument, bindSym"Value", newEmptyNode())],
       body = newStmtList(codomain))
-    newCall(bindSym"runtimeDependentArrowType", domain, globals, callback)
+    var priorArguments = newNimNode(nnkBracket)
+    for override in localOverrides:
+      priorArguments.add(copyNimTree(override.value))
+    newCall(bindSym"runtimeDependentArrowType", domain, globals, callback,
+      newTree(nnkPrefix, ident"@", priorArguments))
   build(0, overrides)
 
 proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,

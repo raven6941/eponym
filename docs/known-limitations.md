@@ -335,10 +335,13 @@ callback with the wrong Vec element type. Computed indices that apply checked
 library definitions are supported too: a 200-case property checks a Nim
 callback with type `Nat -> Vec[Int, add(n, 1)]` through generated and
 `RuntimeValue` wrappers and rejects a result with the wrong computed length.
-Other dependent type expressions outside the supported runtime type grammar,
-and hand-built host closures without an Eponym type witness, still cannot be
-checked this way. For supported
-callback binders, generated `nameDynamic` and `nameRuntimeValueDynamic`
+Multiple named binders also work in computed result indices, such as
+`Pi(left: Nat, right: Nat, Vec[Int, add(left, right)])`. Both callback
+parameters receive distinct runtime references and the result length is
+checked through generated and `RuntimeValue` wrappers. Other dependent type
+expressions outside the supported runtime type grammar, and hand-built host
+closures without an Eponym type witness, still cannot be checked this way. For
+supported callback binders, generated `nameDynamic` and `nameRuntimeValueDynamic`
 overloads accept the corresponding Nim closure type directly; a `Value`
 overload remains available for callers using the low-level runtime API. Nim
 multi-argument callbacks map to their curried Pi telescope and are property-

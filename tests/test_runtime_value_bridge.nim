@@ -716,12 +716,16 @@ eponymBlock:
   proc generatedApplyComputedVectorFunction[
       callback: Pi(n: Nat, Vec[Int, add(n, 1)])](length: Nat):
       Vec[Int, add(length, 1)] = callback(length)
+  proc generatedApplyTwoIndexVectorFunction[
+      callback: Pi(left: Nat, right: Nat, Vec[Int, add(left, right)])](
+      left, right: Nat): Vec[Int, add(left, right)] = callback(left, right)
   proc generatedApplyGenericBinaryFunction[
       callback: Pi(x: Int, y: Int, Int)](x: Int, y: Int): Int =
     callback(x, y)
   runtimeValue(generatedDependentTypeAnchor)
   runtimeValue(generatedApplyDependentVectorFunction)
   runtimeValue(generatedApplyComputedVectorFunction)
+  runtimeValue(generatedApplyTwoIndexVectorFunction)
   runtimeValue(generatedApplyGenericBinaryFunction)
 
 eponymBlock:
@@ -2170,6 +2174,43 @@ when isMainModule:
           expected and wrongLengthRejected and wrongRuntimeLengthRejected,
     shrinkInt)
   if not genericComputedVectorCallbackCases:
+    quit(1)
+  let genericTwoIndexVectorCallbackCases = forAll(
+    "dependent callbacks use all binders in computed Vec indices", r, 200,
+    proc(r: var Rng): tuple[left, right: int] =
+      (r.genInt(0, 8), r.genInt(0, 8)),
+    proc(input: tuple[left, right: int]): bool =
+      let expectedLength = input.left + input.right
+      var expected: seq[int] = @[]
+      for i in 0 ..< expectedLength: expected.add(i - input.left)
+      let callback: proc(left, right: int): seq[int] {.closure.} =
+        proc(left, right: int): seq[int] =
+          var values: seq[int] = @[]
+          for i in 0 ..< (left + right): values.add(i - left)
+          values
+      let checked = generatedApplyTwoIndexVectorFunctionDynamic(callback,
+        input.left, input.right)
+      let runtime = generatedApplyTwoIndexVectorFunctionRuntimeValueDynamic(
+        callback, input.left, input.right)
+      let wrongLength: proc(left, right: int): seq[int] {.closure.} =
+        proc(left, right: int): seq[int] = newSeq[int](left + right + 1)
+      var checkedRejected = false
+      try:
+        discard generatedApplyTwoIndexVectorFunctionDynamic(wrongLength,
+          input.left, input.right)
+      except ValueError:
+        checkedRejected = true
+      var runtimeRejected = false
+      try:
+        discard generatedApplyTwoIndexVectorFunctionRuntimeValueDynamic(
+          wrongLength, input.left, input.right)
+      except ValueError:
+        runtimeRejected = true
+      checked == expected and
+        vecValueToSeq[int](runtime.value, expectedLength, runtime.globals,
+          "Vec", proc(value: Value, globals: Globals): int = valueToInt(value)) ==
+          expected and checkedRejected and runtimeRejected)
+  if not genericTwoIndexVectorCallbackCases:
     quit(1)
   let wrongDependentCallbackType = runtimeDependentArrowType(
     natTypeForCallback, dependentTypeGlobals,

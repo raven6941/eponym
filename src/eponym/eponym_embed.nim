@@ -1553,13 +1553,18 @@ proc runtimeGlobalValue*(globals: Globals, name: string): Value =
   eval(globals[name].tm, @[])
 
 proc runtimeDependentArrowType*(domain: Value, globals: Globals,
-    codomainFn: proc(argument: Value): Value {.closure.}): Value =
+    codomainFn: proc(argument: Value): Value {.closure.},
+    priorArguments: openArray[Value] = []): Value =
   ## Build a Pi type whose codomain can refer to its parameter. Seed the
-  ## fresh-parameter supply after all checked global reference IDs.
+  ## fresh-parameter supply after all checked global reference IDs and any
+  ## earlier binders in the same dependent telescope.
   var supply = Supply()
   for _, entry in globals.pairs:
     if not entry.tm.isNil and entry.tm.kind == tR:
       reserveFreshIdsThrough(supply, entry.tm.refId)
+  for prior in priorArguments:
+    if not prior.isNil and prior.whnfKind == wRef:
+      reserveFreshIdsThrough(supply, prior.whnfRefId)
   let argument = freshPara(supply, domain)
   let codomain = codomainFn(argument)
   runtimeDependentPiType(domain, argument, codomain, codomainFn)
