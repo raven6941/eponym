@@ -1259,7 +1259,9 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   properties still pass (300 and 200 cases). Scoped callable metadata preserves
   index inference through aliases of bracketed constructors and partially
   applied constructors, including non-leading indices, and command-call syntax
-  follows the same inference path. The dependent `All` constructor example now
+  follows the same inference path. Callable-head metadata counts whitespace-
+  separated command arguments with the same nested-command flattening as
+  expression conversion. The dependent `All` constructor example now
   infers its vector index from the recursive proof. Conditional callees compare
   complete call metadata, including inferable-index positions. Callback result
   inference also works through direct aliases and let-bound conditionals,

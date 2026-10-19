@@ -63,6 +63,24 @@ proc unwrapParens(n: NimNode): NimNode =
 
 proc nimTypeCallInfo(ty: NimNode): LegacyCallInfo
 
+proc commandArgumentCount(n: NimNode): int =
+  ## Match nimCommandToEponym's flattening of whitespace-separated command
+  ## arguments. A command-form lambda is one argument, even though its body
+  ## also has nnkCommand nodes.
+  proc countArg(arg: NimNode): int =
+    if arg.kind == nnkCommand and arg.len > 0 and
+        not (arg[0].kind == nnkIdent and $arg[0] == "lam"):
+      result = countArg(arg[0])
+      for i in 1 ..< arg.len:
+        result += countArg(arg[i])
+    else:
+      result = 1
+  if n.kind == nnkCommand:
+    for i in 1 ..< n.len:
+      result += countArg(n[i])
+  elif n.len > 0:
+    result = n.len - 1
+
 proc callInfoForHead(n: NimNode,
     preserveTrailingResultIndex = false):
     tuple[found: bool, info: LegacyCallInfo] =
@@ -86,7 +104,7 @@ proc callInfoForHead(n: NimNode,
           $returnedHead in legacyResultCallInfo:
         return (true, legacyResultCallInfo[$returnedHead])
       let base = callInfoForHead(head[0])
-      let supplied = head.len - 1
+      let supplied = commandArgumentCount(head)
       if base.found and base.info.explicitCount > 0 and
           (supplied <= base.info.leadingTermCount or
            (base.info.inferableIndexCount > 0 and
