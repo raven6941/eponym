@@ -1012,7 +1012,17 @@ proc importedRuntimeProcDecl(definition: ElabDef,
       current = current.scope.bdy
       inc lambdaIndex
       continue
-    if current.impl or current.qty != qOmega:
+    if current.impl:
+      if current.qty notin {q0, qOmega}: return nil
+      let genericType = runtimeTermTypeAst(current.dom, ctx, refNames)
+      if genericType.isNil: return nil
+      genericParams.add(newIdentDefs(ident(name), genericType,
+        newEmptyNode()))
+      ctx = @[name] & ctx
+      current = current.scope.bdy
+      inc lambdaIndex
+      continue
+    if current.qty != qOmega:
       return nil
     let argType = runtimeTermNimTypeAst(current.dom, ctx, refNames)
     if argType.isNil: return nil
@@ -3232,6 +3242,17 @@ macro eponymBlock*(body: untyped): untyped =
             records, allowDependentSigma)
           if not typedImportedValueWrapper.isNil:
             result.add(typedImportedValueWrapper)
+          let importedDynamicWrapper = dynamicGenericRuntimeWrapper(
+            importedDecl, baseDir, src, requested, bindings, runtimeTypes,
+            records, allowDependentSigma)
+          if not importedDynamicWrapper.isNil:
+            result.add(importedDynamicWrapper)
+          let importedDynamicRuntimeValueWrapper =
+            dynamicGenericRuntimeWrapper(importedDecl, baseDir, src,
+              requested, bindings, runtimeTypes, records, allowDependentSigma,
+              returnRuntimeValue = true)
+          if not importedDynamicRuntimeValueWrapper.isNil:
+            result.add(importedDynamicRuntimeValueWrapper)
         var rawImportedDecl = importedDecl
         var rawRuntimeValueSuffix = "RuntimeValue"
         if not rawImportedDecl.isNil and

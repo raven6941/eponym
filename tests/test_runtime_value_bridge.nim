@@ -217,6 +217,7 @@ eponymBlock:
   runtimeValue(importedIntIdentity)
   runtimeValue(importedGenericIdentity)
   runtimeValue(importedImplicitGenericIdentity)
+  runtimeValue(importedImplicitNatVecIdentity)
   runtimeValue(importedCallbackApply)
   runtimeValue(importedCallbackApply2)
   runtimeValue(importedCallbackIdentity)
@@ -784,6 +785,8 @@ eponymBlock:
   runtimePairTrusted(generatedImportedVectorForIndex)
 
 static:
+  doAssert compiles(importedImplicitNatVecIdentity[3](@[1, 2, 3]))
+  doAssert compiles(importedImplicitNatVecIdentityRuntimeValue[3](@[1, 2, 3]))
   doAssert compiles(generatedCheckedRole(35))
   doAssert compiles(generatedAdd(20, 22))
   doAssert not compiles(generatedAdd(42))
@@ -1143,6 +1146,48 @@ when isMainModule:
     shrinkInt)
   if not importedGenericRawCases:
     quit(1)
+  let importedImplicitNatVecCases = forAll(
+    "imported implicit Nat binders have static and dynamic Nim wrappers",
+    r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var expected: seq[int] = @[]
+      for i in 0 ..< input.length:
+        expected.add(input.seed + i)
+      let typed = importedImplicitNatVecIdentityDynamic(input.length, expected)
+      let runtime = importedImplicitNatVecIdentityRuntimeValueDynamic(
+        input.length, expected)
+      let globals = runtime.globals
+      let raw = importedImplicitNatVecIdentityRuntimeValueRaw([
+        natToValue(input.length, globals),
+        runtimeIntVector(expected, globals)])
+      let decoded = vecValueToSeq[int](runtime.value, input.length, globals,
+        "Vec", proc(value: Value, globals: Globals): int = valueToInt(value))
+      let rawDecoded = vecValueToSeq[int](raw.value, input.length,
+        raw.globals, "Vec",
+        proc(value: Value, globals: Globals): int = valueToInt(value))
+      typed == expected and decoded == expected and rawDecoded == expected,
+    proc(input: tuple[length, seed: int]):
+        seq[tuple[length, seed: int]] =
+      @[(0, input.seed), (input.length div 2, input.seed),
+        (input.length, 0)])
+  if not importedImplicitNatVecCases:
+    quit(1)
+  var importedImplicitNatVecMismatchRejected = false
+  try:
+    discard importedImplicitNatVecIdentityDynamic(2, @[1])
+  except ValueError:
+    importedImplicitNatVecMismatchRejected = true
+  var importedImplicitNatVecRawMismatchRejected = false
+  try:
+    let globals = importedIntIdentityRuntimeValue(0).globals
+    discard importedImplicitNatVecIdentityRuntimeValueRaw([
+      natToValue(2, globals), runtimeIntVector(@[1], globals)])
+  except ValueError:
+    importedImplicitNatVecRawMismatchRejected = true
+  doAssert importedImplicitNatVecMismatchRejected and
+    importedImplicitNatVecRawMismatchRejected
   let importedGenericGlobals = importedIntIdentityRuntimeValue(0).globals
   var importedGenericWrongValueRejected = false
   try:
