@@ -79,12 +79,13 @@ What just happened:
   use it in the next section.
 - A call like `double(21)` re-elaborates the block on its first runtime call
   (then uses the cache) and evaluates the checked term. Generated wrappers
-  support first-order `Int`/`Nat` and explicitly mapped opaque postulated
-  types; other definitions are still checked at compile time.
-- This partial runtime bridge is a known limitation, not a limit on
-  what the elaborator can check. See [known limitations](known-limitations.md)
-  and the [postulate binding experiment](postulate-nim-binding-experiment.md)
-  for the path toward callable Nim-backed operations.
+  support primitive `Int`/`Nat`/`Bool`, explicitly mapped opaque Nim types,
+  structural tuples and records, `Vec`/`List`/`Option`, supported generic
+  signatures, and explicitly trusted dependent pairs and records. Unsupported
+  wrapper signatures produce compile-time diagnostics. These runtime codec
+  limits do not restrict what Eponym can check; see
+  [known limitations](known-limitations.md) for the exact boundary and trust
+  assumptions.
 
 A small structural codec also maps non-dependent `Sig(A, B)` values to Nim
 two-element tuples. Primitive fields use the `Int`/`Nat` codecs; opaque fields

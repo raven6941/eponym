@@ -693,8 +693,10 @@ implementations.
   behavior. `tests/test_package_prelude_install.sh` mirrors the flat installed
   module layout from `installFiles`; a separate isolated Nimble install also
   compiled the tutorial and ran the installed-prelude runtime example.
-- [ ] Revisit the first-use time estimate after installation and editor setup
-   are streamlined.
+- [x] Revisit the first-use time estimate after installation and editor setup
+   are streamlined. Keep the tutorial's ~15-minute estimate scoped to a user
+   with Nim and nimble installed; the optional VS Code Sheds setup is separate.
+   This is a documentation walkthrough estimate, not a timed first-user study.
 
 **Exit criteria:**
 
@@ -705,8 +707,9 @@ implementations.
 - [x] Verify `nimble install` in an isolated `NIMBLE_DIR` using cached local
   `falsify` and package-index data, then compile the tutorial snippets and run
   the installed-prelude example from a separate clean Nim project.
-- [ ] Revisit the first-use estimate after installation and editor setup are
-  streamlined.
+- [x] Review the first-use estimate against the clean-install path and current
+  editor guide; retain the qualified estimate above and identify first-user
+  timing as future usability research.
 
 ### Cross-stage validation and project claims
 

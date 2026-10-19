@@ -91,11 +91,12 @@ eponymBlock:
 - Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).
 - Two-layer shape: the checked definitions are the proof layer; the
   surrounding Nim is the running layer. Generated runtime calls support
-  primitive `Int`/`Nat`, `Bool` (when `bool.ep` is imported), non-dependent
-  `Sig` values as Nim tuples, non-dependent
-  named records as mapped Nim objects, and explicitly mapped opaque postulated
-  types; dependent structures and other unsupported definitions are checked
-  at compile time but do not yet have typed Nim wrappers.
+  primitive `Int`/`Nat`, `Bool` (when `bool.ep` is imported), structural
+  `Sig` tuples and named records, `Vec`/`List`/`Option` collections, and
+  explicitly mapped opaque Nim values. Trusted opt-ins expose dependent
+  records and pairs; recursive codecs enforce the index constraints they can
+  represent, such as a vector's length. Unsupported wrapper signatures fail
+  with a compile-time diagnostic while the Eponym definition remains checked.
 - The headline demos in `examples/embedded/` are built this way:
   `paxos_session.nim` (Paxos as dependent session types with
   unforgeable promise tickets), `convex_opt_vec.nim` (DCP-checked
