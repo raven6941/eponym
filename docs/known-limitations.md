@@ -83,7 +83,11 @@ Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque
 leaves. Named non-dependent `record` declarations map to Nim objects via
 `runtimeType`, using the same recursive codecs in declaration order. Property
 tests cover primitive and opaque tuple fields and mixed primitive and opaque
-record fields. Dependent `Sig` types and records with dependent fields remain
+record fields. A dependent `Sig` can also be exposed by a typed wrapper when
+that definition opts in with `runtimePairTrusted(definition)`; its field codecs
+are checked recursively, while correspondence between host field values and
+their indices remains trusted. Without the opt-in, dependent `Sig` wrapper
+signatures remain unsupported. Records with dependent fields remain
 unsupported. A
 mapped `Future[T]` can pass through an opaque postulate adapter as either an
 argument or result; the bridge preserves the same Nim future value. Eponym
@@ -121,7 +125,12 @@ It checks the declared argument type heads and tuple field type heads; indices
 on mapped type families remain trusted. `bindPostulatePair` rejects dependent
 Sigma results. `bindPostulatePairTrusted` permits them when the declared fields
 have codecs, but the host adapter must uphold the relationship between a field
-and its index.
+and its index. A generated wrapper can expose a dependent Sigma result as a
+Nim tuple when that checked definition is explicitly marked
+`runtimePairTrusted(definition)`. The recursive codecs check each field's Nim
+representation, while the relationship between the field values and dependent
+indices remains trusted. Without this marker, generated wrappers continue to
+reject dependent Sigma signatures.
 Opaque bindings require explicit `runtimeType(EponymType, NimType)` mappings
 to postulated Eponym types or
 type families. Nim checks adapter and generated wrapper signatures;
