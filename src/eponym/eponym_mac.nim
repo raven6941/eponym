@@ -1986,11 +1986,14 @@ proc unsupportedRuntimeWrapper(decl: NimNode, defName: string,
                                allowDependentSigma = false): NimNode =
   let params = decl[3]
   var reason = "unsupported generic or higher-order signature"
-  if decl[2].kind != nnkEmpty:
-    reason = "generic Eponym procedures do not yet have runtime wrappers"
+  let generic = genericRuntimeInfo(decl, mappings)
+  let codecMappings = if generic.error.len == 0:
+    generic.codecMappings else: mappings
+  if generic.error.len > 0:
+    reason = generic.error
   elif params.len == 0 or params[0].kind == nnkEmpty:
     reason = "Eponym procedure has no explicit runtime result type"
-  elif runtimeNimType(params[0], mappings, records,
+  elif runtimeNimType(params[0], codecMappings, records,
                       allowDependentSigma).isNil:
     reason = "no runtime codec for Eponym result type '" & repr(params[0]) & "'"
   else:
@@ -2000,7 +2003,7 @@ proc unsupportedRuntimeWrapper(decl: NimNode, defName: string,
         reason = "unsupported Nim parameter declaration for Eponym procedure '" &
           defName & "'"
         break
-      if runtimeNimType(p[^2], mappings, records,
+      if runtimeNimType(p[^2], codecMappings, records,
                         allowDependentSigma).isNil:
         reason = "no runtime codec for Eponym parameter type '" & repr(p[^2]) & "'"
         break

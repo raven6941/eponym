@@ -532,8 +532,10 @@ implementations.
 - [x] For explicit `proc` declarations with no runtime codec, emit a
    compile-time error template naming the unsupported Eponym result or
    parameter type instead of silently generating a `varargs[int]` wrapper.
-   A negative fixture covers a missing opaque mapping. Full structural and
-   dependent codecs remain open.
+     Negative fixtures cover a missing opaque mapping and a generic value
+     binder without a mapped runtime representation. The latter names the
+     supported binder categories and the missing `runtimeType` mapping.
+     Full structural and dependent codecs remain open where no codec exists.
 - [x] Keep runtime source re-elaboration outside the per-call path. The Nim
    macro VM's checked `Term`/`Value` objects contain runtime closures and
    cannot be retained directly as executable runtime values; the first call
