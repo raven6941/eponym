@@ -91,9 +91,9 @@ for host-side interpreters of reified data. Zero-argument definitions get a
 no-argument helper. When every parameter has a runtime codec, parameterized
 definitions also get a Nim-typed overload that converts arguments and returns
 the result as a `Value`. Mapped host values are not checked against dependent
-indices. A raw `openArray[Value]` overload remains available and checks only
-argument count and validates values when their Eponym types can be represented
-without opaque host boxes, including supported dependent argument types.
+indices. A raw `openArray[Value]` overload remains available; it validates
+supported argument types recursively, including dependent structures, while
+function-valued arguments and opaque host boxes remain trusted.
 Structural `Vec`, `List`, and `Option` values are checked in one traversal for
 shape, represented indices, and element types. Nested vectors and recursive
 payload-bearing data variants are checked through their constructor
@@ -119,9 +119,12 @@ has runtime codecs, the macro derives a typed Nim wrapper and typed
 raw Value interface. When its Pi signature can be reconstructed, the raw
 interface also validates arguments against that signature, including
 dependent Vec lengths. Generic imported signatures with explicit type binders
-are checked by instantiating the checked Pi telescope at runtime. Unsupported
-implicit or higher-order binders retain arity-only validation. Function-valued
-arguments and unmapped host boxes remain trusted escape hatches. Imported checked bodies can
+are checked by instantiating the checked Pi telescope at runtime. Explicit
+higher-order signatures with supported Nim callback leaf codecs also generate
+typed closure wrappers. Unsupported implicit binders and callback signatures
+without codecs retain the raw interface; a raw callback `Value` has no runtime
+type witness and remains trusted. Unmapped host boxes remain a trusted escape
+hatch. Imported checked bodies can
 invoke postulates bound by `bindPostulate` in the same block. Tests cover
 typed and raw imported identity calls, a typed call through a bound imported
 postulate, and an imported length-indexed Vec wrapper that rejects the wrong

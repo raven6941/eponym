@@ -924,6 +924,39 @@ proc runtimeTermTypeAst(term: Term, ctx: seq[string],
     if term.lvl == 0: ident"Univ" else: nil
   else: nil
 
+proc runtimeTermNimTypeAst(term: Term, ctx: seq[string],
+    refNames: Table[int, string]): NimNode =
+  ## Rebuild runtime-capable Eponym types as Nim types. A Pi occurring in a
+  ## value position is a Nim closure type; top-level Pis are flattened by
+  ## importedRuntimeProcDecl into ordinary proc parameters.
+  if term.isNil: return nil
+  if term.kind != tPi:
+    return runtimeTermTypeAst(term, ctx, refNames)
+  var current = term
+  var callbackCtx = ctx
+  var formal = newNimNode(nnkFormalParams)
+  var argumentIndex = 0
+  while not current.isNil and current.kind == tPi:
+    if current.impl or current.qty != qOmega or current.dom.isNil or
+        current.dom.kind == tType:
+      return nil
+    let argumentName = if current.scope.adv.len > 0 and
+        current.scope.adv != "_": current.scope.adv
+      else: "callbackArg" & $argumentIndex
+    let argumentType = runtimeTermNimTypeAst(current.dom, callbackCtx,
+      refNames)
+    if argumentType.isNil: return nil
+    formal.add(newIdentDefs(ident(argumentName), argumentType,
+      newEmptyNode()))
+    callbackCtx = @[argumentName] & callbackCtx
+    current = current.scope.bdy
+    inc argumentIndex
+  if argumentIndex == 0: return nil
+  let resultType = runtimeTermNimTypeAst(current, callbackCtx, refNames)
+  if resultType.isNil: return nil
+  formal.insert(0, resultType)
+  result = newTree(nnkProcTy, formal, newTree(nnkPragma, ident"closure"))
+
 proc runtimeTermTypeAfterArgs(ty: Term, count: int, globals: Globals):
     tuple[resultType: NimNode, argNames: seq[string]] =
   var current = ty
@@ -964,14 +997,14 @@ proc importedRuntimeProcDecl(definition: ElabDef,
     let name = if current.scope.adv.len > 0 and
         current.scope.adv != "_": current.scope.adv
       else: "runtimeArg" & $argumentIndex
-    let argType = runtimeTermTypeAst(current.dom, ctx, refNames)
+    let argType = runtimeTermNimTypeAst(current.dom, ctx, refNames)
     if argType.isNil: return nil
     formal.add(newIdentDefs(ident(name), argType, newEmptyNode()))
     ctx = @[name] & ctx
     current = current.scope.bdy
     inc argumentIndex
   if argumentIndex == 0: return nil
-  let resultType = runtimeTermTypeAst(current, ctx, refNames)
+  let resultType = runtimeTermNimTypeAst(current, ctx, refNames)
   if resultType.isNil: return nil
   formal[0] = resultType
   result = newNimNode(nnkProcDef)

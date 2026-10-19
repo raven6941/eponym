@@ -215,6 +215,8 @@ eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
   runtimeValue(importedIntIdentity)
   runtimeValue(importedGenericIdentity)
+  runtimeValue(importedCallbackApply)
+  runtimeValue(importedCallbackApply2)
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
@@ -1140,6 +1142,40 @@ when isMainModule:
   except ValueError:
     importedGenericWrongTypeRejected = true
   doAssert importedGenericWrongTypeRejected
+  let importedCallbackCases = forAll(
+    "imported higher-order definitions accept checked Nim closures", r, 200,
+    proc(r: var Rng): tuple[seed, value: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[seed, value: int]): bool =
+      let callback = proc(value: int): int = value + input.seed
+      let expected = input.value + input.seed
+      let typedResult = importedCallbackApply(callback, input.value)
+      let runtimeResult = importedCallbackApplyRuntimeValue(callback,
+        input.value)
+      typedResult == expected and valueToInt(runtimeResult.value) == expected,
+    proc(input: tuple[seed, value: int]): seq[tuple[seed, value: int]] =
+      @[(0, input.value), (input.seed, input.value)])
+  if not importedCallbackCases:
+    quit(1)
+  let importedMultiCallbackCases = forAll(
+    "imported definitions adapt multi-argument Nim closures", r, 200,
+    proc(r: var Rng): tuple[left, right, bias: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[left, right, bias: int]): bool =
+      let callback = proc(left, right: int): int =
+        left * 3 + right + input.bias
+      let expected = input.left * 3 + input.right + input.bias
+      let typedResult = importedCallbackApply2(callback, input.left,
+        input.right)
+      let runtimeResult = importedCallbackApply2RuntimeValue(callback,
+        input.left, input.right)
+      typedResult == expected and valueToInt(runtimeResult.value) == expected,
+    proc(input: tuple[left, right, bias: int]):
+        seq[tuple[left, right, bias: int]] =
+      @[(0, input.right, input.bias), (input.left, 0, input.bias),
+        (input.left, input.right, 0)])
+  if not importedMultiCallbackCases:
+    quit(1)
   var importedVectorMismatchRejected = false
   try:
     discard importedVectorIdentity(3, @[1, 2])

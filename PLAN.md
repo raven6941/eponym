@@ -484,9 +484,13 @@ implementations.
       including a dependent Vec length. Reconstructed generic signatures with
       explicit type binders also validate their type and value arguments by
       instantiating the checked Pi telescope; negative checks reject a wrong
-      generic type or value. Unsupported implicit or higher-order binders,
-      function-valued arguments, and unmapped host boxes retain trusted or
-      arity-only escape hatches.
+      generic type or value. Imported explicit higher-order signatures with
+      supported Nim callback leaf codecs now generate typed closure wrappers;
+      200-case properties cover unary and multi-argument Nim callbacks through
+      both generated wrappers and typed `RuntimeValue` calls. Raw callback
+      Values have no runtime type witness, while unsupported implicit binders,
+      callback leaf types without codecs, and unmapped host boxes remain
+      trusted or raw-interface escape hatches.
    - [x] Add recursive structural codecs for payload-bearing indexed data
      constructors with `runtimeDataVariant(Family)`. `RuntimeStructuredVariant`
      maps Int, Nat, and Bool fields to Nim values, recursively maps nested data
