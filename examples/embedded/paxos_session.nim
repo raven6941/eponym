@@ -135,88 +135,88 @@ eponymBlock:
   postulate(promiseValue, Promise -> Nat)
   bindPostulate(promiseValue, hostPromiseValue, Promise, Nat)
   postulate(promiseTicket,
-    Pi(promise: Promise, AcceptMsg(promiseValue(promise))))
+    Pi(promise: Promise, AcceptMsg[promiseValue(promise)]))
   bindPostulate(promiseTicket, hostPromiseTicket, Promise, AcceptMsg)
 
   proc propAfterAccept(accepted: Nat): Session = endS()
   proc propAfterPromise(promise: Promise): Session =
-    sendD(AcceptMsg(promiseValue(promise)),
-      lam(ticket, AcceptMsg(promiseValue(promise)),
-        recvD(Nat, propAfterAccept)))
+    sendD[AcceptMsg[promiseValue(promise)]](
+      lam(ticket, AcceptMsg[promiseValue(promise)],
+        recvD[Nat](propAfterAccept)))
   proc propAfterPrepare(ballot: Nat): Session =
-    recvD(Promise, propAfterPromise)
-  proc propProto(): Session = sendD(Nat, propAfterPrepare)
+    recvD[Promise](propAfterPromise)
+  proc propProto(): Session = sendD[Nat](propAfterPrepare)
 
   proc accAfterAccept(accepted: Nat): Session = endS()
   proc accAfterPromise(promise: Promise): Session =
-    recvD(AcceptMsg(promiseValue(promise)),
-      lam(ticket, AcceptMsg(promiseValue(promise)),
-        sendD(Nat, accAfterAccept)))
+    recvD[AcceptMsg[promiseValue(promise)]](
+      lam(ticket, AcceptMsg[promiseValue(promise)],
+        sendD[Nat](accAfterAccept)))
   proc accAfterPrepare(ballot: Nat): Session =
-    sendD(Promise, accAfterPromise)
-  proc accProto(): Session = recvD(Nat, accAfterPrepare)
+    sendD[Promise](accAfterPromise)
+  proc accProto(): Session = recvD[Nat](accAfterPrepare)
 
   postulate(sendPrepare,
     Pi(ballot: Nat,
-       ch {.linear.}: Chan(propProto()),
-       Chan(propAfterPrepare(ballot))))
+       ch {.linear.}: Chan[propProto()],
+       Chan[propAfterPrepare(ballot)]))
   bindPostulate(sendPrepare, hostSendPrepare, Nat, Chan, Chan)
 
   postulate(recvPromise,
     Pi(ballot: Nat,
-       ch {.linear.}: Chan(propAfterPrepare(ballot)),
-       Sig(promise: Promise, Chan(propAfterPromise(promise)))))
+       ch {.linear.}: Chan[propAfterPrepare(ballot)],
+       Sig(promise: Promise, Chan[propAfterPromise(promise)])))
   bindPostulatePairTrusted(recvPromise, hostRecvPromise,
     Nat, Chan, Promise, Chan)
 
   postulate(sendAccept,
     Pi(promise: Promise,
-       ticket: AcceptMsg(promiseValue(promise)),
-       ch {.linear.}: Chan(propAfterPromise(promise)),
-       Chan(recvD(Nat, propAfterAccept))))
+       ticket: AcceptMsg[promiseValue(promise)],
+       ch {.linear.}: Chan[propAfterPromise(promise)],
+       Chan[recvD(Nat, propAfterAccept)]))
   bindPostulate(sendAccept, hostSendAccept,
     Promise, AcceptMsg, Chan, Chan)
 
   postulate(recvAccepted,
     Pi(promise: Promise,
-       ticket: AcceptMsg(promiseValue(promise)),
-       ch {.linear.}: Chan(recvD(Nat, propAfterAccept)),
-       Sig(accepted: Nat, Chan(endS()))))
+       ticket: AcceptMsg[promiseValue(promise)],
+       ch {.linear.}: Chan[recvD(Nat, propAfterAccept)],
+       Sig(accepted: Nat, Chan[endS()])))
   bindPostulatePair(recvAccepted, hostRecvAccepted,
     Promise, AcceptMsg, Chan, Nat, Chan)
 
   postulate(recvPrepare,
-    Pi(ch {.linear.}: Chan(accProto()),
-       Sig(ballot: Nat, Chan(accAfterPrepare(ballot)))))
+    Pi(ch {.linear.}: Chan[accProto()],
+       Sig(ballot: Nat, Chan[accAfterPrepare(ballot)])))
   bindPostulatePairTrusted(recvPrepare, hostRecvPrepare,
     Chan, Nat, Chan)
 
   postulate(sendPromise,
     Pi(ballot: Nat,
        stored: Nat,
-       ch {.linear.}: Chan(accAfterPrepare(ballot)),
-       Sig(promise: Promise, Chan(accAfterPromise(promise)))))
+       ch {.linear.}: Chan[accAfterPrepare(ballot)],
+       Sig(promise: Promise, Chan[accAfterPromise(promise)])))
   bindPostulatePairTrusted(sendPromise, hostSendPromise,
     Nat, Nat, Chan, Promise, Chan)
 
   postulate(recvAccept,
     Pi(promise: Promise,
-       ch {.linear.}: Chan(accAfterPromise(promise)),
-       Sig(ticket: AcceptMsg(promiseValue(promise)),
-         Chan(sendD(Nat, accAfterAccept)))))
+       ch {.linear.}: Chan[accAfterPromise(promise)],
+       Sig(ticket: AcceptMsg[promiseValue(promise)],
+         Chan[sendD(Nat, accAfterAccept)])))
   bindPostulatePair(recvAccept, hostRecvAccept,
     Promise, Chan, AcceptMsg, Chan)
 
   postulate(sendAccepted,
     Pi(promise: Promise,
-       ticket: AcceptMsg(promiseValue(promise)),
-       ch {.linear.}: Chan(sendD(Nat, accAfterAccept)),
-       Chan(endS())))
+       ticket: AcceptMsg[promiseValue(promise)],
+       ch {.linear.}: Chan[sendD(Nat, accAfterAccept)],
+       Chan[endS()]))
   bindPostulate(sendAccepted, hostSendAccepted,
     Promise, AcceptMsg, Chan, Chan)
 
-  proc proposer(ballot: Nat, ch {.linear.}: Chan(propProto())):
-      Sig(accepted: Nat, Chan(endS())) =
+  proc proposer(ballot: Nat, ch {.linear.}: Chan[propProto()]):
+      Sig(accepted: Nat, Chan[endS()]) =
     let ch1 = sendPrepare(ballot, ch)
     let promiseAndChannel = recvPromise(ballot, ch1)
     let ch3 = sendAccept(fst(promiseAndChannel),
@@ -224,7 +224,7 @@ eponymBlock:
     recvAccepted(fst(promiseAndChannel),
       promiseTicket(fst(promiseAndChannel)), ch3)
 
-  proc acceptor(stored: Nat, ch {.linear.}: Chan(accProto())): Chan(endS()) =
+  proc acceptor(stored: Nat, ch {.linear.}: Chan[accProto()]): Chan[endS()] =
     let ballotAndChannel = recvPrepare(ch)
     let promiseAndChannel = sendPromise(fst(ballotAndChannel), stored,
       snd(ballotAndChannel))
