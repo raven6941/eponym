@@ -193,8 +193,9 @@ A few notes on the syntax (the full story is in
 - `cons[A, n](x, xs)` takes explicit type and length parameters in brackets,
   followed by ordinary vector terms in parentheses. Recognized call-style
   explicit parameters such as `cons(A, n, x, xs)` and `Vec(A, n)` are rejected
-  by the compiler. Partial applications whose Nat indices are inferred, and
-  other unrecognized expression forms, may still evade legacy-syntax detection.
+  by the compiler. This migration is still being completed: the first-release
+  checklist tracks remaining call-head coverage, a temporary deprecation
+  diagnostic for legacy forms, and the final removal of legacy lowering.
 - `vecnil` is the empty vector. In `.ep` files it is spelled `nil`,
   but inside `eponymBlock` — which is Nim syntax, where `nil` is a
   keyword — you write `vecnil` and the macro maps it back.

@@ -1193,17 +1193,24 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   `.ep` definitions, and check them when a call result is immediately applied.
   Local and imported bracket-call positives and legacy-call negatives cover
   these higher-order call heads.
+- [x] Track callable procedure parameters and local `let` aliases inside each
+  procedure scope, so callback applications cannot bypass the bracket guard.
+  Callback-parameter and returned-function-alias fixtures cover bracket and
+  legacy forms without leaking signatures between procedures; local shadowing
+  also replaces stale callback metadata.
 - [ ] Audit further AST wrappers around callees beyond parenthesized
-  projections, type-family calls, and immediate call results.
+  projections, type-family calls, immediate call results, local aliases, and
+  callback parameters.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.
 - [ ] Add a deprecation diagnostic while temporarily preserving legacy lowering
-  in an earlier PR in the release stack.
+  in an earlier PR in the release stack. This is required before the first
+  release, so users of the pre-release syntax get a migration path.
 - [ ] Remove legacy lowering in the following PR before tagging the first
-  release. Keep the diagnostic and removal as separate, bisectable PRs; stack
-  the removal after the diagnostic, and retain the bracket-only rejection
-  currently implemented in this branch as the final state.
+  release. Keep the diagnostic and removal as separate, bisectable PRs and
+  stack both in the release series; bracket-only syntax is the first-release
+  contract.
 
 ### Deferred after the first release
 

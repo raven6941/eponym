@@ -29,6 +29,7 @@ type LegacyCallInfo = object
 
 var legacyCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
 var legacyResultCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
+var scopedLegacyCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
 var legacyTypeFamilies {.compileTime.} = initHashSet[string]()
 var legacyTypeNames {.compileTime.} = initHashSet[string]()
 var scopedLegacyTypeNames {.compileTime.} = initHashSet[string]()
@@ -79,7 +80,10 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
   let callee = unwrapParens(n[0])
   if callee.kind in {nnkIdent, nnkSym}:
     let head = $callee
-    if head in legacyCallInfo:
+    if head in scopedLegacyCallInfo:
+      info = scopedLegacyCallInfo[head]
+      found = true
+    elif head in legacyCallInfo:
       info = legacyCallInfo[head]
       found = true
   elif callee.kind in {nnkCall, nnkCommand} and callee.len > 0:
@@ -149,6 +153,36 @@ proc registerLegacyInfo(name: string, info: LegacyCallInfo) =
 proc registerLegacyResultInfo(name: string, info: LegacyCallInfo) =
   if info.explicitCount > 0:
     legacyResultCallInfo[name] = info
+
+proc nimTypeCallInfo(ty: NimNode): LegacyCallInfo
+
+proc returnedCallInfo(n: NimNode): LegacyCallInfo =
+  if n.kind notin {nnkCall, nnkCommand} or n.len == 0: return
+  let head = unwrapParens(n[0])
+  if head.kind in {nnkIdent, nnkSym} and $head in legacyResultCallInfo:
+    result = legacyResultCallInfo[$head]
+
+proc registerScopedLetCallInfo(body: NimNode) =
+  if body.kind != nnkStmtList: return
+  for statement in body:
+    if statement.kind != nnkLetSection: continue
+    for binding in statement:
+      if binding.kind != nnkIdentDefs or binding.len < 3: continue
+      var info: LegacyCallInfo
+      if binding[^2].kind != nnkEmpty:
+        info = nimTypeCallInfo(binding[^2])
+      else:
+        let value = unwrapParens(binding[^1])
+        if value.kind in {nnkIdent, nnkSym} and
+            $value in scopedLegacyCallInfo:
+          info = scopedLegacyCallInfo[$value]
+        else:
+          info = returnedCallInfo(value)
+      for i in 0 ..< binding.len - 2:
+        let name = binderName(binding[i])
+        scopedLegacyCallInfo.del(name)
+        if info.explicitCount > 0:
+          scopedLegacyCallInfo[name] = info
 
 proc registerLegacyInfo(name: string, explicitCount, termCount: int,
                         requiresBrackets = false,
@@ -304,6 +338,7 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
 proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
   legacyCallInfo.clear()
   legacyResultCallInfo.clear()
+  scopedLegacyCallInfo.clear()
   legacyTypeFamilies.clear()
   legacyTypeNames.clear()
   scopedLegacyTypeNames.clear()
@@ -850,7 +885,11 @@ proc procDefToEponym(n: NimNode): string =
   let name = $n[0]
   let params = n[3]  # nnkFormalParams: [returnType, param1, param2, ...]
   let priorScopedTypeNames = toSeq(scopedLegacyTypeNames)
+  var priorScopedCallInfo = initTable[string, LegacyCallInfo]()
+  for scopedName, info in scopedLegacyCallInfo:
+    priorScopedCallInfo[scopedName] = info
   scopedLegacyTypeNames.clear()
+  scopedLegacyCallInfo.clear()
   var genericBinders: seq[string] = @[]
   if n[2].kind != nnkEmpty:
     for genericParam in n[2]:
@@ -869,15 +908,22 @@ proc procDefToEponym(n: NimNode): string =
   for i in 1 ..< params.len:
     let p = params[i]  # nnkIdentDefs: [name1, name2, ..., type, default]
     let ty = nimTypeToEponym(p[^2])
+    let callableInfo = nimTypeCallInfo(p[^2])
     for j in 0 ..< p.len - 2:
       let q = qtyPrefix(p[j])
       paramStrs.add("(" & q & binderName(p[j]) & " : " & ty & ")")
+      if callableInfo.explicitCount > 0:
+        scopedLegacyCallInfo[binderName(p[j])] = callableInfo
       if ty == "Type 0":
         scopedLegacyTypeNames.incl(binderName(p[j]))
+  registerScopedLetCallInfo(n[6])
   let body = nimExprToEponym(n[6])
   scopedLegacyTypeNames.clear()
+  scopedLegacyCallInfo.clear()
   for typeName in priorScopedTypeNames:
     scopedLegacyTypeNames.incl(typeName)
+  for scopedName, info in priorScopedCallInfo:
+    scopedLegacyCallInfo[scopedName] = info
   let genericStr = if genericBinders.len == 0: ""
                    else: " " & genericBinders.join(" ")
   "proc " & name & genericStr & " " & paramStrs.join(" ") & " : " & retTy &

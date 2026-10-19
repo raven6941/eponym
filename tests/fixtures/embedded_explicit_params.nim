@@ -36,8 +36,23 @@ eponymBlock:
   proc bracketHigherOrderResult(value: Nat): Nat =
     identityFactory()[Nat](value)
 
+  proc bracketHigherOrderAlias(value: Nat): Nat =
+    let callback = identityFactory()
+    callback[Nat](value)
+
   proc bracketImportedHigherOrderResult(value: Nat): Nat =
     importedIdentityFactory(unitv)[Nat](value)
+
+  proc bracketCallbackParameter(
+      callback: Pi(A: Univ, value: A, A), value: Nat): Nat =
+    callback[Nat](value)
+
+  proc plainNatIdentity(value: Nat): Nat = value
+
+  proc ordinaryCallAfterShadowing(
+      callback: Pi(A: Univ, value: A, A), value: Nat): Nat =
+    let callback = plainNatIdentity
+    callback(value)
 
   proc bracketCallableRecordField(handler: CallableField,
                                   value: Nat): Nat =
