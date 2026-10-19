@@ -635,7 +635,7 @@ proc blockToEponym*(body: NimNode): string =
       elif head == "bindPostulate":
         # Host binding is consumed by eponymBlock after checking its Eponym
         # contract; it is not part of the Eponym source text.
-        if st.len notin {3, 4, 5, 6, 7, 8, 9} or st[1].kind != nnkIdent:
+        if st.len < 3 or st[1].kind != nnkIdent:
           error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       elif head == "bindPostulateValue":
         # Deliberate raw runtime escape hatch; the Nim adapter owns codecs.
@@ -781,7 +781,7 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
       if pairResult:
         if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
           error("bindPostulatePair expects (name, nimProc, Argument[, Argument...], First, Second)", st)
-      elif st.len notin {3, 4, 5, 6, 7, 8, 9} or st[1].kind != nnkIdent:
+      elif st.len < 3 or st[1].kind != nnkIdent:
         error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       let name = $st[1]
       if name in seen:
@@ -1174,6 +1174,48 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
         adapterValue = newCall(bindSym"vHostFunc", partialProc)
     return newCall(bindSym"bindHostValue", bindingsSym, globalsSym,
                    nameLit, adapterValue)
+  if binding.eponymTypes.len >= 7:
+    let argumentCount = binding.eponymTypes.len - 1
+    var decodedArgs: seq[NimNode] = @[]
+    for i in 0 ..< argumentCount:
+      let eponymType = ident(binding.eponymTypes[i])
+      let nimType = runtimeNimType(eponymType, mappings, records)
+      if nimType.isNil:
+        error("bindPostulate for '" & binding.postulateName &
+          "' needs a runtime codec for argument type '" &
+          binding.eponymTypes[i] & "'")
+      let decoded = runtimeValueConversionExpr(eponymType, nimType,
+        newTree(nnkBracketExpr, ident"runtimeArguments", newLit(i)), false,
+        mappings, records, ident"runtimeGlobals")
+      if decoded.isNil:
+        error("bindPostulate could not build a runtime codec for argument '" &
+          binding.eponymTypes[i] & "'")
+      decodedArgs.add(decoded)
+    let resultEponymType = ident(binding.eponymTypes[^1])
+    let resultNimType = runtimeNimType(resultEponymType, mappings, records)
+    if resultNimType.isNil:
+      error("bindPostulate for '" & binding.postulateName &
+        "' needs a runtime codec for result type '" &
+        binding.eponymTypes[^1] & "'")
+    var implementationCall = newCall(binding.implementation)
+    for decodedArg in decodedArgs:
+      implementationCall.add(decodedArg)
+    let encodedResult = runtimeValueConversionExpr(resultEponymType,
+      resultNimType, implementationCall, true, mappings, records,
+      ident"runtimeGlobals")
+    if encodedResult.isNil:
+      error("bindPostulate could not build a runtime codec for result '" &
+        binding.eponymTypes[^1] & "'")
+    let runtimeArgsSym = ident"runtimeArguments"
+    let runtimeGlobalsSym = ident"runtimeGlobals"
+    let adapterBody = newStmtList(encodedResult)
+    let adapter = newProc(params = @[bindSym"Value",
+      newIdentDefs(runtimeArgsSym,
+        newTree(nnkBracketExpr, ident"seq", bindSym"Value"), newEmptyNode()),
+      newIdentDefs(runtimeGlobalsSym, bindSym"Globals", newEmptyNode())],
+      body = adapterBody)
+    return newCall(bindSym"bindHostValueNary", bindingsSym, globalsSym,
+      nameLit, adapter)
   if binding.eponymTypes.len == 0:
     return newCall(bindSym"bindHostIntUnary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
@@ -1554,6 +1596,10 @@ macro eponymBlock*(body: untyped): untyped =
           binding.eponymTypes[binding.pairArgCount],
           binding.eponymTypes[binding.pairArgCount + 1],
           binding.trustedPairIndex)
+        continue
+      if binding.eponymTypes.len >= 7:
+        validateHostMappedNaryType(checkedGlobals, binding.postulateName,
+                                   binding.eponymTypes)
         continue
       case binding.eponymTypes.len
       of 0:

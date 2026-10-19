@@ -188,6 +188,39 @@ proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
       secondTypeName & ") with " &
       (if allowDependentIndex: "a mapped pair" else: "a non-dependent pair"))
 
+proc validateHostMappedNaryType*(globals: Globals, postulateName: string,
+                                 typeNames: openArray[string]) =
+  ## Validate `A1 -> ... -> An -> R` against the explicitly named Eponym
+  ## type heads used by a typed arbitrary-arity Nim adapter.
+  if typeNames.len < 2:
+    raise newException(ValueError,
+      "typed n-ary adapter needs at least one argument and a result type")
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  var expectedIds: seq[int] = @[]
+  for typeName in typeNames:
+    if typeName notin globals or globals[typeName].tm.isNil or
+        globals[typeName].tm.kind != tR:
+      raise newException(ValueError,
+        "typed n-ary adapter type is not a declared Eponym type: " & typeName)
+    expectedIds.add(globals[typeName].tm.refId)
+  var current = entry.ty
+  for i in 0 ..< typeNames.len - 1:
+    if current.isNil or current.kind != tPi or current.impl or
+        current.qty == q0 or opaqueTypeHeadId(current.dom) != expectedIds[i]:
+      raise newException(ValueError,
+        "typed n-ary adapter requires postulate '" & postulateName &
+        "' to have type " & typeNames.join(" -> "))
+    current = current.scope.bdy
+  if current.isNil or opaqueTypeHeadId(current) != expectedIds[^1]:
+    raise newException(ValueError,
+      "typed n-ary adapter requires postulate '" & postulateName &
+      "' to have type " & typeNames.join(" -> "))
+
 proc validateHostValueNaryType*(globals: Globals,
                                 postulateName: string): int =
   ## Validate the deliberately low-level Value adapter target and return its
