@@ -6,6 +6,7 @@
 ## inspection, no hygiene tricks -- nothing that ties us to Nim 2's macro API.
 
 import macros
+import std/algorithm
 import std/tables
 import elab
 import eponym_embed  # runtime wrapper helpers and adapter-shape validation
@@ -37,6 +38,13 @@ var legacyTypeNames {.compileTime.} = initHashSet[string]()
 var scopedLegacyTypeNames {.compileTime.} = initHashSet[string]()
 var legacyFieldCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
 var ambiguousLegacyFieldNames {.compileTime.} = initHashSet[string]()
+
+proc sameCallInfo(a, b: LegacyCallInfo): bool =
+  a.explicitCount == b.explicitCount and a.termCount == b.termCount and
+    a.leadingTermCount == b.leadingTermCount and
+    a.requiredBracketCount == b.requiredBracketCount and
+    a.requiresBrackets == b.requiresBrackets and
+    a.firstExplicitType == b.firstExplicitType
 
 proc isLegacyTypeName(n: NimNode): bool =
   n.kind in {nnkIdent, nnkSym} and
@@ -166,6 +174,7 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
   let resolved = callInfoForHead(n[0])
   if not resolved.found: return
   let info = resolved.info
+  if info.requiredBracketCount <= 0: return
   var supplied = n.len - 1
   var firstArg = if n.len > 1: n[1] else: nil
   if n.kind == nnkCommand:
@@ -181,9 +190,9 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
     supplied = flattened.len
     if flattened.len > 0: firstArg = flattened[0]
   if info.explicitCount == 0: return
-  if info.requiresBrackets and supplied <= info.leadingTermCount:
+  if supplied <= info.leadingTermCount:
     return
-  if not info.requiresBrackets and supplied <= info.termCount and
+  if supplied <= info.termCount and
       not (info.firstExplicitType and supplied > 0 and
         isLegacyTypeName(firstArg)):
     return
@@ -223,10 +232,17 @@ proc nimFormalArgCount(formal: NimNode): int =
 
 proc nimIndexArity(kind: NimNode): int =
   var current = kind
-  while current.kind == nnkInfix and current.len == 3 and
-      $current[0] == "->":
-    inc result
-    current = current[2]
+  while true:
+    if current.kind == nnkInfix and current.len == 3 and
+        $current[0] == "->":
+      inc result
+      current = current[2]
+    elif current.kind == nnkCall and current.len == 3 and
+        current[0].kind in {nnkIdent, nnkSym} and $current[0] == "Pi":
+      inc result
+      current = current[2]
+    else:
+      break
 
 proc registerLegacyInfo(name: string, info: LegacyCallInfo) =
   if info.explicitCount > 0:
@@ -266,11 +282,13 @@ proc registerScopedLetCallInfo(body: NimNode) =
 
 proc registerLegacyInfo(name: string, explicitCount, termCount: int,
                         requiresBrackets = false,
-                        firstExplicitType = false) =
+                        firstExplicitType = false,
+                        requiredBracketCount = -1) =
   if explicitCount > 0:
     legacyCallInfo[name] = LegacyCallInfo(explicitCount: explicitCount,
       termCount: termCount, requiresBrackets: requiresBrackets,
-      requiredBracketCount: (if requiresBrackets: explicitCount else: 0),
+      requiredBracketCount: (if requiredBracketCount >= 0:
+        requiredBracketCount elif requiresBrackets: explicitCount else: 0),
       firstExplicitType: firstExplicitType)
 
 proc nimTypeToEponym(n: NimNode): string
@@ -312,6 +330,75 @@ proc surfaceFamilyCallInfo(params: seq[tuple[name: string, ty: PreTerm,
       inc result.explicitCount
       if result.explicitCount == 1: result.firstExplicitType = isType
       if isType and not param.impl:
+        inc result.requiredBracketCount
+        result.requiresBrackets = true
+    else:
+      inc result.termCount
+      if result.explicitCount == 0: inc result.leadingTermCount
+
+proc mentionsPretermName(term: PreTerm, name: string): bool =
+  if term.isNil: return false
+  if term.kind == pkVar and term.name == name: return true
+  mentionsPretermName(term.c1, name) or mentionsPretermName(term.c2, name) or
+    mentionsPretermName(term.c3, name)
+
+proc surfaceIndexArity(ty: PreTerm): int
+
+proc surfaceApplicationArgs(term: PreTerm): seq[PreTerm] =
+  var current = term
+  while not current.isNil and current.kind == pkApp:
+    result.add(current.c2)
+    current = current.c1
+  result.reverse()
+
+proc unaryIndexExpression(term: PreTerm): bool =
+  if term.kind == pkVar: return true
+  if term.kind != pkApp: return false
+  let args = surfaceApplicationArgs(term)
+  args.len == 1 and unaryIndexExpression(args[0])
+
+proc constructorIndexBinders(params: int, indexTy, resultTy: PreTerm,
+    tele: seq[tuple[name: string, ty: PreTerm, impl: bool]]): HashSet[string] =
+  ## Identify constructor arguments that determine the indexed-family result.
+  ## A direct index argument, or a unary constructor around one binder (such
+  ## as `suc(n)`), identifies a corresponding constructor binder when its type
+  ## matches the index domain. Compound indices remain inferable from their
+  ## value arguments; guessing which of several binders should be bracketed
+  ## would reject valid Nim-shaped calls.
+  result = initHashSet[string]()
+  let resultArgs = surfaceApplicationArgs(resultTy)
+  let indexCount = surfaceIndexArity(indexTy)
+  if resultArgs.len < params + indexCount: return
+  var domains: seq[PreTerm] = @[]
+  var current = indexTy
+  while not current.isNil and current.kind == pkPi:
+    domains.add(current.c1)
+    current = current.c2
+  for i in 0 ..< indexCount:
+    let indexExpr = resultArgs[params + i]
+    if indexExpr.kind != pkApp or not unaryIndexExpression(indexExpr): continue
+    var candidate = ""
+    var ambiguous = false
+    for binder in tele:
+      if not binder.impl and mentionsPretermName(indexExpr, binder.name) and
+          $binder.ty == $domains[i]:
+        if candidate.len > 0:
+          ambiguous = true
+          break
+        candidate = binder.name
+    if candidate.len > 0 and not ambiguous:
+      result.incl(candidate)
+
+proc surfaceConstructorCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
+    impl: bool, erased: bool, qty: Qty]],
+    indexBinders: HashSet[string]): LegacyCallInfo =
+  for binder in tele:
+    let isType = binder.ty.kind in {pkUniv, pkUnivN}
+    let isIndexedArg = binder.name in indexBinders
+    if binder.impl or isType or isIndexedArg:
+      inc result.explicitCount
+      if result.explicitCount == 1: result.firstExplicitType = isType
+      if isIndexedArg or (isType and not binder.impl):
         inc result.requiredBracketCount
         result.requiresBrackets = true
     else:
@@ -364,13 +451,6 @@ proc mergeCallInfo(a, b: LegacyCallInfo): LegacyCallInfo =
   result.firstExplicitType = if a.explicitCount > 0: a.firstExplicitType
     else: b.firstExplicitType
 
-proc sameCallInfo(a, b: LegacyCallInfo): bool =
-  a.explicitCount == b.explicitCount and a.termCount == b.termCount and
-    a.leadingTermCount == b.leadingTermCount and
-    a.requiredBracketCount == b.requiredBracketCount and
-    a.requiresBrackets == b.requiresBrackets and
-    a.firstExplicitType == b.firstExplicitType
-
 proc registerLegacyFieldInfo(name: string, info: LegacyCallInfo) =
   if name in ambiguousLegacyFieldNames: return
   if name in legacyFieldCallInfo:
@@ -409,8 +489,13 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
       if familyInfo.explicitCount + surfaceIndexArity(declaration.indexTy) > 0:
         legacyTypeFamilies.incl(declaration.dname)
       for constructor in declaration.ctors:
+        var tele: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
+        for binder in constructor.tele:
+          tele.add((binder.name, binder.ty, binder.impl))
         let ctorInfo = mergeCallInfo(familyInfo,
-          surfaceCallInfo(constructor.tele))
+          surfaceConstructorCallInfo(constructor.tele,
+            constructorIndexBinders(declaration.params.len,
+              declaration.indexTy, constructor.retTy, tele)))
         registerLegacyInfo(constructor.name, ctorInfo)
         if constructor.name == "nil":
           registerLegacyInfo("vecnil", ctorInfo)
@@ -444,11 +529,59 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
   legacyFieldCallInfo.clear()
   ambiguousLegacyFieldNames.clear()
   var seen = initHashSet[string]()
+  # Register data constructor signatures before ordinary Nim procedures.
+  # Constructors are represented as `proc`s in the macro AST, so the later
+  # generic-procedure pass must not replace their indexed-family metadata.
+  for statement in body:
+    if statement.kind == nnkCall and statement.len >= 4 and
+        statement[0].kind in {nnkIdent, nnkSym} and $statement[0] == "data":
+      var params: NimNode = nil
+      var kind: NimNode
+      var constructors: NimNode
+      if statement[2].kind == nnkBracket:
+        params = statement[2]
+        kind = statement[3]
+        if statement.len > 4: constructors = statement[4]
+      else:
+        kind = statement[2]
+        if statement.len > 3: constructors = statement[3]
+      let paramCount = if params.isNil: 0 else: params.len
+      legacyTypeNames.incl($statement[1])
+      if paramCount + nimIndexArity(kind) > 0:
+        legacyTypeFamilies.incl($statement[1])
+      if not constructors.isNil and constructors.kind == nnkStmtList:
+        for constructor in constructors:
+          if constructor.kind != nnkProcDef: continue
+          let typeCount = nimLeadingUniverseFormalCount(constructor[3])
+          var tele: seq[tuple[name: string, ty: PreTerm, impl: bool]] = @[]
+          for i in 1 ..< constructor[3].len:
+            let formal = constructor[3][i]
+            if formal.kind != nnkIdentDefs: continue
+            let binderTy = nimTypePreTerm(formal[^2])
+            for j in 0 ..< formal.len - 2:
+              tele.add((binderName(formal[j]), binderTy, false))
+          let indexBinders = constructorIndexBinders(paramCount,
+            nimTypePreTerm(kind), nimTypePreTerm(constructor[3][0]), tele)
+          let explicitCount = paramCount + typeCount + indexBinders.len
+          let firstType = if paramCount > 0:
+            nimBinderIsUniverse(params[0])
+          else:
+            typeCount > 0
+          registerLegacyInfo($constructor[0], explicitCount,
+            nimFormalArgCount(constructor[3]) - typeCount -
+              indexBinders.len,
+                paramCount + typeCount > 0, firstType,
+            paramCount + typeCount)
   for statement in body:
     case statement.kind
     of nnkProcDef:
-      registerLegacyInfo($statement[0],
-        nimGenericCallInfo(statement[2], statement[3]))
+      var procInfo = nimGenericCallInfo(statement[2], statement[3])
+      if $statement[0] in legacyCallInfo:
+        let registered = legacyCallInfo[$statement[0]]
+        if registered.explicitCount > 0 and
+            registered.explicitCount != nimGenericParamCount(statement[2]):
+          procInfo = registered
+      registerLegacyInfo($statement[0], procInfo)
       if statement[3].kind == nnkFormalParams and
           statement[3][0].kind != nnkEmpty:
         registerLegacyResultInfo($statement[0],
@@ -475,33 +608,8 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
               definition[1].kind in {nnkIdent, nnkSym}:
             registerLegacyInfo($definition[1],
               nimTypeCallInfo(definition[2]))
-      elif head == "data" and statement.len >= 4:
-        var params: NimNode = nil
-        var kind: NimNode
-        var constructors: NimNode
-        if statement[2].kind == nnkBracket:
-          params = statement[2]
-          kind = statement[3]
-          if statement.len > 4: constructors = statement[4]
-        else:
-          kind = statement[2]
-          if statement.len > 3: constructors = statement[3]
-        let paramCount = if params.isNil: 0 else: params.len
-        legacyTypeNames.incl($statement[1])
-        if paramCount + nimIndexArity(kind) > 0:
-          legacyTypeFamilies.incl($statement[1])
-        if not constructors.isNil and constructors.kind == nnkStmtList:
-          for constructor in constructors:
-            if constructor.kind == nnkProcDef:
-              let typeCount = nimLeadingUniverseFormalCount(constructor[3])
-              let explicitCount = paramCount + typeCount
-              let firstType = if paramCount > 0:
-                nimBinderIsUniverse(params[0])
-              else:
-                typeCount > 0
-              registerLegacyInfo($constructor[0], explicitCount,
-                nimFormalArgCount(constructor[3]) - typeCount,
-                explicitCount > 0, firstType)
+      elif head == "data":
+        discard # constructor signatures were registered in the first pass
       elif head == "record" and statement.len == 3 and
           statement[2].kind == nnkStmtList:
         for field in statement[2]:

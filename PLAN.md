@@ -1216,9 +1216,13 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   equality-constructor fixture confirms `refl[Nat](zero())` remains valid when
   its term index is inferred from the value argument.
 - [ ] Finish the callable callee audit for partial bracket applications of
-  constructor indices and other inferable binders. Those may be supplied in
-  brackets or inferred from ordinary term arguments; distinguish their
-  positions before rejecting legacy forms.
+  constructor indices and other inferable binders. The syntax guard
+  distinguishes required type parameters from index binders, rejects
+  call-style index arguments when their signature is known, and leaves
+  ordinary inferred applications alone. Constructor indices currently need
+  brackets: the elaborator rejects partial applications such as
+  `cons[Nat](x, xs)` instead of inferring the index from `xs`. Implement that
+  inference and add positive coverage before claiming omitted-index support.
   Other relevant supported forms—identifiers, parenthesized and qualified
   calls, returned calls, callback aliases, conditionals, type ascriptions, and
   statement-list expressions—have focused coverage. Unsupported Nim AST forms

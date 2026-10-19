@@ -11,6 +11,11 @@ eponymBlock:
   data(Protocol, Univ):
     proc protocolSend(A: Univ, payload: Nat): Protocol
 
+  data(LocalVec, [A: Univ], Nat -> Univ):
+    proc localNil(): LocalVec[A, 0]
+    proc localCons(n: Nat, x: A, xs: LocalVec[A, n]):
+        LocalVec[A, suc(n)]
+
   record(LocalCallableField):
     field(apply, Nat -> Nat -> Nat)
 
@@ -76,6 +81,10 @@ eponymBlock:
   proc bracketLocalCallableRecordField(handler: LocalCallableField,
                                        value: Nat): Nat =
     handler.apply[zero()](value)
+
+  proc bracketLocalIndexedConstructor(value: Nat,
+      tail: LocalVec[Nat, 0]): LocalVec[Nat, 1] =
+    localCons[Nat, zero()](value, tail)
 
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =
