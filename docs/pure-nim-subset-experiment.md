@@ -27,7 +27,8 @@ The implemented slice covers familiar expressions whose semantics can be
 represented directly in the current core:
 
 - local `let` bindings;
-- unary minus and `+`, `-`, `*`, lowered to `subInt`, `addInt`, `subInt`, and
+- integer literals including `1` (lowered as the parser's unambiguous `01`
+  spelling) and unary minus and `+`, `-`, `*`, lowered to `subInt`, `addInt`, `subInt`, and
   `mulInt` respectively (only when Eponym checks the expression as `Int`).
   Overflow follows the existing primitive implementation; this syntax adds
   no overflow proof or checked arithmetic guarantee.

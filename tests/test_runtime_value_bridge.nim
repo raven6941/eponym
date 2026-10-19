@@ -241,6 +241,8 @@ proc hostInvokeCheckedIntCallback(callback: NimIntCallback,
 proc hostWrongRoute(channel: int, message: string): int = channel + message.len
 
 proc hostSumSix(a, b, c, d, e, f: int): int = a + b + c + d + e + f
+proc hostBoolPredicateNim(value: int): bool =
+  value mod 2 == 0
 
 static:
   doAssert compiles(hostIntUnary(hostStepNim))
@@ -266,12 +268,17 @@ eponymBlock:
   import "../lib/bool.ep"
   postulate(Int, Univ)
   postulate(Nat, Univ)
+  postulate(hostBoolTick, Int -> Bool)
+  bindPostulate(hostBoolTick, hostBoolPredicateNim, Int, Bool)
   postulate(hostPlusSeven, Int -> Int)
   bindPostulate(hostPlusSeven, hostStepNim)
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
   proc generatedNatId(value: Nat): Nat = value
   proc generatedBoolXor(left: Bool, right: Bool): Bool = left xor right
+  proc generatedIntOne(): Int = 1
+  proc generatedBoolXorWithNimCalls(): Bool =
+    hostBoolTick(0) xor hostBoolTick(1)
   proc generatedSigmaId(value: Sig(Nat, Int)): Sig(Nat, Int) = value
   proc generatedArithmetic(left: Int, right: Int, scale: Int): Int =
     let difference = left - right
@@ -2358,6 +2365,8 @@ when isMainModule:
       generatedBoolXor(input.left, input.right) == (input.left xor input.right),
     proc(input: tuple[left, right: bool]): seq[tuple[left, right: bool]] =
       @[(false, input.right), (input.left, false)])
+  doAssert generatedIntOne() == 1
+  doAssert generatedBoolXorWithNimCalls() == (true xor false)
   let sigmaRoundTrips = forAll(
     "structural Sigma codec round-trips Nat/Int tuple values", r, 200,
     proc(r: var Rng): int = r.genInt(-1000, 1000),

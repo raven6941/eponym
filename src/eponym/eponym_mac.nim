@@ -174,11 +174,12 @@ proc nimExprToEponym(n: NimNode): string =
     # as string syntax. This also resolves Issue #8: nested literals in
     # eponymBlock bodies (e.g. cons(Int, 2, a, ...), eConst 3) now elaborate
     # per their expected type instead of always becoming Nat suc-chains.
-    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so
-    # the Nat literal one is spelled `suc zero` here (as in string syntax).
+    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so use
+    # the parser's unambiguous integer spelling `01`. The elaborator still
+    # overloads it against the expected Nat or Int type.
     let v = n.intVal
     if v < 0: error("negative integer literal", n)
-    if v == 1: "(suc zero)" else: $v
+    if v == 1: "01" else: $v
   of nnkStmtList:
     # Proc body: convert let-statements to nested let...in, final expr is body
     if n.len == 0: error("eponymBlock: empty proc body", n)

@@ -490,3 +490,6 @@ short-circuit behavior even if the right side calls a bound postulate. These
 forms do not enable ordinary effectful Nim control flow inside the block.
 Boolean `xor` is also supported and evaluates each operand once before the
 checked Bool case split, matching Nim's eager operand evaluation.
+The integer literal `1` is emitted as Eponym's unambiguous `01` spelling so
+it can be overloaded by the checked expected type as either `Int` or `Nat`;
+it does not become a Nat successor unconditionally.
