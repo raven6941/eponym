@@ -1248,7 +1248,9 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   the declaration order of required type binders and inferable indices, so a
   partial bracket application cannot make a later type argument appear
   positional; an interleaved `n, A, value` callback has positive full-bracket
-  and negative partial-bracket coverage.
+  and negative partial-bracket coverage. A required leading type binder is
+  also rejected in parentheses when the supplied count would otherwise look
+  like an ordinary one-argument call.
   Compile-time callback regressions cover inferred, result-inferred (including
   an index nested in a `Sig` field), and bracket-supplied indices. The runtime
   bridge property suite passes with dependent callback calls omitting their

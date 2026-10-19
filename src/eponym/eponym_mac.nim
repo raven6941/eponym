@@ -310,6 +310,9 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
   if info.explicitCount == 0: return
   if supplied <= info.leadingTermCount:
     return
+  if info.requiredBracketCount > 0:
+    error("eponymBlock: call-style explicit parameters have been removed; " &
+      "use square brackets for Eponym type/index arguments", n)
   if supplied <= info.termCount and
       not (info.firstExplicitType and supplied > 0 and
         isLegacyTypeName(firstArg)):
