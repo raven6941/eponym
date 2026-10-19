@@ -311,6 +311,9 @@ eponymBlock:
   runtimeVectorArray(Vec)
   proc generatedArrayVecIdentity[n: Nat](values: Vec[Int, n]): Vec[Int, n] =
     values
+  proc generatedArrayVecCallback(
+      callback: proc(values: Vec[Int, 3]): Vec[Int, 3] {.closure.},
+      values: Vec[Int, 3]): Vec[Int, 3] = callback(values)
   runtimeValue(generatedArrayVecIdentity)
 
 eponymBlock:
@@ -2623,6 +2626,24 @@ proc callbackRole : Callback -> Sample -> Sample =
       for i in low(smaller) .. high(smaller): smaller[i] = 0
       @[smaller])
   if not vectorArrayCases:
+    quit(1)
+  let vectorArrayCallbackCases = forAll(
+    "fixed Nim arrays cross checked closure arguments and results", r, 200,
+    proc(r: var Rng): TestIntArray =
+      for i in low(result) .. high(result):
+        result[i] = r.genInt(-1000, 1000),
+    proc(input: TestIntArray): bool =
+      let callback = proc(values: TestIntArray): TestIntArray {.closure.} =
+        for i in low(result) .. high(result): result[i] = values[high(values) - i]
+      var expected: TestIntArray
+      for i in low(expected) .. high(expected):
+        expected[i] = input[high(input) - i]
+      generatedArrayVecCallback(callback, input) == expected,
+    proc(input: TestIntArray): seq[TestIntArray] =
+      var smaller = input
+      for i in low(smaller) .. high(smaller): smaller[i] = 0
+      @[smaller])
+  if not vectorArrayCallbackCases:
     quit(1)
   let dependentCallbackCases = forAll(
     "callback result codecs receive their dependent Nat argument", r, 200,

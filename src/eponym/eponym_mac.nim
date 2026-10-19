@@ -1441,7 +1441,7 @@ proc runtimeArrayLengthTypeExpr(n: NimNode): NimNode =
   if n.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
                 nnkInt64Lit}:
     if n.intVal < 0: return nil
-    return newLit(n.intVal)
+    return newLit(int(n.intVal))
   if n.kind in {nnkIdent, nnkSym}:
     if $n == "zero": return newLit(0)
     return copyNimTree(n)
