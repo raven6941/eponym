@@ -526,7 +526,8 @@ proc nimTypeToEponym(n: NimNode): string =
     var args: seq[string] = @[]
     for i in 1 ..< n.len:
       let a = n[i]
-      if (a.kind == nnkCall and a.len > 1) or a.kind in
+      if (a.kind == nnkCall and
+          (a.len > 1 or a[0].kind == nnkBracketExpr)) or a.kind in
           {nnkObjConstr, nnkBracketExpr} or
           a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
                      nnkInt64Lit}:
@@ -576,7 +577,10 @@ proc nimTypeToEponym(n: NimNode): string =
         # Paren if arg is a call with args, an obj-constr (Pi/Sig type args
         # parse as nnkObjConstr and need grouping too), or an int literal
         # (suc chain needs grouping)
-        if (a.kind == nnkCall and a.len > 1) or a.kind == nnkObjConstr or a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit}:
+        if (a.kind == nnkCall and
+            (a.len > 1 or a[0].kind == nnkBracketExpr)) or
+            a.kind == nnkObjConstr or a.kind in
+            {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit}:
           args.add("(" & nimTypeToEponym(a) & ")")
         else:
           args.add(nimTypeToEponym(a))
