@@ -38,6 +38,11 @@ proc isLegacyTypeName(n: NimNode): bool =
   n.kind in {nnkIdent, nnkSym} and
     ($n in legacyTypeNames or $n in scopedLegacyTypeNames)
 
+proc unwrapParens(n: NimNode): NimNode =
+  result = n
+  while result.kind == nnkPar and result.len == 1:
+    result = result[0]
+
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
 # and generates wrapper procs. Uses call syntax:
@@ -70,9 +75,7 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
     return
   var info: LegacyCallInfo
   var found = false
-  var callee = n[0]
-  while callee.kind == nnkPar and callee.len == 1:
-    callee = callee[0]
+  let callee = unwrapParens(n[0])
   if callee.kind in {nnkIdent, nnkSym}:
     let head = $callee
     if head in legacyCallInfo:
@@ -95,8 +98,9 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
     "use square brackets for Eponym type/index arguments", n)
 
 proc rejectCallStyleTypeArgs(n: NimNode) =
-  if n.kind == nnkCall and n.len > 1 and
-      n[0].kind in {nnkIdent, nnkSym} and $n[0] in legacyTypeFamilies:
+  if n.kind != nnkCall or n.len <= 1: return
+  let callee = unwrapParens(n[0])
+  if callee.kind in {nnkIdent, nnkSym} and $callee in legacyTypeFamilies:
     error("eponymBlock: call-style explicit type/index arguments have been " &
       "removed; use square brackets", n)
 

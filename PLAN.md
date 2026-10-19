@@ -1186,8 +1186,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   locally and imported from `.ep` files, including an implicit function field.
 - [x] Property-test a mapped Nim record containing a closure, invoking it from
   checked Eponym and through the `RuntimeValue` wrapper (200 generated cases).
+- [x] Strip nested parentheses around type-family application heads before
+  checking call-style type/index arguments; a compile-fail fixture covers the
+  previously accepted `((Vec))(Nat, zero())` spelling.
 - [ ] Audit further AST wrappers around callees beyond parenthesized
-  projections.
+  projections and type-family calls.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.
