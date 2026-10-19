@@ -684,11 +684,11 @@ implementations.
 - [x] Resolve relative `.ep` imports source-relative first, then from the
   installed package's `lib/` directory. Absolute paths remain explicit
   overrides; a prelude-resolution test checks nested imports without vendoring.
-- [x] Verify the resolution contract against a clean package-shaped install
-  from a separate working directory; document the path order and absolute
-  override behavior. The smoke script also compiles and runs the tutorial's
-  first checked example and compiles its generic vector example from a clean
-  Nim project directory.
+- [x] Verify the resolution contract against a clean installed package from a
+  separate working directory; document the path order and absolute override
+  behavior. `tests/test_package_prelude_install.sh` mirrors the flat installed
+  module layout from `installFiles`; a separate isolated Nimble install also
+  compiled the tutorial and ran the installed-prelude runtime example.
 - [ ] Revisit the first-use time estimate after installation and editor setup
    are streamlined.
 
@@ -698,10 +698,11 @@ implementations.
   `docs/tutorial.md` against a clean package-shaped install, and resolve `.ep`
   imports from a different working directory; `tests/test_package_prelude_install.sh`
   verifies these paths without hidden global state.
-- [ ] Verify the actual `nimble install` path from a clean Nim project and
-  revisit the first-use estimate after editor setup is streamlined. An
-  isolated offline install attempt is currently blocked because Nimble needs
-  its remote package index to resolve the `falsify` dependency.
+- [x] Verify `nimble install` in an isolated `NIMBLE_DIR` using cached local
+  `falsify` and package-index data, then compile the tutorial snippets and run
+  the installed-prelude example from a separate clean Nim project.
+- [ ] Revisit the first-use estimate after installation and editor setup are
+  streamlined.
 
 ### Cross-stage validation and project claims
 
