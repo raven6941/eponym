@@ -426,9 +426,12 @@ implementations.
    bindings call them, so Nim checks the concrete procedure signatures. A
    200-case property maps a payload-bearing `Tree` family to `seq[int]`, tests
    typed and raw `runtimeValue` paths, and invokes a Nim implementation through
-   a checked `Tree -> Tree` postulate. A compile-fail fixture rejects a Nim
-   encoder with the wrong signature. Index relationships remain the codec
-   author's responsibility.
+   a checked `Tree -> Tree` postulate. A separate 200-case property confirms
+   custom `runtimeCodec` encoders and decoders also run for a bound typed
+   `RuntimeHandle -> RuntimeHandle` postulate through generated, typed, and raw
+   runtime interfaces. A compile-fail fixture rejects a Nim encoder with the
+   wrong signature. Index relationships remain the codec author's
+   responsibility.
 - [x] Permit `runtimeValue(importedDefinition)` when a checked definition
    comes from an imported `.ep` module and has no local Nim `proc` declaration.
    It exposes a raw `openArray[Value] -> (Value, Globals)` wrapper; typed Nim

@@ -98,6 +98,9 @@ proc decodeRuntimeHandle(value: Value, globals: Globals): ChannelHandle =
   let id = valueToInt(variant.arguments[0])
   ChannelHandle(id: id, label: "decoded-" & $id)
 
+proc hostRuntimeHandleAdapter(value: ChannelHandle): ChannelHandle =
+  ChannelHandle(id: value.id + 1, label: value.label & "/adapter")
+
 proc decodedRuntimeHandles(values: openArray[ChannelHandle]):
     seq[ChannelHandle] =
   for value in values:
@@ -302,6 +305,12 @@ eponymBlock:
   import "../lib/option.ep"
   runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
     decodeRuntimeHandle)
+  postulate(runtimeHandleAdapter, RuntimeHandle -> RuntimeHandle)
+  bindPostulate(runtimeHandleAdapter, hostRuntimeHandleAdapter,
+    RuntimeHandle, RuntimeHandle)
+  proc generatedRuntimeHandleAdapter(value: RuntimeHandle): RuntimeHandle =
+    runtimeHandleAdapter(value)
+  runtimeValue(generatedRuntimeHandleAdapter)
   runtimeOption(Option)
   runtimeType(RuntimeOpaqueToken, ChannelHandle)
   runtimeType(RuntimeOtherToken, ChannelHandle)
@@ -2455,6 +2464,23 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded == value and rawDecoded == value and primitiveDecoded == value,
     )
   if not optionCodecCases:
+    quit(1)
+  let customCodecPostulateCases = forAll(
+    "custom runtimeCodec values cross bound typed postulates", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let input = ChannelHandle(id: id, label: "adapter-input")
+      let expected = ChannelHandle(id: id + 1,
+        label: "decoded-" & $(id + 1))
+      let typed = generatedRuntimeHandleAdapter(input)
+      let runtime = generatedRuntimeHandleAdapterRuntimeValue(input)
+      let raw = generatedRuntimeHandleAdapterRuntimeValue([
+        encodeRuntimeHandle(input, runtime.globals)])
+      typed == expected and
+        decodeRuntimeHandle(runtime.value, runtime.globals) == expected and
+        decodeRuntimeHandle(raw.value, raw.globals) == expected,
+    shrinkInt)
+  if not customCodecPostulateCases:
     quit(1)
   let customCodecOptionCases = forAll(
     "runtimeOption recursively applies a custom runtimeCodec", r, 200,

@@ -280,7 +280,9 @@ checked Eponym type when its runtime shape is checkable, including supported
 dependent indices. The codec's semantic relationship between the Nim payload
 and Eponym value remains trusted, as do indices the runtime shape cannot
 represent. Nim's type checker checks the concrete adapter signature but does
-not prove that host code obeys the Eponym contract.
+not prove that host code obeys the Eponym contract. A property test covers a
+custom codec on both sides of a bound typed postulate through generated,
+typed `RuntimeValue`, and raw `RuntimeValue` calls.
 
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
