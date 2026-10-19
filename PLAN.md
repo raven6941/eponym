@@ -444,8 +444,10 @@ implementations.
      dependent results, and trusted pair adapter result codecs. A 200-case
      property covers the generated wrapper, typed `runtimeValue`, host adapter
      results, and rejection of mismatched vector lengths.
-   - [ ] Preserve the full dependent result type for pair adapters whose
-     postulate declaration comes from an imported `.ep` module.
+   - [x] Preserve the full dependent result type for pair adapters whose
+     postulate declaration comes from an imported `.ep` module by deriving
+     the runtime shape from its checked `Globals` type. A 200-case property
+     checks imported host results and rejects mismatched vector lengths.
    Remaining gaps include broader automatic/structural
    codec coverage, additional dependent forms, unmapped value-indexed
    generics, and other higher-order signatures. Unsupported

@@ -625,6 +625,15 @@ eponymBlock:
       Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(index, seed)
   runtimePairTrusted(generatedVectorForIndex)
 
+eponymBlock:
+  import "fixtures/runtime_pair_postulate.ep"
+  runtimeVector(Vec)
+  bindPostulatePairTrusted(makeVectorForIndex, hostMakeVectorForIndex,
+    Nat, Int, Int, Vec)
+  proc generatedImportedVectorForIndex(index: Nat, seed: Int):
+      Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(index, seed)
+  runtimePairTrusted(generatedImportedVectorForIndex)
+
 static:
   doAssert compiles(generatedCheckedRole(35))
   doAssert compiles(generatedAdd(20, 22))
@@ -830,6 +839,9 @@ when isMainModule:
       let pairResult = generatedVectorForIndex(index, -index)
       let pairRoundTrip = pairResult[0] == -index and
         pairResult[1].len == index
+      let importedPairResult = generatedImportedVectorForIndex(index, -index)
+      let importedPairRoundTrip = importedPairResult[0] == -index and
+        importedPairResult[1].len == index
       var inputMismatchRejected = false
       try:
         discard generatedVectorArgIdentity(index, values & @[index])
@@ -840,8 +852,14 @@ when isMainModule:
         discard generatedVectorForIndex(index, low(int))
       except ValueError:
         adapterMismatchRejected = true
+      var importedAdapterMismatchRejected = false
+      try:
+        discard generatedImportedVectorForIndex(index, low(int))
+      except ValueError:
+        importedAdapterMismatchRejected = true
       wrapperRoundTrip and runtimeRoundTrip and pairRoundTrip and
-        inputMismatchRejected and adapterMismatchRejected,
+        importedPairRoundTrip and inputMismatchRejected and
+        adapterMismatchRejected and importedAdapterMismatchRejected,
     shrinkInt)
   var dependentPairAdapterMismatchRejected = false
   try:

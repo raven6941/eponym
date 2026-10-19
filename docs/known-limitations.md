@@ -171,8 +171,8 @@ have codecs. For a postulate declared in the same `eponymBlock`, the macro
 retains its full result Sigma type, allowing recursive codecs to check
 represented constraints such as a Vec length against the first field. The
 host adapter must still uphold index relationships those codecs cannot
-represent. Imported postulate declarations currently lack this retained type
-shape for pair adapters. A generated wrapper can expose a dependent Sigma result as a
+represent. Imported postulates use their checked `Globals` type to recover
+the same result shape. A generated wrapper can expose a dependent Sigma result as a
 Nim tuple when that checked definition is explicitly marked
 `runtimePairTrusted(definition)`. The recursive codecs check each field's Nim
 representation, while the relationship between the field values and dependent

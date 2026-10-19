@@ -862,6 +862,64 @@ proc runtimeTypeAfterArgs(n: NimNode, count: int,
     return runtimeTypeAfterArgs(n[^1], remaining, argNames)
   nil
 
+proc runtimeTermTypeAst(term: Term, ctx: seq[string],
+    refNames: Table[int, string]): NimNode =
+  if term.isNil: return nil
+  case term.kind
+  of tR:
+    if term.refId in refNames: ident(refNames[term.refId]) else: nil
+  of tV:
+    if term.idx >= 0 and term.idx < ctx.len: ident(ctx[term.idx]) else: nil
+  of tPi, tSi:
+    let binderName = if term.scope.adv.len > 0 and term.scope.adv != "_":
+      term.scope.adv else: "runtimeIndex" & $ctx.len
+    let domain = runtimeTermTypeAst(term.dom, ctx, refNames)
+    let body = runtimeTermTypeAst(term.scope.bdy,
+      @[binderName] & ctx, refNames)
+    if domain.isNil or body.isNil: return nil
+    let binder = newTree(nnkExprColonExpr, ident(binderName), domain)
+    newCall(if term.kind == tPi: ident"Pi" else: ident"Sig", binder, body)
+  of tApp:
+    var args: seq[Term] = @[]
+    var head = term
+    while not head.isNil and head.kind == tApp:
+      args.add(head.arg)
+      head = head.fn
+    let callee = runtimeTermTypeAst(head, ctx, refNames)
+    if callee.isNil: return nil
+    var application = newCall(callee)
+    for i in countdown(args.high, 0):
+      let arg = runtimeTermTypeAst(args[i], ctx, refNames)
+      if arg.isNil: return nil
+      application.add(arg)
+    application
+  of tInt: newLit(term.intVal)
+  of tNatLit: newLit(term.natLitVal)
+  of tNatSing: newLit(term.natSingVal)
+  of tType:
+    if term.lvl == 0: ident"Univ" else: nil
+  else: nil
+
+proc runtimeTermTypeAfterArgs(ty: Term, count: int, globals: Globals):
+    tuple[resultType: NimNode, argNames: seq[string]] =
+  var current = ty
+  for i in 0 ..< count:
+    if current.isNil or current.kind != tPi: return
+    let binderName = if current.scope.adv.len > 0 and
+        current.scope.adv != "_": current.scope.adv
+      else: "runtimePairArg" & $i
+    result.argNames.add(if current.scope.adv == "_": "" else: binderName)
+    current = current.scope.bdy
+  var refNames = initTable[int, string]()
+  for name, entry in globals:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      refNames[entry.tm.refId] = name
+  var ctx = newSeq[string](result.argNames.len)
+  for i, name in result.argNames:
+    ctx[result.argNames.high - i] = if name.len == 0:
+      "runtimePairArg" & $i else: name
+  result.resultType = runtimeTermTypeAst(current, ctx, refNames)
+
 proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   var seen = initHashSet[string]()
   for st in body:
@@ -2133,7 +2191,16 @@ macro eponymBlock*(body: untyped): untyped =
       error("runtimeDps cannot compile '" & requested & "': " &
         lowered.error, declaration)
 
-  let bindings = hostPostulateBindings(body)
+  var bindings = hostPostulateBindings(body)
+  for binding in bindings.mitems:
+    if binding.pairResult and binding.pairResultType.isNil and
+        binding.postulateName in checkedGlobals:
+      let checkedShape = runtimeTermTypeAfterArgs(
+        checkedGlobals[binding.postulateName].ty, binding.pairArgCount,
+        checkedGlobals)
+      if not checkedShape.resultType.isNil:
+        binding.pairResultType = checkedShape.resultType
+        binding.pairResultArgNames = checkedShape.argNames
   for binding in bindings:
     if not bindingIsReferenced(body, binding.postulateName, allDefs,
                                checkedGlobals):
