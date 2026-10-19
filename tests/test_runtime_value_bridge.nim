@@ -690,6 +690,15 @@ eponymBlock:
   runtimeValue(generatedGenericChannelValue)
 
 eponymBlock:
+  postulate(Int, Univ)
+  proc generatedRuntimeIncrementValue(): proc(value: Int): Int {.closure.} =
+    lam(value, Int, addInt(value, 1))
+  proc generatedApplyGenericFunction[callback: Int -> Int](value: Int): Int =
+    callback(value)
+  runtimeValue(generatedRuntimeIncrementValue)
+  runtimeValue(generatedApplyGenericFunction)
+
+eponymBlock:
   postulate(Nat, Univ)
   proc generatedGenericNatProjection[n: Nat](): Nat = n
   runtimeValue(generatedGenericNatProjection)
@@ -1960,6 +1969,32 @@ when isMainModule:
   except ValueError as error:
     rawUnmappedGenericTypeRejected = "mismatch" in error.msg
   doAssert rawUnmappedGenericTypeRejected
+
+  let genericFunctionValue = generatedRuntimeIncrementValueRuntimeValue()
+  let genericFunctionType = runtimeArrowType(
+    runtimeGlobalValue(genericFunctionValue.globals, "Int"),
+    runtimeGlobalValue(genericFunctionValue.globals, "Int"))
+  validateRuntimeValueType(genericFunctionValue.value, genericFunctionType,
+    genericFunctionValue.globals)
+  let genericFunctionBinderCases = forAll(
+    "dynamic generic binders validate checked function values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(input: int): bool =
+      let checked = generatedApplyGenericFunctionDynamic(
+        genericFunctionValue.value, input)
+      let runtime = generatedApplyGenericFunctionRuntimeValueDynamic(
+        genericFunctionValue.value, input)
+      checked == input + 1 and valueToInt(runtime.value) == input + 1,
+    shrinkInt)
+  if not genericFunctionBinderCases:
+    quit(1)
+  var genericFunctionTypeRejected = false
+  try:
+    discard generatedApplyGenericFunctionRuntimeValueDynamic(
+      intToValue(42), 0)
+  except ValueError:
+    genericFunctionTypeRejected = true
+  doAssert genericFunctionTypeRejected
 
   let rawGenericNatCases = forAll(
     "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,

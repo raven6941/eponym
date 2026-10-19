@@ -341,6 +341,11 @@ proc freshId*(s: var Supply): int =
   inc s.n
   s.n
 
+proc reserveFreshIdsThrough*(s: var Supply, id: int) =
+  ## Keep later inference-local parameters distinct from references already
+  ## assigned while checking a module.
+  if id > s.n: s.n = id
+
 proc newDefRef*(s: var Supply, typ, val: Value): Term =
   ## A closed definition reference for the elaborator's global scope:
   ## earlier elaborated defs become R nodes later defs can mention.
@@ -875,6 +880,12 @@ proc vPrim*(op: PrimOp, ty: Term): Value =
 proc vPi(dom: Value, sc: ScoVal, qty = qOmega): Value =
   Value(syn: tmPi(dom.syn, sc.syn.adv, sc.syn.bdy, false, false, qty),
         whnf: Whnf(kind: wPi, dom: dom, tscope: sc, qty: qty))
+proc runtimeArrowType*(domain, codomain: Value): Value =
+  ## Construct a non-dependent function type for host-side runtime checks.
+  ## This is used when a checked generic value binder has an arrow domain.
+  let scope = Scope(adv: "_", bdy: codomain.syn)
+  vPi(domain, ScoVal(syn: scope,
+    fn: proc(argument: Value): Value = codomain))
 proc vSi(dom: Value, sc: ScoVal, qty = qOmega): Value =
   Value(syn: tmSi(dom.syn, sc.syn.adv, sc.syn.bdy, false, false, qty),
         whnf: Whnf(kind: wSi, dom: dom, tscope: sc, qty: qty))

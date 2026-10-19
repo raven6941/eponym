@@ -2670,6 +2670,11 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
 proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
   if n.isNil: return nil
+  if n.kind == nnkInfix and n.len == 3 and $n[0] == "->":
+    let domain = runtimeTypeValueExpr(n[1], globals, overrides)
+    let codomain = runtimeTypeValueExpr(n[2], globals, overrides)
+    if domain.isNil or codomain.isNil: return nil
+    return newCall(bindSym"runtimeArrowType", domain, codomain)
   if n.kind in {nnkIdent, nnkSym}:
     if overrides.len > 0:
       for i in countdown(overrides.high, 0):

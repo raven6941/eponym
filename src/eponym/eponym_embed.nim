@@ -1644,6 +1644,9 @@ proc validateRuntimeValueType*(value, expectedType: Value,
   if value.isNil or expectedType.isNil:
     raise newException(ValueError, "cannot validate an incomplete runtime Value")
   var supply = Supply()
+  for _, entry in globals.pairs:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      reserveFreshIdsThrough(supply, entry.tm.refId)
   let inferred = inferRuntimeValueType(value, globals, supply)
   if inferred.isNil: return # legacy opaque values remain trusted in recursive codecs
   areEqual(supply, vStar(), inferred, expectedType)
