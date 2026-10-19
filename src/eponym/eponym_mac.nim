@@ -50,6 +50,27 @@ proc isLegacyNatExpr(n: NimNode): bool =
   else:
     false
 
+proc registerScopedNatLetNames(body: NimNode) =
+  ## Preserve Nat knowledge for let-bound values while converting the body.
+  ## This lets the legacy-syntax check distinguish a Nat index supplied in
+  ## parentheses from an ordinary value argument.
+  if body.kind != nnkStmtList: return
+  for statement in body:
+    if statement.kind != nnkLetSection: continue
+    for binding in statement:
+      if binding.kind != nnkIdentDefs or binding.len < 3: continue
+      let domain = binding[^2]
+      let value = binding[^1]
+      let isNat = (domain.kind in {nnkIdent, nnkSym} and $domain == "Nat") or
+        isLegacyNatExpr(value)
+      if isNat:
+        for i in 0 ..< binding.len - 2:
+          let name = if binding[i].kind == nnkPragmaExpr:
+            $binding[i][0]
+          else:
+            $binding[i]
+          scopedNatNames.incl(name)
+
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
 # and generates wrapper procs. Uses call syntax:
@@ -741,6 +762,7 @@ proc procDefToEponym(n: NimNode): string =
       paramStrs.add("(" & q & binderName(p[j]) & " : " & ty & ")")
       if ty == "Type 0": scopedLegacyTypeNames.incl(binderName(p[j]))
       if ty == "Nat": scopedNatNames.incl(binderName(p[j]))
+  registerScopedNatLetNames(n[6])
   let body = nimExprToEponym(n[6])
   scopedLegacyTypeNames.clear()
   for typeName in priorScopedTypeNames: scopedLegacyTypeNames.incl(typeName)

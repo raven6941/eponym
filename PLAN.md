@@ -1137,9 +1137,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [x] Count leading `Univ` parameters on constructors in local Nim `data(...)`
   declarations when diagnosing legacy applications. A fixture checks bracket
   `protocolSend[Nat](...)` and rejects the call-style spelling.
-- [ ] Extend partial index detection to locally inferred Nat values and other
-  expression forms that cannot be identified from the current declaration
-  metadata.
+- [x] Extend partial index detection to top-level let-bound values explicitly
+  annotated as Nat or initialized by a recognized Nat constructor/function. A
+  compile-fail fixture covers `let index = zero(); indexHead(index)`.
+- [ ] Extend detection to other inferred expression forms and nested scopes
+  that cannot be identified from the current declaration metadata.
 - [x] Migrate the optimizer examples' type-family applications and indexed
   `VAffine` constructor applications to square brackets. Their generated
   checked objectives still pass the 300-case and 200-case runtime properties.

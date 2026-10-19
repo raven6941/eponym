@@ -578,18 +578,16 @@ file. Clean-install resolution is covered by a separate-project test. See
 ## Surface syntax
 
 The embedded syntax is Nim-shaped but is not ordinary Nim semantics. Explicit
-Eponym parameters can use Nim square brackets, as in `Vec[A, n]` and
-`cons[A, n](x, xs)`. Legacy call-style explicit applications are temporary
-migration syntax. A compiler warning currently catches the conventional form
-when a complete call supplies more arguments than the declared term arity, and
-for known data-family applications in type position. It also catches partial
-applications when the first supplied argument is a known Eponym data type
-name or a locally scoped binder of type `Type 0`. When the callee's first
-explicit binder is Nat, it also recognizes Nat literals, known Nat
-constructors/functions, and in-scope Nat binders. Locally inferred Nat values
-and other unrecognized expression forms may still escape the warning. The
-check reads local Nim declarations and imported `.ep` signatures. The syntax is planned
-for removal before the first release. Supported
+Eponym parameters use square brackets, as in `Vec[A, n]` and
+`cons[A, n](x, xs)`. Recognized call-style explicit term and type applications
+are compile-time errors. Detection reads local Nim declarations and imported
+`.ep` signatures, and identifies complete applications, known data-family
+applications, partial applications beginning with a known data type or
+in-scope `Type 0` binder, and recognizable Nat arguments when the callee's
+first explicit binder is Nat. Top-level let-bound Nat values are recognized
+when explicitly annotated or initialized by a known Nat constructor/function.
+Other inferred expression forms and nested scopes may still evade detection.
+Supported
 generic definitions have generated Nim wrappers for type parameters, Nat and
 Int indices, Bool indices, and values with explicit runtime mappings. Other
 value-indexed binders and unsupported argument/result codecs still lack
