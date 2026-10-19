@@ -474,6 +474,10 @@ implementations.
   membership, constructor arity, and runtime spine shape. A 200-case property
   round-trips generated nested trees; negative checks reject wrong arity and
   constructors from another family.
+- [x] Let `runtimeVariant(Family)` generate typed wrappers that use the
+  structural representation for payload-bearing and indexed constructors.
+  A 200-case property covers direct and generated wrapper round trips; typed
+  recursive payload codecs remain future work.
 - [x] Lower conditional Nat indices of the form `if b: n else: m` in dynamic
    generic Vec and non-dependent Sigma value codecs. The Bool condition is a
    generic runtime parameter; both branch lengths are checked. A 200-case
