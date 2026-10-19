@@ -1204,9 +1204,14 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   explicit arguments.
 - [x] Follow callback signatures through Nim type-ascription expressions.
   Bracket-form acceptance and legacy-form rejection are both covered.
+- [x] Recognize qualified/dotted callable heads against known local or imported
+  function signatures when no record field of that name is registered. Field
+  metadata takes precedence, and a regression covers an ordinary callable
+  field whose name collides with a generic function.
 - [ ] Audit further AST wrappers around callees beyond parenthesized
   projections, type-family calls, immediate call results, local aliases,
-  callback parameters, conditional expressions, and type ascriptions.
+  callback parameters, conditional expressions, type ascriptions, and
+  qualified member calls.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.

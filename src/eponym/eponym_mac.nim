@@ -70,8 +70,11 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
   of nnkDotExpr:
     if head.len == 2 and head[1].kind in {nnkIdent, nnkSym}:
       let field = $head[1]
-      if field in legacyFieldCallInfo and field notin ambiguousLegacyFieldNames:
+      if field in ambiguousLegacyFieldNames: return
+      if field in legacyFieldCallInfo:
         return (true, legacyFieldCallInfo[field])
+      if field in legacyCallInfo:
+        return (true, legacyCallInfo[field])
   of nnkTupleConstr:
     if head.len == 1 and head[0].kind == nnkExprColonExpr and
         head[0].len == 2:
