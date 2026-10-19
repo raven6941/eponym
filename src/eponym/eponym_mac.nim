@@ -45,6 +45,8 @@ proc unwrapParens(n: NimNode): NimNode =
   while result.kind == nnkPar and result.len == 1:
     result = result[0]
 
+proc nimTypeCallInfo(ty: NimNode): LegacyCallInfo
+
 proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
   ## Resolve callable metadata through expression wrappers accepted by the
   ## embedded-expression converter. In particular, a conditional can select
@@ -70,6 +72,11 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
       let field = $head[1]
       if field in legacyFieldCallInfo and field notin ambiguousLegacyFieldNames:
         return (true, legacyFieldCallInfo[field])
+  of nnkTupleConstr:
+    if head.len == 1 and head[0].kind == nnkExprColonExpr and
+        head[0].len == 2:
+      let ascribed = nimTypeCallInfo(head[0][1])
+      if ascribed.explicitCount > 0: return (true, ascribed)
   of nnkIfExpr, nnkIfStmt:
     var selected: LegacyCallInfo
     var haveSelected = false
@@ -196,8 +203,6 @@ proc registerLegacyInfo(name: string, info: LegacyCallInfo) =
 proc registerLegacyResultInfo(name: string, info: LegacyCallInfo) =
   if info.explicitCount > 0:
     legacyResultCallInfo[name] = info
-
-proc nimTypeCallInfo(ty: NimNode): LegacyCallInfo
 
 proc returnedCallInfo(n: NimNode): LegacyCallInfo =
   if n.kind notin {nnkCall, nnkCommand} or n.len == 0: return

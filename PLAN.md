@@ -1202,9 +1202,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   (including Nim's `StmtListExpr` wrapper). A compile-fail fixture verifies
   that a conditional selecting a returned function cannot hide legacy
   explicit arguments.
+- [x] Follow callback signatures through Nim type-ascription expressions.
+  Bracket-form acceptance and legacy-form rejection are both covered.
 - [ ] Audit further AST wrappers around callees beyond parenthesized
   projections, type-family calls, immediate call results, local aliases,
-  callback parameters, and conditional expressions.
+  callback parameters, conditional expressions, and type ascriptions.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.

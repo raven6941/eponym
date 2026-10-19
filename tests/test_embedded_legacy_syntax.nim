@@ -33,6 +33,7 @@ for fixture in [
     "tests/fixtures/embedded_err_legacy_conditional_higher_order_application.nim",
     "tests/fixtures/embedded_err_legacy_imported_result_application.nim",
     "tests/fixtures/embedded_err_legacy_callback_param_application.nim",
+    "tests/fixtures/embedded_err_legacy_ascribed_callback_application.nim",
     "tests/fixtures/embedded_err_legacy_local_postulate.nim",
     "tests/fixtures/embedded_err_legacy_command_application.nim"]:
   let (legacyOutput, legacyCode) = compileFixture(fixture, fixture.splitFile.name)
