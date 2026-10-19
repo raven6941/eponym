@@ -102,7 +102,8 @@ signatures remain unsupported. Records with dependent fields remain
 unsupported. The canonical length-indexed `Vec` family has an explicit
 `runtimeVector(Vec)` codec that maps `Vec[A, n]` to `seq[A]`. It checks the
 host sequence length and the runtime Nat index at each `cons` cell; the
-element type uses its recursive runtime codec. The codec accepts Nat length
+element type uses its recursive runtime codec, including nested vectors such
+as `Vec[Vec[Int, m], n]` mapped to `seq[seq[int]]`. The codec accepts Nat length
 expressions made from a static index, `zero`, `suc`, `add`, and `mul`. It
 requires the standard `nil` and `cons` constructor shape from `lib/vec.ep`.
 Other collections and data types with payload constructors remain unsupported. A

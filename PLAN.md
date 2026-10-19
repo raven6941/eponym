@@ -378,8 +378,11 @@ implementations.
 - [x] Add an explicit `runtimeVector(Vec)` codec for the canonical
    length-indexed `Vec` family. `Vec[A,n]` maps to `seq[A]`; input lengths and
    each runtime `cons` tail index are checked, and elements recurse through
-   their runtime codecs. A 200-case property covers primitive and opaque
-   elements, with empty-vector and length-mismatch checks.
+   their runtime codecs, including nested `Vec` values. A 200-case property
+   covers primitive and opaque elements, empty vectors, length mismatches, and
+   nested vectors through typed and raw `runtimeValue` interfaces. Preserve
+   grouping for nested bracketed type and term applications in the Nim AST
+   translator; a nested-vector type exposed a precedence bug in that path.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly

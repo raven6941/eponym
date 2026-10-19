@@ -190,6 +190,9 @@ eponymBlock:
       values: Vec[Int, suc(n)]): Nat = n
   proc generatedVectorAddIndex[m, n: Nat](
       values: Vec[Int, add(m, n)]): Int = addInt(0, 0)
+  proc generatedNestedVectorIdentity[m, n: Nat](
+      values: Vec[Vec[Int, m], n]): Vec[Vec[Int, m], n] = values
+  runtimeValue(generatedNestedVectorIdentity)
 
 eponymBlock:
   import "../lib/bool.ep"
@@ -224,6 +227,17 @@ proc checkGenericIntValueAt[index: static[int]](ignored: int): bool =
     [intToValue(ignored)])
   typedResult == index and valueToInt(runtime.value) == index and
     valueToInt(rawRuntime.value) == index
+
+proc decodeRuntimeIntVector(value: Value, length: int,
+                            globals: Globals): seq[int] =
+  vecValueToSeq[int](value, length, globals, "Vec",
+    proc(item: Value, _: Globals): int = valueToInt(item))
+
+proc decodeRuntimeIntMatrix(value: Value, rows: int,
+                            globals: Globals): seq[seq[int]] =
+  vecValueToSeq[seq[int]](value, rows, globals, "Vec",
+    proc(row: Value, nestedGlobals: Globals): seq[int] =
+      decodeRuntimeIntVector(row, 2, nestedGlobals))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -285,6 +299,8 @@ static:
   doAssert compiles(generatedVectorIdentity[int, 4](@[1, 2, 3, 4]))
   doAssert compiles(generatedVectorSucIndex[3](@[1, 2, 3, 4]))
   doAssert compiles(generatedVectorAddIndex[2, 3](@[1, 2, 3, 4, 5]))
+  doAssert compiles(generatedNestedVectorIdentity[2, 3](
+    @[@[1, 2], @[3, 4], @[5, 6]]))
   doAssert compiles(generatedGenericBoolValue[true](1))
   doAssert compiles(generatedGenericBoolValue[false](1))
   doAssert compiles(generatedGenericBoolValueRuntimeValue[true](1))
@@ -867,6 +883,25 @@ proc callbackRole : Callback -> Sample -> Sample =
   except ValueError as error:
     wrongVectorLengthRejected = "runtime Vec length mismatch" in error.msg
   doAssert wrongVectorLengthRejected
+
+  let nestedVectorCases = forAll(
+    "nested length-indexed Vec values recurse through sequence codecs", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(seed: int): bool =
+      let matrix = @[
+        @[seed, seed + 1],
+        @[seed + 2, seed + 3],
+        @[seed + 4, seed + 5]]
+      let runtime = generatedNestedVectorIdentityRuntimeValue[2, 3](matrix)
+      let rawRuntime = generatedNestedVectorIdentityRuntimeValue[2, 3](
+        [runtime.value])
+      generatedNestedVectorIdentity[2, 3](matrix) == matrix and
+        decodeRuntimeIntMatrix(runtime.value, 3, runtime.globals) == matrix and
+        decodeRuntimeIntMatrix(rawRuntime.value, 3, rawRuntime.globals) == matrix,
+    shrinkInt)
+  if not nestedVectorCases:
+    quit(1)
+
 
   let genericBoolCases = forAll(
     "Bool generic values are available in checked runtime bodies", r, 200,
