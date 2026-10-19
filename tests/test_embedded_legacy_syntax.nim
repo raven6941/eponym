@@ -41,6 +41,7 @@ for fixture in [
     "tests/fixtures/embedded_err_legacy_trailing_callback_index.nim",
     "tests/fixtures/embedded_err_legacy_trailing_constructor_index.nim",
     "tests/fixtures/embedded_err_legacy_trailing_field_index.nim",
+    "tests/fixtures/embedded_err_legacy_command_partial_application.nim",
     "tests/fixtures/embedded_err_legacy_local_postulate.nim",
     "tests/fixtures/embedded_err_legacy_command_application.nim"]:
   let (legacyOutput, legacyCode) = compileFixture(fixture, fixture.splitFile.name)

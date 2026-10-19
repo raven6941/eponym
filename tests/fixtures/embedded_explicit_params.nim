@@ -143,6 +143,11 @@ eponymBlock:
   proc inferredCommandIndex(value: Nat): LocalAt[zero()] =
     localAt value
 
+  proc bracketAfterCommandPartial(
+      callback: Pi(flag: Bool, value: Nat, A: Univ, input: A, A),
+      flag: Bool, value: Nat): Nat =
+    (callback flag value)[Nat](value)
+
   proc inferredCompoundIndex(left: Vec[Nat, 1], right: Vec[Nat, 2]):
       LocalPairIndex[add(1, 2)] = localPairIndex(left, right)
 

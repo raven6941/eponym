@@ -1261,7 +1261,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   applied constructors, including non-leading indices, and command-call syntax
   follows the same inference path. Callable-head metadata counts whitespace-
   separated command arguments with the same nested-command flattening as
-  expression conversion. The dependent `All` constructor example now
+  expression conversion. A callback partially applied with command syntax
+  retains its generic binder for a following bracket application, and the
+  equivalent positional type application is rejected. The dependent `All`
+  constructor example now
   infers its vector index from the recursive proof. Conditional callees compare
   complete call metadata, including inferable-index positions. Callback result
   inference also works through direct aliases and let-bound conditionals,
