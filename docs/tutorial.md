@@ -192,9 +192,8 @@ A few notes on the syntax (the full story is in
 - `Nat` is `zero` / `suc(n)`; `suc(suc(zero()))` is the number 2.
 - `cons[A, n](x, xs)` takes explicit type and length parameters in brackets,
   followed by ordinary vector terms in parentheses. Legacy call-style
-  explicit parameters such as `cons(A, n, x, xs)` and `Vec(A, n)` still compile
-  temporarily with a deprecation warning; migrate them to brackets before the
-  first release.
+  explicit parameters such as `cons(A, n, x, xs)` and `Vec(A, n)` are rejected;
+  migrate them to brackets.
 - `vecnil` is the empty vector. In `.ep` files it is spelled `nil`,
   but inside `eponymBlock` — which is Nim syntax, where `nil` is a
   keyword — you write `vecnil` and the macro maps it back.

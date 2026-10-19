@@ -148,15 +148,15 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
       not (info.firstExplicitType and supplied > 0 and
         isLegacyTypeName(firstArg)):
     return
-  warning("eponymBlock: legacy call-style explicit parameters are deprecated; " &
+  error("eponymBlock: call-style explicit parameters have been removed; " &
     "use square brackets for Eponym type/index arguments", n)
 
 proc rejectCallStyleTypeArgs(n: NimNode) =
   if n.kind != nnkCall or n.len <= 1: return
   let callee = unwrapParens(n[0])
   if callee.kind in {nnkIdent, nnkSym} and $callee in legacyTypeFamilies:
-    warning("eponymBlock: legacy call-style type/index arguments are " &
-      "deprecated; use square brackets", n)
+    error("eponymBlock: call-style explicit type/index arguments have been " &
+      "removed; use square brackets", n)
 
 proc nimLeadingUniverseFormalCount(formal: NimNode): int =
   if formal.kind != nnkFormalParams: return 0

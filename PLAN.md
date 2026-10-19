@@ -1212,7 +1212,7 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   in an earlier PR in the release stack. The diagnostic identifies legacy
   term and type/index applications, and regression fixtures confirm accepted
   calls continue to compile during the migration step.
-- [ ] Remove legacy lowering in the following PR before tagging the first
+- [x] Remove legacy lowering in the following PR before tagging the first
   release. Keep the diagnostic and removal as separate, bisectable PRs and
   stack both in the release series; bracket-only syntax is the first-release
   contract.

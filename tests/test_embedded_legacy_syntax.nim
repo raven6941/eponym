@@ -22,14 +22,6 @@ if positiveCode != 0:
 for fixture in [
     "tests/fixtures/embedded_err_legacy_nat_let.nim",
     "tests/fixtures/embedded_err_legacy_nat_if.nim",
-    "tests/fixtures/embedded_err_legacy_conditional_higher_order_application.nim"]:
-  let (legacyOutput, legacyCode) = compileFixture(fixture, fixture.splitFile.name)
-  if legacyCode == 0 or "call-style explicit" notin legacyOutput or
-      "use square brackets" notin legacyOutput:
-    quit("legacy explicit-parameter syntax was not rejected:\n" &
-      legacyOutput, 1)
-
-for fixture in [
     "tests/fixtures/embedded_err_legacy_explicit_params.nim",
     "tests/fixtures/embedded_err_legacy_type_application.nim",
     "tests/fixtures/embedded_err_legacy_postulate_index.nim",
@@ -38,15 +30,15 @@ for fixture in [
     "tests/fixtures/embedded_err_legacy_parenthesized_type_family.nim",
     "tests/fixtures/embedded_err_legacy_higher_order_result_application.nim",
     "tests/fixtures/embedded_err_legacy_higher_order_alias_application.nim",
+    "tests/fixtures/embedded_err_legacy_conditional_higher_order_application.nim",
     "tests/fixtures/embedded_err_legacy_imported_result_application.nim",
     "tests/fixtures/embedded_err_legacy_callback_param_application.nim",
     "tests/fixtures/embedded_err_legacy_local_postulate.nim",
     "tests/fixtures/embedded_err_legacy_command_application.nim"]:
-  let (legacyOutput, legacyCode) = compileFixture(fixture,
-    "deprecated-" & fixture.splitFile.name)
-  if legacyCode != 0 or "deprecated" notin legacyOutput or
-      "use square brackets" notin legacyOutput:
-    quit("legacy syntax did not compile with a deprecation warning:\n" &
+  let (legacyOutput, legacyCode) = compileFixture(fixture, fixture.splitFile.name)
+  if legacyCode == 0 or "call-style explicit" notin legacyOutput or
+      "have been removed" notin legacyOutput:
+    quit("legacy explicit-parameter syntax was not rejected:\n" &
       legacyOutput, 1)
 
-echo "test_embedded_legacy_syntax: bracket syntax accepted; legacy syntax warns while remaining accepted"
+echo "test_embedded_legacy_syntax: bracket syntax accepted; legacy term and type syntax rejected"
