@@ -9,6 +9,13 @@ eponymBlock:
   record(NumericHandler):
     field(apply, Nat -> Nat)
 
+  record(HandlerBundle):
+    field(inner, PolymorphicHandler)
+
   proc oldPositionalFieldType(
       handler: PolymorphicHandler, value: Vec[Nat, 0]): Vec[Nat, 0] =
     handler.apply(zero(), value)
+
+  proc oldNestedPositionalFieldType(
+      bundle: HandlerBundle, value: Vec[Nat, 0]): Vec[Nat, 0] =
+    bundle.inner.apply(zero(), value)

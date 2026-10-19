@@ -39,6 +39,12 @@ eponymBlock:
   record(LocalIndexedCallableField):
     field(make, Pi(value: Nat, n: Nat, LocalAt[n]))
 
+  record(LocalPolymorphicHandler):
+    field(apply, Pi(n: Nat, value: Vec[Nat, n], Vec[Nat, n]))
+
+  record(LocalHandlerBundle):
+    field(inner, LocalPolymorphicHandler)
+
   postulate(localIndexedPair,
     Pi(m: Nat, n: Nat, left: Vec[Nat, m], right: Vec[Nat, n],
       LocalPairIndex[add(m, n)]))
@@ -115,6 +121,10 @@ eponymBlock:
   proc bracketLocalCallableRecordField(handler: LocalCallableField,
                                        value: Nat): Nat =
     handler.apply[zero()](value)
+
+  proc bracketNestedCallableRecordField(bundle: LocalHandlerBundle,
+      value: Vec[Nat, 0]): Vec[Nat, 0] =
+    bundle.inner.apply[zero()](value)
 
   proc bracketLocalIndexedConstructor(value: Nat,
       tail: LocalVec[Nat, 0]): LocalVec[Nat, 1] =

@@ -46,6 +46,8 @@ var scopedLegacyTypeNames {.compileTime.} = initHashSet[string]()
 var legacyFieldCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
 var legacyRecordFieldCallInfo {.compileTime.} =
   initTable[string, LegacyCallInfo]()
+var legacyRecordFieldTypeNames {.compileTime.} =
+  initTable[string, string]()
 var scopedLegacyValueTypeNames {.compileTime.} = initTable[string, string]()
 var ambiguousLegacyFieldNames {.compileTime.} = initHashSet[string]()
 
@@ -167,10 +169,21 @@ proc callInfoForHead(n: NimNode,
   of nnkDotExpr:
     if head.len == 2 and head[1].kind in {nnkIdent, nnkSym}:
       let field = $head[1]
-      let receiver = unwrapParens(head[0])
-      if receiver.kind in {nnkIdent, nnkSym} and
-          $receiver in scopedLegacyValueTypeNames:
-        let key = scopedLegacyValueTypeNames[$receiver] & "." & field
+      proc surfaceValueType(expr: NimNode): string =
+        let value = unwrapParens(expr)
+        case value.kind
+        of nnkIdent, nnkSym:
+          return scopedLegacyValueTypeNames.getOrDefault($value)
+        of nnkDotExpr:
+          if value.len == 2 and value[1].kind in {nnkIdent, nnkSym}:
+            let parentType = surfaceValueType(value[0])
+            return legacyRecordFieldTypeNames.getOrDefault(
+              parentType & "." & $value[1])
+        else:
+          discard
+      let receiverType = surfaceValueType(head[0])
+      if receiverType.len > 0:
+        let key = receiverType & "." & field
         if key in legacyRecordFieldCallInfo:
           return (true, legacyRecordFieldCallInfo[key])
       if field in ambiguousLegacyFieldNames: return
@@ -739,6 +752,9 @@ proc registerLegacyRecordFieldInfo(recordName, fieldName: string,
     info: LegacyCallInfo) =
   legacyRecordFieldCallInfo[recordName & "." & fieldName] = info
 
+proc registerLegacyRecordFieldType(recordName, fieldName, fieldType: string) =
+  legacyRecordFieldTypeNames[recordName & "." & fieldName] = fieldType
+
 proc surfaceIndexArity(ty: PreTerm): int =
   var current = ty
   while not current.isNil and current.kind == pkPi:
@@ -809,6 +825,7 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
   scopedLegacyTypeNames.clear()
   legacyFieldCallInfo.clear()
   legacyRecordFieldCallInfo.clear()
+  legacyRecordFieldTypeNames.clear()
   scopedLegacyValueTypeNames.clear()
   ambiguousLegacyFieldNames.clear()
   var seen = initHashSet[string]()
@@ -916,6 +933,9 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
             let info = nimTypeCallInfo(field[2])
             registerLegacyFieldInfo($field[1], info)
             registerLegacyRecordFieldInfo($statement[1], $field[1], info)
+            if field[2].kind in {nnkIdent, nnkSym}:
+              registerLegacyRecordFieldType($statement[1], $field[1],
+                $field[2])
     of nnkImportStmt:
       for imported in statement:
         if imported.kind != nnkStrLit: continue
