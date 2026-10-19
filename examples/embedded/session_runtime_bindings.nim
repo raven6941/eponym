@@ -68,18 +68,18 @@ eponymBlock:
 
   postulate(sendNat,
     Pi(value: Nat,
-       ch {.linear.}: Chan(sendS(Nat, endS())),
+       ch {.linear.}: Chan[sendS[Nat](endS())],
        Chan(endS())))
   postulate(recvNat,
-    Pi(ch {.linear.}: Chan(recvS(Nat, endS())), Nat))
+    Pi(ch {.linear.}: Chan[recvS[Nat](endS())], Nat))
   bindPostulate(sendNat, sendNatImpl, Nat, Chan, Chan)
   bindPostulate(recvNat, recvNatImpl, Chan, Nat)
 
   proc checkedSender(value: Nat,
-                     ch {.linear.}: Chan(sendS(Nat, endS()))): Chan(endS()) =
+                     ch {.linear.}: Chan[sendS[Nat](endS())]): Chan[endS()] =
     sendNat(value, ch)
 
-  proc checkedReceiver(ch {.linear.}: Chan(recvS(Nat, endS()))): Nat =
+  proc checkedReceiver(ch {.linear.}: Chan[recvS[Nat](endS())]): Nat =
     recvNat(ch)
 
 when isMainModule:

@@ -77,16 +77,16 @@ eponymBlock:
   runtimeType(ReceiveOutcome, TransportResult[int])
   postulate(sendNatTcpOp,
     Pi(value: Nat,
-       ch {.linear.}: Chan(sendS(Nat, endS())),
+       ch {.linear.}: Chan[sendS[Nat](endS())],
        SendOutcome))
   postulate(recvNatTcpOp,
-    Pi(ch {.linear.}: Chan(recvS(Nat, endS())), ReceiveOutcome))
+    Pi(ch {.linear.}: Chan[recvS[Nat](endS())], ReceiveOutcome))
   bindPostulate(sendNatTcpOp, sendNatTcp, Nat, Chan, SendOutcome)
   bindPostulate(recvNatTcpOp, recvNatTcp, Chan, ReceiveOutcome)
   proc checkedTcpSender(value: Nat,
-      ch {.linear.}: Chan(sendS(Nat, endS()))): SendOutcome =
+      ch {.linear.}: Chan[sendS[Nat](endS())]): SendOutcome =
     sendNatTcpOp(value, ch)
-  proc checkedTcpReceiver(ch {.linear.}: Chan(recvS(Nat, endS()))): ReceiveOutcome =
+  proc checkedTcpReceiver(ch {.linear.}: Chan[recvS[Nat](endS())]): ReceiveOutcome =
     recvNatTcpOp(ch)
 
 proc runTcpDemo*() =

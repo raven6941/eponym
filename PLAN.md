@@ -1160,6 +1160,8 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   `sendD`/`recvD` constructor applications and indexed message/channel types to
   brackets. The higher-order demo runs; the Paxos module compiles and checks
   its roles (its loopback runtime test is covered separately).
+- [x] Migrate the runtime-bound and TCP session examples' `Chan` types and
+  nested `sendS`/`recvS` session applications to brackets; both modules compile.
 - [ ] Migrate the remaining warning-producing embedded examples and tests,
   then remove the legacy parser/lowering path.
 - [ ] Remove the legacy call-style parser/lowering path and update examples,
