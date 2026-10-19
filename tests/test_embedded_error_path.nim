@@ -71,6 +71,8 @@ for (path, expected) in [
      "only type-level generic binders annotated with Univ"),
     ("tests/fixtures/embedded_err_binding_quinary_nim_type.nim",
      "type mismatch"),
+    ("tests/fixtures/embedded_err_binding_senary_eponym_type.nim",
+     "typed n-ary adapter requires postulate 'sumSix' to have type Int -> Int -> Int -> Int -> Nat -> Int -> Int"),
     ("tests/fixtures/embedded_err_runtime_enum_payload.nim",
      "requires only nullary constructors returning the unindexed family"),
     ("tests/fixtures/embedded_err_dependent_sigma_postulate_binding.nim",

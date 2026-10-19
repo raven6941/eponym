@@ -122,10 +122,10 @@ follows a protocol. Opaque `runtimeType` mappings must name postulated Eponym
 types or indexed type families. A nullary, unindexed `data` declaration may
 instead map to a Nim enum whose members use the same constructor names.
 Opaque bindings support `T -> T`, `T -> U`, `T -> Nat`,
-`Nat -> T -> U`, and curried opaque contracts with up to five arguments when
-every opaque type is explicitly mapped. These shapes cover resource handles
-with primitive message values. Other structured values, dependent signatures,
-and longer callbacks still need explicit codec and adapter support.
+`Nat -> T -> U`, and curried contracts of arbitrary arity when every argument
+and result has a runtime codec. Opaque values need explicit `runtimeType`
+mappings; primitive `Int`, `Nat`, and `Bool` use their built-in codecs. Other
+structured values and dependent signatures still need explicit codec support.
 
 For a postulate with one to three arguments and a non-dependent pair result,
 `bindPostulatePair` lets a Nim callback return a typed tuple. The macro checks

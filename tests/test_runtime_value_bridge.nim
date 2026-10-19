@@ -102,6 +102,8 @@ proc hostInvokeCallback(callback: NimIntCallback, value: int): int =
 
 proc hostWrongRoute(channel: int, message: string): int = channel + message.len
 
+proc hostSumSix(a, b, c, d, e, f: int): int = a + b + c + d + e + f
+
 static:
   doAssert compiles(hostIntUnary(hostStepNim))
   doAssert not compiles(hostIntUnary(hostString))
@@ -182,6 +184,13 @@ eponymBlock:
     lam(left, Int, lam(right, Int, addInt(seed, addInt(left, right))))
 
 eponymBlock:
+  postulate(Int, Univ)
+  postulate(sumSix, Int -> Int -> Int -> Int -> Int -> Int -> Int)
+  bindPostulate(sumSix, hostSumSix, Int, Int, Int, Int, Int, Int, Int)
+  proc generatedSumSix(a, b, c, d, e, f: Int): Int =
+    sumSix(a, b, c, d, e, f)
+
+eponymBlock:
   data(Signal, Univ):
     proc signalStop(): Signal
     proc signalCaution(): Signal
@@ -203,6 +212,8 @@ static:
   doAssert compiles(generatedApplyTwoArgumentCallback(
     proc(left, right: int): int = left + right, 1, 2))
   doAssert compiles(generatedTwoArgumentAdder(3)(4, 5))
+  doAssert compiles(generatedSumSix(1, 2, 3, 4, 5, 6))
+  doAssert not compiles(generatedSumSix(1, 2, 3, 4, 5))
   doAssert compiles(generatedSignalIdentity(signalGo))
   doAssert not compiles(generatedSignalIdentity(1))
 
@@ -888,6 +899,15 @@ proc callbackRole : Callback -> Sample -> Sample =
           seed + (seed + 1) + (seed + 2),
     shrinkInt)
   if not twoArgumentCallbackCases:
+    quit(1)
+  let generatedSixArgumentBindingCases = forAll(
+    "typed postulate adapters support six curried arguments", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(a: int): bool =
+      generatedSumSix(a, a + 1, a + 2, a + 3, a + 4, a + 5) ==
+        6 * a + 15,
+    shrinkInt)
+  if not generatedSixArgumentBindingCases:
     quit(1)
   var wrongBinaryMappingRejected = false
   try:
