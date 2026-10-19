@@ -7,4 +7,7 @@ eponymBlock:
   proc indexedIdentity[n: Tag](value: Int): Int = value
   runtimeValue(indexedIdentity)
 
-discard indexedIdentityRuntimeValue(1)
+let result = indexedIdentityRuntimeValueRuntimeValueRaw([vNatLit(3)],
+  [intToValue(1)])
+doAssert result.value.whnfKind == wInt
+doAssert result.value.whnfIntVal == 1

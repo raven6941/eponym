@@ -2135,11 +2135,6 @@ macro eponymBlock*(body: untyped): untyped =
     if declaration[3].len == 0 or declaration[3][0].kind == nnkEmpty:
       error("runtimeValue requires a checked definition with a result: " &
         requested, body)
-    if declaration[2].kind != nnkEmpty:
-      let generic = genericRuntimeInfo(declaration, hostRuntimeTypes(body))
-      if generic.error.len > 0:
-        error("runtimeValue cannot expose '" & requested & "': " &
-          generic.error, declaration)
     for i in 1 ..< declaration[3].len:
       if declaration[3][i].kind != nnkIdentDefs:
         error("runtimeValue supports ordinary fixed-arity parameters: " & requested,
@@ -2366,14 +2361,77 @@ macro eponymBlock*(body: untyped): untyped =
         for i in 1 ..< params.len:
           valueArity += params[i].len - 2
         let runtimeName = ident(d.name & "RuntimeValue")
+        if procDecl[2].kind != nnkEmpty:
+          let genericArgsSym = genSym(nskParam, "runtimeGenericArguments")
+          let valueArgsSym = genSym(nskParam, "runtimeValueArguments")
+          let globalsSym = genSym(nskLet, "runtimeGlobals")
+          let defsSym = genSym(nskLet, "runtimeDefs")
+          let bindingsSym = genSym(nskVar, "runtimeBindings")
+          let nameLit = newLit(d.name)
+          let dirLit = newLit(baseDir)
+          let srcLit = newLit(src)
+          let genericArity = newLit(block:
+            var arity = 0
+            for param in procDecl[2]:
+              arity += param.len - 2
+            arity)
+          let valueArity = newLit(block:
+            var arity = 0
+            for i in 1 ..< params.len:
+              arity += params[i].len - 2
+            arity)
+          var rawBody = newStmtList()
+          rawBody.add quote do:
+            if `genericArgsSym`.len != `genericArity`:
+              raise newException(ValueError,
+                "runtimeValue generic argument count mismatch for " & `nameLit`)
+            if `valueArgsSym`.len != `valueArity`:
+              raise newException(ValueError,
+                "runtimeValue argument count mismatch for " & `nameLit`)
+          rawBody.add(newLetStmt(globalsSym,
+            newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+          rawBody.add(newLetStmt(defsSym,
+            newCall(bindSym"getDefsDir", dirLit, srcLit)))
+          rawBody.add(newVarStmt(bindingsSym,
+            newCall(bindSym"initRuntimeBindings")))
+          for binding in bindings:
+            rawBody.add(bindingCall(binding, bindingsSym, globalsSym,
+                                    runtimeTypes, records))
+          let allArgsSeq = genSym(nskLet, "allRuntimeArguments")
+          rawBody.add(newLetStmt(allArgsSeq, newCall(bindSym"concat",
+            newCall(bindSym"toSeq", genericArgsSym),
+            newCall(bindSym"toSeq", valueArgsSym))))
+          rawBody.add(newTree(nnkTupleConstr,
+            newCall(bindSym"callDefValueWithBindings",
+              newCall(bindSym"findDef", defsSym, nameLit), allArgsSeq,
+              bindingsSym, globalsSym), globalsSym))
+          var rawProc = newNimNode(nnkProcDef)
+          rawProc.add(newTree(nnkPostfix, ident"*",
+                              ident(d.name & "RuntimeValueRaw")))
+          rawProc.add(newEmptyNode())
+          rawProc.add(newEmptyNode())
+          var rawFormal = newNimNode(nnkFormalParams)
+          rawFormal.add(parseExpr("tuple[value: Value, globals: Globals]"))
+          rawFormal.add(newIdentDefs(genericArgsSym,
+            newTree(nnkBracketExpr, ident"openArray", bindSym"Value"),
+            newEmptyNode()))
+          rawFormal.add(newIdentDefs(valueArgsSym,
+            newTree(nnkBracketExpr, ident"openArray", bindSym"Value"),
+            newEmptyNode()))
+          rawProc.add(rawFormal)
+          rawProc.add(newEmptyNode())
+          rawProc.add(newEmptyNode())
+          rawProc.add(rawBody)
+          result.add(rawProc)
         let globalsSym = genSym(nskLet, "runtimeGlobals")
         let defsSym = genSym(nskLet, "runtimeDefs")
         let bindingsSym = genSym(nskVar, "runtimeBindings")
         let argsSym = genSym(nskParam, "runtimeArguments")
         var genericValues = newNimNode(nnkBracket)
-        for genericArg in genericRuntimeValueArgs(generic, globalsSym,
-            runtimeTypes, records):
-          genericValues.add(copyNimTree(genericArg))
+        if generic.error.len == 0:
+          for genericArg in genericRuntimeValueArgs(generic, globalsSym,
+              runtimeTypes, records):
+            genericValues.add(copyNimTree(genericArg))
         let runtimeArgsSym = newCall(bindSym"prependRuntimeArgs",
           newTree(nnkPrefix, ident"@", genericValues), argsSym)
         let expectedArity = newLit(valueArity)
@@ -2394,21 +2452,22 @@ macro eponymBlock*(body: untyped): untyped =
         rawBody.add quote do:
             (callDefValueWithBindings(findDef(`defsSym`, `nameLit`), `runtimeArgsSym`,
                                       `bindingsSym`), `globalsSym`)
-        var rawProc = newNimNode(nnkProcDef)
-        rawProc.add(newTree(nnkPostfix, ident("*"), runtimeName))
-        rawProc.add(newEmptyNode())
-        rawProc.add(copyNimTree(generic.genericParams))
-        var rawFormal = newNimNode(nnkFormalParams)
-        rawFormal.add(parseExpr("tuple[value: Value, globals: Globals]"))
-        rawFormal.add(newIdentDefs(argsSym,
-          newTree(nnkBracketExpr, ident"openArray", bindSym"Value"),
-          newEmptyNode()))
-        rawProc.add(rawFormal)
-        rawProc.add(newEmptyNode())
-        rawProc.add(newEmptyNode())
-        rawProc.add(rawBody)
-        result.add(rawProc)
-        if valueArity == 0:
+        if generic.error.len == 0:
+          var rawProc = newNimNode(nnkProcDef)
+          rawProc.add(newTree(nnkPostfix, ident("*"), runtimeName))
+          rawProc.add(newEmptyNode())
+          rawProc.add(copyNimTree(generic.genericParams))
+          var rawFormal = newNimNode(nnkFormalParams)
+          rawFormal.add(parseExpr("tuple[value: Value, globals: Globals]"))
+          rawFormal.add(newIdentDefs(argsSym,
+            newTree(nnkBracketExpr, ident"openArray", bindSym"Value"),
+            newEmptyNode()))
+          rawProc.add(rawFormal)
+          rawProc.add(newEmptyNode())
+          rawProc.add(newEmptyNode())
+          rawProc.add(rawBody)
+          result.add(rawProc)
+        if valueArity == 0 and generic.error.len == 0:
           var forwarderBody = newStmtList()
           var rawCallee: NimNode = copyNimTree(runtimeName)
           if generic.genericNames.len > 0:

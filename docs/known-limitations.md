@@ -86,9 +86,15 @@ definitions also get a Nim-typed overload that converts arguments and returns
 the result as a `Value`. Mapped host values are not checked against dependent
 indices. A raw `openArray[Value]` overload remains available and checks only
 argument count for definitions with a local Nim signature; callers must
-construct those values correctly. `runtimeValue(importedDefinition)` also
-works for definitions imported from `.ep` files without a local Nim signature
-and exposes only the raw Value interface. Imported checked bodies can invoke
+construct those values correctly. Generic local definitions also get
+`nameRuntimeValueRaw(genericArgs, valueArgs)`, which accepts all generic
+arguments and ordinary arguments as `openArray[Value]`. This supports generic
+binder types without a Nim runtime mapping; callers construct and validate the
+generic values themselves. The checked definition has been type-checked, but
+the raw bridge does not verify that supplied Values inhabit its generic binder
+types. `runtimeValue(importedDefinition)` also works for definitions imported
+from `.ep` files without a local Nim signature and exposes only the raw Value
+interface. Imported checked bodies can invoke
 postulates bound by `bindPostulate` in the same block. The helper applies the
 block's declared adapters; unbound postulates remain neutral. It does not
 generate a structural Nim result type, but checks the imported definition's

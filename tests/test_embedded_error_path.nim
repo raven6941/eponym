@@ -67,8 +67,6 @@ for (path, expected) in [
      "no runtime codec for Eponym result type 'Point'"),
     ("tests/fixtures/embedded_err_bool_without_prelude.nim",
      "Bool constructor 'true' is not declared; import bool.ep"),
-    ("tests/fixtures/embedded_err_generic_runtime_index.nim",
-     "values with an explicit runtimeType mapping"),
     ("tests/fixtures/embedded_err_binding_quinary_nim_type.nim",
      "type mismatch"),
     ("tests/fixtures/embedded_err_binding_senary_eponym_type.nim",

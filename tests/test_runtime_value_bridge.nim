@@ -274,6 +274,16 @@ eponymBlock:
       Channel = channel
   runtimeValue(generatedGenericChannelValue)
 
+eponymBlock:
+  postulate(Nat, Univ)
+  proc generatedGenericNatValueRaw[n: Nat](): Nat = n
+  runtimeValue(generatedGenericNatValueRaw)
+
+proc rawGenericNatAt(index: int): bool =
+  let runtime = generatedGenericNatValueRawRuntimeValueRaw(
+    [vNatLit(index)], [])
+  valueToNat(runtime.value, runtime.globals) == index
+
 proc checkGenericChannelValueAt[channel: static[ChannelHandle]](
     ignored: int): bool =
   let typedResult = generatedGenericChannelValue[channel](ignored)
@@ -712,6 +722,14 @@ when isMainModule:
       runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value,
     shrinkInt)
   if not importedRuntimeCases:
+    quit(1)
+
+  let rawGenericNatCases = forAll(
+    "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 1000),
+    proc(index: int): bool = rawGenericNatAt(index),
+    shrinkInt)
+  if not rawGenericNatCases:
     quit(1)
 
   var importedArityRejected = false

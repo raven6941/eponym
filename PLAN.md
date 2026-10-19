@@ -425,6 +425,12 @@ implementations.
    recursive runtime codecs; 200-case properties cover primitive and explicitly
    mapped opaque arguments for callbacks passed into and returned from checked
    functions. Returned Nim closures require `{.closure.}`.
+- [x] Expose generic local definitions through a raw `RuntimeValueRaw` helper
+  taking generic arguments and ordinary arguments as `openArray[Value]`. This
+  permits generic binder types without Nim runtime codecs; callers are
+  responsible for constructing Values of the declared binder types. A 200-case
+  property passes an unmapped generic Nat value and checks that the definition
+  returns that value.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
