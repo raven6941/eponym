@@ -497,9 +497,9 @@ implementations.
      mapped structured-variant path,
      with a negative mismatched-index check.
    - [x] Add dynamic runtime wrappers that accept unmapped value-indexed
-     binders as `Value` parameters. Named binder types are checked against
-     their Eponym type; callers remain responsible for applied/indexed binder
-     domains that the bridge cannot yet reconstruct.
+     binders as `Value` parameters. Named and supported applied/indexed binder
+     domains are checked against their Eponym types; more complex type
+     expressions remain unsupported.
    - [x] Preserve the full locally declared Sigma result type when generating
      `bindPostulatePairTrusted`, so recursive codecs can enforce represented
      constraints such as a Vec length indexed by the first field. A 200-case
