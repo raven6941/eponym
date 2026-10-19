@@ -129,8 +129,10 @@ and scalar values through typed, dynamic, `RuntimeValue`, and raw `Value`
 paths. Higher-order signatures with supported Nim callback leaf codecs generate
 typed closure wrappers.
 Unsupported implicit binder domains and callback signatures
-without codecs retain the raw interface; a raw callback `Value` has no runtime
-type witness and remains trusted. Unmapped host boxes remain a trusted escape
+without codecs retain the raw interface. Raw-Value callback arguments and
+results are checked against their Eponym function type when the runtime shape
+is supported, including recursive data and dependent Vec indices; unsupported
+type expressions remain trusted. Unmapped host boxes remain a trusted escape
 hatch. Imported checked bodies can
 invoke postulates bound by `bindPostulate` in the same block. Tests cover
 typed and raw imported identity calls, a typed call through a bound imported

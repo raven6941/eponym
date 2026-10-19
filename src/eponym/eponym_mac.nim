@@ -1426,6 +1426,10 @@ proc runtimeStructuredCodecsExpr(mappings: seq[HostRuntimeType],
       result.add(newCall(newTree(nnkBracketExpr,
         bindSym"runtimeStructuredHostCodec", mapping.nimType), mappedName))
 
+proc rawRuntimeValueCheck(eponymType, value, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]],
+    mappings: seq[HostRuntimeType], records: seq[HostRecord]): NimNode
+
 proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                toValue: bool,
                                mappings: seq[HostRuntimeType],
@@ -1444,10 +1448,25 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         argValueSyms.add(genSym(nskParam, "rawCallbackValue" & $i))
         argSyms.add(genSym(nskParam, "rawCallbackArgument" & $i))
       if toValue:
+        var callbackBody = newStmtList()
+        var callbackIndexOverrides = indexOverrides
+        for i, argType in procParts.argTypes:
+          let check = rawRuntimeValueCheck(argType, argValueSyms[i], globals,
+            callbackIndexOverrides, mappings, records)
+          if not check.isNil: callbackBody.add(check)
+          if procParts.argNames[i].len > 0:
+            callbackIndexOverrides.add((procParts.argNames[i],
+              argValueSyms[i]))
         var hostCall = newCall(value)
         for argSym in argValueSyms:
           hostCall.add(argSym)
-        var callbackValue = hostCall
+        let hostResult = genSym(nskLet, "rawCallbackResult")
+        callbackBody.add(newLetStmt(hostResult, hostCall))
+        let resultCheck = rawRuntimeValueCheck(procParts.resultType,
+          hostResult, globals, callbackIndexOverrides, mappings, records)
+        if not resultCheck.isNil: callbackBody.add(resultCheck)
+        callbackBody.add(hostResult)
+        var callbackValue = newStmtList(callbackBody)
         for i in countdown(argValueSyms.high, 0):
           let hostCallback = newProc(params = @[bindSym"Value",
             newIdentDefs(argValueSyms[i], bindSym"Value", newEmptyNode())],
@@ -1459,9 +1478,21 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       for argSym in argSyms:
         callbackArgs.add(argSym)
         formal.add(newIdentDefs(argSym, bindSym"Value", newEmptyNode()))
+      var callbackBody = newStmtList()
+      var callbackIndexOverrides = indexOverrides
+      for i, argType in procParts.argTypes:
+        let check = rawRuntimeValueCheck(argType, argSyms[i], globals,
+          callbackIndexOverrides, mappings, records)
+        if not check.isNil: callbackBody.add(check)
+        if procParts.argNames[i].len > 0:
+          callbackIndexOverrides.add((procParts.argNames[i], argSyms[i]))
       let applied = newCall(bindSym"callRuntimeValue", value,
         newTree(nnkPrefix, ident"@", callbackArgs))
-      return newProc(params = formal, body = newStmtList(applied))
+      let resultCheck = rawRuntimeValueCheck(procParts.resultType, applied,
+        globals, callbackIndexOverrides, mappings, records)
+      if not resultCheck.isNil: callbackBody.add(resultCheck)
+      callbackBody.add(applied)
+      return newProc(params = formal, body = callbackBody)
     let resultNimType = runtimeNimType(procParts.resultType, mappings, records,
                                        allowDependentSigma)
     if resultNimType.isNil: return nil
@@ -2213,10 +2244,6 @@ proc rawRuntimeTypeCheckable(eponymType: NimNode,
     if findHostRecord(records, mapping.eponymName) >= 0: continue
     if mentionsName(eponymType, mapping.eponymName): return false
   true
-
-proc rawRuntimeValueCheck(eponymType, value, globals: NimNode,
-    overrides: seq[tuple[name: string, value: NimNode]],
-    mappings: seq[HostRuntimeType], records: seq[HostRecord]): NimNode
 
 proc rawRuntimePairValueCheck(firstType, secondType, value, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]],

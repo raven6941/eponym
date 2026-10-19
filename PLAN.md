@@ -498,10 +498,13 @@ implementations.
       both generated wrappers and typed `RuntimeValue` calls. Imported
       definitions that return callbacks are also covered through both wrapper
       paths. A negative check rejects a callback returning the wrong Vec
-      length. Raw callback
-      Values have no runtime type witness, while unsupported implicit binders,
-      callback leaf types without codecs, and unmapped host boxes remain
-      trusted or raw-interface escape hatches. `runtimePairTrusted` also opts
+      length. Raw-Value callbacks now validate arguments and results against
+      their checked Eponym function type whenever the runtime shape is
+      supported; tests reject wrong-family arguments and results in generated
+      and reified callbacks. Unsupported type expressions, callback leaf types
+      without a runtime-checkable shape, and unmapped host boxes remain trusted
+      escape hatches; those callbacks retain the explicit raw trust boundary.
+      `runtimePairTrusted` also opts
       reconstructable imported dependent Sigma signatures into typed tuple
       wrappers; a 200-case identity property covers typed and `RuntimeValue`
       calls, and rejects a tuple whose Vec length disagrees with its Nat field.
@@ -555,6 +558,11 @@ implementations.
      postulate declaration comes from an imported `.ep` module by deriving
      the runtime shape from its checked `Globals` type. A 200-case property
      checks imported host results and rejects mismatched vector lengths.
+   - [x] Check raw-Value callback arguments and results against the callback's
+     Eponym function type when its runtime shape is supported. Validation
+     carries earlier callback arguments into dependent codecs. Negative checks
+     reject wrong-family inputs and results through generated and reified
+     closures; unsupported type expressions remain explicitly trusted.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.

@@ -20,6 +20,8 @@ proc hostString(value: string): string = value
 proc hostFailureNim(value: int): int =
   raise newException(IOError, "host adapter failed")
 proc rawRuntimeIdentity(value: Value): Value = value
+proc rawRuntimeWrongToken(value: Value): Value = intToValue(42)
+proc rawRuntimeReturnLength(length, values: Value): Value = length
 proc makeIndexedRuntimeValues(length: int): seq[int] =
   for i in 0 ..< length: result.add(i - length)
 proc makeWrongIndexedRuntimeValues(length: int): seq[int] =
@@ -72,6 +74,7 @@ proc encodeWrongRuntimeHandle(value: ChannelHandle, globals: Globals): Value =
 
 type NimIntCallback = proc(value: int): int {.closure.}
 type RawRuntimeCallback = proc(value: Value): Value {.closure.}
+type RawIndexedRuntimeCallback = proc(length, values: Value): Value {.closure.}
 
 type RuntimePoint = object
   x: int
@@ -503,8 +506,10 @@ eponymBlock:
     lam(left, Int, lam(right, Int, addInt(seed, addInt(left, right))))
 
 eponymBlock:
-  postulate(Int, Univ)
-  postulate(Token, Univ)
+  data(Token, Univ):
+    proc runtimeTokenRed(): Token
+    proc runtimeTokenBlue(): Token
+  runtimeVariant(Token)
   proc generatedRawTokenCallbackEcho(
       callback: proc(value: Token): Token {.closure, rawValue.}):
       proc(value: Token): Token {.closure, rawValue.} = callback
@@ -526,6 +531,12 @@ eponymBlock:
     lam(length, Nat, lam(values, Vec(Int, length), length))
   runtimeValue(generatedApplyDependentVectorCallback)
   runtimeValue(generatedDependentVectorCallback)
+  proc generatedRawIndexedCallbackEcho(
+      callback: proc(length: Nat, values: Vec[Int, length]): Nat
+        {.closure, rawValue.}):
+      proc(length: Nat, values: Vec[Int, length]): Nat
+        {.closure, rawValue.} = callback
+  runtimeValue(generatedRawIndexedCallbackEcho)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -1435,17 +1446,86 @@ when isMainModule:
     "raw Value callbacks bridge unmapped higher-order types", r, 200,
     proc(r: var Rng): int = r.genInt(-1000, 1000),
     proc(value: int): bool =
+      let globals = generatedRawTokenCallbackEchoRuntimeValue(
+        rawRuntimeIdentity).globals
+      let token = eval(globals["runtimeTokenRed"].tm, @[])
       let callback: RawRuntimeCallback =
         generatedRawTokenCallbackEcho(rawRuntimeIdentity)
-      let wrapperResult = valueToInt(callback(intToValue(value))) == value
+      let wrapperResult = callback(token).whnfKind == token.whnfKind and
+        callback(token).whnfRefId == token.whnfRefId
       let runtime = generatedRawTokenCallbackEchoRuntimeValue(
         rawRuntimeIdentity)
-      let runtimeResult = valueToInt(callRuntimeValue(runtime.value,
-        [intToValue(value)])) == value
+      let runtimeCallback = callRuntimeValue(runtime.value, [token])
+      let runtimeResult = runtimeCallback.whnfKind == token.whnfKind and
+        runtimeCallback.whnfRefId == token.whnfRefId
       wrapperResult and runtimeResult,
     shrinkInt)
   if not rawCallbackCases:
     quit(1)
+
+  let rawCallbackRuntime = generatedRawTokenCallbackEchoRuntimeValue(
+    rawRuntimeIdentity)
+  let rawCallbackToken = eval(rawCallbackRuntime.globals["runtimeTokenRed"].tm,
+    @[])
+  var rawCallbackArgumentRejected = false
+  try:
+    discard generatedRawTokenCallbackEcho(rawRuntimeIdentity)(intToValue(42))
+  except ValueError as error:
+    rawCallbackArgumentRejected = true
+    doAssert "runtime" in error.msg
+  doAssert rawCallbackArgumentRejected, "wrong callback argument was accepted"
+  var rawCallbackResultRejected = false
+  try:
+    discard generatedRawTokenCallbackEcho(rawRuntimeWrongToken)(rawCallbackToken)
+  except ValueError as error:
+    rawCallbackResultRejected = true
+    doAssert "runtime" in error.msg
+  doAssert rawCallbackResultRejected, "wrong callback result was accepted"
+  var rawRuntimeCallbackResultRejected = false
+  try:
+    let badRuntime = generatedRawTokenCallbackEchoRuntimeValue(
+      rawRuntimeWrongToken)
+    discard callRuntimeValue(badRuntime.value, [rawCallbackToken])
+  except ValueError as error:
+    rawRuntimeCallbackResultRejected = true
+    doAssert "runtime" in error.msg
+  doAssert rawRuntimeCallbackResultRejected,
+    "wrong raw RuntimeValue callback result was accepted"
+
+  let rawIndexedCallbackCases = forAll(
+    "raw callback checks dependent Vec arguments and indices", r, 200,
+    proc(r: var Rng): tuple[length: int, values: seq[int]] =
+      let length = r.genInt(0, 12)
+      var values: seq[int] = @[]
+      for _ in 0 ..< length: values.add(r.genInt(-1000, 1000))
+      (length, values),
+    proc(input: tuple[length: int, values: seq[int]]): bool =
+      let runtime = generatedRawIndexedCallbackEchoRuntimeValue(
+        rawRuntimeReturnLength)
+      let vector = runtimeIntVector(input.values, runtime.globals)
+      let callback: RawIndexedRuntimeCallback =
+        generatedRawIndexedCallbackEcho(rawRuntimeReturnLength)
+      let direct = callback(natToValue(input.length, runtime.globals), vector)
+      let reified = callRuntimeValue(runtime.value,
+        [natToValue(input.length, runtime.globals), vector])
+      valueToNat(direct, runtime.globals) == input.length and
+        valueToNat(reified, runtime.globals) == input.length,
+    proc(input: tuple[length: int, values: seq[int]]):
+        seq[tuple[length: int, values: seq[int]]] = @[])
+  if not rawIndexedCallbackCases:
+    quit(1)
+  let rawIndexedGlobals = generatedRawIndexedCallbackEchoRuntimeValue(
+    rawRuntimeReturnLength).globals
+  var rawIndexedCallbackRejected = false
+  try:
+    let callback: RawIndexedRuntimeCallback =
+      generatedRawIndexedCallbackEcho(rawRuntimeReturnLength)
+    discard callback(natToValue(2, rawIndexedGlobals),
+      runtimeIntVector(@[1], rawIndexedGlobals))
+  except ValueError:
+    rawIndexedCallbackRejected = true
+  doAssert rawIndexedCallbackRejected,
+    "raw callback accepted a Vec with the wrong dependent length"
 
   var importedArityRejected = false
   try:
