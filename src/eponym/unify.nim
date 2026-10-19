@@ -592,7 +592,10 @@ proc retryDeferred(ms: var MetaStore, solvedId: int) =
 proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) =
   ## Solve ?m[spine] = t (Miller pattern fragment).
   ## Issue #56: pre-unification — a non-pattern spine or an escaping
-  ## variable suspends the goal instead of failing. The goal is retried
+  ## variable suspends the goal instead of failing. If a non-pattern spine
+  ## contains duplicate or non-variable entries that the candidate solution
+  ## does not use, those entries can be pruned and the remaining unique
+  ## variables inverted safely. The goal is retried
   ## when a metavariable it is blocked on is assigned (retryDeferred,
   ## below); whatever is still stuck at the declaration zonk point
   ## becomes an ambiguity error via flushDeferred. The occurs check
@@ -615,14 +618,33 @@ proc solveMeta(ms: var MetaStore, id: int, spine: seq[Term], t: Term, loc: Loc) 
         "' is applied to a term containing ?m" & $id)
     raise uerr(loc, "occurs check failed for ?m" & $id)
   let (pok, perm) = spinePerm(zsp)
-  if not pok:
-    deferGoal(ms, tmMeta(id, zsp), zt, loc)
-    return
-  var maxV = -1
-  for p in perm: maxV = max(maxV, p)
-  var inv = newSeq[int](maxV + 1)
-  for i in 0 .. maxV: inv[i] = -1
-  for i, p in perm: inv[p] = i
+  var inv: seq[int]
+  if pok:
+    var maxV = -1
+    for p in perm: maxV = max(maxV, p)
+    inv = newSeq[int](maxV + 1)
+    for i in 0 .. maxV: inv[i] = -1
+    for i, p in perm: inv[p] = i
+  else:
+    # Let substitution can make distinct creation-context variables equal
+    # at one occurrence (for example, `let alias = callback in alias ?`).
+    # A solution that does not mention an ambiguous current variable remains
+    # safe: invert only unique variable entries and let tryRenameAt reject any
+    # solution that depends on a duplicate or non-variable spine entry.
+    var maxV = -1
+    for arg in zsp:
+      if arg.kind == tV: maxV = max(maxV, arg.idx)
+    inv = newSeq[int](maxV + 1)
+    for i in 0 ..< inv.len: inv[i] = -1
+    var ambiguous = initHashSet[int]()
+    for i, arg in zsp:
+      if arg.kind != tV: continue
+      if arg.idx in ambiguous: continue
+      if inv[arg.idx] >= 0:
+        inv[arg.idx] = -1
+        ambiguous.incl(arg.idx)
+      else:
+        inv[arg.idx] = i
   let (rok, sol) = tryRenameAt(zt, inv, 0, e.metaCtxLen)
   if not rok:
     deferGoal(ms, tmMeta(id, zsp), zt, loc)

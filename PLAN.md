@@ -1250,13 +1250,16 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   index inference through aliases of bracketed constructors and partially
   applied constructors, including non-leading indices, and command-call syntax
   follows the same inference path. The dependent `All` constructor example now
-  infers its vector index from the recursive proof. Extend the same
-  boundary-preserving approach to the remaining inferable-binder forms before
-  closing this audit. Conditional callees compare the complete call metadata,
-  including inferable-index positions; a direct conditional callback call is
-  covered. A `let`-bound conditional callback with a result-only index still
-  leaves an unsolved index metavariable, even with an explicit Pi annotation,
-  so result-directed inference through that binding remains open.
+  infers its vector index from the recursive proof. Conditional callees compare
+  complete call metadata, including inferable-index positions. Callback result
+  inference also works through direct aliases and let-bound conditionals,
+  including when the expected index is an outer variable. The unifier prunes
+  unused duplicate or non-variable context entries while solving these holes;
+  it still defers constraints that depend on an ambiguous duplicated variable.
+  Compile-time fixtures and the runtime bridge property cover the alias paths,
+  and unifier properties cover both prunable and genuinely ambiguous spines.
+  Extend the same boundary-preserving approach to remaining inferable-binder
+  forms before closing this audit.
   Other relevant supported forms—identifiers, parenthesized and qualified
   calls, returned calls, callback aliases, conditionals, type ascriptions, and
   statement-list expressions—have focused coverage. Unsupported Nim AST forms

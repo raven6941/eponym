@@ -943,7 +943,9 @@ eponymBlock:
   runtimeVector(Vec)
   proc generatedApplyIndexedCallback(
       callback: proc(length: Nat): Vec[Int, length] {.closure.},
-      length: Nat): Vec[Int, length] = callback()
+      length: Nat): Vec[Int, length] =
+    let selected = callback
+    selected()
   runtimeValue(generatedApplyIndexedCallback)
   proc generatedApplyDependentVectorCallback(
       callback: proc(length: Nat, values: Vec[Int, length]): Nat {.closure.},

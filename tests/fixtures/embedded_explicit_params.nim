@@ -155,6 +155,16 @@ eponymBlock:
       callback: Pi(n: Nat, Vec[Nat, n])): Vec[Nat, 0] =
     callback[zero()]()
 
+  proc inferredCallbackResultIndexAlias(
+      callback: Pi(n: Nat, Vec[Nat, n])): Vec[Nat, 0] =
+    let selected = callback
+    selected()
+
+  proc inferredCallbackResultIndexAliasOuter(
+      callback: Pi(n: Nat, Vec[Nat, n]), length: Nat): Vec[Nat, length] =
+    let selected = callback
+    selected()
+
   proc inferredCallbackResultIndexInSigma(
       callback: Pi(n: Nat, Sig(marker: Nat, Vec[Nat, n]))):
       Sig(marker: Nat, Vec[Nat, 0]) = callback()
@@ -165,7 +175,8 @@ eponymBlock:
 
   proc inferredConditionalCallbackResultIndex(
       left, right: Pi(n: Nat, Vec[Nat, n]), flag: Bool): Vec[Nat, 0] =
-    (if flag: left else: right)()
+    let selected = if flag: left else: right
+    selected()
 
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =

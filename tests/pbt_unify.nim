@@ -16,8 +16,8 @@
 ##      characterization case, not a universal property.)
 ##   P4 occurs check: ?m = t[?m] raises UnifyError; a constructor-headed
 ##      t names noCycle (issue #80).
-##   P5 non-pattern spines suspend (pre-unification, issue #56):
-##      duplicate-var spines, non-var spines, and escaping variables
+##   P5 non-pattern spines suspend (pre-unification, issue #56), except when
+##      the solution avoids ambiguous or non-variable spine entries.
 ##      defer instead of raising; flushDeferred reports leftovers as an
 ##      ambiguity error showing the stuck constraint.
 ##   P6 zonk idempotence: zonk(zonk(t)) == zonk(t), even mid-elaboration.
@@ -317,14 +317,24 @@ proc flushedAsAmbiguity(ms: var MetaStore): bool =
   except UnifyError as e:
     "ambiguous" in e.msg and "stuck" in e.msg
 
-proc propP5dup(): bool =
+proc propP5dupClosed(): bool =
   var ms = initMetaStore()
   let m = freshMeta(ms, tmC(cStar), 1, 0, noLoc)
   let bad = tmMeta(m.metaId, @[vv(0), vv(0)])
   try:
     unify(ms, bad, tmC(cOne), noLoc)
   except UnifyError:
-    return false  # must suspend, not raise
+    return false
+  ms.deferred.len == 0 and $zonk(ms, bad) == "1"
+
+proc propP5dupUsed(): bool =
+  var ms = initMetaStore()
+  let m = freshMeta(ms, tmC(cStar), 1, 0, noLoc)
+  let bad = tmMeta(m.metaId, @[vv(0), vv(0)])
+  try:
+    unify(ms, bad, vv(0), noLoc)
+  except UnifyError:
+    return false
   ms.deferred.len == 1 and flushedAsAmbiguity(ms)
 
 proc propP5nonVar(): bool =
@@ -332,7 +342,7 @@ proc propP5nonVar(): bool =
   let m = freshMeta(ms, tmC(cStar), 1, 0, noLoc)
   let bad = tmMeta(m.metaId, @[tmC(cOne)])
   try:
-    unify(ms, bad, tmC(cOne), noLoc)
+    unify(ms, bad, vv(0), noLoc)
   except UnifyError:
     return false  # must suspend, not raise
   ms.deferred.len == 1 and flushedAsAmbiguity(ms)
@@ -505,7 +515,8 @@ when isMainModule:
                proc(r: var Rng): int = 0,
                proc(x: int): bool = propP4(r)))
   check("P4 occurs check names noCycle under constructors", propP4noCycle())
-  check("P5 duplicate-var spine suspends (+flush ambiguity)", propP5dup())
+  check("P5 unused duplicate vars allow a closed solution", propP5dupClosed())
+  check("P5 used duplicate var remains ambiguous", propP5dupUsed())
   check("P5 non-var spine suspends (+flush ambiguity)", propP5nonVar())
   check("P5 escaping variable suspends (+flush ambiguity)", propP5escape())
   check("P7 eta-positive: lam(x). r x =Type 0= r",
