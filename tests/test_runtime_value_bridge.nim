@@ -97,6 +97,9 @@ type IndexedChannelHandle = object
 type RuntimeSignal = enum
   signalStop, signalCaution, signalGo
 
+type ImportedToken = enum
+  importedTokenRed, importedTokenBlue
+
 proc hostWrongFour(channel: ChannelHandle, message: string,
                    requestId, phase: int): int = channel.id + requestId + phase
 
@@ -214,10 +217,14 @@ eponymBlock:
 eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
   runtimeVector(Vec)
+  runtimeType(Token, ImportedToken)
   runtimeValue(importedIntIdentity)
   runtimeValue(importedGenericIdentity)
   runtimeValue(importedImplicitGenericIdentity)
   runtimeValue(importedImplicitNatVecIdentity)
+  runtimeValue(importedImplicitBoolIdentity)
+  runtimeValue(importedImplicitIntIdentity)
+  runtimeValue(importedImplicitTokenIdentity)
   runtimeValue(importedCallbackApply)
   runtimeValue(importedCallbackApply2)
   runtimeValue(importedCallbackIdentity)
@@ -787,6 +794,12 @@ eponymBlock:
 static:
   doAssert compiles(importedImplicitNatVecIdentity[3](@[1, 2, 3]))
   doAssert compiles(importedImplicitNatVecIdentityRuntimeValue[3](@[1, 2, 3]))
+  doAssert compiles(importedImplicitBoolIdentity[true]())
+  doAssert compiles(importedImplicitIntIdentity[17]())
+  doAssert compiles(importedImplicitTokenIdentity[importedTokenRed]())
+  doAssert compiles(importedImplicitBoolIdentityRuntimeValue[false]())
+  doAssert compiles(importedImplicitIntIdentityRuntimeValue[17]())
+  doAssert compiles(importedImplicitTokenIdentityRuntimeValue[importedTokenBlue]())
   doAssert compiles(generatedCheckedRole(35))
   doAssert compiles(generatedAdd(20, 22))
   doAssert not compiles(generatedAdd(42))
@@ -1188,6 +1201,50 @@ when isMainModule:
     importedImplicitNatVecRawMismatchRejected = true
   doAssert importedImplicitNatVecMismatchRejected and
     importedImplicitNatVecRawMismatchRejected
+  let importedImplicitScalarCases = forAll(
+    "imported implicit Bool, Int, and mapped binders bridge to Nim",
+    r, 200,
+    proc(r: var Rng): tuple[flag: bool, number: int] =
+      (r.genBool(), r.genInt(-1000, 1000)),
+    proc(input: tuple[flag: bool, number: int]): bool =
+      let globals = importedIntIdentityRuntimeValue(0).globals
+      let boolStatic = importedImplicitBoolIdentity[true]()
+      let boolStaticRuntime = importedImplicitBoolIdentityRuntimeValue[false]()
+      let tokenStatic = importedImplicitTokenIdentity[importedTokenRed]()
+      let tokenStaticRuntime =
+        importedImplicitTokenIdentityRuntimeValue[importedTokenBlue]()
+      let boolDynamic = importedImplicitBoolIdentityDynamic(input.flag)
+      let boolRuntime = importedImplicitBoolIdentityRuntimeValueDynamic(
+        input.flag)
+      let boolRaw = importedImplicitBoolIdentityRuntimeValueRaw(
+        [boolToValue(input.flag, globals)])
+      let intDynamic = importedImplicitIntIdentityDynamic(input.number)
+      let intRuntime = importedImplicitIntIdentityRuntimeValueDynamic(
+        input.number)
+      let intRaw = importedImplicitIntIdentityRuntimeValueRaw(
+        [intToValue(input.number)])
+      let token = if input.flag: importedTokenBlue else: importedTokenRed
+      let tokenDynamic = importedImplicitTokenIdentityDynamic(token)
+      let tokenRuntime = importedImplicitTokenIdentityRuntimeValueDynamic(token)
+      let tokenRaw = importedImplicitTokenIdentityRuntimeValueRaw(
+        [tokenRuntime.value])
+      boolStatic and
+        not valueToBool(boolStaticRuntime.value, boolStaticRuntime.globals) and
+        tokenStatic == importedTokenRed and
+        valueToHost[ImportedToken](tokenStaticRuntime.value) == importedTokenBlue and
+        boolDynamic == input.flag and
+        valueToBool(boolRuntime.value, boolRuntime.globals) == input.flag and
+        valueToBool(boolRaw.value, boolRaw.globals) == input.flag and
+        intDynamic == input.number and valueToInt(intRuntime.value) == input.number and
+        valueToInt(intRaw.value) == input.number and
+        tokenDynamic == token and
+        valueToHost[ImportedToken](tokenRuntime.value) == token and
+        valueToHost[ImportedToken](tokenRaw.value) == token,
+    proc(input: tuple[flag: bool, number: int]):
+        seq[tuple[flag: bool, number: int]] =
+      @[(not input.flag, input.number), (input.flag, 0)])
+  if not importedImplicitScalarCases:
+    quit(1)
   let importedGenericGlobals = importedIntIdentityRuntimeValue(0).globals
   var importedGenericWrongValueRejected = false
   try:

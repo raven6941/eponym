@@ -2496,7 +2496,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   if generic.error.len > 0: return nil
   let codecMappings = generic.codecMappings
   let params = decl[3]
-  if params.len <= 1 or params[0].kind == nnkEmpty:
+  if params.len == 0 or params[0].kind == nnkEmpty:
     return nil
 
   var formal = newNimNode(nnkFormalParams)

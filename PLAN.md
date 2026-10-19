@@ -487,10 +487,10 @@ implementations.
       `Type 0` binders also generate Nim generic wrappers whose type is inferred
       from value arguments. Their raw `Value` overloads use the unambiguous
       `nameRuntimeValueRaw` suffix. A 200-case property covers both typed and
-      raw APIs. Supported implicit Nat binders generate Nim `static[int]`
-      wrappers and dynamic runtime siblings; a length-indexed Vec property
-      covers typed static, typed dynamic, dynamic `RuntimeValue`, and raw
-      `Value` calls.
+      raw APIs. Supported implicit Nat, Bool, Int, and explicitly mapped
+      binders generate Nim static wrappers and dynamic runtime siblings.
+      200-case properties cover length-indexed Vecs and scalar Bool/Int/opaque
+      values through typed, dynamic, `RuntimeValue`, and raw `Value` calls.
       Negative checks reject a wrong generic type or value. Imported explicit higher-order signatures with
       supported Nim callback leaf codecs now generate typed closure wrappers;
       200-case properties cover unary and multi-argument Nim callbacks, plus a

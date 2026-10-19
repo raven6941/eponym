@@ -123,10 +123,11 @@ are checked by instantiating the checked Pi telescope at runtime. Explicit
 and implicit `Type 0` binders also generate Nim generic wrappers, with the
 type inferred from ordinary value arguments. Their raw `Value` entry point is
 named `nameRuntimeValueRaw` to avoid ambiguity with Nim's inferred generic
-overload. Supported implicit Nat binders generate static and dynamic wrappers;
-a property checks length-indexed vectors through static, dynamic,
-`RuntimeValueDynamic`, and raw `Value` paths. Higher-order signatures with
-supported Nim callback leaf codecs generate typed closure wrappers.
+overload. Supported implicit Nat, Bool, Int, and explicitly mapped binders
+generate static and dynamic wrappers. Properties cover length-indexed vectors
+and scalar values through typed, dynamic, `RuntimeValue`, and raw `Value`
+paths. Higher-order signatures with supported Nim callback leaf codecs generate
+typed closure wrappers.
 Unsupported implicit binder domains and callback signatures
 without codecs retain the raw interface; a raw callback `Value` has no runtime
 type witness and remains trusted. Unmapped host boxes remain a trusted escape
