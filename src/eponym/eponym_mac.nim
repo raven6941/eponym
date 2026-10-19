@@ -987,36 +987,48 @@ proc importedRuntimeProcDecl(definition: ElabDef,
       refNames[entry.tm.refId] = name
   var current = definition.tyTm
   var ctx: seq[string] = @[]
+  var genericParams = newNimNode(nnkGenericParams)
   var formal = newNimNode(nnkFormalParams)
   formal.add(newEmptyNode())
   var argumentIndex = 0
+  var lambdaIndex = 0
   var checkedBody = definition.tmTm
   var argumentCount = 0
   while not checkedBody.isNil and checkedBody.kind == tLam:
     inc argumentCount
     checkedBody = checkedBody.scope.bdy
-  while argumentIndex < argumentCount:
+  while lambdaIndex < argumentCount:
     if current.isNil or current.kind != tPi: return nil
-    if current.impl or current.qty != qOmega or
-        current.dom.isNil or current.dom.kind == tType:
+    if current.dom.isNil:
       return nil
     let name = if current.scope.adv.len > 0 and
         current.scope.adv != "_": current.scope.adv
-      else: "runtimeArg" & $argumentIndex
+      else: "runtimeArg" & $lambdaIndex
+    if current.dom.kind == tType and current.dom.lvl == 0:
+      if current.qty notin {q0, qOmega}: return nil
+      genericParams.add(newIdentDefs(ident(name), ident"Univ",
+        newEmptyNode()))
+      ctx = @[name] & ctx
+      current = current.scope.bdy
+      inc lambdaIndex
+      continue
+    if current.impl or current.qty != qOmega:
+      return nil
     let argType = runtimeTermNimTypeAst(current.dom, ctx, refNames)
     if argType.isNil: return nil
     formal.add(newIdentDefs(ident(name), argType, newEmptyNode()))
     ctx = @[name] & ctx
     current = current.scope.bdy
+    inc lambdaIndex
     inc argumentIndex
-  if argumentIndex == 0: return nil
+  if argumentIndex == 0 and genericParams.len == 0: return nil
   let resultType = runtimeTermNimTypeAst(current, ctx, refNames)
   if resultType.isNil: return nil
   formal[0] = resultType
   result = newNimNode(nnkProcDef)
   result.add(ident(definition.name))
   result.add(newEmptyNode())
-  result.add(newEmptyNode())
+  result.add(if genericParams.len > 0: genericParams else: newEmptyNode())
   result.add(formal)
   result.add(newEmptyNode())
   result.add(newEmptyNode())
@@ -2555,7 +2567,8 @@ proc checkedLambdaArity(definition: ElabDef): int =
 proc rawRuntimeValueWrapper(baseDir, src, defName: string,
     expectedArity: int,
     bindings: seq[HostPostulateBinding], mappings: seq[HostRuntimeType],
-    records: seq[HostRecord], runtimeDecl: NimNode = nil): NimNode =
+    records: seq[HostRecord], runtimeDecl: NimNode = nil,
+    nameSuffix = "RuntimeValue"): NimNode =
   ## Expose a checked definition when no local Nim signature is available.
   ## Callers explicitly pass its arguments as Eponym Values.
   let argsSym = genSym(nskParam, "runtimeArguments")
@@ -2607,7 +2620,7 @@ proc rawRuntimeValueWrapper(baseDir, src, defName: string,
       globalsSym)))
   body.add(newTree(nnkTupleConstr, valueSym, globalsSym))
   result = newNimNode(nnkProcDef)
-  result.add(newTree(nnkPostfix, ident"*", ident(defName & "RuntimeValue")))
+  result.add(newTree(nnkPostfix, ident"*", ident(defName & nameSuffix)))
   result.add(newEmptyNode())
   result.add(newEmptyNode())
   var formal = newNimNode(nnkFormalParams)
@@ -3219,9 +3232,16 @@ macro eponymBlock*(body: untyped): untyped =
             records, allowDependentSigma)
           if not typedImportedValueWrapper.isNil:
             result.add(typedImportedValueWrapper)
+        var rawImportedDecl = importedDecl
+        var rawRuntimeValueSuffix = "RuntimeValue"
+        if not rawImportedDecl.isNil and
+            rawImportedDecl[2].kind == nnkGenericParams and
+            rawImportedDecl[2].len > 0:
+          rawImportedDecl = nil
+          rawRuntimeValueSuffix = "RuntimeValueRaw"
         result.add(rawRuntimeValueWrapper(baseDir, src, requested,
           checkedLambdaArity(importedDef), bindings, runtimeTypes, records,
-          importedDecl))
+          rawImportedDecl, rawRuntimeValueSuffix))
 
 macro eponym*(src: string): untyped =
   ## Elaborate and typecheck a surface program at compile time.

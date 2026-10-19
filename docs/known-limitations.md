@@ -120,7 +120,11 @@ raw Value interface. When its Pi signature can be reconstructed, the raw
 interface also validates arguments against that signature, including
 dependent Vec lengths. Generic imported signatures with explicit type binders
 are checked by instantiating the checked Pi telescope at runtime. Explicit
-higher-order signatures with supported Nim callback leaf codecs also generate
+and implicit `Type 0` binders also generate Nim generic wrappers, with the
+type inferred from ordinary value arguments. Their raw `Value` entry point is
+named `nameRuntimeValueRaw` to avoid ambiguity with Nim's inferred generic
+overload. Higher-order signatures with
+supported Nim callback leaf codecs generate
 typed closure wrappers. Unsupported implicit binders and callback signatures
 without codecs retain the raw interface; a raw callback `Value` has no runtime
 type witness and remains trusted. Unmapped host boxes remain a trusted escape

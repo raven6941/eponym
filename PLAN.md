@@ -483,8 +483,12 @@ implementations.
      length. Reconstructed imported Pi signatures also validate raw Values,
       including a dependent Vec length. Reconstructed generic signatures with
       explicit type binders also validate their type and value arguments by
-      instantiating the checked Pi telescope; negative checks reject a wrong
-      generic type or value. Imported explicit higher-order signatures with
+      instantiating the checked Pi telescope; supported explicit and implicit
+      `Type 0` binders also generate Nim generic wrappers whose type is inferred
+      from value arguments. Their raw `Value` overloads use the unambiguous
+      `nameRuntimeValueRaw` suffix. A 200-case property covers both typed and
+      raw APIs.
+      Negative checks reject a wrong generic type or value. Imported explicit higher-order signatures with
       supported Nim callback leaf codecs now generate typed closure wrappers;
       200-case properties cover unary and multi-argument Nim callbacks, plus a
       callback whose Vec result length depends on its Nat argument, through

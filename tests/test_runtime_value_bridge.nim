@@ -216,6 +216,7 @@ eponymBlock:
   runtimeVector(Vec)
   runtimeValue(importedIntIdentity)
   runtimeValue(importedGenericIdentity)
+  runtimeValue(importedImplicitGenericIdentity)
   runtimeValue(importedCallbackApply)
   runtimeValue(importedCallbackApply2)
   runtimeValue(importedCallbackIdentity)
@@ -1126,23 +1127,33 @@ when isMainModule:
     proc(n: int): bool =
       let globals = importedIntIdentityRuntimeValue(n).globals
       let intType = runtimeGlobalValue(globals, "Int")
-      let runtime = importedGenericIdentityRuntimeValue(
+      let runtime = importedGenericIdentityRuntimeValueRaw(
         [intType, intToValue(n)])
-      valueToInt(runtime.value) == n,
+      let implicitRaw = importedImplicitGenericIdentityRuntimeValueRaw(
+        [intType, intToValue(n)])
+      let typed = importedGenericIdentity(n)
+      let implicit = importedImplicitGenericIdentity(n)
+      let typedRuntime = importedGenericIdentityRuntimeValue(n)
+      let implicitRuntime = importedImplicitGenericIdentityRuntimeValue(n)
+      typed == n and implicit == n and
+        valueToHost[int](typedRuntime.value) == n and
+        valueToHost[int](implicitRuntime.value) == n and
+        valueToInt(runtime.value) == n and
+        valueToInt(implicitRaw.value) == n,
     shrinkInt)
   if not importedGenericRawCases:
     quit(1)
   let importedGenericGlobals = importedIntIdentityRuntimeValue(0).globals
   var importedGenericWrongValueRejected = false
   try:
-    discard importedGenericIdentityRuntimeValue([
+    discard importedGenericIdentityRuntimeValueRaw([
       runtimeGlobalValue(importedGenericGlobals, "Int"), natToValue(3)])
   except ValueError:
     importedGenericWrongValueRejected = true
   doAssert importedGenericWrongValueRejected
   var importedGenericWrongTypeRejected = false
   try:
-    discard importedGenericIdentityRuntimeValue([
+    discard importedGenericIdentityRuntimeValueRaw([
       natToValue(3), intToValue(3)])
   except ValueError:
     importedGenericWrongTypeRejected = true
