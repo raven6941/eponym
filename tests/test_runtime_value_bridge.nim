@@ -305,6 +305,10 @@ eponymBlock:
       callback: proc(channel: Channel, message: Message): Channel {.closure.},
       channel: Channel, message: Message): Channel =
     callback(channel, message)
+  proc generatedReturnMappedCallback():
+      proc(channel: Channel, message: Message): Channel {.closure.} =
+    lam(channel, Channel, lam(message, Message,
+      routeChannel(channel, message)))
 
 proc hostIndexedChannelParts(channel: IndexedChannelHandle):
     tuple[index: int, next: IndexedChannelHandle] =
@@ -373,6 +377,8 @@ static:
   doAssert not compiles(generatedCallbackRole(42, 1))
   doAssert compiles(generatedApplyMappedCallback(
     proc(channel: ChannelHandle, message: string): ChannelHandle = channel,
+    ChannelHandle(id: 1), "mapped"))
+  doAssert compiles(generatedReturnMappedCallback()(
     ChannelHandle(id: 1), "mapped"))
   doAssert compiles(generatedIndexedChannelIndex(
     IndexedChannelHandle(index: 17, label: "indexed")))
@@ -860,6 +866,16 @@ proc callbackRole : Callback -> Sample -> Sample =
         ChannelHandle(id: id, label: "callback-" & $id & "/mapped"),
     shrinkInt)
   if not mappedCallbackCases:
+    quit(1)
+  let mappedReturnedCallbackCases = forAll(
+    "checked multi-argument closures return mapped opaque Nim values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let input = ChannelHandle(id: id, label: "returned-" & $id)
+      generatedReturnMappedCallback()(input, "mapped") ==
+        ChannelHandle(id: id, label: "returned-" & $id & ":mapped"),
+    shrinkInt)
+  if not mappedReturnedCallbackCases:
     quit(1)
   let twoArgumentCallbackCases = forAll(
     "multi-argument Nim closures cross checked Eponym functions", r, 200,
