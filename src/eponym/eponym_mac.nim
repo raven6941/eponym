@@ -105,6 +105,17 @@ proc nimFormalArgCount(formal: NimNode): int =
     if param.kind == nnkIdentDefs:
       result += param.len - 2
 
+proc nimLeadingUniverseFormalCount(formal: NimNode): int =
+  if formal.kind != nnkFormalParams: return 0
+  for i in 1 ..< formal.len:
+    let param = formal[i]
+    if param.kind != nnkIdentDefs or param.len < 3: break
+    let domain = param[^2]
+    if domain.kind == nnkIdent and $domain == "Univ":
+      result += param.len - 2
+    else:
+      break
+
 proc nimGenericParamCount(params: NimNode): int =
   if params.kind == nnkGenericParams:
     for param in params:
@@ -225,7 +236,9 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
           for constructor in constructors:
             if constructor.kind == nnkProcDef:
               let termCount = nimFormalArgCount(constructor[3])
-              registerLegacyInfo($constructor[0], paramCount, termCount)
+              let typeCount = nimLeadingUniverseFormalCount(constructor[3])
+              registerLegacyInfo($constructor[0], paramCount + typeCount,
+                termCount - typeCount)
               if $statement[1] == "Nat":
                 legacyNatConstructors.incl($constructor[0])
     of nnkImportStmt:

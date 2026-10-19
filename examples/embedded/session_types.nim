@@ -30,27 +30,27 @@ eponymBlock:
 
   # Channel indexed by current session state.
   data(Chan, Session -> Univ):
-    proc mkChan(s: Session): Chan(s)
+    proc mkChan(s: Session): Chan[s]
 
   # Operations as postulates (mock implementations). The types enforce
   # the protocol; the linear binders enforce single use of the channel.
-  postulate(sendNat, Pi(x: Nat, ch {.linear.}: Chan(sendS(Nat, endS())), Chan(endS())))
-  postulate(recvNat, Pi(ch {.linear.}: Chan(recvS(Nat, endS())), Sig(x: Nat, Chan(endS()))))
-  postulate(closeOp, Pi(ch {.linear.}: Chan(endS()), Nat))
+  postulate(sendNat, Pi(x: Nat, ch {.linear.}: Chan[sendS[Nat](endS())], Chan[endS()]))
+  postulate(recvNat, Pi(ch {.linear.}: Chan[recvS[Nat](endS())], Sig(x: Nat, Chan[endS()])))
+  postulate(closeOp, Pi(ch {.linear.}: Chan[endS()], Nat))
 
   # The protocol, stated once as a type: send a Nat, then done.
   proc proto(): Session =
-    sendS(Nat, endS())
+    sendS[Nat](endS())
 
   # Correct client: ordinary-looking Nim. The elaborator checks that `ch`
   # starts as `Chan (sendS Nat endS)` and that the body delivers the
   # declared `Chan endS`.
-  proc client(ch {.linear.}: Chan(sendS(Nat, endS()))): Chan(endS()) =
+  proc client(ch {.linear.}: Chan[sendS[Nat](endS())]): Chan[endS()] =
     sendNat(zero(), ch)
 
   # Server side of the dual protocol: receive a Nat, then close.
   # `recvNat` returns a pair; `snd(p)` is the continued channel.
-  proc server(ch {.linear.}: Chan(recvS(Nat, endS()))): Nat =
+  proc server(ch {.linear.}: Chan[recvS[Nat](endS())]): Nat =
     let p = recvNat(ch)
     closeOp(snd(p))
 

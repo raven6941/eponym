@@ -3,6 +3,12 @@ import eponym_mac
 eponymBlock:
   import "../../lib/vec.ep"
 
+  data(Protocol, Univ):
+    proc protocolSend(A: Univ, payload: Nat): Protocol
+
+  proc localLegacyConstructor(): Protocol = protocolSend(Nat, zero())
+  proc localBracketConstructor(): Protocol = protocolSend[Nat](zero())
+
   proc legacySingleton(value: Nat): Vec[Nat, suc(zero)] =
     let empty = vecnil(Nat)
     cons(Nat, zero(), value, empty)

@@ -16,7 +16,7 @@ if exitCode != 0:
   quit("legacy syntax fixture failed to compile:\n" & output, 1)
 let termDiagnostic = "call-style explicit parameters are deprecated"
 let typeDiagnostic = "call-style explicit type/index arguments are deprecated"
-if output.count(termDiagnostic) != 7 or output.count(typeDiagnostic) != 2:
-  quit("expected seven term and two type-application warnings, with no " &
+if output.count(termDiagnostic) != 8 or output.count(typeDiagnostic) != 2:
+  quit("expected eight term and two type-application warnings, with no " &
     "warning for ordinary value calls:\n" & output, 1)
 echo "test_embedded_legacy_syntax: explicit-parameter migration warning passed"

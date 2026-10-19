@@ -1135,6 +1135,9 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   and whose first argument is a Nat literal, known Nat constructor/function,
   or in-scope `Nat` binder. The regression fixture covers a generic index
   binder and `zero()`; ordinary Nat-valued function calls remain warning-free.
+- [x] Count leading `Univ` parameters on constructors in local Nim `data(...)`
+  declarations when diagnosing legacy applications. A fixture checks both a
+  warning for `protocolSend(Nat, ...)` and warning-free `protocolSend[Nat](...)`.
 - [ ] Extend partial index detection to locally inferred Nat values and other
   expression forms that cannot be identified from the current declaration
   metadata.
@@ -1150,6 +1153,9 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [x] Migrate the sensor-fusion example's indexed vector type and constructor
   applications to square brackets; it compiles and produces the same fused
   result.
+- [x] Migrate the session-types example's `Chan` indices and polymorphic
+  `sendS`/`recvS` constructors to square brackets; its checked protocol still
+  elaborates and runs.
 - [ ] Migrate the remaining warning-producing embedded examples and tests,
   then remove the legacy parser/lowering path.
 - [ ] Remove the legacy call-style parser/lowering path and update examples,
