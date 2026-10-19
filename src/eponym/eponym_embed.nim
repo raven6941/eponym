@@ -1105,6 +1105,8 @@ proc validateRuntimeVariantConstructors*(globals: Globals,
 proc valueToRuntimeVariant*(value: Value, globals: Globals,
     familyName: string, constructors: openArray[string]): RuntimeVariant
 
+proc runtimeValueTerm(value: Value, globals: Globals): Term
+
 proc runtimeVariantArity(entry: GEntry): int =
   var ty = entry.ty
   while not ty.isNil and ty.kind == tPi:
@@ -1156,6 +1158,10 @@ proc runtimeStructuredValueToValue(value: RuntimeStructuredValue,
     if not found:
       raise newException(ValueError,
         "no runtime mapping for opaque field type '" & typeName & "'")
+    if opaqueHost and result.whnfKind == wHost:
+      let typeTerm = runtimeValueTerm(domain, globals)
+      if not typeTerm.isNil:
+        result.whnf.hostEponymType = typeTerm
   of rsvVariant:
     let familyName = runtimeDataFamilyName(domain, globals)
     if familyName.len == 0:
@@ -1184,6 +1190,13 @@ proc valueToRuntimeStructuredValue(value, domain: Value,
     if codec.eponymName == typeName:
       if not codec.opaqueHost:
         validateRuntimeValueType(value, domain, globals)
+      else:
+        let typeTerm = runtimeValueTerm(domain, globals)
+        if not typeTerm.isNil:
+          if value.whnfKind != wHost or value.whnf.hostEponymType.isNil:
+            raise newException(ValueError,
+              "opaque Nim value has no Eponym type witness")
+          validateRuntimeValueType(value, domain, globals)
       return codec.decode(value, globals)
   if typeName.len > 0:
     if domain.whnfSpineLen > 0:
@@ -1534,8 +1547,10 @@ proc runtimeValueTerm(value: Value, globals: Globals): Term =
           result = tmApp(result, argument)
         return
     return value.syn
-  else:
+  of wConst:
     value.syn
+  else:
+    nil
 
 proc toHostValueAtRuntimeType*[T](hostValue: T, expectedType: Value,
                                   globals: Globals): Value =

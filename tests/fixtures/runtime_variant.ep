@@ -3,6 +3,8 @@ import "../../lib/bool.ep"
 
 postulate Int : Type 0
 postulate RuntimeOpaqueToken : Type 0
+postulate RuntimeOtherToken : Type 0
+postulate RuntimeIndexedToken : Nat -> Type 0
 data RuntimeHandle : Type 0 where
 | runtimeHandle (id : Int) : RuntimeHandle
 data RuntimeTree : Type 0 where
@@ -12,6 +14,8 @@ proc treeIdentity : RuntimeTree -> RuntimeTree =
   lam (tree : RuntimeTree). tree
 data SizedTree (length : Nat) : Type 0 where
 | sizedTree (tree : RuntimeTree) : SizedTree length
+data IndexedEnvelope (length : Nat) : Type 0 where
+| indexedEnvelope (token : RuntimeIndexedToken length) : IndexedEnvelope length
 data OtherTree : Type 0 where
 | otherTree : OtherTree
 data DecisionTree : Type 0 where

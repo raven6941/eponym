@@ -297,8 +297,11 @@ eponymBlock:
   runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
     decodeRuntimeHandle)
   runtimeType(RuntimeOpaqueToken, ChannelHandle)
+  runtimeType(RuntimeOtherToken, ChannelHandle)
+  runtimeType(RuntimeIndexedToken, ChannelHandle)
   runtimeDataVariant(RuntimeTree)
   runtimeDataVariant(SizedTree)
+  runtimeDataVariant(IndexedEnvelope)
   runtimeDataVariant(DecisionTree)
   runtimeDataVariant(HandleEnvelope)
   runtimeValue(treeIdentity)
@@ -337,7 +340,6 @@ eponymBlock:
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
-  postulate(RuntimeOtherToken, Univ)
   runtimeType(RuntimeOpaqueToken, ChannelHandle)
   runtimeType(RuntimeOtherToken, ChannelHandle)
   postulate(dropOpaqueTypeWitness,
@@ -1067,6 +1069,44 @@ when isMainModule:
       @[])
   if not opaqueStructuredCases:
     quit(1)
+  let indexedOpaqueStructuredCases = forAll(
+    "runtimeDataVariant checks indices on mapped opaque family fields", r,
+    200,
+    proc(r: var Rng): tuple[length, id: int] =
+      (r.genInt(0, 100), r.genInt(-1000, 1000)),
+    proc(sample: tuple[length, id: int]): bool =
+      let host = ChannelHandle(id: sample.id, label: $sample.id)
+      let codec = [runtimeStructuredHostCodec[ChannelHandle](
+        "RuntimeIndexedToken")]
+      let encoded = runtimeStructuredVariantToValue(
+        RuntimeStructuredVariant(constructor: "indexedEnvelope",
+          arguments: @[RuntimeStructuredValue(kind: rsvNat,
+            natValue: sample.length), runtimeStructuredOpaque(host)]),
+        variantGlobals, "IndexedEnvelope", ["indexedEnvelope"], codec)
+      let decoded = valueToRuntimeStructuredVariant(encoded, variantGlobals,
+        "IndexedEnvelope", ["indexedEnvelope"], codec)
+      var wrongIndexRejected = false
+      try:
+        let wrongType = callRuntimeValue(
+          eval(variantGlobals["RuntimeIndexedToken"].tm, @[]),
+          [natToValue(sample.length + 1, variantGlobals)])
+        let wrongToken = toHostValueAtRuntimeType(host, wrongType,
+          variantGlobals)
+        let malformed = callRuntimeValue(
+          eval(variantGlobals["indexedEnvelope"].tm, @[]),
+          [natToValue(sample.length, variantGlobals), wrongToken])
+        discard valueToRuntimeStructuredVariant(malformed, variantGlobals,
+          "IndexedEnvelope", ["indexedEnvelope"], codec)
+      except ValueError:
+        wrongIndexRejected = true
+      decoded.constructor == "indexedEnvelope" and
+        decoded.arguments.len == 2 and
+        decoded.arguments[0].natValue == sample.length and
+        runtimeStructuredOpaqueAs[ChannelHandle](decoded.arguments[1]) == host and
+        wrongIndexRejected,
+    proc(value: tuple[length, id: int]): seq[tuple[length, id: int]] = @[])
+  if not indexedOpaqueStructuredCases:
+    quit(1)
   let malformedHandleEnvelope = callRuntimeValue(
     eval(variantGlobals["handleEnvelope"].tm, @[]),
     [intToValue(23),
@@ -1081,6 +1121,39 @@ when isMainModule:
   except ValueError:
     malformedOpaqueFieldRejected = true
   doAssert malformedOpaqueFieldRejected
+  let wrongWitnessHandle = toHostValueAtRuntimeType(
+    ChannelHandle(id: 24, label: "wrong-witness"),
+    eval(variantGlobals["RuntimeOtherToken"].tm, @[]), variantGlobals)
+  let validEnvelopeHandle = callRuntimeValue(
+    eval(variantGlobals["runtimeHandle"].tm, @[]), [intToValue(23)])
+  let missingWitnessEnvelope = callRuntimeValue(
+    eval(variantGlobals["handleEnvelope"].tm, @[]),
+    [validEnvelopeHandle,
+     toHostValue(ChannelHandle(id: 24, label: "missing-witness")),
+     intToValue(25)])
+  var nestedMissingWitnessRejected = false
+  try:
+    discard valueToRuntimeStructuredVariant(missingWitnessEnvelope,
+      variantGlobals, "HandleEnvelope", ["handleEnvelope"],
+      [runtimeStructuredCustomCodec[ChannelHandle]("RuntimeHandle",
+        encodeRuntimeHandle, decodeRuntimeHandle),
+       runtimeStructuredHostCodec[ChannelHandle]("RuntimeOpaqueToken")])
+  except ValueError:
+    nestedMissingWitnessRejected = true
+  doAssert nestedMissingWitnessRejected
+  let wrongWitnessEnvelope = callRuntimeValue(
+    eval(variantGlobals["handleEnvelope"].tm, @[]),
+    [validEnvelopeHandle, wrongWitnessHandle, intToValue(25)])
+  var nestedOpaqueWitnessRejected = false
+  try:
+    discard valueToRuntimeStructuredVariant(wrongWitnessEnvelope,
+      variantGlobals, "HandleEnvelope", ["handleEnvelope"],
+      [runtimeStructuredCustomCodec[ChannelHandle]("RuntimeHandle",
+        encodeRuntimeHandle, decodeRuntimeHandle),
+       runtimeStructuredHostCodec[ChannelHandle]("RuntimeOpaqueToken")])
+  except ValueError:
+    nestedOpaqueWitnessRejected = true
+  doAssert nestedOpaqueWitnessRejected
   var wrongOpaqueEncodingRejected = false
   try:
     discard runtimeStructuredVariantToValue(

@@ -108,11 +108,15 @@ payload-bearing data variants are checked through their constructor
 telescopes, including fields nested in those structures. Named records and
 Sigma pairs are checked field by field, substituting earlier values into later
 field types. Mapped opaque host boxes are checked against their declared Nim
-box type, while the semantic correspondence between the Nim payload and its
-Eponym type remains trusted. Erased type-level element witnesses cannot be
-recovered from a raw runtime value; unsupported type expressions still
-require caller-side validation. For data variants, each constructor's
-instantiated result type is compared with the expected indexed type. Generic local definitions also get
+box type. Typed mappings and recursive structural codecs also carry and check
+an Eponym type witness when the type expression, including its indices, has a
+runtime term representation. The semantic correspondence between the Nim
+payload and its Eponym type remains trusted. Raw host boxes and indices whose
+values cannot be represented as Eponym terms remain trusted. Erased type-level
+element witnesses cannot be recovered from a raw runtime value; unsupported
+type expressions still require caller-side validation. For data variants, each
+constructor's instantiated result type is compared with the expected indexed
+type. Generic local definitions also get
 `nameRuntimeValueRaw(genericArgs, valueArgs)`, which accepts all generic
 arguments and ordinary arguments as `openArray[Value]`. It checks generic
 values against supported binder type expressions, including applied domains
@@ -239,13 +243,15 @@ For recursive decoding, `runtimeDataVariant(Family)` maps Int, Nat, and Bool
 payloads to Nim values, nested data constructors to
 `RuntimeStructuredVariant`, and opaque leaves through matching `runtimeType`
 or `runtimeCodec` mappings. It follows each constructor's checked Pi type and
-validates structural payload fields, including dependent indices. Opaque
-mapping behavior is trusted in the same way as top-level runtime codecs. A
-200-case property covers both custom and opaque `ChannelHandle` mappings nested
-beside an integer field, in addition to nested trees and indexed `SizedTree`
-wrappers. Custom codec values are checked against the field's Eponym type on
-both encode and decode; wrong-type custom encodings and malformed decoded
-fields are rejected. Opaque `runtimeType` boxes remain trusted.
+validates structural payload fields, including dependent indices. Opaque host
+codecs now carry a runtime Eponym type witness when the field type can be
+represented; decoding checks named types and applied indices against the
+constructor telescope. The mapping still trusts that the Nim payload
+semantically represents the indexed value. Properties cover opaque
+`ChannelHandle` fields beside an integer and reject both a different named
+witness and a mismatched index on an opaque family field. Custom codec values
+are checked against the field's Eponym type on both encode and decode;
+wrong-type custom encodings and malformed decoded fields are rejected.
 
 Typed structural codecs include `Vec`, `List`, `Option`, two-field `Sig`
 tuples, named records, and recursive `runtimeDataVariant` values. Records with

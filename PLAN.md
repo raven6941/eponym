@@ -528,11 +528,13 @@ implementations.
    - [x] Compose `runtimeType` and `runtimeCodec` mappings for opaque leaves
      nested inside `RuntimeStructuredVariant`. The checked constructor Pi
      telescope still supplies each field's Eponym type; the matching mapping
-     encodes or decodes the Nim leaf. A 200-case property covers both a custom
-     `runtimeCodec` and an opaque `runtimeType` for `ChannelHandle` values
-     nested beside an `Int` field; a malformed custom-coded field is rejected
-     before decoding, and an encoder returning the wrong Eponym type is
-     rejected.
+     encodes or decodes the Nim leaf. Opaque host codecs preserve a witness
+     for each representable field type, including applied indices; decoding
+     checks that witness against the constructor telescope. A 200-case
+     property covers both a custom `runtimeCodec` and opaque `runtimeType`
+     fields. Further 200-case properties reject a different named witness and
+     a wrong index on an opaque family field; malformed custom-coded fields
+     and encoders returning the wrong Eponym type are also rejected.
    - [x] Add a `runtimeVariant(Family)` representation and generate wrappers
      for payload-bearing and indexed constructors. `RuntimeVariant` preserves
      constructor names and raw argument Values; it checks family membership,
