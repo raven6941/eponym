@@ -1027,11 +1027,143 @@ type RuntimeVariant* = object
   constructor*: string
   arguments*: seq[Value]
 
+type
+  RuntimeStructuredValueKind* = enum
+    rsvInt, rsvNat, rsvBool, rsvVariant, rsvRaw
+  RuntimeStructuredValue* = object
+    case kind*: RuntimeStructuredValueKind
+    of rsvInt:
+      intValue*: int
+    of rsvNat:
+      natValue*: int
+    of rsvBool:
+      boolValue*: bool
+    of rsvVariant:
+      variantValue*: RuntimeStructuredVariant
+    of rsvRaw:
+      rawValue*: Value
+  RuntimeStructuredVariant* = object
+    constructor*: string
+    arguments*: seq[RuntimeStructuredValue]
+
+proc runtimeVariantConstructorNames*(globals: Globals,
+                                     familyName: string): seq[string]
+proc validateRuntimeVariantConstructors*(globals: Globals,
+    familyName: string, constructors: openArray[string])
+proc valueToRuntimeVariant*(value: Value, globals: Globals,
+    familyName: string, constructors: openArray[string]): RuntimeVariant
+proc validateRuntimeValueType*(value, expectedType: Value,
+                               globals: Globals)
+
 proc runtimeVariantArity(entry: GEntry): int =
   var ty = entry.ty
   while not ty.isNil and ty.kind == tPi:
     inc result
     ty = ty.scope.bdy
+
+proc runtimeDomainTypeName(domain: Value, globals: Globals): string =
+  if domain.isNil or domain.whnfKind != wRef: return
+  for name, entry in globals.pairs:
+    if entry.tm.isNil or entry.tm.kind != tR or
+        entry.tm.refId != domain.whnfRefId:
+      continue
+    return name
+
+proc runtimeDataFamilyName(domain: Value, globals: Globals): string =
+  let name = runtimeDomainTypeName(domain, globals)
+  if name notin ["", "Int", "Nat", "Bool"] and
+      runtimeVariantConstructorNames(globals, name).len > 0:
+    return name
+
+proc runtimeStructuredVariantToValue*(variant: RuntimeStructuredVariant,
+    globals: Globals, familyName: string,
+    constructors: openArray[string]): Value
+proc valueToRuntimeStructuredVariant*(value: Value, globals: Globals,
+    familyName: string, constructors: openArray[string]): RuntimeStructuredVariant
+
+proc runtimeStructuredValueToValue(value: RuntimeStructuredValue,
+    domain: Value, globals: Globals): Value =
+  case value.kind
+  of rsvInt: result = intToValue(value.intValue)
+  of rsvNat: result = natToValue(value.natValue, globals)
+  of rsvBool: result = boolToValue(value.boolValue, globals)
+  of rsvRaw: result = value.rawValue
+  of rsvVariant:
+    let familyName = runtimeDataFamilyName(domain, globals)
+    if familyName.len == 0:
+      raise newException(ValueError,
+        "runtime structured variant supplied for a non-data payload")
+    result = runtimeStructuredVariantToValue(value.variantValue, globals,
+      familyName, runtimeVariantConstructorNames(globals, familyName))
+  if value.kind != rsvVariant or domain.whnfSpineLen > 0:
+    validateRuntimeValueType(result, domain, globals)
+
+proc valueToRuntimeStructuredValue(value, domain: Value,
+    globals: Globals): RuntimeStructuredValue =
+  let typeName = runtimeDomainTypeName(domain, globals)
+  if typeName == "Int":
+    return RuntimeStructuredValue(kind: rsvInt,
+      intValue: valueToInt(value))
+  if typeName == "Nat":
+    return RuntimeStructuredValue(kind: rsvNat,
+      natValue: valueToNat(value, globals))
+  if typeName == "Bool":
+    return RuntimeStructuredValue(kind: rsvBool,
+      boolValue: valueToBool(value, globals))
+  if typeName.len > 0:
+    if domain.whnfSpineLen > 0:
+      validateRuntimeValueType(value, domain, globals)
+    return RuntimeStructuredValue(kind: rsvVariant,
+      variantValue: valueToRuntimeStructuredVariant(value, globals,
+        typeName, runtimeVariantConstructorNames(globals, typeName)))
+  validateRuntimeValueType(value, domain, globals)
+  RuntimeStructuredValue(kind: rsvRaw, rawValue: value)
+
+proc runtimeStructuredVariantToValue*(variant: RuntimeStructuredVariant,
+    globals: Globals, familyName: string,
+    constructors: openArray[string]): Value =
+  validateRuntimeVariantConstructors(globals, familyName, constructors)
+  if variant.constructor notin constructors or
+      variant.constructor notin globals:
+    raise newException(ValueError,
+      "runtime structured constructor is not a member of '" & familyName & "'")
+  let ctor = globals[variant.constructor]
+  if variant.arguments.len != runtimeVariantArity(ctor):
+    raise newException(ValueError,
+      "runtime structured constructor '" & variant.constructor &
+      "' expects " & $runtimeVariantArity(ctor) & " arguments, got " &
+      $variant.arguments.len)
+  var fn = eval(ctor.tm, @[])
+  var ctorType = eval(ctor.ty, @[])
+  for argument in variant.arguments:
+    if ctorType.whnfKind != wPi:
+      raise newException(ValueError,
+        "runtime structured constructor has an invalid Pi telescope")
+    let domain = ctorType.whnfDom
+    let encoded = runtimeStructuredValueToValue(argument, domain, globals)
+    fn = callRuntimeValue(fn, [encoded])
+    ctorType = whnfScopeApply(ctorType, encoded)
+  if fn.whnfKind != wRef or fn.whnfRefId != ctor.tm.refId or
+      fn.whnfSpineLen != variant.arguments.len:
+    raise newException(ValueError,
+      "runtime structured constructor application has an invalid spine")
+  fn
+
+proc valueToRuntimeStructuredVariant*(value: Value, globals: Globals,
+    familyName: string, constructors: openArray[string]): RuntimeStructuredVariant =
+  validateRuntimeVariantConstructors(globals, familyName, constructors)
+  let raw = valueToRuntimeVariant(value, globals, familyName, constructors)
+  let ctor = globals[raw.constructor]
+  var ctorType = eval(ctor.ty, @[])
+  result.constructor = raw.constructor
+  for argument in raw.arguments:
+    if ctorType.whnfKind != wPi:
+      raise newException(ValueError,
+        "runtime structured constructor has an invalid Pi telescope")
+    let domain = ctorType.whnfDom
+    result.arguments.add(valueToRuntimeStructuredValue(argument, domain,
+      globals))
+    ctorType = whnfScopeApply(ctorType, argument)
 
 proc validateRuntimeVariantConstructors*(globals: Globals,
     familyName: string, constructors: openArray[string]) =
@@ -1114,9 +1246,6 @@ proc valueToRuntimeVariant*(value: Value, globals: Globals,
     return
   raise newException(ValueError,
     "runtime value is not a constructor of '" & familyName & "'")
-
-proc validateRuntimeValueType*(value, expectedType: Value,
-                               globals: Globals)
 
 proc validateRuntimeValueType*(value: Value, globals: Globals,
                                typeName: string) =

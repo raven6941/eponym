@@ -176,7 +176,7 @@ test exercises a payload-bearing token and rejects an Int supplied at the
 Token index. Applied family domains are also checked by evaluating supported
 type expressions built from named references, applications, earlier generic
 indices, and integer literals. A 200-case `SizedTree[length]` property checks
-both raw `Value` and mapped `RuntimeVariant` arguments, and rejects an
+both raw `Value` and mapped `RuntimeStructuredVariant` arguments, and rejects an
 embedded index that differs from `length`. More complex binder type
 expressions remain unsupported. Results remain raw `Value`s when no host
 representation is mapped.
@@ -190,16 +190,26 @@ and indexed constructors without a custom constructor switch. Use
 automatically. Callers still decode payload fields themselves because the
 generic representation stores them as raw `Value`s.
 
-Typed structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
-`Sig` tuples, and named records. Records with dependent fields
-and dependent `Sig` results are available only through their explicit trusted
-opt-ins described above. Other payload-bearing data constructors have no
-built-in structural codec and require an explicit `runtimeCodec` mapping.
-Non-Nat value-indexed generic signatures without a supported runtime mapping
-and structural inspection of closures are unsupported.
+For recursive decoding, `runtimeDataVariant(Family)` maps Int, Nat, and Bool
+payloads to Nim values and nested data constructors to
+`RuntimeStructuredVariant`. It follows each constructor's checked Pi type and
+validates payload fields, including dependent indices. A 200-case property
+covers nested trees and indexed `SizedTree` wrappers. A payload whose type has
+no built-in structural representation remains an explicit raw `Value` field;
+custom Nim host codecs are not yet composed automatically into this recursive
+sum representation.
+
+Typed structural codecs include `Vec`, `List`, `Option`, two-field `Sig`
+tuples, named records, and recursive `runtimeDataVariant` values. Records with
+dependent fields and dependent `Sig` results are available only through their
+explicit trusted opt-ins described above. Host-specific opaque codecs do not
+yet compose automatically into recursive variant fields; those fields remain
+raw Values or need a custom whole-family `runtimeCodec`.
+More complex generic domain expressions outside the supported type-expression
+forms and structural inspection of closures are unsupported.
 The session runtime demo includes a hand-written Nat LEB128 message codec, and
-the TCP adapter demo uses it over a loopback socket, but there is no general
-derived structural codec framework. A user can provide a codec for a named
+the TCP adapter demo uses it over a loopback socket. The structural codecs
+cover common recursive shapes; a user can provide a codec for a named
 Eponym type or family with `runtimeCodec(Type, NimType, encode, decode)`.
 Encoder and decoder procedures receive `Globals` and translate between the
 Nim representation and runtime `Value`s. The Nim compiler checks their

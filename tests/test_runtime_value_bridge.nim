@@ -183,12 +183,20 @@ eponymBlock:
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
-  runtimeVariant(RuntimeTree)
-  runtimeVariant(SizedTree)
+  runtimeDataVariant(RuntimeTree)
+  runtimeDataVariant(SizedTree)
+  runtimeDataVariant(DecisionTree)
   runtimeValue(treeIdentity)
+  runtimeValue(decisionIdentity)
   proc genericIndexedTreeProjection[length: Nat,
       tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
   runtimeValue(genericIndexedTreeProjection)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  proc genericUnmappedSizedTreeProjection[length: Nat,
+      tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
+  runtimeValue(genericUnmappedSizedTreeProjection)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -802,8 +810,8 @@ when isMainModule:
           constructor: "treeNode",
           arguments: @[intToValue(i), tree]), variantGlobals,
           "RuntimeTree", runtimeTreeConstructors)
-      let typedRoundTrip = runtimeVariantToValue(
-        treeIdentity(valueToRuntimeVariant(tree, variantGlobals,
+      let typedRoundTrip = runtimeStructuredVariantToValue(
+        treeIdentity(valueToRuntimeStructuredVariant(tree, variantGlobals,
           "RuntimeTree", runtimeTreeConstructors)), variantGlobals,
         "RuntimeTree", runtimeTreeConstructors)
       var decoded: seq[int] = @[]
@@ -823,8 +831,34 @@ when isMainModule:
     shrinkInt)
   if not rawVariantCases:
     quit(1)
+  let structuredBoolCases = forAll(
+    "runtimeDataVariant recursively maps Bool and data payloads", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 1),
+    proc(bit: int): bool =
+      let emptyTree = runtimeVariantToValue(RuntimeVariant(
+        constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+        runtimeTreeConstructors)
+      let decision = runtimeVariantToValue(RuntimeVariant(
+        constructor: "decisionNode",
+        arguments: @[boolToValue(bit == 1, variantGlobals), emptyTree]),
+        variantGlobals, "DecisionTree", ["decisionNode"])
+      let hostDecision = valueToRuntimeStructuredVariant(decision,
+        variantGlobals, "DecisionTree", ["decisionNode"])
+      let returned = runtimeStructuredVariantToValue(
+        decisionIdentity(hostDecision), variantGlobals, "DecisionTree",
+        ["decisionNode"])
+      let decoded = valueToRuntimeStructuredVariant(returned, variantGlobals,
+        "DecisionTree", ["decisionNode"])
+      decoded.arguments.len == 2 and
+        decoded.arguments[0].kind == rsvBool and
+        decoded.arguments[0].boolValue == (bit == 1) and
+        decoded.arguments[1].kind == rsvVariant and
+        decoded.arguments[1].variantValue.constructor == "treeEmpty",
+    shrinkInt)
+  if not structuredBoolCases:
+    quit(1)
   let appliedGenericTypeCases = forAll(
-    "unmapped applied generic domains check their runtime indices", r, 200,
+    "mapped applied generic domains check their runtime indices", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),
     proc(length: int): bool =
       let tree = runtimeVariantToValue(RuntimeVariant(
@@ -835,15 +869,40 @@ when isMainModule:
         arguments: @[natToValue(length, variantGlobals), tree]),
         variantGlobals, "SizedTree", ["sizedTree"])
       let projected = genericIndexedTreeProjectionRuntimeValueDynamic(
-        length, valueToRuntimeVariant(indexed, variantGlobals,
+        length, valueToRuntimeStructuredVariant(indexed, variantGlobals,
           "SizedTree", ["sizedTree"]), 0)
-      let decoded = valueToRuntimeVariant(projected.value, variantGlobals,
+      let decoded = valueToRuntimeStructuredVariant(projected.value,
+        variantGlobals,
         "SizedTree", ["sizedTree"])
       decoded.constructor == "sizedTree" and
-        valueToNat(decoded.arguments[0], variantGlobals) == length and
-        decoded.arguments[1].whnfRefId == tree.whnfRefId,
+      decoded.arguments.len == 2 and
+        decoded.arguments[0].kind == rsvNat and
+        decoded.arguments[0].natValue == length and
+        decoded.arguments[1].kind == rsvVariant and
+        decoded.arguments[1].variantValue.constructor == "treeEmpty",
     shrinkInt)
   if not appliedGenericTypeCases:
+    quit(1)
+  let rawAppliedGenericTypeCases = forAll(
+    "raw Values for applied generic domains are type checked", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let tree = runtimeVariantToValue(RuntimeVariant(
+        constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+        runtimeTreeConstructors)
+      let indexed = runtimeVariantToValue(RuntimeVariant(
+        constructor: "sizedTree",
+        arguments: @[natToValue(length, variantGlobals), tree]),
+        variantGlobals, "SizedTree", ["sizedTree"])
+      let runtimeResult = genericUnmappedSizedTreeProjectionRuntimeValueDynamic(
+        length, indexed, 0)
+      let decoded = valueToRuntimeVariant(runtimeResult.value,
+        runtimeResult.globals,
+        "SizedTree", ["sizedTree"])
+      valueToNat(decoded.arguments[0], runtimeResult.globals) == length and
+        decoded.arguments[1].whnfRefId == tree.whnfRefId,
+    shrinkInt)
+  if not rawAppliedGenericTypeCases:
     quit(1)
   var appliedGenericIndexRejected = false
   try:
@@ -855,11 +914,25 @@ when isMainModule:
       arguments: @[natToValue(4, variantGlobals), tree]), variantGlobals,
       "SizedTree", ["sizedTree"])
     discard genericIndexedTreeProjectionRuntimeValueDynamic(3,
-      valueToRuntimeVariant(wrongIndexedTree, variantGlobals,
+      valueToRuntimeStructuredVariant(wrongIndexedTree, variantGlobals,
         "SizedTree", ["sizedTree"]), 0)
   except ValueError:
     appliedGenericIndexRejected = true
   doAssert appliedGenericIndexRejected
+  var rawAppliedGenericIndexRejected = false
+  try:
+    let tree = runtimeVariantToValue(RuntimeVariant(
+      constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+      runtimeTreeConstructors)
+    let wrongIndexedTree = runtimeVariantToValue(RuntimeVariant(
+      constructor: "sizedTree",
+      arguments: @[natToValue(4, variantGlobals), tree]), variantGlobals,
+      "SizedTree", ["sizedTree"])
+    discard genericUnmappedSizedTreeProjectionRuntimeValueDynamic(
+      3, wrongIndexedTree, 0)
+  except ValueError:
+    rawAppliedGenericIndexRejected = true
+  doAssert rawAppliedGenericIndexRejected
   var variantArityRejected = false
   try:
     discard runtimeVariantToValue(RuntimeVariant(

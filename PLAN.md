@@ -468,15 +468,22 @@ implementations.
      bound imported postulate through both typed and raw APIs; another covers
      a dependent imported Vec identity and rejects a sequence with the wrong
      length. Unsupported imported signatures retain the raw `Value` interface.
-   - [ ] Add declarative structural codecs for payload-bearing indexed data
-     constructors. Today users must implement these through `runtimeCodec`;
-     built-in recursive codecs cover Vec, List, Option, Sigma, and records.
+   - [x] Add recursive structural codecs for payload-bearing indexed data
+     constructors with `runtimeDataVariant(Family)`. `RuntimeStructuredVariant`
+     maps Int, Nat, and Bool fields to Nim values, recursively maps nested data
+     constructors, and validates each field against the constructor's Pi
+     telescope, including dependent indices. 200-case properties cover nested
+     trees, Bool payloads, and indexed `SizedTree` wrappers, plus negative
+     mismatched-index checks.
+   - [ ] Use explicit mapped host codecs for opaque leaves nested inside
+     `RuntimeStructuredVariant`; these currently remain raw Eponym `Value`s.
    - [x] Add a `runtimeVariant(Family)` representation and generate wrappers
      for payload-bearing and indexed constructors. `RuntimeVariant` preserves
      constructor names and raw argument Values; it checks family membership,
      constructor arity, and runtime spine shape. 200 generated nested-tree
      cases cover direct and generated wrapper round trips, with negative
-     arity and wrong-family checks. Typed recursive payload codecs remain open.
+     arity and wrong-family checks. `runtimeDataVariant(Family)` adds
+     recursively decoded typed values for supported primitive and data fields.
    - [x] Generate dynamic host wrappers for value-indexed generic binders
      whose domain is a named, unmapped Eponym type. The wrapper accepts a
      `Value` and checks its inferred Eponym type against the checked globals;
@@ -484,9 +491,10 @@ implementations.
      The result remains a `Value` when no host representation is mapped.
    - [x] Extend membership checks to applied/indexed binder domains. Runtime
      type expressions support named references, family applications, earlier
-     generic indices, and integer literals; mapped `RuntimeVariant` binders
-     are checked after encoding as well. A 200-case `SizedTree[length]`
-     property covers both the unmapped `Value` path and a mapped variant path,
+     generic indices, and integer literals; mapped `RuntimeStructuredVariant`
+     binders are checked after encoding as well. A 200-case
+     `SizedTree[length]` property covers both the unmapped `Value` path and a
+     mapped structured-variant path,
      with a negative mismatched-index check.
    - [x] Add dynamic runtime wrappers that accept unmapped value-indexed
      binders as `Value` parameters. Named binder types are checked against
