@@ -219,6 +219,8 @@ eponymBlock:
   runtimeValue(importedCallbackApply)
   runtimeValue(importedCallbackApply2)
   runtimeValue(importedDependentCallbackApply)
+  runtimePairTrusted(importedDependentPairIdentity)
+  runtimeValue(importedDependentPairIdentity)
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
@@ -1213,6 +1215,36 @@ when isMainModule:
   except ValueError:
     importedDependentCallbackWrongLengthRejected = true
   doAssert importedDependentCallbackWrongLengthRejected
+  let importedDependentPairCases = forAll(
+    "trusted imported wrappers bridge dependent Sigma values", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var values: seq[int] = @[]
+      for i in 0 ..< input.length:
+        values.add(input.seed + i)
+      let argument = (input.length, values)
+      let typedResult = importedDependentPairIdentity(argument)
+      let runtimeResult = importedDependentPairIdentityRuntimeValue(argument)
+      let first = valueToNat(runtimePairFirst(runtimeResult.value),
+        runtimeResult.globals)
+      let second = vecValueToSeq[int](
+        runtimePairSecond(runtimeResult.value), input.length,
+        runtimeResult.globals, "Vec",
+        proc(value: Value, globals: Globals): int = valueToInt(value))
+      first == input.length and typedResult == argument and second == values,
+    proc(input: tuple[length, seed: int]):
+        seq[tuple[length, seed: int]] =
+      @[(0, input.seed), (input.length div 2, input.seed),
+        (input.length, 0)])
+  if not importedDependentPairCases:
+    quit(1)
+  var importedDependentPairWrongLengthRejected = false
+  try:
+    discard importedDependentPairIdentity((2, @[1]))
+  except ValueError:
+    importedDependentPairWrongLengthRejected = true
+  doAssert importedDependentPairWrongLengthRejected
   var importedVectorMismatchRejected = false
   try:
     discard importedVectorIdentity(3, @[1, 2])

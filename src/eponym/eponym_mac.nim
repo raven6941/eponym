@@ -2769,7 +2769,7 @@ macro eponymBlock*(body: untyped): untyped =
   let trustedRuntimePairs = trustedRuntimePairNames(body)
   for requested in trustedRuntimePairs:
     var found = false
-    for d in defs:
+    for d in allDefs:
       if d.name == requested: found = true
     if not found:
       error("runtimePairTrusted names no checked definition: " & requested,
@@ -2780,8 +2780,17 @@ macro eponymBlock*(body: untyped): untyped =
         declaration = st
         break
     if declaration.isNil:
-      error("runtimePairTrusted requires a Nim declaration for: " & requested,
-        body)
+      var importedDefinition: ElabDef
+      for d in allDefs:
+        if d.name == requested:
+          importedDefinition = d
+          break
+      if importedDefinition.name.len > 0:
+        declaration = importedRuntimeProcDecl(importedDefinition,
+          checkedGlobals)
+    if declaration.isNil:
+      error("runtimePairTrusted requires a local Nim declaration or a " &
+        "reconstructable imported signature for: " & requested, body)
   var usesBoolCodec = false
   for st in body:
     if st.kind == nnkProcDef and mentionsName(st[3], "Bool"):
@@ -3193,13 +3202,15 @@ macro eponymBlock*(body: untyped): untyped =
         let importedDecl = importedRuntimeProcDecl(importedDef,
           checkedGlobals)
         if not importedDecl.isNil:
+          let allowDependentSigma = requested in trustedRuntimePairs
           let typedImportedWrapper = typedRuntimeWrapper(importedDecl,
-            baseDir, src, requested, bindings, runtimeTypes, records)
+            baseDir, src, requested, bindings, runtimeTypes, records,
+            allowDependentSigma)
           if not typedImportedWrapper.isNil:
             result.add(typedImportedWrapper)
           let typedImportedValueWrapper = typedRuntimeValueWrapper(
             importedDecl, baseDir, src, requested, bindings, runtimeTypes,
-            records)
+            records, allowDependentSigma)
           if not typedImportedValueWrapper.isNil:
             result.add(typedImportedValueWrapper)
         result.add(rawRuntimeValueWrapper(baseDir, src, requested,

@@ -492,7 +492,10 @@ implementations.
       rejects a callback returning the wrong Vec length. Raw callback
       Values have no runtime type witness, while unsupported implicit binders,
       callback leaf types without codecs, and unmapped host boxes remain
-      trusted or raw-interface escape hatches.
+      trusted or raw-interface escape hatches. `runtimePairTrusted` also opts
+      reconstructable imported dependent Sigma signatures into typed tuple
+      wrappers; a 200-case identity property covers typed and `RuntimeValue`
+      calls, and rejects a tuple whose Vec length disagrees with its Nat field.
    - [x] Add recursive structural codecs for payload-bearing indexed data
      constructors with `runtimeDataVariant(Family)`. `RuntimeStructuredVariant`
      maps Int, Nat, and Bool fields to Nim values, recursively maps nested data
