@@ -60,6 +60,8 @@ for (path, expected) in [
      "does not match postulate 'useIntOption'"),
     ("tests/fixtures/embedded_err_imported_applied_type.nim",
      "does not match type 1 of postulate 'useIntOption'"),
+    ("tests/fixtures/embedded_err_imported_binding_callback_type.nim",
+     "does not match type 1 of postulate 'applyCallback'"),
     ("tests/fixtures/embedded_err_binding_nim_type.nim", "type mismatch"),
     ("tests/fixtures/embedded_err_binding_opaque_nim_type.nim",
      "type mismatch"),

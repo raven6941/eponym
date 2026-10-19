@@ -286,6 +286,15 @@ eponymBlock:
   runtimeValue(importedOptionIdentity)
 
 eponymBlock:
+  import "fixtures/runtime_imported_callback.ep"
+  bindPostulate(applyCallback, hostInvokeCheckedIntCallback,
+    proc(value: Int): Int {.closure.}, Int, Int)
+  proc importedApplyCheckedIntCallback(
+      callback: proc(value: Int): Int {.closure.}, value: Int): Int =
+    applyCallback(callback, value)
+  runtimeValue(importedApplyCheckedIntCallback)
+
+eponymBlock:
   import "../lib/vec.ep"
   postulate(Int, Univ)
   runtimeVector(Vec)
@@ -2471,6 +2480,20 @@ proc callbackRole : Callback -> Sample -> Sample =
         callback, input.input)
       typed == expected and valueToInt(runtime.value) == expected)
   if not boundCheckedCallbackCases:
+    quit(1)
+  let importedBoundCallbackCases = forAll(
+    "imported postulates invoke checked Nim callbacks", r, 200,
+    proc(r: var Rng): tuple[input, offset: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[input, offset: int]): bool =
+      let callback: NimIntCallback = proc(value: int): int =
+        value + input.offset
+      let expected = input.input + input.offset
+      let typed = importedApplyCheckedIntCallback(callback, input.input)
+      let runtime = importedApplyCheckedIntCallbackRuntimeValue(
+        callback, input.input)
+      typed == expected and valueToInt(runtime.value) == expected)
+  if not importedBoundCallbackCases:
     quit(1)
 
   let dynamicGenericVectorCases = forAll(

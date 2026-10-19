@@ -225,6 +225,11 @@ output. 200-case properties cover these paths through generated and reified
 wrappers, and negative checks reject mismatched Vec lengths. Returned callback
 types must use Nim's `{.closure.}` calling convention. Callback effects and
 behavior remain trusted host semantics.
+These function values can also cross into typed Nim `bindPostulate` adapters,
+including adapters for imported postulates. The host adapter can invoke the
+callback, while macro expansion checks its full function signature; a property
+covers captured callbacks and a compile-error fixture rejects mismatched leaf
+types.
 Dynamic generic wrappers accept unmapped value-indexed binders as `Value`
 parameters; `nameRuntimeValueDynamic` returns the checked result and globals.
 This lets a caller pass an existing Eponym value, including a payload-bearing

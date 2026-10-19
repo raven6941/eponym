@@ -1,0 +1,3 @@
+postulate Int : Type 0
+postulate applyCallback : Pi (callback : Pi (value : Int). Int).
+  Pi (value : Int). Int
