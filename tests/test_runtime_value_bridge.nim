@@ -1919,6 +1919,12 @@ when isMainModule:
           [natToValue(index, runtime.globals), malformed])
       except ValueError:
         rawInputMismatchRejected = true
+      var typedRuntimeInputMismatchRejected = false
+      try:
+        discard generatedVectorArgIdentityRuntimeValue(index,
+          values & @[index])
+      except ValueError:
+        typedRuntimeInputMismatchRejected = true
       var adapterMismatchRejected = false
       try:
         discard generatedVectorForIndex(index, low(int))
@@ -1931,7 +1937,8 @@ when isMainModule:
         importedAdapterMismatchRejected = true
       wrapperRoundTrip and runtimeRoundTrip and rawRoundTrip and pairRoundTrip and
         importedPairRoundTrip and inputMismatchRejected and
-        rawInputMismatchRejected and adapterMismatchRejected and
+        rawInputMismatchRejected and typedRuntimeInputMismatchRejected and
+        adapterMismatchRejected and
         importedAdapterMismatchRejected,
     shrinkInt)
   var dependentPairAdapterMismatchRejected = false

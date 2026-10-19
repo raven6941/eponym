@@ -572,7 +572,9 @@ implementations.
    - [x] Propagate named outer Pi argument values into later typed arguments,
      dependent results, and trusted pair adapter result codecs. A 200-case
      property covers the generated wrapper, typed `runtimeValue`, host adapter
-     results, and rejection of mismatched vector lengths.
+     results, and rejection of mismatched vector lengths. The indexed Vec
+     argument property also rejects wrong lengths through generated, typed
+     `RuntimeValue`, and raw `RuntimeValue` entry points.
    - [x] Preserve the full dependent result type for pair adapters whose
      postulate declaration comes from an imported `.ep` module by deriving
      the runtime shape from its checked `Globals` type. A 200-case property

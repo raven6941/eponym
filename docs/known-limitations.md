@@ -91,17 +91,21 @@ lacks the witness or carries a different Eponym type, in addition to checking
 its Nim box type. Property tests reject both a missing witness and a witness
 for a different mapped Eponym type. This does not prove that the Nim payload
 semantically represents that Eponym value: the mapping and host implementation
-remain trusted. Indexed type-family mappings and opaque leaves traversed inside
-recursive structural codecs retain their existing trusted behavior.
+remain trusted. Mapped values are checked against the represented Eponym type,
+including family indices the runtime can represent, before decoding or after
+encoding.
 `runtimeValue(name)` request inside `eponymBlock` exposes a checked definition
 as its runtime `Value` together with the checked globals,
 for host-side interpreters of reified data. Zero-argument definitions get a
 no-argument helper. When every parameter has a runtime codec, parameterized
 definitions also get a Nim-typed overload that converts arguments and returns
-the result as a `Value`. Mapped host values are not checked against dependent
-indices. A raw `openArray[Value]` overload remains available; it validates
-supported argument types recursively, including dependent structures, while
-function-valued arguments and opaque host boxes remain trusted.
+the result as a `Value`. Its typed arguments pass through the same recursive
+codecs as generated wrappers, so represented dependent indices are checked.
+A raw `openArray[Value]` overload remains available; it validates supported
+argument types recursively, including dependent structures and callback
+arguments/results when their runtime shape is supported. Unsupported type
+expressions and the semantic correspondence between opaque host payloads and
+their Eponym types remain trusted.
 Structural `Vec`, `List`, and `Option` values are checked in one traversal for
 shape, represented indices, and element types. Nested vectors and recursive
 payload-bearing data variants are checked through their constructor
