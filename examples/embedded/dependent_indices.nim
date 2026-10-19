@@ -32,9 +32,8 @@ eponymBlock:
   proc witness(): All[Nat, lam(x, Nat, Nat), suc(suc(zero())),
                       cons[Nat, suc(zero())](suc(zero()),
                            cons[Nat, zero()](zero(), vecnil[Nat]()))] =
-    allCons[Nat, lam(x, Nat, Nat)](suc(zero()),
-            cons[Nat, zero()](zero(), vecnil[Nat]()), suc(zero()),
-            allCons[Nat, lam(x, Nat, Nat)](zero(), vecnil[Nat](),
+    allCons[Nat, lam(x, Nat, Nat)](suc(zero()), suc(zero()),
+            allCons[Nat, lam(x, Nat, Nat)](zero(),
                     zero(), allNil[Nat, lam(x, Nat, Nat)]()))
 
   # Eliminate the witness to compute the vector's length. The motive is

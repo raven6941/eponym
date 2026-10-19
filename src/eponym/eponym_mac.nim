@@ -28,6 +28,7 @@ type LegacyCallInfo = object
   leadingTermCount: int
   requiredBracketCount: int
   inferableIndexCount: int
+  inferableIndexPositions: seq[int]
   requiresBrackets: bool
   firstExplicitType: bool
 
@@ -45,6 +46,7 @@ proc sameCallInfo(a, b: LegacyCallInfo): bool =
     a.leadingTermCount == b.leadingTermCount and
     a.requiredBracketCount == b.requiredBracketCount and
     a.inferableIndexCount == b.inferableIndexCount and
+    a.inferableIndexPositions == b.inferableIndexPositions and
     a.requiresBrackets == b.requiresBrackets and
     a.firstExplicitType == b.firstExplicitType
 
@@ -82,15 +84,29 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
       let base = callInfoForHead(head[0])
       let supplied = head.len - 1
       if base.found and base.info.explicitCount > 0 and
-          supplied <= base.info.leadingTermCount:
+          (supplied <= base.info.leadingTermCount or
+           (base.info.inferableIndexCount > 0 and
+            supplied <= base.info.termCount)):
         var remaining = base.info
         remaining.termCount = max(0, remaining.termCount - supplied)
         remaining.leadingTermCount =
           max(0, remaining.leadingTermCount - supplied)
-        # Lowering this call inserts every recognized inferable index as a
-        # hole before its value arguments, so an alias of the partial result
-        # must not insert those holes a second time.
-        remaining.inferableIndexCount = 0
+        var pendingPositions: seq[int] = @[]
+        var insertedIndices = 0
+        for position in remaining.inferableIndexPositions:
+          if position < supplied or (position == 0 and supplied == 0):
+            inc insertedIndices
+          else:
+            pendingPositions.add(position - supplied)
+        remaining.inferableIndexPositions = pendingPositions
+        remaining.inferableIndexCount = pendingPositions.len
+        remaining.explicitCount = max(0,
+          remaining.explicitCount - insertedIndices)
+        if remaining.requiredBracketCount == 0:
+          remaining.leadingTermCount = if pendingPositions.len > 0:
+            pendingPositions[0]
+          else:
+            remaining.termCount
         return (true, remaining)
   of nnkDotExpr:
     if head.len == 2 and head[1].kind in {nnkIdent, nnkSym}:
@@ -111,12 +127,24 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
       if base.found and base.info.explicitCount > 0:
         var remaining = base.info
         let supplied = head.len - 1
-        remaining.explicitCount = max(0, remaining.explicitCount - supplied)
         let requiredSupplied = min(remaining.requiredBracketCount, supplied)
+        remaining.explicitCount = max(0,
+          remaining.explicitCount - requiredSupplied)
         remaining.requiredBracketCount -= requiredSupplied
-        let indexSupplied = max(0, supplied - requiredSupplied)
-        remaining.inferableIndexCount = max(0,
-          remaining.inferableIndexCount - indexSupplied)
+        let indexRequested = max(0, supplied - requiredSupplied)
+        var indexConsumed = 0
+        while indexConsumed < indexRequested and
+            indexConsumed < remaining.inferableIndexPositions.len and
+            remaining.inferableIndexPositions[indexConsumed] == 0:
+          inc indexConsumed
+        remaining.explicitCount = max(0,
+          remaining.explicitCount - indexConsumed)
+        var remainingPositions: seq[int] = @[]
+        for i in indexConsumed ..< remaining.inferableIndexPositions.len:
+          remainingPositions.add(remaining.inferableIndexPositions[i])
+        remaining.inferableIndexPositions = remainingPositions
+        remaining.inferableIndexCount =
+          remaining.inferableIndexPositions.len
         if remaining.requiredBracketCount == 0:
           remaining.requiresBrackets = false
           remaining.firstExplicitType = false
@@ -297,13 +325,15 @@ proc registerLegacyInfo(name: string, explicitCount, termCount: int,
                         requiresBrackets = false,
                         firstExplicitType = false,
                         requiredBracketCount = -1,
-                        inferableIndexCount = 0) =
+                        inferableIndexCount = 0,
+                        inferableIndexPositions: seq[int] = @[]) =
   if explicitCount > 0:
     legacyCallInfo[name] = LegacyCallInfo(explicitCount: explicitCount,
       termCount: termCount, requiresBrackets: requiresBrackets,
       requiredBracketCount: (if requiredBracketCount >= 0:
         requiredBracketCount elif requiresBrackets: explicitCount else: 0),
       inferableIndexCount: inferableIndexCount,
+      inferableIndexPositions: inferableIndexPositions,
       firstExplicitType: firstExplicitType)
 
 proc nimTypeToEponym(n: NimNode): string
@@ -369,10 +399,8 @@ proc surfaceApplicationArgs(term: PreTerm): seq[PreTerm] =
 proc constructorIndexBinders(params: int, indexTy, resultTy: PreTerm,
     tele: seq[tuple[name: string, ty: PreTerm, impl: bool]]): HashSet[string] =
   ## Identify constructor arguments that determine the indexed-family result.
-  ## Any binders mentioned in a result index can be inferred by the elaborator
-  ## from constructor argument types. Holes are currently inserted before the
-  ## ordinary arguments, so only infer binders in the leading constructor
-  ## telescope (after any type binders); later binders need positional holes.
+  ## Any uniquely named, nonimplicit binder mentioned in a result index can be
+  ## inferred by the elaborator from constructor argument types.
   result = initHashSet[string]()
   let resultArgs = surfaceApplicationArgs(resultTy)
   let indexCount = surfaceIndexArity(indexTy)
@@ -394,19 +422,10 @@ proc constructorIndexBinders(params: int, indexTy, resultTy: PreTerm,
       if sameNameCount == 1:
         result.incl(binder.name)
 
-  var sawValueBinder = false
-  var leadingCandidates = initHashSet[string]()
-  for binder in tele:
-    let isType = binder.ty.kind in {pkUniv, pkUnivN}
-    if binder.name in result:
-      if not sawValueBinder: leadingCandidates.incl(binder.name)
-    elif not binder.impl and not isType:
-      sawValueBinder = true
-  result = leadingCandidates
-
 proc surfaceConstructorCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
     impl: bool, erased: bool, qty: Qty]],
     indexBinders: HashSet[string]): LegacyCallInfo =
+  var termPosition = 0
   for binder in tele:
     let isType = binder.ty.kind in {pkUniv, pkUnivN}
     let isIndexedArg = binder.name in indexBinders
@@ -415,11 +434,13 @@ proc surfaceConstructorCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
       if result.explicitCount == 1: result.firstExplicitType = isType
       if isIndexedArg:
         inc result.inferableIndexCount
+        result.inferableIndexPositions.add(termPosition)
       if isType and not binder.impl:
         inc result.requiredBracketCount
         result.requiresBrackets = true
     else:
       inc result.termCount
+      inc termPosition
       if result.explicitCount == 0: inc result.leadingTermCount
 
 proc nimTypePreTerm(ty: NimNode): PreTerm =
@@ -466,9 +487,28 @@ proc mergeCallInfo(a, b: LegacyCallInfo): LegacyCallInfo =
   result.requiredBracketCount = a.requiredBracketCount + b.requiredBracketCount
   result.inferableIndexCount = a.inferableIndexCount +
     b.inferableIndexCount
+  result.inferableIndexPositions = a.inferableIndexPositions
+  for position in b.inferableIndexPositions:
+    result.inferableIndexPositions.add(a.termCount + position)
   result.requiresBrackets = a.requiresBrackets or b.requiresBrackets
   result.firstExplicitType = if a.explicitCount > 0: a.firstExplicitType
     else: b.firstExplicitType
+
+proc interleaveInferableHoles(args: seq[string], positions: seq[int]):
+    seq[string] =
+  var hole = 0
+  for i in 0 ..< args.len:
+    while hole < positions.len and positions[hole] <= i:
+      result.add("?")
+      inc hole
+    result.add(args[i])
+  # A nullary constructor's leading index can be solved from its expected
+  # result. For an index after supplied ordinary arguments, leave a trailing
+  # binder pending so callers can either bracket it or infer it from a later
+  # argument through a partial application.
+  while hole < positions.len and positions[hole] == 0 and args.len == 0:
+    result.add("?")
+    inc hole
 
 proc registerLegacyFieldInfo(name: string, info: LegacyCallInfo) =
   if name in ambiguousLegacyFieldNames: return
@@ -581,6 +621,14 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
               tele.add((binderName(formal[j]), binderTy, false))
           let indexBinders = constructorIndexBinders(paramCount,
             nimTypePreTerm(kind), nimTypePreTerm(constructor[3][0]), tele)
+          var inferablePositions: seq[int] = @[]
+          var termPosition = 0
+          for binder in tele:
+            if binder.name in indexBinders:
+              inferablePositions.add(termPosition)
+            elif not binder.impl and
+                binder.ty.kind notin {pkUniv, pkUnivN}:
+              inc termPosition
           let explicitCount = paramCount + typeCount + indexBinders.len
           let firstType = if paramCount > 0:
             nimBinderIsUniverse(params[0])
@@ -590,7 +638,7 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
             nimFormalArgCount(constructor[3]) - typeCount -
               indexBinders.len,
                 paramCount + typeCount > 0, firstType,
-            paramCount + typeCount, indexBinders.len)
+            paramCount + typeCount, indexBinders.len, inferablePositions)
   for statement in body:
     case statement.kind
     of nnkProcDef:
@@ -737,7 +785,7 @@ proc nimCommandToEponym(n: NimNode): string =
   if n[0].kind == nnkIdent and $n[0] == "lam":
     return nimCommandLamToEponym(n)
   rejectCallStyleExplicitArgs(n)
-  var args: seq[string] = @[]
+  var termArgs: seq[string] = @[]
   proc appendArg(a: NimNode) =
     if a.kind == nnkCommand and a.len > 0 and
        not (a[0].kind == nnkIdent and $a[0] == "lam"):
@@ -745,18 +793,19 @@ proc nimCommandToEponym(n: NimNode): string =
       for j in 1 ..< a.len:
         appendArg(a[j])
     elif a.kind == nnkCommand:
-      args.add("(" & nimCommandLamToEponym(a) & ")")
+      termArgs.add("(" & nimCommandLamToEponym(a) & ")")
     elif a.kind in {nnkCall, nnkObjConstr}:
-      args.add("(" & nimExprToEponym(a) & ")")
+      termArgs.add("(" & nimExprToEponym(a) & ")")
     else:
-      args.add(nimExprToEponym(a))
+      termArgs.add(nimExprToEponym(a))
   for i in 1 ..< n.len:
     appendArg(n[i])
-  var head = nimExprToEponym(n[0])
+  let head = nimExprToEponym(n[0])
   let headInfo = callInfoForHead(n[0])
-  if headInfo.found and headInfo.info.inferableIndexCount > 0:
-    for _ in 0 ..< headInfo.info.inferableIndexCount:
-      head.add(" ?")
+  let args = if headInfo.found:
+    interleaveInferableHoles(termArgs, headInfo.info.inferableIndexPositions)
+  else:
+    termArgs
   head & " " & args.join(" ")
 
 proc nimExprToEponym(n: NimNode): string =
@@ -845,11 +894,8 @@ proc nimExprToEponym(n: NimNode): string =
              nimTypeToEponym(n[2]) & "). " & nimExprToEponym(n[3])
     rejectCallStyleExplicitArgs(n)
     # f(a, b) -> f a b (with parens for nested calls to preserve grouping)
-    var head = nimExprToEponym(n[0])
+    let head = nimExprToEponym(n[0])
     let headInfo = callInfoForHead(n[0])
-    if headInfo.found and headInfo.info.inferableIndexCount > 0:
-      for _ in 0 ..< headInfo.info.inferableIndexCount:
-        head.add(" ?")
     var args: seq[string] = @[]
     for i in 1 ..< n.len:
       let a = n[i]
@@ -859,8 +905,12 @@ proc nimExprToEponym(n: NimNode): string =
         args.add("(" & nimExprToEponym(a) & ")")
       else:
         args.add(nimExprToEponym(a))
-    if args.len == 0: head
-    else: head & " " & args.join(" ")
+    let appliedArgs = if headInfo.found:
+      interleaveInferableHoles(args, headInfo.info.inferableIndexPositions)
+    else:
+      args
+    if appliedArgs.len == 0: head
+    else: head & " " & appliedArgs.join(" ")
   of nnkPar:
     # (x) -> x (parenthesized)
     if n.len == 1: nimExprToEponym(n[0])

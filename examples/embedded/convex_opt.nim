@@ -93,7 +93,7 @@ eponymBlock:
   # x affine hence convex, sum of convex convex.
   proc quadConvex(): Convex[quadExpr()] =
     cvPlus(
-      cvScaleN(2, eSq(eMinus(eVar(), eConst(3))),
+      cvScaleN(2,
         cvSq[eMinus(eVar(), eConst(3))](
           afMinus(afVar(), afConst(3)))),
       cvAffine[eVar()](afVar()))

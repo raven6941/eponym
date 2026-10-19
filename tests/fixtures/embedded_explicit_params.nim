@@ -23,6 +23,10 @@ eponymBlock:
     proc localPairIndex(m: Nat, n: Nat,
         left: Vec[Nat, m], right: Vec[Nat, n]): LocalPairIndex[add(m, n)]
 
+  data(LocalMiddleIndex, Nat -> Univ):
+    proc localMiddleIndex(flag: Bool, n: Nat, values: Vec[Nat, n]):
+        LocalMiddleIndex[n]
+
   record(LocalCallableField):
     field(apply, Nat -> Nat -> Nat)
 
@@ -118,6 +122,19 @@ eponymBlock:
 
   proc inferredCompoundIndex(left: Vec[Nat, 1], right: Vec[Nat, 2]):
       LocalPairIndex[add(1, 2)] = localPairIndex(left, right)
+
+  proc inferredMiddleIndex(flag: Bool, values: Vec[Nat, 0]):
+      LocalMiddleIndex[0] = localMiddleIndex(flag, values)
+
+  proc inferredMiddleIndexAlias(flag: Bool, values: Vec[Nat, 0]):
+      LocalMiddleIndex[0] =
+    let afterFlag = localMiddleIndex(flag)
+    afterFlag(values)
+
+  proc bracketMiddleIndexAlias(flag: Bool, values: Vec[Nat, 0]):
+      LocalMiddleIndex[0] =
+    let afterFlag = localMiddleIndex(flag)
+    afterFlag[zero()](values)
 
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =
