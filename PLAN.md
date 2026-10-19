@@ -1164,8 +1164,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   calls still lower through `nnkCall`; bracket applications use Nim's distinct
   `nnkBracketExpr` form. Keep the metadata audit below open for declaration
   forms or qualified call heads the guard does not yet recognize.
-- [ ] Audit remaining test and fixture call sites and run the full local CI
-  gate before the first release.
+- [x] Audit and migrate remaining test and fixture call sites exposed by the
+  embedded error-path suite. Three legacy spellings in runtime-bridge
+  diagnostics now use brackets so those tests reach their intended errors.
+- [ ] Run the full local CI gate before the first release.
 - [x] Migrate remaining legacy indexed type applications in the runtime bridge
   test to brackets, and make generic-signature registration tolerate Nim
   function-type binders. The runtime bridge suite passes, including the
@@ -1221,8 +1223,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   call-style index arguments when their signature is known, and leaves
   ordinary inferred applications alone. Constructor indices currently need
   brackets: the elaborator rejects partial applications such as
-  `cons[Nat](x, xs)` instead of inferring the index from `xs`. Implement that
-  inference and add positive coverage before claiming omitted-index support.
+  `cons[Nat](x, xs)` instead of inferring the index from `xs`. The app
+  elaborator eagerly consumes an implicit binder when the next argument has
+  the same type, so simply marking the index binder implicit misapplies `x`
+  as the index. Preserve application-boundary information or add a principled
+  deferred-inference mechanism before implementing omitted-index support.
   Other relevant supported forms—identifiers, parenthesized and qualified
   calls, returned calls, callback aliases, conditionals, type ascriptions, and
   statement-list expressions—have focused coverage. Unsupported Nim AST forms
