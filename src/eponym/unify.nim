@@ -780,37 +780,30 @@ when isMainModule:
     assert "occurs check" in e.msg
     echo "ok: occurs check fires"
 
-  # Issue #56: non-pattern spine suspends instead of failing.
-  # ?m[V0, V0] = 1 defers; nothing can unblock it (the duplicate is
-  # ground), so the declaration-final flush reports an ambiguity error
-  # showing the stuck constraint.
+  # A duplicate spine can be pruned safely when the solution does not use
+  # its variable.
   let m2 = freshMeta(ms, tmC(cStar), 1, 0, loc)
   let badSpine = tmMeta(m2.metaId, @[vv(0), vv(0)])
   unify(ms, badSpine, tmC(cOne), loc)  # must not raise
-  assert ms.deferred.len == 1, "goal should suspend, got " & $ms.deferred.len
-  assert m2.metaId in ms.deferred[0].blockedOn
-  echo "ok: non-pattern spine suspends"
-  try:
-    flushDeferred(ms, loc)
-    assert false, "flush should report the stuck goal"
-  except UnifyError as e:
-    assert "ambiguous" in e.msg and "?m" in e.msg, e.msg
-    echo "ok: flush reports stuck constraint as ambiguity"
+  assert ms.deferred.len == 0, "prunable spine should not suspend"
+  assert $zonk(ms, badSpine) == "1"
+  echo "ok: unused duplicate spine entries are pruned"
 
-  # Issue #56: deferred-then-solved. The spine [?m6[V0,V1], V0] is not a
-  # pattern spine while ?m6 is unsolved; solving ?m6 := V1 wakes the goal
-  # and it completes as ?m5[V1, V0] = 1.
+  # Issue #56: defer while the target depends on V1, which is absent from the
+  # visible spine until ?m6 is solved. Solving ?m6 := V1 wakes the goal and
+  # makes the spine invertible.
   var msD = initMetaStore()
   let m5 = freshMeta(msD, tmC(cStar), 2, 0, loc)
   let m6 = freshMeta(msD, tmC(cStar), 2, 0, loc)
-  unify(msD, tmMeta(m5.metaId, @[m6, vv(0)]), tmC(cOne), loc)
+  unify(msD, tmMeta(m5.metaId, @[m6, vv(0)]), vv(1), loc)
   assert msD.deferred.len == 1, "goal should suspend"
   assert m5.metaId in msD.deferred[0].blockedOn
   assert m6.metaId in msD.deferred[0].blockedOn
   unify(msD, m6, vv(1), loc)  # pattern solve; wakes the suspended goal
   assert msD.deferred.len == 0, "woken goal should complete, still pending: " &
     $msD.deferred.len
-  assert $zonk(msD, m5) == "1", $zonk(msD, m5)
+  assert $zonk(msD, tmMeta(m5.metaId, @[m6, vv(0)])) == "V1",
+    $zonk(msD, tmMeta(m5.metaId, @[m6, vv(0)]))
   assert $zonk(msD, m6) == "V1", $zonk(msD, m6)
   echo "ok: deferred goal wakes and solves"
 
