@@ -41,9 +41,9 @@ eponymBlock:
   # --- smoke 14 embedded: tactics ---
   postulate(Int, Univ)
   data(Eq, [A: Univ, x: A], A -> Univ):
-    proc refl(): Eq(A, x, x)
-  proc pf1(): Eq(Int, 42, 42) = byTac(refl)
-  proc pf2(): Eq(Int, addInt(20, 22), 42) = byTac(refl)
+    proc refl(): Eq[A, x, x]
+  proc pf1(): Eq[Int, 42, 42] = byTac(refl)
+  proc pf2(): Eq[Int, addInt(20, 22), 42] = byTac(refl)
   proc idInt(x: Int): Int = byTac(assumption)
 
 eponymBlock:

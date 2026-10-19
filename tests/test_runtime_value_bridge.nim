@@ -329,7 +329,7 @@ eponymBlock:
   runtimeVectorArray(Vec)
   runtimeType(Channel, ChannelHandle)
   proc generatedTypeAwareSingleton[A: Univ](value: A): Vec[A, suc(zero)] =
-    cons(A, zero, value, vecnil(A))
+    cons[A, zero](value, vecnil[A]())
   proc generatedArrayVecIdentity[n: Nat](values: Vec[Int, n]): Vec[Int, n] =
     values
   proc generatedArrayMatrixIdentity(
@@ -398,7 +398,7 @@ eponymBlock:
   runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
     decodeRuntimeHandle)
   proc generatedCodecTypeAwareSingleton[A: Univ](value: A):
-      Vec[A, suc(zero)] = cons(A, zero, value, vecnil(A))
+      Vec[A, suc(zero)] = cons[A, zero](value, vecnil[A]())
   runtimeValue(generatedCodecTypeAwareSingleton)
   postulate(indexedRuntimeHandleVectorAdapter,
     Pi(length: Nat, values: Vec[RuntimeHandle, length],
@@ -947,7 +947,7 @@ eponymBlock:
       length: Nat, values: Vec[Int, length]): Nat = callback(length, values)
   proc generatedDependentVectorCallback():
       proc(length: Nat, values: Vec[Int, length]): Nat {.closure.} =
-    lam(length, Nat, lam(values, Vec(Int, length), length))
+    lam(length, Nat, lam(values, Vec[Int, length], length))
   runtimeValue(generatedApplyDependentVectorCallback)
   runtimeValue(generatedDependentVectorCallback)
   proc generatedRawIndexedCallbackEcho(

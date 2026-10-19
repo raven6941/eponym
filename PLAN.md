@@ -1122,8 +1122,12 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 
 ### First-release syntax completion
 
-- [ ] Emit a compile-time warning or error with a migration hint whenever an
-  explicit parameter application uses legacy call-style syntax.
+- [x] Add a signature-aware compile-time warning for complete call-style
+  explicit applications and known data-family type applications. It reads
+  local Nim declarations and imported `.ep` signatures, and the regression
+  test confirms ordinary calls such as `suc(zero())` stay warning-free.
+- [ ] Detect legacy explicit arguments in partial applications when the
+  supplied argument count is still within the ordinary term arity.
 - [ ] Remove the legacy call-style parser/lowering path and update examples,
   tests, and documentation to use square brackets for explicit parameters.
 - [ ] Add positive coverage for bracket syntax and compile-fail coverage for

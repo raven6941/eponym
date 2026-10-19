@@ -580,8 +580,12 @@ file. Clean-install resolution is covered by a separate-project test. See
 The embedded syntax is Nim-shaped but is not ordinary Nim semantics. Explicit
 Eponym parameters can use Nim square brackets, as in `Vec[A, n]` and
 `cons[A, n](x, xs)`. Legacy call-style explicit applications are temporary
-migration syntax: they are planned to receive a compiler diagnostic and be
-removed before the first release. Supported
+migration syntax. A compiler warning currently catches the conventional form
+when a complete call supplies more arguments than the declared term arity, and
+for known data-family applications in type position. The check reads local
+Nim declarations and imported `.ep` signatures; partial applications whose
+argument count is still within the term arity remain ambiguous and may not be
+warned yet. The syntax is planned for removal before the first release. Supported
 generic definitions have generated Nim wrappers for type parameters, Nat and
 Int indices, Bool indices, and values with explicit runtime mappings. Other
 value-indexed binders and unsupported argument/result codecs still lack
