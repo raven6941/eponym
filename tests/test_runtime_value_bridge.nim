@@ -218,6 +218,9 @@ proc hostFutureIdentity(value: Future[int]): Future[int] = value
 proc hostInvokeCallback(callback: NimIntCallback, value: int): int =
   callback(value)
 
+proc hostInvokeCheckedIntCallback(callback: NimIntCallback,
+                                  value: int): int = callback(value)
+
 proc hostWrongRoute(channel: int, message: string): int = channel + message.len
 
 proc hostSumSix(a, b, c, d, e, f: int): int = a + b + c + d + e + f
@@ -736,6 +739,17 @@ eponymBlock:
       proc(length: Nat, values: Vec[Int, length]): Nat
         {.closure, rawValue.} = callback
   runtimeValue(generatedRawIndexedCallbackEcho)
+
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(applyCheckedIntCallback,
+    Pi(callback: proc(value: Int): Int {.closure.}, value: Int, Int))
+  bindPostulate(applyCheckedIntCallback, hostInvokeCheckedIntCallback,
+    proc(value: Int): Int {.closure.}, Int, Int)
+  proc generatedApplyCheckedIntCallback(
+      callback: proc(value: Int): Int {.closure.}, value: Int): Int =
+    applyCheckedIntCallback(callback, value)
+  runtimeValue(generatedApplyCheckedIntCallback)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -2444,6 +2458,21 @@ proc callbackRole : Callback -> Sample -> Sample =
     dependentCallbackArgumentMismatchRejected =
       "runtime Vec length mismatch" in error.msg
   doAssert dependentCallbackArgumentMismatchRejected
+  let boundCheckedCallbackCases = forAll(
+    "typed postulates invoke checked Eponym callback parameters", r, 200,
+    proc(r: var Rng): tuple[input, offset: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[input, offset: int]): bool =
+      let callback: NimIntCallback = proc(value: int): int =
+        value + input.offset
+      let expected = input.input + input.offset
+      let typed = generatedApplyCheckedIntCallback(callback, input.input)
+      let runtime = generatedApplyCheckedIntCallbackRuntimeValue(
+        callback, input.input)
+      typed == expected and valueToInt(runtime.value) == expected)
+  if not boundCheckedCallbackCases:
+    quit(1)
+
   let dynamicGenericVectorCases = forAll(
     "dynamic Nat generics index dependent Vec wrappers", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),

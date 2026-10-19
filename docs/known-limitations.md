@@ -297,7 +297,11 @@ decoded arguments into later codecs: a bound `Nat -> Vec[Int, length] ->
 Vec[Int, length]` operation checks the Vec length on input and output. The same
 path is property-tested with a custom `runtimeCodec` for Vec elements, including
 mismatched-length rejection through typed and raw runtime calls. Indices that a
-codec cannot represent remain the adapter author's responsibility.
+codec cannot represent remain the adapter author's responsibility. A checked
+Eponym function argument can also cross this adapter boundary as a Nim closure
+proc type; the adapter can invoke it, while the closure body remains host
+behavior. A 200-case property exercises a captured callback through a checked
+role and its typed `RuntimeValue` wrapper.
 `bindPostulatePair` additionally binds one to three codec-supported named
 arguments to a non-dependent `Sig(B, C)` result using recursive tuple codecs.
 It checks the declared argument type heads and tuple field type heads; indices

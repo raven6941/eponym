@@ -1151,6 +1151,40 @@ proc stripOuterTypeParens(value: string): string =
   else:
     value
 
+proc checkedTypeMatches(term: Term, typeExpr: NimNode, ctx: Ctx,
+                        refNames: Table[int, string]): bool =
+  if typeExpr.kind != nnkProcTy:
+    return stripOuterTypeParens(prettyTerm(term, ctx, refNames)) ==
+      nimTypeToEponym(typeExpr)
+  if typeExpr.len != 2 or typeExpr[0].kind != nnkFormalParams or
+      typeExpr[0].len < 2:
+    return false
+  var current = term
+  var callbackCtx = ctx
+  var argIndex = 0
+  for i in 1 ..< typeExpr[0].len:
+    let param = typeExpr[0][i]
+    if param.kind != nnkIdentDefs or param.len < 3:
+      return false
+    for j in 0 ..< param.len - 2:
+      if current.isNil or current.kind != tPi or current.impl or
+          current.qty == q0:
+        return false
+      let actual = stripOuterTypeParens(
+        prettyTerm(current.dom, callbackCtx, refNames))
+      let wanted = nimTypeToEponym(param[^2])
+      if actual != wanted: return false
+      let name = if param[j].kind == nnkEmpty: "callbackArg" & $argIndex
+                 else: binderName(param[j])
+      let checkedName = if current.scope.adv == "_": name
+                        else: current.scope.adv
+      callbackCtx = @[CtxEntry(name: checkedName, ty: current.dom,
+        qty: current.qty)] & callbackCtx
+      current = current.scope.bdy
+      inc argIndex
+  stripOuterTypeParens(prettyTerm(current, callbackCtx, refNames)) ==
+    nimTypeToEponym(typeExpr[0][0])
+
 proc validateAppliedBindingTypeExpressions(globals: Globals,
     binding: HostPostulateBinding) =
   if binding.eponymTypeExprs.len == 0 or binding.pairResult or
@@ -1178,9 +1212,9 @@ proc validateAppliedBindingTypeExpressions(globals: Globals,
       raise newException(ValueError,
         "typed adapter signature does not match postulate '" &
         binding.postulateName & "'")
-    let actual = stripOuterTypeParens(prettyTerm(current.dom, ctx, refNames))
     let wanted = nimTypeToEponym(expected[i])
-    if actual != wanted:
+    if not checkedTypeMatches(current.dom, expected[i], ctx, refNames):
+      let actual = stripOuterTypeParens(prettyTerm(current.dom, ctx, refNames))
       raise newException(ValueError,
         "typed adapter type '" & wanted & "' does not match type " &
         $(i + 1) & " of postulate '" & binding.postulateName & "' (" &
@@ -1189,9 +1223,9 @@ proc validateAppliedBindingTypeExpressions(globals: Globals,
                      else: current.scope.adv
     ctx = @[CtxEntry(name: binderName, ty: current.dom, qty: current.qty)] & ctx
     current = current.scope.bdy
-  let actualResult = stripOuterTypeParens(prettyTerm(current, ctx, refNames))
   let wantedResult = nimTypeToEponym(expected[^1])
-  if actualResult != wantedResult:
+  if not checkedTypeMatches(current, expected[^1], ctx, refNames):
+    let actualResult = stripOuterTypeParens(prettyTerm(current, ctx, refNames))
     raise newException(ValueError,
       "typed adapter result type '" & wantedResult &
       "' does not match the result of postulate '" & binding.postulateName &
@@ -3075,15 +3109,17 @@ macro eponymBlock*(body: untyped): untyped =
           adapterTypes = @[binding.eponymTypes[0], binding.eponymTypes[0]]
         if binding.eponymTypeExprs.len > 0:
           var typeHeads: seq[string] = @[]
+          var hasNonNamedType = false
           for typeExpr in binding.eponymTypeExprs:
             let head = runtimeTypeHead(typeExpr)
             if head.isNil or head.kind != nnkIdent:
-              raise newException(ValueError,
-                "typed adapter Eponym type needs a named family head")
+              hasNonNamedType = true
+              break
             typeHeads.add($head)
-          if typeHeads.len == 1: typeHeads = @[typeHeads[0], typeHeads[0]]
-          validateHostMappedNaryType(checkedGlobals, binding.postulateName,
-                                     typeHeads)
+          if not hasNonNamedType:
+            if typeHeads.len == 1: typeHeads = @[typeHeads[0], typeHeads[0]]
+            validateHostMappedNaryType(checkedGlobals, binding.postulateName,
+                                       typeHeads)
         else:
           validateHostMappedNaryType(checkedGlobals, binding.postulateName,
                                      adapterTypes)

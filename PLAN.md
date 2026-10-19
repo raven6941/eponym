@@ -445,6 +445,10 @@ implementations.
    `RuntimeValue`, and raw `RuntimeValue` calls. A second 200-case property
    covers custom `runtimeCodec` elements inside a dependent Vec postulate and
    rejects mismatched lengths through all three entry paths.
+- [x] Pass checked Eponym function values through typed `bindPostulate`
+   adapters as Nim closure proc types. A 200-case property passes a captured
+   Nim callback through a checked role; the host adapter invokes it and the
+   result crosses through generated and typed `RuntimeValue` wrappers.
 - [x] Permit `runtimeValue(importedDefinition)` when a checked definition
    comes from an imported `.ep` module and has no local Nim `proc` declaration.
    It exposes a raw `openArray[Value] -> (Value, Globals)` wrapper; typed Nim
