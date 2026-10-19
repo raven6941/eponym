@@ -744,6 +744,16 @@ proc intToValue*(n: int): Value =
   Value(syn: Term(kind: tInt, intVal: n),
         whnf: Whnf(kind: wInt, intVal: n))
 
+proc runtimePairFirst*(value: Value): Value =
+  if value.whnfKind != wPair:
+    raise newException(ValueError, "runtime value is not a pair")
+  value.whnfFst
+
+proc runtimePairSecond*(value: Value): Value =
+  if value.whnfKind != wPair:
+    raise newException(ValueError, "runtime value is not a pair")
+  value.whnfSnd
+
 proc valueToInt*(v: Value): int =
   ## Convert ETT value to Nim int (must be wInt).
   let w = v.whnf
