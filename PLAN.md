@@ -1131,8 +1131,13 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   callable's ordinary term arity. The regression fixture covers partial
   `cons(Nat, ...)` and `cons(A, ...)` applications, where `A: Type 0` is in
   scope only for the latter.
-- [ ] Detect partial legacy applications whose first explicit index is a
-  value expression indistinguishable from an ordinary term argument.
+- [x] Detect partial legacy applications whose first explicit binder is `Nat`
+  and whose first argument is a Nat literal, known Nat constructor/function,
+  or in-scope `Nat` binder. The regression fixture covers a generic index
+  binder and `zero()`; ordinary Nat-valued function calls remain warning-free.
+- [ ] Extend partial index detection to locally inferred Nat values and other
+  expression forms that cannot be identified from the current declaration
+  metadata.
 - [ ] Remove the legacy call-style parser/lowering path and update examples,
   tests, and documentation to use square brackets for explicit parameters.
 - [ ] Add positive coverage for bracket syntax and compile-fail coverage for

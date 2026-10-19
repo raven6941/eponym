@@ -24,15 +24,31 @@ template rawValue* {.pragma.}
 type LegacyCallInfo = object
   explicitCount: int
   termCount: int
+  firstExplicitNat: bool
 
 var legacyCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
 var legacyTypeFamilies {.compileTime.} = initHashSet[string]()
 var legacyTypeNames {.compileTime.} = initHashSet[string]()
 var scopedLegacyTypeNames {.compileTime.} = initHashSet[string]()
+var legacyNatConstructors {.compileTime.} = initHashSet[string]()
+var legacyNatFunctions {.compileTime.} = initHashSet[string]()
+var scopedNatNames {.compileTime.} = initHashSet[string]()
 
 proc isLegacyTypeName(n: NimNode): bool =
   n.kind in {nnkIdent, nnkSym} and
     ($n in legacyTypeNames or $n in scopedLegacyTypeNames)
+
+proc isLegacyNatExpr(n: NimNode): bool =
+  case n.kind
+  of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
+    n.intVal >= 0
+  of nnkIdent, nnkSym:
+    $n in scopedNatNames
+  of nnkCall, nnkCommand:
+    n.len > 0 and n[0].kind in {nnkIdent, nnkSym} and
+      ($n[0] in legacyNatConstructors or $n[0] in legacyNatFunctions)
+  else:
+    false
 
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
@@ -70,7 +86,9 @@ proc warnCallStyleExplicitArgs(n: NimNode) =
   let supplied = n.len - 1
   if info.explicitCount == 0: return
   let beginsWithTypeName = isLegacyTypeName(n[1])
-  if supplied <= info.termCount and not beginsWithTypeName: return
+  let beginsWithNatIndex = info.firstExplicitNat and isLegacyNatExpr(n[1])
+  if supplied <= info.termCount and not beginsWithTypeName and
+      not beginsWithNatIndex: return
   warning("eponymBlock: call-style explicit parameters are deprecated; " &
     "use square brackets for Eponym type/index arguments", n)
 
@@ -100,10 +118,18 @@ proc nimIndexArity(kind: NimNode): int =
     inc result
     current = current[2]
 
-proc registerLegacyInfo(name: string, explicitCount, termCount: int) =
+proc registerLegacyInfo(name: string, explicitCount, termCount: int,
+                        firstExplicitNat = false) =
   if explicitCount > 0:
     legacyCallInfo[name] = LegacyCallInfo(explicitCount: explicitCount,
-      termCount: termCount)
+      termCount: termCount, firstExplicitNat: firstExplicitNat)
+
+proc firstSurfaceExplicitIsNat(tele: seq[tuple[name: string, ty: PreTerm,
+    impl: bool, erased: bool, qty: Qty]]): bool =
+  for binder in tele:
+    if binder.impl or binder.ty.kind in {pkUniv, pkUnivN}:
+      return binder.ty.kind == pkVar and binder.ty.name == "Nat"
+    return false
 
 proc surfaceExplicitCount(tele: seq[tuple[name: string, ty: PreTerm,
     impl: bool, erased: bool, qty: Qty]]): int =
@@ -128,16 +154,24 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
     of dkDef:
       let explicitCount = surfaceExplicitCount(declaration.def.tele)
       registerLegacyInfo(declaration.def.name, explicitCount,
-        declaration.def.tele.len - explicitCount)
+        declaration.def.tele.len - explicitCount,
+        firstSurfaceExplicitIsNat(declaration.def.tele))
+      if declaration.def.retTy.kind == pkVar and
+          declaration.def.retTy.name == "Nat":
+        legacyNatFunctions.incl(declaration.def.name)
     of dkData:
       let familyParams = declaration.params.len
       legacyTypeNames.incl(declaration.dname)
+      if declaration.dname == "Nat":
+        for constructor in declaration.ctors:
+          legacyNatConstructors.incl(constructor.name)
       if familyParams + surfaceIndexArity(declaration.indexTy) > 0:
         legacyTypeFamilies.incl(declaration.dname)
       for constructor in declaration.ctors:
         let extraImplicit = surfaceExplicitCount(constructor.tele)
         registerLegacyInfo(constructor.name, familyParams + extraImplicit,
-          constructor.tele.len - extraImplicit)
+          constructor.tele.len - extraImplicit,
+          firstSurfaceExplicitIsNat(constructor.tele))
         if constructor.name == "nil":
           registerLegacyInfo("vecnil", familyParams + extraImplicit,
             constructor.tele.len - extraImplicit)
@@ -153,13 +187,23 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
   legacyTypeFamilies.clear()
   legacyTypeNames.clear()
   scopedLegacyTypeNames.clear()
+  legacyNatConstructors.clear()
+  legacyNatFunctions.clear()
+  scopedNatNames.clear()
   var seen = initHashSet[string]()
   for statement in body:
     case statement.kind
     of nnkProcDef:
       let genericCount = nimGenericParamCount(statement[2])
+      let firstGenericIsNat = statement[2].kind == nnkGenericParams and
+        statement[2].len > 0 and statement[2][0].kind == nnkIdentDefs and
+        $statement[2][0][^2] == "Nat"
       registerLegacyInfo($statement[0], genericCount,
-        nimFormalArgCount(statement[3]))
+        nimFormalArgCount(statement[3]), firstGenericIsNat)
+      if statement[3].kind == nnkFormalParams and statement[3].len > 0 and
+          statement[3][0].kind in {nnkIdent, nnkSym} and
+          $statement[3][0] == "Nat":
+        legacyNatFunctions.incl($statement[0])
     of nnkCall:
       if statement.len > 0 and statement[0].kind == nnkIdent and
           $statement[0] == "data" and statement.len >= 4:
@@ -182,6 +226,8 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
             if constructor.kind == nnkProcDef:
               let termCount = nimFormalArgCount(constructor[3])
               registerLegacyInfo($constructor[0], paramCount, termCount)
+              if $statement[1] == "Nat":
+                legacyNatConstructors.incl($constructor[0])
     of nnkImportStmt:
       for imported in statement:
         if imported.kind != nnkStrLit: continue
@@ -653,7 +699,9 @@ proc procDefToEponym(n: NimNode): string =
   let name = $n[0]
   let params = n[3]  # nnkFormalParams: [returnType, param1, param2, ...]
   let priorScopedTypeNames = toSeq(scopedLegacyTypeNames)
+  let priorNatNames = toSeq(scopedNatNames)
   scopedLegacyTypeNames.clear()
+  scopedNatNames.clear()
   var genericBinders: seq[string] = @[]
   if n[2].kind != nnkEmpty:
     for genericParam in n[2]:
@@ -664,6 +712,7 @@ proc procDefToEponym(n: NimNode): string =
       for i in 0 ..< genericParam.len - 2:
         genericBinders.add("(" & binderName(genericParam[i]) & " : " & ty & ")")
         if ty == "Type 0": scopedLegacyTypeNames.incl(binderName(genericParam[i]))
+        if ty == "Nat": scopedNatNames.incl(binderName(genericParam[i]))
   var paramStrs: seq[string] = @[]
   var retTy = "Type 0"
   if params.len > 0 and params[0].kind != nnkEmpty:
@@ -675,9 +724,12 @@ proc procDefToEponym(n: NimNode): string =
       let q = qtyPrefix(p[j])
       paramStrs.add("(" & q & binderName(p[j]) & " : " & ty & ")")
       if ty == "Type 0": scopedLegacyTypeNames.incl(binderName(p[j]))
+      if ty == "Nat": scopedNatNames.incl(binderName(p[j]))
   let body = nimExprToEponym(n[6])
   scopedLegacyTypeNames.clear()
   for typeName in priorScopedTypeNames: scopedLegacyTypeNames.incl(typeName)
+  scopedNatNames.clear()
+  for natName in priorNatNames: scopedNatNames.incl(natName)
   let genericStr = if genericBinders.len == 0: ""
                    else: " " & genericBinders.join(" ")
   "proc " & name & genericStr & " " & paramStrs.join(" ") & " : " & retTy &

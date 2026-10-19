@@ -24,6 +24,18 @@ eponymBlock:
   proc legacyPartialGeneric[A: Univ](value: A): Vec[A, 0] -> Vec[A, 1] =
     cons(A, zero(), value)
 
+  proc indexHead[n: Nat](xs, ys: Vec[Nat, n]): Vec[Nat, n] = xs
+
+  # A scoped Nat index and a Nat constructor expression both identify the
+  # first argument as an explicit generic index in the legacy spelling.
+  proc legacyPartialIndex[n: Nat](xs: Vec[Nat, n]):
+      Vec[Nat, n] -> Vec[Nat, n] -> Vec[Nat, n] = indexHead(n)
+
+  proc legacyPartialIndexExpr():
+      Vec[Nat, 0] -> Vec[Nat, 0] -> Vec[Nat, 0] = indexHead(zero())
+
   # A normal Nim-shaped Eponym value call must not trigger the migration
   # diagnostic because its first argument is a value expression.
   proc ordinaryNat(): Nat = suc(zero())
+  proc ordinaryNatArg(value: Nat): Nat = value
+  proc ordinaryNatCall(): Nat = ordinaryNatArg(zero())
