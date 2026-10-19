@@ -2195,6 +2195,19 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
+          let typeWitnessOverrides = if typeOverrides.len > 0:
+            typeOverrides else: indexOverrides
+          let elementTypeValue = runtimeRepresentedTypeValueExpr(elementType,
+            globals, typeWitnessOverrides, indexOverrides, mappings)
+          if not elementTypeValue.isNil:
+            return newCall(bindSym"seqToListValue", value, globals,
+              newLit(mapping.eponymName), encoder, elementTypeValue)
+          if runtimeHasUnresolvedGenericType(elementType,
+              runtimeValueTypeOverrides(typeOverrides, indexOverrides),
+              mappings):
+            return newCall(bindSym"seqToListValue", value, globals,
+              newLit(mapping.eponymName), encoder, newNimNode(nnkNilLit),
+              newLit(true))
           return newCall(bindSym"seqToListValue", value, globals,
             newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(elementType,
@@ -2642,8 +2655,8 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
       witnesses: seq[tuple[name: string, value: NimNode]],
       encodedArgs: seq[tuple[index: int, value: NimNode]]] =
   ## For a generic type used by a callback, infer indexed family arguments
-  ## from a direct value argument of that same generic type. Cache the
-  ## conversion so a user codec is invoked only once for that value.
+  ## from a direct value argument, or from supported containers that carry
+  ## that generic type. Cache the conversion so a user codec is invoked once.
   result.statements = newStmtList()
   for genericIndex, genericName in generic.typeNames:
     if genericIndex >= generic.genericTypeBodyArgs.len or
@@ -2655,6 +2668,8 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
     var sourceOptionNestedVector = false
     var sourceVectorFamily = ""
     var sourceVectorType: NimNode = nil
+    var sourceListFamily = ""
+    var sourceListType: NimNode = nil
     for i, eponymType in argEponymTypes:
       if eponymType.kind in {nnkIdent, nnkSym} and
           $eponymType == genericName:
@@ -2704,6 +2719,16 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
             sourceVectorFamily = vectorMapping.eponymName
             sourceVectorType = eponymType
             break
+      if sourceIndex < 0:
+        for listMapping in generic.codecMappings:
+          if not listMapping.isRuntimeList: continue
+          let elementType = runtimeListElementType(eponymType,
+            listMapping.eponymName)
+          if not elementType.isNil and mentionsName(elementType, genericName):
+            sourceIndex = i
+            sourceListFamily = listMapping.eponymName
+            sourceListType = eponymType
+            break
       if sourceIndex >= 0: break
     if sourceIndex < 0: continue
 
@@ -2731,12 +2756,20 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         if inferred.isNil: continue
         replaceTypeIdentifier(inferred, genericName, mapping.nimType)
         else: nil
+      let sourceListNimType = if sourceListFamily.len > 0:
+        let inferred = runtimeNimType(sourceListType,
+          generic.codecMappings, records)
+        if inferred.isNil: continue
+        replaceTypeIdentifier(inferred, genericName, mapping.nimType)
+        else: nil
       let sourceType = if sourceOptionFamily.len > 0:
         newTree(nnkBracketExpr, bindSym"Option",
           if sourceOptionNestedVector: sourceVectorNimType
           else: copyNimTree(mapping.nimType))
         elif sourceVectorFamily.len > 0:
           sourceVectorNimType
+        elif sourceListFamily.len > 0:
+          sourceListNimType
         else: copyNimTree(mapping.nimType)
       let condition = newTree(nnkInfix, ident"is",
         copyNimTree(argNimTypes[sourceIndex]), sourceType)
@@ -2746,6 +2779,10 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
       var encoded = if sourceVectorFamily.len > 0:
         runtimeValueConversionExpr(sourceVectorType,
           sourceVectorNimType, copyNimTree(sourceValue), true,
+          generic.codecMappings, records, globals)
+      elif sourceListFamily.len > 0:
+        runtimeValueConversionExpr(sourceListType,
+          sourceListNimType, copyNimTree(sourceValue), true,
           generic.codecMappings, records, globals)
       elif mapping.isRuntimeCodec:
         newCall(copyNimTree(mapping.encoder),
@@ -2775,6 +2812,10 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         genericWitnessExpr = newCall(
           bindSym"runtimeValueTypeArgumentOf", copyNimTree(encodedSym),
           copyNimTree(globals), newLit(sourceVectorFamily), newLit(0))
+      elif sourceListFamily.len > 0:
+        genericWitnessExpr = newCall(
+          bindSym"runtimeValueTypeArgumentOf", copyNimTree(encodedSym),
+          copyNimTree(globals), newLit(sourceListFamily), newLit(0))
       let genericWitnessSym = genSym(nskLet, "indexedGenericTypeWitness")
       packageBody.add(newLetStmt(genericWitnessSym, genericWitnessExpr))
       var packagedValue = copyNimTree(encodedSym)

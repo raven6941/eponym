@@ -481,6 +481,12 @@ eponymBlock:
   runtimeValue(importedGenericIndexedEmptyVectorCallbackApply)
 
 eponymBlock:
+  import "fixtures/runtime_imported_generic_list.ep"
+  runtimeList(List)
+  runtimeDataVariant(SizedTree)
+  runtimeValue(importedGenericIndexedListCallbackApply)
+
+eponymBlock:
   import "fixtures/runtime_imported_generic_variant.ep"
   runtimeCodec(SizedTree, RuntimeStructuredVariant, encodeRuntimeSizedTree,
     decodeRuntimeSizedTree)
@@ -1981,6 +1987,74 @@ when isMainModule:
         emptyDirectVectorRejected and emptyDirectVectorRuntimeRejected,
     shrinkInt)
   if not nestedIndexedOptionCallbackCases:
+    quit(1)
+  let indexedListCallbackCases = forAll(
+    "generic callbacks infer indexed witnesses from nonempty Lists", r, 50,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      proc tree(index: int): RuntimeStructuredVariant =
+        RuntimeStructuredVariant(constructor: "sizedTree", arguments: @[
+          RuntimeStructuredValue(kind: rsvNat, natValue: index),
+          RuntimeStructuredValue(kind: rsvVariant,
+            variantValue: RuntimeStructuredVariant(
+              constructor: "treeEmpty"))])
+      let value = @[tree(length), tree(length)]
+      let callback: proc(value: seq[RuntimeStructuredVariant]):
+          seq[RuntimeStructuredVariant] {.closure.} =
+        proc(value: seq[RuntimeStructuredVariant]):
+            seq[RuntimeStructuredVariant] = value
+      let typed = importedGenericIndexedListCallbackApply(callback, value)
+      let runtime = importedGenericIndexedListCallbackApplyRuntimeValue(
+        callback, value)
+      let treeType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "SizedTree"),
+        [natToValue(length, runtime.globals)])
+      let expectedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "List"), [treeType])
+      validateRuntimeValueType(runtime.value, expectedType, runtime.globals)
+      let decoded = listValueToSeq[RuntimeStructuredVariant](runtime.value,
+        runtime.globals, "List",
+        proc(item: Value, globals: Globals): RuntimeStructuredVariant =
+          valueToRuntimeStructuredVariant(item, globals, "SizedTree",
+            ["sizedTree"]))
+      let wrongIndexCallback:
+          proc(value: seq[RuntimeStructuredVariant]):
+            seq[RuntimeStructuredVariant] {.closure.} =
+        proc(value: seq[RuntimeStructuredVariant]):
+            seq[RuntimeStructuredVariant] =
+          result = value
+          inc result[0].arguments[0].natValue
+      var typedMismatchRejected = false
+      try:
+        discard importedGenericIndexedListCallbackApply(wrongIndexCallback,
+          value)
+      except ValueError:
+        typedMismatchRejected = true
+      var runtimeMismatchRejected = false
+      try:
+        discard importedGenericIndexedListCallbackApplyRuntimeValue(
+          wrongIndexCallback, value)
+      except ValueError:
+        runtimeMismatchRejected = true
+      var emptyRejected = false
+      try:
+        discard importedGenericIndexedListCallbackApply(callback,
+          newSeq[RuntimeStructuredVariant]())
+      except ValueError as error:
+        emptyRejected = "empty sequence" in error.msg
+      var emptyRuntimeRejected = false
+      try:
+        discard importedGenericIndexedListCallbackApplyRuntimeValue(callback,
+          newSeq[RuntimeStructuredVariant]())
+      except ValueError as error:
+        emptyRuntimeRejected = "empty sequence" in error.msg
+      typed.len == 2 and decoded.len == 2 and
+        decoded[0].arguments[0].natValue == length and
+        decoded[1].arguments[0].natValue == length and
+        typedMismatchRejected and runtimeMismatchRejected and emptyRejected and
+        emptyRuntimeRejected,
+    shrinkInt)
+  if not indexedListCallbackCases:
     quit(1)
   let rawAppliedGenericTypeCases = forAll(
     "raw Values for applied generic domains are type checked", r, 200,

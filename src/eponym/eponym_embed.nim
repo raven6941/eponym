@@ -489,13 +489,28 @@ proc vecValueToArray*[N: static[int], T](value: Value,
 
 proc seqToListValue*[T](items: seq[T], globals: Globals,
     familyName: string,
-    encode: proc(item: T, globals: Globals): Value): Value =
+    encode: proc(item: T, globals: Globals): Value,
+    elementType: Value = nil,
+    inferElementType = false): Value =
   validateHostListCodec(globals, familyName)
-  result = callRuntimeValue(eval(globals["nil"].tm, @[]), @[vType(0)])
+  var encodedItems = newSeq[Value](items.len)
   for i in countdown(items.high, 0):
-    let encodedItem = encode(items[i], globals)
+    encodedItems[i] = encode(items[i], globals)
+  var representedType = elementType
+  if representedType.isNil and inferElementType:
+    if encodedItems.len == 0:
+      raise newException(ValueError,
+        "cannot infer the indexed List element type from an empty sequence; " &
+        "use a raw RuntimeValue call with an explicit type witness")
+    representedType = runtimeValueTypeOf(encodedItems[0], globals)
+  if representedType.isNil: representedType = vType(0)
+  if inferElementType:
+    for encodedItem in encodedItems:
+      validateRuntimeValueType(encodedItem, representedType, globals)
+  result = callRuntimeValue(eval(globals["nil"].tm, @[]), @[representedType])
+  for i in countdown(encodedItems.high, 0):
     result = callRuntimeValue(eval(globals["cons"].tm, @[]),
-      @[vType(0), encodedItem, result])
+      @[representedType, encodedItems[i], result])
 
 proc listValueToSeq*[T](value: Value, globals: Globals,
     familyName: string,
