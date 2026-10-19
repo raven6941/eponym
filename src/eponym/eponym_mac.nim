@@ -1179,6 +1179,7 @@ proc genericRuntimeInfo(decl: NimNode,
                         mappings: seq[HostRuntimeType]): tuple[
     genericParams: NimNode, typeNames: seq[string],
     genericNames: seq[NimNode], genericNatArgs: seq[bool],
+    genericBoolArgs: seq[bool],
     codecMappings: seq[HostRuntimeType], error: string] =
   result.genericParams = newEmptyNode()
   result.codecMappings = mappings
@@ -1190,9 +1191,9 @@ proc genericRuntimeInfo(decl: NimNode,
       result.error = "runtime wrappers require explicitly typed generic binders"
       return
     let binderType = nimTypeToEponym(param[^2])
-    if binderType notin ["Type 0", "Nat"]:
+    if binderType notin ["Type 0", "Nat", "Bool"]:
       result.error = "runtime wrappers currently support only type-level " &
-        "binders annotated with Univ and value indices annotated with Nat"
+        "binders annotated with Univ and value indices annotated with Nat or Bool"
       return
     for i in 0 ..< param.len - 2:
       let name = $param[i]
@@ -1212,21 +1213,33 @@ proc genericRuntimeInfo(decl: NimNode,
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]),
           newEmptyNode(), newEmptyNode()))
         result.genericNatArgs.add(false)
+        result.genericBoolArgs.add(false)
         result.codecMappings.add(HostRuntimeType(eponymName: name,
           nimType: copyNimTree(param[i])))
-      else:
+      elif binderType == "Nat":
         let staticInt = newTree(nnkBracketExpr, ident"static", ident"int")
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticInt,
           newEmptyNode()))
         result.genericNatArgs.add(true)
+        result.genericBoolArgs.add(false)
+      else:
+        let staticBool = newTree(nnkBracketExpr, ident"static", ident"bool")
+        result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticBool,
+          newEmptyNode()))
+        result.genericNatArgs.add(false)
+        result.genericBoolArgs.add(true)
 
 proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     typeNames: seq[string], genericNames: seq[NimNode],
-    genericNatArgs: seq[bool], codecMappings: seq[HostRuntimeType],
+    genericNatArgs: seq[bool], genericBoolArgs: seq[bool],
+    codecMappings: seq[HostRuntimeType],
     error: string], globals: NimNode): seq[NimNode] =
   for i, genericName in generic.genericNames:
     if generic.genericNatArgs[i]:
       result.add(newCall(bindSym"natToValue", copyNimTree(genericName),
+                         globals))
+    elif generic.genericBoolArgs[i]:
+      result.add(newCall(bindSym"boolToValue", copyNimTree(genericName),
                          globals))
     else:
       result.add(newCall(bindSym"vType", newLit(0)))

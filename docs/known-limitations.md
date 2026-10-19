@@ -43,8 +43,10 @@ does not inspect their representation. Value-indexed Nat binders written
 `[n: Nat]` map to Nim `static[int]` parameters and cross as canonical checked
 Nat constructors when the Nat prelude is available. These binders can appear
 in signatures and checked runtime bodies; tests cover typed wrappers and both
-typed and raw `runtimeValue` overloads. Other value-indexed binders remain
-unsupported.
+typed and raw `runtimeValue` overloads. Bool binders `[b: Bool]` map to Nim
+`static[bool]` and are encoded with the checked `true` and `false` constructors;
+typed wrappers and both typed and raw `runtimeValue` overloads are covered.
+Other value-indexed binders remain unsupported.
 `Nat` conversions reject negative values. An explicit `proc` declaration with
 an unsupported signature remains
 checked but emits a targeted compile-time error if called. Generated names

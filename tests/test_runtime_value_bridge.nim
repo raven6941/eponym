@@ -192,6 +192,12 @@ eponymBlock:
       values: Vec[Int, add(m, n)]): Int = addInt(0, 0)
 
 eponymBlock:
+  import "../lib/bool.ep"
+  postulate(Int, Univ)
+  proc generatedGenericBoolValue[b: Bool](ignored: Int): Bool = b
+  runtimeValue(generatedGenericBoolValue)
+
+eponymBlock:
   postulate(Int, Univ)
   proc generatedApplyNimCallback(
       callback: proc(value: Int): Int {.closure.}, value: Int): Int =
@@ -236,6 +242,9 @@ static:
   doAssert compiles(generatedVectorIdentity[int, 4](@[1, 2, 3, 4]))
   doAssert compiles(generatedVectorSucIndex[3](@[1, 2, 3, 4]))
   doAssert compiles(generatedVectorAddIndex[2, 3](@[1, 2, 3, 4, 5]))
+  doAssert compiles(generatedGenericBoolValue[true](1))
+  doAssert compiles(generatedGenericBoolValue[false](1))
+  doAssert compiles(generatedGenericBoolValueRuntimeValue[true](1))
   doAssert compiles(generatedApplyNimCallback(proc(value: int): int = value, 1))
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
@@ -809,6 +818,29 @@ proc callbackRole : Callback -> Sample -> Sample =
   except ValueError as error:
     wrongVectorLengthRejected = "runtime Vec length mismatch" in error.msg
   doAssert wrongVectorLengthRejected
+
+  let genericBoolCases = forAll(
+    "Bool generic values are available in checked runtime bodies", r, 200,
+    proc(r: var Rng): tuple[ignored: int, expected: bool] =
+      (r.genInt(-1000, 1000), r.genBool()),
+    proc(input: tuple[ignored: int, expected: bool]): bool =
+      let runtime = if input.expected:
+        generatedGenericBoolValueRuntimeValue[true](input.ignored)
+      else:
+        generatedGenericBoolValueRuntimeValue[false](input.ignored)
+      let rawRuntime = if input.expected:
+        generatedGenericBoolValueRuntimeValue[true]([intToValue(input.ignored)])
+      else:
+        generatedGenericBoolValueRuntimeValue[false]([intToValue(input.ignored)])
+      let typedResult = if input.expected:
+        generatedGenericBoolValue[true](input.ignored)
+      else:
+        generatedGenericBoolValue[false](input.ignored)
+      typedResult == input.expected and
+        valueToBool(runtime.value, runtime.globals) == input.expected and
+        valueToBool(rawRuntime.value, rawRuntime.globals) == input.expected)
+  if not genericBoolCases:
+    quit(1)
 
   let callbackBridgeCases = forAll(
     "Nim closures cross into checked function arguments",

@@ -359,8 +359,11 @@ implementations.
    Add value-indexed Nat binders `[n: Nat]` as Nim `static[int]` generic
    parameters, passed at runtime using the checked Nat constructors. They can
    appear in signatures and runtime bodies; 200-case properties cover typed
-   wrappers and typed/raw `runtimeValue` calls. Other value-indexed binder
-   types and bodies that inspect generic type arguments remain unsupported.
+   wrappers and typed/raw `runtimeValue` calls. Add Bool-indexed binders
+   `[b: Bool]` as Nim `static[bool]`, encoded using checked Bool constructors;
+   a 200-case property covers typed wrappers and typed/raw `runtimeValue`
+   calls. Other value-indexed binder types and bodies that inspect generic
+   type arguments remain unsupported.
 - [x] Add a structural codec for nullary, unindexed `data` declarations mapped
    to same-named Nim enum members. The codec translates through checked
    constructor reference identities; a 200-case property covers every variant,
