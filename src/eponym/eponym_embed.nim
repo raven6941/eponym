@@ -1058,6 +1058,20 @@ proc validateRuntimeVariantConstructors*(globals: Globals,
         "runtimeVariant constructor '" & name &
         "' does not return family '" & familyName & "'")
 
+proc runtimeVariantConstructorNames*(globals: Globals,
+                                     familyName: string): seq[string] =
+  if familyName notin globals:
+    raise newException(ValueError,
+      "runtimeVariant family '" & familyName & "' is not declared")
+  let familyId = globals[familyName].tm.refId
+  for name, entry in globals.pairs:
+    if not entry.isDataConstructor or entry.ty.isNil: continue
+    var resultType = entry.ty
+    while not resultType.isNil and resultType.kind == tPi:
+      resultType = resultType.scope.bdy
+    if not resultType.isNil and opaqueTypeHeadId(resultType) == familyId:
+      result.add(name)
+
 proc runtimeVariantToValue*(variant: RuntimeVariant, globals: Globals,
     familyName: string, constructors: openArray[string]): Value =
   validateRuntimeVariantConstructors(globals, familyName, constructors)

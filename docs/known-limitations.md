@@ -179,9 +179,10 @@ The low-level `RuntimeVariant` API provides a checked structural view for any
 declared data family when the caller supplies its constructor names. It
 preserves constructor identity and raw argument `Value`s, checking family
 membership, constructor arity, and spine shape. This handles payload-bearing
-and indexed constructors without a custom constructor switch, but callers
-still decode payload fields themselves and generated wrappers do not select
-this representation automatically.
+and indexed constructors without a custom constructor switch. Use
+`runtimeVariant(Family)` to have generated wrappers select this representation
+automatically. Callers still decode payload fields themselves because the
+generic representation stores them as raw `Value`s.
 
 Typed structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
 `Sig` tuples, and named records. Records with dependent fields

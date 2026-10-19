@@ -28,6 +28,14 @@ proc checkDependentVectorCallback(length: int, values: seq[int]): int =
   if values.len != length:
     raise newException(ValueError, "callback Vec length mismatch")
   length
+proc runtimeTreePayloads(value: Value, globals: Globals): seq[int] =
+  var current = value
+  while true:
+    let variant = valueToRuntimeVariant(current, globals, "RuntimeTree",
+      ["treeEmpty", "treeNode"])
+    if variant.constructor == "treeEmpty": return
+    result.add(valueToInt(variant.arguments[0]))
+    current = variant.arguments[1]
 
 type ChannelHandle = object
   id: int
@@ -172,6 +180,11 @@ eponymBlock:
   import "fixtures/runtime_imported_vec.ep"
   runtimeVector(Vec)
   runtimeValue(importedVectorIdentity)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  runtimeVariant(RuntimeTree)
+  runtimeValue(treeIdentity)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -785,15 +798,18 @@ when isMainModule:
           constructor: "treeNode",
           arguments: @[intToValue(i), tree]), variantGlobals,
           "RuntimeTree", runtimeTreeConstructors)
+      let typedRoundTrip = runtimeVariantToValue(
+        treeIdentity(valueToRuntimeVariant(tree, variantGlobals,
+          "RuntimeTree", runtimeTreeConstructors)), variantGlobals,
+        "RuntimeTree", runtimeTreeConstructors)
       var decoded: seq[int] = @[]
       var current = tree
       while true:
         let variant = valueToRuntimeVariant(current, variantGlobals,
           "RuntimeTree", runtimeTreeConstructors)
         if variant.constructor == "treeEmpty":
-          var expected: seq[int] = @[]
-          for i in 0 ..< length: expected.add(length - i - 1)
-          return decoded == expected
+          return decoded == runtimeTreePayloads(typedRoundTrip,
+            variantGlobals)
         if variant.constructor != "treeNode" or
             variant.arguments.len != 2:
           return false
