@@ -1189,8 +1189,12 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [x] Strip nested parentheses around type-family application heads before
   checking call-style type/index arguments; a compile-fail fixture covers the
   previously accepted `((Vec))(Nat, zero())` spelling.
+- [x] Track callable result signatures for local procedures and imported
+  `.ep` definitions, and check them when a call result is immediately applied.
+  Local and imported bracket-call positives and legacy-call negatives cover
+  these higher-order call heads.
 - [ ] Audit further AST wrappers around callees beyond parenthesized
-  projections and type-family calls.
+  projections, type-family calls, and immediate call results.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.

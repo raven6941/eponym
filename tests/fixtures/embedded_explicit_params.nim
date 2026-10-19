@@ -6,6 +6,7 @@ eponymBlock:
   import "legacy_postulate_index.ep"
   import "callable_record_field.ep"
   import "callable_record_field_value.ep"
+  import "returned_identity_factory.ep"
 
   data(Protocol, Univ):
     proc protocolSend(A: Univ, payload: Nat): Protocol
@@ -28,6 +29,15 @@ eponymBlock:
 
   proc inferredIndexedHead(values: Vec[Nat, 0]): Vec[Nat, 0] =
     indexedHead(values)
+
+  proc identityFactory(): Pi(A: Univ, value: A, A) =
+    lam(A, Univ, lam(value, A, value))
+
+  proc bracketHigherOrderResult(value: Nat): Nat =
+    identityFactory()[Nat](value)
+
+  proc bracketImportedHigherOrderResult(value: Nat): Nat =
+    importedIdentityFactory(unitv)[Nat](value)
 
   proc bracketCallableRecordField(handler: CallableField,
                                   value: Nat): Nat =

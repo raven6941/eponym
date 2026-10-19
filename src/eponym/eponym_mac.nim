@@ -28,6 +28,7 @@ type LegacyCallInfo = object
   firstExplicitType: bool
 
 var legacyCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
+var legacyResultCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
 var legacyTypeFamilies {.compileTime.} = initHashSet[string]()
 var legacyTypeNames {.compileTime.} = initHashSet[string]()
 var scopedLegacyTypeNames {.compileTime.} = initHashSet[string]()
@@ -80,6 +81,12 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
     let head = $callee
     if head in legacyCallInfo:
       info = legacyCallInfo[head]
+      found = true
+  elif callee.kind in {nnkCall, nnkCommand} and callee.len > 0:
+    let returnedHead = unwrapParens(callee[0])
+    if returnedHead.kind in {nnkIdent, nnkSym} and
+        $returnedHead in legacyResultCallInfo:
+      info = legacyResultCallInfo[$returnedHead]
       found = true
   elif callee.kind == nnkDotExpr and callee.len == 2 and
       callee[1].kind in {nnkIdent, nnkSym}:
@@ -138,6 +145,10 @@ proc nimIndexArity(kind: NimNode): int =
 proc registerLegacyInfo(name: string, info: LegacyCallInfo) =
   if info.explicitCount > 0:
     legacyCallInfo[name] = info
+
+proc registerLegacyResultInfo(name: string, info: LegacyCallInfo) =
+  if info.explicitCount > 0:
+    legacyResultCallInfo[name] = info
 
 proc registerLegacyInfo(name: string, explicitCount, termCount: int,
                         requiresBrackets = false,
@@ -253,6 +264,8 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
     of dkDef:
       registerLegacyInfo(declaration.def.name,
         surfaceCallInfo(declaration.def.tele))
+      registerLegacyResultInfo(declaration.def.name,
+        surfaceTypeCallInfo(declaration.def.retTy))
     of dkPostulate, dkElim:
       registerLegacyInfo(declaration.name, surfaceTypeCallInfo(declaration.ty))
       if declaration.ty.kind in {pkUniv, pkUnivN}:
@@ -290,6 +303,7 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
 
 proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
   legacyCallInfo.clear()
+  legacyResultCallInfo.clear()
   legacyTypeFamilies.clear()
   legacyTypeNames.clear()
   scopedLegacyTypeNames.clear()
@@ -301,6 +315,10 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
     of nnkProcDef:
       registerLegacyInfo($statement[0],
         nimGenericCallInfo(statement[2], statement[3]))
+      if statement[3].kind == nnkFormalParams and
+          statement[3][0].kind != nnkEmpty:
+        registerLegacyResultInfo($statement[0],
+          nimTypeCallInfo(statement[3][0]))
     of nnkCall:
       let head = if statement.len > 0: $statement[0] else: ""
       if head in ["postulate", "elim"] and statement.len == 3 and

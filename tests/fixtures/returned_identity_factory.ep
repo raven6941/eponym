@@ -1,0 +1,2 @@
+proc importedIdentityFactory : 1 -> Pi (A : Type 0). A -> A =
+  lam (_ : 1). lam (A : Type 0). lam (value : A). value

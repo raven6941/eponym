@@ -29,6 +29,8 @@ for fixture in [
     "tests/fixtures/embedded_err_legacy_field_application.nim",
     "tests/fixtures/embedded_err_legacy_local_field_application.nim",
     "tests/fixtures/embedded_err_legacy_parenthesized_type_family.nim",
+    "tests/fixtures/embedded_err_legacy_higher_order_result_application.nim",
+    "tests/fixtures/embedded_err_legacy_imported_result_application.nim",
     "tests/fixtures/embedded_err_legacy_command_application.nim"]:
   let (legacyOutput, legacyCode) = compileFixture(fixture, fixture.splitFile.name)
   if legacyCode == 0 or "call-style explicit" notin legacyOutput or
