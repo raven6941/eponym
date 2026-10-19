@@ -34,6 +34,7 @@ for fixture in [
     "tests/fixtures/embedded_err_legacy_qualified_application.nim",
     "tests/fixtures/embedded_err_legacy_callback_after_term_application.nim",
     "tests/fixtures/embedded_err_legacy_partial_bracket_vec_index.nim",
+    "tests/fixtures/embedded_err_legacy_direct_index.nim",
     "tests/fixtures/embedded_err_legacy_local_postulate.nim",
     "tests/fixtures/embedded_err_legacy_command_application.nim"]:
   let (legacyOutput, legacyCode) = compileFixture(fixture, fixture.splitFile.name)

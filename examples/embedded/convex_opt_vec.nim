@@ -149,13 +149,13 @@ eponymBlock:
   # The certificate: A x - b is affine (matvec of affine, minus const),
   # and sum-of-softplus of affine is convex by cvLogSum.
   proc lrTerm(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]): CExpr =
-    vLogSum(m, vMinus(m, vMatVec(m, n, A, vVar(n)), vData(m, b)))
+    vLogSum(m, vMinus[m](vMatVec[m](n, A, vVar[n]()), vData[m](b)))
 
   proc lrCert(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]):
       Convex[lrTerm(m, n, A, b)] =
-    cvLogSum(m, vMinus(m, vMatVec(m, n, A, vVar(n)), vData(m, b)),
-      vafMinus[m](vMatVec(m, n, A, vVar(n)), vData(m, b),
-        vafMatVec[m, n](A, vVar(n), vafVar[n]()),
+    cvLogSum(m, vMinus[m](vMatVec[m](n, A, vVar[n]()), vData[m](b)),
+      vafMinus[m](vMatVec[m](n, A, vVar[n]()), vData[m](b),
+        vafMatVec[m, n](A, vVar[n](), vafVar[n]()),
         vafData[m](b)))
 
   proc lrProb(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]): CExpr =
@@ -167,7 +167,7 @@ eponymBlock:
   proc shiftedLrCert(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]):
       Convex[shiftedLrTerm(m, n, A, b)] =
     cvPlus(lrTerm(m, n, A, b), eConst(5), lrCert(m, n, A, b),
-      cvAffine(eConst(5), afConst(5)))
+      cvAffine[eConst(5)](afConst(5)))
   proc shiftedLrProb(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]):
       CExpr = minimize(shiftedLrTerm(m, n, A, b),
                        shiftedLrCert(m, n, A, b))
@@ -177,18 +177,18 @@ eponymBlock:
   # loss on x (dim n) plus an l1 penalty on y (dim m). Both check, and
   # their dimensions stay distinct throughout the certificate.
   proc twoVarTerm(p: Nat, n: Nat, m: Nat, A: Mat[p, n]): CExpr =
-    ePlus(vLogSum(p, vMinus(p, vMatVec(p, n, A, vVar(n)), vConstV(p))),
-          norm1(m, vVar(m)))
+    ePlus(vLogSum(p, vMinus[p](vMatVec[p](n, A, vVar[n]()), vConstV[p]())),
+          norm1(m, vVar[m]()))
 
   proc twoVarCert(p: Nat, n: Nat, m: Nat, A: Mat[p, n]):
       Convex[twoVarTerm(p, n, m, A)] =
-    cvPlus(vLogSum(p, vMinus(p, vMatVec(p, n, A, vVar(n)), vConstV(p))),
-           norm1(m, vVar(m)),
-      cvLogSum(p, vMinus(p, vMatVec(p, n, A, vVar(n)), vConstV(p)),
-        vafMinus[p](vMatVec(p, n, A, vVar(n)), vConstV(p),
-          vafMatVec[p, n](A, vVar(n), vafVar[n]()),
+    cvPlus(vLogSum(p, vMinus[p](vMatVec[p](n, A, vVar[n]()), vConstV[p]())),
+           norm1(m, vVar[m]()),
+      cvLogSum(p, vMinus[p](vMatVec[p](n, A, vVar[n]()), vConstV[p]()),
+        vafMinus[p](vMatVec[p](n, A, vVar[n]()), vConstV[p](),
+          vafMatVec[p, n](A, vVar[n](), vafVar[n]()),
           vafConstV[p]())),
-      cvNorm1(m, vVar(m), vafVar[m]()))
+      cvNorm1(m, vVar[m](), vafVar[m]()))
 
   proc twoVarProb(p: Nat, n: Nat, m: Nat, A: Mat[p, n]): CExpr =
     minimize(twoVarTerm(p, n, m, A), twoVarCert(p, n, m, A))
@@ -200,10 +200,10 @@ eponymBlock:
   postulate(psdEye2, PSD[2, eye2])
 
   proc qfTerm(): CExpr =
-    quadForm(2, eye2, vVar(2))
+    quadForm(2, eye2, vVar[2]())
 
   proc qfCert(): Convex[qfTerm()] =
-    cvQuadForm(2, eye2, psdEye2, vVar(2), vafVar[2]())
+    cvQuadForm(2, eye2, psdEye2, vVar[2](), vafVar[2]())
 
   proc qfProb(): CExpr = minimize(qfTerm(), qfCert())
 

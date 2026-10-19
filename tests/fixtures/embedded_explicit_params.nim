@@ -16,6 +16,9 @@ eponymBlock:
     proc localCons(n: Nat, x: A, xs: LocalVec[A, n]):
         LocalVec[A, suc(n)]
 
+  data(LocalAt, Nat -> Univ):
+    proc localAt(n: Nat, value: Nat): LocalAt[n]
+
   record(LocalCallableField):
     field(apply, Nat -> Nat -> Nat)
 
@@ -29,6 +32,9 @@ eponymBlock:
   proc legacySingleton(value: Nat): Vec[Nat, suc(zero)] =
     let empty = vecnil[Nat]()
     cons[Nat, zero()](value, empty)
+
+  proc inferredSingleton(value: Nat, tail: Vec[Nat, 0]): Vec[Nat, 1] =
+    cons[Nat](value, tail)
 
   proc bracketVectorType(value: Vec[Nat, suc(zero())]):
       Vec[Nat, suc(zero())] = value
@@ -85,6 +91,13 @@ eponymBlock:
   proc bracketLocalIndexedConstructor(value: Nat,
       tail: LocalVec[Nat, 0]): LocalVec[Nat, 1] =
     localCons[Nat, zero()](value, tail)
+
+  proc inferredLocalIndex(value: Nat,
+      tail: LocalVec[Nat, 0]): LocalVec[Nat, 1] =
+    localCons[Nat](value, tail)
+
+  proc inferredDirectIndex(value: Nat): LocalAt[zero()] =
+    localAt(value)
 
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =

@@ -27,6 +27,7 @@ type LegacyCallInfo = object
   termCount: int
   leadingTermCount: int
   requiredBracketCount: int
+  inferableIndexCount: int
   requiresBrackets: bool
   firstExplicitType: bool
 
@@ -43,6 +44,7 @@ proc sameCallInfo(a, b: LegacyCallInfo): bool =
   a.explicitCount == b.explicitCount and a.termCount == b.termCount and
     a.leadingTermCount == b.leadingTermCount and
     a.requiredBracketCount == b.requiredBracketCount and
+    a.inferableIndexCount == b.inferableIndexCount and
     a.requiresBrackets == b.requiresBrackets and
     a.firstExplicitType == b.firstExplicitType
 
@@ -106,8 +108,11 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
         var remaining = base.info
         let supplied = head.len - 1
         remaining.explicitCount = max(0, remaining.explicitCount - supplied)
-        remaining.requiredBracketCount =
-          max(0, remaining.requiredBracketCount - supplied)
+        let requiredSupplied = min(remaining.requiredBracketCount, supplied)
+        remaining.requiredBracketCount -= requiredSupplied
+        let indexSupplied = max(0, supplied - requiredSupplied)
+        remaining.inferableIndexCount = max(0,
+          remaining.inferableIndexCount - indexSupplied)
         if remaining.requiredBracketCount == 0:
           remaining.requiresBrackets = false
           remaining.firstExplicitType = false
@@ -174,7 +179,6 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
   let resolved = callInfoForHead(n[0])
   if not resolved.found: return
   let info = resolved.info
-  if info.requiredBracketCount <= 0: return
   var supplied = n.len - 1
   var firstArg = if n.len > 1: n[1] else: nil
   if n.kind == nnkCommand:
@@ -189,6 +193,11 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
     for i in 1 ..< n.len: appendCommandArg(n[i])
     supplied = flattened.len
     if flattened.len > 0: firstArg = flattened[0]
+  if info.requiredBracketCount <= 0:
+    if info.inferableIndexCount <= 0 or supplied <= info.termCount:
+      return
+    error("eponymBlock: call-style explicit index arguments have been " &
+      "removed; use square brackets or omit an inferable index", n)
   if info.explicitCount == 0: return
   if supplied <= info.leadingTermCount:
     return
@@ -283,12 +292,14 @@ proc registerScopedLetCallInfo(body: NimNode) =
 proc registerLegacyInfo(name: string, explicitCount, termCount: int,
                         requiresBrackets = false,
                         firstExplicitType = false,
-                        requiredBracketCount = -1) =
+                        requiredBracketCount = -1,
+                        inferableIndexCount = 0) =
   if explicitCount > 0:
     legacyCallInfo[name] = LegacyCallInfo(explicitCount: explicitCount,
       termCount: termCount, requiresBrackets: requiresBrackets,
       requiredBracketCount: (if requiredBracketCount >= 0:
         requiredBracketCount elif requiresBrackets: explicitCount else: 0),
+      inferableIndexCount: inferableIndexCount,
       firstExplicitType: firstExplicitType)
 
 proc nimTypeToEponym(n: NimNode): string
@@ -376,7 +387,7 @@ proc constructorIndexBinders(params: int, indexTy, resultTy: PreTerm,
     current = current.c2
   for i in 0 ..< indexCount:
     let indexExpr = resultArgs[params + i]
-    if indexExpr.kind != pkApp or not unaryIndexExpression(indexExpr): continue
+    if not unaryIndexExpression(indexExpr): continue
     var candidate = ""
     var ambiguous = false
     for binder in tele:
@@ -398,7 +409,9 @@ proc surfaceConstructorCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
     if binder.impl or isType or isIndexedArg:
       inc result.explicitCount
       if result.explicitCount == 1: result.firstExplicitType = isType
-      if isIndexedArg or (isType and not binder.impl):
+      if isIndexedArg:
+        inc result.inferableIndexCount
+      if isType and not binder.impl:
         inc result.requiredBracketCount
         result.requiresBrackets = true
     else:
@@ -447,6 +460,8 @@ proc mergeCallInfo(a, b: LegacyCallInfo): LegacyCallInfo =
   result.leadingTermCount = if a.explicitCount > 0: a.leadingTermCount
     else: a.termCount + b.leadingTermCount
   result.requiredBracketCount = a.requiredBracketCount + b.requiredBracketCount
+  result.inferableIndexCount = a.inferableIndexCount +
+    b.inferableIndexCount
   result.requiresBrackets = a.requiresBrackets or b.requiresBrackets
   result.firstExplicitType = if a.explicitCount > 0: a.firstExplicitType
     else: b.firstExplicitType
@@ -571,7 +586,7 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
             nimFormalArgCount(constructor[3]) - typeCount -
               indexBinders.len,
                 paramCount + typeCount > 0, firstType,
-            paramCount + typeCount)
+            paramCount + typeCount, indexBinders.len)
   for statement in body:
     case statement.kind
     of nnkProcDef:
@@ -821,7 +836,11 @@ proc nimExprToEponym(n: NimNode): string =
              nimTypeToEponym(n[2]) & "). " & nimExprToEponym(n[3])
     rejectCallStyleExplicitArgs(n)
     # f(a, b) -> f a b (with parens for nested calls to preserve grouping)
-    let head = nimExprToEponym(n[0])
+    var head = nimExprToEponym(n[0])
+    let headInfo = callInfoForHead(n[0])
+    if headInfo.found and headInfo.info.inferableIndexCount > 0:
+      for _ in 0 ..< headInfo.info.inferableIndexCount:
+        head.add(" ?")
     var args: seq[string] = @[]
     for i in 1 ..< n.len:
       let a = n[i]

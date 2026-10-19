@@ -1222,16 +1222,19 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   equality-constructor fixture confirms `refl[Nat](zero())` remains valid when
   its term index is inferred from the value argument.
 - [ ] Finish the callable callee audit for partial bracket applications of
-  constructor indices and other inferable binders. The syntax guard
-  distinguishes required type parameters from index binders, rejects
-  call-style index arguments when their signature is known, and leaves
-  ordinary inferred applications alone. Constructor indices currently need
-  brackets: the elaborator rejects partial applications such as
-  `cons[Nat](x, xs)` instead of inferring the index from `xs`. The app
-  elaborator eagerly consumes an implicit binder when the next argument has
-  the same type, so simply marking the index binder implicit misapplies `x`
-  as the index. Preserve application-boundary information or add a principled
-  deferred-inference mechanism before implementing omitted-index support.
+  constructor indices and other inferable binders. For indexed data
+  constructors, the macro now preserves the distinction between required
+  type parameters and inferable indices: it inserts an Eponym hole at a
+  recognized index binder, allowing forms such as `cons[Nat](x, xs)` to infer
+  the length from `xs` without consuming `x` as the index. Direct index
+  variables and unary constructor expressions such as `suc(n)` are recognized;
+  compound index expressions, ambiguous matching binders, and callback types
+  whose result indices should be inferred remain unsupported. The syntax guard
+  rejects positional call-style index arguments when their signature is known
+  and leaves ordinary inferred applications alone. Local and imported vector
+  constructor regressions plus a direct-index family regression cover the
+  supported cases. Extend the same boundary-preserving approach to the
+  remaining inferable-binder forms before closing this audit.
   Other relevant supported forms—identifiers, parenthesized and qualified
   calls, returned calls, callback aliases, conditionals, type ascriptions, and
   statement-list expressions—have focused coverage. Unsupported Nim AST forms

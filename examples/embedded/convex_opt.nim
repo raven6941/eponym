@@ -94,9 +94,9 @@ eponymBlock:
   proc quadConvex(): Convex[quadExpr()] =
     cvPlus(eScaleN(2, eSq(eMinus(eVar(), eConst(3)))), eVar(),
       cvScaleN(2, eSq(eMinus(eVar(), eConst(3))),
-        cvSq(eMinus(eVar(), eConst(3)),
+        cvSq[eMinus(eVar(), eConst(3))](
           afMinus(eVar(), eConst(3), afVar(), afConst(3)))),
-      cvAffine(eVar(), afVar()))
+      cvAffine[eVar()](afVar()))
 
   # The problem: accepted only because the certificate checks.
   proc prob(): CExpr = minimize(quadExpr(), quadConvex())
@@ -104,7 +104,7 @@ eponymBlock:
   proc shiftedExpr(): CExpr = ePlus(quadExpr(), eConst(11))
   proc shiftedCert(): Convex[shiftedExpr()] =
     cvPlus(quadExpr(), eConst(11), quadConvex(),
-      cvAffine(eConst(11), afConst(11)))
+      cvAffine[eConst(11)](afConst(11)))
   proc shiftedProb(): CExpr = minimize(shiftedExpr(), shiftedCert())
   runtimeValue(shiftedProb)
 
