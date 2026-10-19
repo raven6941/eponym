@@ -289,6 +289,14 @@ proc nimExprToEponym(n: NimNode): string =
       else:
         "(lam (_ : 1). " & right & ")"
       "ifThenElse (" & left & ") " & yesBranch & " " & noBranch & " <>"
+    of "xor":
+      # Nim evaluates both operands of xor. Bind them before selecting so a
+      # postulate on the right is evaluated exactly once in either branch.
+      let leftName = $genSym(nskLet, "eponymXorLeft")
+      let rightName = $genSym(nskLet, "eponymXorRight")
+      "let " & leftName & " = " & nimExprToEponym(n[1]) & " in " &
+        "let " & rightName & " = " & nimExprToEponym(n[2]) & " in " &
+        "ifThenElse " & leftName & " (not " & rightName & ") " & rightName
     else:
       error("eponymBlock: unsupported pure operator '" & $n[0] & "'",
             n[0])

@@ -474,6 +474,9 @@ implementations.
 - [x] Reconstruct imported Eponym functions with a sole unit argument as
    zero-argument Nim procedures. Typed and `RuntimeValue` wrappers supply the
    unit internally; a 200-case property covers both calls.
+- [x] Lower Nim Boolean `xor` into checked Eponym lets and Bool elimination.
+   The operands are each evaluated once, matching Nim's eager `xor`; a
+   200-case property compares the generated result with Nim.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly

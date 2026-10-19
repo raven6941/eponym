@@ -271,6 +271,7 @@ eponymBlock:
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
   proc generatedNatId(value: Nat): Nat = value
+  proc generatedBoolXor(left: Bool, right: Bool): Bool = left xor right
   proc generatedSigmaId(value: Sig(Nat, Int)): Sig(Nat, Int) = value
   proc generatedArithmetic(left: Int, right: Int, scale: Int): Int =
     let difference = left - right
@@ -2350,6 +2351,13 @@ when isMainModule:
       let scale = (n mod 9) + 1
       generatedArithmetic(n, right, scale) == (n - right - right) * scale,
     shrinkInt)
+  let boolXorCases = forAll(
+    "Nim-shaped checked Bool xor evaluates both values correctly", r, 200,
+    proc(r: var Rng): tuple[left, right: bool] = (r.genBool(), r.genBool()),
+    proc(input: tuple[left, right: bool]): bool =
+      generatedBoolXor(input.left, input.right) == (input.left xor input.right),
+    proc(input: tuple[left, right: bool]): seq[tuple[left, right: bool]] =
+      @[(false, input.right), (input.left, false)])
   let sigmaRoundTrips = forAll(
     "structural Sigma codec round-trips Nat/Int tuple values", r, 200,
     proc(r: var Rng): int = r.genInt(-1000, 1000),
@@ -2369,6 +2377,8 @@ when isMainModule:
   if not opaqueSigmaCases:
     quit(1)
   if not arithmeticCases:
+    quit(1)
+  if not boolXorCases:
     quit(1)
   let generatedUnaryOpaqueWorks = generatedRotateRole(
     ChannelHandle(id: 18, label: "single")).id == 19

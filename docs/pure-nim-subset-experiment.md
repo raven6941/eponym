@@ -3,7 +3,9 @@
 **Status:** `let`, unary minus, `+`, `-`, and `*` for Eponym `Int`, `not` for
 Eponym `Bool`, Boolean `and`/`or`, and `if`/`elif`/`else` expressions lower to
 checked Eponym terms. Boolean `and`/`or` use delayed branches so bound
-postulates on the right preserve Nim short-circuit behavior. Other operators,
+postulates on the right preserve Nim short-circuit behavior. Boolean `xor`
+evaluates both operands once before selecting its result, matching Nim's eager
+operand evaluation. Other operators,
 effects, and arbitrary Nim calls remain unsupported.
 
 ## Motivation
@@ -38,6 +40,9 @@ represented directly in the current core:
   with unit thunks so only the selected branch evaluates. A 200-case property
   verifies both results and that a side-effecting bound postulate on the right
   runs only when Nim would evaluate it.
+- `left xor right`, lowered to Eponym lets followed by checked Bool
+  elimination. The lets preserve Nim's eager evaluation of both operands and
+  ensure each runs once; a 200-case property compares results with Nim.
 
 Potential next forms include:
 

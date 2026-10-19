@@ -488,3 +488,5 @@ and each branch must be one Eponym expression. Boolean `and` and `or` lower
 through checked Bool elimination with unit thunks, preserving Nim's
 short-circuit behavior even if the right side calls a bound postulate. These
 forms do not enable ordinary effectful Nim control flow inside the block.
+Boolean `xor` is also supported and evaluates each operand once before the
+checked Bool case split, matching Nim's eager operand evaluation.
