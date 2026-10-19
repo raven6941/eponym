@@ -529,8 +529,10 @@ implementations.
   multi-argument, and raw dependent vector callbacks through generated and
   `RuntimeValue` calls; negative cases reject values with the wrong callback
   type, and a compile-error fixture rejects a Nim `bool -> bool` callback
-  where `Int -> Int` is required. Dependent Pi expressions outside the
-  supported named-binder/runtime-type grammar remain unsupported.
+  where `Int -> Int` is required. A named noncapturing Nim `nimcall` callback
+  also passes directly to the synthesized closure parameter in both dynamic
+  entry points. Dependent Pi expressions outside the supported named-binder/
+  runtime-type grammar remain unsupported.
 - [x] Add `{.rawValue.}` callback proc types that pass callback arguments and
   results as Eponym `Value`s, without requiring codecs for the function's leaf
   types. The checked Eponym callback type remains explicit, and the Nim callback

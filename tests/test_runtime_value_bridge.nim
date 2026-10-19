@@ -2007,8 +2007,14 @@ when isMainModule:
         hostGenericFunctionValue, input)
       let hostRuntime = generatedApplyGenericFunctionRuntimeValueDynamic(
         hostGenericFunctionValue, input)
+      let nimcallResult = generatedApplyGenericFunctionDynamic(
+        hostStepNim, input)
+      let nimcallRuntime = generatedApplyGenericFunctionRuntimeValueDynamic(
+        hostStepNim, input)
       checked == input + 1 and valueToInt(runtime.value) == input + 1 and
-        hostChecked == input + 1 and valueToInt(hostRuntime.value) == input + 1,
+        hostChecked == input + 1 and valueToInt(hostRuntime.value) == input + 1 and
+        nimcallResult == input + 7 and
+        valueToInt(nimcallRuntime.value) == input + 7,
     shrinkInt)
   if not genericFunctionBinderCases:
     quit(1)
