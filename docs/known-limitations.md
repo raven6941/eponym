@@ -92,13 +92,20 @@ no-argument helper. When every parameter has a runtime codec, parameterized
 definitions also get a Nim-typed overload that converts arguments and returns
 the result as a `Value`. Mapped host values are not checked against dependent
 indices. A raw `openArray[Value]` overload remains available and checks only
-argument count for definitions with a local Nim signature; callers must
-construct those values correctly. Generic local definitions also get
+argument count and validates values when their Eponym types can be represented
+without opaque host boxes, including supported dependent argument types.
+Structural `Vec`, `List`, and `Option` values with primitive elements are
+checked in one traversal for shape, represented indices, and element types.
+Nested structural elements, structural records and variants, and mapped opaque
+host boxes are skipped by this raw checker. Their erased type-level element
+witnesses cannot be recovered from a raw runtime value. These values and
+unsupported type expressions still require caller-side validation. Generic local definitions also get
 `nameRuntimeValueRaw(genericArgs, valueArgs)`, which accepts all generic
 arguments and ordinary arguments as `openArray[Value]`. It checks generic
 values against supported binder type expressions, including applied domains
-that refer to earlier generic arguments. More complex binder expressions and
-ordinary raw `Value` arguments still need caller-side validation.
+that refer to earlier generic arguments. Ordinary raw values containing
+nested structural values, structural records or variants, opaque host boxes,
+or unsupported type expressions still need caller-side validation.
 `runtimeValue(importedDefinition)` also works for definitions imported
 from `.ep` files without a local Nim signature. When the checked Pi signature
 has runtime codecs, the macro derives a typed Nim wrapper and typed

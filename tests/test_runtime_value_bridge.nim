@@ -37,6 +37,14 @@ proc runtimeTreePayloads(value: Value, globals: Globals): seq[int] =
     result.add(valueToInt(variant.arguments[0]))
     current = variant.arguments[1]
 
+proc runtimeIntVector(values: seq[int], globals: Globals): Value =
+  let intType = runtimeGlobalValue(globals, "Int")
+  result = callRuntimeValue(eval(globals["nil"].tm, @[]), [intType])
+  for i in countdown(values.high, 0):
+    result = callRuntimeValue(eval(globals["cons"].tm, @[]),
+      [intType, natToValue(values.high - i, globals),
+       intToValue(values[i]), result])
+
 type ChannelHandle = object
   id: int
   label: string
@@ -183,6 +191,7 @@ eponymBlock:
     if true: addInt(19, 0) else: addInt(17, 0)
   proc generatedChooseFalse(): Int =
     if false: addInt(19, 0) else: addInt(17, 0)
+  runtimeValue(generatedAdd)
 
 eponymBlock:
   import "fixtures/runtime_imported_value.ep"
@@ -372,9 +381,15 @@ proc checkGenericIntValueAt[index: static[int]](ignored: int): bool =
   let runtime = generatedGenericIntValueRuntimeValue[index](ignored)
   let rawRuntime = generatedGenericIntValueRuntimeValue[index](
     [intToValue(ignored)])
+  var wrongRawArgumentRejected = false
+  try:
+    discard generatedGenericIntValueRuntimeValue[index]([natToValue(ignored)])
+  except ValueError:
+    wrongRawArgumentRejected = true
   typedResult == index and valueToInt(runtime.value) == index and
     valueToInt(rawRuntime.value) == index and
-    generatedGenericIntValueDynamic(index, ignored) == index
+    generatedGenericIntValueDynamic(index, ignored) == index and
+    wrongRawArgumentRejected
 
 proc decodeRuntimeIntVector(value: Value, length: int,
                             globals: Globals): seq[int] =
@@ -807,6 +822,15 @@ when isMainModule:
   except ValueError as error:
     wrongRuntimeArityRejected = "argument count mismatch" in error.msg
   doAssert wrongRuntimeArityRejected
+  let rawAddRuntime = generatedAddRuntimeValue(
+    [intToValue(20), intToValue(22)])
+  doAssert valueToInt(rawAddRuntime.value) == 42
+  var wrongRawRuntimeArgumentRejected = false
+  try:
+    discard generatedAddRuntimeValue([natToValue(20), intToValue(22)])
+  except ValueError:
+    wrongRawRuntimeArgumentRejected = true
+  doAssert wrongRawRuntimeArgumentRejected
   let boundRuntime = runtimeResultRuntimeValue()
   doAssert boundRuntime.value.whnfKind == wInt
   doAssert boundRuntime.value.whnfIntVal == 42
@@ -1237,6 +1261,12 @@ when isMainModule:
       let runtimeRoundTrip = vecValueToSeq[int](runtime.value, index,
         runtime.globals, "Vec",
         proc(value: Value, globals: Globals): int = valueToInt(value)) == values
+      let rawVector = runtimeIntVector(values, runtime.globals)
+      let rawRuntime = generatedVectorArgIdentityRuntimeValue(
+        [natToValue(index, runtime.globals), rawVector])
+      let rawRoundTrip = vecValueToSeq[int](rawRuntime.value, index,
+        rawRuntime.globals, "Vec",
+        proc(value: Value, globals: Globals): int = valueToInt(value)) == values
       let pairResult = generatedVectorForIndex(index, -index)
       let pairRoundTrip = pairResult[0] == -index and
         pairResult[1].len == index
@@ -1248,6 +1278,13 @@ when isMainModule:
         discard generatedVectorArgIdentity(index, values & @[index])
       except ValueError:
         inputMismatchRejected = true
+      var rawInputMismatchRejected = false
+      try:
+        let malformed = runtimeIntVector(values & @[index], runtime.globals)
+        discard generatedVectorArgIdentityRuntimeValue(
+          [natToValue(index, runtime.globals), malformed])
+      except ValueError:
+        rawInputMismatchRejected = true
       var adapterMismatchRejected = false
       try:
         discard generatedVectorForIndex(index, low(int))
@@ -1258,9 +1295,10 @@ when isMainModule:
         discard generatedImportedVectorForIndex(index, low(int))
       except ValueError:
         importedAdapterMismatchRejected = true
-      wrapperRoundTrip and runtimeRoundTrip and pairRoundTrip and
+      wrapperRoundTrip and runtimeRoundTrip and rawRoundTrip and pairRoundTrip and
         importedPairRoundTrip and inputMismatchRejected and
-        adapterMismatchRejected and importedAdapterMismatchRejected,
+        rawInputMismatchRejected and adapterMismatchRejected and
+        importedAdapterMismatchRejected,
     shrinkInt)
   var dependentPairAdapterMismatchRejected = false
   try:

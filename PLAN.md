@@ -425,13 +425,18 @@ implementations.
    recursive runtime codecs; 200-case properties cover primitive and explicitly
    mapped opaque arguments for callbacks passed into and returned from checked
    functions. Returned Nim closures require `{.closure.}`.
-- [x] Expose generic local definitions through a raw `RuntimeValueRaw` helper
-  taking generic arguments and ordinary arguments as `openArray[Value]`. This
-  permits generic binder types without Nim runtime codecs and checks values
-  against representable binder domains, including domains applied to earlier
-  generic values. A 200-case property covers valid unmapped Token and indexed
-  `SizedTree[length]` values; negative cases reject wrong Token and mismatched
-  indexed values. More complex binder type expressions remain caller-checked.
+- [x] Validate values at generic and raw `RuntimeValue` boundaries, including
+  generic local definitions through `RuntimeValueRaw(genericArgs, valueArgs)`.
+  These APIs take generic and ordinary arguments as `openArray[Value]`. They
+  permit generic binder types without Nim runtime codecs and check generic
+  and ordinary values against representable domains, including domains
+  applied to earlier generic and ordinary arguments. 200-case properties cover
+  valid unmapped Token and indexed `SizedTree[length]` values; negative cases
+  reject wrong Token, wrong primitive arguments, and mismatched indexed values.
+  Primitive-element Vec, List, and Option values validate shape, represented
+  indices, and elements without recursively inferring the whole value. Nested
+  structural elements, records, variants, erased type witnesses, opaque host
+  boxes, and more complex binder type expressions remain caller-checked.
 - [x] Add `{.rawValue.}` callback proc types that pass callback arguments and
   results as Eponym `Value`s, without requiring codecs for the function's leaf
   types. The checked Eponym callback type remains explicit, and the Nim callback

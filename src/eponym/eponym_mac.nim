@@ -2139,6 +2139,82 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
       newTree(nnkPrefix, ident"@", args))
   nil
 
+proc rawRuntimeTypeCheckable(eponymType: NimNode,
+    mappings: seq[HostRuntimeType], records: seq[HostRecord]): bool =
+  if eponymType.isNil: return false
+  for mapping in mappings:
+    if mapping.isRuntimeCodec or mapping.isRuntimeVector or
+        mapping.isRuntimeList or mapping.isRuntimeOption or
+        mapping.isRuntimeVariant or mapping.isRuntimeStructuredVariant:
+      continue
+    if mentionsName(eponymType, mapping.eponymName): return false
+  for record in records:
+    if mentionsName(eponymType, record.name): return false
+  true
+
+proc rawRuntimeValueCheck(eponymType, value, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]],
+    mappings: seq[HostRuntimeType], records: seq[HostRecord]): NimNode =
+  for mapping in mappings:
+    if mapping.isRuntimeList:
+      let elementType = runtimeListElementType(eponymType,
+        mapping.eponymName)
+      if elementType.isNil: continue
+      let elementHead = runtimeTypeHead(elementType)
+      if elementHead.kind == nnkIdent and
+          (findHostRecord(records, $elementHead) >= 0 or
+           mappings.anyIt(it.eponymName == $elementHead and
+             (it.isRuntimeVector or it.isRuntimeList or it.isRuntimeOption or
+              it.isRuntimeVariant or it.isRuntimeStructuredVariant))):
+        return nil
+      let expectedType = runtimeTypeValueExpr(elementType, globals, overrides)
+      if expectedType.isNil: return nil
+      return newCall(bindSym"validateRuntimeListRawValue",
+        copyNimTree(value), expectedType, copyNimTree(globals),
+        newLit(mapping.eponymName))
+    if mapping.isRuntimeOption:
+      let elementType = runtimeOptionElementType(eponymType,
+        mapping.eponymName)
+      if elementType.isNil: continue
+      let elementHead = runtimeTypeHead(elementType)
+      if elementHead.kind == nnkIdent and
+          (findHostRecord(records, $elementHead) >= 0 or
+           mappings.anyIt(it.eponymName == $elementHead and
+             (it.isRuntimeVector or it.isRuntimeList or it.isRuntimeOption or
+              it.isRuntimeVariant or it.isRuntimeStructuredVariant))):
+        return nil
+      let expectedType = runtimeTypeValueExpr(elementType, globals, overrides)
+      if expectedType.isNil: return nil
+      return newCall(bindSym"validateRuntimeOptionRawValue",
+        copyNimTree(value), expectedType, copyNimTree(globals),
+        newLit(mapping.eponymName))
+    if not mapping.isRuntimeVector: continue
+    let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
+    if vector.elementType.isNil: continue
+    let elementHead = runtimeTypeHead(vector.elementType)
+    if elementHead.kind == nnkIdent and
+        (findHostRecord(records, $elementHead) >= 0 or
+         mappings.anyIt(it.eponymName == $elementHead and
+           (it.isRuntimeVector or it.isRuntimeList or it.isRuntimeOption or
+            it.isRuntimeVariant or it.isRuntimeStructuredVariant))):
+      return nil
+    let elementType = runtimeTypeValueExpr(vector.elementType, globals,
+      overrides)
+    var natOverrides: seq[tuple[name: string, value: NimNode]] = @[]
+    for override in overrides:
+      natOverrides.add((override.name, newCall(bindSym"valueToNat",
+        copyNimTree(override.value), copyNimTree(globals))))
+    let expectedLength = runtimeNatIndexExpr(vector.length, natOverrides)
+    if elementType.isNil or expectedLength.isNil: return nil
+    return newCall(bindSym"validateRuntimeVectorRawValue",
+      copyNimTree(value), elementType, expectedLength, copyNimTree(globals),
+      newLit(mapping.eponymName))
+  if not rawRuntimeTypeCheckable(eponymType, mappings, records): return nil
+  let expectedType = runtimeTypeValueExpr(eponymType, globals, overrides)
+  if expectedType.isNil: return nil
+  newCall(bindSym"validateRuntimeValueType", copyNimTree(value),
+    expectedType, copyNimTree(globals))
+
 proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     defName: string, bindings: seq[HostPostulateBinding],
     mappings: seq[HostRuntimeType], records: seq[HostRecord],
@@ -2765,6 +2841,10 @@ macro eponymBlock*(body: untyped): untyped =
             newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
           var genericTypeOverrides: seq[tuple[name: string,
             value: NimNode]] = @[]
+          var rawRuntimeMappings = runtimeTypes
+          for typeName in generic.typeNames:
+            rawRuntimeMappings.add(HostRuntimeType(eponymName: typeName,
+              nimType: ident(typeName)))
           var genericArgIndex = 0
           for genericParam in procDecl[2]:
             for binderOffset in 0 ..< genericParam.len - 2:
@@ -2784,6 +2864,20 @@ macro eponymBlock*(body: untyped): untyped =
                 copyNimTree(genericArgsSym), newLit(genericArgIndex))
               genericTypeOverrides.add(($binderName, genericValue))
               inc genericArgIndex
+          var rawValueIndex = 0
+          for i in 1 ..< params.len:
+            let parameter = params[i]
+            for parameterOffset in 0 ..< parameter.len - 2:
+              let parameterName = if parameter[parameterOffset].kind ==
+                  nnkPragmaExpr: parameter[parameterOffset][0]
+                else: parameter[parameterOffset]
+              let rawValue = newTree(nnkBracketExpr,
+                copyNimTree(valueArgsSym), newLit(rawValueIndex))
+              let check = rawRuntimeValueCheck(parameter[^2], rawValue,
+                globalsSym, genericTypeOverrides, rawRuntimeMappings, records)
+              if not check.isNil: rawBody.add(check)
+              genericTypeOverrides.add(($parameterName, rawValue))
+              inc rawValueIndex
           rawBody.add(newLetStmt(defsSym,
             newCall(bindSym"getDefsDir", dirLit, srcLit)))
           rawBody.add(newVarStmt(bindingsSym,
@@ -2842,6 +2936,30 @@ macro eponymBlock*(body: untyped): untyped =
             let `globalsSym` = getGlobalsDir(`dirLit`, `srcLit`)
             let `defsSym` = getDefsDir(`dirLit`, `srcLit`)
             var `bindingsSym` = initRuntimeBindings()
+        var rawArgumentOverrides: seq[tuple[name: string,
+          value: NimNode]] = @[]
+        var rawRuntimeMappings = runtimeTypes
+        for typeName in generic.typeNames:
+          rawRuntimeMappings.add(HostRuntimeType(eponymName: typeName,
+            nimType: ident(typeName)))
+        if generic.error.len == 0:
+          for i, genericName in generic.genericNames:
+            rawArgumentOverrides.add(($genericName,
+              copyNimTree(genericValues[i])))
+          var rawArgumentIndex = 0
+          for i in 1 ..< params.len:
+            let parameter = params[i]
+            for parameterOffset in 0 ..< parameter.len - 2:
+              let parameterName = if parameter[parameterOffset].kind ==
+                  nnkPragmaExpr: parameter[parameterOffset][0]
+                else: parameter[parameterOffset]
+              let rawValue = newTree(nnkBracketExpr,
+                copyNimTree(argsSym), newLit(rawArgumentIndex))
+              let check = rawRuntimeValueCheck(parameter[^2], rawValue,
+                globalsSym, rawArgumentOverrides, rawRuntimeMappings, records)
+              if not check.isNil: rawBody.add(check)
+              rawArgumentOverrides.add(($parameterName, rawValue))
+              inc rawArgumentIndex
         rawBody.add(bindingStatements)
         rawBody.add quote do:
             (callDefValueWithBindings(findDef(`defsSym`, `nameLit`), `runtimeArgsSym`,
