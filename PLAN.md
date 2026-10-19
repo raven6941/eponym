@@ -275,8 +275,9 @@ implementations.
    values, Bool and nullary enums, opaque mapped types, standard `List` and
    `Option` values, indexed `Vec` sequences, two-field Sigma tuples, and named records
    represented as mapped Nim objects. Dependent records and pairs have
-   explicit trusted opt-ins; nested dependent Sigma conversion still needs
-   dedicated coverage under stage B.
+   explicit trusted opt-ins. Stage B now covers nested Sigma index shadowing,
+   composition with dependent record fields, and rejection of mismatched
+   lengths in 200-case properties.
 - [x] Specify supported ownership, aliasing, exception, async, and lifetime
    behavior. QTT linearity is limited to checked Eponym terms; boxed Nim refs
    and closures may alias or be retained. Typed adapters accept Nim `var`
@@ -321,10 +322,10 @@ implementations.
    `proc(ChannelHandle, string): ChannelHandle` role with 200 property cases.
 - [x] Preserve an Eponym type witness on values crossing simple named opaque
    `runtimeType` mappings, and reject a typed wrapper result if the witness is
-   absent or disagrees with the declared Eponym type. A 200-case negative
-   property strips the witness in a raw postulate adapter. Indexed family
-   mappings and opaque leaves traversed recursively retain their trusted
-   correspondence behavior.
+   absent or disagrees with the declared Eponym type. Two 200-case negative
+   properties strip the witness or replace it with a different mapped Eponym
+   type in a raw postulate adapter. Indexed family mappings and opaque leaves
+   traversed recursively retain their trusted correspondence behavior.
 - [x] Add structural codecs for non-dependent `Sig(A, B)` values as nested
    runtime pairs and Nim two-element tuples. Recursively support primitive
    `Int`/`Nat` and explicitly mapped opaque leaves; 200-case properties cover
