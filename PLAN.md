@@ -365,13 +365,18 @@ implementations.
    to same-named Nim enum members. The codec translates through checked
    constructor reference identities; a 200-case property covers every variant,
    and a compile-fail fixture rejects constructors with payloads.
+- [x] Add an explicit `runtimeVector(Vec)` codec for the canonical
+   length-indexed `Vec` family. `Vec[A,n]` maps to `seq[A]`; input lengths and
+   each runtime `cons` tail index are checked, and elements recurse through
+   their runtime codecs. A 200-case property covers primitive and opaque
+   elements, with empty-vector and length-mismatch checks.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly
    mapped opaque arguments for callbacks passed into and returned from checked
    functions. Returned Nim closures require `{.closure.}`.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
-   definitions and extend support to dependent structures, non-Nat
+   definitions and extend support to other dependent structures, non-Nat
    value-indexed generics, and other unsupported higher-order definitions.
    Definitions without a matching explicit Nim `proc` declaration still
    retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`

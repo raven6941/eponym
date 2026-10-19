@@ -126,8 +126,23 @@ instead map to a Nim enum whose members use the same constructor names.
 Opaque bindings support `T -> T`, `T -> U`, `T -> Nat`,
 `Nat -> T -> U`, and curried contracts of arbitrary arity when every argument
 and result has a runtime codec. Opaque values need explicit `runtimeType`
-mappings; primitive `Int`, `Nat`, and `Bool` use their built-in codecs. Other
-structured values and dependent signatures still need explicit codec support.
+mappings; primitive `Int`, `Nat`, and `Bool` use their built-in codecs. The
+canonical length-indexed `Vec` family can opt into its sequence codec:
+
+```nim
+eponymBlock:
+  import "lib/vec.ep"
+  runtimeVector(Vec)
+  proc keepVector[A: Univ, n: Nat](values: Vec[A, n]): Vec[A, n] = values
+
+doAssert keepVector[int, 3](@[2, 3, 5]) == @[2, 3, 5]
+```
+
+`Vec[A, n]` maps to `seq[A]`. The wrapper checks that input and output
+sequence lengths match the declared Nat index and recursively applies the
+element codec. Length expressions support a static Nat index, `zero`, `suc`,
+`add`, and `mul`. The codec requires the canonical `nil` and `cons` shape from
+`lib/vec.ep`; other indexed data families need their own codecs.
 
 For a postulate with one to three arguments and a non-dependent pair result,
 `bindPostulatePair` lets a Nim callback return a typed tuple. The macro checks
