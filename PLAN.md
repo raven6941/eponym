@@ -609,6 +609,12 @@ implementations.
       reconstructable imported dependent Sigma signatures into typed tuple
       wrappers; a 200-case identity property covers typed and `RuntimeValue`
       calls, and rejects a tuple whose Vec length disagrees with its Nat field.
+   - [x] Generate typed wrappers for imported generic definitions that accept
+     callbacks when the generic Nim type has a direct runtime mapping. A
+     200-case property applies an imported `A -> A` callback to mapped Nim
+     enum values through generated and typed `RuntimeValue` wrappers; a
+     compile-time check rejects a callback whose type does not match the
+     inferred generic type.
    - [x] Reconstruct typed wrappers for local clause-compiled definitions
      from their checked Pi signatures. A 200-case property calls a `Nat -> Nat`
      identity through its generated `int` wrapper. Runtime application helpers

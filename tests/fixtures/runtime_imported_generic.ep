@@ -5,6 +5,8 @@ postulate Token : Type 0
 proc importedIntIdentity : Int -> Int = lam (value : Int). value
 proc importedNullaryInt : Pi (_ : 1). Int = lam (_ : 1). addInt 40 2
 proc importedGenericIdentity (A : Type 0) (value : A) : A = value
+proc importedGenericCallbackApply (A : Type 0) (callback : A -> A)
+    (value : A) : A = callback value
 proc importedImplicitGenericIdentity {A : Type 0} (value : A) : A = value
 proc importedImplicitNatVecIdentity {n : Nat} (values : Vec Int n) : Vec Int n = values
 proc importedImplicitBoolIdentity {flag : Bool} : Bool = flag

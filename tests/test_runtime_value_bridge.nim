@@ -406,6 +406,7 @@ eponymBlock:
   runtimeValue(importedIntIdentity)
   runtimeValue(importedNullaryInt)
   runtimeValue(importedGenericIdentity)
+  runtimeValue(importedGenericCallbackApply)
   runtimeValue(importedImplicitGenericIdentity)
   runtimeValue(importedImplicitNatVecIdentity)
   runtimeValue(importedImplicitBoolIdentity)
@@ -1000,6 +1001,10 @@ static:
   doAssert compiles(generatedApplyNimCallback(proc(value: int): int = value, 1))
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
+  doAssert compiles(importedGenericCallbackApply(
+    proc(value: ImportedToken): ImportedToken = value, importedTokenRed))
+  doAssert not compiles(importedGenericCallbackApply(hostStepNim,
+    importedTokenRed))
   doAssert compiles(generatedAdder(3)(4))
   doAssert compiles(generatedApplyTwoArgumentCallback(
     proc(left, right: int): int = left + right, 1, 2))
@@ -1700,6 +1705,22 @@ when isMainModule:
         valueToInt(implicitRaw.value) == n,
     shrinkInt)
   if not importedGenericRawCases:
+    quit(1)
+  let importedGenericCallbackCases = forAll(
+    "imported generic definitions adapt mapped Nim callbacks", r, 200,
+    proc(r: var Rng): bool = r.genBool,
+    proc(useRed: bool): bool =
+      let value = if useRed: importedTokenRed else: importedTokenBlue
+      let expected = if useRed: importedTokenBlue else: importedTokenRed
+      let callback: proc(value: ImportedToken): ImportedToken {.closure.} =
+        proc(value: ImportedToken): ImportedToken =
+          if value == importedTokenRed: importedTokenBlue
+          else: importedTokenRed
+      let typed = importedGenericCallbackApply(callback, value)
+      let runtime = importedGenericCallbackApplyRuntimeValue(callback, value)
+      typed == expected and
+        valueToHost[ImportedToken](runtime.value) == expected)
+  if not importedGenericCallbackCases:
     quit(1)
   let importedImplicitNatVecCases = forAll(
     "imported implicit Nat binders have static and dynamic Nim wrappers",
