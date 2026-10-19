@@ -1974,17 +1974,26 @@ when isMainModule:
   let genericFunctionType = runtimeArrowType(
     runtimeGlobalValue(genericFunctionValue.globals, "Int"),
     runtimeGlobalValue(genericFunctionValue.globals, "Int"))
+  let hostGenericFunctionValue = setRuntimeHostFunctionType(
+    vHostFunc(proc(value: Value): Value =
+      intToValue(valueToInt(value) + 1)), genericFunctionType,
+    genericFunctionValue.globals)
   validateRuntimeValueType(genericFunctionValue.value, genericFunctionType,
     genericFunctionValue.globals)
   let genericFunctionBinderCases = forAll(
-    "dynamic generic binders validate checked function values", r, 200,
+    "dynamic generic binders validate checked and host function values", r, 200,
     proc(r: var Rng): int = r.genInt(-1000, 1000),
     proc(input: int): bool =
       let checked = generatedApplyGenericFunctionDynamic(
         genericFunctionValue.value, input)
       let runtime = generatedApplyGenericFunctionRuntimeValueDynamic(
         genericFunctionValue.value, input)
-      checked == input + 1 and valueToInt(runtime.value) == input + 1,
+      let hostChecked = generatedApplyGenericFunctionDynamic(
+        hostGenericFunctionValue, input)
+      let hostRuntime = generatedApplyGenericFunctionRuntimeValueDynamic(
+        hostGenericFunctionValue, input)
+      checked == input + 1 and valueToInt(runtime.value) == input + 1 and
+        hostChecked == input + 1 and valueToInt(hostRuntime.value) == input + 1,
     shrinkInt)
   if not genericFunctionBinderCases:
     quit(1)
@@ -1995,6 +2004,12 @@ when isMainModule:
   except ValueError:
     genericFunctionTypeRejected = true
   doAssert genericFunctionTypeRejected
+  var hostFunctionTypeRejected = false
+  try:
+    discard generatedApplyGenericFunctionDynamic(intToValue(42), 0)
+  except ValueError:
+    hostFunctionTypeRejected = true
+  doAssert hostFunctionTypeRejected
 
   let rawGenericNatCases = forAll(
     "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,

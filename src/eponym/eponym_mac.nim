@@ -1762,12 +1762,23 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           let hostCallback = newProc(params = @[bindSym"Value",
             newIdentDefs(unitValue, bindSym"Value", newEmptyNode())],
             body = newStmtList(checkedUnit, callbackValue))
-          return newCall(bindSym"vHostFunc", hostCallback)
+          var callbackValue = newCall(bindSym"vHostFunc", hostCallback)
+          let callbackType = runtimeTypeValueExpr(eponymType, globals,
+            indexOverrides)
+          if not callbackType.isNil:
+            callbackValue = newCall(bindSym"setRuntimeHostFunctionType",
+              callbackValue, callbackType, globals)
+          return callbackValue
         for i in countdown(argValueSyms.high, 0):
           let hostCallback = newProc(params = @[bindSym"Value",
             newIdentDefs(argValueSyms[i], bindSym"Value", newEmptyNode())],
             body = newStmtList(callbackValue))
           callbackValue = newCall(bindSym"vHostFunc", hostCallback)
+        let callbackType = runtimeTypeValueExpr(eponymType, globals,
+          indexOverrides)
+        if not callbackType.isNil:
+          callbackValue = newCall(bindSym"setRuntimeHostFunctionType",
+            callbackValue, callbackType, globals)
         return callbackValue
       var callbackArgs = newNimNode(nnkBracket)
       var formal: seq[NimNode] = @[bindSym"Value"]
@@ -1828,13 +1839,24 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         let hostCallback = newProc(params = @[bindSym"Value",
           newIdentDefs(unitValue, bindSym"Value", newEmptyNode())],
           body = newStmtList(checkedUnit, callbackValue))
-        return newCall(bindSym"vHostFunc", hostCallback)
+        var callbackValue = newCall(bindSym"vHostFunc", hostCallback)
+        let callbackType = runtimeTypeValueExpr(eponymType, globals,
+          indexOverrides)
+        if not callbackType.isNil:
+          callbackValue = newCall(bindSym"setRuntimeHostFunctionType",
+            callbackValue, callbackType, globals)
+        return callbackValue
       for i in countdown(argValueSyms.high, 0):
         let callbackBody = newStmtList(callbackValue)
         let hostCallback = newProc(params = @[bindSym"Value",
           newIdentDefs(argValueSyms[i], bindSym"Value", newEmptyNode())],
           body = callbackBody)
         callbackValue = newCall(bindSym"vHostFunc", hostCallback)
+      let callbackType = runtimeTypeValueExpr(eponymType, globals,
+        indexOverrides)
+      if not callbackType.isNil:
+        callbackValue = newCall(bindSym"setRuntimeHostFunctionType",
+          callbackValue, callbackType, globals)
       return callbackValue
     var encodedArgs = newNimNode(nnkBracket)
     var formal: seq[NimNode] = @[resultNimType]

@@ -309,9 +309,13 @@ forms and structural inspection of closures are unsupported.
 Non-dependent function domains written with `->` are now supported for dynamic
 generic binders: the runtime bridge infers a checked Eponym closure's function
 type, validates it against the declared arrow type, and permits calling it.
-Nested arrows are represented recursively. Dependent function domains whose
-codomain refers to the argument, and opaque Nim closures with no Eponym type
-witness, still cannot be checked this way.
+Typed Nim callback adapters retain their checked Eponym arrow type as a runtime
+witness, so these callbacks can also be supplied to dynamic generic binders and
+checked before invocation. A 200-case property covers both checked and host
+callbacks through generated and raw runtime APIs. Nested non-dependent arrows
+are represented recursively. Dependent function domains whose codomain refers
+to the argument, and hand-built host closures without an Eponym type witness,
+still cannot be checked this way.
 The session runtime demo includes a hand-written Nat LEB128 message codec, and
 the TCP adapter demo uses it over a loopback socket. The structural codecs
 cover common recursive shapes; a user can provide a codec for a named

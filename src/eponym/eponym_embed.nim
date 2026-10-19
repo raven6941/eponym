@@ -1571,8 +1571,20 @@ proc runtimeValueTerm(value: Value, globals: Globals): Term =
     return value.syn
   of wConst:
     value.syn
+  of wPi, wSi, wType, wNatSing:
+    value.syn
   else:
     nil
+
+proc setRuntimeHostFunctionType*(value, expectedType: Value,
+                                 globals: Globals): Value =
+  ## Retain the checked function type for a Nim callback encoded as a runtime
+  ## closure. The callback's implementation remains a trusted adapter.
+  let typeTerm = runtimeValueTerm(expectedType, globals)
+  if typeTerm.isNil:
+    raise newException(ValueError,
+      "cannot retain an incomplete Eponym function type")
+  setHostFunctionType(value, typeTerm)
 
 proc toHostValueAtRuntimeType*[T](hostValue: T, expectedType: Value,
                                   globals: Globals): Value =
@@ -1613,6 +1625,16 @@ proc inferRuntimeValueType(value: Value, globals: Globals,
     if value.whnf.hostEponymType.isNil:
       return nil
     return eval(value.whnf.hostEponymType, @[])
+  of wLam:
+    if not value.whnf.hostFunctionType.isNil:
+      return eval(value.whnf.hostFunctionType, @[])
+    if value.whnf.hostRuntimeOnly:
+      raise newException(ValueError,
+        "runtime host function has no checked Eponym type witness")
+    if value.syn.isNil:
+      raise newException(ValueError,
+        "runtime function has no syntax for type inference")
+    return infer(supply, value.syn)
   of wRef:
     var term: Term = nil
     for _, entry in globals.pairs:

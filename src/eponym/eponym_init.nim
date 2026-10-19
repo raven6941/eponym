@@ -148,6 +148,8 @@ type
       qty: Quantity  # Issue #66: binder quantity, compared by conversion
     of wLam:
       lscope: ScoVal
+      hostFunctionType*: Term
+      hostRuntimeOnly*: bool
     of wPair:
       fstV, sndV: Value
     of wConst:
@@ -825,7 +827,16 @@ proc vHostFunc*(fn: proc(x: Value): Value {.closure.}): Value =
   ## declaration at the host boundary.
   let scope = Scope(adv: "host", bdy: vv(0))
   Value(syn: tmLam(tStar(), scope.adv, scope.bdy),
-        whnf: Whnf(kind: wLam, lscope: ScoVal(syn: scope, fn: fn)))
+        whnf: Whnf(kind: wLam, lscope: ScoVal(syn: scope, fn: fn),
+                   hostRuntimeOnly: true))
+
+proc setHostFunctionType*(value: Value, functionType: Term): Value =
+  ## Attach an explicit checked type witness to a runtime host function.
+  ## The adapter remains trusted to implement the declared behavior.
+  if value.isNil or value.whnf.kind != wLam or functionType.isNil:
+    raise newException(ValueError, "cannot type an incomplete host function")
+  value.whnf.hostFunctionType = functionType
+  value
 
 proc runtimeReferenceId*(value: Value): int =
   ## Return the neutral reference head if runtime evaluation is stuck on one.
