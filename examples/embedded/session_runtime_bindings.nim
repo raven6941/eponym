@@ -69,7 +69,7 @@ eponymBlock:
   postulate(sendNat,
     Pi(value: Nat,
        ch {.linear.}: Chan[sendS[Nat](endS())],
-       Chan(endS())))
+       Chan[endS()]))
   postulate(recvNat,
     Pi(ch {.linear.}: Chan[recvS[Nat](endS())], Nat))
   bindPostulate(sendNat, sendNatImpl, Nat, Chan, Chan)

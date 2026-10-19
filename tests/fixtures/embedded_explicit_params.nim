@@ -3,6 +3,7 @@ import eponym_mac
 eponymBlock:
   import "../../lib/vec.ep"
   import "../../lib/bool.ep"
+  import "legacy_postulate_index.ep"
 
   data(Protocol, Univ):
     proc protocolSend(A: Univ, payload: Nat): Protocol
@@ -16,6 +17,12 @@ eponymBlock:
 
   proc bracketVectorType(value: Vec[Nat, suc(zero())]):
       Vec[Nat, suc(zero())] = value
+
+  proc bracketIndexedHead(values: Vec[Nat, 0]): Vec[Nat, 0] =
+    indexedHead[zero()](values)
+
+  proc inferredIndexedHead(values: Vec[Nat, 0]): Vec[Nat, 0] =
+    indexedHead(values)
 
   proc legacyAppend(left, right: Vec[Nat, suc(zero())]):
       Vec[Nat, add(suc(zero()), suc(zero()))] =

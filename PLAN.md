@@ -1106,10 +1106,12 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   and onboarding work. Split review and merge into independently verifiable
   slices. The QTT destination-passing prototype is deferred until after the
   first release and should be proposed separately from required runtime work.
-- Square-bracket explicit parameters are the canonical syntax. Recognized
-  call-style explicit applications now fail with a compiler error. Before the
-  first release, close the remaining detection gaps and remove the legacy
-  call-style lowering path. Do not ship 1.0 with two accepted syntaxes.
+- Square-bracket explicit parameters are the canonical syntax. Applications
+  that supply required explicit binders through calls fail with a compiler
+  error; inferred implicit binders remain usable in ordinary value calls.
+  Before the first release, finish auditing signature coverage and call-head
+  forms. There is no separate legacy lowering branch: ordinary calls and the
+  old spelling share Nim AST, so the macro guard distinguishes them by signature.
 - The high-level `bindPostulate` is no longer limited to `Int -> Int`: typed
   curried adapters support codec-backed arguments and results, including the
   `Nat -> Chan -> SendOutcome` and `Chan -> ReceiveOutcome` operations used by
@@ -1121,30 +1123,18 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 
 ### First-release syntax completion
 
-- [x] Add signature-aware detection for complete call-style explicit
-  applications and known data-family type applications. It reads local Nim
-  declarations and imported `.ep` signatures, and ordinary calls such as
-  `suc(zero())` remain valid.
-- [x] Detect partial legacy applications whose first explicit argument is a
-  known Eponym data type name, even when the supplied arity is within the
-  callable's ordinary term arity. The regression fixture covers partial
-  `cons(Nat, ...)` and `cons(A, ...)` applications, where `A: Type 0` is in
-  scope only for the latter.
-- [x] Detect partial legacy applications whose first explicit binder is `Nat`
-  and whose first argument is a Nat literal, known Nat constructor/function,
-  or in-scope `Nat` binder. The regression fixture covers a generic index
-  binder and `zero()`; ordinary Nat-valued calls without explicit binders remain
-  valid.
-- [x] Count leading `Univ` parameters on constructors in local Nim `data(...)`
-  declarations when diagnosing legacy applications. A fixture checks bracket
-  `protocolSend[Nat](...)` and rejects the call-style spelling.
-- [x] Extend partial index detection to top-level let-bound values explicitly
-  annotated as Nat or initialized by a recognized Nat constructor/function;
-  parenthesized expressions, aliases of known Nat locals, and conditional
-  expressions whose branches are all Nat are followed. Compile-fail and
-  positive bracket fixtures cover these forms.
-- [ ] Extend detection to other inferred expression forms and nested scopes
-  that cannot be identified from the current declaration metadata.
+- [x] Require square brackets for callable applications with required explicit
+  Eponym binders. Reject parenthesized and Nim command applications regardless
+  of argument shape. For implicit binders, preserve inference in ordinary value
+  calls while rejecting unambiguous legacy applications by signature arity or
+  type-name arguments. A positive fixture checks inference for an implicit Nat
+  postulate.
+- [x] Register local Nim generic procedures, data constructors, postulates,
+  eliminators, and clause/mutual definitions, plus imported `.ep` definitions,
+  postulates, eliminators, data constructors, commands, and clause/mutual
+  definitions. Count local constructor `Univ` parameters and imported implicit
+  parameters. Regression fixtures cover these declaration forms and reject
+  legacy applications while bracket forms compile.
 - [x] Migrate the optimizer examples' type-family applications and indexed
   `VAffine` constructor applications to square brackets. Their generated
   checked objectives still pass the 300-case and 200-case runtime properties.
@@ -1166,11 +1156,16 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   its roles (its loopback runtime test is covered separately).
 - [x] Migrate the runtime-bound and TCP session examples' `Chan` types and
   nested `sendS`/`recvS` session applications to brackets; both modules compile.
-- [ ] Migrate the remaining embedded examples and tests that still use
-  call-style explicit applications, then remove the legacy parser/lowering
-  path. Known legacy applications are now compile-time errors.
-- [ ] Remove the legacy call-style parser/lowering path and update examples,
-  tests, and documentation to use square brackets for explicit parameters.
+- [x] Migrate the embedded examples to square-bracket explicit applications.
+  Every `examples/embedded/*.nim` file compiles under the call-style rejection
+  guard.
+- [x] Remove acceptance of the legacy call-style application spelling where
+  the signature identifies an explicit application. Ordinary Nim-shaped value
+  calls still lower through `nnkCall`; bracket applications use Nim's distinct
+  `nnkBracketExpr` form. Keep the metadata audit below open for declaration
+  forms or qualified call heads the guard does not yet recognize.
+- [ ] Audit remaining test and fixture call sites and run the full local CI
+  gate before the first release.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.

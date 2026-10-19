@@ -1,0 +1,3 @@
+import "../../lib/vec.ep"
+
+postulate indexedHead : Pi {n : Nat}. Pi (xs : Vec Nat n). Vec Nat n

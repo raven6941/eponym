@@ -579,16 +579,13 @@ file. Clean-install resolution is covered by a separate-project test. See
 
 The embedded syntax is Nim-shaped but is not ordinary Nim semantics. Explicit
 Eponym parameters use square brackets, as in `Vec[A, n]` and
-`cons[A, n](x, xs)`. Recognized call-style explicit term and type applications
-are compile-time errors. Detection reads local Nim declarations and imported
-`.ep` signatures, and identifies complete applications, known data-family
-applications, partial applications beginning with a known data type or
-in-scope `Type 0` binder, and recognizable Nat arguments when the callee's
-first explicit binder is Nat. Top-level let-bound Nat values are recognized
-when explicitly annotated or initialized by a known Nat constructor/function;
-parenthesized forms, aliases, and conditionals whose result branches are all
-Nat are also followed. Other inferred expression forms and nested scopes may
-still evade detection.
+`cons[A, n](x, xs)`. Calls to known Eponym signatures with required explicit
+binders are compile-time errors; Nim command-style applications are checked
+too. The guard reads local Nim declarations and imported `.ep` signatures.
+Implicit binders can still be inferred in ordinary value calls. Unambiguous
+legacy applications with excess arguments or a type name in the explicit
+position are rejected. The metadata audit is still open for qualified call
+heads and declaration forms the scanner may miss.
 Supported
 generic definitions have generated Nim wrappers for type parameters, Nat and
 Int indices, Bool indices, and values with explicit runtime mappings. Other
