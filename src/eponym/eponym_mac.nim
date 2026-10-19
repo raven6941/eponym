@@ -31,6 +31,8 @@ var legacyCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
 var legacyTypeFamilies {.compileTime.} = initHashSet[string]()
 var legacyTypeNames {.compileTime.} = initHashSet[string]()
 var scopedLegacyTypeNames {.compileTime.} = initHashSet[string]()
+var legacyFieldCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
+var ambiguousLegacyFieldNames {.compileTime.} = initHashSet[string]()
 
 proc isLegacyTypeName(n: NimNode): bool =
   n.kind in {nnkIdent, nnkSym} and
@@ -64,12 +66,23 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
   ## Required explicit Eponym binders must use brackets. Implicit binders may
   ## still be inferred from ordinary term arguments, so use signature arity
   ## and unambiguous type arguments to distinguish legacy applications.
-  if n.kind notin {nnkCall, nnkCommand} or n.len < 1 or
-      n[0].kind notin {nnkIdent, nnkSym}:
+  if n.kind notin {nnkCall, nnkCommand} or n.len < 1:
     return
-  let head = $n[0]
-  if head notin legacyCallInfo: return
-  let info = legacyCallInfo[head]
+  var info: LegacyCallInfo
+  var found = false
+  let callee = n[0]
+  if callee.kind in {nnkIdent, nnkSym}:
+    let head = $callee
+    if head in legacyCallInfo:
+      info = legacyCallInfo[head]
+      found = true
+  elif callee.kind == nnkDotExpr and callee.len == 2 and
+      callee[1].kind in {nnkIdent, nnkSym}:
+    let field = $callee[1]
+    if field in legacyFieldCallInfo and field notin ambiguousLegacyFieldNames:
+      info = legacyFieldCallInfo[field]
+      found = true
+  if not found: return
   let supplied = n.len - 1
   if info.explicitCount == 0: return
   if not info.requiresBrackets and supplied <= info.termCount and
@@ -201,6 +214,20 @@ proc mergeCallInfo(a, b: LegacyCallInfo): LegacyCallInfo =
   result.firstExplicitType = if a.explicitCount > 0: a.firstExplicitType
     else: b.firstExplicitType
 
+proc sameCallInfo(a, b: LegacyCallInfo): bool =
+  a.explicitCount == b.explicitCount and a.termCount == b.termCount and
+    a.requiresBrackets == b.requiresBrackets and
+    a.firstExplicitType == b.firstExplicitType
+
+proc registerLegacyFieldInfo(name: string, info: LegacyCallInfo) =
+  if name in ambiguousLegacyFieldNames: return
+  if name in legacyFieldCallInfo:
+    if not sameCallInfo(legacyFieldCallInfo[name], info):
+      legacyFieldCallInfo.del(name)
+      ambiguousLegacyFieldNames.incl(name)
+  else:
+    legacyFieldCallInfo[name] = info
+
 proc surfaceIndexArity(ty: PreTerm): int =
   var current = ty
   while not current.isNil and current.kind == pkPi:
@@ -233,6 +260,9 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
         registerLegacyInfo(constructor.name, ctorInfo)
         if constructor.name == "nil":
           registerLegacyInfo("vecnil", ctorInfo)
+    of dkRecord:
+      for field in declaration.fields:
+        registerLegacyFieldInfo(field.name, surfaceTypeCallInfo(field.ty))
     of dkImport:
       let importedPath = normalized.parentDir / declaration.ipath
       if fileExists(importedPath):
@@ -255,6 +285,8 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
   legacyTypeFamilies.clear()
   legacyTypeNames.clear()
   scopedLegacyTypeNames.clear()
+  legacyFieldCallInfo.clear()
+  ambiguousLegacyFieldNames.clear()
   var seen = initHashSet[string]()
   for statement in body:
     case statement.kind

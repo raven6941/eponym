@@ -1166,14 +1166,26 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   forms or qualified call heads the guard does not yet recognize.
 - [ ] Audit remaining test and fixture call sites and run the full local CI
   gate before the first release.
+- [x] Register callable field signatures from imported `.ep` records and
+  reject call-style explicit arguments through record projections. Field-name
+  collisions with differing signatures disable the diagnostic for that name
+  to avoid false positives.
+- [ ] Audit local embedded record fields and additional qualified/parenthesized
+  call-head forms; these are not covered by imported `.ep` record metadata.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.
+- [ ] Add a deprecation diagnostic while temporarily preserving legacy lowering
+  in an earlier PR in the release stack.
+- [ ] Remove legacy lowering in the following PR before tagging the first
+  release. Keep the diagnostic and removal as separate, bisectable PRs; stack
+  the removal after the diagnostic, and retain the bracket-only rejection
+  currently implemented in this branch as the final state.
 
 ### Deferred after the first release
 
-- [ ] Generalize QTT-guided destination-passing code generation beyond the
-  current `runtimeDps(name)` prototype, which handles non-generic linear
+- [ ] (Deferred) Generalize QTT-guided destination-passing code generation
+  beyond the current `runtimeDps(name)` prototype, which handles non-generic linear
   `Int` expressions over literals, parameters, and `+`, `-`, `*`. It remains
   opt-in and is a performance improvement, not a requirement for the
   internally consistent first release.
