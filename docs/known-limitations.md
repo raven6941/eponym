@@ -327,6 +327,9 @@ appears inside a mapped `Vec`, `List`, or `Option`, or a supported nondependent
 `Sig` tuple or a `runtimeDataVariant` family; the direct leaf `runtimeType` or
 `runtimeCodec` mapping is carried into the recursive callback adapter.
 Separate 200-case properties cover these shapes over a custom mapped object.
+An imported dependent `Sig` callback can opt into typed tuple codecs with
+`runtimePairTrusted`; recursive Vec codecs still check represented lengths.
+Properties reject wrong Vec lengths in both callback inputs and results.
 Other structural callback families and generic leaf types without a unique
 direct mapping remain unsupported.
 More complex generic domain expressions outside the supported type-expression

@@ -17,6 +17,11 @@ proc importedGenericOptionCallbackApply (A : Type 0)
 proc importedGenericSigmaCallbackApply (A : Type 0)
     (callback : (Sig (left : A). A) -> (Sig (left : A). A))
     (value : Sig (left : A). A) : Sig (left : A). A = callback value
+proc importedGenericDependentPairCallbackApply (A : Type 0)
+    (callback : (Sig (length : Nat). Vec A length) ->
+      (Sig (length : Nat). Vec A length))
+    (value : Sig (length : Nat). Vec A length) :
+    Sig (length : Nat). Vec A length = callback value
 proc importedGenericSingleton (A : Type 0) (value : A) :
     Vec A (suc zero) = cons A zero value (nil A)
 proc importedImplicitGenericIdentity {A : Type 0} (value : A) : A = value

@@ -2056,8 +2056,10 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         let arrayLengthType = if mapping.isRuntimeVectorArray:
           runtimeArrayLengthTypeExpr(vector.length) else: nil
         if mapping.isRuntimeVectorArray and arrayLengthType.isNil: return nil
-        let itemSym = genSym(nskParam, "runtimeVectorItem")
-        let codecGlobalsSym = genSym(nskParam, "runtimeVectorGlobals")
+        # These are local codec-procedure formals. Plain identifiers keep
+        # nested generic callback ASTs from retaining a macro-VM genSym owner.
+        let itemSym = ident"runtimeVectorItem"
+        let codecGlobalsSym = ident"runtimeVectorGlobals"
         if toValue:
           let encodedItem = runtimeValueConversionExpr(vector.elementType,
             elementNimType, itemSym, true, mappings, records,
