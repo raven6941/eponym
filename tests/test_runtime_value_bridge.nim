@@ -285,6 +285,47 @@ proc decodeRuntimeChannelList(value: Value,
                               globals: Globals): seq[ChannelHandle] =
   decodeRuntimeHostList[ChannelHandle](value, globals)
 
+proc encodeRuntimeTree(values: seq[int], globals: Globals): Value =
+  result = eval(globals["treeEmpty"].tm, @[])
+  for i in countdown(values.high, 0):
+    result = callRuntimeValue(eval(globals["treeNode"].tm, @[]),
+      @[intToValue(values[i]), result])
+
+proc decodeRuntimeTree(value: Value, globals: Globals): seq[int] =
+  let emptyId = globals["treeEmpty"].tm.refId
+  let nodeId = globals["treeNode"].tm.refId
+  var current = value
+  while true:
+    if current.whnfKind != wRef:
+      raise newException(ValueError, "runtime value is not a Tree")
+    if current.whnfRefId == emptyId:
+      if current.whnfSpineLen != 0:
+        raise newException(ValueError,
+          "Tree empty constructor has invalid spine")
+      return
+    if current.whnfRefId != nodeId or current.whnfSpineLen != 2 or
+        current.whnfSpineKind(0) != eApp or
+        current.whnfSpineKind(1) != eApp:
+      raise newException(ValueError, "runtime value is not a Tree")
+    result.add(valueToInt(current.whnfSpineArg(0)))
+    current = current.whnfSpineArg(1)
+
+proc reverseRuntimeTree(values: seq[int]): seq[int] =
+  for i in countdown(values.high, 0):
+    result.add(values[i])
+
+eponymBlock:
+  postulate(Int, Univ)
+  data(Tree, Univ):
+    proc treeEmpty(): Tree
+    proc treeNode(value: Int, tail: Tree): Tree
+  runtimeCodec(Tree, seq[int], encodeRuntimeTree, decodeRuntimeTree)
+  postulate(treeReverse, Tree -> Tree)
+  bindPostulate(treeReverse, reverseRuntimeTree, Tree)
+  proc generatedTreeIdentity(value: Tree): Tree = value
+  runtimeValue(generatedTreeIdentity)
+  proc generatedBoundTreeReverse(value: Tree): Tree = treeReverse(value)
+
 eponymBlock:
   postulate(Int, Univ)
   proc generatedApplyNimCallback(
@@ -1000,6 +1041,24 @@ proc callbackRole : Callback -> Sample -> Sample =
   except ValueError:
     malformedOptionRejected = true
   doAssert malformedOptionRejected
+
+  let customCodecCases = forAll(
+    "explicit Nim codecs bridge payload-bearing Eponym data", r, 200,
+    proc(r: var Rng): seq[int] =
+      result = newSeq[int](r.genInt(0, 8))
+      for i in 0 ..< result.len:
+        result[i] = r.genInt(-1000, 1000)
+    ,
+    proc(values: seq[int]): bool =
+      let runtime = generatedTreeIdentityRuntimeValue(values)
+      let rawRuntime = generatedTreeIdentityRuntimeValue([runtime.value])
+      generatedTreeIdentity(values) == values and
+        generatedBoundTreeReverse(values) == reverseRuntimeTree(values) and
+        decodeRuntimeTree(runtime.value, runtime.globals) == values and
+        decodeRuntimeTree(rawRuntime.value, rawRuntime.globals) == values,
+    )
+  if not customCodecCases:
+    quit(1)
 
   let nestedVectorCases = forAll(
     "nested length-indexed Vec values recurse through sequence codecs", r, 200,

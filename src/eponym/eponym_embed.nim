@@ -644,6 +644,23 @@ proc validateHostOpaqueType*(globals: Globals, typeName: string) =
       "opaque runtime type mapping '" & typeName &
       "' must name a postulated type or type family")
 
+proc validateHostRuntimeCodecType*(globals: Globals, typeName: string) =
+  ## A user codec may describe any named Eponym type or family, including
+  ## transparent data whose constructors the adapter translates itself.
+  if typeName notin globals:
+    raise newException(ValueError,
+      "runtime codec type '" & typeName & "' is not declared")
+  let entry = globals[typeName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.ty.isNil:
+    raise newException(ValueError,
+      "runtime codec mapping '" & typeName & "' must name an Eponym type")
+  var terminalType = entry.ty
+  while not terminalType.isNil and terminalType.kind == tPi:
+    terminalType = terminalType.scope.bdy
+  if terminalType.isNil or terminalType.kind != tType:
+    raise newException(ValueError,
+      "runtime codec mapping '" & typeName & "' must name an Eponym type")
+
 proc opaqueTypeHeadId(ty: Term): int =
   case ty.kind
   of tR: ty.refId

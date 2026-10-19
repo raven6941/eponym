@@ -21,6 +21,8 @@ Trust-model note: this document describes the syntax. What each construct
 ```nim
 import eponym_mac
 import eponym_embed
+import elab
+import eponym_init
 
 eponymBlock:
   import "../../lib/nat.ep"
@@ -54,6 +56,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `addInt(x, y)`, `suc(n)`, `f x`, `lam(x, T, body)` | Eponym applications and lambda forms, translated by the macro |
 | `import "nat.ep"` | Eponym module import; relative to the source file first, then the installed package prelude. Absolute paths select an explicit file. |
 | `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported shapes are listed in [known limitations](known-limitations.md) |
+| `runtimeCodec(Tree, NimType, encode, decode)` | Register typed Nim encoders/decoders for a named Eponym type or family; the codec implementation is trusted |
 | `echo`, `for`, `var`, effectful Nim control flow, Nim library calls | Not supported as host Nim statements/expressions in the block |
 
 Put ordinary computation, IO, control flow, and Nim library calls outside
@@ -181,6 +184,33 @@ doAssert keepOption[int](none(int)).isNone
 
 The payload uses its recursive runtime codec. Other payload-bearing data
 constructors need their own explicit codecs.
+
+For a payload-bearing data type with a different Nim representation, define
+ordinary Nim encoder and decoder procedures before the block and register them
+with `runtimeCodec`. Nim checks the procedure signatures when generated
+wrappers or typed postulate bindings use the codec:
+
+```nim
+import eponym_mac
+import eponym_embed
+
+proc encodeTree(value: seq[int], globals: Globals): Value = ...
+proc decodeTree(value: Value, globals: Globals): seq[int] = ...
+
+eponymBlock:
+  data(Tree, Univ):
+    proc emptyTree(): Tree
+    proc treeNode(value: Int, tail: Tree): Tree
+  runtimeCodec(Tree, seq[int], encodeTree, decodeTree)
+  proc keepTree(tree: Tree): Tree = tree
+```
+
+The codec receives the checked module's `Globals`, so it can use the exact
+constructor identities. Its implementation is trusted: in particular, a
+codec for an indexed family must check that host values agree with the Eponym
+indices. Throw `ValueError` for malformed runtime values. This escape hatch
+lets libraries bridge other Nim representations without adding built-in
+knowledge of each data family.
 
 For a postulate with one to three arguments and a non-dependent pair result,
 `bindPostulatePair` lets a Nim callback return a typed tuple. The macro checks
