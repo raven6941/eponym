@@ -733,6 +733,7 @@ type HostPostulateBinding = object
 type HostRuntimeType = object
   eponymName: string
   nimType: NimNode
+  isSynthetic: bool
   isRuntimeVector: bool
   isRuntimeList: bool
   isRuntimeOption: bool
@@ -1348,6 +1349,7 @@ proc runtimeStructuredCodecsExpr(mappings: seq[HostRuntimeType],
                                  records: seq[HostRecord]): NimNode =
   result = newNimNode(nnkBracket)
   for mapping in mappings:
+    if mapping.isSynthetic: continue
     if mapping.isRuntimeVector or mapping.isRuntimeList or
         mapping.isRuntimeOption or mapping.isRuntimeVariant or
         mapping.isRuntimeStructuredVariant or
@@ -2147,57 +2149,103 @@ proc rawRuntimeTypeCheckable(eponymType: NimNode,
         mapping.isRuntimeList or mapping.isRuntimeOption or
         mapping.isRuntimeVariant or mapping.isRuntimeStructuredVariant:
       continue
+    if findHostRecord(records, mapping.eponymName) >= 0: continue
     if mentionsName(eponymType, mapping.eponymName): return false
-  for record in records:
-    if mentionsName(eponymType, record.name): return false
   true
 
 proc rawRuntimeValueCheck(eponymType, value, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]],
+    mappings: seq[HostRuntimeType], records: seq[HostRecord]): NimNode
+
+proc rawRuntimePairValueCheck(firstType, secondType, value, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]],
+    mappings: seq[HostRuntimeType], records: seq[HostRecord],
+    binderName = ""): NimNode =
+  let first = genSym(nskLet, "rawPairFirst")
+  let second = genSym(nskLet, "rawPairSecond")
+  let firstCheck = rawRuntimeValueCheck(firstType, first, globals, overrides,
+    mappings, records)
+  var secondOverrides = overrides
+  if binderName.len > 0: secondOverrides.add((binderName, first))
+  let secondCheck = rawRuntimeValueCheck(secondType, second, globals,
+    secondOverrides, mappings, records)
+  if firstCheck.isNil or secondCheck.isNil: return nil
+  result = newStmtList()
+  result.add(newLetStmt(first, newCall(bindSym"runtimePairFirst",
+    copyNimTree(value))))
+  result.add(firstCheck)
+  result.add(newLetStmt(second, newCall(bindSym"runtimePairSecond",
+    copyNimTree(value))))
+  result.add(secondCheck)
+
+proc rawRuntimeRecordValueCheck(record: HostRecord, value, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]],
     mappings: seq[HostRuntimeType], records: seq[HostRecord]): NimNode =
+  var current = copyNimTree(value)
+  var fieldOverrides = overrides
+  result = newStmtList()
+  for field in record.fields:
+    let fieldValue = genSym(nskLet, "rawRecordField")
+    result.add(newLetStmt(fieldValue, newCall(bindSym"runtimePairFirst",
+      current)))
+    let check = rawRuntimeValueCheck(field.eponymType, fieldValue, globals,
+      fieldOverrides, mappings, records)
+    if check.isNil: return nil
+    result.add(check)
+    fieldOverrides.add((field.name, fieldValue))
+    current = newCall(bindSym"runtimePairSecond", current)
+  result.add(newCall(bindSym"validateRuntimeUnitValue", current))
+
+proc rawRuntimeValueCheck(eponymType, value, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]],
+    mappings: seq[HostRuntimeType], records: seq[HostRecord]): NimNode =
+  let typeHead = runtimeTypeHead(eponymType)
+  if typeHead.kind == nnkIdent:
+    let recordIndex = findHostRecord(records, $typeHead)
+    if recordIndex >= 0 and not records[recordIndex].isVariant:
+      return rawRuntimeRecordValueCheck(records[recordIndex], value, globals,
+        overrides, mappings, records)
+  let sigma = runtimeSigmaComponents(eponymType, allowDependent = true)
+  if not sigma.first.isNil:
+    return rawRuntimePairValueCheck(sigma.first, sigma.second, value, globals,
+      overrides, mappings, records, sigma.binder)
+  if typeHead.kind == nnkIdent:
+    for mapping in mappings:
+      if mapping.eponymName != $typeHead or mapping.isSynthetic or
+          mapping.isRuntimeCodec or mapping.isRuntimeVector or
+          mapping.isRuntimeList or mapping.isRuntimeOption or
+          mapping.isRuntimeVariant or mapping.isRuntimeStructuredVariant or
+          findHostRecord(records, mapping.eponymName) >= 0:
+        continue
+      let expectedType = runtimeTypeValueExpr(eponymType, globals, overrides)
+      if expectedType.isNil: return nil
+      return newCall(bindSym"validateRuntimeRawValue", copyNimTree(value),
+        expectedType, copyNimTree(globals),
+        runtimeStructuredCodecsExpr(mappings, records))
   for mapping in mappings:
     if mapping.isRuntimeList:
       let elementType = runtimeListElementType(eponymType,
         mapping.eponymName)
       if elementType.isNil: continue
-      let elementHead = runtimeTypeHead(elementType)
-      if elementHead.kind == nnkIdent and
-          (findHostRecord(records, $elementHead) >= 0 or
-           mappings.anyIt(it.eponymName == $elementHead and
-             (it.isRuntimeVector or it.isRuntimeList or it.isRuntimeOption or
-              it.isRuntimeVariant or it.isRuntimeStructuredVariant))):
-        return nil
       let expectedType = runtimeTypeValueExpr(elementType, globals, overrides)
       if expectedType.isNil: return nil
       return newCall(bindSym"validateRuntimeListRawValue",
         copyNimTree(value), expectedType, copyNimTree(globals),
-        newLit(mapping.eponymName))
+        newLit(mapping.eponymName), runtimeStructuredCodecsExpr(mappings,
+          records))
     if mapping.isRuntimeOption:
       let elementType = runtimeOptionElementType(eponymType,
         mapping.eponymName)
       if elementType.isNil: continue
-      let elementHead = runtimeTypeHead(elementType)
-      if elementHead.kind == nnkIdent and
-          (findHostRecord(records, $elementHead) >= 0 or
-           mappings.anyIt(it.eponymName == $elementHead and
-             (it.isRuntimeVector or it.isRuntimeList or it.isRuntimeOption or
-              it.isRuntimeVariant or it.isRuntimeStructuredVariant))):
-        return nil
       let expectedType = runtimeTypeValueExpr(elementType, globals, overrides)
       if expectedType.isNil: return nil
       return newCall(bindSym"validateRuntimeOptionRawValue",
         copyNimTree(value), expectedType, copyNimTree(globals),
-        newLit(mapping.eponymName))
+        newLit(mapping.eponymName), runtimeStructuredCodecsExpr(mappings,
+          records))
     if not mapping.isRuntimeVector: continue
     let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
     if vector.elementType.isNil: continue
-    let elementHead = runtimeTypeHead(vector.elementType)
-    if elementHead.kind == nnkIdent and
-        (findHostRecord(records, $elementHead) >= 0 or
-         mappings.anyIt(it.eponymName == $elementHead and
-           (it.isRuntimeVector or it.isRuntimeList or it.isRuntimeOption or
-            it.isRuntimeVariant or it.isRuntimeStructuredVariant))):
-      return nil
     let elementType = runtimeTypeValueExpr(vector.elementType, globals,
       overrides)
     var natOverrides: seq[tuple[name: string, value: NimNode]] = @[]
@@ -2208,12 +2256,14 @@ proc rawRuntimeValueCheck(eponymType, value, globals: NimNode,
     if elementType.isNil or expectedLength.isNil: return nil
     return newCall(bindSym"validateRuntimeVectorRawValue",
       copyNimTree(value), elementType, expectedLength, copyNimTree(globals),
-      newLit(mapping.eponymName))
+      newLit(mapping.eponymName), runtimeStructuredCodecsExpr(mappings,
+        records))
   if not rawRuntimeTypeCheckable(eponymType, mappings, records): return nil
   let expectedType = runtimeTypeValueExpr(eponymType, globals, overrides)
   if expectedType.isNil: return nil
-  newCall(bindSym"validateRuntimeValueType", copyNimTree(value),
-    expectedType, copyNimTree(globals))
+  newCall(bindSym"validateRuntimeRawValue", copyNimTree(value),
+    expectedType, copyNimTree(globals), runtimeStructuredCodecsExpr(mappings,
+      records))
 
 proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     defName: string, bindings: seq[HostPostulateBinding],
@@ -2844,7 +2894,7 @@ macro eponymBlock*(body: untyped): untyped =
           var rawRuntimeMappings = runtimeTypes
           for typeName in generic.typeNames:
             rawRuntimeMappings.add(HostRuntimeType(eponymName: typeName,
-              nimType: ident(typeName)))
+              nimType: ident(typeName), isSynthetic: true))
           var genericArgIndex = 0
           for genericParam in procDecl[2]:
             for binderOffset in 0 ..< genericParam.len - 2:
@@ -2941,7 +2991,7 @@ macro eponymBlock*(body: untyped): untyped =
         var rawRuntimeMappings = runtimeTypes
         for typeName in generic.typeNames:
           rawRuntimeMappings.add(HostRuntimeType(eponymName: typeName,
-            nimType: ident(typeName)))
+            nimType: ident(typeName), isSynthetic: true))
         if generic.error.len == 0:
           for i, genericName in generic.genericNames:
             rawArgumentOverrides.add(($genericName,

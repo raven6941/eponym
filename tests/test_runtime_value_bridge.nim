@@ -45,6 +45,13 @@ proc runtimeIntVector(values: seq[int], globals: Globals): Value =
       [intType, natToValue(values.high - i, globals),
        intToValue(values[i]), result])
 
+proc runtimeIntMatrix(values: seq[seq[int]], globals: Globals): Value =
+  var rows: seq[Value] = @[]
+  for row in values:
+    rows.add(runtimeIntVector(row, globals))
+  seqToVecValue[Value](rows, rows.len, globals, "Vec",
+    proc(value: Value, globals: Globals): Value = value)
+
 type ChannelHandle = object
   id: int
   label: string
@@ -216,6 +223,9 @@ eponymBlock:
   runtimeValue(treeIdentity)
   runtimeValue(decisionIdentity)
   runtimeValue(handleEnvelopeIdentity)
+  proc generatedSizedTreeRawIdentity(length: Nat,
+      tree: SizedTree[length]): SizedTree[length] = tree
+  runtimeValue(generatedSizedTreeRawIdentity)
   proc genericIndexedTreeProjection[length: Nat,
       tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
   runtimeValue(genericIndexedTreeProjection)
@@ -290,6 +300,7 @@ eponymBlock:
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
   runtimePairTrusted(generatedDependentPairVecIdentity)
+  runtimeValue(generatedDependentPairVecIdentity)
   proc generatedShadowedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(length: Nat, Vec[Int, length]))):
       Sig(length: Nat, Sig(length: Nat, Vec[Int, length])) = value
@@ -613,6 +624,7 @@ eponymBlock:
     field(channel, Channel)
   runtimeType(Point, RuntimePoint)
   proc generatedPointId(value: Point): Point = value
+  runtimeValue(generatedPointId)
   record(Envelope):
     field(point, Point)
     field(note, Message)
@@ -992,11 +1004,28 @@ when isMainModule:
         variantGlobals, "SizedTree", ["sizedTree"])
       let runtimeResult = genericUnmappedSizedTreeProjectionRuntimeValueRaw(
         [natToValue(length, variantGlobals), indexed], [intToValue(0)])
+      let ordinaryRuntimeResult = generatedSizedTreeRawIdentityRuntimeValue(
+        [natToValue(length, variantGlobals), indexed])
+      var wrongOrdinaryIndexRejected = false
+      try:
+        let wrongIndexed = runtimeVariantToValue(RuntimeVariant(
+          constructor: "sizedTree",
+          arguments: @[natToValue(length + 1, variantGlobals), tree]),
+          variantGlobals, "SizedTree", ["sizedTree"])
+        discard generatedSizedTreeRawIdentityRuntimeValue(
+          [natToValue(length, variantGlobals), wrongIndexed])
+      except ValueError:
+        wrongOrdinaryIndexRejected = true
       let decoded = valueToRuntimeVariant(runtimeResult.value,
         runtimeResult.globals,
         "SizedTree", ["sizedTree"])
+      let ordinaryDecoded = valueToRuntimeVariant(ordinaryRuntimeResult.value,
+        ordinaryRuntimeResult.globals, "SizedTree", ["sizedTree"])
       valueToNat(decoded.arguments[0], runtimeResult.globals) == length and
-        decoded.arguments[1].whnfRefId == tree.whnfRefId,
+        decoded.arguments[1].whnfRefId == tree.whnfRefId and
+        valueToNat(ordinaryDecoded.arguments[0],
+          ordinaryRuntimeResult.globals) == length and
+        wrongOrdinaryIndexRejected,
     shrinkInt)
   if not rawAppliedGenericTypeCases:
     quit(1)
@@ -1190,7 +1219,17 @@ when isMainModule:
     proc(n: int): bool =
       let input = RuntimePoint(x: abs(n mod 1000),
         channel: ChannelHandle(id: n, label: "point-" & $n))
-      generatedPointId(input) == input,
+      let runtime = generatedPointIdRuntimeValue(input)
+      let rawRuntime = generatedPointIdRuntimeValue([runtime.value])
+      var wrongOpaqueBoxRejected = false
+      try:
+        let malformed = pairValue(natToValue(input.x, runtime.globals),
+          pairValue(toHostValue("wrong host type"), unitValue()))
+        discard generatedPointIdRuntimeValue([malformed])
+      except ValueError:
+        wrongOpaqueBoxRejected = true
+      generatedPointId(input) == input and
+        rawRuntime.value.whnfKind == wPair and wrongOpaqueBoxRejected,
     shrinkInt)
   if not generatedRecordRoundTrips:
     quit(1)
@@ -1325,13 +1364,26 @@ when isMainModule:
       for i in 0 ..< length: values.add(i + n)
       let input = (length, (n, values))
       let roundTrips = generatedDependentPairVecIdentity(input) == input
+      let runtime = generatedDependentPairVecIdentityRuntimeValue(input)
+      let rawRuntime = generatedDependentPairVecIdentityRuntimeValue(
+        [runtime.value])
       let badValues = if values.len == 0: @[n] else: values[0 ..< values.len - 1]
       var mismatchRejected = false
       try:
         discard generatedDependentPairVecIdentity((length, (n, badValues)))
       except ValueError:
         mismatchRejected = true
-      roundTrips and mismatchRejected,
+      var rawMismatchRejected = false
+      try:
+        let malformed = pairValue(natToValue(length, runtime.globals),
+          pairValue(intToValue(n), runtimeIntVector(badValues,
+            runtime.globals)))
+        discard generatedDependentPairVecIdentityRuntimeValue([malformed])
+      except ValueError:
+        rawMismatchRejected = true
+      roundTrips and runtime.value.whnfKind == wPair and
+        rawRuntime.value.whnfKind == wPair and mismatchRejected and
+        rawMismatchRejected,
     shrinkInt)
   let generatedDependentPairEnvelopeCases = forAll(
     "dependent record and Sigma indices compose through Vec codecs", r, 200,
@@ -1783,10 +1835,27 @@ proc callbackRole : Callback -> Sample -> Sample =
     proc(values: seq[int]): bool =
       let runtime = generatedTreeIdentityRuntimeValue(values)
       let rawRuntime = generatedTreeIdentityRuntimeValue([runtime.value])
-      generatedTreeIdentity(values) == values and
+      let rawTree = encodeRuntimeTree(values, runtime.globals)
+      let rawTreeRuntime = generatedTreeIdentityRuntimeValue([rawTree])
+      var malformedTreeRejected = false
+      try:
+        let malformedTree = callRuntimeValue(
+          eval(runtime.globals["treeNode"].tm, @[]),
+          [intToValue(1), intToValue(2)])
+        discard generatedTreeIdentityRuntimeValue([malformedTree])
+      except ValueError:
+        malformedTreeRejected = true
+      let typedRoundTrip = generatedTreeIdentity(values) == values
+      let codecRoundTrip = decodeRuntimeTree(runtime.value,
+        runtime.globals) == values
+      let rawRoundTrip = decodeRuntimeTree(rawRuntime.value,
+        rawRuntime.globals) == values
+      let recursiveRawRoundTrip = decodeRuntimeTree(rawTreeRuntime.value,
+        rawTreeRuntime.globals) == values
+      typedRoundTrip and
         generatedBoundTreeReverse(values) == reverseRuntimeTree(values) and
-        decodeRuntimeTree(runtime.value, runtime.globals) == values and
-        decodeRuntimeTree(rawRuntime.value, rawRuntime.globals) == values,
+        codecRoundTrip and rawRoundTrip and recursiveRawRoundTrip and
+        malformedTreeRejected,
     )
   if not customCodecCases:
     quit(1)
@@ -1802,9 +1871,21 @@ proc callbackRole : Callback -> Sample -> Sample =
       let runtime = generatedNestedVectorIdentityRuntimeValue[2, 3](matrix)
       let rawRuntime = generatedNestedVectorIdentityRuntimeValue[2, 3](
         [runtime.value])
+      let rawInput = runtimeIntMatrix(matrix, runtime.globals)
+      let rawInputRuntime = generatedNestedVectorIdentityRuntimeValue[2, 3](
+        [rawInput])
+      var rejectedMalformedNestedInput = false
+      try:
+        let malformed = runtimeIntMatrix(@[matrix[0], matrix[1] & @[seed]],
+          runtime.globals)
+        discard generatedNestedVectorIdentityRuntimeValue[2, 3]([malformed])
+      except ValueError:
+        rejectedMalformedNestedInput = true
       generatedNestedVectorIdentity[2, 3](matrix) == matrix and
         decodeRuntimeIntMatrix(runtime.value, 3, runtime.globals) == matrix and
-        decodeRuntimeIntMatrix(rawRuntime.value, 3, rawRuntime.globals) == matrix,
+        decodeRuntimeIntMatrix(rawRuntime.value, 3, rawRuntime.globals) == matrix and
+        decodeRuntimeIntMatrix(rawInputRuntime.value, 3,
+          rawInputRuntime.globals) == matrix and rejectedMalformedNestedInput,
     shrinkInt)
   if not nestedVectorCases:
     quit(1)
@@ -1823,6 +1904,15 @@ proc callbackRole : Callback -> Sample -> Sample =
         suffixLength: input.suffixLength, values: values)
       let runtime = generatedSizedVecIdentityRuntimeValue(value)
       let rawRuntime = generatedSizedVecIdentityRuntimeValue([runtime.value])
+      let malformedRawRecord = pairValue(natToValue(input.prefixLength,
+        runtime.globals), pairValue(natToValue(input.suffixLength,
+        runtime.globals), pairValue(runtimeIntVector(values & @[input.seed],
+        runtime.globals), unitValue())))
+      var rawRecordMismatchRejected = false
+      try:
+        discard generatedSizedVecIdentityRuntimeValue([malformedRawRecord])
+      except ValueError:
+        rawRecordMismatchRejected = true
       let runtimeLength = valueToNat(runtimePairFirst(runtime.value),
         runtime.globals) + valueToNat(runtimePairFirst(
           runtimePairSecond(runtime.value)), runtime.globals)
@@ -1830,6 +1920,7 @@ proc callbackRole : Callback -> Sample -> Sample =
         rawRuntime.globals) + valueToNat(runtimePairFirst(
           runtimePairSecond(rawRuntime.value)), rawRuntime.globals)
       generatedSizedVecIdentity(value) == value and
+        rawRecordMismatchRejected and
         runtimeLength == length and
         decodeRuntimeIntVector(runtimePairFirst(
           runtimePairSecond(runtimePairSecond(runtime.value))), runtimeLength,

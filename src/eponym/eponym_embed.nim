@@ -445,36 +445,6 @@ proc vecValueToSeq*[T](value: Value, expectedLength: int, globals: Globals,
     raise newException(ValueError,
       "runtime value is not a Vec of the declared length")
 
-proc validateRuntimeVectorRawValue*(value, elementType: Value,
-    expectedLength: int, globals: Globals, familyName: string) =
-  ## Check a raw Vec without asking the general term inferencer to recurse over
-  ## the full constructor tree. The vector traversal checks shape and indices;
-  ## the callback checks each element against its declared Eponym type.
-  if expectedLength < 0:
-    raise newException(ValueError, "Vec length cannot be negative")
-  validateHostVectorCodec(globals, familyName)
-  let nilId = globals["nil"].tm.refId
-  let consId = globals["cons"].tm.refId
-  var current = value
-  for i in 0 ..< expectedLength:
-    if current.whnfKind != wRef or current.whnfRefId != consId or
-        current.whnfSpineLen != 4:
-      raise newException(ValueError,
-        "runtime value is not a Vec of the declared length")
-    for argIndex in 0 ..< current.whnfSpineLen:
-      if current.whnfSpineKind(argIndex) != eApp:
-        raise newException(ValueError,
-          "runtime Vec constructor has an invalid spine")
-    let expectedTailLength = expectedLength - i - 1
-    if valueToNat(current.whnfSpineArg(1), globals) != expectedTailLength:
-      raise newException(ValueError,
-        "runtime Vec tail index does not match its spine")
-    validateRuntimeValueType(current.whnfSpineArg(2), elementType, globals)
-    current = current.whnfSpineArg(3)
-  if current.whnfKind != wRef or current.whnfRefId != nilId or
-      current.whnfSpineLen != 1 or current.whnfSpineKind(0) != eApp:
-    raise newException(ValueError,
-      "runtime value is not a Vec of the declared length")
 
 proc seqToListValue*[T](items: seq[T], globals: Globals,
     familyName: string,
@@ -509,28 +479,6 @@ proc listValueToSeq*[T](value: Value, globals: Globals,
     result.add(decode(current.whnfSpineArg(1), globals))
     current = current.whnfSpineArg(2)
 
-proc validateRuntimeListRawValue*(value, elementType: Value,
-    globals: Globals, familyName: string) =
-  validateHostListCodec(globals, familyName)
-  let nilId = globals["nil"].tm.refId
-  let consId = globals["cons"].tm.refId
-  var current = value
-  while true:
-    if current.whnfKind != wRef:
-      raise newException(ValueError, "runtime value is not a List")
-    if current.whnfRefId == nilId:
-      if current.whnfSpineLen != 1 or current.whnfSpineKind(0) != eApp:
-        raise newException(ValueError,
-          "runtime List nil constructor has invalid spine")
-      return
-    if current.whnfRefId != consId or current.whnfSpineLen != 3:
-      raise newException(ValueError, "runtime value is not a List")
-    for argIndex in 0 ..< current.whnfSpineLen:
-      if current.whnfSpineKind(argIndex) != eApp:
-        raise newException(ValueError,
-          "runtime List constructor has an invalid spine")
-    validateRuntimeValueType(current.whnfSpineArg(1), elementType, globals)
-    current = current.whnfSpineArg(2)
 
 proc optionToValue*[T](hostValue: Option[T], globals: Globals,
     familyName: string,
@@ -560,22 +508,6 @@ proc valueToOption*[T](value: Value, globals: Globals,
     raise newException(ValueError, "runtime value is not an Option")
   some(decode(value.whnfSpineArg(1), globals))
 
-proc validateRuntimeOptionRawValue*(value, elementType: Value,
-    globals: Globals, familyName: string) =
-  validateHostOptionCodec(globals, familyName)
-  if value.whnfKind != wRef:
-    raise newException(ValueError, "runtime value is not an Option")
-  let noneId = globals["none"].tm.refId
-  let someId = globals["some"].tm.refId
-  if value.whnfRefId == noneId:
-    if value.whnfSpineLen != 1 or value.whnfSpineKind(0) != eApp:
-      raise newException(ValueError,
-        "runtime Option none constructor has invalid spine")
-    return
-  if value.whnfRefId != someId or value.whnfSpineLen != 2 or
-      value.whnfSpineKind(0) != eApp or value.whnfSpineKind(1) != eApp:
-    raise newException(ValueError, "runtime value is not an Option")
-  validateRuntimeValueType(value.whnfSpineArg(1), elementType, globals)
 
 proc validateHostMappedNaryType*(globals: Globals, postulateName: string,
                                  typeNames: openArray[string]) =
@@ -1040,6 +972,10 @@ proc runtimePairSecond*(value: Value): Value =
     raise newException(ValueError, "runtime value is not a pair")
   value.whnfSnd
 
+proc validateRuntimeUnitValue*(value: Value) =
+  if value.whnfKind != wConst or value.whnfConst != cVoid:
+    raise newException(ValueError, "runtime value is not unit")
+
 proc valueToInt*(v: Value): int =
   ## Convert ETT value to Nim int (must be wInt).
   let w = v.whnf
@@ -1129,6 +1065,7 @@ type
     encode*: proc(value: RuntimeStructuredValue, globals: Globals): Value {.closure.}
     decode*: proc(value: Value, globals: Globals): RuntimeStructuredValue {.closure.}
 
+
 type RuntimeStructuredBox[T] = ref object of RootObj
   value: T
 
@@ -1195,6 +1132,7 @@ proc runtimeStructuredVariantToValue*(variant: RuntimeStructuredVariant,
 proc valueToRuntimeStructuredVariant*(value: Value, globals: Globals,
     familyName: string, constructors: openArray[string],
     codecs: openArray[RuntimeStructuredCodec] = []): RuntimeStructuredVariant
+
 
 
 proc runtimeStructuredValueToValue(value: RuntimeStructuredValue,
@@ -1386,6 +1324,159 @@ proc valueToRuntimeVariant*(value: Value, globals: Globals,
     return
   raise newException(ValueError,
     "runtime value is not a constructor of '" & familyName & "'")
+
+proc validateRuntimeRawValue*(value, expectedType: Value, globals: Globals,
+    codecs: openArray[RuntimeStructuredCodec])
+
+
+proc validateRuntimeVectorRawValue*(value, elementType: Value,
+    expectedLength: int, globals: Globals, familyName: string,
+    codecs: openArray[RuntimeStructuredCodec]) =
+  ## Check a raw Vec without asking the general term inferencer to recurse over
+  ## the full constructor tree. The vector traversal checks shape and indices;
+  ## the callback checks each element against its declared Eponym type.
+  if expectedLength < 0:
+    raise newException(ValueError, "Vec length cannot be negative")
+  validateHostVectorCodec(globals, familyName)
+  let nilId = globals["nil"].tm.refId
+  let consId = globals["cons"].tm.refId
+  var current = value
+  for i in 0 ..< expectedLength:
+    if current.whnfKind != wRef or current.whnfRefId != consId or
+        current.whnfSpineLen != 4:
+      raise newException(ValueError,
+        "runtime value is not a Vec of the declared length")
+    for argIndex in 0 ..< current.whnfSpineLen:
+      if current.whnfSpineKind(argIndex) != eApp:
+        raise newException(ValueError,
+          "runtime Vec constructor has an invalid spine")
+    let expectedTailLength = expectedLength - i - 1
+    if valueToNat(current.whnfSpineArg(1), globals) != expectedTailLength:
+      raise newException(ValueError,
+        "runtime Vec tail index does not match its spine")
+    validateRuntimeRawValue(current.whnfSpineArg(2), elementType, globals,
+      codecs)
+    current = current.whnfSpineArg(3)
+  if current.whnfKind != wRef or current.whnfRefId != nilId or
+      current.whnfSpineLen != 1 or current.whnfSpineKind(0) != eApp:
+    raise newException(ValueError,
+      "runtime value is not a Vec of the declared length")
+
+
+proc validateRuntimeListRawValue*(value, elementType: Value,
+    globals: Globals, familyName: string,
+    codecs: openArray[RuntimeStructuredCodec]) =
+  validateHostListCodec(globals, familyName)
+  let nilId = globals["nil"].tm.refId
+  let consId = globals["cons"].tm.refId
+  var current = value
+  while true:
+    if current.whnfKind != wRef:
+      raise newException(ValueError, "runtime value is not a List")
+    if current.whnfRefId == nilId:
+      if current.whnfSpineLen != 1 or current.whnfSpineKind(0) != eApp:
+        raise newException(ValueError,
+          "runtime List nil constructor has invalid spine")
+      return
+    if current.whnfRefId != consId or current.whnfSpineLen != 3:
+      raise newException(ValueError, "runtime value is not a List")
+    for argIndex in 0 ..< current.whnfSpineLen:
+      if current.whnfSpineKind(argIndex) != eApp:
+        raise newException(ValueError,
+          "runtime List constructor has an invalid spine")
+    validateRuntimeRawValue(current.whnfSpineArg(1), elementType, globals,
+      codecs)
+    current = current.whnfSpineArg(2)
+
+
+proc validateRuntimeOptionRawValue*(value, elementType: Value,
+    globals: Globals, familyName: string,
+    codecs: openArray[RuntimeStructuredCodec]) =
+  validateHostOptionCodec(globals, familyName)
+  if value.whnfKind != wRef:
+    raise newException(ValueError, "runtime value is not an Option")
+  let noneId = globals["none"].tm.refId
+  let someId = globals["some"].tm.refId
+  if value.whnfRefId == noneId:
+    if value.whnfSpineLen != 1 or value.whnfSpineKind(0) != eApp:
+      raise newException(ValueError,
+        "runtime Option none constructor has invalid spine")
+    return
+  if value.whnfRefId != someId or value.whnfSpineLen != 2 or
+      value.whnfSpineKind(0) != eApp or value.whnfSpineKind(1) != eApp:
+    raise newException(ValueError, "runtime value is not an Option")
+  validateRuntimeRawValue(value.whnfSpineArg(1), elementType, globals, codecs)
+
+
+proc validateRuntimeRawValue*(value, expectedType: Value, globals: Globals,
+    codecs: openArray[RuntimeStructuredCodec]) =
+  ## Validate supported structural values directly from their checked
+  ## constructor telescopes. Opaque host representations remain trusted.
+  if value.isNil or expectedType.isNil:
+    raise newException(ValueError, "cannot validate an incomplete runtime Value")
+  if expectedType.whnfKind == wSi:
+    if value.whnfKind != wPair:
+      raise newException(ValueError, "runtime value is not a Sigma pair")
+    let first = value.whnfFst
+    validateRuntimeRawValue(first, expectedType.whnfDom, globals, codecs)
+    var secondType: Value
+    try:
+      secondType = expectedType.whnfScopeApply(first)
+    except IndexDefect:
+      raise newException(ValueError,
+        "cannot instantiate this runtime Sigma field type")
+    validateRuntimeRawValue(value.whnfSnd, secondType, globals, codecs)
+    return
+  if expectedType.whnfKind == wConst and expectedType.whnfConst == cOne:
+    if value.whnfKind != wConst or value.whnfConst != cVoid:
+      raise newException(ValueError, "runtime value is not unit")
+    return
+  let headName = runtimeDomainTypeName(expectedType, globals)
+  if headName.len == 0 or headName in ["Int", "Nat", "Bool"]:
+    validateRuntimeValueType(value, expectedType, globals)
+    return
+  for codec in codecs:
+    if codec.eponymName == headName and codec.opaqueHost:
+      discard codec.decode(value, globals)
+      return
+  let constructors = runtimeVariantConstructorNames(globals, headName)
+  if constructors.len == 0:
+    validateRuntimeValueType(value, expectedType, globals)
+    return
+  if expectedType.whnfSpineLen == 2 and "nil" in constructors and
+      "cons" in constructors:
+    let expectedLength = valueToNat(expectedType.whnfSpineArg(1), globals)
+    validateRuntimeVectorRawValue(value, expectedType.whnfSpineArg(0),
+      expectedLength, globals, headName, codecs)
+    return
+  if expectedType.whnfSpineLen == 1 and "nil" in constructors and
+      "cons" in constructors:
+    validateRuntimeListRawValue(value, expectedType.whnfSpineArg(0),
+      globals, headName, codecs)
+    return
+  if expectedType.whnfSpineLen == 1 and "none" in constructors and
+      "some" in constructors:
+    validateRuntimeOptionRawValue(value, expectedType.whnfSpineArg(0),
+      globals, headName, codecs)
+    return
+  let raw = valueToRuntimeVariant(value, globals, headName, constructors)
+  let constructor = globals[raw.constructor]
+  var constructorType = eval(constructor.ty, @[])
+  for argument in raw.arguments:
+    if constructorType.whnfKind != wPi:
+      raise newException(ValueError,
+        "runtime constructor has an invalid Pi telescope")
+    let domain = constructorType.whnfDom
+    validateRuntimeRawValue(argument, domain, globals, codecs)
+    constructorType = whnfScopeApply(constructorType, argument)
+  var supply = Supply()
+  try:
+    areEqual(supply, vStar(), constructorType, expectedType)
+  except ValueError:
+    raise newException(ValueError,
+      "runtime constructor result does not match its declared Eponym type")
+
+
 
 proc validateRuntimeValueType*(value: Value, globals: Globals,
                                typeName: string) =

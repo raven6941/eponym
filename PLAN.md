@@ -433,10 +433,17 @@ implementations.
   applied to earlier generic and ordinary arguments. 200-case properties cover
   valid unmapped Token and indexed `SizedTree[length]` values; negative cases
   reject wrong Token, wrong primitive arguments, and mismatched indexed values.
-  Primitive-element Vec, List, and Option values validate shape, represented
-  indices, and elements without recursively inferring the whole value. Nested
-  structural elements, records, variants, erased type witnesses, opaque host
-  boxes, and more complex binder type expressions remain caller-checked.
+  Vec, List, and Option values validate shape, represented indices, and
+  elements without recursively inferring the whole value. Nested vectors and
+  payload-bearing data variants recurse through checked constructor
+  telescopes. 200-case properties accept valid nested vectors and trees, and
+  reject a wrong inner vector length and malformed recursive tree tails.
+  Named records and Sigma pairs also validate fields against dependent field
+  types; 200-case properties reject raw records and pairs whose Vec length
+  disagrees with earlier Nat fields. Mapped opaque values are checked against
+  their Nim box type, while semantic correspondence to the Eponym type remains
+  trusted. Erased type witnesses and more complex binder type expressions
+  remain caller-checked.
 - [x] Add `{.rawValue.}` callback proc types that pass callback arguments and
   results as Eponym `Value`s, without requiring codecs for the function's leaf
   types. The checked Eponym callback type remains explicit, and the Nim callback
@@ -554,8 +561,10 @@ implementations.
   bridge now represents primitive Int/Nat, evaluator closures, opaque boxed
   Nim values, non-dependent Sigma tuples, and non-dependent named records;
   `runtimeValue(name)` exposes a checked definition's Value for a host-side
-  interpreter, including raw Value arguments with arity checking. It does not
-  type-check those raw arguments or generate a Nim data type. Dependent pairs
+  interpreter, including raw Value arguments with arity checking. Local raw
+  arguments are checked recursively when their Eponym structure is supported;
+  imported definitions without a local signature still check only arity. This
+  interface does not generate a Nim data type. Dependent pairs
   still lack general codecs and generated typed wrappers. The remaining
   implementation is tracked in the
    preceding ABI/codec items.

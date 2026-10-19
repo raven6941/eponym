@@ -94,18 +94,24 @@ the result as a `Value`. Mapped host values are not checked against dependent
 indices. A raw `openArray[Value]` overload remains available and checks only
 argument count and validates values when their Eponym types can be represented
 without opaque host boxes, including supported dependent argument types.
-Structural `Vec`, `List`, and `Option` values with primitive elements are
-checked in one traversal for shape, represented indices, and element types.
-Nested structural elements, structural records and variants, and mapped opaque
-host boxes are skipped by this raw checker. Their erased type-level element
-witnesses cannot be recovered from a raw runtime value. These values and
-unsupported type expressions still require caller-side validation. Generic local definitions also get
+Structural `Vec`, `List`, and `Option` values are checked in one traversal for
+shape, represented indices, and element types. Nested vectors and recursive
+payload-bearing data variants are checked through their constructor
+telescopes, including fields nested in those structures. Named records and
+Sigma pairs are checked field by field, substituting earlier values into later
+field types. Mapped opaque host boxes are checked against their declared Nim
+box type, while the semantic correspondence between the Nim payload and its
+Eponym type remains trusted. Erased type-level element witnesses cannot be
+recovered from a raw runtime value; unsupported type expressions still
+require caller-side validation. For data variants, each constructor's
+instantiated result type is compared with the expected indexed type. Generic local definitions also get
 `nameRuntimeValueRaw(genericArgs, valueArgs)`, which accepts all generic
 arguments and ordinary arguments as `openArray[Value]`. It checks generic
 values against supported binder type expressions, including applied domains
 that refer to earlier generic arguments. Ordinary raw values containing
-nested structural values, structural records or variants, opaque host boxes,
-or unsupported type expressions still need caller-side validation.
+unsupported type expressions still need caller-side validation. Mapped
+opaque boxes are checked against their Nim box type; their Eponym semantics
+remain trusted.
 `runtimeValue(importedDefinition)` also works for definitions imported
 from `.ep` files without a local Nim signature. When the checked Pi signature
 has runtime codecs, the macro derives a typed Nim wrapper and typed
