@@ -69,6 +69,8 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_binding_nim_type.nim", "type mismatch"),
     ("tests/fixtures/embedded_err_binding_opaque_nim_type.nim",
      "type mismatch"),
+    ("tests/fixtures/embedded_err_generic_dynamic_callback.nim",
+     "type mismatch"),
     ("tests/fixtures/embedded_err_unsupported_runtime_type.nim",
      "no runtime codec for Eponym result type 'Thing'"),
     ("tests/fixtures/embedded_err_generic_runtime_type.nim",
