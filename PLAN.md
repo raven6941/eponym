@@ -361,6 +361,11 @@ implementations.
    to same-named Nim enum members. The codec translates through checked
    constructor reference identities; a 200-case property covers every variant,
    and a compile-fail fixture rejects constructors with payloads.
+- [x] Bridge multi-argument Nim closure types to curried Eponym function
+   values in both directions. Each argument and result uses the existing
+   recursive runtime codecs; 200-case properties cover primitive and explicitly
+   mapped opaque arguments for callbacks passed into and returned from checked
+   functions. Returned Nim closures require `{.closure.}`.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to dependent signatures, value-indexed
    generics, and higher-order definitions. Definitions without
