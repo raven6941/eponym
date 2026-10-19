@@ -677,14 +677,25 @@ implementations.
 - [x] Verify the resolution contract against a clean package-shaped install
   from a separate working directory; document the path order and absolute
   override behavior.
+- [x] Verify the resolution contract against a clean installed package from a
+  separate working directory; document the path order and absolute override
+  behavior. `tests/test_package_prelude_install.sh` mirrors the flat installed
+  module layout from `installFiles`; an isolated Nimble install compiled the
+  tutorial and ran the installed-prelude runtime example.
 - [ ] Revisit the first-use time estimate after installation and editor setup
    are streamlined.
 
 **Exit criteria:**
 
-- [ ] Examples use the documented Nim-friendly syntax; the tutorial runs
-  from a clean Nim project using the published package; `.ep` resolution
-  works from a different working directory without hidden global state.
+- [x] Compile the marked hello and vector snippets extracted directly from
+  `docs/tutorial.md` against a clean package-shaped install, and resolve `.ep`
+  imports from a different working directory; `tests/test_package_prelude_install.sh`
+  verifies these paths without hidden global state.
+- [x] Verify `nimble install` in an isolated `NIMBLE_DIR` using cached local
+  `falsify` and package-index data, then compile the tutorial snippets and run
+  the installed-prelude example from a separate clean Nim project.
+- [ ] Revisit the first-use estimate after installation and editor setup are
+  streamlined.
 
 ### Cross-stage validation and project claims
 
