@@ -619,7 +619,12 @@ implementations.
      and typed `RuntimeValue` wrappers. Another 200-case property covers
      `Option[int]` values and callbacks, including both `none` and `some`.
      Compile-time checking rejects a callback whose type does not match the
-     inferred generic type.
+     inferred generic type. When a generic type appears under a mapped
+     structural family (`Vec`, `List`, or `Option`) in an imported callback
+     signature, the wrapper now carries the direct mapped type witness into
+     recursive callback codecs. A 200-case property covers a custom
+     `runtimeCodec` value inside a dependent Vec callback through generated
+     and typed `RuntimeValue` wrappers, with the Vec index checked.
    - [x] Reconstruct typed wrappers for local clause-compiled definitions
      from their checked Pi signatures. A 200-case property calls a `Nat -> Nat`
      identity through its generated `int` wrapper. Runtime application helpers

@@ -1724,6 +1724,36 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
   let generic = if toValue: bindSym"toHostValue" else: bindSym"valueToHost"
   newTree(nnkBracketExpr, generic, nimType)
 
+proc genericTypeUsedByStructuredCallback(decl: NimNode, name: string,
+    mappings: seq[HostRuntimeType]): bool =
+  ## Imported definitions do not have a Nim body AST from which to discover
+  ## runtime uses of a generic type. When that type occurs beneath a mapped
+  ## structural family in a callback signature, preserve its explicit runtime
+  ## type witness so the callback adapter can recursively apply the leaf codec.
+  if decl.kind != nnkProcDef or decl[3].kind != nnkFormalParams:
+    return false
+  for i in 1 ..< decl[3].len:
+    let parameter = decl[3][i]
+    if parameter.kind != nnkIdentDefs: continue
+    let callback = runtimeProcParts(parameter[^2])
+    if callback.resultType.isNil: continue
+    var callbackTypes = callback.argTypes
+    callbackTypes.add(callback.resultType)
+    for callbackType in callbackTypes:
+      var pending = @[callbackType]
+      while pending.len > 0:
+        let current = pending.pop()
+        if not mentionsName(current, name): continue
+        let head = runtimeTypeHead(current)
+        if head.kind == nnkIdent:
+          for mapping in mappings:
+            if mapping.eponymName == $head and
+                (mapping.isRuntimeVector or mapping.isRuntimeList or
+                 mapping.isRuntimeOption):
+              return true
+        for child in current:
+          pending.add(child)
+
 proc runtimeStructuredCodecsExpr(mappings: seq[HostRuntimeType],
                                  records: seq[HostRecord]): NimNode =
   result = newNimNode(nnkBracket)
@@ -2300,8 +2330,10 @@ proc genericRuntimeInfo(decl: NimNode,
       if name in result.genericNames.mapIt($it):
         result.error = "duplicate generic runtime parameter '" & name & "'"
         return
-      let typeUsedByBody = binderType == "Type 0" and decl.len > 6 and
-        not decl[6].isNil and mentionsName(decl[6], name)
+      let typeUsedByBody = binderType == "Type 0" and
+        ((decl.len > 6 and not decl[6].isNil and
+          mentionsName(decl[6], name)) or
+         genericTypeUsedByStructuredCallback(decl, name, mappings))
       if typeUsedByBody:
         var representedTypes: seq[string] = @[]
         for mapping in mappings:

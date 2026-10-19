@@ -1,14 +1,15 @@
 import "../../lib/vec.ep"
-import "../../lib/bool.ep"
 import "../../lib/option.ep"
-postulate Int : Type 0
+import "runtime_variant.ep"
 postulate Token : Type 0
-postulate RuntimeHandle : Type 0
 proc importedIntIdentity : Int -> Int = lam (value : Int). value
 proc importedNullaryInt : Pi (_ : 1). Int = lam (_ : 1). addInt 40 2
 proc importedGenericIdentity (A : Type 0) (value : A) : A = value
 proc importedGenericCallbackApply (A : Type 0) (callback : A -> A)
     (value : A) : A = callback value
+proc importedGenericDependentVectorCallbackApply (A : Type 0)
+    (callback : Pi (n : Nat). Vec A n -> Vec A n) (n : Nat)
+    (values : Vec A n) : Vec A n = callback n values
 proc importedImplicitGenericIdentity {A : Type 0} (value : A) : A = value
 proc importedImplicitNatVecIdentity {n : Nat} (values : Vec Int n) : Vec Int n = values
 proc importedImplicitBoolIdentity {flag : Bool} : Bool = flag

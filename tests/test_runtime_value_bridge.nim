@@ -410,6 +410,7 @@ eponymBlock:
   runtimeValue(importedNullaryInt)
   runtimeValue(importedGenericIdentity)
   runtimeValue(importedGenericCallbackApply)
+  runtimeValue(importedGenericDependentVectorCallbackApply)
   runtimeValue(importedImplicitGenericIdentity)
   runtimeValue(importedImplicitNatVecIdentity)
   runtimeValue(importedImplicitBoolIdentity)
@@ -1760,6 +1761,35 @@ when isMainModule:
       let runtime = importedGenericCallbackApplyRuntimeValue(callback, value)
       typed == expected and valueToHost[Option[int]](runtime.value) == expected)
   if not importedGenericOptionCallbackCases:
+    quit(1)
+  let importedGenericDependentVectorCallbackCases = forAll(
+    "imported generic callbacks preserve dependent Vec indices", r, 200,
+    proc(r: var Rng): tuple[length, seed, delta: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[length, seed, delta: int]): bool =
+      var values: seq[ChannelHandle] = @[]
+      var expected: seq[ChannelHandle] = @[]
+      for i in 0 ..< input.length:
+        let item = ChannelHandle(id: input.seed + i, label: "generic-vec")
+        values.add(item)
+        expected.add(ChannelHandle(id: item.id + input.delta,
+          label: "decoded-" & $(item.id + input.delta)))
+      let callback: proc(length: int, values: seq[ChannelHandle]):
+          seq[ChannelHandle] {.closure.} =
+        proc(length: int, values: seq[ChannelHandle]): seq[ChannelHandle] =
+          var mapped: seq[ChannelHandle] = @[]
+          for item in values:
+            mapped.add(ChannelHandle(id: item.id + input.delta,
+              label: item.label & "/mapped"))
+          mapped
+      let typed = importedGenericDependentVectorCallbackApply(callback,
+        input.length, values)
+      let runtime = importedGenericDependentVectorCallbackApplyRuntimeValue(
+        callback, input.length, values)
+      typed == expected and
+        vecValueToSeq[ChannelHandle](runtime.value, input.length,
+          runtime.globals, "Vec", decodeRuntimeHandle) == expected)
+  if not importedGenericDependentVectorCallbackCases:
     quit(1)
   let importedImplicitNatVecCases = forAll(
     "imported implicit Nat binders have static and dynamic Nim wrappers",
