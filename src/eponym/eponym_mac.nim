@@ -44,6 +44,9 @@ var legacyTypeFamilies {.compileTime.} = initHashSet[string]()
 var legacyTypeNames {.compileTime.} = initHashSet[string]()
 var scopedLegacyTypeNames {.compileTime.} = initHashSet[string]()
 var legacyFieldCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
+var legacyRecordFieldCallInfo {.compileTime.} =
+  initTable[string, LegacyCallInfo]()
+var scopedLegacyValueTypeNames {.compileTime.} = initTable[string, string]()
 var ambiguousLegacyFieldNames {.compileTime.} = initHashSet[string]()
 
 proc sameCallInfo(a, b: LegacyCallInfo): bool =
@@ -164,6 +167,12 @@ proc callInfoForHead(n: NimNode,
   of nnkDotExpr:
     if head.len == 2 and head[1].kind in {nnkIdent, nnkSym}:
       let field = $head[1]
+      let receiver = unwrapParens(head[0])
+      if receiver.kind in {nnkIdent, nnkSym} and
+          $receiver in scopedLegacyValueTypeNames:
+        let key = scopedLegacyValueTypeNames[$receiver] & "." & field
+        if key in legacyRecordFieldCallInfo:
+          return (true, legacyRecordFieldCallInfo[key])
       if field in ambiguousLegacyFieldNames: return
       if field in legacyFieldCallInfo:
         return (true, legacyFieldCallInfo[field])
@@ -726,6 +735,10 @@ proc registerLegacyFieldInfo(name: string, info: LegacyCallInfo) =
   else:
     legacyFieldCallInfo[name] = info
 
+proc registerLegacyRecordFieldInfo(recordName, fieldName: string,
+    info: LegacyCallInfo) =
+  legacyRecordFieldCallInfo[recordName & "." & fieldName] = info
+
 proc surfaceIndexArity(ty: PreTerm): int =
   var current = ty
   while not current.isNil and current.kind == pkPi:
@@ -795,6 +808,8 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
   legacyTypeNames.clear()
   scopedLegacyTypeNames.clear()
   legacyFieldCallInfo.clear()
+  legacyRecordFieldCallInfo.clear()
+  scopedLegacyValueTypeNames.clear()
   ambiguousLegacyFieldNames.clear()
   var seen = initHashSet[string]()
   # Register data constructor signatures before ordinary Nim procedures.
@@ -892,12 +907,15 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
       elif head == "data":
         discard # constructor signatures were registered in the first pass
       elif head == "record" and statement.len == 3 and
+          statement[1].kind in {nnkIdent, nnkSym} and
           statement[2].kind == nnkStmtList:
         for field in statement[2]:
           if field.kind == nnkCall and field.len == 3 and
               field[0].kind in {nnkIdent, nnkSym} and $field[0] == "field" and
               field[1].kind in {nnkIdent, nnkSym}:
-            registerLegacyFieldInfo($field[1], nimTypeCallInfo(field[2]))
+            let info = nimTypeCallInfo(field[2])
+            registerLegacyFieldInfo($field[1], info)
+            registerLegacyRecordFieldInfo($statement[1], $field[1], info)
     of nnkImportStmt:
       for imported in statement:
         if imported.kind != nnkStrLit: continue
@@ -1406,8 +1424,12 @@ proc procDefToEponym(n: NimNode): string =
   var priorScopedCallInfo = initTable[string, LegacyCallInfo]()
   for scopedName, info in scopedLegacyCallInfo:
     priorScopedCallInfo[scopedName] = info
+  var priorScopedValueTypeNames = initTable[string, string]()
+  for scopedName, typeName in scopedLegacyValueTypeNames:
+    priorScopedValueTypeNames[scopedName] = typeName
   scopedLegacyTypeNames.clear()
   scopedLegacyCallInfo.clear()
+  scopedLegacyValueTypeNames.clear()
   var genericBinders: seq[string] = @[]
   if n[2].kind != nnkEmpty:
     for genericParam in n[2]:
@@ -1430,6 +1452,8 @@ proc procDefToEponym(n: NimNode): string =
     for j in 0 ..< p.len - 2:
       let q = qtyPrefix(p[j])
       paramStrs.add("(" & q & binderName(p[j]) & " : " & ty & ")")
+      if p[^2].kind in {nnkIdent, nnkSym}:
+        scopedLegacyValueTypeNames[binderName(p[j])] = $p[^2]
       if callableInfo.explicitCount > 0:
         scopedLegacyCallInfo[binderName(p[j])] = callableInfo
       if ty == "Type 0":
@@ -1438,10 +1462,13 @@ proc procDefToEponym(n: NimNode): string =
   let body = nimExprToEponym(n[6])
   scopedLegacyTypeNames.clear()
   scopedLegacyCallInfo.clear()
+  scopedLegacyValueTypeNames.clear()
   for typeName in priorScopedTypeNames:
     scopedLegacyTypeNames.incl(typeName)
   for scopedName, info in priorScopedCallInfo:
     scopedLegacyCallInfo[scopedName] = info
+  for scopedName, typeName in priorScopedValueTypeNames:
+    scopedLegacyValueTypeNames[scopedName] = typeName
   let genericStr = if genericBinders.len == 0: ""
                    else: " " & genericBinders.join(" ")
   "proc " & name & genericStr & " " & paramStrs.join(" ") & " : " & retTy &

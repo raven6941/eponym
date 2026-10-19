@@ -1216,6 +1216,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   function signatures when no record field of that name is registered. Field
   metadata takes precedence, and a regression covers an ordinary callable
   field whose name collides with a generic function.
+- [x] Resolve callable field signatures from the typed receiver when multiple
+  record types share a field name with different signatures. A compile-fail
+  regression confirms positional legacy explicit arguments cannot bypass the
+  bracket-only syntax guard through that ambiguity.
 - [x] Track the required type-binder count through bracket-applied call heads.
   A compile-fail fixture verifies that a partially bracketed two-type generic
   cannot receive the next required type argument in parentheses. A positive
