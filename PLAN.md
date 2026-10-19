@@ -450,17 +450,27 @@ implementations.
   `Nat -> Vec[Int, n]` and `Nat -> Vec[Int, n] -> Nat` callbacks through
   generated and reified runtime wrappers. Negative runtime checks reject a
   callback result or argument with the wrong Vec length.
-- [ ] Add explicit runtime type/codec descriptions for exported Eponym
-   definitions and extend support to remaining dependent structures,
-   unmapped value-indexed generics, and unsupported higher-order definitions.
-   Current support includes checked Nim wrappers for supported generic
-   definitions, `runtimeValue` access to checked results, callback values with
-   recursive codecs, and explicit trusted opt-ins for dependent records and
-   pairs. A reusable explicit descriptor now exists through `runtimeCodec`.
-   Nested dependent Sigma values now propagate named indices through recursive
-   codecs, honoring nearest-binder shadowing and composing with trusted record
-   fields. Three 200-case properties cover a dependent Vec, shadowed indices,
-   record/Sigma index composition, and rejection of mismatched lengths.
+- [ ] Complete typed runtime interoperation for checked Eponym definitions.
+   Current support includes checked Nim wrappers for supported local generic
+   definitions, dynamic Nat/Bool/Int and mapped value indices, recursive
+   callback codecs (including dependent Vec arguments/results), raw
+   `Value` interfaces for unmapped generics and callbacks, and explicit trusted
+   dependent record/pair codecs. `runtimeCodec` lets users describe arbitrary
+   named type and family representations. Nested dependent Sigma values carry
+   named indices through recursive codecs, honoring nearest-binder shadowing
+   and composing with trusted record fields. Four 200-case properties cover a
+   dependent Vec, shadowed indices, record/Sigma index composition, and
+   rejection of mismatched lengths.
+   Remaining gaps:
+   - [ ] Generate typed Nim wrappers from imported `.ep` definitions when
+     their checked signatures use supported runtime codecs; imported
+     `runtimeValue` definitions currently expose only raw `Value` arguments.
+   - [ ] Add declarative structural codecs for payload-bearing indexed data
+     constructors. Today users must implement these through `runtimeCodec`;
+     built-in recursive codecs cover Vec, List, Option, Sigma, and records.
+   - [ ] Add typed host wrappers for value-indexed generic binders without a
+     Nim runtime mapping. `RuntimeValueRaw` accepts their Eponym arguments as
+     Values, with type membership left to the caller.
    - [x] Preserve the full locally declared Sigma result type when generating
      `bindPostulatePairTrusted`, so recursive codecs can enforce represented
      constraints such as a Vec length indexed by the first field. A 200-case
@@ -473,10 +483,9 @@ implementations.
      postulate declaration comes from an imported `.ep` module by deriving
      the runtime shape from its checked `Globals` type. A 200-case property
      checks imported host results and rejects mismatched vector lengths.
-   Remaining gaps include broader automatic/structural
-   codec coverage, additional dependent forms, unmapped value-indexed
-   generics, and other higher-order signatures. Unsupported
-   cases must continue to fail with a precise compile-time diagnostic.
+   Other higher-order and dependent signatures still need explicit runtime
+   codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
+   to fail with a precise compile-time diagnostic.
    Definitions without a matching explicit Nim `proc` declaration still
    retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`
    declarations with unsupported signatures fail clearly when called.
