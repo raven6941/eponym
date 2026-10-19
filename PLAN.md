@@ -408,6 +408,12 @@ implementations.
    generated wrappers and typed/raw `RuntimeValue` paths. Preserve
    grouping for nested bracketed type and term applications in the Nim AST
    translator; a nested-vector type exposed a precedence bug in that path.
+- [x] Add `runtimeVectorArray(Vec)` as an alternative Nim representation for
+   the canonical length-indexed Vec family. It maps `Vec[A,n]` to
+   `array[n,A]`, infers static Nat lengths through generated wrappers, and
+   reuses recursive element codecs and runtime tail-index checks. A 200-case
+   property covers generated and typed `RuntimeValue` calls. Dynamic wrappers
+   are omitted when a runtime Nat would need to determine a Nim array type.
 - [x] Add `runtimeRecordTrusted(Record)` for mapped records with dependent
    fields. Earlier field names are substituted into later codecs; supported
    codecs still check constraints they represent (for example, a Vec field

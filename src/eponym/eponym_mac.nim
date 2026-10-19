@@ -714,6 +714,10 @@ proc blockToEponym*(body: NimNode): string =
         # constructor names.
         if st.len != 2 or st[1].kind != nnkIdent:
           error("runtimeVector expects (VecFamily)", st)
+      elif head == "runtimeVectorArray":
+        # Fixed-size array representation of the canonical Vec family.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("runtimeVectorArray expects (VecFamily)", st)
       elif head == "runtimeList":
         # Structural runtime codec for a List family with canonical nil/cons.
         if st.len != 2 or st[1].kind != nnkIdent:
@@ -772,6 +776,7 @@ type HostRuntimeType = object
   nimType: NimNode
   isSynthetic: bool
   isRuntimeVector: bool
+  isRuntimeVectorArray: bool
   isRuntimeList: bool
   isRuntimeOption: bool
   isRuntimeVariant: bool
@@ -842,25 +847,27 @@ proc hostRuntimeTypes(body: NimNode, globals: Globals): seq[HostRuntimeType] =
   var seen = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
-        $st[0] in ["runtimeType", "runtimeVector", "runtimeList",
+        $st[0] in ["runtimeType", "runtimeVector", "runtimeVectorArray", "runtimeList",
                    "runtimeOption", "runtimeVariant", "runtimeDataVariant",
                    "runtimeCodec"]:
       let isVector = $st[0] == "runtimeVector"
+      let isVectorArray = $st[0] == "runtimeVectorArray"
       let isList = $st[0] == "runtimeList"
       let isOption = $st[0] == "runtimeOption"
       let isVariant = $st[0] == "runtimeVariant"
       let isStructuredVariant = $st[0] == "runtimeDataVariant"
       let isCodec = $st[0] == "runtimeCodec"
-      if ((isVector or isList or isOption or isVariant or
+      if ((isVector or isVectorArray or isList or isOption or isVariant or
           isStructuredVariant) and
           (st.len != 2 or st[1].kind != nnkIdent)) or
           (isCodec and (st.len != 5 or st[1].kind != nnkIdent or
             st[3].kind notin {nnkIdent, nnkSym} or
             st[4].kind notin {nnkIdent, nnkSym})) or
-          (not isVector and not isList and not isOption and not isVariant and
+          (not isVector and not isVectorArray and not isList and not isOption and not isVariant and
             not isStructuredVariant and not isCodec and
             (st.len != 3 or st[1].kind != nnkIdent)):
         error(if isVector: "runtimeVector expects (VecFamily)"
+          elif isVectorArray: "runtimeVectorArray expects (VecFamily)"
           elif isList: "runtimeList expects (ListFamily)"
           elif isOption: "runtimeOption expects (OptionFamily)"
           elif isVariant: "runtimeVariant expects (DataFamily)"
@@ -873,10 +880,12 @@ proc hostRuntimeTypes(body: NimNode, globals: Globals): seq[HostRuntimeType] =
       seen.incl(name)
       result.add(HostRuntimeType(eponymName: name,
         nimType: if isVector or isList: ident"seq"
+          elif isVectorArray: ident"array"
           elif isVariant: bindSym"RuntimeVariant"
           elif isStructuredVariant: bindSym"RuntimeStructuredVariant"
           elif isOption: ident"Option" else: st[2],
-        isRuntimeVector: isVector, isRuntimeList: isList,
+        isRuntimeVector: isVector or isVectorArray,
+        isRuntimeVectorArray: isVectorArray, isRuntimeList: isList,
         isRuntimeOption: isOption, isRuntimeVariant: isVariant,
         isRuntimeStructuredVariant: isStructuredVariant,
         isRuntimeCodec: isCodec,
@@ -1426,6 +1435,38 @@ proc runtimeVectorComponents(n: NimNode, familyName: string):
     return
   (n[1], n[2])
 
+proc runtimeArrayLengthTypeExpr(n: NimNode): NimNode =
+  ## Convert the supported Nat index grammar to a Nim compile-time array size.
+  if n.isNil: return nil
+  if n.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
+                nnkInt64Lit}:
+    if n.intVal < 0: return nil
+    return newLit(n.intVal)
+  if n.kind in {nnkIdent, nnkSym}:
+    if $n == "zero": return newLit(0)
+    return copyNimTree(n)
+  if n.kind == nnkPar and n.len == 1:
+    return runtimeArrayLengthTypeExpr(n[0])
+  if n.kind in {nnkCall, nnkCommand} and n.len >= 2 and
+      n[0].kind in {nnkIdent, nnkSym}:
+    let op = $n[0]
+    if op == "suc" and n.len == 2:
+      let value = runtimeArrayLengthTypeExpr(n[1])
+      if value.isNil: return nil
+      return newTree(nnkInfix, ident"+", value, newLit(1))
+    if op in ["add", "mul"] and n.len == 3:
+      let left = runtimeArrayLengthTypeExpr(n[1])
+      let right = runtimeArrayLengthTypeExpr(n[2])
+      if left.isNil or right.isNil: return nil
+      return newTree(nnkInfix, ident(if op == "add": "+" else: "*"),
+        left, right)
+  if n.kind == nnkInfix and n.len == 3 and $n[0] in ["+", "*"]:
+    let left = runtimeArrayLengthTypeExpr(n[1])
+    let right = runtimeArrayLengthTypeExpr(n[2])
+    if left.isNil or right.isNil: return nil
+    return newTree(nnkInfix, copyNimTree(n[0]), left, right)
+  nil
+
 proc runtimeListElementType(n: NimNode, familyName: string): NimNode =
   if n.kind notin {nnkCall, nnkObjConstr, nnkBracketExpr} or n.len != 2 or
       n[0].kind != nnkIdent or $n[0] != familyName:
@@ -1556,6 +1597,11 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
         let elementType = runtimeNimType(vector.elementType, mappings,
           records, allowDependentSigma)
         if elementType.isNil: return nil
+        if mapping.isRuntimeVectorArray:
+          let lengthType = runtimeArrayLengthTypeExpr(vector.length)
+          if lengthType.isNil: return nil
+          return newTree(nnkBracketExpr, ident"array", lengthType,
+            elementType)
         return newTree(nnkBracketExpr, ident"seq", elementType)
     elif mapping.isRuntimeList:
       let listElement = runtimeListElementType(n, mapping.eponymName)
@@ -1875,6 +1921,9 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         let elementNimType = runtimeNimType(vector.elementType, mappings,
           records, allowDependentSigma)
         if expectedLength.isNil or elementNimType.isNil: return nil
+        let arrayLengthType = if mapping.isRuntimeVectorArray:
+          runtimeArrayLengthTypeExpr(vector.length) else: nil
+        if mapping.isRuntimeVectorArray and arrayLengthType.isNil: return nil
         let itemSym = genSym(nskParam, "runtimeVectorItem")
         let codecGlobalsSym = genSym(nskParam, "runtimeVectorGlobals")
         if toValue:
@@ -1886,8 +1935,12 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
-          return newCall(bindSym"seqToVecValue", value, expectedLength,
-            globals, newLit(mapping.eponymName), encoder)
+          let encoderFn = if mapping.isRuntimeVectorArray:
+            newTree(nnkBracketExpr, bindSym"arrayToVecValue",
+              copyNimTree(arrayLengthType), copyNimTree(elementNimType))
+          else: bindSym"seqToVecValue"
+          return newCall(encoderFn, value, expectedLength, globals,
+            newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(vector.elementType,
           elementNimType, itemSym, false, mappings, records,
           codecGlobalsSym, allowDependentSigma, indexOverrides)
@@ -1896,8 +1949,12 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           newIdentDefs(itemSym, bindSym"Value", newEmptyNode()),
           newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
           body = newStmtList(decodedItem))
-        return newCall(bindSym"vecValueToSeq", value, expectedLength,
-          globals, newLit(mapping.eponymName), decoder)
+        let decoderFn = if mapping.isRuntimeVectorArray:
+          newTree(nnkBracketExpr, bindSym"vecValueToArray",
+            copyNimTree(arrayLengthType), copyNimTree(elementNimType))
+        else: bindSym"vecValueToSeq"
+        return newCall(decoderFn, value, expectedLength, globals,
+          newLit(mapping.eponymName), decoder)
     elif mapping.isRuntimeList:
       let elementType = runtimeListElementType(eponymType, mapping.eponymName)
       if not elementType.isNil:
@@ -2683,6 +2740,15 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     return nil
   let params = decl[3]
   if params.len == 0 or params[0].kind == nnkEmpty: return nil
+  # Nim array sizes must be compile-time values. A value-indexed `Dynamic`
+  # sibling cannot vary an array's type at runtime, so keep that signature on
+  # its ordinary static wrapper and raw Value entry points.
+  for mapping in mappings:
+    if not mapping.isRuntimeVectorArray: continue
+    for genericName in generic.genericNames:
+      if mentionsName(params[0], $genericName): return nil
+      for i in 1 ..< params.len:
+        if mentionsName(params[i][^2], $genericName): return nil
   let resultType = if returnRuntimeValue:
     nil
   else:

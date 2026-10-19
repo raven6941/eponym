@@ -60,6 +60,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `import "nat.ep"` | Eponym module import; relative to the source file first, then the installed package prelude. Absolute paths select an explicit file. |
 | `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported shapes are listed in [known limitations](known-limitations.md) |
 | `runtimeCodec(Tree, NimType, encode, decode)` | Register typed Nim encoders/decoders for a named Eponym type or family; the codec implementation is trusted |
+| `runtimeVectorArray(Vec)` | Map the canonical indexed `Vec[A, n]` family to fixed-size Nim `array[n, A]` values |
 | `runtimeValue(checkedDefinition)` | Expose checked values and globals; imported definitions without a local Nim signature use the raw `Value` ABI |
 | `runtimeDps(checkedDefinition)` | Opt into direct destination passing for a non-generic linear `Int` definition using literals, parameters, and `+`, `-`, `*`; emits `<name>Dps` |
 | `echo`, `for`, `var`, effectful Nim control flow, Nim library calls | Not supported as host Nim statements/expressions in the block |

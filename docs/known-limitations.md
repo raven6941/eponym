@@ -189,6 +189,11 @@ element type uses its recursive runtime codec, including nested vectors such
 as `Vec[Vec[Int, m], n]` mapped to `seq[seq[int]]`. The codec accepts Nat length
 expressions made from a static index, `zero`, `suc`, `add`, and `mul`. It
 requires the standard `nil` and `cons` constructor shape from `lib/vec.ep`.
+For fixed-size Nim data, `runtimeVectorArray(Vec)` instead maps
+`Vec[A,n]` to `array[n,A]`; the array size must be statically known to Nim.
+Static Nat generic binders are inferred from the array argument. Dynamic
+siblings are not generated when their runtime Nat argument would have to
+change a Nim type. The same element codecs and Eponym tail-index checks apply.
 The standard unindexed `List[A]` family also has a `runtimeList(List)` codec
 that maps to `seq[A]`, checks constructor identities and spines, and recursively
 uses the element codec. A unary family with canonical `none` and `some`

@@ -244,6 +244,8 @@ proc hostSumSix(a, b, c, d, e, f: int): int = a + b + c + d + e + f
 proc hostBoolPredicateNim(value: int): bool =
   value mod 2 == 0
 
+type TestIntArray = array[3, int]
+
 static:
   doAssert compiles(hostIntUnary(hostStepNim))
   doAssert not compiles(hostIntUnary(hostString))
@@ -302,6 +304,14 @@ eponymBlock:
   import "fixtures/runtime_imported_vec.ep"
   runtimeVector(Vec)
   runtimeValue(importedVectorIdentity)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVectorArray(Vec)
+  proc generatedArrayVecIdentity[n: Nat](values: Vec[Int, n]): Vec[Int, n] =
+    values
+  runtimeValue(generatedArrayVecIdentity)
 
 eponymBlock:
   import "fixtures/runtime_imported_option.ep"
@@ -2596,6 +2606,23 @@ proc callbackRole : Callback -> Sample -> Sample =
         generatedVectorIdentity[ChannelHandle, 4](handles) == handles,
     shrinkInt)
   if not vectorCodecCases:
+    quit(1)
+  let vectorArrayCases = forAll(
+    "length-indexed Vec values bridge to fixed Nim arrays", r, 200,
+    proc(r: var Rng): TestIntArray =
+      for i in low(result) .. high(result):
+        result[i] = r.genInt(-1000, 1000),
+    proc(input: TestIntArray): bool =
+      let checked = generatedArrayVecIdentity(input)
+      let runtime = generatedArrayVecIdentityRuntimeValue(input)
+      let decoded = vecValueToArray[3, int](runtime.value, 3, runtime.globals,
+        "Vec", proc(value: Value, globals: Globals): int = valueToInt(value))
+      checked == input and decoded == input,
+    proc(input: TestIntArray): seq[TestIntArray] =
+      var smaller = input
+      for i in low(smaller) .. high(smaller): smaller[i] = 0
+      @[smaller])
+  if not vectorArrayCases:
     quit(1)
   let dependentCallbackCases = forAll(
     "callback result codecs receive their dependent Nat argument", r, 200,

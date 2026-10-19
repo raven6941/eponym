@@ -445,6 +445,28 @@ proc vecValueToSeq*[T](value: Value, expectedLength: int, globals: Globals,
     raise newException(ValueError,
       "runtime value is not a Vec of the declared length")
 
+proc arrayToVecValue*[N: static[int], T](items: array[N, T],
+    expectedLength: int, globals: Globals, familyName: string,
+    encode: proc(item: T, globals: Globals): Value): Value =
+  if expectedLength != N:
+    raise newException(ValueError,
+      "runtime Vec length mismatch: expected " & $expectedLength &
+      ", got fixed array length " & $N)
+  var sequence = newSeqOfCap[T](N)
+  for item in items: sequence.add(item)
+  seqToVecValue(sequence, expectedLength, globals, familyName, encode)
+
+proc vecValueToArray*[N: static[int], T](value: Value,
+    expectedLength: int, globals: Globals, familyName: string,
+    decode: proc(value: Value, globals: Globals): T): array[N, T] =
+  if expectedLength != N:
+    raise newException(ValueError,
+      "runtime Vec length mismatch: expected " & $expectedLength &
+      ", fixed array length is " & $N)
+  let sequence = vecValueToSeq[T](value, expectedLength, globals, familyName,
+    decode)
+  for i, item in sequence: result[i] = item
+
 
 proc seqToListValue*[T](items: seq[T], globals: Globals,
     familyName: string,
