@@ -607,19 +607,23 @@ implementations.
 - [x] Keep usage checking as the correctness feature, independently of any
   optimization. No code-generation optimizer is wired into acceptance; the
   QTT usage property suite passes independently.
-- [ ] Prototype destination-passing or slot reuse for a narrow first-order
-   expression language where liveness and aliasing are explicit.
-- [ ] Generate mutation only when the representation and ownership analysis
-   prove it safe. Linear use alone does not make an arbitrary Nim object
-   uniquely owned.
-- [ ] Compare output behavior and allocations against an immutable baseline;
-   report when the backend cannot optimize a term.
+- [x] Prototype destination-passing for a narrow first-order Int expression
+   language. The ownership analysis accepts only acyclic expression trees
+   with one incoming edge per node; shared graphs fall back to immutable
+   evaluation and cycles fail clearly.
+- [x] Generate mutation only for the prototype's owned Int destination slot,
+   after the ownership analysis proves the tree has no aliases. This does not
+   establish unique ownership for arbitrary Nim objects.
+- [x] Compare results and tracked runtime-cell allocations against an immutable
+   baseline. The 200-case differential property passes; a 500-add chain uses
+   1,001 immutable cells and zero destination-passing cells.
 
 **Exit criteria:**
 
-- [ ] The optimization has differential correctness coverage, does not
-  change QTT acceptance, and has measured benefit on a documented workload.
-  Do not market QTT as code-generation optimization until this lands.
+- [ ] Connect the prototype to Eponym's generated Nim code, use QTT usage
+  information together with representation and ownership checks, and measure
+  generated-code behavior and allocations. The current prototype is isolated;
+  QTT still affects checking only.
 
 #### G. Improve the Nim surface and onboarding
 

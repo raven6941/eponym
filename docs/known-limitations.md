@@ -187,7 +187,16 @@ and the [pure subset experiment](pure-nim-subset-experiment.md).
 Linear and erased quantities constrain usage during elaboration and
 typechecking. The current runtime bridge does not use linearity to generate
 in-place mutation, destination-passing code, or other ownership-based
-optimizations.
+optimizations. An isolated prototype in
+[`src/experimental/qtt_dps.nim`](../src/experimental/qtt_dps.nim) evaluates a
+first-order Int expression language. It mutates a destination slot only after
+an ownership check proves the expression graph is an exclusive tree; shared
+graphs fall back to immutable evaluation, and cycles are rejected. A
+200-case differential property keeps results equal to an immutable reference.
+On the documented 500-add chain, the immutable evaluator allocated 1,001
+runtime cells and the destination-passing evaluator allocated zero. This
+prototype uses its own tree ownership analysis, does not change QTT acceptance,
+and is not connected to Eponym wrapper code generation.
 
 ### Host implementations remain trusted
 
