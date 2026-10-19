@@ -1208,9 +1208,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.
-- [ ] Add a deprecation diagnostic while temporarily preserving legacy lowering
-  in an earlier PR in the release stack. This is required before the first
-  release, so users of the pre-release syntax get a migration path.
+- [x] Add a deprecation diagnostic while temporarily preserving legacy lowering
+  in an earlier PR in the release stack. The diagnostic identifies legacy
+  term and type/index applications, and regression fixtures confirm accepted
+  calls continue to compile during the migration step.
 - [ ] Remove legacy lowering in the following PR before tagging the first
   release. Keep the diagnostic and removal as separate, bisectable PRs and
   stack both in the release series; bracket-only syntax is the first-release

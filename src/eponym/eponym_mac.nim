@@ -129,21 +129,34 @@ proc rejectCallStyleExplicitArgs(n: NimNode) =
   let resolved = callInfoForHead(n[0])
   if not resolved.found: return
   let info = resolved.info
-  let supplied = n.len - 1
+  var supplied = n.len - 1
+  var firstArg = if n.len > 1: n[1] else: nil
+  if n.kind == nnkCommand:
+    var flattened: seq[NimNode] = @[]
+    proc appendCommandArg(arg: NimNode) =
+      if arg.kind == nnkCommand and arg.len > 0 and
+          not (arg[0].kind == nnkIdent and $arg[0] == "lam"):
+        appendCommandArg(arg[0])
+        for i in 1 ..< arg.len: appendCommandArg(arg[i])
+      else:
+        flattened.add(arg)
+    for i in 1 ..< n.len: appendCommandArg(n[i])
+    supplied = flattened.len
+    if flattened.len > 0: firstArg = flattened[0]
   if info.explicitCount == 0: return
   if not info.requiresBrackets and supplied <= info.termCount and
       not (info.firstExplicitType and supplied > 0 and
-        isLegacyTypeName(n[1])):
+        isLegacyTypeName(firstArg)):
     return
-  error("eponymBlock: call-style explicit parameters have been removed; " &
+  warning("eponymBlock: legacy call-style explicit parameters are deprecated; " &
     "use square brackets for Eponym type/index arguments", n)
 
 proc rejectCallStyleTypeArgs(n: NimNode) =
   if n.kind != nnkCall or n.len <= 1: return
   let callee = unwrapParens(n[0])
   if callee.kind in {nnkIdent, nnkSym} and $callee in legacyTypeFamilies:
-    error("eponymBlock: call-style explicit type/index arguments have been " &
-      "removed; use square brackets", n)
+    warning("eponymBlock: legacy call-style type/index arguments are " &
+      "deprecated; use square brackets", n)
 
 proc nimLeadingUniverseFormalCount(formal: NimNode): int =
   if formal.kind != nnkFormalParams: return 0
