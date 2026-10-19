@@ -213,10 +213,12 @@ eponymBlock:
 
 eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
+  runtimeVector(Vec)
   runtimeValue(importedIntIdentity)
   runtimeValue(importedGenericIdentity)
   runtimeValue(importedCallbackApply)
   runtimeValue(importedCallbackApply2)
+  runtimeValue(importedDependentCallbackApply)
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
@@ -1176,6 +1178,41 @@ when isMainModule:
         (input.left, input.right, 0)])
   if not importedMultiCallbackCases:
     quit(1)
+  let importedDependentCallbackCases = forAll(
+    "imported callbacks preserve dependent Vec result indices", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      let callback = proc(length: int): seq[int] =
+        for i in 0 ..< length:
+          result.add(input.seed + i)
+      let expected = block:
+        var values: seq[int] = @[]
+        for i in 0 ..< input.length:
+          values.add(input.seed + i)
+        values
+      let typedResult = importedDependentCallbackApply(callback, input.length)
+      let runtimeResult = importedDependentCallbackApplyRuntimeValue(callback,
+        input.length)
+      let globals = runtimeResult.globals
+      let vecType = callRuntimeValue(eval(globals["Vec"].tm, @[]),
+        [runtimeGlobalValue(globals, "Int"),
+         natToValue(input.length, globals)])
+      validateRuntimeRawValue(runtimeResult.value, vecType, globals, [])
+      typedResult == expected,
+    proc(input: tuple[length, seed: int]):
+        seq[tuple[length, seed: int]] =
+      @[(0, input.seed), (input.length div 2, input.seed),
+        (input.length, 0)])
+  if not importedDependentCallbackCases:
+    quit(1)
+  var importedDependentCallbackWrongLengthRejected = false
+  try:
+    discard importedDependentCallbackApply(
+      proc(length: int): seq[int] = @[1], 2)
+  except ValueError:
+    importedDependentCallbackWrongLengthRejected = true
+  doAssert importedDependentCallbackWrongLengthRejected
   var importedVectorMismatchRejected = false
   try:
     discard importedVectorIdentity(3, @[1, 2])

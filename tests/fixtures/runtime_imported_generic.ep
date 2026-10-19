@@ -1,5 +1,7 @@
+import "../../lib/vec.ep"
 postulate Int : Type 0
 proc importedIntIdentity : Int -> Int = lam (value : Int). value
 proc importedGenericIdentity (A : Type 0) (value : A) : A = value
 proc importedCallbackApply (f : Int -> Int) (value : Int) : Int = f value
 proc importedCallbackApply2 (f : Int -> Int -> Int) (left : Int) (right : Int) : Int = f left right
+proc importedDependentCallbackApply (f : Pi (n : Nat). Vec Int n) (n : Nat) : Vec Int n = f n

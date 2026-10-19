@@ -486,8 +486,10 @@ implementations.
       instantiating the checked Pi telescope; negative checks reject a wrong
       generic type or value. Imported explicit higher-order signatures with
       supported Nim callback leaf codecs now generate typed closure wrappers;
-      200-case properties cover unary and multi-argument Nim callbacks through
-      both generated wrappers and typed `RuntimeValue` calls. Raw callback
+      200-case properties cover unary and multi-argument Nim callbacks, plus a
+      callback whose Vec result length depends on its Nat argument, through
+      both generated wrappers and typed `RuntimeValue` calls. A negative check
+      rejects a callback returning the wrong Vec length. Raw callback
       Values have no runtime type witness, while unsupported implicit binders,
       callback leaf types without codecs, and unmapped host boxes remain
       trusted or raw-interface escape hatches.
