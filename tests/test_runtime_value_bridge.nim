@@ -41,6 +41,17 @@ type ChannelHandle = object
   id: int
   label: string
 
+proc encodeRuntimeHandle(value: ChannelHandle, globals: Globals): Value =
+  runtimeVariantToValue(RuntimeVariant(constructor: "runtimeHandle",
+    arguments: @[intToValue(value.id)]), globals, "RuntimeHandle",
+    ["runtimeHandle"])
+
+proc decodeRuntimeHandle(value: Value, globals: Globals): ChannelHandle =
+  let variant = valueToRuntimeVariant(value, globals, "RuntimeHandle",
+    ["runtimeHandle"])
+  let id = valueToInt(variant.arguments[0])
+  ChannelHandle(id: id, label: "decoded-" & $id)
+
 type NimIntCallback = proc(value: int): int {.closure.}
 type RawRuntimeCallback = proc(value: Value): Value {.closure.}
 
@@ -183,11 +194,16 @@ eponymBlock:
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
+  runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
+    decodeRuntimeHandle)
+  runtimeType(RuntimeOpaqueToken, ChannelHandle)
   runtimeDataVariant(RuntimeTree)
   runtimeDataVariant(SizedTree)
   runtimeDataVariant(DecisionTree)
+  runtimeDataVariant(HandleEnvelope)
   runtimeValue(treeIdentity)
   runtimeValue(decisionIdentity)
+  runtimeValue(handleEnvelopeIdentity)
   proc genericIndexedTreeProjection[length: Nat,
       tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
   runtimeValue(genericIndexedTreeProjection)
@@ -856,6 +872,30 @@ when isMainModule:
         decoded.arguments[1].variantValue.constructor == "treeEmpty",
     shrinkInt)
   if not structuredBoolCases:
+    quit(1)
+  let opaqueStructuredCases = forAll(
+    "runtimeDataVariant composes mapped opaque host fields", r, 200,
+    proc(r: var Rng): tuple[id: int, count: int] =
+      (r.genInt(-100, 100), r.genInt(-100, 100)),
+    proc(sample: tuple[id: int, count: int]): bool =
+      let input = RuntimeStructuredVariant(constructor: "handleEnvelope",
+        arguments: @[runtimeStructuredOpaque(ChannelHandle(id: sample.id,
+          label: "channel-" & $sample.id)),
+          runtimeStructuredOpaque(ChannelHandle(id: sample.id + 1,
+            label: "opaque-" & $sample.id)),
+          RuntimeStructuredValue(kind: rsvInt, intValue: sample.count)])
+      let output = handleEnvelopeIdentity(input)
+      output.constructor == "handleEnvelope" and
+        output.arguments.len == 3 and
+        runtimeStructuredOpaqueAs[ChannelHandle](output.arguments[0]) ==
+          ChannelHandle(id: sample.id, label: "decoded-" & $sample.id) and
+        runtimeStructuredOpaqueAs[ChannelHandle](output.arguments[1]) ==
+          ChannelHandle(id: sample.id + 1, label: "opaque-" & $sample.id) and
+        output.arguments[2].kind == rsvInt and
+        output.arguments[2].intValue == sample.count,
+    proc(value: tuple[id: int, count: int]): seq[tuple[id: int, count: int]] =
+      @[])
+  if not opaqueStructuredCases:
     quit(1)
   let appliedGenericTypeCases = forAll(
     "mapped applied generic domains check their runtime indices", r, 200,

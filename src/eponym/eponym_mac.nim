@@ -1344,6 +1344,25 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
   let generic = if toValue: bindSym"toHostValue" else: bindSym"valueToHost"
   newTree(nnkBracketExpr, generic, nimType)
 
+proc runtimeStructuredCodecsExpr(mappings: seq[HostRuntimeType],
+                                 records: seq[HostRecord]): NimNode =
+  result = newNimNode(nnkBracket)
+  for mapping in mappings:
+    if mapping.isRuntimeVector or mapping.isRuntimeList or
+        mapping.isRuntimeOption or mapping.isRuntimeVariant or
+        mapping.isRuntimeStructuredVariant or
+        findHostRecord(records, mapping.eponymName) >= 0:
+      continue
+    let mappedName = newLit(mapping.eponymName)
+    if mapping.isRuntimeCodec:
+      let codec = newCall(newTree(nnkBracketExpr,
+        bindSym"runtimeStructuredCustomCodec", mapping.nimType),
+        mappedName, copyNimTree(mapping.encoder), copyNimTree(mapping.decoder))
+      result.add(codec)
+    else:
+      result.add(newCall(newTree(nnkBracketExpr,
+        bindSym"runtimeStructuredHostCodec", mapping.nimType), mappedName))
+
 proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                toValue: bool,
                                mappings: seq[HostRuntimeType],
@@ -1458,9 +1477,11 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           globals, familyName)
         if toValue:
           return newCall(bindSym"runtimeStructuredVariantToValue", value,
-            globals, familyName, constructors)
+            globals, familyName, constructors,
+            runtimeStructuredCodecsExpr(mappings, records))
         return newCall(bindSym"valueToRuntimeStructuredVariant", value,
-          globals, familyName, constructors)
+          globals, familyName, constructors,
+          runtimeStructuredCodecsExpr(mappings, records))
   for mapping in mappings:
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(eponymType, mapping.eponymName)

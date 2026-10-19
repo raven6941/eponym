@@ -18,6 +18,7 @@ import tables
 import sequtils
 import strutils
 import options
+import typetraits
 import elab
 import eponym_init
 import preterm  # Quantity constants for validating supported adapter shapes
@@ -1029,7 +1030,7 @@ type RuntimeVariant* = object
 
 type
   RuntimeStructuredValueKind* = enum
-    rsvInt, rsvNat, rsvBool, rsvVariant, rsvRaw
+    rsvInt, rsvNat, rsvBool, rsvVariant, rsvRaw, rsvOpaque
   RuntimeStructuredValue* = object
     case kind*: RuntimeStructuredValueKind
     of rsvInt:
@@ -1042,9 +1043,49 @@ type
       variantValue*: RuntimeStructuredVariant
     of rsvRaw:
       rawValue*: Value
+    of rsvOpaque:
+      opaquePayload*: RootRef
+      opaqueTypeName*: string
   RuntimeStructuredVariant* = object
     constructor*: string
     arguments*: seq[RuntimeStructuredValue]
+  RuntimeStructuredCodec* = object
+    eponymName*: string
+    opaqueHost*: bool
+    encode*: proc(value: RuntimeStructuredValue, globals: Globals): Value {.closure.}
+    decode*: proc(value: Value, globals: Globals): RuntimeStructuredValue {.closure.}
+
+type RuntimeStructuredBox[T] = ref object of RootObj
+  value: T
+
+proc runtimeStructuredOpaque*[T](value: T): RuntimeStructuredValue =
+  let boxed = RuntimeStructuredBox[T](value: value)
+  RuntimeStructuredValue(kind: rsvOpaque, opaquePayload: RootRef(boxed),
+    opaqueTypeName: name(T))
+
+proc runtimeStructuredOpaqueAs*[T](value: RuntimeStructuredValue): T =
+  if value.kind != rsvOpaque or value.opaqueTypeName != name(T) or
+      not (value.opaquePayload of RuntimeStructuredBox[T]):
+    raise newException(ValueError,
+      "runtime structured opaque value has the wrong Nim type")
+  cast[RuntimeStructuredBox[T]](value.opaquePayload).value
+
+proc runtimeStructuredHostCodec*[T](eponymName: string): RuntimeStructuredCodec =
+  RuntimeStructuredCodec(eponymName: eponymName, opaqueHost: true,
+    encode: proc(value: RuntimeStructuredValue, globals: Globals): Value =
+      toHostValue(runtimeStructuredOpaqueAs[T](value)),
+    decode: proc(value: Value, globals: Globals): RuntimeStructuredValue =
+      runtimeStructuredOpaque(valueToHost[T](value)))
+
+proc runtimeStructuredCustomCodec*[T](eponymName: string,
+    encoder: proc(value: T, globals: Globals): Value {.closure.},
+    decoder: proc(value: Value, globals: Globals): T {.closure.}):
+    RuntimeStructuredCodec =
+  RuntimeStructuredCodec(eponymName: eponymName, opaqueHost: false,
+    encode: proc(value: RuntimeStructuredValue, globals: Globals): Value =
+      encoder(runtimeStructuredOpaqueAs[T](value), globals),
+    decode: proc(value: Value, globals: Globals): RuntimeStructuredValue =
+      runtimeStructuredOpaque(decoder(value, globals)))
 
 proc runtimeVariantConstructorNames*(globals: Globals,
                                      familyName: string): seq[string]
@@ -1077,29 +1118,48 @@ proc runtimeDataFamilyName(domain: Value, globals: Globals): string =
 
 proc runtimeStructuredVariantToValue*(variant: RuntimeStructuredVariant,
     globals: Globals, familyName: string,
-    constructors: openArray[string]): Value
+    constructors: openArray[string],
+    codecs: openArray[RuntimeStructuredCodec] = []): Value
 proc valueToRuntimeStructuredVariant*(value: Value, globals: Globals,
-    familyName: string, constructors: openArray[string]): RuntimeStructuredVariant
+    familyName: string, constructors: openArray[string],
+    codecs: openArray[RuntimeStructuredCodec] = []): RuntimeStructuredVariant
+
 
 proc runtimeStructuredValueToValue(value: RuntimeStructuredValue,
-    domain: Value, globals: Globals): Value =
+    domain: Value, globals: Globals,
+    codecs: openArray[RuntimeStructuredCodec]): Value =
+  var opaqueHost = false
   case value.kind
   of rsvInt: result = intToValue(value.intValue)
   of rsvNat: result = natToValue(value.natValue, globals)
   of rsvBool: result = boolToValue(value.boolValue, globals)
   of rsvRaw: result = value.rawValue
+  of rsvOpaque:
+    let typeName = runtimeDomainTypeName(domain, globals)
+    var found = false
+    for codec in codecs:
+      if codec.eponymName == typeName:
+        result = codec.encode(value, globals)
+        opaqueHost = codec.opaqueHost
+        found = true
+        break
+    if not found:
+      raise newException(ValueError,
+        "no runtime mapping for opaque field type '" & typeName & "'")
   of rsvVariant:
     let familyName = runtimeDataFamilyName(domain, globals)
     if familyName.len == 0:
       raise newException(ValueError,
         "runtime structured variant supplied for a non-data payload")
     result = runtimeStructuredVariantToValue(value.variantValue, globals,
-      familyName, runtimeVariantConstructorNames(globals, familyName))
-  if value.kind != rsvVariant or domain.whnfSpineLen > 0:
+      familyName, runtimeVariantConstructorNames(globals, familyName), codecs)
+  if (value.kind != rsvVariant and not opaqueHost) or
+      (value.kind == rsvVariant and domain.whnfSpineLen > 0):
     validateRuntimeValueType(result, domain, globals)
 
 proc valueToRuntimeStructuredValue(value, domain: Value,
-    globals: Globals): RuntimeStructuredValue =
+    globals: Globals,
+    codecs: openArray[RuntimeStructuredCodec]): RuntimeStructuredValue =
   let typeName = runtimeDomainTypeName(domain, globals)
   if typeName == "Int":
     return RuntimeStructuredValue(kind: rsvInt,
@@ -1110,18 +1170,22 @@ proc valueToRuntimeStructuredValue(value, domain: Value,
   if typeName == "Bool":
     return RuntimeStructuredValue(kind: rsvBool,
       boolValue: valueToBool(value, globals))
+  for codec in codecs:
+    if codec.eponymName == typeName:
+      return codec.decode(value, globals)
   if typeName.len > 0:
     if domain.whnfSpineLen > 0:
       validateRuntimeValueType(value, domain, globals)
     return RuntimeStructuredValue(kind: rsvVariant,
       variantValue: valueToRuntimeStructuredVariant(value, globals,
-        typeName, runtimeVariantConstructorNames(globals, typeName)))
+        typeName, runtimeVariantConstructorNames(globals, typeName), codecs))
   validateRuntimeValueType(value, domain, globals)
   RuntimeStructuredValue(kind: rsvRaw, rawValue: value)
 
 proc runtimeStructuredVariantToValue*(variant: RuntimeStructuredVariant,
     globals: Globals, familyName: string,
-    constructors: openArray[string]): Value =
+    constructors: openArray[string],
+    codecs: openArray[RuntimeStructuredCodec]): Value =
   validateRuntimeVariantConstructors(globals, familyName, constructors)
   if variant.constructor notin constructors or
       variant.constructor notin globals:
@@ -1140,7 +1204,8 @@ proc runtimeStructuredVariantToValue*(variant: RuntimeStructuredVariant,
       raise newException(ValueError,
         "runtime structured constructor has an invalid Pi telescope")
     let domain = ctorType.whnfDom
-    let encoded = runtimeStructuredValueToValue(argument, domain, globals)
+    let encoded = runtimeStructuredValueToValue(argument, domain, globals,
+      codecs)
     fn = callRuntimeValue(fn, [encoded])
     ctorType = whnfScopeApply(ctorType, encoded)
   if fn.whnfKind != wRef or fn.whnfRefId != ctor.tm.refId or
@@ -1150,7 +1215,8 @@ proc runtimeStructuredVariantToValue*(variant: RuntimeStructuredVariant,
   fn
 
 proc valueToRuntimeStructuredVariant*(value: Value, globals: Globals,
-    familyName: string, constructors: openArray[string]): RuntimeStructuredVariant =
+    familyName: string, constructors: openArray[string],
+    codecs: openArray[RuntimeStructuredCodec]): RuntimeStructuredVariant =
   validateRuntimeVariantConstructors(globals, familyName, constructors)
   let raw = valueToRuntimeVariant(value, globals, familyName, constructors)
   let ctor = globals[raw.constructor]
@@ -1162,7 +1228,7 @@ proc valueToRuntimeStructuredVariant*(value: Value, globals: Globals,
         "runtime structured constructor has an invalid Pi telescope")
     let domain = ctorType.whnfDom
     result.arguments.add(valueToRuntimeStructuredValue(argument, domain,
-      globals))
+      globals, codecs))
     ctorType = whnfScopeApply(ctorType, argument)
 
 proc validateRuntimeVariantConstructors*(globals: Globals,

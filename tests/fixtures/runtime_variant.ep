@@ -2,6 +2,9 @@ import "../../lib/nat.ep"
 import "../../lib/bool.ep"
 
 postulate Int : Type 0
+postulate RuntimeOpaqueToken : Type 0
+data RuntimeHandle : Type 0 where
+| runtimeHandle (id : Int) : RuntimeHandle
 data RuntimeTree : Type 0 where
 | treeEmpty : RuntimeTree
 | treeNode (value : Int) (tail : RuntimeTree) : RuntimeTree
@@ -15,3 +18,8 @@ data DecisionTree : Type 0 where
 | decisionNode (flag : Bool) (tree : RuntimeTree) : DecisionTree
 proc decisionIdentity : DecisionTree -> DecisionTree =
   lam (tree : DecisionTree). tree
+data HandleEnvelope : Type 0 where
+| handleEnvelope (handle : RuntimeHandle) (token : RuntimeOpaqueToken)
+    (count : Int) : HandleEnvelope
+proc handleEnvelopeIdentity : HandleEnvelope -> HandleEnvelope =
+  lam (envelope : HandleEnvelope). envelope

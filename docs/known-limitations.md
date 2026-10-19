@@ -191,20 +191,19 @@ automatically. Callers still decode payload fields themselves because the
 generic representation stores them as raw `Value`s.
 
 For recursive decoding, `runtimeDataVariant(Family)` maps Int, Nat, and Bool
-payloads to Nim values and nested data constructors to
-`RuntimeStructuredVariant`. It follows each constructor's checked Pi type and
-validates payload fields, including dependent indices. A 200-case property
-covers nested trees and indexed `SizedTree` wrappers. A payload whose type has
-no built-in structural representation remains an explicit raw `Value` field;
-custom Nim host codecs are not yet composed automatically into this recursive
-sum representation.
+payloads to Nim values, nested data constructors to
+`RuntimeStructuredVariant`, and opaque leaves through matching `runtimeType`
+or `runtimeCodec` mappings. It follows each constructor's checked Pi type and
+validates structural payload fields, including dependent indices. Opaque
+mapping behavior is trusted in the same way as top-level runtime codecs. A
+200-case property covers both custom and opaque `ChannelHandle` mappings nested
+beside an integer field, in addition to nested trees and indexed `SizedTree`
+wrappers.
 
 Typed structural codecs include `Vec`, `List`, `Option`, two-field `Sig`
 tuples, named records, and recursive `runtimeDataVariant` values. Records with
 dependent fields and dependent `Sig` results are available only through their
-explicit trusted opt-ins described above. Host-specific opaque codecs do not
-yet compose automatically into recursive variant fields; those fields remain
-raw Values or need a custom whole-family `runtimeCodec`.
+explicit trusted opt-ins described above.
 More complex generic domain expressions outside the supported type-expression
 forms and structural inspection of closures are unsupported.
 The session runtime demo includes a hand-written Nat LEB128 message codec, and
