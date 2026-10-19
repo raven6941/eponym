@@ -110,7 +110,7 @@ let generatedCases = forAll(
   proc(value: int): bool =
     let generated = checkedLinearPlusSevenDps(value)
     generated.value == checkedLinearPlusSeven(value) and
-      generated.value == value + 7 and generated.stackSlots == 3 and
+      generated.value == value + 7 and generated.stackSlots == 1 and
       generated.heapCells == 0,
   shrinkInt)
 if not generatedCases:
@@ -123,7 +123,7 @@ let arithmeticCases = forAll(
     let right = left + 1
     let generated = checkedLinearArithmeticDps(left, right)
     generated.value == checkedLinearArithmetic(left, right) and
-      generated.value == left - 1 and generated.stackSlots == 5 and
+      generated.value == left - 1 and generated.stackSlots == 1 and
       generated.heapCells == 0,
   shrinkInt)
 if not arithmeticCases:

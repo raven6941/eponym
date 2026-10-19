@@ -818,6 +818,11 @@ implementations.
 - [x] Generate mutation only for the prototype's owned Int destination slot,
    after the ownership analysis proves the tree has no aliases. This does not
    establish unique ownership for arbitrary Nim objects.
+- [x] Reuse a linear expression's left destination for its result and inline
+  literal/parameter leaves, allocating a temporary only for a live right
+  subtree. Generated wrapper properties verify the representative one- and
+  two-argument arithmetic bodies need one mutable slot (previously three and
+  five).
 - [x] Compare results and tracked runtime-cell allocations against an immutable
    baseline. The 200-case differential property passes; a 500-add chain uses
    1,001 immutable cells and zero destination-passing cells.
@@ -827,11 +832,12 @@ implementations.
 - [x] Connect the destination-passing IR to Eponym's generated Nim code through
   `runtimeDps(name)`. The opt-in requires checked quantity-1 Int parameters,
   verifies each is used once, checks the supported Int term representation and
-  exclusive-tree shape, and emits mutable local slots. Two 200-case properties
-  compare one- and two-argument generated code to the ordinary checked wrapper;
-  generated code uses stack slots and contains no heap-backed Eponym value
-  cells. This is limited to non-generic literal/parameter/`+`/`-`/`*`
-  expressions; QTT remains a checking feature for all other generated code.
+  exclusive-tree shape, and emits reusable mutable local slots. Two 200-case
+  properties compare one- and two-argument generated code to the ordinary
+  checked wrapper; the tested expressions use one slot and contain no
+  heap-backed Eponym value cells. This is limited to non-generic
+  literal/parameter/`+`/`-`/`*` expressions; QTT remains a checking feature for
+  all other generated code.
 
 #### G. Improve the Nim surface and onboarding
 

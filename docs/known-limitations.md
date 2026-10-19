@@ -336,12 +336,14 @@ parameters, and primitive `+`, `-`, `*` expressions. It lowers the checked term
 through the destination-passing IR in
 [`src/eponym/qtt_dps.nim`](../src/eponym/qtt_dps.nim), after checking the QTT
 quantities, Int representation, supported term shape, and exclusive-tree
-ownership. Generated code uses mutable stack slots and reports the number of
-slots plus zero heap-backed Eponym value cells (a generated-code count, not a
-process-wide allocation profiler); properties compare its results with the
-regular checked evaluator. Other term forms, generic functions, and non-Int
-values remain on the normal wrapper/evaluator path. This opt-in does not change
-QTT acceptance or claim unique ownership for arbitrary Nim objects.
+ownership. Generated code writes into a reusable destination slot, inlines
+literal and parameter leaves, and allocates a temporary only when a right-hand
+subtree must remain live. It reports peak mutable slots and zero heap-backed
+Eponym value cells (generated-code counts, not a process-wide allocation
+profiler); properties compare its results with the regular checked evaluator.
+Other term forms, generic functions, and non-Int values remain on the normal
+wrapper/evaluator path. This opt-in does not change QTT acceptance or claim
+unique ownership for arbitrary Nim objects.
 
 ### Host implementations remain trusted
 
