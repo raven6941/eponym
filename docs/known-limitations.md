@@ -175,7 +175,15 @@ does not verify that the value inhabits the binder's Eponym type. The caller
 must construct a well-typed `Value`; typed host representations and membership
 checking remain future work.
 
-Structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
+The low-level `RuntimeVariant` API provides a checked structural view for any
+declared data family when the caller supplies its constructor names. It
+preserves constructor identity and raw argument `Value`s, checking family
+membership, constructor arity, and spine shape. This handles payload-bearing
+and indexed constructors without a custom constructor switch, but callers
+still decode payload fields themselves and generated wrappers do not select
+this representation automatically.
+
+Typed structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
 `Sig` tuples, and named records. Records with dependent fields
 and dependent `Sig` results are available only through their explicit trusted
 opt-ins described above. Other payload-bearing data constructors have no

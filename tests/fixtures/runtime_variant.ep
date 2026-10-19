@@ -1,0 +1,6 @@
+postulate Int : Type 0
+data RuntimeTree : Type 0 where
+| treeEmpty : RuntimeTree
+| treeNode (value : Int) (tail : RuntimeTree) : RuntimeTree
+data OtherTree : Type 0 where
+| otherTree : OtherTree

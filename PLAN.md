@@ -471,6 +471,11 @@ implementations.
    - [ ] Add declarative structural codecs for payload-bearing indexed data
      constructors. Today users must implement these through `runtimeCodec`;
      built-in recursive codecs cover Vec, List, Option, Sigma, and records.
+   - [x] Add a low-level `RuntimeVariant` representation that preserves a
+     constructor name and raw argument Values. It checks family membership,
+     constructor arity, and runtime spine shape; 200 generated nested-tree
+     cases and negative arity/wrong-family checks cover it. Typed recursive
+     payload codecs and automatic `runtimeValue` integration remain open.
    - [ ] Add typed host wrappers for value-indexed generic binders without a
      Nim runtime mapping. `RuntimeValueRaw` and the dynamic `RuntimeValue`
      wrapper accept their Eponym arguments as Values, with type membership

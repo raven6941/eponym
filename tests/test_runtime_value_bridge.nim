@@ -769,6 +769,56 @@ when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
   var r = initRng(424242'u64)
 
+  let variantSrc = readFile(baseDir / "tests/fixtures/runtime_variant.ep")
+  let variantGlobals = getGlobalsDir(baseDir, variantSrc)
+  const runtimeTreeConstructors = ["treeEmpty", "treeNode"]
+  let rawVariantCases = forAll(
+    "generic structural codecs preserve payload-bearing data constructors",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      var tree = runtimeVariantToValue(RuntimeVariant(
+        constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+        runtimeTreeConstructors)
+      for i in 0 ..< length:
+        tree = runtimeVariantToValue(RuntimeVariant(
+          constructor: "treeNode",
+          arguments: @[intToValue(i), tree]), variantGlobals,
+          "RuntimeTree", runtimeTreeConstructors)
+      var decoded: seq[int] = @[]
+      var current = tree
+      while true:
+        let variant = valueToRuntimeVariant(current, variantGlobals,
+          "RuntimeTree", runtimeTreeConstructors)
+        if variant.constructor == "treeEmpty":
+          var expected: seq[int] = @[]
+          for i in 0 ..< length: expected.add(length - i - 1)
+          return decoded == expected
+        if variant.constructor != "treeNode" or
+            variant.arguments.len != 2:
+          return false
+        decoded.add(valueToInt(variant.arguments[0]))
+        current = variant.arguments[1]
+      false,
+    shrinkInt)
+  if not rawVariantCases:
+    quit(1)
+  var variantArityRejected = false
+  try:
+    discard runtimeVariantToValue(RuntimeVariant(
+      constructor: "treeNode", arguments: @[intToValue(1)]),
+      variantGlobals, "RuntimeTree", runtimeTreeConstructors)
+  except ValueError as error:
+    variantArityRejected = "expects 2 arguments" in error.msg
+  doAssert variantArityRejected
+  var variantFamilyRejected = false
+  try:
+    validateRuntimeVariantConstructors(variantGlobals, "RuntimeTree",
+      ["treeEmpty", "otherTree"])
+  except ValueError as error:
+    variantFamilyRejected = "does not return family" in error.msg
+  doAssert variantFamilyRejected
+
   let importedRuntimeCases = forAll(
     "raw runtimeValue access reaches imported checked definitions", r, 200,
     proc(r: var Rng): int = r.genInt(-1000, 1000),
