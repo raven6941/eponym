@@ -20,6 +20,10 @@ eponymBlock:
   proc legacyPartial(value: Nat): Vec[Nat, 0] -> Vec[Nat, 1] =
     cons(Nat, zero(), value)
 
+  # The generic binder is known to be a type only within this proc's scope.
+  proc legacyPartialGeneric[A: Univ](value: A): Vec[A, 0] -> Vec[A, 1] =
+    cons(A, zero(), value)
+
   # A normal Nim-shaped Eponym value call must not trigger the migration
   # diagnostic because its first argument is a value expression.
   proc ordinaryNat(): Nat = suc(zero())
