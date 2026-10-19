@@ -783,6 +783,7 @@ type HostRuntimeType = object
   isRuntimeStructuredVariant: bool
   isRuntimeCodec: bool
   isRuntimeIndexedType: bool
+  isOpaqueRuntimeType: bool
   encoder: NimNode
   decoder: NimNode
 
@@ -891,6 +892,8 @@ proc hostRuntimeTypes(body: NimNode, globals: Globals): seq[HostRuntimeType] =
         isRuntimeCodec: isCodec,
         isRuntimeIndexedType: not isCodec and name in globals and
           not globals[name].ty.isNil and globals[name].ty.kind == tPi,
+        isOpaqueRuntimeType: not isCodec and name in globals and
+          not globals[name].tm.isNil and not globals[name].tm.refIsDefn,
         encoder: if isCodec: st[3] else: nil,
         decoder: if isCodec: st[4] else: nil))
 
@@ -2129,7 +2132,7 @@ proc genericRuntimeInfo(decl: NimNode,
     genericParams: NimNode, typeNames: seq[string],
     genericNames: seq[NimNode], genericNatArgs: seq[bool],
     genericBoolArgs: seq[bool], genericIntArgs: seq[bool],
-    genericValueArgs: seq[bool],
+    genericValueArgs: seq[bool], genericTypeBodyArgs: seq[bool],
     genericValueTypeNames: seq[string],
     genericValueTypeExprs: seq[NimNode],
     genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
@@ -2166,17 +2169,42 @@ proc genericRuntimeInfo(decl: NimNode,
       if name in result.genericNames.mapIt($it):
         result.error = "duplicate generic runtime parameter '" & name & "'"
         return
-      if binderType == "Type 0" and decl.len > 6 and not decl[6].isNil and
-          mentionsName(decl[6], name):
-        result.error = "generic type parameter '" & name &
-          "' is used by the runtime body; an explicit runtime type " &
-          "representation is required"
-        return
+      let typeUsedByBody = binderType == "Type 0" and decl.len > 6 and
+        not decl[6].isNil and mentionsName(decl[6], name)
+      if typeUsedByBody:
+        var representedTypes: seq[string] = @[]
+        for mapping in mappings:
+          if not mapping.isOpaqueRuntimeType or mapping.isRuntimeIndexedType or
+              mapping.isRuntimeVector or mapping.isRuntimeList or
+              mapping.isRuntimeOption or mapping.isRuntimeVariant or
+              mapping.isRuntimeStructuredVariant:
+            continue
+          if mapping.nimType.kind == nnkIdent and $mapping.nimType in
+              ["int", "int8", "int16", "int32", "int64", "uint",
+               "uint8", "uint16", "uint32", "uint64", "bool", "char",
+               "string", "cstring", "float", "float32", "float64"]:
+            continue
+          if not mapping.isRuntimeCodec and mapping.nimType.kind == nnkIdent and
+              $mapping.nimType == "seq":
+            continue
+          let mappedNimName = repr(mapping.nimType)
+          if mappedNimName in representedTypes:
+            result.error = "generic type parameter '" & name &
+              "' is used by the runtime body, but Nim type '" &
+              mappedNimName & "' has ambiguous runtime type mappings"
+            return
+          representedTypes.add(mappedNimName)
+        if representedTypes.len == 0:
+          result.error = "generic type parameter '" & name &
+            "' is used by the runtime body; add a runtimeType mapping for " &
+            "its opaque Nim type"
+          return
       let genericName = copyNimTree(param[i])
       result.genericNames.add(genericName)
       result.genericMappedTypes.add(nil)
       result.genericMappedNimTypes.add(nil)
       result.genericValueArgs.add(false)
+      result.genericTypeBodyArgs.add(typeUsedByBody)
       result.genericValueTypeNames.add("")
       result.genericValueTypeExprs.add(copyNimTree(param[^2]))
       if binderType == "Type 0":
@@ -2233,6 +2261,7 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     typeNames: seq[string], genericNames: seq[NimNode],
     genericNatArgs: seq[bool], genericBoolArgs: seq[bool],
     genericIntArgs: seq[bool], genericValueArgs: seq[bool],
+    genericTypeBodyArgs: seq[bool],
     genericValueTypeNames: seq[string],
     genericValueTypeExprs: seq[NimNode],
     genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
@@ -2248,6 +2277,35 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
                          globals))
     elif generic.genericIntArgs[i]:
       result.add(newCall(bindSym"intToValue", copyNimTree(genericName)))
+    elif generic.genericTypeBodyArgs[i]:
+      var whenBranches = newNimNode(nnkWhenStmt)
+      for mapping in mappings:
+        if not mapping.isOpaqueRuntimeType or mapping.isRuntimeIndexedType or
+            mapping.isRuntimeVector or mapping.isRuntimeList or
+            mapping.isRuntimeOption or mapping.isRuntimeVariant or
+            mapping.isRuntimeStructuredVariant:
+          continue
+        if mapping.nimType.kind == nnkIdent and $mapping.nimType in
+            ["int", "int8", "int16", "int32", "int64", "uint",
+             "uint8", "uint16", "uint32", "uint64", "bool", "char",
+             "string", "cstring", "float", "float32", "float64"]:
+          continue
+        if not mapping.isRuntimeCodec and mapping.nimType.kind == nnkIdent and
+            $mapping.nimType == "seq":
+          continue
+        let condition = newTree(nnkInfix, ident"is",
+          copyNimTree(genericName), copyNimTree(mapping.nimType))
+        let value = newCall(bindSym"runtimeGlobalValue", globals,
+                            newLit(mapping.eponymName))
+        whenBranches.add(newTree(nnkElifBranch, condition, newStmtList(value)))
+      let errorMessage = newLit("generic Nim type '" & $genericName &
+        "' has no runtimeType mapping")
+      whenBranches.add(newTree(nnkElse, newStmtList(newTree(nnkPragma,
+        newTree(nnkExprColonExpr, ident"error", errorMessage)))))
+      var mappedTypeValue = newNimNode(nnkBlockExpr)
+      mappedTypeValue.add(newEmptyNode())
+      mappedTypeValue.add(newStmtList(whenBranches))
+      result.add(mappedTypeValue)
     elif not generic.genericMappedTypes[i].isNil:
       let encoded = runtimeValueConversionExpr(
         generic.genericMappedTypes[i], generic.genericMappedNimTypes[i],

@@ -313,6 +313,8 @@ eponymBlock:
   postulate(Channel, Univ)
   runtimeVectorArray(Vec)
   runtimeType(Channel, ChannelHandle)
+  proc generatedTypeAwareSingleton[A: Univ](value: A): Vec[A, suc(zero)] =
+    cons(A, zero, value, vecnil(A))
   proc generatedArrayVecIdentity[n: Nat](values: Vec[Int, n]): Vec[Int, n] =
     values
   proc generatedArrayMatrixIdentity(
@@ -323,6 +325,7 @@ eponymBlock:
       callback: proc(values: Vec[Int, 3]): Vec[Int, 3] {.closure.},
       values: Vec[Int, 3]): Vec[Int, 3] = callback(values)
   runtimeValue(generatedArrayVecIdentity)
+  runtimeValue(generatedTypeAwareSingleton)
   runtimeValue(generatedArrayMatrixIdentity)
   runtimeValue(generatedChannelArrayIdentity)
 
@@ -953,6 +956,9 @@ static:
   doAssert compiles(generatedGenericChannelValue[
     ChannelHandle(id: 7, label: "generic")](1))
   doAssert not compiles(generatedGenericChannelValue[17](1))
+  doAssert compiles(generatedTypeAwareSingleton(
+    ChannelHandle(id: 8, label: "type-witness")))
+  doAssert not compiles(generatedTypeAwareSingleton(8))
   doAssert compiles(generatedApplyNimCallback(proc(value: int): int = value, 1))
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
@@ -2658,6 +2664,20 @@ proc callbackRole : Callback -> Sample -> Sample =
           smaller[row][column] = 0
       @[smaller])
   if not nestedVectorArrayCases:
+    quit(1)
+  let mappedGenericTypeCases = forAll(
+    "mapped Nim generic types are available in checked bodies", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(seed: int): bool =
+      let input = ChannelHandle(id: seed, label: "generic/" & $seed)
+      let checked = generatedTypeAwareSingleton(input)
+      let runtime = generatedTypeAwareSingletonRuntimeValue(input)
+      let decoded = vecValueToSeq[ChannelHandle](runtime.value, 1,
+        runtime.globals, "Vec", proc(value: Value, _: Globals): ChannelHandle =
+          valueToHost[ChannelHandle](value))
+      checked == @[input] and decoded == @[input],
+    shrinkInt)
+  if not mappedGenericTypeCases:
     quit(1)
   let vectorArrayOpaqueCases = forAll(
     "fixed Nim arrays preserve explicitly mapped opaque elements", r, 200,

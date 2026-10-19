@@ -373,9 +373,9 @@ implementations.
    definitions and round-trip both constructor cases in a 200-case property;
    runtime missing-postulate diagnostics recognize data constructors as valid
    results.
-- [x] Generate typed wrappers for type-level generic binders `[A: Univ]` when
-   the binder is used only in the checked signature. Nim values of generic
-   type `A` pass through opaque boxes; runtime computation uses the same
+- [x] Generate typed wrappers for type-level generic binders `[A: Univ]`.
+   Nim values of generic type `A` pass through opaque boxes; runtime
+   computation uses the same
    checked body. A 200-case property covers primitive and user-defined Nim
    values through both the generated wrapper and typed `runtimeValue` helper.
    Add value-indexed Nat binders `[n: Nat]` as Nim `static[int]` generic
@@ -384,8 +384,9 @@ implementations.
    wrappers and typed/raw `runtimeValue` calls. Add Bool-indexed binders
    `[b: Bool]` as Nim `static[bool]`, encoded using checked Bool constructors;
    a 200-case property covers typed wrappers and typed/raw `runtimeValue`
-   calls. Other value-indexed binder types and bodies that inspect generic
-   type arguments remain unsupported. Add Int-indexed binders `[i: Int]` as
+   calls. Bodies that inspect generic type arguments require the separately
+   tracked explicit opaque `runtimeType` witness. Other value-indexed binder
+   types remain unsupported. Add Int-indexed binders `[i: Int]` as
    Nim `static[int]`, encoded with Eponym integer values; a 200-case property
    covers negative and positive indices through typed wrappers and typed/raw
    `runtimeValue` calls. Add value binders over explicitly mapped runtime
@@ -664,6 +665,15 @@ implementations.
      function deliberately ignores the bad argument to prove validation occurs
      at the boundary. Another 200-case property confirms a malformed runtime
      result is rejected before the custom decoder runs.
+   - [x] Reify a used `[A: Univ]` type argument for checked runtime bodies
+      when its Nim type has a unique explicit opaque `runtimeType`
+      mapping. Generated wrappers and typed `RuntimeValue` calls pass the
+      mapped Eponym type witness; a 200-case property constructs an indexed
+      Vec value inside the generic body using a mapped opaque element type.
+      Unmapped, ambiguous, or primitive Nim type representations remain
+      rejected because Nim types such as `int` cannot identify whether Eponym
+      intended `Int`, `Nat`, or another explicitly mapped type. Custom
+      `runtimeCodec` representations are not inferred for generic `A`.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.
