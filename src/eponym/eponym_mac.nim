@@ -950,7 +950,7 @@ proc trustedRuntimeRecordNames(body: NimNode): HashSet[string] =
       result.incl(name)
 
 proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
-    tuple[first, second: NimNode] =
+    tuple[first, second: NimNode, binder: string] =
   ## Runtime tuples represent only non-dependent two-field Sig types. Reject
   ## dependent tails rather than erasing the first component from their type.
   if n.kind notin {nnkCall, nnkObjConstr} or n.len != 3 or
@@ -961,8 +961,8 @@ proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
     if n[1].len != 2 or n[1][0].kind != nnkIdent or
         (mentionsName(n[2], $n[1][0]) and not allowDependent):
       return
-    return (n[1][1], n[2])
-  (n[1], n[2])
+    return (n[1][1], n[2], $n[1][0])
+  (n[1], n[2], "")
 
 proc runtimeVectorComponents(n: NimNode, familyName: string):
     tuple[elementType, length: NimNode] =
@@ -1327,12 +1327,16 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     if nimType.kind notin {nnkTupleConstr, nnkTupleTy} or nimType.len != 2:
       return nil
     if toValue:
+      let firstValue = newTree(nnkBracketExpr, value, newLit(0))
       let first = runtimeValueConversionExpr(sigma.first, nimType[0],
-        newTree(nnkBracketExpr, value, newLit(0)), true, mappings, records,
+        firstValue, true, mappings, records,
         globals, allowDependentSigma, indexOverrides)
+      var secondOverrides = indexOverrides
+      if sigma.binder.len > 0:
+        secondOverrides.add((sigma.binder, firstValue))
       let second = runtimeValueConversionExpr(sigma.second, nimType[1],
         newTree(nnkBracketExpr, value, newLit(1)), true, mappings, records,
-        globals, allowDependentSigma, indexOverrides)
+        globals, allowDependentSigma, secondOverrides)
       if first.isNil or second.isNil: return nil
       return newCall(bindSym"pairValue", first, second)
     let firstValue = newCall(bindSym"runtimePairFirst", value)
@@ -1340,9 +1344,12 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     let first = runtimeValueConversionExpr(sigma.first, nimType[0],
       firstValue, false, mappings, records, globals, allowDependentSigma,
       indexOverrides)
+    var secondOverrides = indexOverrides
+    if sigma.binder.len > 0:
+      secondOverrides.add((sigma.binder, first))
     let second = runtimeValueConversionExpr(sigma.second, nimType[1],
       secondValue, false, mappings, records, globals, allowDependentSigma,
-      indexOverrides)
+      secondOverrides)
     if first.isNil or second.isNil: return nil
     return newTree(nnkTupleConstr, first, second)
   if eponymType.kind == nnkIdent:

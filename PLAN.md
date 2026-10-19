@@ -275,8 +275,8 @@ implementations.
    values, Bool and nullary enums, opaque mapped types, standard `List` and
    `Option` values, indexed `Vec` sequences, two-field Sigma tuples, and named records
    represented as mapped Nim objects. Dependent records and pairs have
-   explicit trusted opt-ins; the remaining dependent runtime forms stay open
-   under stage B.
+   explicit trusted opt-ins; nested dependent Sigma conversion still needs
+   dedicated coverage under stage B.
 - [x] Specify supported ownership, aliasing, exception, async, and lifetime
    behavior. QTT linearity is limited to checked Eponym terms; boxed Nim refs
    and closures may alias or be retained. Adapters pass values by value, have
@@ -432,10 +432,10 @@ implementations.
    definitions, `runtimeValue` access to checked results, callback values with
    recursive codecs, and explicit trusted opt-ins for dependent records and
    pairs. A reusable explicit descriptor now exists through `runtimeCodec`;
-   remaining gaps include broader automatic/structural codec coverage,
-   additional dependent forms, unmapped value-indexed generics, and other
-   higher-order signatures. Unsupported cases must continue to fail with a
-   precise compile-time diagnostic.
+   remaining gaps include nested dependent Sigma values, broader
+   automatic/structural codec coverage, additional dependent forms, unmapped
+   value-indexed generics, and other higher-order signatures. Unsupported
+   cases must continue to fail with a precise compile-time diagnostic.
    Definitions without a matching explicit Nim `proc` declaration still
    retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`
    declarations with unsupported signatures fail clearly when called.
