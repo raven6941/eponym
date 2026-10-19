@@ -169,6 +169,11 @@ eponymBlock:
   runtimeValue(importedApply)
 
 eponymBlock:
+  import "fixtures/runtime_imported_vec.ep"
+  runtimeVector(Vec)
+  runtimeValue(importedVectorIdentity)
+
+eponymBlock:
   postulate(Nat, Univ)
   data(Tree, Univ):
     proc leaf(): Tree
@@ -767,6 +772,27 @@ when isMainModule:
     shrinkInt)
   if not importedRuntimeCases:
     quit(1)
+
+  let importedDependentVectorCases = forAll(
+    "typed imported wrappers carry dependent Vec indices", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let values = makeIndexedRuntimeValues(length)
+      let direct = importedVectorIdentity(length, values)
+      let runtime = importedVectorIdentityRuntimeValue(length, values)
+      let decoded = vecValueToSeq[int](runtime.value, length, runtime.globals,
+        "Vec", proc(item: Value, _: Globals): int = valueToInt(item))
+      direct == values and decoded == values,
+    shrinkInt)
+  if not importedDependentVectorCases:
+    quit(1)
+  var importedVectorMismatchRejected = false
+  try:
+    discard importedVectorIdentity(3, @[1, 2])
+  except ValueError as error:
+    importedVectorMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert importedVectorMismatchRejected
 
   let rawGenericNatCases = forAll(
     "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,

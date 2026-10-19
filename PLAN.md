@@ -465,8 +465,9 @@ implementations.
    - [x] Generate typed Nim wrappers and typed `RuntimeValue` overloads from
      imported `.ep` definitions whose checked Pi signatures use supported
      runtime codecs. A 200-case property covers an imported identity and a
-     bound imported postulate through both typed and raw APIs; unsupported
-     imported signatures retain the raw `Value` interface.
+     bound imported postulate through both typed and raw APIs; another covers
+     a dependent imported Vec identity and rejects a sequence with the wrong
+     length. Unsupported imported signatures retain the raw `Value` interface.
    - [ ] Add declarative structural codecs for payload-bearing indexed data
      constructors. Today users must implement these through `runtimeCodec`;
      built-in recursive codecs cover Vec, List, Option, Sigma, and records.
