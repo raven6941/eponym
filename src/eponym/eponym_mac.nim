@@ -28,6 +28,11 @@ type LegacyCallInfo = object
 var legacyCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
 var legacyTypeFamilies {.compileTime.} = initHashSet[string]()
 var legacyTypeNames {.compileTime.} = initHashSet[string]()
+var scopedLegacyTypeNames {.compileTime.} = initHashSet[string]()
+
+proc isLegacyTypeName(n: NimNode): bool =
+  n.kind in {nnkIdent, nnkSym} and
+    ($n in legacyTypeNames or $n in scopedLegacyTypeNames)
 
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
@@ -64,8 +69,7 @@ proc warnCallStyleExplicitArgs(n: NimNode) =
   let info = legacyCallInfo[head]
   let supplied = n.len - 1
   if info.explicitCount == 0: return
-  let beginsWithTypeName = n[1].kind in {nnkIdent, nnkSym} and
-    $n[1] in legacyTypeNames
+  let beginsWithTypeName = isLegacyTypeName(n[1])
   if supplied <= info.termCount and not beginsWithTypeName: return
   warning("eponymBlock: call-style explicit parameters are deprecated; " &
     "use square brackets for Eponym type/index arguments", n)
@@ -148,6 +152,7 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
   legacyCallInfo.clear()
   legacyTypeFamilies.clear()
   legacyTypeNames.clear()
+  scopedLegacyTypeNames.clear()
   var seen = initHashSet[string]()
   for statement in body:
     case statement.kind
@@ -647,6 +652,8 @@ proc procDefToEponym(n: NimNode): string =
   # n[3] = formal params, n[4] = empty, n[5] = empty, n[6] = body
   let name = $n[0]
   let params = n[3]  # nnkFormalParams: [returnType, param1, param2, ...]
+  let priorScopedTypeNames = toSeq(scopedLegacyTypeNames)
+  scopedLegacyTypeNames.clear()
   var genericBinders: seq[string] = @[]
   if n[2].kind != nnkEmpty:
     for genericParam in n[2]:
@@ -656,6 +663,7 @@ proc procDefToEponym(n: NimNode): string =
       let ty = nimTypeToEponym(genericParam[^2])
       for i in 0 ..< genericParam.len - 2:
         genericBinders.add("(" & binderName(genericParam[i]) & " : " & ty & ")")
+        if ty == "Type 0": scopedLegacyTypeNames.incl(binderName(genericParam[i]))
   var paramStrs: seq[string] = @[]
   var retTy = "Type 0"
   if params.len > 0 and params[0].kind != nnkEmpty:
@@ -666,7 +674,10 @@ proc procDefToEponym(n: NimNode): string =
     for j in 0 ..< p.len - 2:
       let q = qtyPrefix(p[j])
       paramStrs.add("(" & q & binderName(p[j]) & " : " & ty & ")")
+      if ty == "Type 0": scopedLegacyTypeNames.incl(binderName(p[j]))
   let body = nimExprToEponym(n[6])
+  scopedLegacyTypeNames.clear()
+  for typeName in priorScopedTypeNames: scopedLegacyTypeNames.incl(typeName)
   let genericStr = if genericBinders.len == 0: ""
                    else: " " & genericBinders.join(" ")
   "proc " & name & genericStr & " " & paramStrs.join(" ") & " : " & retTy &

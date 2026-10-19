@@ -1128,11 +1128,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   test confirms ordinary calls such as `suc(zero())` stay warning-free.
 - [x] Detect partial legacy applications whose first explicit argument is a
   known Eponym data type name, even when the supplied arity is within the
-  callable's ordinary term arity. The regression fixture covers a partial
-  `cons(Nat, ...)` application.
-- [ ] Detect partial legacy applications whose explicit type argument is a
-  locally bound type variable or whose first explicit index is a value
-  expression indistinguishable from an ordinary term argument.
+  callable's ordinary term arity. The regression fixture covers partial
+  `cons(Nat, ...)` and `cons(A, ...)` applications, where `A: Type 0` is in
+  scope only for the latter.
+- [ ] Detect partial legacy applications whose first explicit index is a
+  value expression indistinguishable from an ordinary term argument.
 - [ ] Remove the legacy call-style parser/lowering path and update examples,
   tests, and documentation to use square brackets for explicit parameters.
 - [ ] Add positive coverage for bracket syntax and compile-fail coverage for

@@ -584,9 +584,10 @@ migration syntax. A compiler warning currently catches the conventional form
 when a complete call supplies more arguments than the declared term arity, and
 for known data-family applications in type position. It also catches partial
 applications when the first supplied argument is a known Eponym data type
-name. The check reads local Nim declarations and imported `.ep` signatures;
-partial applications beginning with a locally bound type variable or a Nat
-index value remain ambiguous and may not be warned yet. The syntax is planned
+name or a locally scoped binder of type `Type 0`. The check reads local Nim
+declarations and imported `.ep` signatures; partial applications beginning
+with an explicit Nat index value remain ambiguous and may not be warned yet.
+The syntax is planned
 for removal before the first release. Supported
 generic definitions have generated Nim wrappers for type parameters, Nat and
 Int indices, Bool indices, and values with explicit runtime mappings. Other
