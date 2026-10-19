@@ -439,6 +439,10 @@ implementations.
    and imported Option argument/results through generated, typed `RuntimeValue`,
    and raw `RuntimeValue` calls; negative compile fixtures reject a matching
    family with the wrong payload type.
+- [x] Thread earlier named Pi arguments through typed `bindPostulate` codecs
+   for later applied argument and result types. A 200-case property covers
+   `Nat -> Vec[Int, length] -> Vec[Int, length]` through generated, typed
+   `RuntimeValue`, and raw `RuntimeValue` calls.
 - [x] Permit `runtimeValue(importedDefinition)` when a checked definition
    comes from an imported `.ep` module and has no local Nim `proc` declaration.
    It exposes a raw `openArray[Value] -> (Value, Globals)` wrapper; typed Nim

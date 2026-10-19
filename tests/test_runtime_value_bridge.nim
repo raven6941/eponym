@@ -106,6 +106,9 @@ proc hostRuntimeHandleOptionAdapter(
 
 proc hostIntOptionIdentity(value: Option[int]): Option[int] = value
 
+proc hostIndexedIntVectorIdentity(length: int,
+    values: seq[int]): seq[int] = values
+
 proc decodedRuntimeHandles(values: openArray[ChannelHandle]):
     seq[ChannelHandle] =
   for value in values:
@@ -272,6 +275,19 @@ eponymBlock:
   proc importedOptionIdentity(value: Option[Int]): Option[Int] =
     useIntOption(value)
   runtimeValue(importedOptionIdentity)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  postulate(indexedIntVectorIdentity,
+    Pi(length: Nat, values: Vec[Int, length], Vec[Int, length]))
+  bindPostulate(indexedIntVectorIdentity, hostIndexedIntVectorIdentity,
+    Nat, Vec[Int, length], Vec[Int, length])
+  proc generatedIndexedIntVectorIdentity(length: Nat,
+      values: Vec[Int, length]): Vec[Int, length] =
+    indexedIntVectorIdentity(length, values)
+  runtimeValue(generatedIndexedIntVectorIdentity)
 
 eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
@@ -2545,6 +2561,27 @@ proc callbackRole : Callback -> Sample -> Sample =
         valueToOption[int](raw.value, raw.globals, "Option",
           proc(value: Value, globals: Globals): int = valueToInt(value)) == host)
   if not importedAppliedPostulateCases:
+    quit(1)
+  let dependentPostulateCodecCases = forAll(
+    "typed postulates carry earlier Nat indices into structural codecs", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var values: seq[int] = @[]
+      for i in 0 ..< input.length: values.add(input.seed + i)
+      let typed = generatedIndexedIntVectorIdentity(input.length, values)
+      let runtime = generatedIndexedIntVectorIdentityRuntimeValue(
+        input.length, values)
+      let vector = seqToVecValue(values, input.length, runtime.globals, "Vec",
+        proc(value: int, globals: Globals): Value = intToValue(value))
+      let raw = generatedIndexedIntVectorIdentityRuntimeValue([
+        natToValue(input.length, runtime.globals), vector])
+      typed == values and
+        vecValueToSeq[int](runtime.value, input.length, runtime.globals, "Vec",
+          proc(value: Value, globals: Globals): int = valueToInt(value)) == values and
+        vecValueToSeq[int](raw.value, input.length, raw.globals, "Vec",
+          proc(value: Value, globals: Globals): int = valueToInt(value)) == values)
+  if not dependentPostulateCodecCases:
     quit(1)
   let customCodecOptionCases = forAll(
     "runtimeOption recursively applies a custom runtimeCodec", r, 200,

@@ -292,7 +292,10 @@ Typed adapter annotations also accept applied structural types such as
 `Option[RuntimeHandle]`; for locally declared postulates, the macro checks the
 full annotated signature against the postulate. Imported postulate types are
 reconstructed from checked globals and receive the same comparison, including
-applied family arguments.
+applied family arguments. For named Pi binders, typed adapters carry earlier
+decoded arguments into later codecs: a bound `Nat -> Vec[Int, length] ->
+Vec[Int, length]` operation checks the Vec length on input and output. Indices
+that a codec cannot represent remain the adapter author's responsibility.
 `bindPostulatePair` additionally binds one to three codec-supported named
 arguments to a non-dependent `Sig(B, C)` result using recursive tuple codecs.
 It checks the declared argument type heads and tuple field type heads; indices

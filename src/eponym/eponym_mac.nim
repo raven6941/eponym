@@ -744,6 +744,7 @@ type HostPostulateBinding = object
   implementation: NimNode
   eponymTypes: seq[string]
   eponymTypeExprs: seq[NimNode]
+  eponymArgumentNames: seq[string]
   pairResultType: NimNode
   pairResultArgNames: seq[string]
   pairResult: bool
@@ -1131,6 +1132,9 @@ proc validateLocalBindingTypeExpressions(body: NimNode,
       binding.rawValue: return
   let declared = localPostulateArrowTypes(body, binding.postulateName)
   if declared.len == 0: return # imported or explicitly Pi-encoded declaration
+  if declared[0].kind in {nnkCall, nnkObjConstr} and declared[0].len > 0 and
+      declared[0][0].kind == nnkIdent and $declared[0][0] == "Pi":
+    return # the checked Pi telescope below supplies the exact comparison
   var provided = binding.eponymTypeExprs.mapIt(nimTypeToEponym(it))
   if binding.eponymTypeExprs.len == 1:
     provided = @[provided[0], provided[0]]
@@ -2126,6 +2130,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
     let argumentCount = adapterTypes.len - 1
     var decodedArgs: seq[NimNode] = @[]
     var adapterBody = newStmtList()
+    var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
     for i in 0 ..< argumentCount:
       let eponymType = adapterTypes[i]
       let nimType = runtimeNimType(eponymType, mappings, records)
@@ -2135,13 +2140,17 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
           repr(eponymType) & "'")
       let decoded = runtimeValueConversionExpr(eponymType, nimType,
         newTree(nnkBracketExpr, ident"runtimeArguments", newLit(i)), false,
-        mappings, records, ident"runtimeGlobals")
+        mappings, records, ident"runtimeGlobals", false, indexOverrides)
       if decoded.isNil:
         error("bindPostulate could not build a runtime codec for argument '" &
           repr(adapterTypes[i]) & "'")
       let decodedArg = genSym(nskVar, "hostArgument" & $i)
       adapterBody.add(newVarStmt(decodedArg, decoded))
       decodedArgs.add(decodedArg)
+      if i < binding.eponymArgumentNames.len and
+          binding.eponymArgumentNames[i].len > 0 and
+          binding.eponymArgumentNames[i] != "_":
+        indexOverrides.add((binding.eponymArgumentNames[i], decodedArg))
     let resultEponymType = adapterTypes[^1]
     let resultNimType = runtimeNimType(resultEponymType, mappings, records)
     if resultNimType.isNil:
@@ -2153,7 +2162,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       implementationCall.add(decodedArg)
     let encodedResult = runtimeValueConversionExpr(resultEponymType,
       resultNimType, implementationCall, true, mappings, records,
-      ident"runtimeGlobals")
+      ident"runtimeGlobals", false, indexOverrides)
     if encodedResult.isNil:
       error("bindPostulate could not build a runtime codec for result '" &
         repr(adapterTypes[^1]) & "'")
@@ -2941,6 +2950,11 @@ macro eponymBlock*(body: untyped): untyped =
 
   var bindings = hostPostulateBindings(body)
   for binding in bindings.mitems:
+    if binding.postulateName in checkedGlobals:
+      var bindingType = checkedGlobals[binding.postulateName].ty
+      while not bindingType.isNil and bindingType.kind == tPi:
+        binding.eponymArgumentNames.add(bindingType.scope.adv)
+        bindingType = bindingType.scope.bdy
     if binding.pairResult and binding.pairResultType.isNil and
         binding.postulateName in checkedGlobals:
       let checkedShape = runtimeTermTypeAfterArgs(
