@@ -1,0 +1,4 @@
+import "../../lib/vec.ep"
+
+record CallableField:
+| apply : Nat -> Nat -> Nat

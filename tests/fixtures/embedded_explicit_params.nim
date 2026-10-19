@@ -4,9 +4,14 @@ eponymBlock:
   import "../../lib/vec.ep"
   import "../../lib/bool.ep"
   import "legacy_postulate_index.ep"
+  import "callable_record_field.ep"
+  import "callable_record_field_value.ep"
 
   data(Protocol, Univ):
     proc protocolSend(A: Univ, payload: Nat): Protocol
+
+  record(LocalCallableField):
+    field(apply, Nat -> Nat -> Nat)
 
   proc localLegacyConstructor(): Protocol = protocolSend[Nat](zero())
   proc localBracketConstructor(): Protocol = protocolSend[Nat](zero())
@@ -23,6 +28,18 @@ eponymBlock:
 
   proc inferredIndexedHead(values: Vec[Nat, 0]): Vec[Nat, 0] =
     indexedHead(values)
+
+  proc bracketCallableRecordField(handler: CallableField,
+                                  value: Nat): Nat =
+    handler.apply[zero()](value)
+
+  proc bracketImplicitCallableRecordField(handler: Handler,
+                                          value: Nat): Nat =
+    handler.apply[zero()](value)
+
+  proc bracketLocalCallableRecordField(handler: LocalCallableField,
+                                       value: Nat): Nat =
+    handler.apply[zero()](value)
 
   proc legacyAppend(left, right: Vec[Nat, suc(zero())]):
       Vec[Nat, add(suc(zero()), suc(zero()))] =

@@ -1174,9 +1174,14 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   declarations, strip parenthesized call heads, and reject call-style explicit
   arguments through those projections. Local and imported field regressions
   cover direct and parenthesized projection calls.
-- [ ] Audit further AST wrappers around callees and add bracket-form compile
-  coverage for callable record fields once function-valued record fields
-  elaborate through the runtime wrapper pipeline.
+- [x] Preserve implicit Pi-typed function values when inferring Sigma/record
+  fields. A regression covers a record containing an implicit function and
+  a bracket call through its projection; elaborator tests continue to cover
+  ordinary implicit insertion.
+- [x] Add bracket-form compile coverage for callable record fields declared
+  locally and imported from `.ep` files, including an implicit function field.
+- [ ] Audit further AST wrappers around callees beyond parenthesized
+  projections.
 - [x] Add positive coverage for bracket syntax and compile-fail coverage for
   legacy term and type application spellings. The full local CI gate remains
   required before the first release.

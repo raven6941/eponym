@@ -2190,7 +2190,20 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         # Issue #201: the insertion inferTm's pkVar used to do now lives
         # at the infer-then-convert boundary, so check-mode uses of bare
         # implicits-headed variables keep their old behaviour.
-        (t, ty) = insertImplicits(pre, t, ty, ctx.len, ms)
+        # Preserve an implicit function value when the expected type is either
+        # unknown or also headed by an implicit Pi. Inserting here would
+        # consume its leading binder and turn a callback value into its result
+        # type (e.g. when inferring a pair component for a record field). If
+        # the expected type has a known non-function shape, retain ordinary
+        # implicit insertion below.
+        let inferredHead = headTy(ms, ty)
+        let expectedHead = headTy(ms, expTy)
+        let expectedWantsImplicitFunction = expectedHead.kind == tMeta or
+          (expectedHead.kind == tPi and expectedHead.impl)
+        let keepImplicitFunction = inferredHead.kind == tPi and
+          inferredHead.impl and expectedWantsImplicitFunction
+        if not keepImplicitFunction:
+          (t, ty) = insertImplicits(pre, t, ty, ctx.len, ms)
         discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
         t
 
