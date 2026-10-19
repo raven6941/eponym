@@ -26,6 +26,7 @@ type LegacyCallInfo = object
 
 var legacyCallInfo {.compileTime.} = initTable[string, LegacyCallInfo]()
 var legacyTypeFamilies {.compileTime.} = initHashSet[string]()
+var legacyTypeNames {.compileTime.} = initHashSet[string]()
 
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
@@ -61,7 +62,10 @@ proc warnCallStyleExplicitArgs(n: NimNode) =
   if head notin legacyCallInfo: return
   let info = legacyCallInfo[head]
   let supplied = n.len - 1
-  if info.explicitCount == 0 or supplied <= info.termCount: return
+  if info.explicitCount == 0: return
+  let beginsWithTypeName = n[1].kind in {nnkIdent, nnkSym} and
+    $n[1] in legacyTypeNames
+  if supplied <= info.termCount and not beginsWithTypeName: return
   warning("eponymBlock: call-style explicit parameters are deprecated; " &
     "use square brackets for Eponym type/index arguments", n)
 
@@ -122,6 +126,7 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
         declaration.def.tele.len - explicitCount)
     of dkData:
       let familyParams = declaration.params.len
+      legacyTypeNames.incl(declaration.dname)
       if familyParams + surfaceIndexArity(declaration.indexTy) > 0:
         legacyTypeFamilies.incl(declaration.dname)
       for constructor in declaration.ctors:
@@ -141,6 +146,7 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
 proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
   legacyCallInfo.clear()
   legacyTypeFamilies.clear()
+  legacyTypeNames.clear()
   var seen = initHashSet[string]()
   for statement in body:
     case statement.kind
@@ -162,6 +168,7 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
           kind = statement[2]
           if statement.len > 3: constructors = statement[3]
         let paramCount = if params.isNil: 0 else: params.len
+        legacyTypeNames.incl($statement[1])
         if paramCount + nimIndexArity(kind) > 0:
           legacyTypeFamilies.incl($statement[1])
         if not constructors.isNil and constructors.kind == nnkStmtList:

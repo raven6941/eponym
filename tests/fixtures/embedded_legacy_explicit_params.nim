@@ -14,6 +14,12 @@ eponymBlock:
       Vec[Nat, add(suc(zero()), suc(zero()))] =
     vappend(Nat, suc(zero()), suc(zero()), left, right)
 
+  # Partial applications are still distinguishable when a known data type
+  # appears first: this is the legacy explicit A argument to cons, even though
+  # the call supplies fewer arguments than cons has term binders.
+  proc legacyPartial(value: Nat): Vec[Nat, 0] -> Vec[Nat, 1] =
+    cons(Nat, zero(), value)
+
   # A normal Nim-shaped Eponym value call must not trigger the migration
   # diagnostic because its first argument is a value expression.
   proc ordinaryNat(): Nat = suc(zero())
