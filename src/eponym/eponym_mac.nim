@@ -25,6 +25,7 @@ type LegacyCallInfo = object
   explicitCount: int
   termCount: int
   leadingTermCount: int
+  requiredBracketCount: int
   requiresBrackets: bool
   firstExplicitType: bool
 
@@ -90,6 +91,20 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
         head[0].len == 2:
       let ascribed = nimTypeCallInfo(head[0][1])
       if ascribed.explicitCount > 0: return (true, ascribed)
+  of nnkBracketExpr:
+    if head.len > 1:
+      let base = callInfoForHead(head[0])
+      if base.found and base.info.explicitCount > 0:
+        var remaining = base.info
+        let supplied = head.len - 1
+        remaining.explicitCount = max(0, remaining.explicitCount - supplied)
+        remaining.requiredBracketCount =
+          max(0, remaining.requiredBracketCount - supplied)
+        if remaining.requiredBracketCount == 0:
+          remaining.requiresBrackets = false
+          remaining.firstExplicitType = false
+          remaining.leadingTermCount = remaining.termCount
+        return (true, remaining)
   of nnkIfExpr, nnkIfStmt:
     var selected: LegacyCallInfo
     var haveSelected = false
@@ -108,6 +123,7 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
       if haveSelected and (candidate.info.explicitCount != selected.explicitCount or
           candidate.info.termCount != selected.termCount or
           candidate.info.leadingTermCount != selected.leadingTermCount or
+          candidate.info.requiredBracketCount != selected.requiredBracketCount or
           candidate.info.requiresBrackets != selected.requiresBrackets or
           candidate.info.firstExplicitType != selected.firstExplicitType):
         return
@@ -254,6 +270,7 @@ proc registerLegacyInfo(name: string, explicitCount, termCount: int,
   if explicitCount > 0:
     legacyCallInfo[name] = LegacyCallInfo(explicitCount: explicitCount,
       termCount: termCount, requiresBrackets: requiresBrackets,
+      requiredBracketCount: (if requiresBrackets: explicitCount else: 0),
       firstExplicitType: firstExplicitType)
 
 proc nimTypeToEponym(n: NimNode): string
@@ -265,7 +282,9 @@ proc surfaceCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
     if binder.impl or isType:
       inc result.explicitCount
       if result.explicitCount == 1: result.firstExplicitType = isType
-      if isType and not binder.impl: result.requiresBrackets = true
+      if isType and not binder.impl:
+        inc result.requiredBracketCount
+        result.requiresBrackets = true
     elif not binder.impl:
       inc result.termCount
       if result.explicitCount == 0: inc result.leadingTermCount
@@ -277,7 +296,9 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
     if current.impl or isType:
       inc result.explicitCount
       if result.explicitCount == 1: result.firstExplicitType = isType
-      if isType and not current.impl: result.requiresBrackets = true
+      if isType and not current.impl:
+        inc result.requiredBracketCount
+        result.requiresBrackets = true
     elif not current.impl:
       inc result.termCount
       if result.explicitCount == 0: inc result.leadingTermCount
@@ -285,12 +306,17 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
 
 proc surfaceFamilyCallInfo(params: seq[tuple[name: string, ty: PreTerm,
     impl: bool, erased: bool, qty: Qty]]): LegacyCallInfo =
-  result.explicitCount = params.len
   for param in params:
-    if not param.impl:
-      result.requiresBrackets = true
-  if params.len > 0:
-    result.firstExplicitType = params[0].ty.kind in {pkUniv, pkUnivN}
+    let isType = param.ty.kind in {pkUniv, pkUnivN}
+    if param.impl or isType:
+      inc result.explicitCount
+      if result.explicitCount == 1: result.firstExplicitType = isType
+      if isType and not param.impl:
+        inc result.requiredBracketCount
+        result.requiresBrackets = true
+    else:
+      inc result.termCount
+      if result.explicitCount == 0: inc result.leadingTermCount
 
 proc nimTypePreTerm(ty: NimNode): PreTerm =
   let program = parseProgram("postulate __eponymCallable : " &
@@ -314,6 +340,7 @@ proc nimGenericCallInfo(params, formal: NimNode): LegacyCallInfo =
   result.explicitCount = nimGenericParamCount(params)
   result.termCount = nimFormalArgCount(formal)
   result.leadingTermCount = 0
+  result.requiredBracketCount = result.explicitCount
   result.requiresBrackets = result.explicitCount > 0
   if result.explicitCount > 0 and params.len > 0 and
       params[0].kind == nnkIdentDefs:
@@ -332,6 +359,7 @@ proc mergeCallInfo(a, b: LegacyCallInfo): LegacyCallInfo =
   result.termCount = a.termCount + b.termCount
   result.leadingTermCount = if a.explicitCount > 0: a.leadingTermCount
     else: a.termCount + b.leadingTermCount
+  result.requiredBracketCount = a.requiredBracketCount + b.requiredBracketCount
   result.requiresBrackets = a.requiresBrackets or b.requiresBrackets
   result.firstExplicitType = if a.explicitCount > 0: a.firstExplicitType
     else: b.firstExplicitType
@@ -339,6 +367,7 @@ proc mergeCallInfo(a, b: LegacyCallInfo): LegacyCallInfo =
 proc sameCallInfo(a, b: LegacyCallInfo): bool =
   a.explicitCount == b.explicitCount and a.termCount == b.termCount and
     a.leadingTermCount == b.leadingTermCount and
+    a.requiredBracketCount == b.requiredBracketCount and
     a.requiresBrackets == b.requiresBrackets and
     a.firstExplicitType == b.firstExplicitType
 

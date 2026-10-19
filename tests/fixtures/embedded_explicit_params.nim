@@ -28,6 +28,9 @@ eponymBlock:
   proc bracketVectorType(value: Vec[Nat, suc(zero())]):
       Vec[Nat, suc(zero())] = value
 
+  proc bracketInferredEqualityIndex(): Eq[Nat, zero(), zero()] =
+    refl[Nat](zero())
+
   proc bracketIndexedHead(values: Vec[Nat, 0]): Vec[Nat, 0] =
     indexedHead[zero()](values)
 

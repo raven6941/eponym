@@ -1210,11 +1210,15 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   function signatures when no record field of that name is registered. Field
   metadata takes precedence, and a regression covers an ordinary callable
   field whose name collides with a generic function.
-- [ ] Finish the callable callee audit for partial bracket applications.
-  Bracket heads may have inferable constructor indices after their explicit
-  type arguments, so subtracting a simple argument count creates false
-  positives. The guard currently avoids guessing; complete this with binder
-  position/inferability metadata before claiming the wrapper audit is done.
+- [x] Track the required type-binder count through bracket-applied call heads.
+  A compile-fail fixture verifies that a partially bracketed two-type generic
+  cannot receive the next required type argument in parentheses. A positive
+  equality-constructor fixture confirms `refl[Nat](zero())` remains valid when
+  its term index is inferred from the value argument.
+- [ ] Finish the callable callee audit for partial bracket applications of
+  constructor indices and other inferable binders. Those may be supplied in
+  brackets or inferred from ordinary term arguments; distinguish their
+  positions before rejecting legacy forms.
   Other relevant supported forms—identifiers, parenthesized and qualified
   calls, returned calls, callback aliases, conditionals, type ascriptions, and
   statement-list expressions—have focused coverage. Unsupported Nim AST forms
