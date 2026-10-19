@@ -1803,6 +1803,42 @@ proc rawRuntimeValueCheck(eponymType, value, globals: NimNode,
 proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode
 
+proc runtimeValueTypeOverrides(typeOverrides, indexOverrides:
+    seq[tuple[name: string, value: NimNode]]):
+    seq[tuple[name: string, value: NimNode]] =
+  result = indexOverrides
+  for override in typeOverrides:
+    result.add(override)
+
+proc runtimeRepresentedTypeValueExpr(n, globals: NimNode,
+    typeOverrides, indexOverrides: seq[tuple[name: string,
+      value: NimNode]], mappings: seq[HostRuntimeType]): NimNode =
+  for mapping in mappings:
+    if mapping.isRuntimeVector:
+      let vector = runtimeVectorComponents(n, mapping.eponymName)
+      if not vector.elementType.isNil:
+        let elementType = runtimeRepresentedTypeValueExpr(vector.elementType,
+          globals, typeOverrides, indexOverrides, mappings)
+        let length = runtimeNatIndexExpr(vector.length, indexOverrides)
+        if elementType.isNil or length.isNil: return nil
+        return newCall(bindSym"callRuntimeValue",
+          newCall(bindSym"runtimeGlobalValue", globals,
+            newLit(mapping.eponymName)),
+          newTree(nnkBracket, elementType,
+            newCall(bindSym"natToValue", length, globals)))
+    elif mapping.isRuntimeOption:
+      let elementType = runtimeOptionElementType(n, mapping.eponymName)
+      if not elementType.isNil:
+        let representedElement = runtimeRepresentedTypeValueExpr(
+          elementType, globals, typeOverrides, indexOverrides, mappings)
+        if representedElement.isNil: return nil
+        return newCall(bindSym"callRuntimeValue",
+          newCall(bindSym"runtimeGlobalValue", globals,
+            newLit(mapping.eponymName)),
+          newTree(nnkBracket, representedElement))
+  runtimeTypeValueExpr(n, globals,
+    runtimeValueTypeOverrides(typeOverrides, indexOverrides))
+
 proc runtimePiTypeValueExpr(n, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
   if n.kind notin {nnkCall, nnkObjConstr} or n.len < 3 or
@@ -1820,7 +1856,7 @@ proc runtimePiTypeValueExpr(n, globals: NimNode,
     let domain = runtimeTypeValueExpr(binders[index].domain, globals,
       localOverrides)
     if domain.isNil: return nil
-    let argument = genSym(nskParam, "runtimePiArgument")
+    let argument = ident"runtimePiArgument"
     var codomainOverrides = localOverrides
     codomainOverrides.add((binders[index].name, argument))
     let codomain = if index + 1 < binders.len:
@@ -1846,6 +1882,8 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                globals: NimNode,
                                allowDependentSigma = false,
                                indexOverrides: seq[tuple[name: string,
+                                 value: NimNode]] = @[],
+                               typeOverrides: seq[tuple[name: string,
                                  value: NimNode]] = @[]): NimNode =
   if eponymType.kind == nnkEmpty or
       (eponymType.kind == nnkIdent and $eponymType in ["void", "unitTy"]):
@@ -1890,7 +1928,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             body = newStmtList(checkedUnit, callbackValue))
           var callbackValue = newCall(bindSym"vHostFunc", hostCallback)
           let callbackType = runtimeTypeValueExpr(eponymType, globals,
-            indexOverrides)
+            runtimeValueTypeOverrides(typeOverrides, indexOverrides))
           if not callbackType.isNil:
             callbackValue = newCall(bindSym"setRuntimeHostFunctionType",
               callbackValue, callbackType, globals)
@@ -1901,7 +1939,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             body = newStmtList(callbackValue))
           callbackValue = newCall(bindSym"vHostFunc", hostCallback)
         let callbackType = runtimeTypeValueExpr(eponymType, globals,
-          indexOverrides)
+          runtimeValueTypeOverrides(typeOverrides, indexOverrides))
         if not callbackType.isNil:
           callbackValue = newCall(bindSym"setRuntimeHostFunctionType",
             callbackValue, callbackType, globals)
@@ -1939,15 +1977,15 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                       allowDependentSigma)
       if argNimType.isNil: return nil
       argNimTypes.add(argNimType)
-      argValueSyms.add(genSym(nskParam, "runtimeCallbackValue" & $i))
-      argSyms.add(genSym(nskParam, "runtimeCallbackArgument" & $i))
+      argValueSyms.add(ident("runtimeCallbackValue" & $i))
+      argSyms.add(ident("runtimeCallbackArgument" & $i))
     if toValue:
       var decodedArgs: seq[NimNode] = @[]
       var callbackIndexOverrides = indexOverrides
       for i, argType in procParts.argTypes:
         let decodedArg = runtimeValueConversionExpr(argType, argNimTypes[i],
           argValueSyms[i], false, mappings, records, globals,
-          allowDependentSigma, callbackIndexOverrides)
+          allowDependentSigma, callbackIndexOverrides, typeOverrides)
         if decodedArg.isNil: return nil
         decodedArgs.add(decodedArg)
         callbackIndexOverrides.add((procParts.argNames[i], decodedArg))
@@ -1956,7 +1994,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         hostResult.add(decodedArg)
       let encodedResult = runtimeValueConversionExpr(procParts.resultType,
         resultNimType, hostResult, true, mappings, records, globals,
-        allowDependentSigma, callbackIndexOverrides)
+        allowDependentSigma, callbackIndexOverrides, typeOverrides)
       if encodedResult.isNil: return nil
       var callbackValue = encodedResult
       if procParts.isNullary:
@@ -1967,7 +2005,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           body = newStmtList(checkedUnit, callbackValue))
         var callbackValue = newCall(bindSym"vHostFunc", hostCallback)
         let callbackType = runtimeTypeValueExpr(eponymType, globals,
-          indexOverrides)
+          runtimeValueTypeOverrides(typeOverrides, indexOverrides))
         if not callbackType.isNil:
           callbackValue = newCall(bindSym"setRuntimeHostFunctionType",
             callbackValue, callbackType, globals)
@@ -1979,7 +2017,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           body = callbackBody)
         callbackValue = newCall(bindSym"vHostFunc", hostCallback)
       let callbackType = runtimeTypeValueExpr(eponymType, globals,
-        indexOverrides)
+        runtimeValueTypeOverrides(typeOverrides, indexOverrides))
       if not callbackType.isNil:
         callbackValue = newCall(bindSym"setRuntimeHostFunctionType",
           callbackValue, callbackType, globals)
@@ -1990,7 +2028,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     for i, argType in procParts.argTypes:
       let encodedArg = runtimeValueConversionExpr(argType, argNimTypes[i],
         argSyms[i], true, mappings, records, globals, allowDependentSigma,
-        callbackIndexOverrides)
+        callbackIndexOverrides, typeOverrides)
       if encodedArg.isNil: return nil
       encodedArgs.add(encodedArg)
       formal.add(newIdentDefs(argSyms[i], argNimTypes[i], newEmptyNode()))
@@ -2001,7 +2039,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       newTree(nnkPrefix, ident"@", encodedArgs))
     let decodedResult = runtimeValueConversionExpr(procParts.resultType,
       resultNimType, applied, false, mappings, records, globals,
-      allowDependentSigma, callbackIndexOverrides)
+      allowDependentSigma, callbackIndexOverrides, typeOverrides)
     if decodedResult.isNil: return nil
     return newProc(params = formal, body = newStmtList(decodedResult))
   let typeHead = runtimeTypeHead(eponymType)
@@ -2032,7 +2070,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           not mapping.isRuntimeIndexedType and
           findHostRecord(records, mapping.eponymName) < 0:
         let expectedType = runtimeTypeValueExpr(eponymType, globals,
-          indexOverrides)
+          runtimeValueTypeOverrides(typeOverrides, indexOverrides))
         if expectedType.isNil: return nil
         let converterSym = if toValue:
           bindSym"toHostValueAtRuntimeType"
@@ -2083,7 +2121,8 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         if toValue:
           let encodedItem = runtimeValueConversionExpr(vector.elementType,
             elementNimType, itemSym, true, mappings, records,
-            codecGlobalsSym, allowDependentSigma, indexOverrides)
+            codecGlobalsSym, allowDependentSigma, indexOverrides,
+            typeOverrides)
           if encodedItem.isNil: return nil
           let encoder = newProc(params = @[bindSym"Value",
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
@@ -2093,11 +2132,20 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newTree(nnkBracketExpr, bindSym"arrayToVecValue",
               copyNimTree(arrayLengthType), copyNimTree(elementNimType))
           else: bindSym"seqToVecValue"
+          let typeWitnessOverrides = if typeOverrides.len > 0:
+            typeOverrides else: indexOverrides
+          let elementTypeValue = runtimeRepresentedTypeValueExpr(
+            vector.elementType, globals, typeWitnessOverrides,
+            indexOverrides, mappings)
+          if not elementTypeValue.isNil:
+            return newCall(encoderFn, value, expectedLength, globals,
+              newLit(mapping.eponymName), encoder, elementTypeValue)
           return newCall(encoderFn, value, expectedLength, globals,
             newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(vector.elementType,
           elementNimType, itemSym, false, mappings, records,
-          codecGlobalsSym, allowDependentSigma, indexOverrides)
+          codecGlobalsSym, allowDependentSigma, indexOverrides,
+          typeOverrides)
         if decodedItem.isNil: return nil
         let decoder = newProc(params = @[elementNimType,
           newIdentDefs(itemSym, bindSym"Value", newEmptyNode()),
@@ -2120,7 +2168,8 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         if toValue:
           let encodedItem = runtimeValueConversionExpr(elementType,
             elementNimType, itemSym, true, mappings, records,
-            codecGlobalsSym, allowDependentSigma, indexOverrides)
+            codecGlobalsSym, allowDependentSigma, indexOverrides,
+            typeOverrides)
           if encodedItem.isNil: return nil
           let encoder = newProc(params = @[bindSym"Value",
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
@@ -2150,17 +2199,26 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         if toValue:
           let encodedItem = runtimeValueConversionExpr(elementType,
             elementNimType, itemSym, true, mappings, records,
-            codecGlobalsSym, allowDependentSigma, indexOverrides)
+            codecGlobalsSym, allowDependentSigma, indexOverrides,
+            typeOverrides)
           if encodedItem.isNil: return nil
           let encoder = newProc(params = @[bindSym"Value",
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
+          let typeWitnessOverrides = if typeOverrides.len > 0:
+            typeOverrides else: indexOverrides
+          let elementTypeValue = runtimeRepresentedTypeValueExpr(elementType,
+            globals, typeWitnessOverrides, indexOverrides, mappings)
+          if not elementTypeValue.isNil:
+            return newCall(bindSym"optionToValue", value, globals,
+              newLit(mapping.eponymName), encoder, elementTypeValue)
           return newCall(bindSym"optionToValue", value, globals,
             newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(elementType,
           elementNimType, itemSym, false, mappings, records,
-          codecGlobalsSym, allowDependentSigma, indexOverrides)
+          codecGlobalsSym, allowDependentSigma, indexOverrides,
+          typeOverrides)
         if decodedItem.isNil: return nil
         let decoder = newProc(params = @[elementNimType,
           newIdentDefs(itemSym, bindSym"Value", newEmptyNode()),
@@ -2180,7 +2238,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         let fieldValue = newTree(nnkBracketExpr, value, newLit(i))
         let encoded = runtimeValueConversionExpr(field.fieldType, nimType[i],
           fieldValue, true, mappings, records, globals, allowDependentSigma,
-          fieldOverrides)
+          fieldOverrides, typeOverrides)
         if encoded.isNil: return nil
         encodedFields.add(encoded)
         if field.binder.len > 0:
@@ -2198,7 +2256,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       else: current
       let decoded = runtimeValueConversionExpr(field.fieldType, nimType[i],
         fieldValue, false, mappings, records, globals, allowDependentSigma,
-        fieldOverrides)
+        fieldOverrides, typeOverrides)
       if decoded.isNil: return nil
       decodedFields.add(decoded)
       if field.binder.len > 0:
@@ -2230,7 +2288,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         record.trustDependentFields
       if toValue:
         var convertedFields: seq[NimNode] = @[]
-        var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
+        var fieldOverrides = indexOverrides
         for field in record.fields:
           let fieldType = runtimeNimType(field.eponymType, mappings, records,
                                          recordAllowsDependentFields)
@@ -2238,10 +2296,10 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           let fieldValue = newTree(nnkDotExpr, value, ident(field.name))
           let converted = runtimeValueConversionExpr(field.eponymType,
             fieldType, fieldValue, true, mappings, records, globals,
-            recordAllowsDependentFields, indexOverrides)
+            recordAllowsDependentFields, fieldOverrides, typeOverrides)
           if converted.isNil: return nil
           convertedFields.add(converted)
-          indexOverrides.add((field.name, fieldValue))
+          fieldOverrides.add((field.name, fieldValue))
         var tail = newCall(bindSym"unitValue")
         for i in countdown(convertedFields.high, 0):
           tail = newCall(bindSym"pairValue", convertedFields[i], tail)
@@ -2250,7 +2308,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       var fields = newNimNode(nnkObjConstr)
       fields.add(nimType)
       var decodeBody = newStmtList()
-      var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
+      var fieldOverrides = indexOverrides
       for field in record.fields:
         let fieldType = runtimeNimType(field.eponymType, mappings, records,
                                        recordAllowsDependentFields)
@@ -2259,11 +2317,11 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         let converted = runtimeValueConversionExpr(field.eponymType,
           fieldType, newCall(bindSym"runtimePairFirst", current), false,
           mappings, records, globals, recordAllowsDependentFields,
-          indexOverrides)
+          fieldOverrides, typeOverrides)
         if converted.isNil: return nil
         decodeBody.add(newLetStmt(fieldSym, converted))
         fields.add(newTree(nnkExprColonExpr, ident(field.name), fieldSym))
-        indexOverrides.add((field.name, fieldSym))
+        fieldOverrides.add((field.name, fieldSym))
         current = newCall(bindSym"runtimePairSecond", current)
       decodeBody.add(fields)
       return newBlockStmt(decodeBody)
@@ -2286,20 +2344,19 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         continue
       let condition = newTree(nnkInfix, ident"is", copyNimTree(nimType),
                               copyNimTree(mapping.nimType))
-      let mappedValue = if mapping.isRuntimeIndexedType and
-          mapping.isRuntimeCodec:
+      let mappedValue = if mapping.isRuntimeCodec:
         newCall(if toValue: copyNimTree(mapping.encoder)
           else: copyNimTree(mapping.decoder), value, globals)
         else:
           runtimeValueConversionExpr(ident(mapping.eponymName),
             mapping.nimType, value, toValue, mappings, records, globals,
-            allowDependentSigma, indexOverrides)
+            allowDependentSigma, indexOverrides, typeOverrides)
       if mappedValue.isNil: return nil
       var checkedValue = mappedValue
       if mapping.isRuntimeIndexedType and
           (mapping.isRuntimeStructuredVariant or mapping.isRuntimeCodec):
         let expectedType = runtimeTypeValueExpr(eponymType, globals,
-          indexOverrides)
+          runtimeValueTypeOverrides(typeOverrides, indexOverrides))
         if not expectedType.isNil:
           if toValue:
             let encodedSym = genSym(nskLet, "indexedGenericEncoded")
@@ -2901,12 +2958,18 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     argEponymTypes, argNimTypes, globalsSym, records)
   wrapperBody.add(indexedWitnesses.statements)
   var values = newNimNode(nnkBracket)
-  for genericArg in genericRuntimeValueArgs(generic, globalsSym,
-      codecMappings, records, indexedWitnesses.witnesses):
+  let genericArgs = genericRuntimeValueArgs(generic, globalsSym,
+    codecMappings, records, indexedWitnesses.witnesses)
+  for genericArg in genericArgs:
     values.add(genericArg)
   if hasImportedNullaryUnitArgument(decl):
     values.add(newCall(bindSym"vUnit"))
   var wrapperIndexOverrides = indexedWitnesses.witnesses
+  var wrapperTypeOverrides = indexedWitnesses.witnesses
+  for genericIndex, genericName in generic.genericNames:
+    if genericIndex < genericArgs.len:
+      wrapperTypeOverrides.add(($genericName,
+        copyNimTree(genericArgs[genericIndex])))
   for i, argSym in argSyms:
     var encodedArg: NimNode = nil
     for cached in indexedWitnesses.encodedArgs:
@@ -2916,7 +2979,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     values.add(if encodedArg.isNil:
       runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i], argSym,
         true, codecMappings, records, globalsSym, allowDependentSigma,
-        wrapperIndexOverrides)
+        wrapperIndexOverrides, wrapperTypeOverrides)
       else: encodedArg)
     if values[^1].isNil: return nil
     wrapperIndexOverrides.add((argNames[i], argSym))
@@ -2928,7 +2991,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     newCall(bindSym"callValueFuncDir", callArgs)))
   let resultExpr = runtimeValueConversionExpr(params[0], resultType,
     runtimeValue, false, codecMappings, records, globalsSym,
-    allowDependentSigma, wrapperIndexOverrides)
+    allowDependentSigma, wrapperIndexOverrides, wrapperTypeOverrides)
   if resultExpr.isNil: return nil
   wrapperBody.add(resultExpr)
 
@@ -3209,14 +3272,14 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
         encodedGeneric = runtimeValueConversionExpr(
           generic.genericValueTypeExprs[i], genericNimTypes[i], genericSym,
           true, generic.codecMappings, records, globalsSym,
-          allowDependentSigma)
+          allowDependentSigma, @[], typeIndexOverrides)
       else:
         encodedGeneric = copyNimTree(genericSym)
     elif not generic.genericMappedTypes[i].isNil:
       encodedGeneric = runtimeValueConversionExpr(
         generic.genericMappedTypes[i], generic.genericMappedNimTypes[i],
         genericSym, true, generic.codecMappings, records, globalsSym,
-        allowDependentSigma)
+        allowDependentSigma, @[], typeIndexOverrides)
     if encodedGeneric.isNil: return nil
     var validateEncodedMappedVariant = false
     if not generic.genericValueArgs[i] and
@@ -3256,20 +3319,21 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
         encoded = runtimeValueConversionExpr(
           generic.genericValueTypeExprs[i], genericNimTypes[i],
           genericSyms[i], true, generic.codecMappings, records, globalsSym,
-          allowDependentSigma, indexOverrides)
+          allowDependentSigma, indexOverrides, typeIndexOverrides)
       else:
         encoded = copyNimTree(genericSyms[i])
     else:
       encoded = runtimeValueConversionExpr(generic.genericMappedTypes[i],
         genericNimTypes[i], genericSyms[i], true, generic.codecMappings,
-        records, globalsSym, allowDependentSigma, indexOverrides)
+        records, globalsSym, allowDependentSigma, indexOverrides,
+        typeIndexOverrides)
     if encoded.isNil: return nil
     values.add(encoded)
     indexOverrides.add(($genericName, genericSyms[i]))
   for i, argSym in argSyms:
     let encoded = runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i],
       argSym, true, generic.codecMappings, records, globalsSym,
-      allowDependentSigma, indexOverrides)
+      allowDependentSigma, indexOverrides, typeIndexOverrides)
     if encoded.isNil: return nil
     values.add(encoded)
     indexOverrides.add((argNames[i], argSym))
@@ -3283,7 +3347,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
   else:
     let decoded = runtimeValueConversionExpr(params[0], resultType,
       runtimeResult, false, generic.codecMappings, records, globalsSym,
-      allowDependentSigma, indexOverrides)
+      allowDependentSigma, indexOverrides, typeIndexOverrides)
     if decoded.isNil: return nil
     body.add(decoded)
   result = newNimNode(nnkProcDef)
@@ -3338,12 +3402,18 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   let indexedWitnesses = indexedGenericTypeWitnesses(generic, argSyms,
     eponymTypes, nimTypes, globalsSym, records)
   var values = newNimNode(nnkBracket)
-  for genericArg in genericRuntimeValueArgs(generic, globalsSym,
-      codecMappings, records, indexedWitnesses.witnesses):
+  let genericArgs = genericRuntimeValueArgs(generic, globalsSym,
+    codecMappings, records, indexedWitnesses.witnesses)
+  for genericArg in genericArgs:
     values.add(genericArg)
   if hasImportedNullaryUnitArgument(decl):
     values.add(newCall(bindSym"vUnit"))
   var runtimeValueIndexOverrides = indexedWitnesses.witnesses
+  var runtimeValueTypeOverrides = indexedWitnesses.witnesses
+  for genericIndex, genericName in generic.genericNames:
+    if genericIndex < genericArgs.len:
+      runtimeValueTypeOverrides.add(($genericName,
+        copyNimTree(genericArgs[genericIndex])))
   for i, argSym in argSyms:
     var converted: NimNode = nil
     for cached in indexedWitnesses.encodedArgs:
@@ -3353,7 +3423,8 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
     if converted.isNil:
       converted = runtimeValueConversionExpr(eponymTypes[i], nimTypes[i],
         argSym, true, codecMappings, records, globalsSym,
-        allowDependentSigma, runtimeValueIndexOverrides)
+        allowDependentSigma, runtimeValueIndexOverrides,
+        runtimeValueTypeOverrides)
     if converted.isNil: return nil
     values.add(converted)
     runtimeValueIndexOverrides.add((argNames[i], argSym))

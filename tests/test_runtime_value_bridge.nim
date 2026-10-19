@@ -2018,6 +2018,15 @@ when isMainModule:
         ChannelHandle](callback, value)
       let runtime = importedGenericNestedOptionVectorCallbackApplyRuntimeValue[
         ChannelHandle](callback, value)
+      let runtimeElementType = runtimeGlobalValue(runtime.globals,
+        "RuntimeHandle")
+      let expectedVecType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [runtimeElementType, natToValue(2, runtime.globals)])
+      let expectedOptionType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Option"), [expectedVecType])
+      validateRuntimeValueType(runtime.value, expectedOptionType,
+        runtime.globals)
       let decoded = valueToOption(runtime.value, runtime.globals, "Option",
         proc(item: Value, globals: Globals): seq[ChannelHandle] =
           vecValueToSeq[ChannelHandle](item, 2, globals, "Vec",
@@ -3449,6 +3458,13 @@ proc callbackRole : Callback -> Sample -> Sample =
       let expected = @[ChannelHandle(id: seed, label: "decoded-" & $seed)]
       let checked = generatedCodecTypeAwareSingleton(input)
       let runtime = generatedCodecTypeAwareSingletonRuntimeValue(input)
+      let representedElementType = runtimeGlobalValue(runtime.globals,
+        "RuntimeHandle")
+      let expectedVectorType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [representedElementType, natToValue(1, runtime.globals)])
+      validateRuntimeValueType(runtime.value, expectedVectorType,
+        runtime.globals)
       let decoded = vecValueToSeq[ChannelHandle](runtime.value, 1,
         runtime.globals, "Vec", decodeRuntimeHandle)
       checked == expected and decoded == expected,

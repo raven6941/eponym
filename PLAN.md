@@ -741,6 +741,12 @@ implementations.
      A 200-case property covers `runtimeDataVariant`; a 50-case property covers
      a custom `runtimeCodec`. Both reject callbacks that change the index via
      generated and typed `RuntimeValue` wrappers.
+   - [x] Preserve represented element types when recursive Vec and Option
+     codecs construct runtime values. Type witnesses include nested vector
+     element types and Nat lengths rather than using `Type 0` as a placeholder.
+     A 200-case property checks a generic Vec's mapped element type, and the
+     nested `Option[Vec[A, 2]]` callback property validates the full runtime
+     result type with `validateRuntimeValueType`.
    - [ ] Infer indexed witnesses when the only representative is nested in a
      structural value, and define behavior when no representative exists,
      such as `none` or an empty collection. These cases need an explicit type

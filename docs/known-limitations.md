@@ -225,6 +225,10 @@ leaves are property-tested through all three codecs, including generated
 wrappers and typed and raw `RuntimeValue` calls. Other collections and
 payload-bearing data types need an explicit codec when no built-in mapping is
 available.
+Recursive Vec and Option encoders preserve their represented Eponym element
+types, including nested vectors and fixed Nat lengths; the bridge no longer
+uses `Type 0` as the encoded element type when it can reconstruct the declared
+type.
 A mapped `Future[T]` can pass through an opaque postulate adapter as either an
 argument or result; the bridge preserves the same Nim future value. Eponym
 has no async effect, await, or cancellation operation. Completion, failure,
