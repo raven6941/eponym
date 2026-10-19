@@ -2,6 +2,7 @@ import eponym_mac
 
 eponymBlock:
   import "../../lib/vec.ep"
+  import "../../lib/bool.ep"
 
   data(Protocol, Univ):
     proc protocolSend(A: Univ, payload: Nat): Protocol
@@ -37,6 +38,10 @@ eponymBlock:
 
   proc bracketPartialIndexExpr():
       Vec[Nat, 0] -> Vec[Nat, 0] -> Vec[Nat, 0] = indexHead[zero()]
+
+  proc bracketNatIf(enabled: Bool): Nat =
+    let index = if enabled: zero() else: suc(zero())
+    index
 
   # Ordinary Nim-shaped Eponym value calls remain parenthesized.
   proc ordinaryNat(): Nat = suc(zero())

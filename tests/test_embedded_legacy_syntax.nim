@@ -15,13 +15,15 @@ proc compileFixture(fixture, suffix: string):
   execCmdEx(command)
 
 let (positiveOutput, positiveCode) = compileFixture(
-  "tests/fixtures/embedded_legacy_explicit_params.nim", "positive")
+  "tests/fixtures/embedded_explicit_params.nim", "positive")
 if positiveCode != 0:
   quit("bracket syntax fixture failed to compile:\n" & positiveOutput, 1)
 
 for fixture in [
     "tests/fixtures/embedded_err_legacy_explicit_params.nim",
-    "tests/fixtures/embedded_err_legacy_type_application.nim"]:
+    "tests/fixtures/embedded_err_legacy_type_application.nim",
+    "tests/fixtures/embedded_err_legacy_nat_let.nim",
+    "tests/fixtures/embedded_err_legacy_nat_if.nim"]:
   let (legacyOutput, legacyCode) = compileFixture(fixture, fixture.splitFile.name)
   if legacyCode == 0 or "call-style explicit" notin legacyOutput or
       "have been removed" notin legacyOutput:

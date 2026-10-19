@@ -37,19 +37,44 @@ proc isLegacyTypeName(n: NimNode): bool =
   n.kind in {nnkIdent, nnkSym} and
     ($n in legacyTypeNames or $n in scopedLegacyTypeNames)
 
+proc isLegacyNatExpr(n: NimNode): bool
+
+proc isLegacyNatBranch(n: NimNode): bool =
+  if n.kind == nnkStmtList:
+    n.len == 1 and isLegacyNatExpr(n[0])
+  else:
+    isLegacyNatExpr(n)
+
 proc isLegacyNatExpr(n: NimNode): bool =
   case n.kind
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
-    n.intVal >= 0
+    result = n.intVal >= 0
   of nnkIdent, nnkSym:
-    $n in scopedNatNames
+    result = $n in scopedNatNames
   of nnkPar:
-    n.len == 1 and isLegacyNatExpr(n[0])
+    result = n.len == 1 and isLegacyNatExpr(n[0])
+  of nnkIfExpr, nnkIfStmt:
+    var hasCondition = false
+    var hasElse = false
+    result = true
+    for branch in n:
+      case branch.kind
+      of nnkElifExpr, nnkElifBranch:
+        hasCondition = true
+        if branch.len != 2 or not isLegacyNatBranch(branch[1]):
+          result = false
+      of nnkElseExpr, nnkElse:
+        hasElse = true
+        if branch.len != 1 or not isLegacyNatBranch(branch[0]):
+          result = false
+      else:
+        result = false
+    result = result and hasCondition and hasElse
   of nnkCall, nnkCommand:
-    n.len > 0 and n[0].kind in {nnkIdent, nnkSym} and
+    result = n.len > 0 and n[0].kind in {nnkIdent, nnkSym} and
       ($n[0] in legacyNatConstructors or $n[0] in legacyNatFunctions)
   else:
-    false
+    result = false
 
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
