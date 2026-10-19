@@ -46,7 +46,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | Inside `eponymBlock` | Meaning |
 |---|---|
 | `proc f(x: T): U = term` | Eponym definition; `term` must use Eponym forms |
-| `proc f[A: Univ, n: Nat, b: Bool, i: Int](x: A): Vec[A, n] = ...` | Explicit Eponym binders; `[A: Univ]` maps to an opaque Nim generic type, `[n: Nat]` and `[i: Int]` map to `static[int]`, and `[b: Bool]` maps to `static[bool]`. Value binders cross as checked Eponym values. Other value-indexed binders remain unsupported. |
+| `proc f[A: Univ, n: Nat, b: Bool, i: Int](x: A): Vec[A, n] = ...` | Explicit Eponym binders; `[A: Univ]` maps to an opaque Nim generic type, `[n: Nat]` and `[i: Int]` map to `static[int]`, and `[b: Bool]` maps to `static[bool]`. Binders over `runtimeType` mappings use `static[NimType]` when Nim supports that type as a compile-time value. Value binders cross through their checked runtime codec. |
 | `cons[A, n](x, xs)`, `Vec[A, n]` | Square brackets supply explicit Eponym parameters; parentheses supply term arguments. Call-style forms remain supported during migration. |
 | `let x = term` in a definition body | Eponym local binding; one or more lets may precede the final term |
 | `left + right`, `left - right`, `left * right`, `-value` | Lowered to checked Eponym `Int` primitives; the Eponym checker enforces operand types |
@@ -88,7 +88,9 @@ binder appears only in the checked signature. Nat binders `[n: Nat]` map to
 Nim `static[int]`; Bool binders `[b: Bool]` map to `static[bool]` and require
 `bool.ep`; Int binders `[i: Int]` also map to `static[int]` and cross as Eponym
 integer values. All three value binder kinds can appear in checked signatures
-and bodies. Other Eponym signatures need an explicit opaque mapping as shown below or one of the
+and bodies. A binder over an explicitly mapped type can also use a Nim static
+generic value, encoded through the mapping's runtime codec. Other Eponym
+signatures need an explicit opaque mapping as shown below or one of the
 supported structural codecs. Multi-argument Nim proc types with supported leaf
 codecs can cross in either direction when annotated with `{.closure.}`. Calling
 an explicit `proc` definition

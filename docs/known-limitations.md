@@ -48,7 +48,11 @@ typed and raw `runtimeValue` overloads. Bool binders `[b: Bool]` map to Nim
 typed wrappers and both typed and raw `runtimeValue` overloads are covered.
 Int binders `[i: Int]` map to Nim `static[int]` and cross as integer values;
 typed wrappers and typed/raw `runtimeValue` overloads are covered, including
-negative indices. Other value-indexed binders remain unsupported.
+negative indices. A binder over an explicitly mapped runtime type uses
+`static[NimType]` and crosses through that type's runtime codec; tests cover
+opaque object and nullary enum values. The value must be representable as a
+Nim compile-time constant, and other unmapped value-indexed binders remain
+unsupported.
 `Nat` conversions reject negative values. An explicit `proc` declaration with
 an unsupported signature remains
 checked but emits a targeted compile-time error if called. Generated names
