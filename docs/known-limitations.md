@@ -116,7 +116,8 @@ that maps to `seq[A]`, checks constructor identities and spines, and recursively
 uses the element codec. A unary family with canonical `none` and `some`
 constructors can opt into `runtimeOption(Option)`, which maps recursively
 codec-supported payloads to `std/options.Option[A]`. Other collections and
-payload-bearing data types remain unsupported.
+payload-bearing data types need an explicit codec when no built-in mapping is
+available.
 A mapped `Future[T]` can pass through an opaque postulate adapter as either an
 argument or result; the bridge preserves the same Nim future value. Eponym
 has no async effect, await, or cancellation operation. Completion, failure,
@@ -135,12 +136,18 @@ behavior remain trusted host semantics.
 Structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
 `Sig` tuples, and named records. Records with dependent fields
 and dependent `Sig` results are available only through their explicit trusted
-opt-ins described above. Other payload-bearing data constructors,
-non-Nat value-indexed generic signatures without a supported runtime mapping,
+opt-ins described above. Other payload-bearing data constructors have no
+built-in structural codec and require an explicit `runtimeCodec` mapping.
+Non-Nat value-indexed generic signatures without a supported runtime mapping
 and structural inspection of closures are unsupported.
 The session runtime demo includes a hand-written Nat LEB128 message codec, and
 the TCP adapter demo uses it over a loopback socket, but there is no general
-structural codec framework.
+derived structural codec framework. A user can provide a codec for a named
+Eponym type or family with `runtimeCodec(Type, NimType, encode, decode)`.
+Encoder and decoder procedures receive `Globals` and translate between the
+Nim representation and runtime `Value`s. The Nim compiler checks their
+concrete signatures when a wrapper or typed postulate binding uses them; the
+codec implementation and any dependent-index correspondence remain trusted.
 Nim's type checker checks the concrete adapter signature, but the mapping to
 the Eponym type and the adapter behavior remain trusted. Neither compiler
 proves that the host value satisfies a dependent index.

@@ -401,6 +401,15 @@ implementations.
    and recursively encodes the payload. A 200-case property covers `none`,
    `some`, primitive and opaque generic payloads, nested options, and typed/raw
    `runtimeValue` paths.
+- [x] Add `runtimeCodec(EponymType, NimType, encoder, decoder)` for explicitly
+   mapped named Eponym types and families. The typed encoder and decoder
+   receive the module's `Globals`; generated wrappers and typed postulate
+   bindings call them, so Nim checks the concrete procedure signatures. A
+   200-case property maps a payload-bearing `Tree` family to `seq[int]`, tests
+   typed and raw `runtimeValue` paths, and invokes a Nim implementation through
+   a checked `Tree -> Tree` postulate. A compile-fail fixture rejects a Nim
+   encoder with the wrong signature. Index relationships remain the codec
+   author's responsibility.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly
@@ -409,6 +418,14 @@ implementations.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
+   Current support includes checked Nim wrappers for supported generic
+   definitions, `runtimeValue` access to checked results, callback values with
+   recursive codecs, standard `Vec`, `List`, and `Option` codecs, custom
+   `runtimeCodec` mappings, and explicit trusted opt-ins for dependent records
+   and pairs. Remaining gaps include broader automatic codec coverage,
+   additional dependent forms, unmapped value-indexed generics, and other
+   higher-order signatures. Unsupported cases must continue to fail with a
+   precise compile-time diagnostic.
    Definitions without a matching explicit Nim `proc` declaration still
    retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`
    declarations with unsupported signatures fail clearly when called.
