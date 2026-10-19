@@ -356,8 +356,11 @@ implementations.
    type `A` pass through opaque boxes; runtime computation uses the same
    checked body. A 200-case property covers primitive and user-defined Nim
    values through both the generated wrapper and typed `runtimeValue` helper.
-   Value-indexed binders and bodies that inspect generic type arguments still
-   require an explicit runtime representation.
+   Add value-indexed Nat binders `[n: Nat]` as Nim `static[int]` generic
+   parameters, passed at runtime using the checked Nat constructors. They can
+   appear in signatures and runtime bodies; 200-case properties cover typed
+   wrappers and typed/raw `runtimeValue` calls. Other value-indexed binder
+   types and bodies that inspect generic type arguments remain unsupported.
 - [x] Add a structural codec for nullary, unindexed `data` declarations mapped
    to same-named Nim enum members. The codec translates through checked
    constructor reference identities; a 200-case property covers every variant,
@@ -368,11 +371,11 @@ implementations.
    mapped opaque arguments for callbacks passed into and returned from checked
    functions. Returned Nim closures require `{.closure.}`.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
-   definitions and extend support to dependent signatures, value-indexed
-   generics, and higher-order definitions. Definitions without
-   a matching explicit Nim `proc` declaration still retain the legacy
-   `varargs[int]` compatibility wrapper; explicit `proc` declarations with
-   unsupported signatures fail clearly when called.
+   definitions and extend support to dependent structures, non-Nat
+   value-indexed generics, and other unsupported higher-order definitions.
+   Definitions without a matching explicit Nim `proc` declaration still
+   retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`
+   declarations with unsupported signatures fail clearly when called.
 - [x] Validate each currently supported Eponym adapter shape during macro
    expansion and the concrete Nim adapter signature during compilation.
    Unsupported generated wrapper shapes produce a compile-time diagnostic;

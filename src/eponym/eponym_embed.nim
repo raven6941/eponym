@@ -663,6 +663,8 @@ proc enumToValue*[T: enum](hostValue: T, globals: Globals,
       "' has no matching Eponym data constructor")
   eval(globals[constructorName].tm, @[])
 
+proc callRuntimeValue*(fn: Value, args: openArray[Value]): Value
+
 proc valueToEnum*[T: enum](value: Value, globals: Globals,
                            constructors: openArray[string]): T =
   ## Decode only the mapped nullary Eponym constructors.
@@ -686,6 +688,16 @@ proc prependErasedTypeArgs*(typeArgCount: int,
   result = newSeqOfCap[Value](typeArgCount + args.len)
   for _ in 0 ..< typeArgCount:
     result.add(vType(0))
+  for arg in args:
+    result.add(arg)
+
+proc prependRuntimeArgs*(genericArgs: openArray[Value],
+                         args: openArray[Value]): seq[Value] =
+  ## Add explicitly represented generic arguments (type and static value
+  ## indices) before the ordinary runtime values.
+  result = newSeqOfCap[Value](genericArgs.len + args.len)
+  for arg in genericArgs:
+    result.add(arg)
   for arg in args:
     result.add(arg)
 
@@ -749,6 +761,36 @@ proc hostOpaqueQuinary*[A, B, C, D, E, F](
 
 proc natToValue*(n: int): Value = vNatLit(n)
 
+proc canonicalNatConstructorIds(globals: Globals):
+    tuple[zeroId, sucId: int, valid: bool] =
+  if "Nat" notin globals or "zero" notin globals or "suc" notin globals:
+    return
+  let natType = globals["Nat"]
+  let zero = globals["zero"]
+  let suc = globals["suc"]
+  if natType.tm.isNil or natType.tm.kind != tR or zero.tm.isNil or
+      suc.tm.isNil or not zero.isDataConstructor or
+      not suc.isDataConstructor or zero.ty.isNil or suc.ty.isNil or
+      zero.ty.kind != tR or zero.ty.refId != natType.tm.refId or
+      suc.ty.kind != tPi or suc.ty.dom.kind != tR or
+      suc.ty.dom.refId != natType.tm.refId or
+      suc.ty.scope.bdy.kind != tR or
+      suc.ty.scope.bdy.refId != natType.tm.refId:
+    return
+  (zero.tm.refId, suc.tm.refId, true)
+
+proc natToValue*(n: int, globals: Globals): Value =
+  ## Prefer checked zero/suc constructors when available so Eponym definitions
+  ## that eliminate Nat values can compute; retain literals for opaque Nat.
+  if n < 0:
+    raise newException(ValueError, "Nat cannot be negative")
+  let constructors = canonicalNatConstructorIds(globals)
+  if not constructors.valid:
+    return natToValue(n)
+  result = eval(globals["zero"].tm, @[])
+  for _ in 0 ..< n:
+    result = callRuntimeValue(eval(globals["suc"].tm, @[]), @[result])
+
 proc valueToNat*(v: Value): int =
   ## Convert a primitive Eponym Nat value to a Nim int.
   if v.whnf.kind == wNatLit:
@@ -758,10 +800,11 @@ proc valueToNat*(v: Value): int =
 proc valueToNat*(v: Value, globals: Globals): int =
   ## Decode either a canonical Nat literal or its checked zero/suc constructor
   ## representation using the constructor identities from the same module.
-  if "zero" notin globals or "suc" notin globals:
+  if v.whnfKind == wNatLit:
+    return v.whnfNatLitVal
+  let constructors = canonicalNatConstructorIds(globals)
+  if not constructors.valid:
     raise newException(ValueError, "runtime Nat constructors are unavailable")
-  let zeroId = globals["zero"].tm.refId
-  let sucId = globals["suc"].tm.refId
   var current = v
   while true:
     case current.whnfKind
@@ -772,9 +815,9 @@ proc valueToNat*(v: Value, globals: Globals): int =
       return
     of wRef:
       let id = current.whnfRefId
-      if id == zeroId:
+      if id == constructors.zeroId:
         return
-      if id != sucId or current.whnfSpineLen != 1 or
+      if id != constructors.sucId or current.whnfSpineLen != 1 or
           current.whnfSpineKind(0) != eApp:
         raise newException(ValueError, "runtime value is not a Nat")
       if result == high(int):

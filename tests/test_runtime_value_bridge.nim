@@ -170,6 +170,17 @@ eponymBlock:
   runtimeValue(generatedGenericIdentity)
 
 eponymBlock:
+  import "../lib/nat.ep"
+  postulate(Int, Univ)
+  postulate(Channel, Nat -> Univ)
+  runtimeType(Channel, IndexedChannelHandle)
+  proc generatedGenericIndexedChannelIdentity[n: Nat](
+      channel: Channel[n]): Channel[n] = channel
+  runtimeValue(generatedGenericIndexedChannelIdentity)
+  proc generatedGenericNatValue[n: Nat](ignored: Int): Nat = n
+  runtimeValue(generatedGenericNatValue)
+
+eponymBlock:
   postulate(Int, Univ)
   proc generatedApplyNimCallback(
       callback: proc(value: Int): Int {.closure.}, value: Int): Int =
@@ -205,6 +216,12 @@ static:
   doAssert not compiles(generatedBoolNot(1))
   doAssert compiles(generatedGenericIdentity(1))
   doAssert compiles(generatedGenericIdentity("opaque"))
+  doAssert compiles(generatedGenericIndexedChannelIdentity[17](
+    IndexedChannelHandle(index: 3, label: "generic-index")))
+  doAssert compiles(generatedGenericIndexedChannelIdentityRuntimeValue[17](
+    IndexedChannelHandle(index: 3, label: "generic-index")))
+  doAssert compiles(generatedGenericNatValue[17](3))
+  doAssert compiles(generatedGenericNatValueRuntimeValue[17](3))
   doAssert compiles(generatedApplyNimCallback(proc(value: int): int = value, 1))
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
@@ -722,6 +739,36 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded.id == input.id and decoded.label == input.label,
     shrinkInt)
   if not genericOpaqueIdentityCases:
+    quit(1)
+
+  let genericNatIndexCases = forAll(
+    "generic Nat indices cross typed wrappers", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let input = IndexedChannelHandle(index: id, label: "generic-index/" & $id)
+      let typed = generatedGenericIndexedChannelIdentity[17](input)
+      let typedRuntime = generatedGenericIndexedChannelIdentityRuntimeValue[17](
+        input)
+      let rawRuntime = generatedGenericIndexedChannelIdentityRuntimeValue[17](
+        [toHostValue(input)])
+      typed == input and
+        valueToHost[IndexedChannelHandle](typedRuntime.value) == input and
+        valueToHost[IndexedChannelHandle](rawRuntime.value) == input,
+    shrinkInt)
+  if not genericNatIndexCases:
+    quit(1)
+
+  let genericNatBodyCases = forAll(
+    "Nat generic values are available in checked runtime bodies", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let typedRuntime = generatedGenericNatValueRuntimeValue[17](value)
+      let rawRuntime = generatedGenericNatValueRuntimeValue[17]([intToValue(value)])
+      generatedGenericNatValue[17](value) == 17 and
+        valueToNat(typedRuntime.value, typedRuntime.globals) == 17 and
+        valueToNat(rawRuntime.value, rawRuntime.globals) == 17,
+    shrinkInt)
+  if not genericNatBodyCases:
     quit(1)
 
   let callbackBridgeCases = forAll(
