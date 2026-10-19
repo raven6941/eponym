@@ -1,0 +1,5 @@
+import "../../lib/bool.ep"
+import "../../lib/option.ep"
+
+postulate Int : Type 0
+postulate useIntOption : Option Int -> Option Int

@@ -433,11 +433,12 @@ implementations.
    wrong signature. Index relationships remain the codec author's
    responsibility.
 - [x] Allow typed `bindPostulate` annotations to use applied structural codec
-   types such as `Option[RuntimeHandle]`, and check the full locally declared
-   Eponym signature against those annotations during macro expansion. A
-   200-case property covers a custom-coded Option argument/result through
-   generated, typed `RuntimeValue`, and raw `RuntimeValue` calls; a negative
-   compile fixture rejects a matching family with the wrong payload type.
+   types such as `Option[RuntimeHandle]`, and check the full Eponym signature,
+   including imported signatures reconstructed from checked globals, against
+   those annotations during macro expansion. 200-case properties cover custom
+   and imported Option argument/results through generated, typed `RuntimeValue`,
+   and raw `RuntimeValue` calls; negative compile fixtures reject a matching
+   family with the wrong payload type.
 - [x] Permit `runtimeValue(importedDefinition)` when a checked definition
    comes from an imported `.ep` module and has no local Nim `proc` declaration.
    It exposes a raw `openArray[Value] -> (Value, Globals)` wrapper; typed Nim
@@ -614,10 +615,8 @@ implementations.
      at the boundary. Another 200-case property confirms a malformed runtime
      result is rejected before the custom decoder runs.
    Other higher-order and dependent signatures still need explicit runtime
-   codecs or raw `Value` interfaces. Imported postulate bindings with applied
-   type annotations currently validate named family heads but do not compare
-   applied arguments or indices with the imported signature. Unsupported
-   typed wrappers must continue to fail with a precise compile-time diagnostic.
+   codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
+   to fail with a precise compile-time diagnostic.
    Definitions whose signatures cannot be reconstructed expose the raw
    `Value` interface when requested; calling their generated name produces a
    compile-time diagnostic. Explicit `proc` declarations with unsupported

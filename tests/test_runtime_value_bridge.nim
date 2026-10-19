@@ -104,6 +104,8 @@ proc hostRuntimeHandleAdapter(value: ChannelHandle): ChannelHandle =
 proc hostRuntimeHandleOptionAdapter(
     value: Option[ChannelHandle]): Option[ChannelHandle] = value
 
+proc hostIntOptionIdentity(value: Option[int]): Option[int] = value
+
 proc decodedRuntimeHandles(values: openArray[ChannelHandle]):
     seq[ChannelHandle] =
   for value in values:
@@ -261,6 +263,15 @@ eponymBlock:
   import "fixtures/runtime_imported_vec.ep"
   runtimeVector(Vec)
   runtimeValue(importedVectorIdentity)
+
+eponymBlock:
+  import "fixtures/runtime_imported_option.ep"
+  runtimeOption(Option)
+  bindPostulate(useIntOption, hostIntOptionIdentity,
+    Option[Int], Option[Int])
+  proc importedOptionIdentity(value: Option[Int]): Option[Int] =
+    useIntOption(value)
+  runtimeValue(importedOptionIdentity)
 
 eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
@@ -2516,6 +2527,24 @@ proc callbackRole : Callback -> Sample -> Sample =
         valueToOption[ChannelHandle](raw.value, raw.globals, "Option",
           decodeRuntimeHandle) == expected)
   if not customCodecOptionPostulateCases:
+    quit(1)
+  let importedAppliedPostulateCases = forAll(
+    "imported typed postulates preserve applied codec signatures", r, 200,
+    proc(r: var Rng): tuple[present: bool, value: int] =
+      (r.genBool(), r.genInt(-1000, 1000)),
+    proc(input: tuple[present: bool, value: int]): bool =
+      let host = if input.present: some(input.value) else: none(int)
+      let typed = importedOptionIdentity(host)
+      let runtime = importedOptionIdentityRuntimeValue(host)
+      let raw = importedOptionIdentityRuntimeValue([
+        optionToValue(host, runtime.globals, "Option",
+          proc(value: int, globals: Globals): Value = intToValue(value))])
+      typed == host and
+        valueToOption[int](runtime.value, runtime.globals, "Option",
+          proc(value: Value, globals: Globals): int = valueToInt(value)) == host and
+        valueToOption[int](raw.value, raw.globals, "Option",
+          proc(value: Value, globals: Globals): int = valueToInt(value)) == host)
+  if not importedAppliedPostulateCases:
     quit(1)
   let customCodecOptionCases = forAll(
     "runtimeOption recursively applies a custom runtimeCodec", r, 200,

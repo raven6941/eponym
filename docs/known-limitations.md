@@ -290,10 +290,9 @@ opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`, and curried
 opaque postulates with typed runtime codecs for every argument and result.
 Typed adapter annotations also accept applied structural types such as
 `Option[RuntimeHandle]`; for locally declared postulates, the macro checks the
-full annotated signature against the postulate. For imported postulates, the
-current adapter validation checks named family heads, so applied arguments
-and indices in the annotation are not yet compared with the imported
-signature.
+full annotated signature against the postulate. Imported postulate types are
+reconstructed from checked globals and receive the same comparison, including
+applied family arguments.
 `bindPostulatePair` additionally binds one to three codec-supported named
 arguments to a non-dependent `Sig(B, C)` result using recursive tuple codecs.
 It checks the declared argument type heads and tuple field type heads; indices

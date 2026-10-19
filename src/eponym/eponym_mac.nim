@@ -1141,6 +1141,58 @@ proc validateLocalBindingTypeExpressions(body: NimNode,
       "typed adapter type '" & providedType & "' does not match postulate '" &
       binding.postulateName & "' (" & declaredType & ")")
 
+proc stripOuterTypeParens(value: string): string =
+  if value.len >= 2 and value[0] == '(' and value[^1] == ')':
+    value[1 ..< value.len - 1]
+  else:
+    value
+
+proc validateAppliedBindingTypeExpressions(globals: Globals,
+    binding: HostPostulateBinding) =
+  if binding.eponymTypeExprs.len == 0 or binding.pairResult or
+      binding.rawValue: return
+  var hasAppliedType = false
+  for typeExpr in binding.eponymTypeExprs:
+    if typeExpr.kind != nnkIdent: hasAppliedType = true
+  if not hasAppliedType: return
+  if binding.postulateName notin globals:
+    raise newException(ValueError,
+      "postulate not found: " & binding.postulateName)
+  let entry = globals[binding.postulateName]
+  var refNames = initTable[int, string]()
+  for name, globalEntry in globals:
+    if not globalEntry.tm.isNil and globalEntry.tm.kind == tR and
+        globalEntry.tm.refId notin refNames:
+      refNames[globalEntry.tm.refId] = name
+  var expected = binding.eponymTypeExprs
+  if expected.len == 1: expected = @[expected[0], expected[0]]
+  var current = entry.ty
+  var ctx: Ctx = @[]
+  for i in 0 ..< expected.len - 1:
+    if current.isNil or current.kind != tPi or current.impl or
+        current.qty == q0:
+      raise newException(ValueError,
+        "typed adapter signature does not match postulate '" &
+        binding.postulateName & "'")
+    let actual = stripOuterTypeParens(prettyTerm(current.dom, ctx, refNames))
+    let wanted = nimTypeToEponym(expected[i])
+    if actual != wanted:
+      raise newException(ValueError,
+        "typed adapter type '" & wanted & "' does not match type " &
+        $(i + 1) & " of postulate '" & binding.postulateName & "' (" &
+        actual & ")")
+    let binderName = if current.scope.adv == "_": "bindingArg" & $i
+                     else: current.scope.adv
+    ctx = @[CtxEntry(name: binderName, ty: current.dom, qty: current.qty)] & ctx
+    current = current.scope.bdy
+  let actualResult = stripOuterTypeParens(prettyTerm(current, ctx, refNames))
+  let wantedResult = nimTypeToEponym(expected[^1])
+  if actualResult != wantedResult:
+    raise newException(ValueError,
+      "typed adapter result type '" & wantedResult &
+      "' does not match the result of postulate '" & binding.postulateName &
+      "' (" & actualResult & ")")
+
 proc mentionsName(node: NimNode, name: string): bool =
   if node.kind in {nnkIdent, nnkSym} and $node == name:
     return true
@@ -2983,6 +3035,7 @@ macro eponymBlock*(body: untyped): untyped =
   for binding in bindings:
     try:
       validateLocalBindingTypeExpressions(body, binding)
+      validateAppliedBindingTypeExpressions(checkedGlobals, binding)
       if binding.rawValue:
         discard validateHostValueNaryType(checkedGlobals,
                                           binding.postulateName)
