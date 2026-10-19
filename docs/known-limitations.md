@@ -173,8 +173,12 @@ This lets a caller pass an existing Eponym value, including a payload-bearing
 constructor, through an index and retrieve it from the checked body. The bridge
 checks membership when the binder domain is a named Eponym type. A property
 test exercises a payload-bearing token and rejects an Int supplied at the
-Token index. Applied or indexed binder domains are not reconstructed for
-membership checking yet, and the result remains a raw `Value` when no host
+Token index. Applied family domains are also checked by evaluating supported
+type expressions built from named references, applications, earlier generic
+indices, and integer literals. A 200-case `SizedTree[length]` property checks
+both raw `Value` and mapped `RuntimeVariant` arguments, and rejects an
+embedded index that differs from `length`. More complex binder type
+expressions remain unsupported. Results remain raw `Value`s when no host
 representation is mapped.
 
 The low-level `RuntimeVariant` API provides a checked structural view for any

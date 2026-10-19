@@ -482,8 +482,12 @@ implementations.
      `Value` and checks its inferred Eponym type against the checked globals;
      a 200-case token property and a wrong-type Int rejection cover the path.
      The result remains a `Value` when no host representation is mapped.
-   - [ ] Extend this type check to applied/indexed binder domains and provide
-     typed host representations where a Nim mapping is available.
+   - [x] Extend membership checks to applied/indexed binder domains. Runtime
+     type expressions support named references, family applications, earlier
+     generic indices, and integer literals; mapped `RuntimeVariant` binders
+     are checked after encoding as well. A 200-case `SizedTree[length]`
+     property covers both the unmapped `Value` path and a mapped variant path,
+     with a negative mismatched-index check.
    - [x] Add dynamic runtime wrappers that accept unmapped value-indexed
      binders as `Value` parameters. Named binder types are checked against
      their Eponym type; callers remain responsible for applied/indexed binder

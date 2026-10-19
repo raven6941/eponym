@@ -1638,6 +1638,7 @@ proc genericRuntimeInfo(decl: NimNode,
     genericBoolArgs: seq[bool], genericIntArgs: seq[bool],
     genericValueArgs: seq[bool],
     genericValueTypeNames: seq[string],
+    genericValueTypeExprs: seq[NimNode],
     genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
     codecMappings: seq[HostRuntimeType], error: string] =
   result.genericParams = newEmptyNode()
@@ -1650,10 +1651,14 @@ proc genericRuntimeInfo(decl: NimNode,
       result.error = "runtime wrappers require explicitly typed generic binders"
       return
     let binderType = nimTypeToEponym(param[^2])
+    let binderTypeHead = runtimeTypeHead(param[^2])
+    let binderTypeHeadName = if binderTypeHead.kind == nnkIdent:
+      $binderTypeHead else: ""
     var mappedBinder: HostRuntimeType
     var hasMappedBinder = false
     for mapping in mappings:
-      if mapping.eponymName == binderType:
+      if mapping.eponymName == binderType or
+          mapping.eponymName == binderTypeHeadName:
         mappedBinder = mapping
         hasMappedBinder = true
         break
@@ -1680,6 +1685,7 @@ proc genericRuntimeInfo(decl: NimNode,
       result.genericMappedNimTypes.add(nil)
       result.genericValueArgs.add(false)
       result.genericValueTypeNames.add("")
+      result.genericValueTypeExprs.add(copyNimTree(param[^2]))
       if binderType == "Type 0":
         result.typeNames.add(name)
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]),
@@ -1719,13 +1725,9 @@ proc genericRuntimeInfo(decl: NimNode,
           result.genericNatArgs.add(false)
           result.genericBoolArgs.add(false)
           result.genericIntArgs.add(false)
-          result.genericMappedTypes[^1] = ident(binderType)
+          result.genericMappedTypes[^1] = copyNimTree(param[^2])
           result.genericMappedNimTypes[^1] = copyNimTree(mappedBinder.nimType)
           continue
-        if param[^2].kind != nnkIdent:
-          result.error = "unmapped runtime generic binders currently require " &
-            "a named Eponym type"
-          return
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]), bindSym"Value",
           newEmptyNode()))
         result.genericNatArgs.add(false)
@@ -1739,6 +1741,7 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     genericNatArgs: seq[bool], genericBoolArgs: seq[bool],
     genericIntArgs: seq[bool], genericValueArgs: seq[bool],
     genericValueTypeNames: seq[string],
+    genericValueTypeExprs: seq[NimNode],
     genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
     codecMappings: seq[HostRuntimeType],
     error: string], globals: NimNode, mappings: seq[HostRuntimeType],
@@ -2053,6 +2056,41 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   result.add(newEmptyNode())
   result.add(wrapperBody)
 
+proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
+  if n.isNil: return nil
+  if n.kind in {nnkIdent, nnkSym}:
+    if overrides.len > 0:
+      for i in countdown(overrides.high, 0):
+        if $n == overrides[i].name:
+          return copyNimTree(overrides[i].value)
+    return newCall(bindSym"runtimeGlobalValue", globals, newLit($n))
+  if n.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
+                nnkInt64Lit}:
+    if n.intVal < 0: return newCall(bindSym"intToValue", newLit(n.intVal))
+    return newCall(bindSym"natToValue", newLit(n.intVal), globals)
+  if n.kind == nnkPrefix and n.len == 2 and $n[0] == "-" and
+      n[1].kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
+                    nnkInt64Lit}:
+    return newCall(bindSym"intToValue", newLit(-n[1].intVal))
+  if n.kind == nnkPar and n.len == 1:
+    return runtimeTypeValueExpr(n[0], globals, overrides)
+  if n.kind in {nnkCall, nnkCommand, nnkBracketExpr, nnkObjConstr,
+                nnkInfix} and n.len >= 2:
+    let fnNode = if n.kind == nnkInfix:
+      ident($n[0]) else: n[0]
+    let fnValue = runtimeTypeValueExpr(fnNode, globals, overrides)
+    if fnValue.isNil: return nil
+    var args = newNimNode(nnkBracket)
+    let firstArg = if n.kind == nnkInfix: 1 else: 1
+    for i in firstArg ..< n.len:
+      let argValue = runtimeTypeValueExpr(n[i], globals, overrides)
+      if argValue.isNil: return nil
+      args.add(argValue)
+    return newCall(bindSym"callRuntimeValue", fnValue,
+      newTree(nnkPrefix, ident"@", args))
+  nil
+
 proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     defName: string, bindings: seq[HostPostulateBinding],
     mappings: seq[HostRuntimeType], records: seq[HostRecord],
@@ -2120,10 +2158,40 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
   var body = newStmtList()
   body.add(newLetStmt(globalsSym,
     newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+  var typeIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, genericSym in genericSyms:
-    if generic.genericValueArgs[i]:
-      body.add(newCall(bindSym"validateRuntimeValueType", genericSym,
-        globalsSym, newLit(generic.genericValueTypeNames[i])))
+    var encodedGeneric: NimNode
+    if generic.genericNatArgs[i]:
+      encodedGeneric = newCall(bindSym"natToValue", genericSym, globalsSym)
+    elif generic.genericBoolArgs[i]:
+      encodedGeneric = newCall(bindSym"boolToValue", genericSym, globalsSym)
+    elif generic.genericIntArgs[i]:
+      encodedGeneric = newCall(bindSym"intToValue", genericSym)
+    elif generic.genericValueArgs[i]:
+      encodedGeneric = copyNimTree(genericSym)
+    elif not generic.genericMappedTypes[i].isNil:
+      encodedGeneric = runtimeValueConversionExpr(
+        generic.genericMappedTypes[i], generic.genericMappedNimTypes[i],
+        genericSym, true, generic.codecMappings, records, globalsSym,
+        allowDependentSigma)
+    if encodedGeneric.isNil: return nil
+    var validateEncodedMappedVariant = false
+    if not generic.genericValueArgs[i] and
+        not generic.genericMappedTypes[i].isNil:
+      let mappedHead = runtimeTypeHead(generic.genericValueTypeExprs[i])
+      if mappedHead.kind == nnkIdent:
+        for mapping in mappings:
+          if mapping.isRuntimeVariant and
+              mapping.eponymName == $mappedHead:
+            validateEncodedMappedVariant = true
+    if generic.genericValueArgs[i] or validateEncodedMappedVariant:
+      let expectedType = runtimeTypeValueExpr(
+        generic.genericValueTypeExprs[i], globalsSym, typeIndexOverrides)
+      if expectedType.isNil: return nil
+      body.add(newCall(bindSym"validateRuntimeValueType",
+        if generic.genericValueArgs[i]: genericSym else: encodedGeneric,
+        expectedType, globalsSym))
+    typeIndexOverrides.add(($generic.genericNames[i], encodedGeneric))
   body.add(newLetStmt(defsSym,
     newCall(bindSym"getDefsDir", dirLit, srcLit)))
   body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))

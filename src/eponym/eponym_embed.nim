@@ -1115,6 +1115,9 @@ proc valueToRuntimeVariant*(value: Value, globals: Globals,
   raise newException(ValueError,
     "runtime value is not a constructor of '" & familyName & "'")
 
+proc validateRuntimeValueType*(value, expectedType: Value,
+                               globals: Globals)
+
 proc validateRuntimeValueType*(value: Value, globals: Globals,
                                typeName: string) =
   ## Check an unmapped generic Value against a named Eponym type. This is a
@@ -1122,23 +1125,83 @@ proc validateRuntimeValueType*(value: Value, globals: Globals,
   if typeName notin globals or value.isNil or value.syn.isNil:
     raise newException(ValueError,
       "cannot validate runtime Value against Eponym type '" & typeName & "'")
-  var supply = Supply()
-  var inferred: Value
+  let expected = eval(globals[typeName].tm, @[])
+  validateRuntimeValueType(value, expected, globals)
+
+proc runtimeGlobalValue*(globals: Globals, name: string): Value =
+  if name notin globals or globals[name].tm.isNil:
+    raise newException(ValueError,
+      "runtime type expression refers to unknown Eponym name '" & name & "'")
+  eval(globals[name].tm, @[])
+
+proc runtimeValueTerm(value: Value, globals: Globals): Term =
+  if value.isNil: return nil
+  case value.whnfKind
+  of wInt: return tmInt(value.whnfIntVal)
+  of wNatLit: return tmNatLit(value.whnfNatLitVal)
+  of wRef:
+    for _, entry in globals.pairs:
+      if not entry.tm.isNil and entry.tm.kind == tR and
+          entry.tm.refId == value.whnfRefId:
+        result = entry.tm
+        for i in 0 ..< value.whnfSpineLen:
+          if value.whnfSpineKind(i) != eApp: return value.syn
+          let argument = runtimeValueTerm(value.whnfSpineArg(i), globals)
+          if argument.isNil: return value.syn
+          result = tmApp(result, argument)
+        return
+    return value.syn
+  else:
+    value.syn
+
+proc inferRuntimeValueType(value: Value, globals: Globals,
+                          supply: var Supply): Value =
+  if value.isNil:
+    raise newException(ValueError, "cannot infer the type of a nil runtime Value")
   case value.whnfKind
   of wInt:
     if "Int" notin globals:
       raise newException(ValueError,
-        "cannot validate an Int Value without the Int declaration")
-    inferred = eval(globals["Int"].tm, @[])
+        "cannot infer an Int Value without the Int declaration")
+    return eval(globals["Int"].tm, @[])
   of wNatLit:
     if "Nat" notin globals:
       raise newException(ValueError,
-        "cannot validate a Nat Value without the Nat declaration")
-    inferred = eval(globals["Nat"].tm, @[])
+        "cannot infer a Nat Value without the Nat declaration")
+    return eval(globals["Nat"].tm, @[])
+  of wRef:
+    var term: Term = nil
+    for _, entry in globals.pairs:
+      if not entry.tm.isNil and entry.tm.kind == tR and
+          entry.tm.refId == value.whnfRefId:
+        term = entry.tm
+        break
+    if term.isNil:
+      raise newException(ValueError,
+        "runtime Value reference is not present in checked globals")
+    for i in 0 ..< value.whnfSpineLen:
+      if value.whnfSpineKind(i) != eApp:
+        raise newException(ValueError,
+          "cannot infer runtime Value type through a non-application spine")
+      let argument = runtimeValueTerm(value.whnfSpineArg(i), globals)
+      if argument.isNil:
+        raise newException(ValueError,
+          "runtime Value argument has no syntax for type inference")
+      term = tmApp(term, argument)
+    return infer(supply, term)
   else:
-    inferred = infer(supply, value.syn)
-  let expected = eval(globals[typeName].tm, @[])
-  areEqual(supply, vStar(), inferred, expected)
+    if value.syn.isNil:
+      raise newException(ValueError,
+        "runtime Value has no syntax for type inference")
+    infer(supply, value.syn)
+
+proc validateRuntimeValueType*(value, expectedType: Value,
+                               globals: Globals) =
+  if value.isNil or expectedType.isNil:
+    raise newException(ValueError, "cannot validate an incomplete runtime Value")
+  var supply = Supply()
+  let inferred = inferRuntimeValueType(value, globals, supply)
+  areEqual(supply, vStar(), inferred, expectedType)
 
 proc prependErasedTypeArgs*(typeArgCount: int,
                             args: openArray[Value]): seq[Value] =
