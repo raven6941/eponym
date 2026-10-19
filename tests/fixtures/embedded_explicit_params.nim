@@ -163,6 +163,10 @@ eponymBlock:
       callback: Pi(n: Nat, Sig(marker: Nat, Vec[Nat, n]))):
       Sig(marker: Nat, Vec[Nat, 0]) = callback[zero()]()
 
+  proc inferredConditionalCallbackResultIndex(
+      left, right: Pi(n: Nat, Vec[Nat, n]), flag: Bool): Vec[Nat, 0] =
+    (if flag: left else: right)()
+
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =
     handler.identity(value)

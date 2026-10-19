@@ -165,12 +165,7 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
         body = body[0]
       let candidate = callInfoForHead(body)
       if not candidate.found: return
-      if haveSelected and (candidate.info.explicitCount != selected.explicitCount or
-          candidate.info.termCount != selected.termCount or
-          candidate.info.leadingTermCount != selected.leadingTermCount or
-          candidate.info.requiredBracketCount != selected.requiredBracketCount or
-          candidate.info.requiresBrackets != selected.requiresBrackets or
-          candidate.info.firstExplicitType != selected.firstExplicitType):
+      if haveSelected and not sameCallInfo(candidate.info, selected):
         return
       selected = candidate.info
       haveSelected = true

@@ -16,3 +16,8 @@ eponymBlock:
   proc oldResultOnlyCallbackApplication(
       callback: Pi(n: Nat, Vec[Nat, n])): Vec[Nat, 0] =
     callback(zero())
+
+  proc oldConditionalCallbackApplication(
+      left, right: Pi(n: Nat, Vec[Nat, n]), flag: Bool): Vec[Nat, 0] =
+    let selected = if flag: left else: right
+    selected(zero())

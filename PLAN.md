@@ -1252,7 +1252,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   follows the same inference path. The dependent `All` constructor example now
   infers its vector index from the recursive proof. Extend the same
   boundary-preserving approach to the remaining inferable-binder forms before
-  closing this audit.
+  closing this audit. Conditional callees compare the complete call metadata,
+  including inferable-index positions; a direct conditional callback call is
+  covered. A `let`-bound conditional callback with a result-only index still
+  leaves an unsolved index metavariable, even with an explicit Pi annotation,
+  so result-directed inference through that binding remains open.
   Other relevant supported forms—identifiers, parenthesized and qualified
   calls, returned calls, callback aliases, conditionals, type ascriptions, and
   statement-list expressions—have focused coverage. Unsupported Nim AST forms
