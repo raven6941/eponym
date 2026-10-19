@@ -167,8 +167,12 @@ arguments to a non-dependent `Sig(B, C)` result using recursive tuple codecs.
 It checks the declared argument type heads and tuple field type heads; indices
 on mapped type families remain trusted. `bindPostulatePair` rejects dependent
 Sigma results. `bindPostulatePairTrusted` permits them when the declared fields
-have codecs, but the host adapter must uphold the relationship between a field
-and its index. A generated wrapper can expose a dependent Sigma result as a
+have codecs. For a postulate declared in the same `eponymBlock`, the macro
+retains its full result Sigma type, allowing recursive codecs to check
+represented constraints such as a Vec length against the first field. The
+host adapter must still uphold index relationships those codecs cannot
+represent. Imported postulate declarations currently lack this retained type
+shape for pair adapters. A generated wrapper can expose a dependent Sigma result as a
 Nim tuple when that checked definition is explicitly marked
 `runtimePairTrusted(definition)`. The recursive codecs check each field's Nim
 representation, while the relationship between the field values and dependent

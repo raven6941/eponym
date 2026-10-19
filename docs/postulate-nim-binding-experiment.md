@@ -1,8 +1,11 @@
 # Experiment: bind Eponym postulates to Nim procedures
 
-**Status:** unary Int `eponymBlock` binding prototype implemented; other Nim
-value shapes and arbitrary postulate signatures remain unimplemented. This
-work is tracked in [known limitations](known-limitations.md).
+**Status:** The initial binding prototype has grown into a typed runtime
+bridge for primitive, opaque, structural, collection, and callback values.
+This page preserves the original design notes; consult
+[known limitations](known-limitations.md) and the
+[surface syntax reference](surface-syntax-reference.md) for current support
+and remaining gaps.
 
 ## Goal
 
@@ -23,8 +26,8 @@ eponymBlock:
   # checked role definitions may call sendNat
 ```
 
-This is illustrative only. The exact surface syntax and supported Nim ABI
-types remain open.
+This is illustrative only. The implemented syntax and supported Nim ABI types
+are listed in the current references linked above.
 
 ## Separate guarantees
 

@@ -713,6 +713,7 @@ type HostPostulateBinding = object
   postulateName: string
   implementation: NimNode
   eponymTypes: seq[string]
+  pairResultType: NimNode
   pairResult: bool
   pairArgCount: int
   trustedPairIndex: bool
@@ -833,6 +834,29 @@ proc validateHostBoolCodec(globals: Globals) =
       raise newException(ValueError,
         "Bool codec requires '" & constructorName & "' to construct Bool")
 
+proc runtimeTypeAfterArgs(n: NimNode, count: int): NimNode =
+  ## Extract the result type after the explicit arrows/Pi binders accepted by
+  ## a typed pair adapter. Keep this original type AST so dependent Sigma
+  ## codecs can see the actual index expressions from the postulate.
+  if count < 0: return nil
+  if count == 0: return copyNimTree(n)
+  if n.kind == nnkInfix and n.len == 3 and $n[0] == "->":
+    return runtimeTypeAfterArgs(n[2], count - 1)
+  if n.kind in {nnkCall, nnkObjConstr} and n.len >= 3 and
+      n[0].kind == nnkIdent and $n[0] == "Pi":
+    var remaining = count
+    for i in 1 ..< n.len - 1:
+      let binder = n[i]
+      if binder.kind == nnkExprColonExpr:
+        dec remaining
+      elif binder.kind == nnkTableConstr:
+        remaining -= binder.len
+      else:
+        return nil
+      if remaining < 0: return nil
+    return runtimeTypeAfterArgs(n[^1], remaining)
+  nil
+
 proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   var seen = initHashSet[string]()
   for st in body:
@@ -856,9 +880,21 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
         if st[i].kind != nnkIdent:
           error("bindPostulate Eponym type mappings must be identifiers", st[i])
         typeNames.add($st[i])
+      var pairResultType: NimNode = nil
+      if pairResult:
+        for declaration in body:
+          if declaration.kind == nnkCall and declaration.len == 3 and
+              declaration[0].kind == nnkIdent and
+              $declaration[0] == "postulate" and
+              declaration[1].kind == nnkIdent and
+              $declaration[1] == name:
+            pairResultType = runtimeTypeAfterArgs(declaration[2],
+              typeNames.len - 2)
+            break
       result.add(HostPostulateBinding(postulateName: name,
                                      implementation: st[2],
                                      eponymTypes: typeNames,
+                                     pairResultType: pairResultType,
                                      pairResult: pairResult,
                                      pairArgCount: if pairResult:
                                        typeNames.len - 2 else: 0,
@@ -1544,9 +1580,12 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
     return newCall(bindSym"bindHostValueNary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
   if binding.pairResult:
-    let pairType = newCall(ident"Sig",
-      ident(binding.eponymTypes[binding.pairArgCount]),
-      ident(binding.eponymTypes[binding.pairArgCount + 1]))
+    let pairType = if not binding.pairResultType.isNil:
+      copyNimTree(binding.pairResultType)
+    else:
+      newCall(ident"Sig",
+        ident(binding.eponymTypes[binding.pairArgCount]),
+        ident(binding.eponymTypes[binding.pairArgCount + 1]))
     let pairNimType = runtimeNimType(pairType, mappings, records,
                                     binding.trustedPairIndex)
     if pairNimType.isNil:

@@ -558,6 +558,14 @@ proc hostRepeatIndexedChannel(index: int, channel: IndexedChannelHandle):
     tuple[first: IndexedChannelHandle, second: IndexedChannelHandle] =
   (channel, IndexedChannelHandle(index: index, label: channel.label & "/copy"))
 
+proc hostMakeIndexedVector(seed: int): tuple[count: int, values: seq[int]] =
+  result.count = abs(seed mod 20)
+  for i in 0 ..< result.count:
+    result.values.add(seed + i)
+  if seed == low(int):
+    if result.values.len > 0: result.values.setLen(result.values.len - 1)
+    else: result.values.add(seed)
+
 eponymBlock:
   import "../lib/nat.ep"
   postulate(Channel, Nat -> Univ)
@@ -580,6 +588,18 @@ eponymBlock:
   proc generatedRepeatIndexedChannel(index: Nat, channel: Channel(index)):
       Sig(first: Channel(index), Channel(index)) =
     repeatIndexedChannel(index, channel)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  postulate(makeIndexedVector,
+    Int -> Sig(count: Nat, Vec[Int, count]))
+  bindPostulatePairTrusted(makeIndexedVector, hostMakeIndexedVector,
+    Int, Nat, Vec)
+  proc generatedMakeIndexedVector(seed: Int):
+      Sig(count: Nat, Vec[Int, count]) = makeIndexedVector(seed)
+  runtimePairTrusted(generatedMakeIndexedVector)
 
 static:
   doAssert compiles(generatedCheckedRole(35))
@@ -762,6 +782,20 @@ when isMainModule:
       generatedIndexedChannelIndex(IndexedChannelHandle(index: index,
         label: "index-" & $index)) == index,
     shrinkInt)
+  let generatedTrustedDependentPairAdapterCases = forAll(
+    "trusted host pair adapters preserve dependent Vec indices", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(seed: int): bool =
+      let pairResult = generatedMakeIndexedVector(seed)
+      pairResult[0] == abs(seed mod 20) and
+        pairResult[1].len == pairResult[0] and
+        pairResult[1] == hostMakeIndexedVector(seed).values,
+    shrinkInt)
+  var dependentPairAdapterMismatchRejected = false
+  try:
+    discard generatedMakeIndexedVector(low(int))
+  except ValueError:
+    dependentPairAdapterMismatchRejected = true
   if not generatedTrustedDependentPairCases:
     quit(1)
   let generatedTrustedDependentResultCases = forAll(
@@ -926,6 +960,8 @@ when isMainModule:
       generatedBinaryPairBindingCases and
       generatedTernaryPairBindingCases and
       generatedTrustedDependentPairCases and
+      generatedTrustedDependentPairAdapterCases and
+      dependentPairAdapterMismatchRejected and
       generatedDependentPairVecCases and
       generatedDependentPairEnvelopeCases and
       generatedShadowedDependentPairVecCases and

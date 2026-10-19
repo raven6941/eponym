@@ -436,6 +436,12 @@ implementations.
    codecs, honoring nearest-binder shadowing and composing with trusted record
    fields. Three 200-case properties cover a dependent Vec, shadowed indices,
    record/Sigma index composition, and rejection of mismatched lengths.
+   - [x] Preserve the full locally declared Sigma result type when generating
+     `bindPostulatePairTrusted`, so recursive codecs can enforce represented
+     constraints such as a Vec length indexed by the first field. A 200-case
+     property checks valid results and rejects a mismatched host result.
+   - [ ] Preserve the full dependent result type for pair adapters whose
+     postulate declaration comes from an imported `.ep` module.
    Remaining gaps include broader automatic/structural
    codec coverage, additional dependent forms, unmapped value-indexed
    generics, and other higher-order signatures. Unsupported
