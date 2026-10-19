@@ -218,6 +218,7 @@ eponymBlock:
   runtimeValue(importedGenericIdentity)
   runtimeValue(importedCallbackApply)
   runtimeValue(importedCallbackApply2)
+  runtimeValue(importedCallbackIdentity)
   runtimeValue(importedDependentCallbackApply)
   runtimePairTrusted(importedDependentPairIdentity)
   runtimeValue(importedDependentPairIdentity)
@@ -1179,6 +1180,21 @@ when isMainModule:
       @[(0, input.right, input.bias), (input.left, 0, input.bias),
         (input.left, input.right, 0)])
   if not importedMultiCallbackCases:
+    quit(1)
+  let importedReturnedCallbackCases = forAll(
+    "imported definitions return callable Nim closures", r, 200,
+    proc(r: var Rng): tuple[value, bias: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[value, bias: int]): bool =
+      let callback = proc(value: int): int = value * 2 + input.bias
+      let returned = importedCallbackIdentity(callback)
+      let runtime = importedCallbackIdentityRuntimeValue(callback)
+      returned(input.value) == input.value * 2 + input.bias and
+        valueToInt(callRuntimeValue(runtime.value,
+          [intToValue(input.value)])) == input.value * 2 + input.bias,
+    proc(input: tuple[value, bias: int]): seq[tuple[value, bias: int]] =
+      @[(0, input.bias), (input.value, 0)])
+  if not importedReturnedCallbackCases:
     quit(1)
   let importedDependentCallbackCases = forAll(
     "imported callbacks preserve dependent Vec result indices", r, 200,

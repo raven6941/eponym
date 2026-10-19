@@ -990,7 +990,13 @@ proc importedRuntimeProcDecl(definition: ElabDef,
   var formal = newNimNode(nnkFormalParams)
   formal.add(newEmptyNode())
   var argumentIndex = 0
-  while not current.isNil and current.kind == tPi:
+  var checkedBody = definition.tmTm
+  var argumentCount = 0
+  while not checkedBody.isNil and checkedBody.kind == tLam:
+    inc argumentCount
+    checkedBody = checkedBody.scope.bdy
+  while argumentIndex < argumentCount:
+    if current.isNil or current.kind != tPi: return nil
     if current.impl or current.qty != qOmega or
         current.dom.isNil or current.dom.kind == tType:
       return nil

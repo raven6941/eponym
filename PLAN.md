@@ -488,8 +488,10 @@ implementations.
       supported Nim callback leaf codecs now generate typed closure wrappers;
       200-case properties cover unary and multi-argument Nim callbacks, plus a
       callback whose Vec result length depends on its Nat argument, through
-      both generated wrappers and typed `RuntimeValue` calls. A negative check
-      rejects a callback returning the wrong Vec length. Raw callback
+      both generated wrappers and typed `RuntimeValue` calls. Imported
+      definitions that return callbacks are also covered through both wrapper
+      paths. A negative check rejects a callback returning the wrong Vec
+      length. Raw callback
       Values have no runtime type witness, while unsupported implicit binders,
       callback leaf types without codecs, and unmapped host boxes remain
       trusted or raw-interface escape hatches. `runtimePairTrusted` also opts

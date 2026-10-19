@@ -130,7 +130,9 @@ typed and raw imported identity calls, a typed call through a bound imported
 postulate, and an imported length-indexed Vec wrapper that rejects the wrong
 length through both typed and raw interfaces. Imported callback wrappers also
 preserve dependent Vec result lengths derived from a callback's Nat argument;
-wrong-length callback results are rejected. Callers must handle unsupported
+wrong-length callback results are rejected. Imported definitions can also
+return callable Nim closures when callback leaf types have codecs; a property
+covers typed wrappers and raw `RuntimeValue` closures. Callers must handle unsupported
 constructors and neutral values explicitly. A
 non-dependent `Sig(A, B)` runtime type is structurally mapped to a two-element
 Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque
