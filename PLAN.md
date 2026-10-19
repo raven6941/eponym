@@ -539,6 +539,11 @@ implementations.
   generated and `RuntimeValue` wrappers for both paths, then awaits the
   returned futures from ordinary Nim code. Dependent Pi expressions outside
   the supported named-binder/runtime-type grammar remain unsupported.
+- [x] Reify computed Nat indices in dependent callback signatures, including
+  expressions that call checked library definitions. A 200-case property
+  passes a Nim `Nat -> Vec[Int, add(n, 1)]` callback through both generated and
+  `RuntimeValue` dynamic wrappers and rejects a callback result with the wrong
+  computed length.
 - [x] Add `{.rawValue.}` callback proc types that pass callback arguments and
   results as Eponym `Value`s, without requiring codecs for the function's leaf
   types. The checked Eponym callback type remains explicit, and the Nim callback

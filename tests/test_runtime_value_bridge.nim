@@ -709,11 +709,15 @@ eponymBlock:
   proc generatedApplyDependentVectorFunction[
       callback: Pi(n: Nat, Vec[Int, n])](length: Nat): Vec[Int, length] =
     callback(length)
+  proc generatedApplyComputedVectorFunction[
+      callback: Pi(n: Nat, Vec[Int, add(n, 1)])](length: Nat):
+      Vec[Int, add(length, 1)] = callback(length)
   proc generatedApplyGenericBinaryFunction[
       callback: Pi(x: Int, y: Int, Int)](x: Int, y: Int): Int =
     callback(x, y)
   runtimeValue(generatedDependentTypeAnchor)
   runtimeValue(generatedApplyDependentVectorFunction)
+  runtimeValue(generatedApplyComputedVectorFunction)
   runtimeValue(generatedApplyGenericBinaryFunction)
 
 eponymBlock:
@@ -2074,6 +2078,42 @@ when isMainModule:
           expected,
     shrinkInt)
   if not genericDependentFunctionCases:
+    quit(1)
+  let genericComputedVectorCallbackCases = forAll(
+    "dynamic callbacks reify add in dependent Vec indices", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 16),
+    proc(length: int): bool =
+      var expected: seq[int] = @[]
+      for i in 0 .. length: expected.add(i - length)
+      let callback: proc(length: int): seq[int] {.closure.} =
+        proc(length: int): seq[int] =
+          var values: seq[int] = @[]
+          for i in 0 .. length: values.add(i - length)
+          values
+      let checked = generatedApplyComputedVectorFunctionDynamic(callback,
+        length)
+      let runtime = generatedApplyComputedVectorFunctionRuntimeValueDynamic(
+        callback, length)
+      let wrongLength: proc(length: int): seq[int] {.closure.} =
+        proc(length: int): seq[int] = newSeq[int](length)
+      var wrongLengthRejected = false
+      try:
+        discard generatedApplyComputedVectorFunctionDynamic(wrongLength,
+          length)
+      except ValueError:
+        wrongLengthRejected = true
+      var wrongRuntimeLengthRejected = false
+      try:
+        discard generatedApplyComputedVectorFunctionRuntimeValueDynamic(
+          wrongLength, length)
+      except ValueError:
+        wrongRuntimeLengthRejected = true
+      checked == expected and
+        vecValueToSeq[int](runtime.value, length + 1, runtime.globals, "Vec",
+          proc(value: Value, globals: Globals): int = valueToInt(value)) ==
+          expected and wrongLengthRejected and wrongRuntimeLengthRejected,
+    shrinkInt)
+  if not genericComputedVectorCallbackCases:
     quit(1)
   let wrongDependentCallbackType = runtimeDependentArrowType(
     natTypeForCallback, dependentTypeGlobals,
