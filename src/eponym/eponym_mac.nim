@@ -10,12 +10,16 @@ import std/tables
 import elab
 import eponym_embed  # runtime wrapper helpers and adapter-shape validation
 import eponym_init # opaque Value conversion helpers
+import preterm
+import qtt_dps
 import parse_surf
 import os  # issue #131: parentDir of the eponymBlock call site
 import strutils
 import sequtils
 import sets
 import std/options
+
+template rawValue* {.pragma.}
 
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
@@ -688,6 +692,10 @@ proc blockToEponym*(body: NimNode): string =
         # typically for a host interpreter of reified data.
         if st.len != 2 or st[1].kind != nnkIdent:
           error("runtimeValue expects (checkedDefinition)", st)
+      elif head == "runtimeDps":
+        # Request direct destination-passing code for a checked definition.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("runtimeDps expects (checkedDefinition)", st)
       elif head == "runtimePairTrusted":
         # Explicitly trust the host correspondence for dependent Sigma indices
         # in one generated definition's typed runtime interface.
@@ -707,6 +715,8 @@ type HostPostulateBinding = object
   postulateName: string
   implementation: NimNode
   eponymTypes: seq[string]
+  pairResultType: NimNode
+  pairResultArgNames: seq[string]
   pairResult: bool
   pairArgCount: int
   trustedPairIndex: bool
@@ -827,6 +837,130 @@ proc validateHostBoolCodec(globals: Globals) =
       raise newException(ValueError,
         "Bool codec requires '" & constructorName & "' to construct Bool")
 
+proc runtimeTypeAfterArgs(n: NimNode, count: int,
+    argNames: var seq[string]): NimNode =
+  ## Extract the result type after the explicit arrows/Pi binders accepted by
+  ## a typed pair adapter. Keep this original type AST so dependent Sigma
+  ## codecs can see the actual index expressions from the postulate.
+  if count < 0: return nil
+  if count == 0: return copyNimTree(n)
+  if n.kind == nnkInfix and n.len == 3 and $n[0] == "->":
+    argNames.add("")
+    return runtimeTypeAfterArgs(n[2], count - 1, argNames)
+  if n.kind in {nnkCall, nnkObjConstr} and n.len >= 3 and
+      n[0].kind == nnkIdent and $n[0] == "Pi":
+    var remaining = count
+    for i in 1 ..< n.len - 1:
+      let binder = n[i]
+      if binder.kind == nnkExprColonExpr:
+        argNames.add(binderName(binder[0]))
+        dec remaining
+      elif binder.kind == nnkTableConstr:
+        for _ in binder: argNames.add("")
+        remaining -= binder.len
+      else:
+        return nil
+      if remaining < 0: return nil
+    return runtimeTypeAfterArgs(n[^1], remaining, argNames)
+  nil
+
+proc runtimeTermTypeAst(term: Term, ctx: seq[string],
+    refNames: Table[int, string]): NimNode =
+  if term.isNil: return nil
+  case term.kind
+  of tR:
+    if term.refId in refNames: ident(refNames[term.refId]) else: nil
+  of tV:
+    if term.idx >= 0 and term.idx < ctx.len: ident(ctx[term.idx]) else: nil
+  of tPi, tSi:
+    let binderName = if term.scope.adv.len > 0 and term.scope.adv != "_":
+      term.scope.adv else: "runtimeIndex" & $ctx.len
+    let domain = runtimeTermTypeAst(term.dom, ctx, refNames)
+    let body = runtimeTermTypeAst(term.scope.bdy,
+      @[binderName] & ctx, refNames)
+    if domain.isNil or body.isNil: return nil
+    let binder = newTree(nnkExprColonExpr, ident(binderName), domain)
+    newCall(if term.kind == tPi: ident"Pi" else: ident"Sig", binder, body)
+  of tApp:
+    var args: seq[Term] = @[]
+    var head = term
+    while not head.isNil and head.kind == tApp:
+      args.add(head.arg)
+      head = head.fn
+    let callee = runtimeTermTypeAst(head, ctx, refNames)
+    if callee.isNil: return nil
+    var application = newCall(callee)
+    for i in countdown(args.high, 0):
+      let arg = runtimeTermTypeAst(args[i], ctx, refNames)
+      if arg.isNil: return nil
+      application.add(arg)
+    application
+  of tInt: newLit(term.intVal)
+  of tNatLit: newLit(term.natLitVal)
+  of tNatSing: newLit(term.natSingVal)
+  of tType:
+    if term.lvl == 0: ident"Univ" else: nil
+  else: nil
+
+proc runtimeTermTypeAfterArgs(ty: Term, count: int, globals: Globals):
+    tuple[resultType: NimNode, argNames: seq[string]] =
+  var current = ty
+  for i in 0 ..< count:
+    if current.isNil or current.kind != tPi: return
+    let binderName = if current.scope.adv.len > 0 and
+        current.scope.adv != "_": current.scope.adv
+      else: "runtimePairArg" & $i
+    result.argNames.add(if current.scope.adv == "_": "" else: binderName)
+    current = current.scope.bdy
+  var refNames = initTable[int, string]()
+  for name, entry in globals:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      refNames[entry.tm.refId] = name
+  var ctx = newSeq[string](result.argNames.len)
+  for i, name in result.argNames:
+    ctx[result.argNames.high - i] = if name.len == 0:
+      "runtimePairArg" & $i else: name
+  result.resultType = runtimeTermTypeAst(current, ctx, refNames)
+
+proc importedRuntimeProcDecl(definition: ElabDef,
+                             globals: Globals): NimNode =
+  ## Rebuild a simple imported Pi signature as a synthetic Nim proc AST so
+  ## the ordinary codec generator can emit typed wrappers for it.
+  var refNames = initTable[int, string]()
+  for name, entry in globals:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      refNames[entry.tm.refId] = name
+  var current = definition.tyTm
+  var ctx: seq[string] = @[]
+  var formal = newNimNode(nnkFormalParams)
+  formal.add(newEmptyNode())
+  var argumentIndex = 0
+  while not current.isNil and current.kind == tPi:
+    if current.impl or current.qty != qOmega or
+        current.dom.isNil or current.dom.kind == tType:
+      return nil
+    let name = if current.scope.adv.len > 0 and
+        current.scope.adv != "_": current.scope.adv
+      else: "runtimeArg" & $argumentIndex
+    let argType = runtimeTermTypeAst(current.dom, ctx, refNames)
+    if argType.isNil: return nil
+    formal.add(newIdentDefs(ident(name), argType, newEmptyNode()))
+    ctx = @[name] & ctx
+    current = current.scope.bdy
+    inc argumentIndex
+  if argumentIndex == 0: return nil
+  let resultType = runtimeTermTypeAst(current, ctx, refNames)
+  if resultType.isNil: return nil
+  formal[0] = resultType
+  result = newNimNode(nnkProcDef)
+  result.add(ident(definition.name))
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(formal)
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+
 proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   var seen = initHashSet[string]()
   for st in body:
@@ -850,9 +984,23 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
         if st[i].kind != nnkIdent:
           error("bindPostulate Eponym type mappings must be identifiers", st[i])
         typeNames.add($st[i])
+      var pairResultType: NimNode = nil
+      var pairResultArgNames: seq[string] = @[]
+      if pairResult:
+        for declaration in body:
+          if declaration.kind == nnkCall and declaration.len == 3 and
+              declaration[0].kind == nnkIdent and
+              $declaration[0] == "postulate" and
+              declaration[1].kind == nnkIdent and
+              $declaration[1] == name:
+            pairResultType = runtimeTypeAfterArgs(declaration[2],
+              typeNames.len - 2, pairResultArgNames)
+            break
       result.add(HostPostulateBinding(postulateName: name,
                                      implementation: st[2],
                                      eponymTypes: typeNames,
+                                     pairResultType: pairResultType,
+                                     pairResultArgNames: pairResultArgNames,
                                      pairResult: pairResult,
                                      pairArgCount: if pairResult:
                                        typeNames.len - 2 else: 0,
@@ -944,9 +1092,10 @@ proc trustedRuntimeRecordNames(body: NimNode): HashSet[string] =
       result.incl(name)
 
 proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
-    tuple[first, second: NimNode] =
-  ## Runtime tuples represent only non-dependent two-field Sig types. Reject
-  ## dependent tails rather than erasing the first component from their type.
+    tuple[first, second: NimNode, binder: string] =
+  ## Runtime tuples represent two-field Sig types. Unless the enclosing
+  ## definition or record explicitly trusts dependent indices, reject a
+  ## dependent tail rather than erase the first component from its type.
   if n.kind notin {nnkCall, nnkObjConstr} or n.len != 3 or
       n[0].kind != nnkIdent or
       $n[0] != "Sig":
@@ -955,8 +1104,8 @@ proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
     if n[1].len != 2 or n[1][0].kind != nnkIdent or
         (mentionsName(n[2], $n[1][0]) and not allowDependent):
       return
-    return (n[1][1], n[2])
-  (n[1], n[2])
+    return (n[1][1], n[2], $n[1][0])
+  (n[1], n[2], "")
 
 proc runtimeVectorComponents(n: NimNode, familyName: string):
     tuple[elementType, length: NimNode] =
@@ -982,9 +1131,15 @@ proc runtimeTypeHead(n: NimNode): NimNode =
   while result.kind in {nnkCall, nnkCommand, nnkBracketExpr} and result.len > 0:
     result = result[0]
 
-proc runtimeNatIndexExpr(n: NimNode): NimNode =
-  ## Lower the supported Nat index expressions to checked Nim int arithmetic.
+proc runtimeNatIndexExpr(n: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]] = @[]): NimNode =
+  ## Lower supported Nat index expressions to checked Nim int arithmetic,
+  ## substituting nearer Sigma/record binders as ordinary Nim operands.
   if n.kind in {nnkIdent, nnkSym}:
+    if overrides.len > 0:
+      for i in countdown(overrides.high, 0):
+        if $n == overrides[i].name:
+          return copyNimTree(overrides[i].value)
     if $n == "zero": return newLit(0)
     return copyNimTree(n)
   if n.kind == nnkDotExpr:
@@ -997,31 +1152,21 @@ proc runtimeNatIndexExpr(n: NimNode): NimNode =
     case $n[0]
     of "suc":
       if n.len != 2: return nil
-      let index = runtimeNatIndexExpr(n[1])
+      let index = runtimeNatIndexExpr(n[1], overrides)
       if index.isNil: return nil
       return newCall(bindSym"natIndexSucc", index)
     of "add", "mul":
       if n.len != 3: return nil
-      let left = runtimeNatIndexExpr(n[1])
-      let right = runtimeNatIndexExpr(n[2])
+      let left = runtimeNatIndexExpr(n[1], overrides)
+      let right = runtimeNatIndexExpr(n[2], overrides)
       if left.isNil or right.isNil: return nil
       return newCall(if $n[0] == "add": bindSym"natIndexAdd" else:
         bindSym"natIndexMul", left, right)
   nil
 
-proc substituteRuntimeIndices(n: NimNode,
-    overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
-  if n.kind in {nnkIdent, nnkSym}:
-    for override in overrides:
-      if $n == override.name:
-        return copyNimTree(override.value)
-    return copyNimTree(n)
-  result = copyNimTree(n)
-  for i in 0 ..< n.len:
-    result[i] = substituteRuntimeIndices(n[i], overrides)
-
 type RuntimeProcParts = object
   argTypes: seq[NimNode]
+  argNames: seq[string]
   resultType: NimNode
 
 proc runtimeProcParts(n: NimNode): RuntimeProcParts =
@@ -1032,8 +1177,10 @@ proc runtimeProcParts(n: NimNode): RuntimeProcParts =
     let p = n[0][i]
     if p.kind != nnkIdentDefs or p.len < 3:
       return RuntimeProcParts()
-    for _ in 0 ..< p.len - 2:
+    for j in 0 ..< p.len - 2:
       result.argTypes.add(p[^2])
+      result.argNames.add(if p[j].kind == nnkEmpty: "callbackArg" &
+        $result.argNames.len else: binderName(p[j]))
   if result.argTypes.len > 0:
     result.resultType = n[0][0]
 
@@ -1043,12 +1190,25 @@ proc hasClosurePragma(n: NimNode): bool =
       if pragma.kind in {nnkIdent, nnkSym} and $pragma == "closure":
         return true
 
+proc hasRawValuePragma(n: NimNode): bool =
+  if n.kind == nnkProcTy and n.len == 2 and n[1].kind == nnkPragma:
+    for pragma in n[1]:
+      if pragma.kind in {nnkIdent, nnkSym} and $pragma == "rawValue":
+        return true
+
+proc rawValueCallbackType(n: NimNode): NimNode =
+  result = copyNimTree(n)
+  result[0][0] = bindSym"Value"
+  for i in 1 ..< result[0].len:
+    result[0][i][^2] = bindSym"Value"
+
 proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
                     records: seq[HostRecord],
                     allowDependentSigma = false): NimNode =
   let procParts = runtimeProcParts(n)
   if not procParts.resultType.isNil:
     if not hasClosurePragma(n): return nil
+    if hasRawValuePragma(n): return rawValueCallbackType(n)
     let resultType = runtimeNimType(procParts.resultType, mappings, records,
                                     allowDependentSigma)
     if resultType.isNil: return nil
@@ -1119,9 +1279,11 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
       if (record.hasDependentField and not record.trustDependentFields) or
           record.fields.len == 0:
         return nil
+      let recordAllowsDependentFields = allowDependentSigma or
+        record.trustDependentFields
       for field in record.fields:
         if runtimeNimType(field.eponymType, mappings, records,
-                          allowDependentSigma).isNil:
+                          recordAllowsDependentFields).isNil:
           return nil
       for mapping in mappings:
         if mapping.eponymName == $head:
@@ -1166,6 +1328,32 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                  value: NimNode]] = @[]): NimNode =
   let procParts = runtimeProcParts(eponymType)
   if not procParts.resultType.isNil:
+    let rawValueCallback = hasRawValuePragma(nimType)
+    if rawValueCallback:
+      var argValueSyms: seq[NimNode] = @[]
+      var argSyms: seq[NimNode] = @[]
+      for i, _ in procParts.argTypes:
+        argValueSyms.add(genSym(nskParam, "rawCallbackValue" & $i))
+        argSyms.add(genSym(nskParam, "rawCallbackArgument" & $i))
+      if toValue:
+        var hostCall = newCall(value)
+        for argSym in argValueSyms:
+          hostCall.add(argSym)
+        var callbackValue = hostCall
+        for i in countdown(argValueSyms.high, 0):
+          let hostCallback = newProc(params = @[bindSym"Value",
+            newIdentDefs(argValueSyms[i], bindSym"Value", newEmptyNode())],
+            body = newStmtList(callbackValue))
+          callbackValue = newCall(bindSym"vHostFunc", hostCallback)
+        return callbackValue
+      var callbackArgs = newNimNode(nnkBracket)
+      var formal: seq[NimNode] = @[bindSym"Value"]
+      for argSym in argSyms:
+        callbackArgs.add(argSym)
+        formal.add(newIdentDefs(argSym, bindSym"Value", newEmptyNode()))
+      let applied = newCall(bindSym"callRuntimeValue", value,
+        newTree(nnkPrefix, ident"@", callbackArgs))
+      return newProc(params = formal, body = newStmtList(applied))
     let resultNimType = runtimeNimType(procParts.resultType, mappings, records,
                                        allowDependentSigma)
     if resultNimType.isNil: return nil
@@ -1181,18 +1369,20 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       argSyms.add(genSym(nskParam, "runtimeCallbackArgument" & $i))
     if toValue:
       var decodedArgs: seq[NimNode] = @[]
+      var callbackIndexOverrides = indexOverrides
       for i, argType in procParts.argTypes:
         let decodedArg = runtimeValueConversionExpr(argType, argNimTypes[i],
           argValueSyms[i], false, mappings, records, globals,
-          allowDependentSigma, indexOverrides)
+          allowDependentSigma, callbackIndexOverrides)
         if decodedArg.isNil: return nil
         decodedArgs.add(decodedArg)
+        callbackIndexOverrides.add((procParts.argNames[i], decodedArg))
       var hostResult = newCall(value)
       for decodedArg in decodedArgs:
         hostResult.add(decodedArg)
       let encodedResult = runtimeValueConversionExpr(procParts.resultType,
         resultNimType, hostResult, true, mappings, records, globals,
-        allowDependentSigma, indexOverrides)
+        allowDependentSigma, callbackIndexOverrides)
       if encodedResult.isNil: return nil
       var callbackValue = encodedResult
       for i in countdown(argValueSyms.high, 0):
@@ -1204,18 +1394,20 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       return callbackValue
     var encodedArgs = newNimNode(nnkBracket)
     var formal: seq[NimNode] = @[resultNimType]
+    var callbackIndexOverrides = indexOverrides
     for i, argType in procParts.argTypes:
       let encodedArg = runtimeValueConversionExpr(argType, argNimTypes[i],
         argSyms[i], true, mappings, records, globals, allowDependentSigma,
-        indexOverrides)
+        callbackIndexOverrides)
       if encodedArg.isNil: return nil
       encodedArgs.add(encodedArg)
       formal.add(newIdentDefs(argSyms[i], argNimTypes[i], newEmptyNode()))
+      callbackIndexOverrides.add((procParts.argNames[i], argSyms[i]))
     let applied = newCall(bindSym"callRuntimeValue", value,
       newTree(nnkPrefix, ident"@", encodedArgs))
     let decodedResult = runtimeValueConversionExpr(procParts.resultType,
       resultNimType, applied, false, mappings, records, globals,
-      allowDependentSigma, indexOverrides)
+      allowDependentSigma, callbackIndexOverrides)
     if decodedResult.isNil: return nil
     return newProc(params = formal, body = newStmtList(decodedResult))
   let typeHead = runtimeTypeHead(eponymType)
@@ -1228,9 +1420,11 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
       if not vector.elementType.isNil:
-        let resolvedLength = substituteRuntimeIndices(vector.length,
-                                                       indexOverrides)
-        let expectedLength = runtimeNatIndexExpr(resolvedLength)
+        # Lower the original supported Nat grammar while substituting named
+        # Sigma/record indices as Nim operands. This keeps Eponym `add`/`mul`
+        # mapped to checked integer helpers even when an operand is a host
+        # field or tuple projection.
+        let expectedLength = runtimeNatIndexExpr(vector.length, indexOverrides)
         let elementNimType = runtimeNimType(vector.elementType, mappings,
           records, allowDependentSigma)
         if expectedLength.isNil or elementNimType.isNil: return nil
@@ -1321,12 +1515,16 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     if nimType.kind notin {nnkTupleConstr, nnkTupleTy} or nimType.len != 2:
       return nil
     if toValue:
+      let firstValue = newTree(nnkBracketExpr, value, newLit(0))
       let first = runtimeValueConversionExpr(sigma.first, nimType[0],
-        newTree(nnkBracketExpr, value, newLit(0)), true, mappings, records,
+        firstValue, true, mappings, records,
         globals, allowDependentSigma, indexOverrides)
+      var secondOverrides = indexOverrides
+      if sigma.binder.len > 0:
+        secondOverrides.add((sigma.binder, firstValue))
       let second = runtimeValueConversionExpr(sigma.second, nimType[1],
         newTree(nnkBracketExpr, value, newLit(1)), true, mappings, records,
-        globals, allowDependentSigma, indexOverrides)
+        globals, allowDependentSigma, secondOverrides)
       if first.isNil or second.isNil: return nil
       return newCall(bindSym"pairValue", first, second)
     let firstValue = newCall(bindSym"runtimePairFirst", value)
@@ -1334,9 +1532,12 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     let first = runtimeValueConversionExpr(sigma.first, nimType[0],
       firstValue, false, mappings, records, globals, allowDependentSigma,
       indexOverrides)
+    var secondOverrides = indexOverrides
+    if sigma.binder.len > 0:
+      secondOverrides.add((sigma.binder, first))
     let second = runtimeValueConversionExpr(sigma.second, nimType[1],
       secondValue, false, mappings, records, globals, allowDependentSigma,
-      indexOverrides)
+      secondOverrides)
     if first.isNil or second.isNil: return nil
     return newTree(nnkTupleConstr, first, second)
   if eponymType.kind == nnkIdent:
@@ -1357,17 +1558,19 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       if (record.hasDependentField and not record.trustDependentFields) or
           record.fields.len == 0:
         return nil
+      let recordAllowsDependentFields = allowDependentSigma or
+        record.trustDependentFields
       if toValue:
         var convertedFields: seq[NimNode] = @[]
         var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
         for field in record.fields:
           let fieldType = runtimeNimType(field.eponymType, mappings, records,
-                                         allowDependentSigma)
+                                         recordAllowsDependentFields)
           if fieldType.isNil: return nil
           let fieldValue = newTree(nnkDotExpr, value, ident(field.name))
           let converted = runtimeValueConversionExpr(field.eponymType,
             fieldType, fieldValue, true, mappings, records, globals,
-            allowDependentSigma, indexOverrides)
+            recordAllowsDependentFields, indexOverrides)
           if converted.isNil: return nil
           convertedFields.add(converted)
           indexOverrides.add((field.name, fieldValue))
@@ -1382,12 +1585,13 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
       for field in record.fields:
         let fieldType = runtimeNimType(field.eponymType, mappings, records,
-                                       allowDependentSigma)
+                                       recordAllowsDependentFields)
         if fieldType.isNil: return nil
         let fieldSym = genSym(nskLet, field.name)
         let converted = runtimeValueConversionExpr(field.eponymType,
           fieldType, newCall(bindSym"runtimePairFirst", current), false,
-          mappings, records, globals, allowDependentSigma, indexOverrides)
+          mappings, records, globals, recordAllowsDependentFields,
+          indexOverrides)
         if converted.isNil: return nil
         decodeBody.add(newLetStmt(fieldSym, converted))
         fields.add(newTree(nnkExprColonExpr, ident(field.name), fieldSym))
@@ -1529,15 +1733,20 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
     return newCall(bindSym"bindHostValueNary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
   if binding.pairResult:
-    let pairType = newCall(ident"Sig",
-      ident(binding.eponymTypes[binding.pairArgCount]),
-      ident(binding.eponymTypes[binding.pairArgCount + 1]))
+    let pairType = if not binding.pairResultType.isNil:
+      copyNimTree(binding.pairResultType)
+    else:
+      newCall(ident"Sig",
+        ident(binding.eponymTypes[binding.pairArgCount]),
+        ident(binding.eponymTypes[binding.pairArgCount + 1]))
     let pairNimType = runtimeNimType(pairType, mappings, records,
                                     binding.trustedPairIndex)
     if pairNimType.isNil:
       error("bindPostulatePair needs runtime codecs for both pair fields")
     var runtimeArgs: seq[NimNode] = @[]
     var decodedArgs: seq[NimNode] = @[]
+    var adapterBody = newStmtList()
+    var pairIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
     for i in 0 ..< binding.pairArgCount:
       let eponymArgType = ident(binding.eponymTypes[i])
       let nimArgType = runtimeNimType(eponymArgType, mappings, records)
@@ -1550,14 +1759,18 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
         runtimeArg, false, mappings, records, globalsSym)
       if decoded.isNil:
         error("bindPostulatePair could not build an argument codec")
-      decodedArgs.add(decoded)
+      let decodedArg = genSym(nskLet, "hostPairArgument")
+      adapterBody.add(newLetStmt(decodedArg, decoded))
+      decodedArgs.add(decodedArg)
+      if i < binding.pairResultArgNames.len and
+          binding.pairResultArgNames[i].len > 0:
+        pairIndexOverrides.add((binding.pairResultArgNames[i], decodedArg))
     let hostResult = genSym(nskLet, "hostPairResult")
     let encodedResult = runtimeValueConversionExpr(pairType, pairNimType,
       hostResult, true, mappings, records, globalsSym,
-      binding.trustedPairIndex)
+      binding.trustedPairIndex, pairIndexOverrides)
     if encodedResult.isNil:
       error("bindPostulatePair could not build a value codec")
-    var adapterBody = newStmtList()
     var implementationCall = newCall(binding.implementation)
     for decodedArg in decodedArgs:
       implementationCall.add(decodedArg)
@@ -1734,6 +1947,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   var formal = newNimNode(nnkFormalParams)
   formal.add(ident("int"))
   var argSyms: seq[NimNode] = @[]
+  var argNames: seq[string] = @[]
   var argEponymTypes: seq[NimNode] = @[]
   var argNimTypes: seq[NimNode] = @[]
   for i in 1 ..< params.len:
@@ -1747,6 +1961,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
       let argSym = genSym(nskParam, $argName)
       formal.add(newIdentDefs(argSym, argType, newEmptyNode()))
       argSyms.add(argSym)
+      argNames.add($argName)
       argEponymTypes.add(p[^2])
       argNimTypes.add(argType)
 
@@ -1772,11 +1987,13 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   for genericArg in genericRuntimeValueArgs(generic, globalsSym,
       codecMappings, records):
     values.add(genericArg)
+  var wrapperIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, argSym in argSyms:
     values.add(runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i],
       argSym, true, codecMappings, records, globalsSym,
-      allowDependentSigma))
+      allowDependentSigma, wrapperIndexOverrides))
     if values[^1].isNil: return nil
+    wrapperIndexOverrides.add((argNames[i], argSym))
   let valuesSeq = newTree(nnkPrefix, ident("@"), values)
   var callArgs = @[dirLit, srcLit, nameLit, valuesSeq]
   if not bindingSym.isNil: callArgs.add(bindingSym)
@@ -1785,7 +2002,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     newCall(bindSym"callValueFuncDir", callArgs)))
   let resultExpr = runtimeValueConversionExpr(params[0], resultType,
     runtimeValue, false, codecMappings, records, globalsSym,
-    allowDependentSigma)
+    allowDependentSigma, wrapperIndexOverrides)
   if resultExpr.isNil: return nil
   wrapperBody.add(resultExpr)
 
@@ -1797,6 +2014,123 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   result.add(newEmptyNode())
   result.add(newEmptyNode())
   result.add(wrapperBody)
+
+proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
+    defName: string, bindings: seq[HostPostulateBinding],
+    mappings: seq[HostRuntimeType], records: seq[HostRecord],
+    allowDependentSigma = false,
+    returnRuntimeValue = false): NimNode =
+  ## Emit a sibling wrapper where supported value-indexed generics are
+  ## ordinary runtime parameters instead of Nim `static` parameters.
+  let generic = genericRuntimeInfo(decl, mappings)
+  if generic.error.len > 0 or generic.genericNames.len == 0 or
+      generic.typeNames.len > 0:
+    return nil
+  let params = decl[3]
+  if params.len == 0 or params[0].kind == nnkEmpty: return nil
+  let resultType = if returnRuntimeValue:
+    nil
+  else:
+    runtimeNimType(params[0], generic.codecMappings, records,
+                   allowDependentSigma)
+  if not returnRuntimeValue and resultType.isNil: return nil
+  var formal = newNimNode(nnkFormalParams)
+  formal.add(if returnRuntimeValue:
+    parseExpr("tuple[value: Value, globals: Globals]") else: resultType)
+  var genericSyms: seq[NimNode] = @[]
+  var genericNimTypes: seq[NimNode] = @[]
+  for i, genericName in generic.genericNames:
+    var dynamicType: NimNode = nil
+    if generic.genericNatArgs[i] or generic.genericIntArgs[i]:
+      dynamicType = ident"int"
+    elif generic.genericBoolArgs[i]:
+      dynamicType = ident"bool"
+    elif not generic.genericMappedTypes[i].isNil:
+      dynamicType = copyNimTree(generic.genericMappedNimTypes[i])
+    if dynamicType.isNil: return nil
+    let sym = genSym(nskParam, "dynamicGeneric" & $genericName)
+    formal.add(newIdentDefs(sym, dynamicType, newEmptyNode()))
+    genericSyms.add(sym)
+    genericNimTypes.add(dynamicType)
+  var argSyms: seq[NimNode] = @[]
+  var argNames: seq[string] = @[]
+  var argEponymTypes: seq[NimNode] = @[]
+  var argNimTypes: seq[NimNode] = @[]
+  for i in 1 ..< params.len:
+    let p = params[i]
+    if p.kind != nnkIdentDefs: return nil
+    let argType = runtimeNimType(p[^2], generic.codecMappings, records,
+                                 allowDependentSigma)
+    if argType.isNil: return nil
+    for j in 0 ..< p.len - 2:
+      let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
+      let argSym = genSym(nskParam, $argName)
+      formal.add(newIdentDefs(argSym, argType, newEmptyNode()))
+      argSyms.add(argSym)
+      argNames.add($argName)
+      argEponymTypes.add(p[^2])
+      argNimTypes.add(argType)
+  let globalsSym = genSym(nskLet, "dynamicGlobals")
+  let defsSym = genSym(nskLet, "dynamicDefs")
+  let bindingsSym = genSym(nskVar, "dynamicBindings")
+  let dirLit = newLit(baseDir)
+  let srcLit = newLit(src)
+  let nameLit = newLit(defName)
+  var body = newStmtList()
+  body.add(newLetStmt(globalsSym,
+    newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+  body.add(newLetStmt(defsSym,
+    newCall(bindSym"getDefsDir", dirLit, srcLit)))
+  body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))
+  for binding in bindings:
+    body.add(bindingCall(binding, bindingsSym, globalsSym,
+                         generic.codecMappings, records))
+  var values = newNimNode(nnkBracket)
+  var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
+  for i, genericName in generic.genericNames:
+    var encoded: NimNode
+    if generic.genericNatArgs[i]:
+      encoded = newCall(bindSym"natToValue", genericSyms[i], globalsSym)
+    elif generic.genericBoolArgs[i]:
+      encoded = newCall(bindSym"boolToValue", genericSyms[i], globalsSym)
+    elif generic.genericIntArgs[i]:
+      encoded = newCall(bindSym"intToValue", genericSyms[i])
+    else:
+      encoded = runtimeValueConversionExpr(generic.genericMappedTypes[i],
+        genericNimTypes[i], genericSyms[i], true, generic.codecMappings,
+        records, globalsSym, allowDependentSigma, indexOverrides)
+    if encoded.isNil: return nil
+    values.add(encoded)
+    indexOverrides.add(($genericName, genericSyms[i]))
+  for i, argSym in argSyms:
+    let encoded = runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i],
+      argSym, true, generic.codecMappings, records, globalsSym,
+      allowDependentSigma, indexOverrides)
+    if encoded.isNil: return nil
+    values.add(encoded)
+    indexOverrides.add((argNames[i], argSym))
+  let runtimeResult = genSym(nskLet, "dynamicRuntimeResult")
+  let call = newCall(bindSym"callDefValueWithBindings",
+    newCall(bindSym"findDef", defsSym, nameLit),
+    newTree(nnkPrefix, ident"@", values), bindingsSym, globalsSym)
+  body.add(newLetStmt(runtimeResult, call))
+  if returnRuntimeValue:
+    body.add(newTree(nnkTupleConstr, runtimeResult, globalsSym))
+  else:
+    let decoded = runtimeValueConversionExpr(params[0], resultType,
+      runtimeResult, false, generic.codecMappings, records, globalsSym,
+      allowDependentSigma, indexOverrides)
+    if decoded.isNil: return nil
+    body.add(decoded)
+  result = newNimNode(nnkProcDef)
+  result.add(newTree(nnkPostfix, ident"*", ident(if returnRuntimeValue:
+    defName & "RuntimeValueDynamic" else: defName & "Dynamic")))
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(formal)
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(body)
 
 proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
                               bindings: seq[HostPostulateBinding],
@@ -1818,6 +2152,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   var formal = newNimNode(nnkFormalParams)
   formal.add(parseExpr("tuple[value: Value, globals: Globals]"))
   var argSyms: seq[NimNode] = @[]
+  var argNames: seq[string] = @[]
   var eponymTypes: seq[NimNode] = @[]
   var nimTypes: seq[NimNode] = @[]
   for i in 1 ..< params.len:
@@ -1831,6 +2166,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
       let argSym = genSym(nskParam, $argName)
       formal.add(newIdentDefs(argSym, nimType, newEmptyNode()))
       argSyms.add(argSym)
+      argNames.add($argName)
       eponymTypes.add(p[^2])
       nimTypes.add(nimType)
 
@@ -1839,12 +2175,14 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   for genericArg in genericRuntimeValueArgs(generic, globalsSym,
       codecMappings, records):
     values.add(genericArg)
+  var runtimeValueIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, argSym in argSyms:
     let converted = runtimeValueConversionExpr(eponymTypes[i], nimTypes[i],
       argSym, true, codecMappings, records, globalsSym,
-      allowDependentSigma)
+      allowDependentSigma, runtimeValueIndexOverrides)
     if converted.isNil: return nil
     values.add(converted)
+    runtimeValueIndexOverrides.add((argNames[i], argSym))
   let valuesSeq = newTree(nnkPrefix, ident("@"), values)
   let dirLit = newLit(baseDir)
   let srcLit = newLit(src)
@@ -1957,6 +2295,7 @@ macro eponymBlock*(body: untyped): untyped =
   ## retain the varargs[int] compatibility wrapper.
   let src = blockToEponym(body)
   var runtimeValueNames = initHashSet[string]()
+  var runtimeDpsNames = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
         $st[0] == "runtimeValue":
@@ -1964,6 +2303,12 @@ macro eponymBlock*(body: untyped): untyped =
       if name in runtimeValueNames:
         error("duplicate runtimeValue request for '" & name & "'", st)
       runtimeValueNames.incl(name)
+    elif st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
+        $st[0] == "runtimeDps":
+      let name = $st[1]
+      if name in runtimeDpsNames:
+        error("duplicate runtimeDps request for '" & name & "'", st)
+      runtimeDpsNames.incl(name)
   # Issue #131: imports resolve relative to the calling Nim file's dir.
   let baseDir = callerDir(body)
   var defs: seq[ElabDef]
@@ -1995,17 +2340,67 @@ macro eponymBlock*(body: untyped): untyped =
     if declaration[3].len == 0 or declaration[3][0].kind == nnkEmpty:
       error("runtimeValue requires a checked definition with a result: " &
         requested, body)
-    if declaration[2].kind != nnkEmpty:
-      let generic = genericRuntimeInfo(declaration, hostRuntimeTypes(body))
-      if generic.error.len > 0:
-        error("runtimeValue cannot expose '" & requested & "': " &
-          generic.error, declaration)
     for i in 1 ..< declaration[3].len:
       if declaration[3][i].kind != nnkIdentDefs:
         error("runtimeValue supports ordinary fixed-arity parameters: " & requested,
           declaration)
 
-  let bindings = hostPostulateBindings(body)
+  for requested in runtimeDpsNames:
+    var checkedDef: ElabDef
+    for d in defs:
+      if d.name == requested:
+        checkedDef = d
+        break
+    if checkedDef.name.len == 0:
+      error("runtimeDps requires a locally declared checked definition: " &
+        requested, body)
+    var declaration: NimNode = nil
+    for st in body:
+      if st.kind == nnkProcDef and $st[0] == requested:
+        declaration = st
+        break
+    if declaration.isNil:
+      error("runtimeDps requires an explicit Nim proc declaration: " &
+        requested, body)
+    if declaration[2].kind != nnkEmpty:
+      error("runtimeDps does not yet support generic procedures", declaration)
+    let params = declaration[3]
+    if params.len < 2 or params[0].kind == nnkEmpty or
+        $params[0] != "Int":
+      error("runtimeDps currently requires an Int result", declaration)
+    var valueArity = 0
+    for i in 1 ..< params.len:
+      let p = params[i]
+      if p.kind != nnkIdentDefs or $p[^2] != "Int":
+        error("runtimeDps currently requires Int parameters", p)
+      valueArity += p.len - 2
+    if valueArity == 0:
+      error("runtimeDps requires at least one linear Int parameter",
+        declaration)
+    var term = checkedDef.tmTm
+    for i in 0 ..< valueArity:
+      if term.isNil or term.kind != tLam:
+        error("runtimeDps checked definition has an unexpected lambda shape",
+          declaration)
+      if term.qty != q1:
+        error("runtimeDps requires every parameter to be marked {.linear.}",
+          declaration)
+      term = term.scope.bdy
+    let lowered = tryLowerCheckedLinearInt(term, valueArity)
+    if lowered.error.len > 0:
+      error("runtimeDps cannot compile '" & requested & "': " &
+        lowered.error, declaration)
+
+  var bindings = hostPostulateBindings(body)
+  for binding in bindings.mitems:
+    if binding.pairResult and binding.pairResultType.isNil and
+        binding.postulateName in checkedGlobals:
+      let checkedShape = runtimeTermTypeAfterArgs(
+        checkedGlobals[binding.postulateName].ty, binding.pairArgCount,
+        checkedGlobals)
+      if not checkedShape.resultType.isNil:
+        binding.pairResultType = checkedShape.resultType
+        binding.pairResultArgNames = checkedShape.argNames
   for binding in bindings:
     if not bindingIsReferenced(body, binding.postulateName, allDefs,
                                checkedGlobals):
@@ -2171,14 +2566,77 @@ macro eponymBlock*(body: untyped): untyped =
         for i in 1 ..< params.len:
           valueArity += params[i].len - 2
         let runtimeName = ident(d.name & "RuntimeValue")
+        if procDecl[2].kind != nnkEmpty:
+          let genericArgsSym = genSym(nskParam, "runtimeGenericArguments")
+          let valueArgsSym = genSym(nskParam, "runtimeValueArguments")
+          let globalsSym = genSym(nskLet, "runtimeGlobals")
+          let defsSym = genSym(nskLet, "runtimeDefs")
+          let bindingsSym = genSym(nskVar, "runtimeBindings")
+          let nameLit = newLit(d.name)
+          let dirLit = newLit(baseDir)
+          let srcLit = newLit(src)
+          let genericArity = newLit(block:
+            var arity = 0
+            for param in procDecl[2]:
+              arity += param.len - 2
+            arity)
+          let valueArity = newLit(block:
+            var arity = 0
+            for i in 1 ..< params.len:
+              arity += params[i].len - 2
+            arity)
+          var rawBody = newStmtList()
+          rawBody.add quote do:
+            if `genericArgsSym`.len != `genericArity`:
+              raise newException(ValueError,
+                "runtimeValue generic argument count mismatch for " & `nameLit`)
+            if `valueArgsSym`.len != `valueArity`:
+              raise newException(ValueError,
+                "runtimeValue argument count mismatch for " & `nameLit`)
+          rawBody.add(newLetStmt(globalsSym,
+            newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+          rawBody.add(newLetStmt(defsSym,
+            newCall(bindSym"getDefsDir", dirLit, srcLit)))
+          rawBody.add(newVarStmt(bindingsSym,
+            newCall(bindSym"initRuntimeBindings")))
+          for binding in bindings:
+            rawBody.add(bindingCall(binding, bindingsSym, globalsSym,
+                                    runtimeTypes, records))
+          let allArgsSeq = genSym(nskLet, "allRuntimeArguments")
+          rawBody.add(newLetStmt(allArgsSeq, newCall(bindSym"concat",
+            newCall(bindSym"toSeq", genericArgsSym),
+            newCall(bindSym"toSeq", valueArgsSym))))
+          rawBody.add(newTree(nnkTupleConstr,
+            newCall(bindSym"callDefValueWithBindings",
+              newCall(bindSym"findDef", defsSym, nameLit), allArgsSeq,
+              bindingsSym, globalsSym), globalsSym))
+          var rawProc = newNimNode(nnkProcDef)
+          rawProc.add(newTree(nnkPostfix, ident"*",
+                              ident(d.name & "RuntimeValueRaw")))
+          rawProc.add(newEmptyNode())
+          rawProc.add(newEmptyNode())
+          var rawFormal = newNimNode(nnkFormalParams)
+          rawFormal.add(parseExpr("tuple[value: Value, globals: Globals]"))
+          rawFormal.add(newIdentDefs(genericArgsSym,
+            newTree(nnkBracketExpr, ident"openArray", bindSym"Value"),
+            newEmptyNode()))
+          rawFormal.add(newIdentDefs(valueArgsSym,
+            newTree(nnkBracketExpr, ident"openArray", bindSym"Value"),
+            newEmptyNode()))
+          rawProc.add(rawFormal)
+          rawProc.add(newEmptyNode())
+          rawProc.add(newEmptyNode())
+          rawProc.add(rawBody)
+          result.add(rawProc)
         let globalsSym = genSym(nskLet, "runtimeGlobals")
         let defsSym = genSym(nskLet, "runtimeDefs")
         let bindingsSym = genSym(nskVar, "runtimeBindings")
         let argsSym = genSym(nskParam, "runtimeArguments")
         var genericValues = newNimNode(nnkBracket)
-        for genericArg in genericRuntimeValueArgs(generic, globalsSym,
-            runtimeTypes, records):
-          genericValues.add(copyNimTree(genericArg))
+        if generic.error.len == 0:
+          for genericArg in genericRuntimeValueArgs(generic, globalsSym,
+              runtimeTypes, records):
+            genericValues.add(copyNimTree(genericArg))
         let runtimeArgsSym = newCall(bindSym"prependRuntimeArgs",
           newTree(nnkPrefix, ident"@", genericValues), argsSym)
         let expectedArity = newLit(valueArity)
@@ -2199,21 +2657,22 @@ macro eponymBlock*(body: untyped): untyped =
         rawBody.add quote do:
             (callDefValueWithBindings(findDef(`defsSym`, `nameLit`), `runtimeArgsSym`,
                                       `bindingsSym`), `globalsSym`)
-        var rawProc = newNimNode(nnkProcDef)
-        rawProc.add(newTree(nnkPostfix, ident("*"), runtimeName))
-        rawProc.add(newEmptyNode())
-        rawProc.add(copyNimTree(generic.genericParams))
-        var rawFormal = newNimNode(nnkFormalParams)
-        rawFormal.add(parseExpr("tuple[value: Value, globals: Globals]"))
-        rawFormal.add(newIdentDefs(argsSym,
-          newTree(nnkBracketExpr, ident"openArray", bindSym"Value"),
-          newEmptyNode()))
-        rawProc.add(rawFormal)
-        rawProc.add(newEmptyNode())
-        rawProc.add(newEmptyNode())
-        rawProc.add(rawBody)
-        result.add(rawProc)
-        if valueArity == 0:
+        if generic.error.len == 0:
+          var rawProc = newNimNode(nnkProcDef)
+          rawProc.add(newTree(nnkPostfix, ident("*"), runtimeName))
+          rawProc.add(newEmptyNode())
+          rawProc.add(copyNimTree(generic.genericParams))
+          var rawFormal = newNimNode(nnkFormalParams)
+          rawFormal.add(parseExpr("tuple[value: Value, globals: Globals]"))
+          rawFormal.add(newIdentDefs(argsSym,
+            newTree(nnkBracketExpr, ident"openArray", bindSym"Value"),
+            newEmptyNode()))
+          rawProc.add(rawFormal)
+          rawProc.add(newEmptyNode())
+          rawProc.add(newEmptyNode())
+          rawProc.add(rawBody)
+          result.add(rawProc)
+        if valueArity == 0 and generic.error.len == 0:
           var forwarderBody = newStmtList()
           var rawCallee: NimNode = copyNimTree(runtimeName)
           if generic.genericNames.len > 0:
@@ -2249,6 +2708,32 @@ macro eponymBlock*(body: untyped): untyped =
       else:
         result.add(unsupportedRuntimeWrapper(procDecl, d.name, runtimeTypes,
           records, allowDependentSigma))
+      let dynamicWrapper = dynamicGenericRuntimeWrapper(procDecl, baseDir,
+        src, d.name, bindings, runtimeTypes, records, allowDependentSigma)
+      if not dynamicWrapper.isNil:
+        result.add(dynamicWrapper)
+      if d.name in runtimeValueNames:
+        let dynamicRuntimeValueWrapper = dynamicGenericRuntimeWrapper(procDecl,
+          baseDir, src, d.name, bindings, runtimeTypes, records,
+          allowDependentSigma, returnRuntimeValue = true)
+        if not dynamicRuntimeValueWrapper.isNil:
+          result.add(dynamicRuntimeValueWrapper)
+      if d.name in runtimeDpsNames:
+        var parameterNames: seq[string] = @[]
+        for i in 1 ..< procDecl[3].len:
+          let p = procDecl[3][i]
+          for j in 0 ..< p.len - 2:
+            let nameNode = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
+            parameterNames.add($nameNode)
+        var term = d.tmTm
+        for _ in 0 ..< parameterNames.len:
+          term = term.scope.bdy
+        let lowered = tryLowerCheckedLinearInt(term, parameterNames.len)
+        if lowered.error.len > 0:
+          error("runtimeDps cannot compile '" & d.name & "': " &
+            lowered.error, procDecl)
+        result.add(generateLinearIntDpsProc(d.name & "Dps", parameterNames,
+                                             lowered.expression))
       continue
     if d.name in runtimeValueNames:
       result.add(rawRuntimeValueWrapper(baseDir, src, d.name,
@@ -2292,6 +2777,18 @@ macro eponymBlock*(body: untyped): untyped =
           importedDef = d
           break
       if importedDef.name.len > 0:
+        let importedDecl = importedRuntimeProcDecl(importedDef,
+          checkedGlobals)
+        if not importedDecl.isNil:
+          let typedImportedWrapper = typedRuntimeWrapper(importedDecl,
+            baseDir, src, requested, bindings, runtimeTypes, records)
+          if not typedImportedWrapper.isNil:
+            result.add(typedImportedWrapper)
+          let typedImportedValueWrapper = typedRuntimeValueWrapper(
+            importedDecl, baseDir, src, requested, bindings, runtimeTypes,
+            records)
+          if not typedImportedValueWrapper.isNil:
+            result.add(typedImportedValueWrapper)
         result.add(rawRuntimeValueWrapper(baseDir, src, requested,
           checkedLambdaArity(importedDef), bindings, runtimeTypes, records))
 

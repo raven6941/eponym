@@ -631,7 +631,11 @@ when isMainModule:
     proc(r: var Rng): int = r.genInt(-1000, 1000),
     proc(value: int): bool =
       let runtime = importedIdentityRuntimeValue([intToValue(value)])
-      runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value,
+      let typedRuntime = importedIdentityRuntimeValue(value)
+      importedIdentity(value) == value and
+        typedRuntime.value.whnfKind == wInt and
+        typedRuntime.value.whnfIntVal == value and
+        runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value,
     shrinkInt)
   if not importedRuntimeCases:
     quit(1)
@@ -649,7 +653,11 @@ when isMainModule:
     proc(r: var Rng): int = r.genInt(-1000, 1000),
     proc(value: int): bool =
       let runtime = importedApplyRuntimeValue([intToValue(value)])
-      runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value + 7,
+      let typedRuntime = importedApplyRuntimeValue(value)
+      importedApply(value) == value + 7 and
+        typedRuntime.value.whnfKind == wInt and
+        typedRuntime.value.whnfIntVal == value + 7 and
+        runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value + 7,
     shrinkInt)
   if not importedPostulateCases:
     quit(1)
