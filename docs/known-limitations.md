@@ -44,9 +44,12 @@ type has a unique direct `runtimeType` or `runtimeCodec` mapping; generic
 values use the selected codec. 200-case properties cover constructing a Vec
 inside such a generic body through both the generated wrapper and typed
 `RuntimeValue` API, for opaque and custom-codec host types. Unmapped,
-ambiguous, and indexed-family mappings remain unsupported; scalar Nim types
-such as `int` cannot identify whether Eponym intended `Int`, `Nat`, or another
-explicitly mapped type.
+ambiguous, and indexed-family mappings remain unsupported. A scalar Nim type
+can be used when the block has a unique explicit direct mapping, such as
+`runtimeType(UserToken, int)`; a generic wrapper reports a compile-time
+ambiguity if multiple Eponym types map to the same Nim type. A 200-case property
+covers an imported generic function returning `Vec[RuntimeScalar, 1]` through that
+mapping and both generated and `RuntimeValue` wrappers.
 Value-indexed Nat binders written
 `[n: Nat]` map to Nim `static[int]` parameters and cross as canonical checked
 Nat constructors when the Nat prelude is available. These binders can appear

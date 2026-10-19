@@ -1724,37 +1724,37 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
   let generic = if toValue: bindSym"toHostValue" else: bindSym"valueToHost"
   newTree(nnkBracketExpr, generic, nimType)
 
-proc genericTypeUsedByCodecCallback(decl: NimNode, name: string,
+proc genericTypeUsedByStructuredSignature(decl: NimNode, name: string,
     mappings: seq[HostRuntimeType]): bool =
   ## Imported definitions do not have a Nim body AST from which to discover
   ## runtime uses of a generic type. When that type occurs beneath a supported
-  ## structural codec in a callback signature, preserve its explicit runtime
-  ## type witness so the callback adapter can recursively apply the leaf codec.
+  ## structural codec in a signature, preserve its explicit runtime type
+  ## witness so the wrapper can recursively apply the leaf codec.
   if decl.kind != nnkProcDef or decl[3].kind != nnkFormalParams:
     return false
-  for i in 1 ..< decl[3].len:
+  if decl.len <= 6 or decl[6].kind != nnkEmpty:
+    return false
+  for i in 0 ..< decl[3].len:
     let parameter = decl[3][i]
-    if parameter.kind != nnkIdentDefs: continue
-    let callback = runtimeProcParts(parameter[^2])
-    if callback.resultType.isNil: continue
-    var callbackTypes = callback.argTypes
-    callbackTypes.add(callback.resultType)
-    for callbackType in callbackTypes:
-      var pending = @[callbackType]
-      while pending.len > 0:
-        let current = pending.pop()
-        if not mentionsName(current, name): continue
-        let head = runtimeTypeHead(current)
-        if head.kind == nnkIdent and $head == "Sig":
-          return true
-        if head.kind == nnkIdent:
-          for mapping in mappings:
-            if mapping.eponymName == $head and
-                (mapping.isRuntimeVector or mapping.isRuntimeList or
-                 mapping.isRuntimeOption):
-              return true
-        for child in current:
-          pending.add(child)
+    let typeNode = if i == 0: parameter
+      elif parameter.kind == nnkIdentDefs: parameter[^2]
+      else: newEmptyNode()
+    if typeNode.kind == nnkEmpty: continue
+    var pending = @[typeNode]
+    while pending.len > 0:
+      let current = pending.pop()
+      if not mentionsName(current, name): continue
+      let head = runtimeTypeHead(current)
+      if head.kind == nnkIdent and $head == "Sig":
+        return true
+      if head.kind == nnkIdent:
+        for mapping in mappings:
+          if mapping.eponymName == $head and
+              (mapping.isRuntimeVector or mapping.isRuntimeList or
+               mapping.isRuntimeOption):
+            return true
+      for child in current:
+        pending.add(child)
 
 proc runtimeStructuredCodecsExpr(mappings: seq[HostRuntimeType],
                                  records: seq[HostRecord]): NimNode =
@@ -2258,11 +2258,6 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       if not mapping.isOpaqueRuntimeType and not mapping.isRuntimeCodec:
         continue
       if mapping.isRuntimeIndexedType: continue
-      if mapping.nimType.kind == nnkIdent and $mapping.nimType in
-          ["int", "int8", "int16", "int32", "int64", "uint",
-           "uint8", "uint16", "uint32", "uint64", "bool", "char",
-           "string", "cstring", "float", "float32", "float64"]:
-        continue
       let condition = newTree(nnkInfix, ident"is", copyNimTree(nimType),
                               copyNimTree(mapping.nimType))
       let mappedValue = runtimeValueConversionExpr(
@@ -2335,7 +2330,7 @@ proc genericRuntimeInfo(decl: NimNode,
       let typeUsedByBody = binderType == "Type 0" and
         ((decl.len > 6 and not decl[6].isNil and
           mentionsName(decl[6], name)) or
-         genericTypeUsedByCodecCallback(decl, name, mappings))
+         genericTypeUsedByStructuredSignature(decl, name, mappings))
       if typeUsedByBody:
         var representedTypes: seq[string] = @[]
         for mapping in mappings:
@@ -2344,11 +2339,6 @@ proc genericRuntimeInfo(decl: NimNode,
               mapping.isRuntimeVector or mapping.isRuntimeList or
               mapping.isRuntimeOption or mapping.isRuntimeVariant or
               mapping.isRuntimeStructuredVariant:
-            continue
-          if mapping.nimType.kind == nnkIdent and $mapping.nimType in
-              ["int", "int8", "int16", "int32", "int64", "uint",
-               "uint8", "uint16", "uint32", "uint64", "bool", "char",
-               "string", "cstring", "float", "float32", "float64"]:
             continue
           if not mapping.isRuntimeCodec and mapping.nimType.kind == nnkIdent and
               $mapping.nimType == "seq":
@@ -2452,11 +2442,6 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
             mapping.isRuntimeVector or mapping.isRuntimeList or
             mapping.isRuntimeOption or mapping.isRuntimeVariant or
             mapping.isRuntimeStructuredVariant:
-          continue
-        if mapping.nimType.kind == nnkIdent and $mapping.nimType in
-            ["int", "int8", "int16", "int32", "int64", "uint",
-             "uint8", "uint16", "uint32", "uint64", "bool", "char",
-             "string", "cstring", "float", "float32", "float64"]:
           continue
         if not mapping.isRuntimeCodec and mapping.nimType.kind == nnkIdent and
             $mapping.nimType == "seq":
@@ -3932,6 +3917,9 @@ macro eponymBlock*(body: untyped): untyped =
             allowDependentSigma)
           if not typedImportedWrapper.isNil:
             result.add(typedImportedWrapper)
+          else:
+            result.add(unsupportedRuntimeWrapper(importedDecl, requested,
+              runtimeTypes, records, allowDependentSigma))
           let typedImportedValueWrapper = typedRuntimeValueWrapper(
             importedDecl, baseDir, src, requested, bindings, runtimeTypes,
             records, allowDependentSigma)

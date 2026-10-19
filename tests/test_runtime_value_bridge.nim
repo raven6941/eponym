@@ -98,6 +98,10 @@ proc decodeRuntimeHandle(value: Value, globals: Globals): ChannelHandle =
   let id = valueToInt(variant.arguments[0])
   ChannelHandle(id: id, label: "decoded-" & $id)
 
+proc decodeRuntimeScalar(value: Value, globals: Globals): int =
+  valueToHostAtRuntimeType[int](value,
+    runtimeGlobalValue(globals, "RuntimeScalar"), globals)
+
 proc hostRuntimeHandleAdapter(value: ChannelHandle): ChannelHandle =
   ChannelHandle(id: value.id + 1, label: value.label & "/adapter")
 
@@ -404,6 +408,7 @@ eponymBlock:
   runtimeVector(Vec)
   runtimeOption(Option)
   runtimeType(Token, ImportedToken)
+  runtimeType(RuntimeScalar, int)
   runtimeCodec(RuntimeHandle, ChannelHandle, encodeRuntimeHandle,
     decodeRuntimeHandle)
   runtimeValue(importedIntIdentity)
@@ -413,6 +418,7 @@ eponymBlock:
   runtimeValue(importedGenericDependentVectorCallbackApply)
   runtimeValue(importedGenericOptionCallbackApply)
   runtimeValue(importedGenericSigmaCallbackApply)
+  runtimeValue(importedGenericSingleton)
   runtimeValue(importedImplicitGenericIdentity)
   runtimeValue(importedImplicitNatVecIdentity)
   runtimeValue(importedImplicitBoolIdentity)
@@ -1884,6 +1890,17 @@ when isMainModule:
         runtime.globals)
       typed == expected and (first, second) == expected)
   if not importedGenericSigmaCallbackCases:
+    quit(1)
+  let importedGenericExplicitScalarMappingCases = forAll(
+    "explicit unique scalar mappings reify generic runtime types", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let typed = importedGenericSingleton(value)
+      let runtime = importedGenericSingletonRuntimeValue(value)
+      typed == @[value] and
+        vecValueToSeq[int](runtime.value, 1, runtime.globals, "Vec",
+          decodeRuntimeScalar) == @[value])
+  if not importedGenericExplicitScalarMappingCases:
     quit(1)
   let importedImplicitNatVecCases = forAll(
     "imported implicit Nat binders have static and dynamic Nim wrappers",

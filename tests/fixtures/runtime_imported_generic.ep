@@ -2,6 +2,7 @@ import "../../lib/vec.ep"
 import "../../lib/option.ep"
 import "runtime_variant.ep"
 postulate Token : Type 0
+postulate RuntimeScalar : Type 0
 proc importedIntIdentity : Int -> Int = lam (value : Int). value
 proc importedNullaryInt : Pi (_ : 1). Int = lam (_ : 1). addInt 40 2
 proc importedGenericIdentity (A : Type 0) (value : A) : A = value
@@ -16,6 +17,8 @@ proc importedGenericOptionCallbackApply (A : Type 0)
 proc importedGenericSigmaCallbackApply (A : Type 0)
     (callback : (Sig (left : A). A) -> (Sig (left : A). A))
     (value : Sig (left : A). A) : Sig (left : A). A = callback value
+proc importedGenericSingleton (A : Type 0) (value : A) :
+    Vec A (suc zero) = cons A zero value (nil A)
 proc importedImplicitGenericIdentity {A : Type 0} (value : A) : A = value
 proc importedImplicitNatVecIdentity {n : Nat} (values : Vec Int n) : Vec Int n = values
 proc importedImplicitBoolIdentity {flag : Bool} : Bool = flag

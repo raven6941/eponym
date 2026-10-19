@@ -715,10 +715,14 @@ implementations.
       mapping. Generated wrappers and typed `RuntimeValue` calls pass the
       mapped Eponym type witness and use the selected codec for generic values.
       200-case properties cover both an opaque host type and a custom-codec
-      type inside an indexed Vec. Unmapped, ambiguous, indexed-family, or
-      primitive Nim type representations remain rejected because Nim types
-      such as `int` cannot identify whether Eponym intended `Int`, `Nat`, or
-      another explicitly mapped type.
+      type inside an indexed Vec. An imported generic definition also maps
+      `int` to a named Eponym postulate when that is the block's unique direct
+      mapping; a 200-case property covers its returned Vec through generated
+      and `RuntimeValue` wrappers. Multiple Eponym types mapped to the same Nim
+      scalar remain ambiguous and produce a compile-time diagnostic. Unmapped
+      and indexed-family representations remain unsupported because Nim types
+      such as `int` cannot identify an Eponym type without a unique explicit
+      mapping.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.
