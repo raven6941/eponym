@@ -451,6 +451,10 @@ implementations.
    imported checked roles; the host adapter invokes them and results cross
    through generated and typed `RuntimeValue` wrappers. A negative fixture
    rejects a callback whose leaf types do not match the imported contract.
+- [x] Carry outer Pi indices through typed postulate callback adapters.
+   A 200-case property invokes a callback returning `Vec[Int, length]` through
+   a bound adapter, checks typed and `RuntimeValue` results, and rejects a
+   callback that returns a vector of the wrong length.
 - [x] Permit `runtimeValue(importedDefinition)` when a checked definition
    comes from an imported `.ep` module and has no local Nim `proc` declaration.
    It exposes a raw `openArray[Value] -> (Value, Globals)` wrapper; typed Nim

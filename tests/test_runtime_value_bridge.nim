@@ -109,6 +109,10 @@ proc hostIntOptionIdentity(value: Option[int]): Option[int] = value
 proc hostIndexedIntVectorIdentity(length: int,
     values: seq[int]): seq[int] = values
 
+proc hostInvokeIndexedVectorCallback(length: int,
+    callback: proc(index: int): seq[int] {.closure.}): seq[int] =
+  callback(length)
+
 proc hostIncrementRuntimeHandles(length: int,
     values: seq[ChannelHandle]): seq[ChannelHandle] =
   result = values
@@ -306,6 +310,22 @@ eponymBlock:
       values: Vec[Int, length]): Vec[Int, length] =
     indexedIntVectorIdentity(length, values)
   runtimeValue(generatedIndexedIntVectorIdentity)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  postulate(callIndexedVectorCallback,
+    Pi(length: Nat,
+       callback: proc(index: Nat): Vec[Int, length] {.closure.},
+       Vec[Int, length]))
+  bindPostulate(callIndexedVectorCallback, hostInvokeIndexedVectorCallback,
+    Nat, proc(index: Nat): Vec[Int, length] {.closure.},
+    Vec[Int, length])
+  proc generatedApplyIndexedVectorCallback(length: Nat,
+      callback: proc(index: Nat): Vec[Int, length] {.closure.}):
+      Vec[Int, length] = callIndexedVectorCallback(length, callback)
+  runtimeValue(generatedApplyIndexedVectorCallback)
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
@@ -2495,6 +2515,36 @@ proc callbackRole : Callback -> Sample -> Sample =
       typed == expected and valueToInt(runtime.value) == expected)
   if not importedBoundCallbackCases:
     quit(1)
+  let boundDependentCallbackCases = forAll(
+    "typed postulates preserve outer indices through callback codecs", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      let callback: proc(index: int): seq[int] {.closure.} =
+        proc(index: int): seq[int] =
+          for i in 0 ..< input.length: result.add(input.seed + index + i)
+      let expected = block:
+        var values: seq[int] = @[]
+        for i in 0 ..< input.length:
+          values.add(input.seed + input.length + i)
+        values
+      let typed = generatedApplyIndexedVectorCallback(input.length, callback)
+      let runtime = generatedApplyIndexedVectorCallbackRuntimeValue(
+        input.length, callback)
+      typed == expected and
+        vecValueToSeq[int](runtime.value, input.length, runtime.globals,
+          "Vec", proc(value: Value, _: Globals): int = valueToInt(value)) ==
+          expected)
+  if not boundDependentCallbackCases:
+    quit(1)
+  var boundDependentCallbackMismatchRejected = false
+  try:
+    discard generatedApplyIndexedVectorCallback(3,
+      proc(index: int): seq[int] = @[index, index + 1, index + 2, index + 3])
+  except ValueError as error:
+    boundDependentCallbackMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert boundDependentCallbackMismatchRejected
 
   let dynamicGenericVectorCases = forAll(
     "dynamic Nat generics index dependent Vec wrappers", r, 200,

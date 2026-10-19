@@ -229,7 +229,9 @@ These function values can also cross into typed Nim `bindPostulate` adapters,
 including adapters for imported postulates. The host adapter can invoke the
 callback, while macro expansion checks its full function signature; a property
 covers captured callbacks and a compile-error fixture rejects mismatched leaf
-types.
+types. Outer Pi indices also reach the callback codec: a host adapter can
+invoke a callback returning `Vec[Int, length]`, and the bridge rejects a
+wrong-length result.
 Dynamic generic wrappers accept unmapped value-indexed binders as `Value`
 parameters; `nameRuntimeValueDynamic` returns the checked result and globals.
 This lets a caller pass an existing Eponym value, including a payload-bearing
