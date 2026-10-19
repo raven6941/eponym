@@ -1610,10 +1610,12 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
   newCall(valueFn, value)
 
 proc genericRuntimeInfo(decl: NimNode,
-                        mappings: seq[HostRuntimeType]): tuple[
+                        mappings: seq[HostRuntimeType],
+                        allowUnmappedValue = false): tuple[
     genericParams: NimNode, typeNames: seq[string],
     genericNames: seq[NimNode], genericNatArgs: seq[bool],
     genericBoolArgs: seq[bool], genericIntArgs: seq[bool],
+    genericValueArgs: seq[bool],
     genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
     codecMappings: seq[HostRuntimeType], error: string] =
   result.genericParams = newEmptyNode()
@@ -1634,7 +1636,7 @@ proc genericRuntimeInfo(decl: NimNode,
         hasMappedBinder = true
         break
     if binderType notin ["Type 0", "Nat", "Bool", "Int"] and
-        not hasMappedBinder:
+        not hasMappedBinder and not allowUnmappedValue:
       result.error = "runtime wrappers currently support only type-level " &
         "binders annotated with Univ, primitive value indices, or values " &
         "with an explicit runtimeType mapping"
@@ -1654,6 +1656,7 @@ proc genericRuntimeInfo(decl: NimNode,
       result.genericNames.add(genericName)
       result.genericMappedTypes.add(nil)
       result.genericMappedNimTypes.add(nil)
+      result.genericValueArgs.add(false)
       if binderType == "Type 0":
         result.typeNames.add(name)
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]),
@@ -1677,6 +1680,13 @@ proc genericRuntimeInfo(decl: NimNode,
         result.genericNatArgs.add(false)
         result.genericBoolArgs.add(true)
         result.genericIntArgs.add(false)
+      elif binderType == "Int":
+        let staticInt = newTree(nnkBracketExpr, ident"static", ident"int")
+        result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticInt,
+          newEmptyNode()))
+        result.genericNatArgs.add(false)
+        result.genericBoolArgs.add(false)
+        result.genericIntArgs.add(true)
       else:
         if hasMappedBinder:
           let staticMapped = newTree(nnkBracketExpr, ident"static",
@@ -1689,17 +1699,17 @@ proc genericRuntimeInfo(decl: NimNode,
           result.genericMappedTypes[^1] = ident(binderType)
           result.genericMappedNimTypes[^1] = copyNimTree(mappedBinder.nimType)
           continue
-        let staticInt = newTree(nnkBracketExpr, ident"static", ident"int")
-        result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticInt,
+        result.genericParams.add(newIdentDefs(copyNimTree(param[i]), bindSym"Value",
           newEmptyNode()))
         result.genericNatArgs.add(false)
         result.genericBoolArgs.add(false)
-        result.genericIntArgs.add(true)
+        result.genericIntArgs.add(false)
+        result.genericValueArgs[^1] = true
 
 proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     typeNames: seq[string], genericNames: seq[NimNode],
     genericNatArgs: seq[bool], genericBoolArgs: seq[bool],
-    genericIntArgs: seq[bool],
+    genericIntArgs: seq[bool], genericValueArgs: seq[bool],
     genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
     codecMappings: seq[HostRuntimeType],
     error: string], globals: NimNode, mappings: seq[HostRuntimeType],
@@ -2021,7 +2031,8 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     returnRuntimeValue = false): NimNode =
   ## Emit a sibling wrapper where supported value-indexed generics are
   ## ordinary runtime parameters instead of Nim `static` parameters.
-  let generic = genericRuntimeInfo(decl, mappings)
+  let generic = genericRuntimeInfo(decl, mappings,
+                                   allowUnmappedValue = true)
   if generic.error.len > 0 or generic.genericNames.len == 0 or
       generic.typeNames.len > 0:
     return nil
@@ -2044,6 +2055,8 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
       dynamicType = ident"int"
     elif generic.genericBoolArgs[i]:
       dynamicType = ident"bool"
+    elif generic.genericValueArgs[i]:
+      dynamicType = bindSym"Value"
     elif not generic.genericMappedTypes[i].isNil:
       dynamicType = copyNimTree(generic.genericMappedNimTypes[i])
     if dynamicType.isNil: return nil
@@ -2094,6 +2107,8 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
       encoded = newCall(bindSym"boolToValue", genericSyms[i], globalsSym)
     elif generic.genericIntArgs[i]:
       encoded = newCall(bindSym"intToValue", genericSyms[i])
+    elif generic.genericValueArgs[i]:
+      encoded = copyNimTree(genericSyms[i])
     else:
       encoded = runtimeValueConversionExpr(generic.genericMappedTypes[i],
         genericNimTypes[i], genericSyms[i], true, generic.codecMappings,

@@ -167,6 +167,14 @@ output. 200-case properties cover these paths through generated and reified
 wrappers, and negative checks reject mismatched Vec lengths. Returned callback
 types must use Nim's `{.closure.}` calling convention. Callback effects and
 behavior remain trusted host semantics.
+Dynamic generic wrappers accept unmapped value-indexed binders as `Value`
+parameters; `nameRuntimeValueDynamic` returns the checked result and globals.
+This lets a caller pass an existing Eponym value, including a payload-bearing
+constructor, through an index and retrieve it from the checked body. The bridge
+does not verify that the value inhabits the binder's Eponym type. The caller
+must construct a well-typed `Value`; typed host representations and membership
+checking remain future work.
+
 Structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
 `Sig` tuples, and named records. Records with dependent fields
 and dependent `Sig` results are available only through their explicit trusted

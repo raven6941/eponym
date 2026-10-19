@@ -174,6 +174,16 @@ eponymBlock:
   runtimeValue(importedVectorIdentity)
 
 eponymBlock:
+  postulate(Int, Univ)
+  data(RuntimeToken, Univ):
+    proc runtimeTokenValue(): RuntimeToken
+  proc makeRuntimeToken(): RuntimeToken = runtimeTokenValue()
+  runtimeValue(makeRuntimeToken)
+  proc genericRuntimeTokenProjection[token: RuntimeToken](ignored: Int):
+      RuntimeToken = token
+  runtimeValue(genericRuntimeTokenProjection)
+
+eponymBlock:
   postulate(Nat, Univ)
   data(Tree, Univ):
     proc leaf(): Tree
@@ -793,6 +803,19 @@ when isMainModule:
     importedVectorMismatchRejected =
       "runtime Vec length mismatch" in error.msg
   doAssert importedVectorMismatchRejected
+
+  let tokenValue = makeRuntimeTokenRuntimeValue().value
+  let unmappedGenericCases = forAll(
+    "dynamic wrappers accept unmapped indexed Values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(ignored: int): bool =
+      let tokenProjection = genericRuntimeTokenProjectionRuntimeValueDynamic(
+        tokenValue, ignored)
+      tokenProjection.value.whnfKind == tokenValue.whnfKind and
+        tokenProjection.value.whnfRefId == tokenValue.whnfRefId,
+    shrinkInt)
+  if not unmappedGenericCases:
+    quit(1)
 
   let rawGenericNatCases = forAll(
     "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,

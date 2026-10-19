@@ -472,8 +472,13 @@ implementations.
      constructors. Today users must implement these through `runtimeCodec`;
      built-in recursive codecs cover Vec, List, Option, Sigma, and records.
    - [ ] Add typed host wrappers for value-indexed generic binders without a
-     Nim runtime mapping. `RuntimeValueRaw` accepts their Eponym arguments as
-     Values, with type membership left to the caller.
+     Nim runtime mapping. `RuntimeValueRaw` and the dynamic `RuntimeValue`
+     wrapper accept their Eponym arguments as Values, with type membership
+     left to the caller.
+   - [x] Add dynamic runtime wrappers that accept unmapped value-indexed
+     binders as `Value` parameters. A 200-case property checks round-tripping a
+     payload-bearing token index. Type membership remains the caller's
+     responsibility, so this does not complete the typed wrapper item above.
    - [x] Preserve the full locally declared Sigma result type when generating
      `bindPostulatePairTrusted`, so recursive codecs can enforce represented
      constraints such as a Vec length indexed by the first field. A 200-case
