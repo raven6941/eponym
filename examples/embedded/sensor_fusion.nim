@@ -51,8 +51,8 @@ eponymBlock:
 
   # Build a 3-element vector. Return type `Vec(Int, 3)` uses Nat literal.
   # The body constructs 3 `cons` cells with Nat literal indices.
-  proc mkVec3(a: Int, b: Int, c: Int): Vec(Int, 3) =
-    cons(Int, 2, a, cons(Int, 1, b, cons(Int, 0, c, vecnil(Int))))
+  proc mkVec3(a: Int, b: Int, c: Int): Vec[Int, 3] =
+    cons[Int, 2](a, cons[Int, 1](b, cons[Int, 0](c, vecnil[Int]())))
 
   # 3-element dot product. The `let` bindings build `Vec Int 3` values,
   # proving at the type level that arity matches (3 weights, 3 inputs).

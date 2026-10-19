@@ -1147,6 +1147,9 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [x] Migrate the deforestation and map-fusion example's generic calls and
   `Eq`/`List` type applications to square brackets; its checked laws still
   elaborate and the example runs.
+- [x] Migrate the sensor-fusion example's indexed vector type and constructor
+  applications to square brackets; it compiles and produces the same fused
+  result.
 - [ ] Migrate the remaining warning-producing embedded examples and tests,
   then remove the legacy parser/lowering path.
 - [ ] Remove the legacy call-style parser/lowering path and update examples,
