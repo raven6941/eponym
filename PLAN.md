@@ -1233,8 +1233,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   rejects positional call-style index arguments when their signature is known
   and leaves ordinary inferred applications alone. Local and imported vector
   constructor regressions plus a direct-index family regression cover the
-  supported cases. Extend the same boundary-preserving approach to the
-  remaining inferable-binder forms before closing this audit.
+  supported cases. Scoped callable metadata preserves index inference through
+  aliases of bracketed constructors and partially applied constructors, and
+  command-call syntax follows the same inference path. Extend the same
+  boundary-preserving approach to the remaining inferable-binder forms before
+  closing this audit.
   Other relevant supported forms—identifiers, parenthesized and qualified
   calls, returned calls, callback aliases, conditionals, type ascriptions, and
   statement-list expressions—have focused coverage. Unsupported Nim AST forms

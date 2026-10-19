@@ -36,6 +36,16 @@ eponymBlock:
   proc inferredSingleton(value: Nat, tail: Vec[Nat, 0]): Vec[Nat, 1] =
     cons[Nat](value, tail)
 
+  proc inferredAliasedConstructor(value: Nat,
+      tail: Vec[Nat, 0]): Vec[Nat, 1] =
+    let addHead = cons[Nat]
+    addHead(value, tail)
+
+  proc inferredPartiallyAppliedConstructor(value: Nat,
+      tail: Vec[Nat, 0]): Vec[Nat, 1] =
+    let addTail = cons[Nat](value)
+    addTail(tail)
+
   proc bracketVectorType(value: Vec[Nat, suc(zero())]):
       Vec[Nat, suc(zero())] = value
 
@@ -98,6 +108,9 @@ eponymBlock:
 
   proc inferredDirectIndex(value: Nat): LocalAt[zero()] =
     localAt(value)
+
+  proc inferredCommandIndex(value: Nat): LocalAt[zero()] =
+    localAt value
 
   proc ordinaryCallThroughNameCollidingField(
       handler: OrdinaryIdentityField, value: Nat): Nat =

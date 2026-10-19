@@ -87,6 +87,10 @@ proc callInfoForHead(n: NimNode): tuple[found: bool, info: LegacyCallInfo] =
         remaining.termCount = max(0, remaining.termCount - supplied)
         remaining.leadingTermCount =
           max(0, remaining.leadingTermCount - supplied)
+        # Lowering this call inserts every recognized inferable index as a
+        # hole before its value arguments, so an alias of the partial result
+        # must not insert those holes a second time.
+        remaining.inferableIndexCount = 0
         return (true, remaining)
   of nnkDotExpr:
     if head.len == 2 and head[1].kind in {nnkIdent, nnkSym}:
@@ -278,9 +282,9 @@ proc registerScopedLetCallInfo(body: NimNode) =
         info = nimTypeCallInfo(binding[^2])
       else:
         let value = unwrapParens(binding[^1])
-        if value.kind in {nnkIdent, nnkSym} and
-            $value in scopedLegacyCallInfo:
-          info = scopedLegacyCallInfo[$value]
+        let resolved = callInfoForHead(value)
+        if resolved.found:
+          info = resolved.info
         else:
           info = returnedCallInfo(value)
       for i in 0 ..< binding.len - 2:
@@ -748,7 +752,12 @@ proc nimCommandToEponym(n: NimNode): string =
       args.add(nimExprToEponym(a))
   for i in 1 ..< n.len:
     appendArg(n[i])
-  nimExprToEponym(n[0]) & " " & args.join(" ")
+  var head = nimExprToEponym(n[0])
+  let headInfo = callInfoForHead(n[0])
+  if headInfo.found and headInfo.info.inferableIndexCount > 0:
+    for _ in 0 ..< headInfo.info.inferableIndexCount:
+      head.add(" ?")
+  head & " " & args.join(" ")
 
 proc nimExprToEponym(n: NimNode): string =
   ## Convert a Nim expression AST to Eponym source string.
