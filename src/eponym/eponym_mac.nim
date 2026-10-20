@@ -1425,8 +1425,6 @@ proc importedRuntimeProcDecl(definition: ElabDef,
       current = current.scope.bdy
       inc genericIndex
       continue
-    if current.qty != qOmega:
-      return nil
     let argType = runtimeTermTypeAst(current.dom, ctx, refNames)
     if argType.isNil: return nil
     formal.add(newIdentDefs(ident(name), argType, newEmptyNode()))

@@ -203,6 +203,11 @@ eponymBlock:
   runtimeValue(importedApply)
 
 eponymBlock:
+  import "fixtures/runtime_imported_indexed_callback.ep"
+  runtimeVector(Vec)
+  runtimeValue(importedApplyVectorCallback)
+
+eponymBlock:
   import "fixtures/runtime_imported_vec.ep"
   runtimeVector(Vec)
   runtimeValue(importedVectorIdentity)
@@ -1394,6 +1399,52 @@ proc generatedTokenIdentity (value : Token) : Token = value
           proc(item: Value, _: Globals): int = valueToHost[int](item)) == direct)
   if not importedGenericCallbackCases:
     quit(1)
+
+  let importedIndexedCallbackCases = forAll(
+    "imported callbacks enforce an outer dependent Vec index", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 12), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        values[i] = input.seed + i
+      let mapper: proc(values: seq[int]): seq[int] {.closure.} =
+        proc(values: seq[int]): seq[int] =
+          var mapped = newSeq[int](values.len)
+          for i, value in values:
+            mapped[i] = value * 2
+          mapped
+      let direct = importedApplyVectorCallback(input.length, mapper, values)
+      let runtime = importedApplyVectorCallbackRuntimeValue(input.length,
+        mapper, values)
+      var expected = newSeq[int](values.len)
+      for i, value in values:
+        expected[i] = value * 2
+      direct == expected and
+        vecValueToSeq[int](runtime.value, input.length, runtime.globals,
+          "Vec", proc(item: Value, _: Globals): int = valueToInt(item)) ==
+            expected)
+  if not importedIndexedCallbackCases:
+    quit(1)
+  let identityVector: proc(values: seq[int]): seq[int] {.closure.} =
+    proc(values: seq[int]): seq[int] = values
+  var importedIndexedCallbackInputMismatchRejected = false
+  try:
+    discard importedApplyVectorCallback(3, identityVector, @[1, 2])
+  except ValueError as error:
+    importedIndexedCallbackInputMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert importedIndexedCallbackInputMismatchRejected
+  let wrongLengthVectorResult: proc(values: seq[int]): seq[int] {.closure.} =
+    proc(values: seq[int]): seq[int] = values & 0
+  var importedIndexedCallbackResultMismatchRejected = false
+  try:
+    discard importedApplyVectorCallback(3, wrongLengthVectorResult,
+      @[1, 2, 3])
+  except ValueError as error:
+    importedIndexedCallbackResultMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert importedIndexedCallbackResultMismatchRejected
 
   let importedDependentVectorCases = forAll(
     "typed imported wrappers carry dependent Vec indices", r, 200,

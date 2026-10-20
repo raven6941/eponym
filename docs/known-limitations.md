@@ -52,9 +52,11 @@ check. `RuntimeVariant` checks constructor identity, family membership, arity,
 and spine shape, but leaves payloads as raw `Value`s for the caller to decode.
 Imported `.ep` definitions can get typed wrappers when their Pi signature is
 within the reconstruction subset, including `Univ` type parameters and
-non-dependent callback arrows with closure types and codec-supported leaves.
-Other imported signatures, including dependent callbacks, expose the raw
-`Value` interface; it checks argument count, while callers supply well-typed
+callback arrows with closure types and codec-supported leaves. Callback
+arguments and results may use indices from earlier outer parameters, such as
+`Vec[Int, length]`; the host codec checks the vector length. Callback-local
+dependent signatures and other unsupported imported signatures use the raw
+`Value` interface, which checks argument count while callers supply well-typed
 values. Imported checked bodies can call postulates bound in the same block.
 
 Generic type parameters can pass values through as opaque host values when
