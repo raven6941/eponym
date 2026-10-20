@@ -194,7 +194,9 @@ eponymBlock:
 eponymBlock:
   import "fixtures/runtime_imported_value.ep"
   bindPostulate(importedStep, hostStepNim)
+  runtimeType(Channel, ChannelHandle)
   runtimeValue(importedIdentity)
+  runtimeValue(importedGenericIdentity)
   runtimeValue(importedApply)
 
 eponymBlock:
@@ -1347,6 +1349,25 @@ proc generatedTokenIdentity (value : Token) : Token = value
         runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value,
     shrinkInt)
   if not importedRuntimeCases:
+    quit(1)
+
+  let importedGenericIdentityCases = forAll(
+    "typed wrappers reconstruct imported polymorphic identities", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let typedRuntime = importedGenericIdentityRuntimeValue[int](value)
+      let rawRuntime = importedGenericIdentityRuntimeValueRaw(
+        [vType(0), intToValue(value)])
+      let channel = ChannelHandle(id: value, label: "imported/" & $value)
+      let typedChannelRuntime =
+        importedGenericIdentityRuntimeValue[ChannelHandle](channel)
+      importedGenericIdentity[int](value) == value and
+        valueToHost[int](typedRuntime.value) == value and
+        valueToInt(rawRuntime.value) == value and
+        importedGenericIdentity[ChannelHandle](channel) == channel and
+        valueToHost[ChannelHandle](typedChannelRuntime.value) == channel,
+    shrinkInt)
+  if not importedGenericIdentityCases:
     quit(1)
 
   let importedDependentVectorCases = forAll(

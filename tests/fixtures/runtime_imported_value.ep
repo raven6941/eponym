@@ -1,5 +1,7 @@
 postulate Int : Type 0
+postulate Channel : Type 0
 postulate importedStep : Int -> Int
 
 proc importedIdentity (value : Int) : Int = value
+proc importedGenericIdentity (A : Type 0) (value : A) : A = value
 proc importedApply (value : Int) : Int = importedStep value
