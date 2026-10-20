@@ -47,3 +47,9 @@ eponymBlock:
   proc ordinaryNat(): Nat = suc(zero())
   proc ordinaryNatArg(value: Nat): Nat = value
   proc ordinaryNatCall(): Nat = ordinaryNatArg(zero())
+
+eponymBlock:
+  postulate(Nat, Univ)
+  proc callbackInferredType(
+      callback: Pi(A: Univ, value: A, A), value: Nat): Nat =
+    callback[Nat](value)

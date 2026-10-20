@@ -286,8 +286,9 @@ The embedded syntax is Nim-shaped but is not ordinary Nim semantics. Explicit
 Eponym parameters can use Nim square brackets, as in `Vec[A, n]` and
 `cons[A, n](x, xs)`; recognized legacy call-style explicit applications now fail with a migration
 diagnostic, including local Nat `let` aliases and conditional Nat expressions.
-A complete audit of indirect callable aliases and callback/function-valued
-paths remains follow-up work. Generic Eponym definitions can be checked,
+Direct callback parameters with explicit Pi type binders also receive this
+check. Returned-function aliases, callback aliases, and other function-valued
+paths still need a complete audit. Generic Eponym definitions can be checked,
 but the generated Nim runtime wrapper for a generic definition is not
 implemented yet.
 
