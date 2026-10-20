@@ -311,6 +311,7 @@ eponymBlock:
     Channel(0) -> Sig(index: Nat, Channel(index)))
   bindPostulatePairTrusted(splitIndexedChannel, hostIndexedChannelParts,
     Channel, Nat, Channel)
+  runtimePairTrusted(generatedSplitIndexedChannel)
   postulate(repeatIndexedChannel,
     Pi(index: Nat, channel: Channel(index),
        Sig(first: Channel(index), Channel(index))))
@@ -318,6 +319,9 @@ eponymBlock:
     Nat, Channel, Channel, Channel)
   proc generatedIndexedChannelIndex(channel: Channel(0)): Nat =
     fst(splitIndexedChannel(channel))
+  proc generatedSplitIndexedChannel(channel: Channel(0)):
+      Sig(index: Nat, Channel(index)) =
+    splitIndexedChannel(channel)
   proc generatedRepeatIndexedChannel(index: Nat, channel: Channel(index)):
       Sig(first: Channel(index), Channel(index)) =
     repeatIndexedChannel(index, channel)
@@ -356,6 +360,8 @@ static:
   doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
   doAssert not compiles(generatedCallbackRole(42, 1))
   doAssert compiles(generatedIndexedChannelIndex(
+    IndexedChannelHandle(index: 17, label: "indexed")))
+  doAssert compiles(generatedSplitIndexedChannel(
     IndexedChannelHandle(index: 17, label: "indexed")))
   doAssert compiles(generatedRepeatIndexedChannel(17,
     IndexedChannelHandle(index: 17, label: "indexed")))
@@ -469,6 +475,17 @@ when isMainModule:
         label: "index-" & $index)) == index,
     shrinkInt)
   if not generatedTrustedDependentPairCases:
+    quit(1)
+  let generatedTrustedDependentResultCases = forAll(
+    "explicit trusted wrapper codecs carry a dependent Sigma result", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 1000),
+    proc(index: int): bool =
+      let pairOutput = generatedSplitIndexedChannel(IndexedChannelHandle(
+        index: index, label: "wrapper-" & $index))
+      pairOutput[0] == index and pairOutput[1] == IndexedChannelHandle(
+        index: index, label: "wrapper-" & $index & "/indexed"),
+    shrinkInt)
+  if not generatedTrustedDependentResultCases:
     quit(1)
   let generatedPairWithExternalIndexCases = forAll(
     "non-dependent Sigma tails may use earlier Pi indices", r, 200,
