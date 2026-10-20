@@ -506,6 +506,8 @@ eponymBlock:
   runtimeDataVariant(SizedTree)
   runtimeValue(importedGenericIndexedListCallbackApply)
   runtimeValue(importedGenericIndexedOptionListCallbackApply)
+  runtimeValue(importedGenericIndexedSigmaListCallbackApply)
+  runtimeValue(importedGenericIndexedSigmaOptionListCallbackApply)
 
 eponymBlock:
   import "fixtures/runtime_imported_generic_variant.ep"
@@ -2290,6 +2292,167 @@ when isMainModule:
         noneRejected and emptyRejected,
     shrinkInt)
   if not indexedOptionListCallbackCases:
+    quit(1)
+  let indexedSigmaListWitnessCases = forAll(
+    "generic callbacks infer indexed witnesses from Sigma List fields", r, 30,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let tag = length * 3 - 50
+      proc tree(index: int): RuntimeStructuredVariant =
+        RuntimeStructuredVariant(constructor: "sizedTree", arguments: @[
+          RuntimeStructuredValue(kind: rsvNat, natValue: index),
+          RuntimeStructuredValue(kind: rsvVariant,
+            variantValue: RuntimeStructuredVariant(
+              constructor: "treeEmpty"))])
+      let directValue = (tag, @[tree(length), tree(length)])
+      let directCallback: proc(value: tuple[tag: int,
+          payload: seq[RuntimeStructuredVariant]]):
+          tuple[tag: int, payload: seq[RuntimeStructuredVariant]] {.closure.} =
+        proc(value: tuple[tag: int, payload: seq[RuntimeStructuredVariant]]):
+            tuple[tag: int, payload: seq[RuntimeStructuredVariant]] = value
+      let directTyped = importedGenericIndexedSigmaListCallbackApply(
+        directCallback, directValue)
+      let directRuntime =
+        importedGenericIndexedSigmaListCallbackApplyRuntimeValue(
+          directCallback, directValue)
+      let directTreeType = callRuntimeValue(
+        runtimeGlobalValue(directRuntime.globals, "SizedTree"),
+        [natToValue(length, directRuntime.globals)])
+      let directListType = callRuntimeValue(
+        runtimeGlobalValue(directRuntime.globals, "List"), [directTreeType])
+      validateRuntimeValueType(runtimePairSecond(directRuntime.value),
+        directListType, directRuntime.globals)
+      let wrongDirectCallback: proc(value: tuple[tag: int,
+          payload: seq[RuntimeStructuredVariant]]):
+          tuple[tag: int, payload: seq[RuntimeStructuredVariant]] {.closure.} =
+        proc(value: tuple[tag: int, payload: seq[RuntimeStructuredVariant]]):
+            tuple[tag: int, payload: seq[RuntimeStructuredVariant]] =
+          var payload = value.payload
+          inc payload[0].arguments[0].natValue
+          (value.tag, payload)
+      var directResultRejected = false
+      try:
+        discard importedGenericIndexedSigmaListCallbackApply(
+          wrongDirectCallback, directValue)
+      except ValueError:
+        directResultRejected = true
+      var directRuntimeResultRejected = false
+      try:
+        discard importedGenericIndexedSigmaListCallbackApplyRuntimeValue(
+          wrongDirectCallback, directValue)
+      except ValueError:
+        directRuntimeResultRejected = true
+      var mixedDirectInputRejected = false
+      try:
+        discard importedGenericIndexedSigmaListCallbackApply(directCallback,
+          (tag, @[tree(length), tree(length + 1)]))
+      except ValueError:
+        mixedDirectInputRejected = true
+      var mixedDirectRuntimeInputRejected = false
+      try:
+        discard importedGenericIndexedSigmaListCallbackApplyRuntimeValue(
+          directCallback, (tag, @[tree(length), tree(length + 1)]))
+      except ValueError:
+        mixedDirectRuntimeInputRejected = true
+      var emptyDirectRejected = false
+      try:
+        discard importedGenericIndexedSigmaListCallbackApply(directCallback,
+          (tag, newSeq[RuntimeStructuredVariant]()))
+      except ValueError as error:
+        emptyDirectRejected = "empty List" in error.msg
+      var emptyDirectRuntimeRejected = false
+      try:
+        discard importedGenericIndexedSigmaListCallbackApplyRuntimeValue(
+          directCallback, (tag, newSeq[RuntimeStructuredVariant]()))
+      except ValueError as error:
+        emptyDirectRuntimeRejected = "empty List" in error.msg
+
+      let optionValue = (tag, some(@[tree(length), tree(length)]))
+      let optionCallback: proc(value: tuple[tag: int,
+          payload: Option[seq[RuntimeStructuredVariant]]]):
+          tuple[tag: int,
+            payload: Option[seq[RuntimeStructuredVariant]]] {.closure.} =
+        proc(value: tuple[tag: int,
+            payload: Option[seq[RuntimeStructuredVariant]]]):
+            tuple[tag: int,
+              payload: Option[seq[RuntimeStructuredVariant]]] = value
+      let optionTyped = importedGenericIndexedSigmaOptionListCallbackApply(
+        optionCallback, optionValue)
+      let optionRuntime =
+        importedGenericIndexedSigmaOptionListCallbackApplyRuntimeValue(
+          optionCallback, optionValue)
+      let optionTreeType = callRuntimeValue(
+        runtimeGlobalValue(optionRuntime.globals, "SizedTree"),
+        [natToValue(length, optionRuntime.globals)])
+      let optionListType = callRuntimeValue(
+        runtimeGlobalValue(optionRuntime.globals, "List"), [optionTreeType])
+      let optionType = callRuntimeValue(
+        runtimeGlobalValue(optionRuntime.globals, "Option"), [optionListType])
+      validateRuntimeValueType(runtimePairSecond(optionRuntime.value),
+        optionType, optionRuntime.globals)
+      let wrongOptionCallback: proc(value: tuple[tag: int,
+          payload: Option[seq[RuntimeStructuredVariant]]]):
+          tuple[tag: int,
+            payload: Option[seq[RuntimeStructuredVariant]]] {.closure.} =
+        proc(value: tuple[tag: int,
+            payload: Option[seq[RuntimeStructuredVariant]]]):
+            tuple[tag: int,
+              payload: Option[seq[RuntimeStructuredVariant]]] =
+          var payload = value.payload.get
+          inc payload[0].arguments[0].natValue
+          (value.tag, some(payload))
+      var optionResultRejected = false
+      try:
+        discard importedGenericIndexedSigmaOptionListCallbackApply(
+          wrongOptionCallback, optionValue)
+      except ValueError:
+        optionResultRejected = true
+      var optionRuntimeResultRejected = false
+      try:
+        discard importedGenericIndexedSigmaOptionListCallbackApplyRuntimeValue(
+          wrongOptionCallback, optionValue)
+      except ValueError:
+        optionRuntimeResultRejected = true
+      var noneOptionRejected = false
+      try:
+        discard importedGenericIndexedSigmaOptionListCallbackApply(
+          optionCallback, (tag, none[seq[RuntimeStructuredVariant]]()))
+      except ValueError as error:
+        noneOptionRejected =
+          "cannot infer indexed Eponym type argument" in error.msg
+      var noneOptionRuntimeRejected = false
+      try:
+        discard importedGenericIndexedSigmaOptionListCallbackApplyRuntimeValue(
+          optionCallback, (tag, none[seq[RuntimeStructuredVariant]]()))
+      except ValueError as error:
+        noneOptionRuntimeRejected =
+          "cannot infer indexed Eponym type argument" in error.msg
+      var emptyOptionRejected = false
+      try:
+        discard importedGenericIndexedSigmaOptionListCallbackApply(
+          optionCallback, (tag, some(newSeq[RuntimeStructuredVariant]())) )
+      except ValueError as error:
+        emptyOptionRejected = "empty List" in error.msg
+      var emptyOptionRuntimeRejected = false
+      try:
+        discard importedGenericIndexedSigmaOptionListCallbackApplyRuntimeValue(
+          optionCallback, (tag, some(newSeq[RuntimeStructuredVariant]())) )
+      except ValueError as error:
+        emptyOptionRuntimeRejected = "empty List" in error.msg
+      directTyped[0] == tag and directTyped[1].len == 2 and
+        directTyped[1][0].arguments[0].natValue == length and
+        valueToInt(runtimePairFirst(directRuntime.value)) == tag and
+        directResultRejected and directRuntimeResultRejected and
+        mixedDirectInputRejected and mixedDirectRuntimeInputRejected and
+        emptyDirectRejected and emptyDirectRuntimeRejected and
+        optionTyped[0] == tag and optionTyped[1].isSome and
+        optionTyped[1].get.len == 2 and
+        valueToInt(runtimePairFirst(optionRuntime.value)) == tag and
+        optionResultRejected and optionRuntimeResultRejected and
+        noneOptionRejected and noneOptionRuntimeRejected and
+        emptyOptionRejected and emptyOptionRuntimeRejected,
+    shrinkInt)
+  if not indexedSigmaListWitnessCases:
     quit(1)
   let rawAppliedGenericTypeCases = forAll(
     "raw Values for applied generic domains are type checked", r, 200,

@@ -3290,8 +3290,12 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         let elementNimType = runtimeNimType(elementType, mappings, records,
           allowDependentSigma)
         if elementNimType.isNil: return nil
-        let itemSym = genSym(nskParam, "runtimeListItem")
-        let codecGlobalsSym = genSym(nskParam, "runtimeListGlobals")
+        # Use local identifiers instead of compiler gensyms here. A List codec
+        # nested under a generic callback's Sigma field can otherwise retain
+        # a gensym in the macro VM environment after the callback adapter is
+        # specialized by Nim.
+        let itemSym = ident("runtimeListItem")
+        let codecGlobalsSym = ident("runtimeListGlobals")
         if toValue:
           let encodedItem = runtimeValueConversionExpr(elementType,
             elementNimType, itemSym, true, mappings, records,
@@ -3856,6 +3860,7 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
     var sourceVectorType: NimNode = nil
     var sourceListFamily = ""
     var sourceListType: NimNode = nil
+    var sourceListElementOnly = false
     for i, eponymType in argEponymTypes:
       if eponymType.kind in {nnkIdent, nnkSym} and
           $eponymType == genericName:
@@ -3882,9 +3887,23 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
             if inner.isNil: break
             inc optionDepth
             elementType = inner
-          if optionDepth == 0 or elementType.kind notin {nnkIdent, nnkSym} or
-              $elementType != genericName:
-            continue
+          if optionDepth == 0: continue
+          let directGeneric = elementType.kind in {nnkIdent, nnkSym} and
+            $elementType == genericName
+          var nestedList = false
+          if not directGeneric:
+            for listMapping in generic.codecMappings:
+              if not listMapping.isRuntimeList: continue
+              let listElement = runtimeListElementType(elementType,
+                listMapping.eponymName)
+              if not listElement.isNil and
+                  listElement.kind in {nnkIdent, nnkSym} and
+                  $listElement == genericName:
+                nestedList = true
+                sourceListFamily = listMapping.eponymName
+                sourceListType = elementType
+                break
+          if not directGeneric and not nestedList: continue
           let fieldNimType = runtimeNimType(field.fieldType,
             generic.codecMappings, records, allowDependentSigma)
           if fieldNimType.isNil: continue
@@ -3893,6 +3912,8 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
           sourceSigmaFieldNimType = fieldNimType
           sourceOptionFamily = optionMapping.eponymName
           sourceOptionDepth = optionDepth
+          sourceOptionNestedList = nestedList
+          sourceListElementOnly = nestedList
           break
         if sourceIndex >= 0: break
         for vectorMapping in generic.codecMappings:
@@ -3915,6 +3936,24 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
             if preceding.binder.len > 0:
               sourceSigmaIndexNames.add((preceding.binder,
                 precedingFieldIndex))
+          break
+        if sourceIndex >= 0: break
+        for listMapping in generic.codecMappings:
+          if not listMapping.isRuntimeList: continue
+          let listElement = runtimeListElementType(field.fieldType,
+            listMapping.eponymName)
+          if listElement.isNil or listElement.kind notin {nnkIdent, nnkSym} or
+              $listElement != genericName:
+            continue
+          let fieldNimType = runtimeNimType(field.fieldType,
+            generic.codecMappings, records, allowDependentSigma)
+          if fieldNimType.isNil: continue
+          sourceIndex = i
+          sourceSigmaFieldIndex = fieldIndex
+          sourceSigmaFieldNimType = fieldNimType
+          sourceListFamily = listMapping.eponymName
+          sourceListType = field.fieldType
+          sourceListElementOnly = true
           break
         if sourceIndex >= 0: break
       if sourceIndex >= 0: break
@@ -4062,6 +4101,9 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
           newTree(nnkBracketExpr, copyNimTree(argSyms[sourceIndex]),
             newLit(sourceSigmaFieldIndex))
         else: copyNimTree(argSyms[sourceIndex])
+      let indexedValue = if sourceListElementOnly:
+        newTree(nnkBracketExpr, copyNimTree(sourceValue), newLit(0))
+        else: copyNimTree(sourceValue)
       var encoded = if sourceVectorFamily.len > 0:
         var sigmaIndexOverrides: seq[tuple[name: string,
           value: NimNode]] = @[]
@@ -4073,16 +4115,19 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
           sourceVectorNimType, copyNimTree(sourceValue), true,
           generic.codecMappings, records, globals, allowDependentSigma,
           sigmaIndexOverrides)
-      elif sourceListFamily.len > 0:
+      elif sourceListFamily.len > 0 and not sourceListElementOnly:
         runtimeValueConversionExpr(sourceListType,
           sourceListNimType, copyNimTree(sourceValue), true,
           generic.codecMappings, records, globals)
+      elif sourceListElementOnly and mapping.isRuntimeCodec:
+        newCall(copyNimTree(mapping.encoder), copyNimTree(indexedValue),
+          copyNimTree(globals))
       elif mapping.isRuntimeCodec:
         newCall(copyNimTree(mapping.encoder),
-          copyNimTree(sourceValue), copyNimTree(globals))
+          copyNimTree(indexedValue), copyNimTree(globals))
       else:
         runtimeValueConversionExpr(ident(mapping.eponymName),
-          mapping.nimType, copyNimTree(sourceValue), true,
+          mapping.nimType, copyNimTree(indexedValue), true,
           generic.codecMappings, records, globals)
       if encoded.isNil: continue
       let encodedSym = genSym(nskLet, "indexedGenericValue")
@@ -4104,13 +4149,22 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
               ident"ValueError", noneMessage))))))
           optionCursor = newCall(bindSym"get", optionCursor)
         packageBody.add(optionChecks)
+      if sourceListElementOnly:
+        let emptyMessage = newLit("cannot infer indexed Eponym type argument '" &
+          genericName & "' from an empty List; pass a nonempty List or use " &
+          "the raw RuntimeValue API with an explicit type argument")
+        packageBody.add(newTree(nnkIfStmt, newTree(nnkElifBranch,
+          newCall(ident"==", newDotExpr(copyNimTree(sourceValue), ident"len"),
+            newLit(0)),
+          newStmtList(newTree(nnkRaiseStmt, newCall(ident"newException",
+            ident"ValueError", emptyMessage))))))
       packageBody.add(newLetStmt(encodedSym, encoded))
       let witnessSym = genSym(nskLet, "indexedGenericType")
       let inferredContainerType = if sourceVectorFamily.len > 0:
         newCall(bindSym"runtimeIndexedContainerTypeOf",
           copyNimTree(encodedSym), copyNimTree(globals),
           newLit(sourceVectorFamily))
-      elif sourceListFamily.len > 0:
+      elif sourceListFamily.len > 0 and not sourceListElementOnly:
         newCall(bindSym"runtimeIndexedContainerTypeOf",
           copyNimTree(encodedSym), copyNimTree(globals),
           newLit(sourceListFamily))
@@ -4123,14 +4177,14 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         genericWitnessExpr = newCall(
           bindSym"runtimeValueTypeArgumentOf", copyNimTree(encodedSym),
           copyNimTree(globals), newLit(sourceVectorFamily), newLit(0))
-      elif sourceListFamily.len > 0:
+      elif sourceListFamily.len > 0 and not sourceListElementOnly:
         genericWitnessExpr = newCall(
           bindSym"runtimeValueTypeArgumentOf", copyNimTree(encodedSym),
           copyNimTree(globals), newLit(sourceListFamily), newLit(0))
       let genericWitnessSym = genSym(nskLet, "indexedGenericTypeWitness")
       packageBody.add(newLetStmt(genericWitnessSym, genericWitnessExpr))
       var packagedValue = copyNimTree(encodedSym)
-      if sourceOptionFamily.len > 0:
+      if sourceOptionFamily.len > 0 and not sourceListElementOnly:
         for _ in 0 ..< sourceOptionDepth:
           let optionValueSym = genSym(nskLet, "indexedOptionValue")
           packageBody.add(newLetStmt(optionValueSym,

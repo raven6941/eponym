@@ -349,11 +349,13 @@ arrays through `runtimeVectorArray(Vec)`.
 Other structural callback families and generic leaf types without a unique
 direct mapping remain unsupported.
 If a generic callback's only indexed-type witness is inside a Sigma field of
-type `List[A]`, such as `Sig (tag: Int). List A`, the wrapper currently reports
-that it needs a direct generic value argument. It does not yet inspect List
-elements nested in Sigma values. Standalone List witnesses and direct generic
-Sigma fields are supported; adding witness inference through a Sigma List is
-tracked in [`PLAN.md`](../PLAN.md#embedding-applicability-plan).
+type `List[A]`, such as `Sig (tag: Int). List A`, the bridge infers it from the
+first List element. The complete Sigma/List codec then checks every element
+against that inferred type and validates callback results. This also works for
+`Option (List A)` fields. Empty Lists and `none` values cannot supply an element
+witness, so the caller must use the raw generic `RuntimeValue` interface with
+an explicit type argument. A 30-case property covers typed wrappers and typed
+`RuntimeValue` calls, including mismatched elements and results.
 `runtimeValueTypeOf(value, globals)` recovers the checked type of a runtime
 Value, including represented family indices. Imported generic callback
 wrappers can use a direct value argument of the same generic type to infer the
@@ -364,15 +366,15 @@ When the only representative is nested in a structural value, or no
 representative exists (`none` or an empty collection), callers still need an
 explicit witness, with these supported paths: a direct `Option.some(value)`
 argument with a mapped indexed payload; nonempty `Vec[A,n]` or `List[A]`
-values, directly or nested in `Option`; and a direct generic field in a
-nondependent `Sig` tuple. A `some(value)` Option field in a supported Sigma
-tuple can also provide an indexed payload witness, and a nonempty mapped
-`Vec[A,n]` field can provide the generic witness inside a `runtimePairTrusted`
-dependent Sigma. The wrappers infer the payload's index and validate callback
-inputs/results. `none` reports that it cannot infer an Option witness and
-directs callers to use `some(value)` or the raw generic `RuntimeValue`
-interface with an explicit type Value. Empty Vec and List values still need an
-explicit witness. For indexed container witnesses, the runtime bridge projects
+values, directly or nested in `Option`; and generic fields or nonempty mapped
+`Vec[A,n]` and `List[A]` fields inside supported Sigma tuples. A `some(value)`
+Option field in a supported Sigma tuple can also provide an indexed payload
+witness, including when the payload is a nonempty List. The wrappers infer the
+payload's index and validate callback inputs/results. `none` reports that it
+cannot infer an Option witness and directs callers to use `some(value)` or the
+raw generic `RuntimeValue` interface with an explicit type Value. Empty Vec
+and List values still need an explicit witness. For indexed container
+witnesses, the runtime bridge projects
 the element type from the outer constructor and validates the structure against
 that expected type, avoiding recursive type inference over the complete
 container. A vector with the wrong declared length is rejected by the ordinary

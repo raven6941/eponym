@@ -9,3 +9,13 @@ proc importedGenericIndexedListCallbackApply (A : Type 0)
 proc importedGenericIndexedOptionListCallbackApply (A : Type 0)
     (callback : Option (List A) -> Option (List A))
     (value : Option (List A)) : Option (List A) = callback value
+proc importedGenericIndexedSigmaListCallbackApply (A : Type 0)
+    (callback : (Sig (tag : Int). List A) ->
+      (Sig (tag : Int). List A))
+    (value : Sig (tag : Int). List A) : Sig (tag : Int). List A =
+    callback value
+proc importedGenericIndexedSigmaOptionListCallbackApply (A : Type 0)
+    (callback : (Sig (tag : Int). Option (List A)) ->
+      (Sig (tag : Int). Option (List A)))
+    (value : Sig (tag : Int). Option (List A)) :
+    Sig (tag : Int). Option (List A) = callback value
