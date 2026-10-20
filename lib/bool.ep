@@ -19,6 +19,9 @@ proc and (a : Bool) (b : Bool) : Bool =
 proc or (a : Bool) (b : Bool) : Bool =
   boolElim (lam (u : Bool). Bool) true b a
 
+proc boolXor (a : Bool) (b : Bool) : Bool =
+  or (and a (not b)) (and (not a) b)
+
 proc notNot (b : Bool) : Eq Bool (not (not b)) b =
   boolElim (lam (u : Bool). Eq Bool (not (not u)) u)
            (refl Bool true) (refl Bool false) b

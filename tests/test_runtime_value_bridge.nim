@@ -267,8 +267,40 @@ eponymBlock:
   proc generatedConditionalGenericSigmaValue[b: Bool, n, m: Nat,
       pair: Sig(length: Nat, Vec[Int, (if b: n else: m)])](ignored: Int):
       Sig(length: Nat, Vec[Int, (if b: n else: m)]) = pair
+  proc generatedAndConditionalGenericVectorValue[b, c: Bool, n, m: Nat,
+      values: Vec[Int, (if b and c: n else: m)]](ignored: Int):
+      Vec[Int, (if b and c: n else: m)] = values
+  proc generatedOrConditionalGenericVectorValue[b, c: Bool, n, m: Nat,
+      values: Vec[Int, (if b or c: n else: m)]](ignored: Int):
+      Vec[Int, (if b or c: n else: m)] = values
+  proc generatedXorConditionalGenericVectorValue[b, c: Bool, n, m: Nat,
+      values: Vec[Int, (if b xor c: n else: m)]](ignored: Int):
+      Vec[Int, (if b xor c: n else: m)] = values
+  proc generatedNotConditionalGenericVectorValue[b: Bool, n, m: Nat,
+      values: Vec[Int, (if not b: n else: m)]](ignored: Int):
+      Vec[Int, (if not b: n else: m)] = values
+  proc generatedAndConditionalGenericSigmaValue[b, c: Bool, n, m: Nat,
+      pair: Sig(length: Nat, Vec[Int, (if b and c: n else: m)])](ignored: Int):
+      Sig(length: Nat, Vec[Int, (if b and c: n else: m)]) = pair
+  proc generatedOrConditionalGenericSigmaValue[b, c: Bool, n, m: Nat,
+      pair: Sig(length: Nat, Vec[Int, (if b or c: n else: m)])](ignored: Int):
+      Sig(length: Nat, Vec[Int, (if b or c: n else: m)]) = pair
+  proc generatedXorConditionalGenericSigmaValue[b, c: Bool, n, m: Nat,
+      pair: Sig(length: Nat, Vec[Int, (if b xor c: n else: m)])](ignored: Int):
+      Sig(length: Nat, Vec[Int, (if b xor c: n else: m)]) = pair
+  proc generatedNotConditionalGenericSigmaValue[b: Bool, n, m: Nat,
+      pair: Sig(length: Nat, Vec[Int, (if not b: n else: m)])](ignored: Int):
+      Sig(length: Nat, Vec[Int, (if not b: n else: m)]) = pair
   runtimeValue(generatedConditionalGenericVectorValue)
   runtimeValue(generatedConditionalGenericSigmaValue)
+  runtimeValue(generatedAndConditionalGenericVectorValue)
+  runtimeValue(generatedOrConditionalGenericVectorValue)
+  runtimeValue(generatedXorConditionalGenericVectorValue)
+  runtimeValue(generatedNotConditionalGenericVectorValue)
+  runtimeValue(generatedAndConditionalGenericSigmaValue)
+  runtimeValue(generatedOrConditionalGenericSigmaValue)
+  runtimeValue(generatedXorConditionalGenericSigmaValue)
+  runtimeValue(generatedNotConditionalGenericSigmaValue)
   proc generatedVectorIdentity[A: Univ, n: Nat](
       values: Vec[A, n]): Vec[A, n] = values
   proc generatedVectorSucIndex[n: Nat](
@@ -1656,6 +1688,108 @@ proc callbackRole : Callback -> Sample -> Sample =
           proc(value: Value, _: Globals): int = valueToInt(value)) == values)
   if not conditionalGenericValueCases:
     quit(1)
+  let logicalConditionalGenericValueCases = forAll(
+    "logical Bool conditions validate generic Vec and Sigma values", r, 200,
+    proc(r: var Rng): tuple[a, b: bool, yesLength, noLength, seed: int] =
+      (r.genBool(), r.genBool(), r.genInt(0, 12), r.genInt(0, 12),
+       r.genInt(-1000, 1000)),
+    proc(input: tuple[a, b: bool, yesLength, noLength, seed: int]): bool =
+      let conditions = [input.a and input.b, input.a or input.b,
+        input.a xor input.b, not input.a]
+      for i, condition in conditions:
+        let length = if condition: input.yesLength else: input.noLength
+        var values = newSeq[int](length)
+        for j in 0 ..< length: values[j] = input.seed + j
+        let pair = (7, values)
+        var typedVector: seq[int]
+        var runtimeVector: tuple[value: Value, globals: Globals]
+        var typedSigma: tuple[marker: int, values: seq[int]]
+        var runtimeSigma: tuple[value: Value, globals: Globals]
+        case i
+        of 0:
+          typedVector = generatedAndConditionalGenericVectorValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, values, 0)
+          runtimeVector = generatedAndConditionalGenericVectorValueRuntimeValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, values, 0)
+          typedSigma = generatedAndConditionalGenericSigmaValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, pair, 0)
+          runtimeSigma = generatedAndConditionalGenericSigmaValueRuntimeValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, pair, 0)
+        of 1:
+          typedVector = generatedOrConditionalGenericVectorValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, values, 0)
+          runtimeVector = generatedOrConditionalGenericVectorValueRuntimeValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, values, 0)
+          typedSigma = generatedOrConditionalGenericSigmaValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, pair, 0)
+          runtimeSigma = generatedOrConditionalGenericSigmaValueRuntimeValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, pair, 0)
+        of 2:
+          typedVector = generatedXorConditionalGenericVectorValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, values, 0)
+          runtimeVector = generatedXorConditionalGenericVectorValueRuntimeValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, values, 0)
+          typedSigma = generatedXorConditionalGenericSigmaValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, pair, 0)
+          runtimeSigma = generatedXorConditionalGenericSigmaValueRuntimeValueDynamic(
+            input.a, input.b, input.yesLength, input.noLength, pair, 0)
+        of 3:
+          typedVector = generatedNotConditionalGenericVectorValueDynamic(
+            input.a, input.yesLength, input.noLength, values, 0)
+          runtimeVector = generatedNotConditionalGenericVectorValueRuntimeValueDynamic(
+            input.a, input.yesLength, input.noLength, values, 0)
+          typedSigma = generatedNotConditionalGenericSigmaValueDynamic(
+            input.a, input.yesLength, input.noLength, pair, 0)
+          runtimeSigma = generatedNotConditionalGenericSigmaValueRuntimeValueDynamic(
+            input.a, input.yesLength, input.noLength, pair, 0)
+        if typedVector != values or typedSigma != pair or
+            vecValueToSeq[int](runtimeVector.value, length,
+              runtimeVector.globals, "Vec",
+              proc(value: Value, _: Globals): int = valueToInt(value)) != values or
+            valueToNat(runtimePairFirst(runtimeSigma.value), runtimeSigma.globals) != 7 or
+            vecValueToSeq[int](runtimePairSecond(runtimeSigma.value), length,
+              runtimeSigma.globals, "Vec",
+              proc(value: Value, _: Globals): int = valueToInt(value)) != values:
+          return false
+      true)
+  if not logicalConditionalGenericValueCases:
+    quit(1)
+  for a in [false, true]:
+    for b in [false, true]:
+      let conditions = [a and b, a or b, a xor b, not a]
+      for i, condition in conditions:
+        let expectedLength = if condition: 2 else: 4
+        let invalidValues = newSeq[int](expectedLength + 1)
+        let rejected = case i
+          of 0:
+            try:
+              discard generatedAndConditionalGenericVectorValueDynamic(
+                a, b, 2, 4, invalidValues, 0)
+              false
+            except ValueError as error:
+              "runtime Vec length mismatch" in error.msg
+          of 1:
+            try:
+              discard generatedOrConditionalGenericVectorValueRuntimeValueDynamic(
+                a, b, 2, 4, invalidValues, 0)
+              false
+            except ValueError as error:
+              "runtime Vec length mismatch" in error.msg
+          of 2:
+            try:
+              discard generatedXorConditionalGenericSigmaValueDynamic(
+                a, b, 2, 4, (7, invalidValues), 0)
+              false
+            except ValueError as error:
+              "runtime Vec length mismatch" in error.msg
+          of 3:
+            try:
+              discard generatedNotConditionalGenericSigmaValueRuntimeValueDynamic(
+                a, 2, 4, (7, invalidValues), 0)
+              false
+            except ValueError as error:
+              "runtime Vec length mismatch" in error.msg
+        doAssert rejected
   for condition in [true, false]:
     let expectedLength = if condition: 2 else: 4
     let invalidValues = newSeq[int](expectedLength + 1)

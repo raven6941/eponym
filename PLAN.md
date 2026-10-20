@@ -467,6 +467,11 @@ implementations.
    generic Vec and non-dependent Sigma value codecs. The Bool condition is a
    generic runtime parameter; both branch lengths are checked. A 200-case
    property covers typed and `RuntimeValue` wrappers and wrong-length values.
+- [x] Extend conditional Nat index conditions to composed Bool expressions
+   (`not`, `and`, `or`, and `xor`) over Bool generic parameters. Keep the
+   lowering within Nim's Boolean subset, and property-test typed and
+   `RuntimeValue` dynamic Vec and Sigma wrappers. A 200-case property covers
+   each operator across both value shapes and rejects incorrect Vec lengths.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
