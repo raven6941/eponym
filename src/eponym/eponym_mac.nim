@@ -1148,6 +1148,7 @@ type HostRuntimeType = object
   isRuntimeOption: bool
   isRuntimeVariant: bool
   isRuntimeCodec: bool
+  isGenericTypeWitnessable: bool
   encoder: NimNode
   decoder: NimNode
 
@@ -1212,7 +1213,8 @@ proc findHostRecord(records: seq[HostRecord], name: string): int =
     if record.name == name: return i
   -1
 
-proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
+proc hostRuntimeTypes(body: NimNode, checkedGlobals: Globals):
+    seq[HostRuntimeType] =
   var seen = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
@@ -1241,6 +1243,11 @@ proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
       if name in seen:
         error("duplicate runtime type mapping for '" & name & "'", st)
       seen.incl(name)
+      var genericTypeWitnessable = not isCodec
+      if isCodec and name in checkedGlobals:
+        let checkedType = checkedGlobals[name].ty
+        genericTypeWitnessable = not checkedType.isNil and
+          checkedType.kind == tType and checkedType.lvl == 0
       result.add(HostRuntimeType(eponymName: name,
         nimType: if isVector or isList: ident"seq"
           elif isVariant: bindSym"RuntimeVariant"
@@ -1248,6 +1255,7 @@ proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
         isRuntimeVector: isVector, isRuntimeList: isList,
         isRuntimeOption: isOption, isRuntimeVariant: isVariant,
         isRuntimeCodec: isCodec,
+        isGenericTypeWitnessable: genericTypeWitnessable,
         encoder: if isCodec: st[3] else: nil,
         decoder: if isCodec: st[4] else: nil))
 
@@ -1924,6 +1932,12 @@ proc runtimePiTypeValueExpr(n, globals: NimNode,
       newTree(nnkPrefix, ident"@", priorArguments))
   build(0, overrides)
 
+proc isGenericTypeWitnessMapping(mapping: HostRuntimeType): bool =
+  not isSyntheticGenericRuntimeType(mapping) and
+    not mapping.isRuntimeVector and not mapping.isRuntimeList and
+    not mapping.isRuntimeOption and not mapping.isRuntimeVariant and
+    (not mapping.isRuntimeCodec or mapping.isGenericTypeWitnessable)
+
 proc runtimeGenericTypeWitnessExpr(n, globals: NimNode,
     mappings: seq[HostRuntimeType]): NimNode =
   if n.kind notin {nnkIdent, nnkSym}: return nil
@@ -1935,19 +1949,13 @@ proc runtimeGenericTypeWitnessExpr(n, globals: NimNode,
   var branches = newNimNode(nnkWhenStmt)
   var candidateNames = initHashSet[string]()
   for mapping in mappings:
-    if isSyntheticGenericRuntimeType(mapping) or
-        mapping.isRuntimeVector or mapping.isRuntimeList or
-        mapping.isRuntimeOption or mapping.isRuntimeVariant or
-        mapping.isRuntimeCodec:
-      continue
+    if not isGenericTypeWitnessMapping(mapping): continue
     let nimTypeName = mapping.nimType.repr
     if nimTypeName.len == 0 or nimTypeName in candidateNames: continue
     var sameNimTypeCount = 0
     for other in mappings:
-      if not isSyntheticGenericRuntimeType(other) and
-          not other.isRuntimeVector and not other.isRuntimeList and
-          not other.isRuntimeOption and not other.isRuntimeVariant and
-          not other.isRuntimeCodec and other.nimType.repr == nimTypeName:
+      if isGenericTypeWitnessMapping(other) and
+          other.nimType.repr == nimTypeName:
         inc sameNimTypeCount
     if sameNimTypeCount != 1: continue
     candidateNames.incl(nimTypeName)
@@ -1967,6 +1975,43 @@ proc runtimeGenericTypeWitnessExpr(n, globals: NimNode,
     branches,
     witnessSym)
   newTree(nnkBlockExpr, newEmptyNode(), body)
+
+proc runtimeGenericCodecConversionExpr(eponymType, nimType, value: NimNode,
+    toValue: bool, globals: NimNode, mappings: seq[HostRuntimeType],
+    fallback: NimNode): NimNode =
+  if eponymType.kind notin {nnkIdent, nnkSym}: return nil
+  var isGenericTypeParameter = false
+  for mapping in mappings:
+    if mapping.eponymName == $eponymType and
+        isSyntheticGenericRuntimeType(mapping):
+      isGenericTypeParameter = true
+      break
+  if not isGenericTypeParameter: return nil
+
+  var branches = newNimNode(nnkWhenStmt)
+  var emitted = initHashSet[string]()
+  for mapping in mappings:
+    if not mapping.isRuntimeCodec or
+        not isGenericTypeWitnessMapping(mapping):
+      continue
+    let nimTypeName = mapping.nimType.repr
+    if nimTypeName.len == 0 or nimTypeName in emitted: continue
+    var sameNimTypeCount = 0
+    for other in mappings:
+      if isGenericTypeWitnessMapping(other) and
+          other.nimType.repr == nimTypeName:
+        inc sameNimTypeCount
+    if sameNimTypeCount != 1: continue
+    emitted.incl(nimTypeName)
+    let condition = newCall(newTree(nnkBracketExpr,
+      bindSym"sameHostType", copyNimTree(nimType),
+      copyNimTree(mapping.nimType)))
+    let codec = copyNimTree(if toValue: mapping.encoder else: mapping.decoder)
+    branches.add(newTree(nnkElifBranch, condition,
+      newStmtList(newCall(codec, copyNimTree(value), globals))))
+  if branches.len == 0: return nil
+  branches.add(newTree(nnkElse, newStmtList(fallback)))
+  newTree(nnkBlockExpr, newEmptyNode(), newStmtList(branches))
 
 proc runtimeRepresentedTypeValueExpr(n, globals: NimNode,
     mappings: seq[HostRuntimeType],
@@ -2134,6 +2179,30 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             findHostRecord(records, mapping.eponymName) < 0:
           return newCall(bindSym"toHostValueWithType", value,
             runtimeTypeValueExpr(eponymType, globals, indexOverrides))
+  if eponymType.kind in {nnkIdent, nnkSym}:
+    var isGenericTypeParameter = false
+    for mapping in mappings:
+      if mapping.eponymName == $eponymType and
+          isSyntheticGenericRuntimeType(mapping):
+        isGenericTypeParameter = true
+        break
+    if isGenericTypeParameter:
+      var fallback: NimNode
+      if toValue:
+        let representedType = runtimeRepresentedTypeValueExpr(eponymType,
+          globals, mappings, indexOverrides)
+        if representedType.isNil:
+          fallback = newCall(newTree(nnkBracketExpr,
+            bindSym"toHostValue", copyNimTree(nimType)), value)
+        else:
+          fallback = newCall(bindSym"toHostValueWithType", value,
+            representedType)
+      else:
+        fallback = newCall(newTree(nnkBracketExpr,
+          bindSym"valueToHost", copyNimTree(nimType)), value)
+      let genericCodec = runtimeGenericCodecConversionExpr(eponymType,
+        nimType, value, toValue, globals, mappings, fallback)
+      if not genericCodec.isNil: return genericCodec
   for mapping in mappings:
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
@@ -3397,7 +3466,7 @@ macro eponymBlock*(body: untyped): untyped =
                                checkedGlobals):
       error("eponymBlock binding error: binding for postulate '" &
         binding.postulateName & "' is unused by every proc body", body)
-  let runtimeTypes = hostRuntimeTypes(body)
+  let runtimeTypes = hostRuntimeTypes(body, checkedGlobals)
   let trustedRuntimeRecords = trustedRuntimeRecordNames(body)
   let records = hostRecords(body, trustedRuntimeRecords)
   for requested in trustedRuntimeRecords:

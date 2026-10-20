@@ -68,6 +68,13 @@ shape. Runtime evaluation of type and index expressions supports a subset;
 arbitrary type-level Nim computation and every possible Eponym index
 expression are not supported by generated codecs.
 
+A `runtimeCodec` mapping for an unindexed Eponym type can also supply the
+runtime type witness and encoder/decoder for a generic type parameter. This
+lets generic wrappers and callbacks process mapped values inside containers,
+such as `Vec[Tree, n]` represented as `seq[seq[int]]`. Automatic witness
+inference requires one unambiguous mapping for the Nim type; a raw host value
+without a generated codec still has no Eponym type witness.
+
 Host code can build Pi and Sigma runtime type witnesses with
 `runtimeArrowType`, `runtimeDependentArrowType`, `runtimeSigmaType`, and
 `runtimeDependentSigmaType`; `validateRuntimeValueAgainstType` checks values

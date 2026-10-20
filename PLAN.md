@@ -544,6 +544,11 @@ implementations.
    refer to earlier generic values. Two 200-case properties validate nested
    pairs and `Sig(length: Nat, Vec[Int, length])`; malformed Nat fields and
    mismatched vector indices are rejected.
+- [x] Let generic `Type 0` parameters use unique `runtimeCodec` mappings for
+   unindexed Eponym types. Generated generic container and callback codecs use
+   the mapped encoder/decoder and preserve the concrete type witness; a
+   200-case property checks `vmap` over custom-coded `Tree` values and rejects
+   a vector with the wrong length.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
