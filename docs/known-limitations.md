@@ -13,9 +13,9 @@ design notes where the limit comes from.
 |---|---|---|---|
 | `session_runtime_bindings.nim`, `session_tcp_bindings.nim` | The sender/receiver role and its session-indexed postulate calls | Generated wrapper and adapter signatures | Adapter behavior, message codec, and TCP transport |
 | `paxos_session.nim` | Proposer/acceptor roles, dependent promise ticket use, and indexed channel transitions | Generated wrapper and Nim TCP adapter signatures | Wire codec, TCP behavior, and host promise/ticket correspondence |
-| `qtt_borrow.nim` | The modeled linear owner/borrow use and postulated operation sequence | The separate buffer driver compiles | Buffer exclusivity/lifetime and synchronization between driver and model |
+| `qtt_borrow.nim` | `borrowClient` and its linear continuation use | Generated `Buffer -> int` wrapper; Nim raw-Value adapters type-check | The adapter's decoding, exclusive access, alias discipline, and lifetime |
 | `convex_opt.nim` | The reified objective and DCP certificate | Nim interpreter and ternary search consume the runtime value of checked `prob()` | Integer interpreter and search are trusted |
-| `convex_opt_vec.nim` | The reified objective and DCP certificate | Separate numeric implementation compiles | Logistic loss and gradient are still restated in Nim |
+| `convex_opt_vec.nim` | The data-indexed logistic objective and DCP certificate | Nim interprets the checked expression and derives a finite-difference gradient | Raw Value argument construction, expression interpreter, floating point, and optimizer are trusted |
 | `bindPostulate` runtime bridge | Checked callers match the Eponym postulate type | Generated wrapper and Nim adapter signatures match declared mappings | Adapter implementation and opaque mappings uphold the postulate semantics |
 
 “Checked” in this table means the Eponym layer elaborates the definition and
@@ -52,11 +52,14 @@ explicitly mapped Eponym types without exposing their representation.
 `eponymBlock` can generate typed wrappers for first-order definitions over
 mapped opaque types that correspond to named Eponym postulates. Tests exercise
 user-defined values through checked definitions and generated wrappers. A
-`runtimeValue(name)` request inside `eponymBlock` exposes a zero-argument
+`runtimeValue(name)` request inside `eponymBlock` exposes a non-generic
 checked definition as its runtime `Value` together with the checked globals,
-for host-side interpreters of reified data. It applies the block's declared
-`bindPostulate` adapters; unbound postulates remain neutral. It does not
-generate a structural Nim type, so callers must handle unsupported
+for host-side interpreters of reified data. Zero-argument definitions get a
+no-argument helper; parameterized definitions take an `openArray[Value]` and
+check argument count. The raw argument values are not checked against the
+Eponym signature, so the caller must construct them correctly. It applies the
+block's declared `bindPostulate` adapters; unbound postulates remain neutral.
+It does not generate a structural Nim type, so callers must handle unsupported
 constructors and neutral values explicitly. A
 non-dependent `Sig(A, B)` runtime type is structurally mapped to a two-element
 Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque
@@ -162,33 +165,36 @@ unchanged. A mapped `Future[T]` is returned as an opaque Nim value and remains
 owned by the caller and Nim's normal lifetime rules; Eponym does not await or
 cancel it.
 
-### The borrow example still has a separate Nim driver
+### The borrow example uses a trusted raw-Value callback adapter
 
 `session_runtime_bindings.nim` and `session_tcp_bindings.nim` run checked
 sender/receiver roles through typed Nim adapters. `paxos_session.nim` runs its
 checked proposer and acceptor in separate processes through a loopback TCP
 adapter; `runPaxosRound` starts the acceptor and invokes the checked proposer
-rather than repeating their message sequence. `qtt_borrow.nim` checks a linear
-borrow API, while its buffer driver mirrors the operations separately.
+rather than repeating their message sequence. `qtt_borrow.nim` now runs the
+checked `borrowClient` through bound postulates. Its host adapter receives raw
+Eponym `Value`s so it can invoke the Eponym continuations in CPS order.
 
-The integrated session and Paxos examples establish that the checked roles
-execute through their bound postulates, but the adapters and transports remain
-trusted. The Eponym checker does not establish network ordering or inspect
-aliases in ordinary Nim. Buffer execution still requires manual
-synchronization with its checked Eponym description.
+The `bindPostulateValue` form is an explicit low-level escape hatch. Eponym
+checks the postulated operation types at call sites and the adapter arity;
+Nim checks only the adapter's `seq[Value] -> Value` signature. The adapter
+must uphold the full value contract. For borrowing, Nim enforces a scoped
+active flag and releases it in `finally`, while arbitrary aliases held by
+other Nim code remain outside Eponym's guarantee. TCP transports and all
+adapter behavior remain trusted as well.
 
 ### Some examples certify a model, not the runtime computation
 
-The single-variable `convex_opt.nim` demo now opts into `runtimeValue(prob)`.
-Its Nim interpreter reads the constructor tree from the evaluated Eponym
-`Value`, so the ternary search consumes the exact expression whose convexity
-certificate was checked. The interpreter supports only the constructors used
-by that objective and fails on an unknown constructor. The vector-valued
-`convex_opt_vec.nim` logistic regression demo still restates the loss and
-gradient over Nim `seq[float]`; its checked certificate is not connected to
-that numerical calculation. The integer interpreter, ternary search,
-floating-point behavior, and gradient implementation remain trusted host
-code.
+Both convex examples now feed their checked objective to a Nim interpreter.
+`convex_opt.nim` interprets the value of `prob()`; `convex_opt_vec.nim`
+interprets `lrProb(m, n, A, b)`, including its concrete host matrix and label
+vector. Gradient descent estimates derivatives from that interpreted
+objective instead of maintaining a second gradient formula. Properties
+compare 200 randomized vector objectives and gradients against a separate
+numeric oracle, and verify a checked objective mutation changes the result.
+The interpreters support only the constructors used by these examples and
+fail on unknown constructors. Raw `Value` arguments, arithmetic precision,
+finite-difference error, and optimizer behavior remain trusted host code.
 
 ### Linear checks apply to modeled Eponym values
 

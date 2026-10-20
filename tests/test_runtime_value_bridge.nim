@@ -138,7 +138,9 @@ eponymBlock:
     proc leaf(): Tree
     proc node(n: Nat, rest: Tree): Tree
   proc sampleTree(): Tree = node(37, leaf())
+  proc sampleTreeWith(n: Nat): Tree = node(n, leaf())
   runtimeValue(sampleTree)
+  runtimeValue(sampleTreeWith)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -310,6 +312,15 @@ when isMainModule:
   doAssert treeRuntime.value.whnfSpineLen == 2
   doAssert treeRuntime.value.whnfSpineArg(0).whnfNatLitVal == 37
   doAssert treeRuntime.value.whnfSpineArg(1).whnfRefId == leafId
+  let parameterizedTree = sampleTreeWithRuntimeValue([natToValue(91)])
+  doAssert parameterizedTree.value.whnfRefId == nodeId
+  doAssert parameterizedTree.value.whnfSpineArg(0).whnfNatLitVal == 91
+  var wrongRuntimeArityRejected = false
+  try:
+    discard sampleTreeWithRuntimeValue([])
+  except ValueError as error:
+    wrongRuntimeArityRejected = "argument count mismatch" in error.msg
+  doAssert wrongRuntimeArityRejected
   let boundRuntime = runtimeResultRuntimeValue()
   doAssert boundRuntime.value.whnfKind == wInt
   doAssert boundRuntime.value.whnfIntVal == 42
@@ -544,6 +555,15 @@ proc callbackRole : Callback -> Sample -> Sample =
   let postulateId = checked.globals["hostStep"].tm.refId
   let cachedGlobals = getGlobalsDir(baseDir, identityProgram)
   if cachedGlobals["hostStep"].tm.refId != postulateId:
+    quit(1)
+  let malformedZero = eval(
+    tmApp(cachedGlobals["zero"].tm, tmInt(1)), @[])
+  var appliedZeroRejected = false
+  try:
+    discard valueToNat(malformedZero, cachedGlobals)
+  except ValueError:
+    appliedZeroRejected = true
+  if not appliedZeroRejected:
     quit(1)
   var runtimeBindings = initRuntimeBindings()
   runtimeBindings.bindHostIntUnary(cachedGlobals, "hostStep", hostStepNim)

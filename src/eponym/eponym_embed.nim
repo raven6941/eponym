@@ -33,6 +33,12 @@ proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value
 proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value
 proc hostNatOpaqueMapBinary*[A, B](
   implementation: proc(n: int, x: A): B): Value
+proc hostValueNary*(arity: int,
+                    implementation: proc(args: seq[Value],
+                                          globals: Globals): Value,
+                    globals: Globals): Value
+proc validateHostValueNaryType*(globals: Globals,
+                                postulateName: string): int
 
 # Cache: (baseDir, source) key -> checked module state. Retaining globals is
 # required for runtime postulate bindings to use the identities assigned by
@@ -99,6 +105,14 @@ proc bindHostValue*(bindings: var RuntimeBindings, globals: Globals,
     raise newException(ValueError,
       "duplicate runtime binding for postulate: " & postulateName)
   bindings[id] = implementation
+
+proc bindHostValueNary*(bindings: var RuntimeBindings, globals: Globals,
+                        postulateName: string,
+                        implementation: proc(args: seq[Value],
+                                              globals: Globals): Value) =
+  let arity = validateHostValueNaryType(globals, postulateName)
+  bindHostValue(bindings, globals, postulateName,
+                hostValueNary(arity, implementation, globals))
 
 proc opaqueTypeHeadId(ty: Term): int
 
@@ -171,6 +185,30 @@ proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
       "' to have type " & argTypeSig & " -> Sig(" & firstTypeName & ", " &
       secondTypeName & ") with " &
       (if allowDependentIndex: "a mapped pair" else: "a non-dependent pair"))
+
+proc validateHostValueNaryType*(globals: Globals,
+                                postulateName: string): int =
+  ## Validate the deliberately low-level Value adapter target and return its
+  ## curried arity. The adapter receives raw Values and is responsible for
+  ## honoring every domain and result in the checked postulate type.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  var current = entry.ty
+  while not current.isNil and current.kind == tPi:
+    if current.impl or current.qty == q0:
+      raise newException(ValueError,
+        "raw Value adapter requires runtime-visible Pi binders for '" &
+        postulateName & "'")
+    inc result
+    current = current.scope.bdy
+  if result == 0:
+    raise newException(ValueError,
+      "raw Value adapter requires a postulate with at least one argument: " &
+      postulateName)
 
 proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
   ## Require an Eponym postulate with the exact runtime shape `Int -> Int`.
@@ -574,6 +612,37 @@ proc valueToNat*(v: Value): int =
     return v.whnf.natLitVal
   raise newException(ValueError, "value is not a canonical Nat literal")
 
+proc valueToNat*(v: Value, globals: Globals): int =
+  ## Decode either a canonical Nat literal or its checked zero/suc constructor
+  ## representation using the constructor identities from the same module.
+  if "zero" notin globals or "suc" notin globals:
+    raise newException(ValueError, "runtime Nat constructors are unavailable")
+  let zeroId = globals["zero"].tm.refId
+  let sucId = globals["suc"].tm.refId
+  var current = v
+  while true:
+    case current.whnfKind
+    of wNatLit:
+      if current.whnfNatLitVal > high(int) - result:
+        raise newException(ValueError, "runtime Nat does not fit Nim int")
+      result += current.whnfNatLitVal
+      return
+    of wRef:
+      let id = current.whnfRefId
+      if id == zeroId:
+        if current.whnfSpineLen != 0:
+          raise newException(ValueError, "runtime value is not a Nat")
+        return
+      if id != sucId or current.whnfSpineLen != 1 or
+          current.whnfSpineKind(0) != eApp:
+        raise newException(ValueError, "runtime value is not a Nat")
+      if result == high(int):
+        raise newException(ValueError, "runtime Nat does not fit Nim int")
+      inc result
+      current = current.whnfSpineArg(0)
+    else:
+      raise newException(ValueError, "runtime value is not a Nat")
+
 proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value =
   ## Adapt an opaque Nim argument and primitive Nat result to a unary Eponym
   ## runtime function.
@@ -594,6 +663,27 @@ proc hostNatOpaqueMapBinary*[A, B](
     vHostFunc(proc(opaqueValue: Value): Value =
       toHostValue(implementation(valueToNat(natValue),
                                  valueToHost[A](opaqueValue)))))
+
+proc hostValueNary*(arity: int,
+                    implementation: proc(args: seq[Value],
+                                         globals: Globals): Value,
+                    globals: Globals): Value =
+  ## Explicit raw-Value escape hatch. Eponym checks callers against the full
+  ## postulate, while the host adapter owns conversion and semantics.
+  if arity < 1:
+    raise newException(ValueError, "raw Value adapter arity must be positive")
+  proc curry(args: seq[Value]): Value =
+    if args.len == arity:
+      return implementation(args, globals)
+    vHostFunc(proc(arg: Value): Value = curry(args & @[arg]))
+  curry(@[])
+
+proc callRuntimeValue*(fn: Value, args: openArray[Value]): Value =
+  ## Apply a checked runtime callback. A wLam retains the binding environment
+  ## from its definition, including block-local postulate adapters.
+  result = fn
+  for arg in args:
+    result = Value(syn: result.syn, whnf: applyWhnf(result, arg))
 
 proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
                                bindings: RuntimeBindings): Value =

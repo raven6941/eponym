@@ -625,6 +625,10 @@ proc blockToEponym*(body: NimNode): string =
         # contract; it is not part of the Eponym source text.
         if st.len notin {3, 4, 5, 6, 7, 8} or st[1].kind != nnkIdent:
           error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
+      elif head == "bindPostulateValue":
+        # Deliberate raw runtime escape hatch; the Nim adapter owns codecs.
+        if st.len != 3 or st[1].kind != nnkIdent:
+          error("bindPostulateValue expects (postulateName, nimProcedure)", st)
       elif head == "bindPostulatePair":
         # Typed adapter for A1 -> ... -> An -> Sig(B, C).
         if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
@@ -645,10 +649,10 @@ proc blockToEponym*(body: NimNode): string =
         if st.len != 3 or st[1].kind != nnkIdent:
           error("runtimeType expects (EponymType, NimType)", st)
       elif head == "runtimeValue":
-        # Request an explicitly unboxed Eponym Value for a zero-argument
-        # definition, typically for a host interpreter of reified data.
+        # Request a raw Eponym Value wrapper for a checked definition,
+        # typically for a host interpreter of reified data.
         if st.len != 2 or st[1].kind != nnkIdent:
-          error("runtimeValue expects (zeroArgumentDefinition)", st)
+          error("runtimeValue expects (checkedDefinition)", st)
       else:
         error("eponymBlock: unsupported call: " & head, st)
     else:
@@ -661,6 +665,7 @@ type HostPostulateBinding = object
   pairResult: bool
   pairArgCount: int
   trustedPairIndex: bool
+  rawValue: bool
 
 type HostRuntimeType = object
   eponymName: string
@@ -719,9 +724,10 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   var seen = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
-        $st[0] in ["bindPostulate", "bindPostulatePair",
+        $st[0] in ["bindPostulate", "bindPostulateValue", "bindPostulatePair",
                    "bindPostulatePairTrusted"]:
-      let pairResult = $st[0] != "bindPostulate"
+      let rawValue = $st[0] == "bindPostulateValue"
+      let pairResult = $st[0] in ["bindPostulatePair", "bindPostulatePairTrusted"]
       let trustedPairIndex = $st[0] == "bindPostulatePairTrusted"
       if pairResult:
         if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
@@ -743,7 +749,8 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
                                      pairResult: pairResult,
                                      pairArgCount: if pairResult:
                                        typeNames.len - 2 else: 0,
-                                     trustedPairIndex: trustedPairIndex))
+                                     trustedPairIndex: trustedPairIndex,
+                                     rawValue: rawValue))
 
 proc mentionsName(node: NimNode, name: string): bool =
   if node.kind in {nnkIdent, nnkSym} and $node == name:
@@ -905,6 +912,9 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
                  mappings: seq[HostRuntimeType], records: seq[HostRecord],
                  checkedGlobals: Globals): NimNode =
   let nameLit = newLit(binding.postulateName)
+  if binding.rawValue:
+    return newCall(bindSym"bindHostValueNary", bindingsSym, globalsSym,
+                   nameLit, binding.implementation)
   if binding.pairResult:
     let bindingForm = if binding.trustedPairIndex:
       "bindPostulatePairTrusted"
@@ -1178,10 +1188,14 @@ macro eponymBlock*(body: untyped): untyped =
       if st.kind == nnkProcDef and $st[0] == requested:
         declaration = st
         break
-    if declaration.isNil or declaration[3].len != 1 or
-        declaration[3][0].kind == nnkEmpty:
-      error("runtimeValue requires a declared zero-argument definition with a result: " &
+    if declaration.isNil or declaration[2].kind != nnkEmpty or
+        declaration[3].len == 0 or declaration[3][0].kind == nnkEmpty:
+      error("runtimeValue requires a non-generic checked definition with a result: " &
         requested, body)
+    for i in 1 ..< declaration[3].len:
+      if declaration[3][i].kind != nnkIdentDefs:
+        error("runtimeValue supports ordinary fixed-arity parameters: " & requested,
+          declaration)
 
   let bindings = hostPostulateBindings(body)
   for binding in bindings:
@@ -1198,6 +1212,10 @@ macro eponymBlock*(body: untyped): untyped =
       error("eponymBlock runtimeType error: " & e.msg, body)
   for binding in bindings:
     try:
+      if binding.rawValue:
+        discard validateHostValueNaryType(checkedGlobals,
+                                          binding.postulateName)
+        continue
       if binding.pairResult:
         let pairArgs = binding.eponymTypes[0 ..< binding.pairArgCount]
         validateHostSigmaAdapterType(checkedGlobals,
@@ -1264,26 +1282,51 @@ macro eponymBlock*(body: untyped): untyped =
     if not procDecl.isNil:
       if d.name in runtimeValueNames:
         let params = procDecl[3]
-        if params.len != 1 or params[0].kind == nnkEmpty:
-          error("runtimeValue requires a zero-argument definition with a result: " & d.name,
-            procDecl)
+        var valueArity = 0
+        for i in 1 ..< params.len:
+          valueArity += params[i].len - 2
         let runtimeName = ident(d.name & "RuntimeValue")
         let globalsSym = genSym(nskLet, "runtimeGlobals")
         let defsSym = genSym(nskLet, "runtimeDefs")
         let bindingsSym = genSym(nskVar, "runtimeBindings")
+        let argsSym = genSym(nskParam, "runtimeArguments")
+        let expectedArity = newLit(valueArity)
         var bindingStatements = newStmtList()
         for binding in bindings:
           bindingStatements.add(bindingCall(binding, bindingsSym, globalsSym,
                                             runtimeTypes, records,
                                             checkedGlobals))
-        result.add quote do:
-          proc `runtimeName`*(): tuple[value: Value, globals: Globals] =
+        var rawBody = newStmtList()
+        rawBody.add quote do:
+          if `argsSym`.len != `expectedArity`:
+            raise newException(ValueError,
+              "runtimeValue argument count mismatch for " & `nameLit`)
+        rawBody.add quote do:
             let `globalsSym` = getGlobalsDir(`dirLit`, `srcLit`)
             let `defsSym` = getDefsDir(`dirLit`, `srcLit`)
             var `bindingsSym` = initRuntimeBindings()
-            `bindingStatements`
-            (callDefValueWithBindings(findDef(`defsSym`, `nameLit`), [],
+        rawBody.add(bindingStatements)
+        rawBody.add quote do:
+            (callDefValueWithBindings(findDef(`defsSym`, `nameLit`), `argsSym`,
                                       `bindingsSym`), `globalsSym`)
+        var rawProc = newNimNode(nnkProcDef)
+        rawProc.add(newTree(nnkPostfix, ident("*"), runtimeName))
+        rawProc.add(newEmptyNode())
+        rawProc.add(newEmptyNode())
+        var rawFormal = newNimNode(nnkFormalParams)
+        rawFormal.add(parseExpr("tuple[value: Value, globals: Globals]"))
+        rawFormal.add(newIdentDefs(argsSym,
+          newTree(nnkBracketExpr, ident"openArray", bindSym"Value"),
+          newEmptyNode()))
+        rawProc.add(rawFormal)
+        rawProc.add(newEmptyNode())
+        rawProc.add(newEmptyNode())
+        rawProc.add(rawBody)
+        result.add(rawProc)
+        if valueArity == 0:
+          result.add quote do:
+            proc `runtimeName`*(): tuple[value: Value, globals: Globals] =
+              `runtimeName`([])
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
                                              bindings, runtimeTypes,
                                              checkedGlobals, records)

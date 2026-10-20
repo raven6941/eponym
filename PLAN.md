@@ -359,8 +359,11 @@ implementations.
    that one `Value` escape hatch makes all Nim types callable. The low-level
   bridge now represents primitive Int/Nat, evaluator closures, opaque boxed
   Nim values, non-dependent Sigma tuples, and non-dependent named records;
-  dependent pairs still lack Nim codecs and generated typed wrappers. The
-  remaining implementation is tracked in the
+  `runtimeValue(name)` exposes a checked definition's Value for a host-side
+  interpreter, including raw Value arguments with arity checking. It does not
+  type-check those raw arguments or generate a Nim data type. Dependent pairs
+  still lack general codecs and generated typed wrappers. The remaining
+  implementation is tracked in the
    preceding ABI/codec items.
 
 **Exit criteria:**
@@ -450,6 +453,11 @@ implementations.
    receiver roles over the channel handle. A separate `std/net` demo uses the
    same codec through a loopback TCP socket; transport libraries stay outside
    the Eponym core.
+- [x] Add an explicitly trusted `bindPostulateValue` adapter for host
+   operations that must invoke Eponym CPS continuations. The checked borrow
+   client uses it to run its `withBorrow`/`readB`/`writeB`/`endB` sequence;
+   300 property cases exercise different buffer contents. This low-level form
+   checks postulate arity but leaves Value conversion and semantics to Nim.
 
 **Exit criteria:**
 
@@ -472,9 +480,10 @@ implementations.
 - [x] Represent transport and serialization failures in explicit Nim result
   values. The loopback integration test checks success, peer closure, and a
   malformed Nat frame through the checked receiver role.
-- [ ] Make the buffer/borrow example route through bound postulates, and label
+- [x] Make the buffer/borrow example route through bound postulates, and label
    what the linear checker establishes versus what the Nim buffer adapter
-   must uphold.
+   must uphold. The adapter scopes the runtime borrow in `try/finally`; Nim
+   aliases held elsewhere remain outside the Eponym guarantee.
 - [x] Exercise correct runtime session execution and compile-time failures for
   wrong message order, wrong indexed value, double use, and dropped linear
   handles. The error snapshots cover the negative cases; the TCP loopback test
@@ -482,32 +491,34 @@ implementations.
 
 **Exit criteria:**
 
-- [ ] The running demo executes the same checked roles that compile-time
+- [x] The running demos execute the same checked roles that compile-time
   negative examples constrain; there is no second manually maintained
-  protocol sequence.
+  protocol sequence. The borrow property test invokes generated
+  `borrowClient(Buffer)` and checks only the borrowed head cell changes.
 
 #### E. Connect certified models to numeric execution
 
-- [x] Choose runtime interpretation for the single-variable DCP example.
-   `runtimeValue(prob)` exposes the checked definition's runtime Value; the
-   Nim interpreter evaluates the CExpr constructor tree. The vector logistic
-   example remains open.
-- [x] Pass the exact single-variable Eponym objective to ternary search
-   through that interpreter. A 300-case property test compares the result to
-   its known integer formula; the certificate is checked during elaboration.
-- [x] Document the trusted assumptions for the connected example: the CExpr
-   interpreter, integer overflow behavior, ternary-search correctness, and
-   convexity reasoning remain host/math assumptions. The vector example's
-   floating-point and gradient assumptions remain documented as disconnected.
-- [ ] Connect the logistic-regression example's checked objective to its
-   executed loss and gradient. `convex_opt.nim` now interprets its checked
-   objective; `convex_opt_vec.nim` still has a separately stated Nim loss.
+- [x] Choose runtime interpretation for both DCP examples.
+   `runtimeValue(name)` exposes each checked definition's runtime Value; the
+   Nim interpreters evaluate the relevant CExpr/VExpr constructors.
+- [x] Pass the exact Eponym objectives to ternary search and logistic
+   gradient descent. A 300-case scalar property and a 200-case vector
+   differential property cover evaluated outputs; the certificates are
+   checked during elaboration.
+- [x] Document trusted assumptions: the interpreters, raw runtime argument
+   construction, numeric precision, finite-difference error, optimizers, and
+   convexity reasoning remain host/math assumptions.
+- [x] Connect logistic regression's checked objective to the executed loss
+   and gradient. Matrix and label data enter as the same explicit mapped
+   values represented in the checked `lrProb` expression; its gradient is
+   estimated from that objective, not separately restated.
 
 **Exit criteria:**
 
-- [ ] A mutation to the checked objective changes the runtime function or
-  causes generation/validation to fail; the solver cannot silently optimize
-  a different expression.
+- [x] A mutation to the checked objectives changes the runtime functions or
+  causes generation/validation to fail; the solvers cannot silently optimize
+  different expressions. The vector property checks a separately certified
+  objective shifted by five.
 
 #### F. Evaluate QTT-guided code generation
 
@@ -569,8 +580,9 @@ implementations.
   unsupported operators, dependent-index mismatch, and linear misuse.
 - [x] Add runtime integration examples that execute the exact Eponym-checked
   definition, not a mirrored Nim implementation. The in-memory and TCP session
-  examples run their checked sender/receiver roles and Paxos runs its checked
-  proposer and acceptor; borrow remains an open item.
+  examples run their checked sender/receiver roles, Paxos runs its checked
+  proposer and acceptor, and the borrow example runs `borrowClient` through
+  bound postulates. The raw borrow adapters remain trusted.
 - [x] Classify the TCP/in-memory session, Paxos, borrow, and optimizer
   examples by what Eponym checks, what Nim checks, and what remains trusted
   or disconnected. The README links to the table; retain it as implementations

@@ -134,8 +134,9 @@ for verified components inside a larger Nim application.
   the softplus composition rule, non-obvious unlike least squares),
   plus a two-variable objective with different dimensions and a
   portfolio risk term (`quadForm` with a PSD side condition). The Nim
-  driver still re-states the logistic loss and gradient in Nim; it is not yet
-  connected to the checked objective. Dimension
+  driver interprets the exact checked logistic objective, including its
+  concrete matrix and label vector, and derives a finite-difference gradient
+  from it. Dimension
   mismatches and non-DCP vector products (`vMul`) are compile-time
   errors (see 18a/18b/18c above).
 - **qtt_borrow.nim** — QTT borrow checking as an embedded DSL (Issue
@@ -145,8 +146,10 @@ for verified components inside a larger Nim application.
   continuation-passing style so every borrow is a lambda binder, and the
   quantity checker fires at every step; unannotated lambdas inherit the
   linear quantity from the expected `Pi` (Idris 2 behaviour). The
-  normal-Nim driver binds the same op sequence to a real buffer and runs
-  it. Double-use, owner-use-while-borrowed, and dropped borrows are
+  checked `borrowClient` runs through bound Nim postulates against a real
+  buffer. The raw-Value callback adapters invoke the checked continuations;
+  the backend is responsible for excluding aliases and ending the borrow
+  scope. Double-use, owner-use-while-borrowed, and dropped borrows are
   compile-time errors (see 21a/21b/21c above).
 
 ### The embedded pattern
