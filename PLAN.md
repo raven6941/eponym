@@ -563,6 +563,12 @@ implementations.
   when `runtimeValue(name)` is requested. It accepts the generic value as an
   ordinary Nim argument and returns `(Value, Globals)`, including when the
   result has no typed Nim codec. A 200-case property checks a generic Nat result.
+- [x] Encode dynamic generic value binders whose domains are non-dependent
+  `Sig` types as flat Nim tuples using the recursive Sigma codec. Runtime type
+  witnesses validate the pair fields before checked evaluation. A 200-case
+  property covers typed and `RuntimeValue` dynamic wrappers and rejects a
+  negative value in a Nat field. Dependent Sigma binder domains remain
+  unsupported.
 - [x] Propagate earlier callback arguments into dependent callback result
   codecs and later callback argument codecs. 200-case properties check Nim
   `Nat -> Vec[Int, n]` and `Nat -> Vec[Int, n] -> Nat` callbacks through

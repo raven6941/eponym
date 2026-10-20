@@ -909,6 +909,14 @@ proc runtimeDependentPiType*(domain, argument, codomain: Value,
 proc vSi(dom: Value, sc: ScoVal, qty = qOmega): Value =
   Value(syn: tmSi(dom.syn, sc.syn.adv, sc.syn.bdy, false, false, qty),
         whnf: Whnf(kind: wSi, dom: dom, tscope: sc, qty: qty))
+proc runtimeSigmaType*(domain, codomain: Value): Value =
+  ## Construct a non-dependent Sigma type for runtime validation of host
+  ## values whose Eponym type is represented by a tuple.
+  if domain.isNil or codomain.isNil:
+    raise newException(ValueError, "cannot build an incomplete Sigma type")
+  let scope = Scope(adv: "_", bdy: codomain.syn)
+  vSi(domain, ScoVal(syn: scope,
+    fn: proc(_: Value): Value = codomain))
 
 proc vAbsurd(): Value =
   eval(tmPi(tStar(), "T", vv(0)), @[])   # Pi(T:? ). T, as in the paper

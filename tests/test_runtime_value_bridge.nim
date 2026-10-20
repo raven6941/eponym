@@ -691,6 +691,13 @@ eponymBlock:
 eponymBlock:
   import "../lib/nat.ep"
   postulate(Int, Univ)
+  proc generatedSigmaValueBinder[pair: Sig(Int, Sig(Nat, Int))](
+      ignored: Int): Sig(Int, Sig(Nat, Int)) = pair
+  runtimeValue(generatedSigmaValueBinder)
+
+eponymBlock:
+  import "../lib/nat.ep"
+  postulate(Int, Univ)
   postulate(Channel, Nat -> Univ)
   runtimeType(Channel, IndexedChannelHandle)
   proc generatedGenericIndexedChannelIdentity[n: Nat](
@@ -4549,6 +4556,35 @@ proc callbackRole : Callback -> Sample -> Sample =
     shrinkInt)
   if not dynamicGenericVectorCases:
     quit(1)
+  let dynamicSigmaBinderCases = forAll(
+    "dynamic generic binders encode and validate Sigma tuple values", r, 200,
+    proc(r: var Rng): tuple[first, natField, last, ignored: int] =
+      (r.genInt(-1000, 1000), r.genInt(0, 100),
+       r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[first, natField, last, ignored: int]): bool =
+      let sigmaValue = (input.first, input.natField, input.last)
+      let typed = generatedSigmaValueBinderDynamic(sigmaValue, input.ignored)
+      let runtime = generatedSigmaValueBinderRuntimeValueDynamic(
+        sigmaValue, input.ignored)
+      let expectedType = runtimeSigmaType(
+        runtimeGlobalValue(runtime.globals, "Int"),
+        runtimeSigmaType(runtimeGlobalValue(runtime.globals, "Nat"),
+          runtimeGlobalValue(runtime.globals, "Int")))
+      validateRuntimeValueAgainstType(runtime.value, expectedType,
+        runtime.globals)
+      let tail = runtimePairSecond(runtime.value)
+      typed == sigmaValue and
+        valueToInt(runtimePairFirst(runtime.value)) == input.first and
+        valueToNat(runtimePairFirst(tail), runtime.globals) == input.natField and
+        valueToInt(runtimePairSecond(tail)) == input.last)
+  if not dynamicSigmaBinderCases:
+    quit(1)
+  var negativeSigmaNatRejected = false
+  try:
+    discard generatedSigmaValueBinderDynamic((1, -1, 3), 0)
+  except ValueError:
+    negativeSigmaNatRejected = true
+  doAssert negativeSigmaNatRejected
   var dynamicGenericMismatchRejected = false
   try:
     discard generatedVectorSucIndexDynamic(3, @[1, 2])

@@ -4554,6 +4554,18 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
   if n.isNil: return nil
   if n.kind in {nnkCall, nnkObjConstr} and n.len > 0 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Sig":
+    let fields = runtimeSigmaFields(n)
+    if fields.len < 2: return nil
+    result = runtimeTypeValueExpr(fields[^1].fieldType, globals, overrides)
+    if result.isNil: return nil
+    for i in countdown(fields.high - 1, 0):
+      let domain = runtimeTypeValueExpr(fields[i].fieldType, globals,
+        overrides)
+      if domain.isNil: return nil
+      result = newCall(bindSym"runtimeSigmaType", domain, result)
+    return
+  if n.kind in {nnkCall, nnkObjConstr} and n.len > 0 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Pi":
     return runtimePiTypeValueExpr(n, globals, overrides)
   if n.kind == nnkInfix and n.len == 3 and $n[0] == "->":
@@ -4759,8 +4771,10 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     parseExpr("tuple[value: Value, globals: Globals]") else: resultType)
   var genericSyms: seq[NimNode] = @[]
   var genericNimTypes: seq[NimNode] = @[]
+  var genericValueHasCodec: seq[bool] = @[]
   for i, genericName in generic.genericNames:
     var dynamicType: NimNode = nil
+    var hasValueCodec = false
     if generic.genericNatArgs[i] or generic.genericIntArgs[i]:
       dynamicType = ident"int"
     elif generic.genericBoolArgs[i]:
@@ -4769,6 +4783,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
       if not rawGenericValues:
         dynamicType = runtimeNimType(generic.genericValueTypeExprs[i],
           generic.codecMappings, records, allowDependentSigma)
+        hasValueCodec = not dynamicType.isNil
       if dynamicType.isNil: dynamicType = bindSym"Value"
     elif not generic.genericMappedTypes[i].isNil:
       dynamicType = copyNimTree(generic.genericMappedNimTypes[i])
@@ -4777,6 +4792,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     formal.add(newIdentDefs(sym, dynamicType, newEmptyNode()))
     genericSyms.add(sym)
     genericNimTypes.add(dynamicType)
+    genericValueHasCodec.add(hasValueCodec)
   var argSyms: seq[NimNode] = @[]
   var argNames: seq[string] = @[]
   var argEponymTypes: seq[NimNode] = @[]
@@ -4814,7 +4830,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     elif generic.genericIntArgs[i]:
       encodedGeneric = newCall(bindSym"intToValue", genericSym)
     elif generic.genericValueArgs[i]:
-      if genericNimTypes[i].kind == nnkProcTy and not rawGenericValues:
+      if genericValueHasCodec[i] and not rawGenericValues:
         encodedGeneric = runtimeValueConversionExpr(
           generic.genericValueTypeExprs[i], genericNimTypes[i], genericSym,
           true, generic.codecMappings, records, globalsSym,
@@ -4861,7 +4877,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     elif generic.genericIntArgs[i]:
       encoded = newCall(bindSym"intToValue", genericSyms[i])
     elif generic.genericValueArgs[i]:
-      if genericNimTypes[i].kind == nnkProcTy and not rawGenericValues:
+      if genericValueHasCodec[i] and not rawGenericValues:
         encoded = runtimeValueConversionExpr(
           generic.genericValueTypeExprs[i], genericNimTypes[i],
           genericSyms[i], true, generic.codecMappings, records, globalsSym,
