@@ -69,6 +69,10 @@ clause eliminators substitute their arguments correctly. Definitions without
 a supported runtime codec still need an explicit mapping or the raw `Value`
 interface.
 
+Nim default parameter values are preserved on generated typed wrappers and
+typed `RuntimeValue` overloads, so callers can omit those arguments or
+override them positionally or by name.
+
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values, canonical Bool constructors, nullary
 unindexed data constructors mapped to Nim enums, and opaque boxes for arbitrary

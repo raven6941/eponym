@@ -2286,7 +2286,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
       let formalType = if callbackCanDeferGenericInference(params, i,
           generic.typeNames): ident"auto"
         else: argType
-      formal.add(newIdentDefs(argSym, formalType, newEmptyNode()))
+      let defaultValue = if p[^1].kind == nnkEmpty: newEmptyNode()
+                         else: copyNimTree(p[^1])
+      formal.add(newIdentDefs(argSym, formalType, defaultValue))
       argSyms.add(argSym)
       argNames.add($argName)
       argEponymTypes.add(p[^2])
@@ -2494,7 +2496,9 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
       let formalType = if callbackCanDeferGenericInference(params, i,
           generic.typeNames): ident"auto"
         else: nimType
-      formal.add(newIdentDefs(argSym, formalType, newEmptyNode()))
+      let defaultValue = if p[^1].kind == nnkEmpty: newEmptyNode()
+                         else: copyNimTree(p[^1])
+      formal.add(newIdentDefs(argSym, formalType, defaultValue))
       argSyms.add(argSym)
       argNames.add($argName)
       eponymTypes.add(p[^2])
