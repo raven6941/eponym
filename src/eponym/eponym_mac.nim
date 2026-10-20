@@ -14,6 +14,7 @@ import os  # issue #131: parentDir of the eponymBlock call site
 import strutils
 import sequtils
 import sets
+import tables
 
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
@@ -92,12 +93,16 @@ proc ifExprToEponym(n: NimNode): string =
     if elseBranch.len != 1:
       error("eponymBlock: else branch must be one expression", elseBranch)
     elseBranch = elseBranch[0]
-  var fallback = nimExprToEponym(elseBranch)
+  # Eponym applications are strict, while Nim conditionals evaluate only the
+  # selected branch. Pass each branch as a unit thunk so a postulate (or any
+  # other runtime-bound operation) in the unselected branch is not evaluated.
+  var fallback = "(lam (_ : 1). " & nimExprToEponym(elseBranch) & ")"
   for i in countdown(branches.high, 0):
     let (condition, body) = branches[i]
-    fallback = "ifThenElse (" & nimExprToEponym(condition) & ") (" &
-      nimExprToEponym(branchExpr(body)) & ") (" & fallback & ")"
-  fallback
+    let yesBranch = "(lam (_ : 1). " & nimExprToEponym(branchExpr(body)) & ")"
+    fallback = "ifThenElse (" & nimExprToEponym(condition) & ") " &
+      yesBranch & " (" & fallback & ")"
+  "(" & fallback & ") <>"
 
 proc nimCommandLamToEponym(n: NimNode): string =
   ## Convert Nim's command-form untyped lambda (`lam x. body`) to Eponym
@@ -168,11 +173,12 @@ proc nimExprToEponym(n: NimNode): string =
     # as string syntax. This also resolves Issue #8: nested literals in
     # eponymBlock bodies (e.g. cons(Int, 2, a, ...), eConst 3) now elaborate
     # per their expected type instead of always becoming Nat suc-chains.
-    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so
-    # the Nat literal one is spelled `suc zero` here (as in string syntax).
+    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so use
+    # the parser's unambiguous integer spelling `01`. Expected-type
+    # overloading then selects Nat or Int, just as it does for other literals.
     let v = n.intVal
     if v < 0: error("negative integer literal", n)
-    if v == 1: "(suc zero)" else: $v
+    if v == 1: "01" else: $v
   of nnkStmtList:
     # Proc body: convert let-statements to nested let...in, final expr is body
     if n.len == 0: error("eponymBlock: empty proc body", n)
@@ -687,6 +693,15 @@ proc bindingIsReferenced(body: NimNode, postulateName: string): bool =
         mentionsName(st[6], postulateName):
       return true
 
+proc isCheckedNatType(globals: Globals, typeName: string): bool =
+  ## Classify Nat by the checked declaration's identity, not by its spelling.
+  if "Nat" notin globals or typeName notin globals:
+    return false
+  let nat = globals["Nat"].tm
+  let candidate = globals[typeName].tm
+  not nat.isNil and not candidate.isNil and nat.kind == tR and
+    candidate.kind == tR and nat.refId == candidate.refId
+
 proc simpleRuntimeCodec(n: NimNode): string =
   if n.kind == nnkIdent:
     case $n
@@ -719,17 +734,21 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
   newTree(nnkBracketExpr, generic, nimType)
 
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
-                 mappings: seq[HostRuntimeType]): NimNode =
+                 mappings: seq[HostRuntimeType], checkedGlobals: Globals): NimNode =
   let nameLit = newLit(binding.postulateName)
   if binding.eponymTypes.len == 0:
     return newCall(bindSym"bindHostIntUnary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
   var typeIndexes: seq[int] = @[]
-  if binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+  let isNatType = proc(typeIndex: int): bool =
+    if typeIndex < 0 or typeIndex >= binding.eponymTypes.len: return false
+    let typeName = binding.eponymTypes[typeIndex]
+    isCheckedNatType(checkedGlobals, typeName)
+  if binding.eponymTypes.len == 2 and isNatType(1):
     typeIndexes = @[0]
   elif binding.eponymTypes.len == 2:
     typeIndexes = @[0, 1]
-  elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
+  elif binding.eponymTypes.len == 3 and isNatType(0):
     typeIndexes = @[1, 2]
   else:
     for i in 0 ..< binding.eponymTypes.len:
@@ -746,13 +765,16 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       error("bindPostulate for '" & binding.postulateName &
         "' needs runtimeType(" & eponymName & ", NimType)")
     typeArgs.add(nimType)
+  let natOpaqueHomogeneous = binding.eponymTypes.len == 3 and
+    isNatType(0) and typeArgs[0].repr == typeArgs[1].repr
   let adapter =
     if binding.eponymTypes.len == 1: bindSym"bindHostOpaqueUnary"
-    elif binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+    elif binding.eponymTypes.len == 2 and isNatType(1):
       bindSym"bindHostOpaqueNatUnary"
     elif binding.eponymTypes.len == 2: bindSym"bindHostOpaqueMapUnary"
-    elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
-      bindSym"bindHostNatOpaqueMapBinary"
+    elif binding.eponymTypes.len == 3 and isNatType(0):
+      if natOpaqueHomogeneous: bindSym"bindHostNatOpaqueBinary"
+      else: bindSym"bindHostNatOpaqueMapBinary"
     elif binding.eponymTypes.len == 3: bindSym"bindHostOpaqueBinary"
     elif binding.eponymTypes.len == 4: bindSym"bindHostOpaqueTernary"
     else:
@@ -760,12 +782,13 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
             binding.postulateName & "'")
   var genericAdapter = newNimNode(nnkBracketExpr)
   genericAdapter.add(adapter)
-  for typeArg in typeArgs:
+  let genericTypeArgs = if natOpaqueHomogeneous: typeArgs[0 .. 0] else: typeArgs
+  for typeArg in genericTypeArgs:
     genericAdapter.add(typeArg)
   var call = newCall(genericAdapter, bindingsSym, globalsSym, nameLit)
-  if binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+  if binding.eponymTypes.len == 2 and isNatType(1):
     call.add(newLit(binding.eponymTypes[0]))
-  elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
+  elif binding.eponymTypes.len == 3 and isNatType(0):
     call.add(newLit(binding.eponymTypes[1]))
     call.add(newLit(binding.eponymTypes[2]))
   else:
@@ -803,7 +826,8 @@ proc unsupportedRuntimeWrapper(decl: NimNode, defName: string,
 
 proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          bindings: seq[HostPostulateBinding],
-                         mappings: seq[HostRuntimeType]): NimNode =
+                         mappings: seq[HostRuntimeType],
+                         checkedGlobals: Globals): NimNode =
   ## Emit concrete Nim wrappers for non-generic first-order primitive and
   ## explicitly mapped opaque types.
   if decl.kind != nnkProcDef or decl[2].kind != nnkEmpty:
@@ -847,7 +871,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     wrapperBody.add(newVarStmt(bindingSym,
       newCall(bindSym"initRuntimeBindings")))
     for binding in bindings:
-      wrapperBody.add(bindingCall(binding, bindingSym, globalsSym, mappings))
+      wrapperBody.add(bindingCall(binding, bindingSym, globalsSym, mappings,
+                                  checkedGlobals))
 
   var values = newNimNode(nnkBracket)
   for i, argSym in argSyms:
@@ -934,7 +959,7 @@ macro eponymBlock*(body: untyped): untyped =
             "postulate '" & binding.postulateName & "' requires opaque Eponym type '" &
             required & "', not '" & binding.eponymTypes[0] & "'")
       of 2:
-        if binding.eponymTypes[1] == "Nat":
+        if isCheckedNatType(checkedGlobals, binding.eponymTypes[1]):
           validateHostOpaqueNatUnaryType(checkedGlobals,
             binding.postulateName, binding.eponymTypes[0])
         else:
@@ -942,7 +967,7 @@ macro eponymBlock*(body: untyped): untyped =
             binding.postulateName, binding.eponymTypes[0],
             binding.eponymTypes[1])
       of 3:
-        if binding.eponymTypes[0] == "Nat":
+        if isCheckedNatType(checkedGlobals, binding.eponymTypes[0]):
           validateHostNatOpaqueBinaryType(checkedGlobals,
             binding.postulateName, binding.eponymTypes[1],
             binding.eponymTypes[2])
@@ -975,7 +1000,8 @@ macro eponymBlock*(body: untyped): untyped =
         break
     if not procDecl.isNil:
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
-                                             bindings, runtimeTypes)
+                                             bindings, runtimeTypes,
+                                             checkedGlobals)
       if not typedWrapper.isNil:
         result.add(typedWrapper)
       else:
@@ -999,7 +1025,7 @@ macro eponymBlock*(body: untyped): untyped =
       )
       for binding in bindings:
         wrapperBody.add(bindingCall(binding, runtimeBindingsId, globalsId,
-                                    runtimeTypes))
+                                    runtimeTypes, checkedGlobals))
       wrapperBody.add(quote do:
         callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @`argsIdent`,
                        `runtimeBindingsId`)
