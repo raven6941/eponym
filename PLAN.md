@@ -450,8 +450,9 @@ implementations.
    explicit `proc` declarations with unsupported signatures fail clearly
    when called.
 - [x] Reconstruct typed wrappers for local clause-style definitions from
-   their checked Pi signatures. A 200-case property covers direct calls and
-   typed and raw `RuntimeValue` access for a `Nat -> Nat` identity. Restrict
+   their checked Pi signatures. Two 200-case properties cover direct calls
+   and typed and raw `RuntimeValue` access for a `Nat -> Nat` identity and a
+   recursive two-argument `Nat -> Nat -> Nat` addition definition. Restrict
    the generated wrapper to signatures with supported runtime codecs; an
    unsupported result type gets a compile-time diagnostic.
 - [x] Validate each currently supported Eponym adapter shape during macro

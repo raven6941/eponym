@@ -207,6 +207,13 @@ eponymBlock:
   runtimeValue(checkedNatIdentity)
 
 eponymBlock:
+  import "../lib/nat.ep"
+  def(checkedNatAdd, Nat -> Nat -> Nat):
+    clause([zero, m], m)
+    clause([suc(n), m], suc(checkedNatAdd(n, m)))
+  runtimeValue(checkedNatAdd)
+
+eponymBlock:
   postulate(Channel, Univ)
   runtimeType(Channel, ChannelHandle)
   proc generatedGenericMappedCallback[A: Univ](
@@ -1342,6 +1349,28 @@ proc callbackRole : Callback -> Sample -> Sample =
         valueToNat(rawRuntime.value, rawRuntime.globals) == value,
     shrinkInt)
   if not clauseDefinitionWrapperCases:
+    quit(1)
+
+  let recursiveClauseWrapperCases = forAll(
+    "recursive two-argument clause definitions get typed wrappers", r, 200,
+    proc(r: var Rng): tuple[left, right: int] =
+      (r.genInt(0, 20), r.genInt(0, 20)),
+    proc(input: tuple[left, right: int]): bool =
+      let expected = input.left + input.right
+      let typed = checkedNatAdd(input.left, input.right)
+      let typedRuntime = checkedNatAddRuntimeValue(input.left, input.right)
+      let rawRuntime = checkedNatAddRuntimeValue(
+        [natToValue(input.left, typedRuntime.globals),
+         natToValue(input.right, typedRuntime.globals)])
+      typed == expected and
+        valueToNat(typedRuntime.value, typedRuntime.globals) == expected and
+        valueToNat(rawRuntime.value, rawRuntime.globals) == expected,
+    proc(input: tuple[left, right: int]): seq[tuple[left, right: int]] =
+      for left in shrinkInt(input.left):
+        result.add((left, input.right))
+      for right in shrinkInt(input.right):
+        result.add((input.left, right)))
+  if not recursiveClauseWrapperCases:
     quit(1)
 
   let genericNatIndexCases = forAll(
