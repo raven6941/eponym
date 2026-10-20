@@ -766,6 +766,11 @@ implementations.
       empty `Vec[A, zero]`, and empty `List[A]` require an explicit witness.
       A `some(empty-sequence)` for positive fixed Vec length is rejected by
       the ordinary Vec length check.
+   - [ ] Infer indexed witnesses through multiple nested `Option` layers for
+     imported generic callback wrappers. The witness can be read from a value
+     such as `some(some(indexedValue))`, but generated recursive Option callback
+     codecs currently fail Nim type checking for this shape; extend codec type
+     substitution and add a property covering typed and `RuntimeValue` calls.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.
