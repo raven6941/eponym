@@ -41,9 +41,10 @@ User code is ordinary Nim. Eponym surface syntax appears inside a macro;
 the macro elaborates it at compile time and splices ordinary Nim code
 back. The target is for proof terms and static evidence to have no runtime
 cost, with runtime values crossing an explicit typed boundary. Current
-wrappers support first-order `Int`/`Nat` and explicitly mapped opaque
-postulated types; unsupported signatures retain the legacy
-`varargs[int] -> int` wrapper. The first runtime call re-elaborates the block
+wrappers support first-order `Int`/`Nat`, explicitly mapped opaque postulated
+types, and local clause-style definitions whose checked signatures can be
+reconstructed; unsupported signatures produce a compile-time diagnostic. The
+first runtime call re-elaborates the block
 and caches its checked terms and globals for subsequent calls. External
 postulates can be bound for unary Int, unary opaque, mixed Nat/opaque, and
 typed opaque adapters of arbitrary curried arity when every argument and
@@ -445,18 +446,24 @@ implementations.
    higher-order signatures. Unsupported cases must continue to fail with a
    precise compile-time diagnostic.
    Definitions without a matching explicit Nim `proc` declaration still
-   retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`
-   declarations with unsupported signatures fail clearly when called.
+   need a typed wrapper when their checked signature is reconstructable;
+   explicit `proc` declarations with unsupported signatures fail clearly
+   when called.
+- [x] Reconstruct typed wrappers for local clause-style definitions from
+   their checked Pi signatures. A 200-case property covers direct calls and
+   typed and raw `RuntimeValue` access for a `Nat -> Nat` identity. Restrict
+   the generated wrapper to signatures with supported runtime codecs; an
+   unsupported result type gets a compile-time diagnostic.
 - [x] Validate each currently supported Eponym adapter shape during macro
    expansion and the concrete Nim adapter signature during compilation.
    Unsupported generated wrapper shapes produce a compile-time diagnostic;
    no unchecked cast is used for a signature mismatch. Generic and structural
    codecs remain part of the preceding open item.
-- [x] For explicit `proc` declarations with no runtime codec, emit a
-   compile-time error template naming the unsupported Eponym result or
-   parameter type instead of silently generating a `varargs[int]` wrapper.
-   A negative fixture covers a missing opaque mapping. Full structural and
-   dependent codecs remain open.
+- [x] For explicit `proc` declarations with no runtime codec, and definitions
+   whose checked signatures cannot be reconstructed, emit a compile-time
+   diagnostic instead of silently generating a `varargs[int]` wrapper.
+   Negative fixtures cover a missing opaque mapping and an unsupported local
+   clause result type. Full structural and dependent codecs remain open.
 - [x] Keep runtime source re-elaboration outside the per-call path. The Nim
    macro VM's checked `Term`/`Value` objects contain runtime closures and
    cannot be retained directly as executable runtime values; the first call

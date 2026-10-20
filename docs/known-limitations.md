@@ -58,18 +58,16 @@ value parameter, generated wrappers let Nim infer the type from the value,
 including when a later `Vec[A, n]` argument maps to `seq[A]`. The callback's
 concrete signature is still checked when the wrapper invokes or returns it,
 so an incompatible callback fails compilation.
-`Nat` conversions reject negative values. An explicit `proc` declaration with
-an unsupported signature remains
-checked but emits a targeted compile-time error if called. Generated names
-without a matching `proc` declaration retain the compatibility
-`varargs[int] -> int` wrapper in
-[`eponym_mac.nim`](../src/eponym/eponym_mac.nim). At runtime,
-[`eponym_embed.nim`](../src/eponym/eponym_embed.nim) converts Nim integers to
-Eponym's primitive `Int`, applies the checked term, and converts an `Int`
-result back. This means the checker can accept definitions over `Nat`,
-vectors, records, session types, and other Eponym types, but those definitions
-do not thereby become callable from ordinary Nim with a faithful typed
-signature.
+`Nat` conversions reject negative values. Explicit Nim `proc` declarations
+with unsupported signatures remain checked but emit a targeted compile-time
+error if called. Local clause-style definitions whose checked Pi signatures
+can be reconstructed receive the same typed wrappers as explicit procedures;
+unsupported signatures emit a compile-time diagnostic instead of an
+integer-shaped fallback. When requested, `runtimeValue(name)` still exposes
+the raw `Value` interface. Runtime application preserves the applied term so
+clause eliminators substitute their arguments correctly. Definitions without
+a supported runtime codec still need an explicit mapping or the raw `Value`
+interface.
 
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values, canonical Bool constructors, nullary

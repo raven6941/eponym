@@ -61,6 +61,8 @@ for (path, expected) in [
      "type mismatch"),
     ("tests/fixtures/embedded_err_unsupported_runtime_type.nim",
      "no runtime codec for Eponym result type 'Thing'"),
+    ("tests/fixtures/embedded_err_unmapped_clause_wrapper.nim",
+     "no runtime codec for Eponym result type 'LocalToken'"),
     ("tests/fixtures/embedded_err_dependent_sigma_runtime.nim",
      "no runtime codec for Eponym result type 'Sig(n: Nat, Vec[Nat, n])'"),
     ("tests/fixtures/embedded_err_dependent_record_runtime.nim",

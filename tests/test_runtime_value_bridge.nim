@@ -200,6 +200,13 @@ eponymBlock:
   runtimeValue(generatedGenericIdentity)
 
 eponymBlock:
+  import "../lib/nat.ep"
+  def(checkedNatIdentity, Nat -> Nat):
+    clause([zero], zero)
+    clause([suc(n)], suc(n))
+  runtimeValue(checkedNatIdentity)
+
+eponymBlock:
   postulate(Channel, Univ)
   runtimeType(Channel, ChannelHandle)
   proc generatedGenericMappedCallback[A: Univ](
@@ -1319,6 +1326,22 @@ proc callbackRole : Callback -> Sample -> Sample =
       typed == expected and decoded == expected and
         typedLengthRejected and runtimeLengthRejected)
   if not genericCallbackVectorInferenceCases:
+    quit(1)
+
+  let clauseDefinitionWrapperCases = forAll(
+    "clause definitions get typed wrappers from checked Pi signatures", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(value: int): bool =
+      let expected = value == 0
+      let typed = checkedNatIdentity(value)
+      let typedRuntime = checkedNatIdentityRuntimeValue(value)
+      let rawRuntime = checkedNatIdentityRuntimeValue(
+        [natToValue(value, typedRuntime.globals)])
+      typed == value and
+        valueToNat(typedRuntime.value, typedRuntime.globals) == value and
+        valueToNat(rawRuntime.value, rawRuntime.globals) == value,
+    shrinkInt)
+  if not clauseDefinitionWrapperCases:
     quit(1)
 
   let genericNatIndexCases = forAll(

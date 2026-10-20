@@ -2239,6 +2239,16 @@ proc unsupportedRuntimeWrapper(decl: NimNode, defName: string,
     template `name`*(args: varargs[untyped]): untyped =
       {.error: `message`.}
 
+proc unreconstructableRuntimeWrapper(defName: string): NimNode =
+  let name = ident(defName)
+  let message = newLit("eponymBlock wrapper '" & defName &
+    "': cannot reconstruct a supported Nim signature from the checked " &
+    "Eponym type; add an explicit Nim proc signature or use runtimeValue(" &
+    defName & ")")
+  result = quote do:
+    template `name`*(args: varargs[untyped]): untyped =
+      {.error: `message`.}
+
 proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          bindings: seq[HostPostulateBinding],
                          mappings: seq[HostRuntimeType],
@@ -2817,7 +2827,6 @@ macro eponymBlock*(body: untyped): untyped =
   result = newStmtList()
   let dirLit = newLit(baseDir)
   for d in defs:
-    let procName = ident(d.name)
     let srcLit = newLit(src)
     let nameLit = newLit(d.name)
     var procDecl: NimNode = nil
@@ -2825,6 +2834,11 @@ macro eponymBlock*(body: untyped): untyped =
       if st.kind == nnkProcDef and $st[0] == d.name:
         procDecl = st
         break
+    if procDecl.isNil:
+      # Clause-style definitions have no Nim proc declaration to supply the
+      # runtime ABI. Reconstruct a simple fixed-arity signature from the
+      # checked Pi type and feed it through the same codec generator.
+      procDecl = importedRuntimeProcDecl(d, checkedGlobals)
     if not procDecl.isNil:
       if d.name in runtimeValueNames:
         let params = procDecl[3]
@@ -2995,31 +3009,7 @@ macro eponymBlock*(body: untyped): untyped =
       result.add(rawRuntimeValueWrapper(baseDir, src, d.name,
         checkedLambdaArity(d), bindings,
         runtimeTypes, records))
-    if bindings.len == 0:
-      result.add(quote do:
-        proc `procName`*(args: varargs[int]): int =
-          callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @args)
-      )
-    else:
-      var wrapper = quote do:
-        proc `procName`*(args: varargs[int]): int = discard
-      let argsIdent = wrapper[3][1][0]
-      let globalsId = genSym(nskLet, "checkedGlobals")
-      let runtimeBindingsId = genSym(nskVar, "runtimeBindings")
-      var wrapperBody = newStmtList()
-      wrapperBody.add(quote do:
-        let `globalsId` = getGlobalsDir(`dirLit`, `srcLit`)
-        var `runtimeBindingsId` = initRuntimeBindings()
-      )
-      for binding in bindings:
-        wrapperBody.add(bindingCall(binding, runtimeBindingsId, globalsId,
-                                    runtimeTypes, records))
-      wrapperBody.add(quote do:
-        callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @`argsIdent`,
-                       `runtimeBindingsId`)
-      )
-      wrapper[6] = wrapperBody
-      result.add(wrapper)
+    result.add(unreconstructableRuntimeWrapper(d.name))
   for requested in runtimeValueNames:
     var localDef = false
     for d in defs:
