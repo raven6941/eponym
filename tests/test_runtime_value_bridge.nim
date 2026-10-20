@@ -38,6 +38,9 @@ type IndexedChannelHandle = object
   index: int
   label: string
 
+type RuntimeSignal = enum
+  signalStop, signalCaution, signalGo
+
 proc hostWrongFour(channel: ChannelHandle, message: string,
                    requestId, phase: int): int = channel.id + requestId + phase
 
@@ -172,6 +175,14 @@ eponymBlock:
   proc generatedAdder(seed: Int): proc(value: Int): Int {.closure.} =
     lam(value, Int, addInt(seed, value))
 
+eponymBlock:
+  data(Signal, Univ):
+    proc signalStop(): Signal
+    proc signalCaution(): Signal
+    proc signalGo(): Signal
+  runtimeType(Signal, RuntimeSignal)
+  proc generatedSignalIdentity(value: Signal): Signal = value
+
 static:
   doAssert compiles(sampleTreeWithRuntimeValue(2))
   doAssert not compiles(sampleTreeWithRuntimeValue("not a Nat"))
@@ -183,6 +194,8 @@ static:
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
   doAssert compiles(generatedAdder(3)(4))
+  doAssert compiles(generatedSignalIdentity(signalGo))
+  doAssert not compiles(generatedSignalIdentity(1))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -696,6 +709,23 @@ proc callbackRole : Callback -> Sample -> Sample =
     proc(pair: (int, int)): seq[(int, int)] =
       pair.shrinkPair(shrinkInt, shrinkInt))
   if not returnedClosureCases:
+    quit(1)
+
+  for signal in [signalStop, signalCaution, signalGo]:
+    if generatedSignalIdentity(signal) != signal:
+      quit(1)
+  let enumCodecCases = forAll(
+    "nullary Eponym data constructors map to Nim enum values",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(0, 2),
+    proc(ordinal: int): bool =
+      let signal = case ordinal
+        of 0: signalStop
+        of 1: signalCaution
+        else: signalGo
+      generatedSignalIdentity(signal) == signal,
+    shrinkInt)
+  if not enumCodecCases:
     quit(1)
 
   let quinaryWrapperCases = forAll(

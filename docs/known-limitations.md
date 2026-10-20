@@ -32,6 +32,10 @@ result use primitive `Int` or `Nat` get fixed-arity Nim `proc` wrappers with
 when `bool.ep` is imported; the codec uses the checked `true` and `false`
 constructors and rejects noncanonical Bool runtime values. Explicit
 `runtimeType` mappings add opaque postulated types and indexed families.
+Nullary, unindexed `data` declarations can map to Nim enums with the same
+constructor names; constructor values are translated through their checked
+runtime identities. Data constructors with arguments or indexed results do
+not have an enum codec.
 Type-level generic binders written `[A: Univ]` also support generated Nim
 generic wrappers when `A` appears only in the checked signature and the
 remaining shape has codecs. Nim's concrete `A` values cross as opaque boxes;
@@ -52,8 +56,9 @@ do not thereby become callable from ordinary Nim with a faithful typed
 signature.
 
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
-supports primitive Int/Nat values, canonical Bool constructors, and opaque
-boxes for arbitrary Nim payload types. Typed adapters support unary
+supports primitive Int/Nat values, canonical Bool constructors, nullary
+unindexed data constructors mapped to Nim enums, and opaque boxes for arbitrary
+Nim payload types. Typed adapters support unary
 `T -> T`, `T -> U`, `T -> Nat`,
 `Nat -> A -> B`, and opaque postulate contracts with up to five curried
 arguments.
@@ -95,7 +100,8 @@ Returned callback types must use Nim's `{.closure.}` calling convention.
 Multi-argument Nim proc types and effectful callback behavior remain outside
 this bridge.
 Structural codecs for collections beyond non-dependent two-field `Sig` tuples
-and named non-dependent records, dependent signatures, value-indexed generic
+and named non-dependent records, payload-bearing data constructors, dependent
+signatures, value-indexed generic
 signatures, and generic binders used in runtime bodies,
 callback shapes with more than five curried opaque arguments, and structural
 inspection of closures remain unsupported. The session runtime demo includes a

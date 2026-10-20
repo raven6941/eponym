@@ -350,6 +350,10 @@ implementations.
    values through both the generated wrapper and typed `runtimeValue` helper.
    Value-indexed binders and bodies that inspect generic type arguments still
    require an explicit runtime representation.
+- [x] Add a structural codec for nullary, unindexed `data` declarations mapped
+   to same-named Nim enum members. The codec translates through checked
+   constructor reference identities; a 200-case property covers every variant,
+   and a compile-fail fixture rejects constructors with payloads.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to dependent signatures, value-indexed
    generics, and higher-order definitions. Definitions without

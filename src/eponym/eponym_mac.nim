@@ -688,14 +688,32 @@ type HostRecord = object
   name: string
   fields: seq[HostRecordField]
   hasDependentField: bool
+  isVariant: bool
+  constructors: seq[string]
 
 proc hostRecords(body: NimNode): seq[HostRecord] =
   for st in body:
-    if st.kind != nnkCall or st.len != 3 or st[0].kind != nnkIdent or
-        $st[0] != "record" or st[1].kind != nnkIdent or
-        st[2].kind != nnkStmtList:
+    if st.kind != nnkCall or st.len == 0 or st[0].kind != nnkIdent:
       continue
-    var record = HostRecord(name: $st[1])
+    let isRecord = $st[0] == "record" and st.len == 3 and
+      st[2].kind == nnkStmtList
+    let isVariant = $st[0] == "data" and st.len == 4 and
+      st[3].kind == nnkStmtList
+    if (not isRecord and not isVariant) or st[1].kind != nnkIdent:
+      continue
+    var record = HostRecord(name: $st[1], isVariant: isVariant)
+    if isVariant:
+      for ctor in st[3]:
+        if ctor.kind != nnkProcDef or ctor[0].kind != nnkIdent or
+            ctor[3].kind != nnkFormalParams or ctor[3].len != 1 or
+            ctor[3][0].kind != nnkIdent or $ctor[3][0] != record.name:
+          record.hasDependentField = true
+          break
+        record.constructors.add($ctor[0])
+      if record.constructors.len == 0:
+        record.hasDependentField = true
+      result.add(record)
+      continue
     for field in st[2]:
       if field.kind != nnkCall or field.len != 3 or
           field[0].kind != nnkIdent or $field[0] != "field" or
@@ -860,6 +878,13 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
     let recordIndex = findHostRecord(records, $head)
     if recordIndex >= 0:
       let record = records[recordIndex]
+      if record.isVariant:
+        if record.hasDependentField or record.constructors.len == 0:
+          return nil
+        for mapping in mappings:
+          if mapping.eponymName == $head:
+            return mapping.nimType
+        return nil
       if record.hasDependentField or record.fields.len == 0:
         return nil
       for field in record.fields:
@@ -959,6 +984,17 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     let recordIndex = findHostRecord(records, $eponymType)
     if recordIndex >= 0:
       let record = records[recordIndex]
+      if record.isVariant:
+        if record.hasDependentField or record.constructors.len == 0:
+          return nil
+        var constructorNames = newNimNode(nnkBracket)
+        for constructor in record.constructors:
+          constructorNames.add(newLit(constructor))
+        let namesSeq = newTree(nnkPrefix, ident"@", constructorNames)
+        if toValue:
+          return newCall(bindSym"enumToValue", value, globals, namesSeq)
+        return newCall(newTree(nnkBracketExpr, bindSym"valueToEnum", nimType),
+                       value, globals, namesSeq)
       if record.hasDependentField or record.fields.len == 0:
         return nil
       if toValue:
@@ -1419,7 +1455,15 @@ macro eponymBlock*(body: untyped): untyped =
       error("eponymBlock runtimeType error: " & e.msg, body)
   for mapping in runtimeTypes:
     try:
-      if findHostRecord(records, mapping.eponymName) < 0:
+      let recordIndex = findHostRecord(records, mapping.eponymName)
+      if recordIndex >= 0:
+        let record = records[recordIndex]
+        if record.isVariant and
+            (record.hasDependentField or record.constructors.len == 0):
+          raise newException(ValueError,
+            "runtime enum codec for '" & mapping.eponymName &
+            "' requires only nullary constructors returning the unindexed family")
+      else:
         validateHostOpaqueType(checkedGlobals, mapping.eponymName)
     except ValueError as e:
       error("eponymBlock runtimeType error: " & e.msg, body)
