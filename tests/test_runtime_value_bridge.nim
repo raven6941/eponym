@@ -765,6 +765,9 @@ eponymBlock:
   runtimeList(List)
   proc generatedIntListIdentity(values: List[Int]): List[Int] = values
   runtimeValue(generatedIntListIdentity)
+  proc generatedNestedIntListIdentity(
+      values: List[List[Int]]): List[List[Int]] = values
+  runtimeValue(generatedNestedIntListIdentity)
   proc generatedListIdentity[A: Univ](values: List[A]): List[A] = values
   runtimeValue(generatedListIdentity)
 
@@ -889,6 +892,12 @@ proc decodeRuntimeIntMatrix(value: Value, rows: int,
 proc decodeRuntimeIntList(value: Value, globals: Globals): seq[int] =
   listValueToSeq[int](value, globals, "List",
     proc(item: Value, _: Globals): int = valueToInt(item))
+
+proc decodeRuntimeIntNestedList(value: Value,
+                                globals: Globals): seq[seq[int]] =
+  listValueToSeq[seq[int]](value, globals, "List",
+    proc(item: Value, nestedGlobals: Globals): seq[int] =
+      decodeRuntimeIntList(item, nestedGlobals))
 
 proc decodeRuntimeHostList[T](value: Value,
                               globals: Globals): seq[T] =
@@ -4584,6 +4593,33 @@ proc callbackRole : Callback -> Sample -> Sample =
   if not listCodecCases:
     quit(1)
   doAssert generatedListIdentity[int](@[]) == @[]
+
+  let nestedListCodecCases = forAll(
+    "nested List codecs recurse through empty and populated lists", r, 200,
+    proc(r: var Rng): seq[seq[int]] =
+      let outerLength = r.genInt(0, 6)
+      result = newSeq[seq[int]](outerLength)
+      for i in 0 ..< outerLength:
+        let innerLength = r.genInt(0, 6)
+        result[i] = newSeq[int](innerLength)
+        for j in 0 ..< innerLength:
+          result[i][j] = r.genInt(-1000, 1000),
+    proc(values: seq[seq[int]]): bool =
+      let typed = generatedNestedIntListIdentity(values)
+      let runtime = generatedNestedIntListIdentityRuntimeValue(values)
+      let raw = generatedNestedIntListIdentityRuntimeValue([runtime.value])
+      let intType = runtimeGlobalValue(runtime.globals, "Int")
+      let innerType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "List"), [intType])
+      let expectedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "List"), [innerType])
+      validateRuntimeValueType(runtime.value, expectedType, runtime.globals)
+      validateRuntimeValueType(raw.value, expectedType, raw.globals)
+      typed == values and
+        decodeRuntimeIntNestedList(runtime.value, runtime.globals) == values and
+        decodeRuntimeIntNestedList(raw.value, raw.globals) == values)
+  if not nestedListCodecCases:
+    quit(1)
 
   let optionCodecCases = forAll(
     "Option values cross as checked none/some constructors", r, 200,

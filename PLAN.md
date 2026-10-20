@@ -428,7 +428,9 @@ implementations.
    property covers primitive and opaque elements, empty lists, and typed/raw
    `runtimeValue` paths. Custom `runtimeCodec` leaves are also property-tested
    inside List values through generated wrappers and typed/raw `RuntimeValue`
-   paths.
+   paths. A further 200-case property covers nested `List[List[Int]]` values,
+   including empty inner and outer lists, through generated and raw runtime
+   wrappers and checks the represented nested Eponym type.
 - [x] Add `runtimeOption(Option)` for a unary Option family with canonical
    `none` and `some` constructors. It maps `Option[A]` to `std/options.Option[A]`
    and recursively encodes the payload. A 200-case property covers `none`,
