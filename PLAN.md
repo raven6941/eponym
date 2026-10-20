@@ -515,13 +515,15 @@ implementations.
 - [x] Lower Nim `Int` expressions using `let`, unary minus, and `+`, `-`, `*`
   to the existing checked Eponym primitives. A 200-case property test compares
   generated wrappers with Nim arithmetic over values that avoid overflow.
-- [x] Lower a single-condition `if/else` expression through the polymorphic
-  `ifThenElse` definition in `lib/bool.ep`; both branches remain Eponym terms
-  and Bool eliminator computation selects the result.
-- [x] Lower chained `elif` expressions to nested checked `ifThenElse` calls;
-  test a multi-branch embedded definition and a missing-`else` compile error.
-  Effects, arbitrary procedure calls, macros, mutation, and IO remain outside
-  unless introduced as explicit trusted bindings.
+- [x] Lower single and chained `if/elif/else` expressions through the checked
+  `ifThenElse` definition in `lib/bool.ep`. Branches are unit thunks, so only
+  the chosen branch runs, matching Nim conditional evaluation even when a
+  branch calls a bound postulate. A 200-case property checks effect counts and
+  results; a compile-fail test covers a missing `else`. Arbitrary Nim control
+  flow, macros, mutation, and IO remain outside unless explicitly bound.
+- [x] Emit Nim's integer literal `1` as unambiguous Eponym `01`, preserving
+  expected-type selection between `Int` and `Nat`. A 200-case `x + 1` property
+  and surface-conformance fixture cover the behavior.
 - [x] Use square brackets for explicit Eponym binders (`A`, indices such as
    `n`), parentheses for term arguments, and braces for implicit binders.
    Generic declarations, bracketed type applications, and bracketed term
