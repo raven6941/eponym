@@ -1151,6 +1151,10 @@ type HostRuntimeType = object
   encoder: NimNode
   decoder: NimNode
 
+proc isSyntheticGenericRuntimeType(mapping: HostRuntimeType): bool =
+  mapping.nimType.kind in {nnkIdent, nnkSym} and
+    $mapping.nimType == mapping.eponymName
+
 proc mentionsName(node: NimNode, name: string): bool
 
 type HostRecordField = object
@@ -1814,6 +1818,50 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
 proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode
 
+proc runtimeGenericTypeWitnessExpr(n, globals: NimNode,
+    mappings: seq[HostRuntimeType]): NimNode =
+  if n.kind notin {nnkIdent, nnkSym}: return nil
+  if $n in ["Int", "Nat", "Bool"]: return nil
+  for mapping in mappings:
+    if mapping.eponymName == $n and
+        not isSyntheticGenericRuntimeType(mapping): return nil
+  let typeName = copyNimTree(n)
+  var branches = newNimNode(nnkWhenStmt)
+  var candidateNames = initHashSet[string]()
+  for mapping in mappings:
+    if isSyntheticGenericRuntimeType(mapping) or
+        mapping.isRuntimeVector or mapping.isRuntimeList or
+        mapping.isRuntimeOption or mapping.isRuntimeVariant or
+        mapping.isRuntimeCodec:
+      continue
+    let nimTypeName = mapping.nimType.repr
+    if nimTypeName.len == 0 or nimTypeName in candidateNames: continue
+    var sameNimTypeCount = 0
+    for other in mappings:
+      if not isSyntheticGenericRuntimeType(other) and
+          not other.isRuntimeVector and not other.isRuntimeList and
+          not other.isRuntimeOption and not other.isRuntimeVariant and
+          not other.isRuntimeCodec and other.nimType.repr == nimTypeName:
+        inc sameNimTypeCount
+    if sameNimTypeCount != 1: continue
+    candidateNames.incl(nimTypeName)
+    let condition = newCall(newTree(nnkBracketExpr,
+      bindSym"sameHostType", copyNimTree(typeName),
+      copyNimTree(mapping.nimType)))
+    let witness = newCall(bindSym"runtimeGlobalTypeWitness", globals,
+      newLit(mapping.eponymName))
+    branches.add(newTree(nnkElifBranch, condition,
+      newStmtList(newAssignment(ident"runtimeTypeWitness", witness))))
+  if branches.len == 0: return nil
+  branches.add(newTree(nnkElse, newStmtList()))
+  let witnessSym = ident"runtimeTypeWitness"
+  let body = newStmtList(
+    newTree(nnkVarSection,
+      newIdentDefs(witnessSym, bindSym"Value", newNilLit())),
+    branches,
+    witnessSym)
+  newTree(nnkBlockExpr, newEmptyNode(), body)
+
 proc runtimeRepresentedTypeValueExpr(n, globals: NimNode,
     mappings: seq[HostRuntimeType],
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
@@ -1850,12 +1898,14 @@ proc runtimeRepresentedTypeValueExpr(n, globals: NimNode,
           newCall(bindSym"runtimeGlobalValue", globals,
             newLit(mapping.eponymName)),
           newTree(nnkBracket, representedElement))
+  if n.kind in {nnkIdent, nnkSym}:
+    let genericWitness = runtimeGenericTypeWitnessExpr(n, globals, mappings)
+    if not genericWitness.isNil: return genericWitness
   if n.kind in {nnkIdent, nnkSym} and $n notin ["Int", "Nat", "Bool"]:
     var hasRuntimeType = false
     for mapping in mappings:
       if mapping.eponymName == $n and
-          not (mapping.nimType.kind in {nnkIdent, nnkSym} and
-            $mapping.nimType == mapping.eponymName):
+          not isSyntheticGenericRuntimeType(mapping):
         hasRuntimeType = true
         break
     if not hasRuntimeType: return nil
@@ -1968,6 +2018,16 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             familyName, constructors)
         return newCall(bindSym"valueToRuntimeVariant", value, globals,
           familyName, constructors)
+    if toValue and eponymType.kind in {nnkIdent, nnkSym}:
+      for mapping in mappings:
+        if mapping.eponymName == $typeHead and
+            not isSyntheticGenericRuntimeType(mapping) and
+            not mapping.isRuntimeCodec and not mapping.isRuntimeVariant and
+            not mapping.isRuntimeVector and not mapping.isRuntimeList and
+            not mapping.isRuntimeOption and
+            findHostRecord(records, mapping.eponymName) < 0:
+          return newCall(bindSym"toHostValueWithType", value,
+            runtimeTypeValueExpr(eponymType, globals, indexOverrides))
   for mapping in mappings:
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
@@ -2108,6 +2168,16 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     if first.isNil or second.isNil: return nil
     return newTree(nnkTupleConstr, first, second)
   if eponymType.kind == nnkIdent:
+    var isDeclaredType = $eponymType in ["Int", "Nat", "Bool"] or
+      findHostRecord(records, $eponymType) >= 0
+    for mapping in mappings:
+      if mapping.eponymName == $eponymType and
+          not isSyntheticGenericRuntimeType(mapping): isDeclaredType = true
+    if toValue and not isDeclaredType:
+      let representedType = runtimeRepresentedTypeValueExpr(eponymType,
+        globals, mappings, indexOverrides)
+      if not representedType.isNil:
+        return newCall(bindSym"toHostValueWithType", value, representedType)
     let recordIndex = findHostRecord(records, $eponymType)
     if recordIndex >= 0:
       let record = records[recordIndex]

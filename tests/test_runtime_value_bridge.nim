@@ -65,6 +65,12 @@ type IndexedChannelHandle = object
   index: int
   label: string
 
+type BaseRuntimeHandle = ref object of RootObj
+  id: int
+
+type DerivedRuntimeHandle = ref object of BaseRuntimeHandle
+  label: string
+
 type RuntimeSignal = enum
   signalStop, signalCaution, signalGo
 
@@ -302,6 +308,8 @@ eponymBlock:
   import "../lib/bool.ep"
   import "../lib/vec.ep"
   postulate(Int, Univ)
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
   runtimeVector(Vec)
   proc generatedConditionalGenericVectorValue[b: Bool, n, m: Nat,
       values: Vec[Int, (if b: n else: m)]](ignored: Int):
@@ -325,6 +333,7 @@ eponymBlock:
   runtimeValue(generatedOrConditionalVectorValue)
   proc generatedVectorIdentity[A: Univ, n: Nat](
       values: Vec[A, n]): Vec[A, n] = values
+  runtimeValue(generatedVectorIdentity)
   proc generatedVectorSucIndex[n: Nat](
       values: Vec[Int, suc(n)]): Nat = n
   proc generatedVectorAddIndex[m, n: Nat](
@@ -813,6 +822,14 @@ eponymBlock:
   import "fixtures/runtime_imported_named.ep"
   proc generatedImportedNamed(left, right: Int): Int =
     importedPick(right = right, left = left)
+
+eponymBlock:
+  postulate(BaseHandle, Univ)
+  postulate(DerivedHandle, Univ)
+  runtimeType(BaseHandle, BaseRuntimeHandle)
+  runtimeType(DerivedHandle, DerivedRuntimeHandle)
+  proc mappedGenericIdentity[A: Univ](value: A): A = value
+  runtimeValue(mappedGenericIdentity)
 
 static:
   doAssert compiles(generatedCheckedRole(35))
@@ -1760,11 +1777,60 @@ proc callbackRole : Callback -> Sample -> Sample =
         ChannelHandle(id: seed + 1, label: "vec/" & $(seed + 1)),
         ChannelHandle(id: seed + 2, label: "vec/" & $(seed + 2)),
         ChannelHandle(id: seed + 3, label: "vec/" & $(seed + 3))]
+      let runtimeHandles = generatedVectorIdentityRuntimeValue[
+        ChannelHandle, 4](handles)
+      let expectedHandleVectorType = callRuntimeValue(
+        runtimeGlobalValue(runtimeHandles.globals, "Vec"),
+        [runtimeGlobalValue(runtimeHandles.globals, "Channel"),
+         natToValue(4, runtimeHandles.globals)])
+      validateRuntimeValueType(runtimeHandles.value,
+        expectedHandleVectorType, runtimeHandles.globals)
+      let expectedIntVectorType = callRuntimeValue(
+        runtimeGlobalValue(runtimeHandles.globals, "Vec"),
+        [runtimeGlobalValue(runtimeHandles.globals, "Int"),
+         natToValue(4, runtimeHandles.globals)])
+      var mismatchedElementTypeRejected = false
+      try:
+        validateRuntimeValueType(runtimeHandles.value,
+          expectedIntVectorType, runtimeHandles.globals)
+      except ValueError:
+        mismatchedElementTypeRejected = true
       generatedVectorIdentity[int, 4](values) == values and
-        generatedVectorIdentity[ChannelHandle, 4](handles) == handles,
+        generatedVectorIdentity[ChannelHandle, 4](handles) == handles and
+        mismatchedElementTypeRejected and
+        vecValueToSeq[ChannelHandle](runtimeHandles.value, 4,
+          runtimeHandles.globals, "Vec",
+          proc(item: Value, _: Globals): ChannelHandle =
+            valueToHost[ChannelHandle](item)) == handles,
     shrinkInt)
   if not vectorCodecCases:
     quit(1)
+
+  let inheritedTypeWitnessCases = forAll(
+    "generic host type witnesses distinguish mapped object subtypes", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let baseInput = BaseRuntimeHandle(id: id)
+      let childInput = DerivedRuntimeHandle(id: id + 1,
+        label: "derived/" & $id)
+      let baseRuntime = mappedGenericIdentityRuntimeValue[
+        BaseRuntimeHandle](baseInput)
+      let childRuntime = mappedGenericIdentityRuntimeValue[
+        DerivedRuntimeHandle](childInput)
+      validateRuntimeValueType(baseRuntime.value,
+        runtimeGlobalValue(baseRuntime.globals, "BaseHandle"),
+        baseRuntime.globals)
+      validateRuntimeValueType(childRuntime.value,
+        runtimeGlobalValue(childRuntime.globals, "DerivedHandle"),
+        childRuntime.globals)
+      valueToHost[BaseRuntimeHandle](baseRuntime.value).id == id and
+        valueToHost[DerivedRuntimeHandle](childRuntime.value).id == id + 1 and
+        valueToHost[DerivedRuntimeHandle](childRuntime.value).label ==
+          "derived/" & $id,
+    shrinkInt)
+  if not inheritedTypeWitnessCases:
+    quit(1)
+
   let dependentCallbackCases = forAll(
     "callback result codecs receive their dependent Nat argument", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),

@@ -405,9 +405,12 @@ implementations.
 - [x] Preserve concrete element type witnesses in runtime `Vec`, `List`, and
    `Option` constructor values, including recursively nested collection types.
    The witness builder lowers nested Vec lengths to runtime Nat values and
-   declines unresolved generic type variables. The 200-case bridge property
-   validates the full runtime type of primitive Vec values, including the
-   empty case; existing nested collection round trips cover recursive codecs.
+   resolves generic element types through unique `runtimeType` mappings for an
+   unindexed Eponym type and its concrete Nim type. Mapped opaque boxes retain
+   that Eponym type witness so runtime inference can validate constructor
+   arguments. A 200-case bridge property validates mapped `Vec[A,n]` values and
+   rejects an incorrect element type, in addition to primitive Vecs including
+   the empty case and nested collection round trips.
 - [x] Add `runtimeCodec(EponymType, NimType, encoder, decoder)` for explicitly
    mapped named Eponym types and families. The typed encoder and decoder
    receive the module's `Globals`; generated wrappers and typed postulate

@@ -147,10 +147,15 @@ expressions made from a static index, `zero`, `suc`, `add`, and `mul`. It
 requires the standard `nil` and `cons` constructor shape from `lib/vec.ep`.
 Generated runtime `Vec`, `List`, and `Option` values retain concrete element
 type witnesses, including recursively nested built-in collection types. When an
-element type is an unresolved type-level generic, the bridge cannot yet derive
-its Eponym runtime type from the inferred Nim type and uses the legacy
-placeholder witness; generic callback/container combinations may therefore
-not pass full runtime type validation.
+element type is a type-level generic, generated wrappers can derive its
+Eponym type witness from a unique `runtimeType` mapping for an unindexed Eponym
+type and the concrete Nim type. Opaque host boxes retain that witness for
+runtime type inference, so a `Vec[A, n]` can be checked with mapped Nim
+elements. Generic types with no mapping, multiple Eponym mappings for the same
+Nim type, or only an indexed-family mapping remain opaque and cannot support
+full runtime type validation in that context. Raw `toHostValue` values also
+remain untyped unless the caller supplies them through a mapped generated
+codec.
 The standard unindexed `List[A]` family also has a `runtimeList(List)` codec
 that maps to `seq[A]`, checks constructor identities and spines, and recursively
 uses the element codec. A unary family with canonical `none` and `some`
