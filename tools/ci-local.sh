@@ -57,6 +57,8 @@ echo "=== kernel audit (issue #62: independent re-check) ==="
 nim c -r --hints:off $P "tests/kernel_audit.nim"
 echo "=== embedded examples (issue #149) ==="
 nim c -r --hints:off $P "tests/run_embedded_examples.nim"
+echo "=== package prelude resolution ==="
+sh tests/test_package_prelude_install.sh
 echo "=== surface-syntax conformance (issue #144) ==="
 nim c -r --hints:off $P "tests/surface_conformance.nim"
 echo "=== elaboration adequacy properties (issue #38) ==="

@@ -444,9 +444,10 @@ implementations.
 - [ ] Make the buffer/borrow example route through bound postulates, and label
    what the linear checker establishes versus what the Nim buffer adapter
    must uphold.
-- [ ] Exercise both correct runtime execution and compile-time failures for
-   wrong message order, wrong indexed value, double use, and dropped linear
-   handles.
+- [x] Exercise correct runtime session execution and compile-time failures for
+  wrong message order, wrong indexed value, double use, and dropped linear
+  handles. The error snapshots cover the negative cases; the TCP loopback test
+  exercises the positive checked sender/receiver roles.
 
 **Exit criteria:**
 
@@ -511,10 +512,12 @@ implementations.
    `n`), parentheses for term arguments, and braces for implicit binders.
    Generic declarations, bracketed type applications, and bracketed term
    applications are covered; call-style forms remain supported for migration.
-- [ ] Make installed preludes discoverable by the package without requiring
-   users to copy `.ep` files beside every source file; define deterministic
-   resolution order (source-relative, package prelude, explicit override)
-   and keep standalone file behavior reproducible.
+- [x] Resolve relative `.ep` imports source-relative first, then from the
+  installed package's `lib/` directory. Absolute paths remain explicit
+  overrides; a prelude-resolution test checks nested imports without vendoring.
+- [x] Verify the resolution contract against a clean package-shaped install
+  from a separate working directory; document the path order and absolute
+  override behavior.
 - [ ] Revisit the first-use time estimate after installation and editor setup
    are streamlined.
 
