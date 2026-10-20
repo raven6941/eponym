@@ -1231,7 +1231,7 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [x] Carry receiver record types through simple `let` aliases of nested
   projections. Positive and compile-fail regressions cover
   `let nested = bundle.inner; nested.apply[...]` for imported records with
-  colliding field names.
+  colliding field names, both with inferred and explicitly declared let types.
 - [x] Track the required type-binder count through bracket-applied call heads.
   A compile-fail fixture verifies that a partially bracketed two-type generic
   cannot receive the next required type argument in parentheses. A positive

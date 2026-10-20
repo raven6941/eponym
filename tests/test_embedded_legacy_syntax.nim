@@ -49,6 +49,7 @@ for fixture in [
     "tests/fixtures/embedded_err_legacy_ambiguous_callable_field.nim",
     "tests/fixtures/embedded_err_legacy_nested_ambiguous_callable_field.nim",
     "tests/fixtures/embedded_err_legacy_imported_ambiguous_callable_field.nim",
+    "tests/fixtures/embedded_err_legacy_imported_typed_alias_callable_field.nim",
     "tests/fixtures/embedded_err_legacy_local_postulate.nim",
     "tests/fixtures/embedded_err_legacy_command_application.nim"]:
   let (legacyOutput, legacyCode) = compileFixture(fixture, fixture.splitFile.name)
