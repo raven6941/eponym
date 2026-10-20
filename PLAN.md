@@ -445,6 +445,9 @@ implementations.
    trailing arguments or skip defaulted arguments with named calls. A 200-case
    property covers both forms; missing required arguments remain compile-time
    errors.
+- [x] Reorder named arguments for Nim callback parameters from their declared
+   `proc` type. A 200-case property covers both generated and typed
+   `RuntimeValue` wrappers for a two-argument callback.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

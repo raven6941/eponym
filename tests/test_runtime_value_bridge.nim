@@ -438,7 +438,8 @@ eponymBlock:
     lam(value, Int, addInt(seed, value))
   proc generatedApplyTwoArgumentCallback(
       callback: proc(left, right: Int): Int {.closure.},
-      left, right: Int): Int = callback(left, right)
+      left, right: Int): Int = callback(right = right, left = left)
+  runtimeValue(generatedApplyTwoArgumentCallback)
   proc generatedTwoArgumentAdder(seed: Int):
       proc(left, right: Int): Int {.closure.} =
     lam(left, Int, lam(right, Int, addInt(seed, addInt(left, right))))
@@ -1958,7 +1959,10 @@ proc callbackRole : Callback -> Sample -> Sample =
     proc(seed: int): bool =
       let callback: proc(left, right: int): int {.closure.} =
         proc(left, right: int): int = left * 2 + right
-      generatedApplyTwoArgumentCallback(callback, seed, -seed) == seed and
+      let direct = generatedApplyTwoArgumentCallback(callback, seed, -seed)
+      let runtime = generatedApplyTwoArgumentCallbackRuntimeValue(
+        callback, seed, -seed)
+      direct == seed and valueToInt(runtime.value) == seed and
         generatedTwoArgumentAdder(seed)(seed + 1, seed + 2) ==
           seed + (seed + 1) + (seed + 2),
     shrinkInt)

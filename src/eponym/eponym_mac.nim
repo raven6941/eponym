@@ -812,6 +812,10 @@ proc patToEponym(n: NimNode): string =
     nimExprToEponym(n)
 
 proc legacyCallInfoFromNimType(ty: NimNode): LegacyCallInfo =
+  if ty.kind == nnkProcTy and ty.len == 2 and
+      ty[0].kind == nnkFormalParams:
+    result.termParamNames = nimFormalArgNames(ty[0])
+    result.termParamDefaults = nimFormalArgDefaults(ty[0])
   let declarations = parseProgram("postulate __legacyCallable : " &
     nimTypeToEponym(ty))
   for declaration in declarations:
@@ -869,7 +873,7 @@ proc procDefToEponym(n: NimNode): string =
     let formal = params[i]
     if formal.kind != nnkIdentDefs: continue
     let callableInfo = legacyCallInfoFromNimType(formal[^2])
-    if callableInfo.explicitCount == 0: continue
+    if callableInfo.explicitCount == 0 and callableInfo.termCount == 0: continue
     for j in 0 ..< formal.len - 2:
       let nameNode = if formal[j].kind == nnkPragmaExpr:
         formal[j][0] else: formal[j]
