@@ -363,12 +363,10 @@ recursive type inference over the complete container. An empty
 `Vec[A, zero]` or `List[A]` has no representative element and still needs an
 explicit witness. A vector with the wrong declared length is rejected by the
 ordinary length check.
-A single `Option.some(value)` can provide an indexed witness, but multiple
-nested Option layers are not supported for this inference path yet. Although
-the witness can be read from `some(some(value))`, generated callback codecs
-currently fail Nim type checking while composing the nested Option codecs.
-A direct mapping for the indexed type or the raw generic `RuntimeValue`
-interface with an explicit type argument remains available.
+A `some(value)` at any depth of nested Option layers can provide an indexed
+witness, as long as every layer contains a value. Empty layers cannot provide
+the witness and raise a `ValueError` directing callers to supply an explicit
+type argument through the raw generic `RuntimeValue` interface.
 A property covers an indexed `SizedTree` identity through the raw generic
 `RuntimeValue` interface.
 More complex generic domain expressions outside the supported type-expression

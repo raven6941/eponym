@@ -485,6 +485,7 @@ eponymBlock:
   runtimeOption(Option)
   runtimeDataVariant(SizedTree)
   runtimeValue(importedGenericIndexedOptionCallbackApply)
+  runtimeValue(importedGenericIndexedNestedOptionCallbackApply)
 
 eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
@@ -1872,6 +1873,72 @@ when isMainModule:
     proc(input: tuple[length: int, present: bool]):
         seq[tuple[length: int, present: bool]] = @[])
   if not indexedOptionCallbackCases:
+    quit(1)
+  let nestedOptionWitnessCases = forAll(
+    "generic callbacks infer indexed witnesses through nested Options", r, 50,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let tree = RuntimeStructuredVariant(constructor: "sizedTree",
+        arguments: @[
+          RuntimeStructuredValue(kind: rsvNat, natValue: length),
+          RuntimeStructuredValue(kind: rsvVariant,
+            variantValue: RuntimeStructuredVariant(constructor: "treeEmpty"))])
+      let value = some(some(tree))
+      let callback: proc(value: Option[Option[RuntimeStructuredVariant]]):
+          Option[Option[RuntimeStructuredVariant]] {.closure.} =
+        proc(value: Option[Option[RuntimeStructuredVariant]]):
+            Option[Option[RuntimeStructuredVariant]] = value
+      let typed = importedGenericIndexedNestedOptionCallbackApply(callback,
+        value)
+      let runtime = importedGenericIndexedNestedOptionCallbackApplyRuntimeValue(
+        callback, value)
+      let treeType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "SizedTree"),
+        [natToValue(length, runtime.globals)])
+      let nestedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Option"),
+        [callRuntimeValue(runtimeGlobalValue(runtime.globals, "Option"),
+          [treeType])])
+      var typedMismatchRejected = false
+      var badTree = tree
+      inc badTree.arguments[0].natValue
+      let wrongIndexCallback:
+          proc(value: Option[Option[RuntimeStructuredVariant]]):
+            Option[Option[RuntimeStructuredVariant]] {.closure.} =
+        proc(value: Option[Option[RuntimeStructuredVariant]]):
+            Option[Option[RuntimeStructuredVariant]] = some(some(badTree))
+      try:
+        discard importedGenericIndexedNestedOptionCallbackApply(
+          wrongIndexCallback, value)
+      except ValueError:
+        typedMismatchRejected = true
+      var runtimeMismatchRejected = false
+      try:
+        discard importedGenericIndexedNestedOptionCallbackApplyRuntimeValue(
+          wrongIndexCallback, value)
+      except ValueError:
+        runtimeMismatchRejected = true
+      var missingWitnessRejected = false
+      try:
+        discard importedGenericIndexedNestedOptionCallbackApply(callback,
+          none[Option[RuntimeStructuredVariant]]())
+      except ValueError as error:
+        missingWitnessRejected = "cannot infer indexed Eponym type argument" in
+          error.msg
+      var missingRuntimeWitnessRejected = false
+      try:
+        discard importedGenericIndexedNestedOptionCallbackApplyRuntimeValue(
+          callback, some(none[RuntimeStructuredVariant]()))
+      except ValueError as error:
+        missingRuntimeWitnessRejected =
+          "cannot infer indexed Eponym type argument" in error.msg
+      validateRuntimeValueType(runtime.value, nestedType, runtime.globals)
+      typed.isSome and typed.get.isSome and
+        typed.get.get.arguments[0].natValue == length and
+        typedMismatchRejected and runtimeMismatchRejected and
+        missingWitnessRejected and missingRuntimeWitnessRejected,
+    shrinkInt)
+  if not nestedOptionWitnessCases:
     quit(1)
   let nestedIndexedOptionCallbackCases = forAll(
     "generic callbacks infer indexed witnesses inside Option and Vec", r, 50,

@@ -3334,9 +3334,43 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         let elementNimType = runtimeNimType(elementType, mappings, records,
           allowDependentSigma)
         if elementNimType.isNil: return nil
-        let itemSym = genSym(nskParam, "runtimeOptionItem")
-        let codecGlobalsSym = genSym(nskParam, "runtimeOptionGlobals")
+        # Keep these local codec formals as plain identifiers. Nested Option
+        # codecs embed one generated proc inside another, and genSym owners
+        # from the macro VM can leak across that generic proc boundary.
+        let itemSym = ident"runtimeOptionItem"
+        let codecGlobalsSym = ident"runtimeOptionGlobals"
         if toValue:
+          let nestedElementType = runtimeOptionElementType(elementType,
+            mapping.eponymName)
+          if not nestedElementType.isNil:
+            let nestedNimType = runtimeNimType(nestedElementType, mappings,
+              records, allowDependentSigma)
+            if nestedNimType.isNil: return nil
+            let nestedItemSym = ident"runtimeNestedOptionItem"
+            let nestedGlobalsSym = ident"runtimeNestedOptionGlobals"
+            let encodedNestedItem = runtimeValueConversionExpr(
+              nestedElementType, nestedNimType, nestedItemSym, true,
+              mappings, records, globals, allowDependentSigma, indexOverrides,
+              typeOverrides)
+            if encodedNestedItem.isNil: return nil
+            let nestedEncoder = newProc(params = @[bindSym"Value",
+              newIdentDefs(nestedItemSym, nestedNimType, newEmptyNode()),
+              newIdentDefs(nestedGlobalsSym, bindSym"Globals", newEmptyNode())],
+              body = newStmtList(encodedNestedItem))
+            let representedLeafType = runtimeRepresentedTypeValueExpr(
+              nestedElementType, globals,
+              if typeOverrides.len > 0: typeOverrides else: indexOverrides,
+              indexOverrides, mappings)
+            let representedNestedType = runtimeRepresentedTypeValueExpr(
+              elementType, globals,
+              if typeOverrides.len > 0: typeOverrides else: indexOverrides,
+              indexOverrides, mappings)
+            if not representedLeafType.isNil and
+                not representedNestedType.isNil:
+              return newCall(newTree(nnkBracketExpr,
+                bindSym"nestedOptionToValue", copyNimTree(nestedNimType)),
+                value, globals, newLit(mapping.eponymName), nestedEncoder,
+                representedLeafType, representedNestedType)
           let encodedItem = runtimeValueConversionExpr(elementType,
             elementNimType, itemSym, true, mappings, records,
             codecGlobalsSym, allowDependentSigma, indexOverrides,
@@ -3350,10 +3384,12 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             typeOverrides else: indexOverrides
           let elementTypeValue = runtimeRepresentedTypeValueExpr(elementType,
             globals, typeWitnessOverrides, indexOverrides, mappings)
+          let optionEncoder = newTree(nnkBracketExpr,
+            bindSym"optionToValue", copyNimTree(elementNimType))
           if not elementTypeValue.isNil:
-            return newCall(bindSym"optionToValue", value, globals,
+            return newCall(optionEncoder, value, globals,
               newLit(mapping.eponymName), encoder, elementTypeValue)
-          return newCall(bindSym"optionToValue", value, globals,
+          return newCall(optionEncoder, value, globals,
             newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(elementType,
           elementNimType, itemSym, false, mappings, records,
@@ -3787,9 +3823,9 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
       continue
     var sourceIndex = -1
     var sourceOptionFamily = ""
-    var sourceOptionElementType: NimNode = nil
     var sourceOptionNestedVector = false
     var sourceOptionNestedList = false
+    var sourceOptionDepth = 0
     var sourceVectorFamily = ""
     var sourceVectorType: NimNode = nil
     var sourceListFamily = ""
@@ -3801,9 +3837,15 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         break
       for optionMapping in generic.codecMappings:
         if not optionMapping.isRuntimeOption: continue
-        let elementType = runtimeOptionElementType(eponymType,
-          optionMapping.eponymName)
-        if elementType.isNil: continue
+        var elementType = eponymType
+        var optionDepth = 0
+        while true:
+          let inner = runtimeOptionElementType(elementType,
+            optionMapping.eponymName)
+          if inner.isNil: break
+          inc optionDepth
+          elementType = inner
+        if optionDepth == 0: continue
         let directGeneric = elementType.kind in {nnkIdent, nnkSym} and
           $elementType == genericName
         var nestedVector = false
@@ -3829,7 +3871,7 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         if directGeneric or nestedVector or nestedList:
           sourceIndex = i
           sourceOptionFamily = optionMapping.eponymName
-          sourceOptionElementType = elementType
+          sourceOptionDepth = optionDepth
           sourceOptionNestedVector = nestedVector
           sourceOptionNestedList = nestedList
           if nestedVector:
@@ -3908,10 +3950,13 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         replaceTypeIdentifier(inferred, genericName, mapping.nimType)
         else: nil
       let sourceType = if sourceOptionFamily.len > 0:
-        newTree(nnkBracketExpr, bindSym"Option",
-          if sourceOptionNestedVector: sourceVectorNimType
-          elif sourceOptionNestedList: sourceListNimType
-          else: copyNimTree(mapping.nimType))
+        block:
+          var nested = if sourceOptionNestedVector: sourceVectorNimType
+            elif sourceOptionNestedList: sourceListNimType
+            else: copyNimTree(mapping.nimType)
+          for _ in 0 ..< sourceOptionDepth:
+            nested = newTree(nnkBracketExpr, bindSym"Option", nested)
+          nested
         elif sourceVectorFamily.len > 0:
           sourceVectorNimType
         elif sourceListFamily.len > 0:
@@ -3920,7 +3965,11 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
       let condition = newTree(nnkInfix, ident"is",
         copyNimTree(argNimTypes[sourceIndex]), sourceType)
       let sourceValue = if sourceOptionFamily.len > 0:
-        newCall(bindSym"get", copyNimTree(argSyms[sourceIndex]))
+        block:
+          var nested = copyNimTree(argSyms[sourceIndex])
+          for _ in 0 ..< sourceOptionDepth:
+            nested = newCall(bindSym"get", nested)
+          nested
         else: copyNimTree(argSyms[sourceIndex])
       var encoded = if sourceVectorFamily.len > 0:
         runtimeValueConversionExpr(sourceVectorType,
@@ -3942,12 +3991,17 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
       var packageBody = newStmtList()
       if sourceOptionFamily.len > 0:
         let noneMessage = newLit("cannot infer indexed Eponym type argument '" &
-          genericName & "' from none; pass a some(value) or use the raw " &
+          genericName & "' from none; pass nested some(value) or use the raw " &
           "RuntimeValue API with an explicit type argument")
-        packageBody.add(newTree(nnkIfStmt, newTree(nnkElifBranch,
-          newCall(bindSym"isNone", copyNimTree(argSyms[sourceIndex])),
-          newStmtList(newTree(nnkRaiseStmt, newCall(ident"newException",
-            ident"ValueError", noneMessage))))))
+        var optionChecks = newStmtList()
+        var optionCursor = copyNimTree(argSyms[sourceIndex])
+        for _ in 0 ..< sourceOptionDepth:
+          optionChecks.add(newTree(nnkIfStmt, newTree(nnkElifBranch,
+            newCall(bindSym"isNone", copyNimTree(optionCursor)),
+            newStmtList(newTree(nnkRaiseStmt, newCall(ident"newException",
+              ident"ValueError", noneMessage))))))
+          optionCursor = newCall(bindSym"get", optionCursor)
+        packageBody.add(optionChecks)
       packageBody.add(newLetStmt(encodedSym, encoded))
       let witnessSym = genSym(nskLet, "indexedGenericType")
       let inferredContainerType = if sourceVectorFamily.len > 0:
@@ -3975,14 +4029,15 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
       packageBody.add(newLetStmt(genericWitnessSym, genericWitnessExpr))
       var packagedValue = copyNimTree(encodedSym)
       if sourceOptionFamily.len > 0:
-        let optionValueSym = genSym(nskLet, "indexedOptionValue")
-        packageBody.add(newLetStmt(optionValueSym,
-          newCall(bindSym"callRuntimeValue",
-            newCall(bindSym"runtimeGlobalValue", copyNimTree(globals),
-              newLit("some")),
-            newTree(nnkBracket, copyNimTree(witnessSym),
-              copyNimTree(encodedSym)))))
-        packagedValue = copyNimTree(optionValueSym)
+        for _ in 0 ..< sourceOptionDepth:
+          let optionValueSym = genSym(nskLet, "indexedOptionValue")
+          packageBody.add(newLetStmt(optionValueSym,
+            newCall(bindSym"callRuntimeValue",
+              newCall(bindSym"runtimeGlobalValue", copyNimTree(globals),
+                newLit("some")),
+              newTree(nnkBracket, copyNimTree(witnessSym),
+                copyNimTree(packagedValue)))))
+          packagedValue = copyNimTree(optionValueSym)
       packageBody.add(
         newTree(nnkTupleConstr,
           newTree(nnkExprColonExpr, ident"value", packagedValue),

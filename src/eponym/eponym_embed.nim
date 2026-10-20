@@ -548,6 +548,18 @@ proc optionToValue*[T](hostValue: Option[T], globals: Globals,
       @[representedType, encoded])
   callRuntimeValue(eval(globals["none"].tm, @[]), @[representedType])
 
+proc nestedOptionToValue*[T](hostValue: Option[Option[T]], globals: Globals,
+    familyName: string,
+    encode: proc(item: T, globals: Globals): Value,
+    elementType, nestedElementType: Value): Value =
+  ## Encode two Option layers with the inner codec supplied separately. Keeping
+  ## the nested adapter here avoids Nim generic inference crossing generated
+  ## callback closures in the macro VM.
+  let encodeNested = proc(item: Option[T], callbackGlobals: Globals): Value =
+    optionToValue(item, callbackGlobals, familyName, encode, elementType)
+  optionToValue(hostValue, globals, familyName, encodeNested,
+    nestedElementType)
+
 proc valueToOption*[T](value: Value, globals: Globals,
     familyName: string,
     decode: proc(value: Value, globals: Globals): T): Option[T] =
