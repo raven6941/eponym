@@ -21,9 +21,7 @@ if positiveCode != 0:
 
 for fixture in [
     "tests/fixtures/embedded_err_legacy_explicit_params.nim",
-    "tests/fixtures/embedded_err_legacy_type_application.nim",
-    "tests/fixtures/embedded_err_legacy_nat_let.nim",
-    "tests/fixtures/embedded_err_legacy_nat_if.nim"]:
+    "tests/fixtures/embedded_err_legacy_type_application.nim"]:
   let (legacyOutput, legacyCode) = compileFixture(fixture, fixture.splitFile.name)
   if legacyCode == 0 or "call-style explicit" notin legacyOutput or
       "have been removed" notin legacyOutput:

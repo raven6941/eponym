@@ -422,7 +422,7 @@ eponymBlock:
       length: Nat, values: Vec[Int, length]): Nat = callback(length, values)
   proc generatedDependentVectorCallback():
       proc(length: Nat, values: Vec[Int, length]): Nat {.closure.} =
-    lam(length, Nat, lam(values, Vec(Int, length), length))
+    lam(length, Nat, lam(values, Vec[Int, length], length))
   runtimeValue(generatedApplyDependentVectorCallback)
   runtimeValue(generatedDependentVectorCallback)
 

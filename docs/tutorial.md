@@ -188,14 +188,14 @@ A few notes on the syntax (the full story is in
 
 - `Nat` is `zero` / `suc(n)`; `suc(suc(zero()))` is the number 2.
 - `cons[A, n](x, xs)` takes explicit type and length parameters in brackets,
-  followed by ordinary vector terms in parentheses. `cons(A, n, x, xs)` and
-  `Vec(A, n)` remain accepted as migration forms.
+  followed by ordinary vector terms in parentheses. Call-style explicit forms
+  such as `cons(A, n, x, xs)` and `Vec(A, n)` are rejected; use brackets.
 - `vecnil` is the empty vector. In `.ep` files it is spelled `nil`,
   but inside `eponymBlock` — which is Nim syntax, where `nil` is a
   keyword — you write `vecnil` and the macro maps it back.
 - `vecElim` is the induction principle the `data` declaration
   generates: give it a *motive* (what you are proving about every
-  vector — here `lam(i, Nat, lam(w, Vec(A, i), Nat))`, "for every length
+  vector — here `lam(i, Nat, lam(w, Vec[A, i], Nat))`, "for every length
   `i` and vector `w`, produce a `Nat`"), the nil case, the cons case,
   and the vector to eliminate. The cons case gets an induction
   hypothesis `ih` for the tail.
