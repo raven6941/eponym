@@ -29,6 +29,7 @@ type LegacyCallInfo = object
   explicitCount: int
   termCount: int
   termParamNames: seq[string]
+  termParamDefaults: seq[NimNode]
   leadingTermCount: int
   requiredBracketCount: int
   inferableIndexCount: int
@@ -62,9 +63,6 @@ proc sameCallShape(a, b: LegacyCallInfo): bool =
     a.explicitBinderKinds == b.explicitBinderKinds and
     a.requiresBrackets == b.requiresBrackets and
     a.firstExplicitType == b.firstExplicitType
-
-proc sameCallInfo(a, b: LegacyCallInfo): bool =
-  sameCallShape(a, b) and a.termParamNames == b.termParamNames
 
 proc refreshFirstExplicitType(info: var LegacyCallInfo) =
   if info.explicitBinderKinds.len > 0:
@@ -117,12 +115,20 @@ proc namedArgumentName(arg: NimNode): string =
       arg[0].kind in {nnkIdent, nnkSym}:
     result = $arg[0]
 
-proc orderedNamedArguments(args: seq[NimNode], names: seq[string],
-    call: NimNode): seq[NimNode] =
-  if args.len == 0 or args.allIt(namedArgumentName(it).len == 0):
-    return args
+proc orderedCallArguments(args: seq[NimNode], names: seq[string],
+    defaults: seq[NimNode], call: NimNode): seq[NimNode] =
+  let hasNamed = args.anyIt(namedArgumentName(it).len > 0)
   if names.len == 0:
-    error("eponymBlock: named arguments need a known callable signature", call)
+    if hasNamed:
+      error("eponymBlock: named arguments need a known callable signature", call)
+    return args
+  if not hasNamed:
+    result = args
+    var i = args.len
+    while i < names.len and i < defaults.len and not defaults[i].isNil:
+      result.add(copyNimTree(defaults[i]))
+      inc i
+    return
   var ordered = newSeq[NimNode](names.len)
   var nextPositional = 0
   for arg in args:
@@ -146,13 +152,15 @@ proc orderedNamedArguments(args: seq[NimNode], names: seq[string],
       error("eponymBlock: duplicate argument for '" & names[index] & "'",
         arg)
     ordered[index] = if name.len > 0: arg[1] else: arg
-  var sawGap = false
   for i, value in ordered:
     if value.isNil:
-      sawGap = true
-    elif sawGap:
-      error("eponymBlock: named arguments cannot skip an earlier Eponym " &
-        "parameter", call)
+      if i < defaults.len and not defaults[i].isNil:
+        result.add(copyNimTree(defaults[i]))
+      elif ordered[i .. ^1].anyIt(not it.isNil):
+        error("eponymBlock: named arguments cannot skip an earlier Eponym " &
+          "parameter without a default", call)
+      else:
+        break
     else:
       result.add(value)
 
@@ -187,18 +195,33 @@ proc callInfoForHead(n: NimNode,
             supplied <= base.info.termCount)):
         var remaining = base.info
         remaining.termCount = max(0, remaining.termCount - supplied)
-        let namedCount = (if head.kind == nnkCommand: 0 else:
-          (1 ..< head.len).countIt(namedArgumentName(head[it]).len > 0))
-        let positionalCount = supplied - namedCount
-        var consumedNames = initHashSet[string]()
-        for i in 0 ..< min(positionalCount, base.info.termParamNames.len):
-          consumedNames.incl(base.info.termParamNames[i])
-        if head.kind != nnkCommand:
-          for i in 1 ..< head.len:
-            let name = namedArgumentName(head[i])
-            if name.len > 0: consumedNames.incl(name)
-        for name in base.info.termParamNames:
-          if name notin consumedNames: remaining.termParamNames.add(name)
+        var consumed = newSeq[bool](base.info.termParamNames.len)
+        proc markConsumed(arg: NimNode) =
+          if arg.kind == nnkCommand and arg.len > 0 and
+              not (arg[0].kind == nnkIdent and $arg[0] == "lam"):
+            markConsumed(arg[0])
+            for i in 1 ..< arg.len: markConsumed(arg[i])
+          else:
+            let name = namedArgumentName(arg)
+            var index = -1
+            if name.len > 0:
+              for i, paramName in base.info.termParamNames:
+                if not consumed[i] and paramName == name:
+                  index = i
+                  break
+            else:
+              for i in 0 ..< consumed.len:
+                if not consumed[i]:
+                  index = i
+                  break
+            if index >= 0: consumed[index] = true
+        for i in 1 ..< head.len: markConsumed(head[i])
+        for i, name in base.info.termParamNames:
+          if not consumed[i]:
+            remaining.termParamNames.add(name)
+            remaining.termParamDefaults.add(
+              if i < base.info.termParamDefaults.len:
+                base.info.termParamDefaults[i] else: nil)
         remaining.leadingTermCount =
           max(0, remaining.leadingTermCount - supplied)
         var pendingPositions: seq[int] = @[]
@@ -531,6 +554,7 @@ proc surfaceCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
     elif not binder.impl:
       inc result.termCount
       result.termParamNames.add(binder.name)
+      result.termParamDefaults.add(nil)
       if result.explicitCount == 0: inc result.leadingTermCount
 
 proc mentionsPretermName(term: PreTerm, name: string): bool
@@ -633,6 +657,7 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
     elif not binder.impl:
       inc result.termCount
       result.termParamNames.add(binder.name)
+      result.termParamDefaults.add(nil)
       inc termPosition
       if result.explicitCount == 0: inc result.leadingTermCount
 
@@ -651,6 +676,7 @@ proc surfaceFamilyCallInfo(params: seq[tuple[name: string, ty: PreTerm,
     else:
       inc result.termCount
       result.termParamNames.add(param.name)
+      result.termParamDefaults.add(nil)
       if result.explicitCount == 0: inc result.leadingTermCount
 
 proc mentionsPretermName(term: PreTerm, name: string): bool =
@@ -734,6 +760,7 @@ proc surfaceConstructorCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
     else:
       inc result.termCount
       result.termParamNames.add(binder.name)
+      result.termParamDefaults.add(nil)
       inc termPosition
       if result.explicitCount == 0: inc result.leadingTermCount
 
@@ -766,6 +793,8 @@ proc nimGenericCallInfo(params, formal: NimNode): LegacyCallInfo =
       if param.kind == nnkIdentDefs:
         for j in 0 ..< param.len - 2:
           result.termParamNames.add(binderName(param[j]))
+          result.termParamDefaults.add(if param[^1].kind == nnkEmpty: nil
+            else: copyNimTree(param[^1]))
   result.leadingTermCount = 0
   result.requiredBracketCount = result.explicitCount
   result.requiresBrackets = result.explicitCount > 0
@@ -786,6 +815,8 @@ proc mergeCallInfo(a, b: LegacyCallInfo): LegacyCallInfo =
   result.termCount = a.termCount + b.termCount
   result.termParamNames = a.termParamNames
   result.termParamNames.add(b.termParamNames)
+  result.termParamDefaults = a.termParamDefaults
+  result.termParamDefaults.add(b.termParamDefaults)
   result.leadingTermCount = if a.explicitCount > 0: a.leadingTermCount
     else: a.termCount + b.leadingTermCount
   result.requiredBracketCount = a.requiredBracketCount + b.requiredBracketCount
@@ -1147,11 +1178,11 @@ proc nimCommandToEponym(n: NimNode,
     appendArg(n[i])
   let head = nimExprToEponym(n[0])
   let headInfo = callInfoForHead(n[0])
-  if termArgNodes.anyIt(namedArgumentName(it).len > 0):
-    if not headInfo.found:
-      error("eponymBlock: named arguments need a known callable signature", n)
-    termArgNodes = orderedNamedArguments(termArgNodes,
-      headInfo.info.termParamNames, n)
+  if headInfo.found:
+    termArgNodes = orderedCallArguments(termArgNodes,
+      headInfo.info.termParamNames, headInfo.info.termParamDefaults, n)
+  elif termArgNodes.anyIt(namedArgumentName(it).len > 0):
+    error("eponymBlock: named arguments need a known callable signature", n)
   var termArgs: seq[string] = @[]
   for arg in termArgNodes:
     if arg.kind == nnkCommand:
@@ -1261,11 +1292,11 @@ proc nimExprToEponym(n: NimNode,
     let headInfo = callInfoForHead(n[0])
     var argNodes: seq[NimNode] = @[]
     for i in 1 ..< n.len: argNodes.add(n[i])
-    if argNodes.anyIt(namedArgumentName(it).len > 0):
-      if not headInfo.found:
-        error("eponymBlock: named arguments need a known callable signature", n)
-      argNodes = orderedNamedArguments(argNodes,
-        headInfo.info.termParamNames, n)
+    if headInfo.found:
+      argNodes = orderedCallArguments(argNodes,
+        headInfo.info.termParamNames, headInfo.info.termParamDefaults, n)
+    elif argNodes.anyIt(namedArgumentName(it).len > 0):
+      error("eponymBlock: named arguments need a known callable signature", n)
     var args: seq[string] = @[]
     for a in argNodes:
       # Parenthesize if arg is a call or obj-constr (Pi/Sig type args

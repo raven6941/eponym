@@ -582,6 +582,9 @@ implementations.
      Runtime bridge regressions check an omitted default, positional and named
      overrides, and named arguments generally; compile-time checks confirm
      those Nim call forms are accepted.
+   - [x] Apply supported Nim defaults when checked bodies call local
+     defaulted procedures, including gaps before named arguments. A 200-case
+     runtime property covers a skipped default followed by a named override.
    - [x] Generate typed Nim wrappers and typed `RuntimeValue` overloads from
      imported `.ep` definitions whose checked Pi signatures use supported
      runtime codecs. A 200-case property covers an imported identity and a

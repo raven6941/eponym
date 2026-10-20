@@ -299,6 +299,11 @@ eponymBlock:
   bindPostulate(hostPlusSeven, hostStepNim)
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
   proc generatedDefault(value: Int = 42): Int = value
+  proc generatedDefaultThenValue(value: Int = 42,
+      adjustment: Int): Int = addInt(value, adjustment)
+  proc generatedNestedDefault(): Int = generatedDefault()
+  proc generatedNamedDefaultGap(adjustment: Int): Int =
+    generatedDefaultThenValue(adjustment = adjustment)
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
   proc generatedNamedAdd(left: Int, right: Int): Int =
     generatedAdd(right = right, left = left)
@@ -3287,6 +3292,7 @@ when isMainModule:
     generatedAdd(left = 20, right = 22) == 42 and
     generatedDefault() == 42 and generatedDefault(7) == 7 and
     generatedDefault(value = 7) == 7 and
+    generatedNestedDefault() == 42 and
     generatedNatId(17) == 17 and generatedArithmetic(5, 7, 3) == -27 and
     generatedSigmaId((17, -9)) == (17, -9) and
     generatedOpaqueSigmaId((17, ChannelHandle(id: 1))) ==
@@ -3302,6 +3308,14 @@ when isMainModule:
     proc(input: tuple[left, right: int]):
         seq[tuple[left, right: int]] = @[])
   if not namedArgumentCalls:
+    quit(1)
+  let namedDefaultCalls = forAll(
+    "checked calls fill omitted Nim defaults before named arguments", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(adjustment: int): bool =
+      generatedNamedDefaultGap(adjustment) == 42 + adjustment,
+    shrinkInt)
+  if not namedDefaultCalls:
     quit(1)
   let generatedRecordRoundTrips = forAll(
     "structural record codec preserves primitive and opaque fields", r, 200,
