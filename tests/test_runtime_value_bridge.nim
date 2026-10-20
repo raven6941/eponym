@@ -418,6 +418,11 @@ eponymBlock:
                    Vec[Int, length])](length: Nat,
                                       values: Vec[Int, length]):
       Vec[Int, length] = callback(length, values)
+  proc generatedComputedDependentPiCallbackBinder[
+      callback: Pi(left: Nat, right: Nat,
+        values: Vec[Int, add(left, right)], Vec[Int, add(left, right)])](
+        left, right: Nat, values: Vec[Int, add(left, right)]):
+      Vec[Int, add(left, right)] = callback(left, right, values)
   runtimeValue(generatedNestedVectorIdentity)
   runtimeValue(generatedGenericVectorValueBinder)
   runtimeValue(generatedGenericSigmaValueBinder)
@@ -427,6 +432,7 @@ eponymBlock:
   runtimeValue(generatedGenericPiCallbackBinder)
   runtimeValue(generatedGenericPiBinaryCallbackBinder)
   runtimeValue(generatedDependentPiCallbackBinder)
+  runtimeValue(generatedComputedDependentPiCallbackBinder)
   proc generatedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
@@ -764,6 +770,13 @@ static:
   doAssert not compiles(generatedDependentPiCallbackBinderDynamic(
     proc(length: string, values: seq[int]): seq[int] {.closure.} = values,
     3, @[1, 2, 3]))
+  doAssert compiles(generatedComputedDependentPiCallbackBinderDynamic(
+    proc(left, right: int, values: seq[int]): seq[int] {.closure.} = values,
+    2, 3, @[1, 2, 3, 4, 5]))
+  doAssert not compiles(generatedComputedDependentPiCallbackBinderDynamic(
+    proc(left: string, right: int, values: seq[int]): seq[int] {.closure.} =
+      values,
+    2, 3, @[1, 2, 3, 4, 5]))
   doAssert compiles(generatedMappedGenericPiCallbackBinderDynamic(
     proc(value: ChannelHandle): ChannelHandle {.closure.} = value,
     ChannelHandle(id: 1)))
@@ -2502,6 +2515,47 @@ proc callbackRole : Callback -> Sample -> Sample =
             values)
   if not dynamicDependentPiCallbackCases:
     quit(1)
+  let computedDependentPiCallbackCases = forAll(
+    "generic Pi callbacks preserve computed Vec indices", r, 200,
+    proc(r: var Rng): tuple[left, right, seed: int] =
+      (r.genInt(0, 10), r.genInt(0, 10), r.genInt(-1000, 1000)),
+    proc(input: tuple[left, right, seed: int]): bool =
+      var values = newSeq[int](input.left + input.right)
+      for i in 0 ..< values.len:
+        values[i] = input.seed + i
+      let callback: proc(left, right: int, values: seq[int]): seq[int]
+          {.closure.} =
+        proc(left, right: int, values: seq[int]): seq[int] = values
+      let typed = generatedComputedDependentPiCallbackBinderDynamic(
+        callback, input.left, input.right, values)
+      let runtime = generatedComputedDependentPiCallbackBinderRuntimeValueDynamic(
+        callback, input.left, input.right, values)
+      typed == values and
+        vecValueToSeq[int](runtime.value, input.left + input.right,
+          runtime.globals, "Vec",
+          proc(value: Value, _: Globals): int = valueToInt(value)) == values)
+  if not computedDependentPiCallbackCases:
+    quit(1)
+  var computedCallbackInputMismatchRejected = false
+  try:
+    let callback: proc(left, right: int, values: seq[int]): seq[int]
+        {.closure.} =
+      proc(left, right: int, values: seq[int]): seq[int] = values
+    discard generatedComputedDependentPiCallbackBinderDynamic(callback, 2, 3,
+      @[1, 2, 3, 4])
+  except ValueError:
+    computedCallbackInputMismatchRejected = true
+  doAssert computedCallbackInputMismatchRejected
+  var computedCallbackOutputMismatchRejected = false
+  try:
+    let callback: proc(left, right: int, values: seq[int]): seq[int]
+        {.closure.} =
+      proc(left, right: int, values: seq[int]): seq[int] = values & @[999]
+    discard generatedComputedDependentPiCallbackBinderDynamic(callback, 2, 3,
+      @[1, 2, 3, 4, 5])
+  except ValueError:
+    computedCallbackOutputMismatchRejected = true
+  doAssert computedCallbackOutputMismatchRejected
   var dependentCallbackResultMismatchRejected = false
   try:
     let malformedCallback: proc(length: int, values: seq[int]): seq[int]
