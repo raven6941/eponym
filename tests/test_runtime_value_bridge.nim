@@ -200,6 +200,22 @@ eponymBlock:
   runtimeValue(generatedGenericIdentity)
 
 eponymBlock:
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
+  proc generatedGenericMappedCallback[A: Univ](
+      callback: proc(value: A): A {.closure.}, value: A): A =
+    callback(value)
+  runtimeValue(generatedGenericMappedCallback)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  runtimeVector(Vec)
+  proc generatedGenericCallbackOverVector[A: Univ](
+      callback: proc(value: A): A {.closure.}, values: Vec[A, 2]):
+      Vec[A, 2] = vmap(callback, values)
+  runtimeValue(generatedGenericCallbackOverVector)
+
+eponymBlock:
   import "../lib/nat.ep"
   postulate(Int, Univ)
   postulate(Channel, Nat -> Univ)
@@ -1261,6 +1277,58 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded.id == input.id and decoded.label == input.label,
     shrinkInt)
   if not genericOpaqueIdentityCases:
+    quit(1)
+
+  let genericCallbackInferenceCases = forAll(
+    "generic callback type infers from a later mapped value", r, 200,
+    proc(r: var Rng): tuple[id, delta: int] =
+      (r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[id, delta: int]): bool =
+      let value = ChannelHandle(id: input.id, label: "generic-callback")
+      let callback: proc(value: ChannelHandle): ChannelHandle {.closure.} =
+        proc(value: ChannelHandle): ChannelHandle =
+          ChannelHandle(id: value.id + input.delta,
+            label: value.label & "/callback")
+      let expected = callback(value)
+      let typed = generatedGenericMappedCallback(callback, value)
+      let runtime = generatedGenericMappedCallbackRuntimeValue(callback, value)
+      typed == expected and
+        valueToHost[ChannelHandle](runtime.value) == expected)
+  if not genericCallbackInferenceCases:
+    quit(1)
+
+  let genericCallbackVectorInferenceCases = forAll(
+    "generic callback type infers from a later mapped vector argument", r, 200,
+    proc(r: var Rng): tuple[first, second: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[first, second: int]): bool =
+      let values = @[ChannelHandle(id: input.first, label: "first"),
+        ChannelHandle(id: input.second, label: "second")]
+      let callback: proc(value: ChannelHandle): ChannelHandle {.closure.} =
+        proc(value: ChannelHandle): ChannelHandle =
+          ChannelHandle(id: value.id + 1, label: value.label & "/returned")
+      let expected = @[callback(values[0]), callback(values[1])]
+      let typed = generatedGenericCallbackOverVector(callback, values)
+      let runtime = generatedGenericCallbackOverVectorRuntimeValue(callback,
+        values)
+      let decoded = vecValueToSeq[ChannelHandle](runtime.value, 2,
+        runtime.globals, "Vec",
+        proc(item: Value, _: Globals): ChannelHandle =
+          valueToHost[ChannelHandle](item))
+      var typedLengthRejected = false
+      try:
+        discard generatedGenericCallbackOverVector(callback, @[values[0]])
+      except ValueError as error:
+        typedLengthRejected = "runtime Vec length mismatch" in error.msg
+      var runtimeLengthRejected = false
+      try:
+        discard generatedGenericCallbackOverVectorRuntimeValue(callback,
+          @[values[0]])
+      except ValueError as error:
+        runtimeLengthRejected = "runtime Vec length mismatch" in error.msg
+      typed == expected and decoded == expected and
+        typedLengthRejected and runtimeLengthRejected)
+  if not genericCallbackVectorInferenceCases:
     quit(1)
 
   let genericNatIndexCases = forAll(

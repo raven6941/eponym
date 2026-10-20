@@ -668,7 +668,7 @@ proc fireRed(elimId: int, rule: RedRule, args: seq[Value],
   ## length rule.nargs (last = scrutinee), in application order.
   let scrut = args[^1]
   if scrut.whnf.kind == wRef and scrut.whnf.refId in rule.cases:
-    var cargs: seq[Term] = @[]
+    var cargs: seq[Value] = @[]
     # Skip the leading params (Experiment 5); only fresh ctor vars
     # become substitution arguments.
     for i in rule.nParams ..< scrut.whnf.spine.len:
@@ -676,17 +676,17 @@ proc fireRed(elimId: int, rule: RedRule, args: seq[Value],
       if e.kind != eApp:  # projections on the scrutinee: stay neutral
         return Whnf(kind: wRef, refId: elimId,
                     spine: args.mapIt(ElimV(kind: eApp, arg: it)))
-      cargs.add(e.arg.syn)
-    # The template's context is innermost-first: [ctor vars, elim vars].
-    # substSpine maps V(i) -> spine[i], so the spine must be innermost-first:
-    # ctor args reversed, then elim args (excluding scrutinee) reversed.
-    var spine: seq[Term] = @[]
+      cargs.add(e.arg)
+    # The template's context is innermost-first: [ctor vars, elim vars]. Keep
+    # actual runtime Values in the environment so opaque host payloads survive
+    # recursive eliminator reduction; their syntax alone cannot encode them.
+    var env: seq[Value] = @[]
     for i in countdown(cargs.high, 0):
-      spine.add(cargs[i])
+      env.add(cargs[i])
     for i in countdown(args.high - 1, 0):
-      spine.add(args[i].syn)
-    let inst = substSpine(rule.cases[scrut.whnf.refId], spine)
-    return evalWithBindings(inst, @[], bindings).whnf
+      env.add(args[i])
+    return evalWithBindings(rule.cases[scrut.whnf.refId], env,
+                            bindings).whnf
   # fully applied but the scrutinee is not constructor-headed: neutral
   Whnf(kind: wRef, refId: elimId, spine: args.mapIt(ElimV(kind: eApp, arg: it)))
 
@@ -731,6 +731,10 @@ proc applyWhnf*(f, a: Value): Whnf =
 
 proc vApp(f, a: Value): Value =
   Value(syn: tmApp(f.syn, a.syn), whnf: applyWhnf(f, a))
+
+proc vAppWithBindings*(f, a: Value, bindings: RuntimeBindings): Value =
+  Value(syn: tmApp(f.syn, a.syn),
+        whnf: applyWhnfWithBindings(f, a, bindings))
 
 proc projWhnf(p: Value, wantFst: bool): Whnf =
   case p.whnf.kind

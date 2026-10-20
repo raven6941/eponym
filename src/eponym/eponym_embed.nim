@@ -1229,7 +1229,7 @@ proc callRuntimeValue*(fn: Value, args: openArray[Value]): Value =
   ## from its definition, including block-local postulate adapters.
   result = fn
   for arg in args:
-    result = Value(syn: result.syn, whnf: applyWhnf(result, arg))
+    result = vAppWithBindings(result, arg, initRuntimeBindings())
 
 proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
                                bindings: RuntimeBindings): Value =
@@ -1237,8 +1237,7 @@ proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
   let t = d.tmTm
   var fn = evalWithBindings(t, @[], bindings)
   for arg in args:
-    let w = applyWhnf(fn, arg)
-    fn = Value(syn: t, whnf: w)  # syn doesn't matter for result
+    fn = vAppWithBindings(fn, arg, bindings)
   fn
 
 proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],

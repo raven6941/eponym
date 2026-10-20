@@ -2002,6 +2002,29 @@ proc genericRuntimeInfo(decl: NimNode,
         result.genericBoolArgs.add(false)
         result.genericIntArgs.add(true)
 
+proc callbackCanDeferGenericInference(params: NimNode, paramIndex: int,
+    typeNames: seq[string]): bool =
+  ## Nim does not revisit an earlier callback argument after it infers a
+  ## generic type from a later value argument. Leave that callback untyped in
+  ## the generated wrapper; invoking it in the wrapper body still checks its
+  ## concrete argument and result types.
+  if paramIndex <= 0 or paramIndex >= params.len or
+      params[paramIndex].kind != nnkIdentDefs:
+    return false
+  let callbackType = params[paramIndex][^2]
+  if runtimeProcParts(callbackType).resultType.isNil:
+    return false
+  for genericName in typeNames:
+    if not mentionsName(callbackType, genericName):
+      continue
+    for otherIndex in 1 ..< params.len:
+      if otherIndex == paramIndex or params[otherIndex].kind != nnkIdentDefs:
+        continue
+      let otherType = params[otherIndex][^2]
+      if runtimeProcParts(otherType).resultType.isNil and
+          mentionsName(otherType, genericName):
+        return true
+
 proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     typeNames: seq[string], genericNames: seq[NimNode],
     genericNatArgs: seq[bool], genericBoolArgs: seq[bool],
@@ -2277,7 +2300,10 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     for j in 0 ..< p.len - 2:
       let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
       let argSym = genSym(nskParam, $argName)
-      formal.add(newIdentDefs(argSym, argType, newEmptyNode()))
+      let formalType = if callbackCanDeferGenericInference(params, i,
+          generic.typeNames): ident"auto"
+        else: argType
+      formal.add(newIdentDefs(argSym, formalType, newEmptyNode()))
       argSyms.add(argSym)
       argNames.add($argName)
       argEponymTypes.add(p[^2])
@@ -2484,7 +2510,10 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
     for j in 0 ..< p.len - 2:
       let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
       let argSym = genSym(nskParam, $argName)
-      formal.add(newIdentDefs(argSym, nimType, newEmptyNode()))
+      let formalType = if callbackCanDeferGenericInference(params, i,
+          generic.typeNames): ident"auto"
+        else: nimType
+      formal.add(newIdentDefs(argSym, formalType, newEmptyNode()))
       argSyms.add(argSym)
       argNames.add($argName)
       eponymTypes.add(p[^2])
