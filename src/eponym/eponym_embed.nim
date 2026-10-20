@@ -124,6 +124,8 @@ proc bindHostValueNary*(bindings: var RuntimeBindings, globals: Globals,
                 hostValueNary(arity, implementation, globals))
 
 proc opaqueTypeHeadId(ty: Term): int
+proc canonicalNatConstructorIds(globals: Globals):
+    tuple[zeroId, sucId: int, valid: bool]
 
 proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
     argTypeNames: openArray[string], firstTypeName, secondTypeName: string,
@@ -213,6 +215,24 @@ proc validateHostVectorCodec*(globals: Globals, familyName: string) =
       "runtimeVector requires a declared data family and its constructors")
   let familyId = family.tm.refId
   let natId = nat.tm.refId
+  let natConstructors = canonicalNatConstructorIds(globals)
+  if not natConstructors.valid:
+    raise newException(ValueError,
+      "runtimeVector requires canonical zero and suc Nat constructors")
+  proc appArgs(term: Term): seq[Term] =
+    if term.isNil: return
+    if term.kind == tApp:
+      result = appArgs(term.fn)
+      result.add(term.arg)
+  proc isVar(term: Term, index: int): bool =
+    not term.isNil and term.kind == tV and term.idx == index
+  proc isRef(term: Term, refId: int): bool =
+    not term.isNil and term.kind == tR and term.refId == refId
+  proc isFamilyApp(term: Term, argCount: int): bool =
+    let args = appArgs(term)
+    not term.isNil and term.kind == tApp and
+      opaqueTypeHeadId(term) == familyId and
+      args.len == argCount
   let nilTy = nilCtor.ty
   let consTy = consCtor.ty
   if family.ty.isNil or family.ty.kind != tPi or
@@ -223,8 +243,11 @@ proc validateHostVectorCodec*(globals: Globals, familyName: string) =
     raise newException(ValueError,
       "runtimeVector family must have shape Type -> Nat -> Type")
   if nilTy.isNil or nilTy.kind != tPi or nilTy.dom.kind != tType or
-      nilTy.impl or nilTy.qty == q0 or nilTy.scope.bdy.isNil or
-      opaqueTypeHeadId(nilTy.scope.bdy) != familyId:
+      nilTy.impl or nilTy.qty == q0 or
+      not isFamilyApp(nilTy.scope.bdy, 2) or
+      not isVar(appArgs(nilTy.scope.bdy)[0], 0) or
+      not isRef(appArgs(nilTy.scope.bdy)[1],
+        natConstructors.zeroId):
     raise newException(ValueError,
       "runtimeVector nil constructor must take a type and return " & familyName)
   if consTy.isNil or consTy.kind != tPi or consTy.dom.kind != tType or
@@ -239,16 +262,75 @@ proc validateHostVectorCodec*(globals: Globals, familyName: string) =
       "runtimeVector cons must take a Nat tail length")
   let elementBinder = lengthBinder.scope.bdy
   if elementBinder.isNil or elementBinder.kind != tPi or elementBinder.impl or
-      elementBinder.qty == q0:
+      elementBinder.qty == q0 or not isVar(elementBinder.dom, 1):
     raise newException(ValueError,
       "runtimeVector cons must take an element")
   let tailBinder = elementBinder.scope.bdy
   if tailBinder.isNil or tailBinder.kind != tPi or tailBinder.impl or
-      tailBinder.qty == q0 or opaqueTypeHeadId(tailBinder.dom) != familyId or
-      tailBinder.scope.bdy.isNil or tailBinder.scope.bdy.kind != tApp or
-      opaqueTypeHeadId(tailBinder.scope.bdy.fn) != familyId:
+      tailBinder.qty == q0 or not isFamilyApp(tailBinder.dom, 2) or
+      not isVar(appArgs(tailBinder.dom)[0], 2) or
+      not isVar(appArgs(tailBinder.dom)[1], 1) or
+      not isFamilyApp(tailBinder.scope.bdy, 2) or
+      not isVar(appArgs(tailBinder.scope.bdy)[0], 3):
     raise newException(ValueError,
       "runtimeVector cons must take a tail and return " & familyName)
+
+proc validateHostListCodec*(globals: Globals, familyName: string) =
+  ## Accept the standard unindexed List family with nil and cons constructors.
+  if familyName notin globals or "nil" notin globals or "cons" notin globals:
+    raise newException(ValueError,
+      "runtimeList requires the family, nil, and cons declarations")
+  let family = globals[familyName]
+  let nilCtor = globals["nil"]
+  let consCtor = globals["cons"]
+  if family.tm.isNil or family.tm.kind != tR or family.tm.refIsDefn or
+      nilCtor.tm.isNil or consCtor.tm.isNil or
+      not nilCtor.isDataConstructor or not consCtor.isDataConstructor:
+    raise newException(ValueError,
+      "runtimeList requires a declared data family and its constructors")
+  let familyId = family.tm.refId
+  proc appArgs(term: Term): seq[Term] =
+    if term.isNil: return
+    if term.kind == tApp:
+      result = appArgs(term.fn)
+      result.add(term.arg)
+  proc isVar(term: Term, index: int): bool =
+    not term.isNil and term.kind == tV and term.idx == index
+  proc isFamilyApp(term: Term): bool =
+    let args = appArgs(term)
+    not term.isNil and term.kind == tApp and
+      opaqueTypeHeadId(term) == familyId and
+      args.len == 1
+  let familyTy = family.ty
+  if familyTy.isNil or familyTy.kind != tPi or familyTy.dom.kind != tType or
+      familyTy.scope.bdy.kind != tType:
+    raise newException(ValueError,
+      "runtimeList family must have shape Type -> Type")
+  let nilTy = nilCtor.ty
+  if nilTy.isNil or nilTy.kind != tPi or nilTy.dom.kind != tType or
+      nilTy.impl or nilTy.qty == q0 or
+      not isFamilyApp(nilTy.scope.bdy) or
+      not isVar(appArgs(nilTy.scope.bdy)[0], 0):
+    raise newException(ValueError,
+      "runtimeList nil constructor must take a type and return " & familyName)
+  let consTy = consCtor.ty
+  if consTy.isNil or consTy.kind != tPi or consTy.dom.kind != tType or
+      consTy.impl or consTy.qty == q0:
+    raise newException(ValueError,
+      "runtimeList cons constructor must take a type parameter")
+  let elementBinder = consTy.scope.bdy
+  if elementBinder.isNil or elementBinder.kind != tPi or elementBinder.impl or
+      elementBinder.qty == q0 or not isVar(elementBinder.dom, 0):
+    raise newException(ValueError,
+      "runtimeList cons constructor must take an element")
+  let tailBinder = elementBinder.scope.bdy
+  if tailBinder.isNil or tailBinder.kind != tPi or tailBinder.impl or
+      tailBinder.qty == q0 or not isFamilyApp(tailBinder.dom) or
+      not isVar(appArgs(tailBinder.dom)[0], 1) or
+      not isFamilyApp(tailBinder.scope.bdy) or
+      not isVar(appArgs(tailBinder.scope.bdy)[0], 2):
+    raise newException(ValueError,
+      "runtimeList cons must take a tail and return " & familyName)
 
 proc natIndexSucc*(n: int): int =
   if n < 0 or n == high(int):
@@ -311,6 +393,39 @@ proc vecValueToSeq*[T](value: Value, expectedLength: int, globals: Globals,
       current.whnfSpineLen != 1 or current.whnfSpineKind(0) != eApp:
     raise newException(ValueError,
       "runtime value is not a Vec of the declared length")
+
+proc seqToListValue*[T](items: seq[T], globals: Globals,
+    familyName: string,
+    encode: proc(item: T, globals: Globals): Value): Value =
+  validateHostListCodec(globals, familyName)
+  result = callRuntimeValue(eval(globals["nil"].tm, @[]), @[vType(0)])
+  for i in countdown(items.high, 0):
+    let encodedItem = encode(items[i], globals)
+    result = callRuntimeValue(eval(globals["cons"].tm, @[]),
+      @[vType(0), encodedItem, result])
+
+proc listValueToSeq*[T](value: Value, globals: Globals,
+    familyName: string,
+    decode: proc(value: Value, globals: Globals): T): seq[T] =
+  validateHostListCodec(globals, familyName)
+  let nilId = globals["nil"].tm.refId
+  let consId = globals["cons"].tm.refId
+  var current = value
+  while true:
+    if current.whnfKind != wRef:
+      raise newException(ValueError, "runtime value is not a List")
+    if current.whnfRefId == nilId:
+      if current.whnfSpineLen != 1 or current.whnfSpineKind(0) != eApp:
+        raise newException(ValueError, "runtime List nil constructor has invalid spine")
+      return
+    if current.whnfRefId != consId or current.whnfSpineLen != 3:
+      raise newException(ValueError, "runtime value is not a List")
+    for argIndex in 0 ..< current.whnfSpineLen:
+      if current.whnfSpineKind(argIndex) != eApp:
+        raise newException(ValueError,
+          "runtime List constructor has an invalid spine")
+    result.add(decode(current.whnfSpineArg(1), globals))
+    current = current.whnfSpineArg(2)
 
 proc validateHostMappedNaryType*(globals: Globals, postulateName: string,
                                  typeNames: openArray[string]) =

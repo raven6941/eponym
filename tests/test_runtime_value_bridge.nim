@@ -208,6 +208,15 @@ eponymBlock:
   runtimeValue(generatedSizedVecIdentity)
 
 eponymBlock:
+  import "../lib/list.ep"
+  postulate(Int, Univ)
+  runtimeList(List)
+  proc generatedIntListIdentity(values: List[Int]): List[Int] = values
+  runtimeValue(generatedIntListIdentity)
+  proc generatedListIdentity[A: Univ](values: List[A]): List[A] = values
+  runtimeValue(generatedListIdentity)
+
+eponymBlock:
   import "../lib/bool.ep"
   postulate(Int, Univ)
   proc generatedGenericBoolValue[b: Bool](ignored: Int): Bool = b
@@ -251,6 +260,19 @@ proc decodeRuntimeIntMatrix(value: Value, rows: int,
   vecValueToSeq[seq[int]](value, rows, globals, "Vec",
     proc(row: Value, nestedGlobals: Globals): seq[int] =
       decodeRuntimeIntVector(row, 2, nestedGlobals))
+
+proc decodeRuntimeIntList(value: Value, globals: Globals): seq[int] =
+  listValueToSeq[int](value, globals, "List",
+    proc(item: Value, _: Globals): int = valueToInt(item))
+
+proc decodeRuntimeHostList[T](value: Value,
+                              globals: Globals): seq[T] =
+  listValueToSeq[T](value, globals, "List",
+    proc(item: Value, _: Globals): T = valueToHost[T](item))
+
+proc decodeRuntimeChannelList(value: Value,
+                              globals: Globals): seq[ChannelHandle] =
+  decodeRuntimeHostList[ChannelHandle](value, globals)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -316,6 +338,9 @@ static:
     @[@[1, 2], @[3, 4], @[5, 6]]))
   doAssert compiles(generatedSizedVecIdentity(
     RuntimeSizedVec(prefixLength: 1, suffixLength: 1, values: @[7, 8])))
+  doAssert compiles(generatedListIdentity[int](@[1, 2, 3]))
+  doAssert compiles(generatedListIdentity[ChannelHandle](@[
+    ChannelHandle(id: 2, label: "list")]))
   doAssert compiles(generatedGenericBoolValue[true](1))
   doAssert compiles(generatedGenericBoolValue[false](1))
   doAssert compiles(generatedGenericBoolValueRuntimeValue[true](1))
@@ -908,6 +933,35 @@ proc callbackRole : Callback -> Sample -> Sample =
   except ValueError as error:
     wrongVectorLengthRejected = "runtime Vec length mismatch" in error.msg
   doAssert wrongVectorLengthRejected
+
+  let listCodecCases = forAll(
+    "length-independent List values cross as checked Nim sequences", r, 200,
+    proc(r: var Rng): tuple[length: int, seed: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000)),
+    proc(input: tuple[length: int, seed: int]): bool =
+      var values = newSeq[int](input.length)
+      var handles = newSeq[ChannelHandle](input.length)
+      for i in 0 ..< input.length:
+        values[i] = input.seed + i
+        handles[i] = ChannelHandle(id: input.seed + i,
+          label: "list/" & $(input.seed + i))
+      let intRuntime = generatedIntListIdentityRuntimeValue(values)
+      let rawIntRuntime = generatedIntListIdentityRuntimeValue([intRuntime.value])
+      let runtime = generatedListIdentityRuntimeValue[int](values)
+      let rawRuntime = generatedListIdentityRuntimeValue[int]([runtime.value])
+      let opaqueRuntime = generatedListIdentityRuntimeValue[ChannelHandle](handles)
+      generatedIntListIdentity(values) == values and
+      generatedListIdentity[int](values) == values and
+        generatedListIdentity[ChannelHandle](handles) == handles and
+        decodeRuntimeIntList(intRuntime.value, intRuntime.globals) == values and
+        decodeRuntimeIntList(rawIntRuntime.value, rawIntRuntime.globals) == values and
+        decodeRuntimeHostList[int](runtime.value, runtime.globals) == values and
+        decodeRuntimeHostList[int](rawRuntime.value, rawRuntime.globals) == values and
+        decodeRuntimeChannelList(opaqueRuntime.value,
+          opaqueRuntime.globals) == handles)
+  if not listCodecCases:
+    quit(1)
+  doAssert generatedListIdentity[int](@[]) == @[]
 
   let nestedVectorCases = forAll(
     "nested length-indexed Vec values recurse through sequence codecs", r, 200,

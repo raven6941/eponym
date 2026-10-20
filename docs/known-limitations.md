@@ -111,7 +111,10 @@ element type uses its recursive runtime codec, including nested vectors such
 as `Vec[Vec[Int, m], n]` mapped to `seq[seq[int]]`. The codec accepts Nat length
 expressions made from a static index, `zero`, `suc`, `add`, and `mul`. It
 requires the standard `nil` and `cons` constructor shape from `lib/vec.ep`.
-Other collections and data types with payload constructors remain unsupported.
+The standard unindexed `List[A]` family also has a `runtimeList(List)` codec
+that maps to `seq[A]`, checks constructor identities and spines, and recursively
+uses the element codec. Other collections and payload-bearing data types remain
+unsupported.
 A mapped `Future[T]` can pass through an opaque postulate adapter as either an
 argument or result; the bridge preserves the same Nim future value. Eponym
 has no async effect, await, or cancellation operation. Completion, failure,
