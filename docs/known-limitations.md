@@ -54,8 +54,10 @@ opaque object and nullary enum values. The value must be representable as a
 Nim compile-time constant. Dynamic wrappers also support generic value binders
 whose domain is an indexed `Vec` with a registered `runtimeVector` codec: the
 wrapper takes the corresponding Nim `seq` and checks its length while encoding.
-Generic binders over Sigma values, other structural values, and unmapped
-Eponym values remain unsupported by typed dynamic wrappers.
+Generic binders over non-dependent Sigma values are also supported when each
+field has a runtime codec; nested Vec fields retain their length checks.
+Dependent Sigma generic binders, other structural values without a registered
+codec, and unmapped Eponym values remain unsupported by typed dynamic wrappers.
 When a generic type appears in both a callback parameter and a later ordinary
 value parameter, generated wrappers let Nim infer the type from the value,
 including when a later `Vec[A, n]` argument maps to `seq[A]`. The callback's
