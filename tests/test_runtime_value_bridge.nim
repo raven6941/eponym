@@ -297,6 +297,7 @@ eponymBlock:
   postulate(hostPlusSeven, Int -> Int)
   bindPostulate(hostPlusSeven, hostStepNim)
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
+  proc generatedDefault(value: Int = 42): Int = value
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
   proc generatedNatId(value: Nat): Nat = value
   proc generatedBoolXor(left: Bool, right: Bool): Bool = left xor right
@@ -1321,6 +1322,10 @@ static:
   doAssert compiles(importedImplicitIntIdentityRuntimeValue[17]())
   doAssert compiles(importedImplicitTokenIdentityRuntimeValue[importedTokenBlue]())
   doAssert compiles(generatedCheckedRole(35))
+  doAssert compiles(generatedDefault())
+  doAssert compiles(generatedDefault(7))
+  doAssert compiles(generatedDefault(value = 7))
+  doAssert compiles(generatedAdd(left = 20, right = 22))
   doAssert compiles(generatedAdd(20, 22))
   doAssert not compiles(generatedAdd(42))
   doAssert not compiles(generatedAdd("20", 22))
@@ -3271,6 +3276,9 @@ when isMainModule:
   let compat = callIntFuncDir(baseDir, program, "double", @[21]) == 42
   let generatedBindingWorks = generatedCheckedRole(35) == 42
   let generatedTypedWrappersWork = generatedAdd(20, 22) == 42 and
+    generatedAdd(left = 20, right = 22) == 42 and
+    generatedDefault() == 42 and generatedDefault(7) == 7 and
+    generatedDefault(value = 7) == 7 and
     generatedNatId(17) == 17 and generatedArithmetic(5, 7, 3) == -27 and
     generatedSigmaId((17, -9)) == (17, -9) and
     generatedOpaqueSigmaId((17, ChannelHandle(id: 1))) ==

@@ -4133,7 +4133,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     for j in 0 ..< p.len - 2:
       let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
       let argSym = genSym(nskParam, $argName)
-      formal.add(newIdentDefs(argSym, argType, newEmptyNode()))
+      let defaultValue = if p[^1].kind == nnkEmpty: newEmptyNode()
+                         else: copyNimTree(p[^1])
+      formal.add(newIdentDefs(argSym, argType, defaultValue))
       argSyms.add(argSym)
       argNames.add($argName)
       argEponymTypes.add(p[^2])

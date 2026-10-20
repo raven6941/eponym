@@ -578,6 +578,10 @@ implementations.
    dependent Vec, shadowed indices, record/Sigma index composition, and
    rejection of mismatched lengths.
    Remaining gaps:
+   - [x] Preserve Nim default parameter values on generated typed wrappers.
+     Runtime bridge regressions check an omitted default, positional and named
+     overrides, and named arguments generally; compile-time checks confirm
+     those Nim call forms are accepted.
    - [x] Generate typed Nim wrappers and typed `RuntimeValue` overloads from
      imported `.ep` definitions whose checked Pi signatures use supported
      runtime codecs. A 200-case property covers an imported identity and a
