@@ -77,6 +77,8 @@ Inside `eponymBlock`, named term arguments are reordered for calls to known
 local and imported declarations. Unknown names, duplicate arguments, and
 omitted required arguments produce compile-time diagnostics. Calls through
 arbitrary callable aliases still need signature metadata to support names.
+Known local procedures also apply Nim defaults at checked call sites, including
+when named arguments skip a preceding defaulted parameter.
 
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values, canonical Bool constructors, nullary
