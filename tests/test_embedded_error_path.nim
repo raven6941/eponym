@@ -17,7 +17,7 @@ import os
 import osproc
 import strutils
 
-const pathFlags = "--path:src --path:src/eponym"
+const pathFlags = "--path:src --path:src/eponym --nimcache:/tmp/eponym-errpath-nimcache"
 
 let tmpDir = getTempDir() / "eponym-errpath-tests"
 createDir(tmpDir)
@@ -59,10 +59,12 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_binding_nim_type.nim", "type mismatch"),
     ("tests/fixtures/embedded_err_binding_opaque_nim_type.nim",
      "type mismatch"),
-    ("tests/fixtures/embedded_err_runtime_type_structured.nim",
-     "eponymBlock runtimeType error"),
     ("tests/fixtures/embedded_err_unsupported_runtime_type.nim",
      "no runtime codec for Eponym result type 'Thing'"),
+    ("tests/fixtures/embedded_err_dependent_sigma_runtime.nim",
+     "no runtime codec for Eponym result type 'Sig(n: Nat, Vec[Nat, n])'"),
+    ("tests/fixtures/embedded_err_dependent_record_runtime.nim",
+     "no runtime codec for Eponym result type 'Point'"),
     ("tests/fixtures/embedded_err_binding_unused.nim",
      "binding for postulate 'hostStepPostulate' is unused"),
     ("tests/fixtures/embedded_err_binding_duplicate.nim",

@@ -26,6 +26,14 @@ type ChannelHandle = object
 
 type NimIntCallback = proc(value: int): int {.closure.}
 
+type RuntimePoint = object
+  x: int
+  channel: ChannelHandle
+
+type RuntimeEnvelope = object
+  point: RuntimePoint
+  note: string
+
 proc hostWrongFour(channel: ChannelHandle, message: string,
                    requestId, phase: int): int = channel.id + requestId + phase
 
@@ -89,6 +97,7 @@ eponymBlock:
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
   proc generatedNatId(value: Nat): Nat = value
+  proc generatedSigmaId(value: Sig(Nat, Int)): Sig(Nat, Int) = value
   proc generatedArithmetic(left: Int, right: Int, scale: Int): Int =
     let difference = left - right
     let subtotal = difference + -right
@@ -105,6 +114,7 @@ eponymBlock:
   proc generatedFailureRole(value: Int): Int = hostFailure(value)
 
 eponymBlock:
+  postulate(Nat, Univ)
   postulate(Channel, Univ)
   postulate(Message, Univ)
   postulate(RequestId, Univ)
@@ -119,6 +129,17 @@ eponymBlock:
   runtimeType(PendingResult, Future[int])
   runtimeType(Callback, NimIntCallback)
   runtimeType(Sample, int)
+  record(Point):
+    field(x, Nat)
+    field(channel, Channel)
+  runtimeType(Point, RuntimePoint)
+  proc generatedPointRebuild(value: Point): Point =
+    mkPoint(value.x, value.channel)
+  record(Envelope):
+    field(point, Point)
+    field(note, Message)
+  runtimeType(Envelope, RuntimeEnvelope)
+  proc generatedEnvelopeId(value: Envelope): Envelope = value
   postulate(rotateChannel, Channel -> Channel)
   bindPostulate(rotateChannel, hostRotateChannel, Channel)
   postulate(routeChannel, Channel -> Message -> Channel)
@@ -153,6 +174,8 @@ eponymBlock:
     startFuture(channel)
   proc generatedFutureInput(value: PendingResult): PendingResult =
     passFuture(value)
+  proc generatedOpaqueSigmaId(value: Sig(Nat, Channel)): Sig(Nat, Channel) =
+    value
   proc generatedCallbackRole(callback: Callback, value: Sample): Sample =
     invokeCallback(callback, value)
 
@@ -162,6 +185,8 @@ static:
   doAssert not compiles(generatedAdd(42))
   doAssert not compiles(generatedAdd("20", 22))
   doAssert compiles(generatedNatId(17))
+  doAssert compiles(generatedSigmaId((17, -9)))
+  doAssert not compiles(generatedSigmaId((17, "wrong field type")))
   doAssert compiles(generatedArithmetic(1, 2, 3))
   doAssert compiles(generatedChooseTrue())
   doAssert compiles(generatedChooseFalse())
@@ -174,6 +199,12 @@ static:
     "hello", 2, 3))
   doAssert compiles(generatedFutureRole(ChannelHandle(id: 1)))
   doAssert compiles(generatedFutureInput(newFuture[int]("typedFuture")))
+  doAssert compiles(generatedOpaqueSigmaId((17, ChannelHandle(id: 1))))
+  doAssert compiles(generatedPointRebuild(RuntimePoint(x: 17,
+    channel: ChannelHandle(id: 1))))
+  doAssert compiles(generatedEnvelopeId(RuntimeEnvelope(
+    point: RuntimePoint(x: 17, channel: ChannelHandle(id: 1)),
+    note: "ok")))
   doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
   doAssert not compiles(generatedCallbackRole(42, 1))
 
@@ -204,7 +235,32 @@ when isMainModule:
   let compat = callIntFuncDir(baseDir, program, "double", @[21]) == 42
   let generatedBindingWorks = generatedCheckedRole(35) == 42
   let generatedTypedWrappersWork = generatedAdd(20, 22) == 42 and
-    generatedNatId(17) == 17 and generatedArithmetic(5, 7, 3) == -27
+    generatedNatId(17) == 17 and generatedArithmetic(5, 7, 3) == -27 and
+    generatedSigmaId((17, -9)) == (17, -9) and
+    generatedOpaqueSigmaId((17, ChannelHandle(id: 1))) ==
+      (17, ChannelHandle(id: 1))
+  let generatedRecordRoundTrips = forAll(
+    "structural record codec preserves primitive and opaque fields", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let input = RuntimePoint(x: abs(n mod 1000),
+        channel: ChannelHandle(id: n, label: "point-" & $n))
+      generatedPointRebuild(input) == input,
+    shrinkInt)
+  if not generatedRecordRoundTrips:
+    quit(1)
+  let generatedNestedRecordRoundTrips = forAll(
+    "nested structural record codecs preserve recursive fields", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let input = RuntimeEnvelope(
+        point: RuntimePoint(x: abs(n mod 1000),
+          channel: ChannelHandle(id: n, label: "nested-" & $n)),
+        note: "message-" & $n)
+      generatedEnvelopeId(input) == input,
+    shrinkInt)
+  if not generatedNestedRecordRoundTrips:
+    quit(1)
   let generatedPureConditionalsWork = generatedChooseTrue() == 19 and
     generatedChooseFalse() == 17
   let generatedOpaqueWrapperWorks = generatedRouteRole(
@@ -220,6 +276,24 @@ when isMainModule:
       let scale = (n mod 9) + 1
       generatedArithmetic(n, right, scale) == (n - right - right) * scale,
     shrinkInt)
+  let sigmaRoundTrips = forAll(
+    "structural Sigma codec round-trips Nat/Int tuple values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let input = (abs(n mod 1000), n)
+      generatedSigmaId(input) == input,
+    shrinkInt)
+  if not sigmaRoundTrips:
+    quit(1)
+  let opaqueSigmaCases = forAll(
+    "structural Sigma codec preserves mapped opaque fields", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let input = (abs(n mod 1000), ChannelHandle(id: n, label: $n))
+      generatedOpaqueSigmaId(input) == input,
+    shrinkInt)
+  if not opaqueSigmaCases:
+    quit(1)
   if not arithmeticCases:
     quit(1)
   let generatedUnaryOpaqueWorks = generatedRotateRole(
@@ -254,6 +328,8 @@ when isMainModule:
     rejectedNegativeNat = true
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
+      generatedRecordRoundTrips and
+      generatedNestedRecordRoundTrips and
       generatedFutureInputPassesThrough and
       generatedPureConditionalsWork and
       generatedUnaryOpaqueWorks and generatedUnaryOpaqueCases and
