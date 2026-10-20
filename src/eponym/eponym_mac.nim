@@ -28,6 +28,7 @@ type ExplicitBinderKind = enum
 type LegacyCallInfo = object
   explicitCount: int
   termCount: int
+  termParamNames: seq[string]
   leadingTermCount: int
   requiredBracketCount: int
   inferableIndexCount: int
@@ -51,7 +52,7 @@ var legacyRecordFieldTypeNames {.compileTime.} =
 var scopedLegacyValueTypeNames {.compileTime.} = initTable[string, string]()
 var ambiguousLegacyFieldNames {.compileTime.} = initHashSet[string]()
 
-proc sameCallInfo(a, b: LegacyCallInfo): bool =
+proc sameCallShape(a, b: LegacyCallInfo): bool =
   a.explicitCount == b.explicitCount and a.termCount == b.termCount and
     a.leadingTermCount == b.leadingTermCount and
     a.requiredBracketCount == b.requiredBracketCount and
@@ -61,6 +62,9 @@ proc sameCallInfo(a, b: LegacyCallInfo): bool =
     a.explicitBinderKinds == b.explicitBinderKinds and
     a.requiresBrackets == b.requiresBrackets and
     a.firstExplicitType == b.firstExplicitType
+
+proc sameCallInfo(a, b: LegacyCallInfo): bool =
+  sameCallShape(a, b) and a.termParamNames == b.termParamNames
 
 proc refreshFirstExplicitType(info: var LegacyCallInfo) =
   if info.explicitBinderKinds.len > 0:
@@ -108,6 +112,50 @@ proc commandArgumentCount(n: NimNode): int =
   elif n.len > 0:
     result = n.len - 1
 
+proc namedArgumentName(arg: NimNode): string =
+  if arg.kind == nnkExprEqExpr and arg.len == 2 and
+      arg[0].kind in {nnkIdent, nnkSym}:
+    result = $arg[0]
+
+proc orderedNamedArguments(args: seq[NimNode], names: seq[string],
+    call: NimNode): seq[NimNode] =
+  if args.len == 0 or args.allIt(namedArgumentName(it).len == 0):
+    return args
+  if names.len == 0:
+    error("eponymBlock: named arguments need a known callable signature", call)
+  var ordered = newSeq[NimNode](names.len)
+  var nextPositional = 0
+  for arg in args:
+    let name = namedArgumentName(arg)
+    var index = -1
+    if name.len > 0:
+      for i, paramName in names:
+        if paramName == name:
+          index = i
+          break
+      if index < 0:
+        error("eponymBlock: unknown named argument '" & name & "'", arg)
+    else:
+      while nextPositional < ordered.len and not ordered[nextPositional].isNil:
+        inc nextPositional
+      if nextPositional >= ordered.len:
+        error("eponymBlock: too many arguments", call)
+      index = nextPositional
+      inc nextPositional
+    if not ordered[index].isNil:
+      error("eponymBlock: duplicate argument for '" & names[index] & "'",
+        arg)
+    ordered[index] = if name.len > 0: arg[1] else: arg
+  var sawGap = false
+  for i, value in ordered:
+    if value.isNil:
+      sawGap = true
+    elif sawGap:
+      error("eponymBlock: named arguments cannot skip an earlier Eponym " &
+        "parameter", call)
+    else:
+      result.add(value)
+
 proc callInfoForHead(n: NimNode,
     preserveTrailingResultIndex = false):
     tuple[found: bool, info: LegacyCallInfo] =
@@ -139,6 +187,18 @@ proc callInfoForHead(n: NimNode,
             supplied <= base.info.termCount)):
         var remaining = base.info
         remaining.termCount = max(0, remaining.termCount - supplied)
+        let namedCount = (if head.kind == nnkCommand: 0 else:
+          (1 ..< head.len).countIt(namedArgumentName(head[it]).len > 0))
+        let positionalCount = supplied - namedCount
+        var consumedNames = initHashSet[string]()
+        for i in 0 ..< min(positionalCount, base.info.termParamNames.len):
+          consumedNames.incl(base.info.termParamNames[i])
+        if head.kind != nnkCommand:
+          for i in 1 ..< head.len:
+            let name = namedArgumentName(head[i])
+            if name.len > 0: consumedNames.incl(name)
+        for name in base.info.termParamNames:
+          if name notin consumedNames: remaining.termParamNames.add(name)
         remaining.leadingTermCount =
           max(0, remaining.leadingTermCount - supplied)
         var pendingPositions: seq[int] = @[]
@@ -258,6 +318,7 @@ proc callInfoForHead(n: NimNode,
   of nnkIfExpr, nnkIfStmt:
     var selected: LegacyCallInfo
     var haveSelected = false
+    var namesAmbiguous = false
     for branch in head:
       var body: NimNode
       if branch.kind in {nnkElifExpr, nnkElifBranch} and branch.len == 2:
@@ -270,9 +331,13 @@ proc callInfoForHead(n: NimNode,
         body = body[0]
       let candidate = callInfoForHead(body, preserveTrailingResultIndex)
       if not candidate.found: return
-      if haveSelected and not sameCallInfo(candidate.info, selected):
+      if haveSelected and not sameCallShape(candidate.info, selected):
         return
+      if haveSelected and
+          candidate.info.termParamNames != selected.termParamNames:
+        namesAmbiguous = true
       selected = candidate.info
+      if namesAmbiguous: selected.termParamNames.setLen(0)
       haveSelected = true
     if haveSelected: return (true, selected)
   else:
@@ -389,11 +454,11 @@ proc nimIndexArity(kind: NimNode): int =
       break
 
 proc registerLegacyInfo(name: string, info: LegacyCallInfo) =
-  if info.explicitCount > 0:
+  if info.explicitCount > 0 or info.termParamNames.len > 0:
     legacyCallInfo[name] = info
 
 proc registerLegacyResultInfo(name: string, info: LegacyCallInfo) =
-  if info.explicitCount > 0:
+  if info.explicitCount > 0 or info.termParamNames.len > 0:
     legacyResultCallInfo[name] = info
 
 proc returnedCallInfo(n: NimNode): LegacyCallInfo =
@@ -421,7 +486,7 @@ proc registerScopedLetCallInfo(body: NimNode) =
       for i in 0 ..< binding.len - 2:
         let name = binderName(binding[i])
         scopedLegacyCallInfo.del(name)
-        if info.explicitCount > 0:
+        if info.explicitCount > 0 or info.termParamNames.len > 0:
           scopedLegacyCallInfo[name] = info
         scopedLegacyValueTypeNames.del(name)
         let declaredType = binding[^2]
@@ -465,6 +530,7 @@ proc surfaceCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
         result.requiresBrackets = true
     elif not binder.impl:
       inc result.termCount
+      result.termParamNames.add(binder.name)
       if result.explicitCount == 0: inc result.leadingTermCount
 
 proc mentionsPretermName(term: PreTerm, name: string): bool
@@ -566,6 +632,7 @@ proc surfaceTypeCallInfo(ty: PreTerm): LegacyCallInfo =
       result.explicitBinderKinds.add(ebkIndex)
     elif not binder.impl:
       inc result.termCount
+      result.termParamNames.add(binder.name)
       inc termPosition
       if result.explicitCount == 0: inc result.leadingTermCount
 
@@ -583,6 +650,7 @@ proc surfaceFamilyCallInfo(params: seq[tuple[name: string, ty: PreTerm,
         result.requiresBrackets = true
     else:
       inc result.termCount
+      result.termParamNames.add(param.name)
       if result.explicitCount == 0: inc result.leadingTermCount
 
 proc mentionsPretermName(term: PreTerm, name: string): bool =
@@ -665,6 +733,7 @@ proc surfaceConstructorCallInfo(tele: seq[tuple[name: string, ty: PreTerm,
         result.requiresBrackets = true
     else:
       inc result.termCount
+      result.termParamNames.add(binder.name)
       inc termPosition
       if result.explicitCount == 0: inc result.leadingTermCount
 
@@ -691,6 +760,12 @@ proc nimGenericCallInfo(params, formal: NimNode): LegacyCallInfo =
   for _ in 0 ..< result.explicitCount:
     result.explicitBinderKinds.add(ebkType)
   result.termCount = nimFormalArgCount(formal)
+  if formal.kind == nnkFormalParams:
+    for i in 1 ..< formal.len:
+      let param = formal[i]
+      if param.kind == nnkIdentDefs:
+        for j in 0 ..< param.len - 2:
+          result.termParamNames.add(binderName(param[j]))
   result.leadingTermCount = 0
   result.requiredBracketCount = result.explicitCount
   result.requiresBrackets = result.explicitCount > 0
@@ -709,6 +784,8 @@ proc nimBinderIsUniverse(binder: NimNode): bool =
 proc mergeCallInfo(a, b: LegacyCallInfo): LegacyCallInfo =
   result.explicitCount = a.explicitCount + b.explicitCount
   result.termCount = a.termCount + b.termCount
+  result.termParamNames = a.termParamNames
+  result.termParamNames.add(b.termParamNames)
   result.leadingTermCount = if a.explicitCount > 0: a.leadingTermCount
     else: a.termCount + b.leadingTermCount
   result.requiredBracketCount = a.requiredBracketCount + b.requiredBracketCount
@@ -751,9 +828,11 @@ proc interleaveInferableHoles(args: seq[string], positions: seq[int],
 proc registerLegacyFieldInfo(name: string, info: LegacyCallInfo) =
   if name in ambiguousLegacyFieldNames: return
   if name in legacyFieldCallInfo:
-    if not sameCallInfo(legacyFieldCallInfo[name], info):
+    if not sameCallShape(legacyFieldCallInfo[name], info):
       legacyFieldCallInfo.del(name)
       ambiguousLegacyFieldNames.incl(name)
+    elif legacyFieldCallInfo[name].termParamNames != info.termParamNames:
+      legacyFieldCallInfo[name].termParamNames.setLen(0)
   else:
     legacyFieldCallInfo[name] = info
 
@@ -1055,23 +1134,32 @@ proc nimCommandToEponym(n: NimNode,
   if n[0].kind == nnkIdent and $n[0] == "lam":
     return nimCommandLamToEponym(n)
   rejectCallStyleExplicitArgs(n)
-  var termArgs: seq[string] = @[]
+  var termArgNodes: seq[NimNode] = @[]
   proc appendArg(a: NimNode) =
     if a.kind == nnkCommand and a.len > 0 and
        not (a[0].kind == nnkIdent and $a[0] == "lam"):
       appendArg(a[0])
       for j in 1 ..< a.len:
         appendArg(a[j])
-    elif a.kind == nnkCommand:
-      termArgs.add("(" & nimCommandLamToEponym(a) & ")")
-    elif a.kind in {nnkCall, nnkObjConstr}:
-      termArgs.add("(" & nimExprToEponym(a) & ")")
     else:
-      termArgs.add(nimExprToEponym(a))
+      termArgNodes.add(a)
   for i in 1 ..< n.len:
     appendArg(n[i])
   let head = nimExprToEponym(n[0])
   let headInfo = callInfoForHead(n[0])
+  if termArgNodes.anyIt(namedArgumentName(it).len > 0):
+    if not headInfo.found:
+      error("eponymBlock: named arguments need a known callable signature", n)
+    termArgNodes = orderedNamedArguments(termArgNodes,
+      headInfo.info.termParamNames, n)
+  var termArgs: seq[string] = @[]
+  for arg in termArgNodes:
+    if arg.kind == nnkCommand:
+      termArgs.add("(" & nimCommandLamToEponym(arg) & ")")
+    elif arg.kind in {nnkCall, nnkObjConstr}:
+      termArgs.add("(" & nimExprToEponym(arg) & ")")
+    else:
+      termArgs.add(nimExprToEponym(arg))
   let args = if headInfo.found:
     interleaveInferableHoles(termArgs, headInfo.info.inferableIndexPositions,
       headInfo.info.inferableResultIndexFlags,
@@ -1171,9 +1259,15 @@ proc nimExprToEponym(n: NimNode,
     # f(a, b) -> f a b (with parens for nested calls to preserve grouping)
     let head = nimExprToEponym(n[0])
     let headInfo = callInfoForHead(n[0])
+    var argNodes: seq[NimNode] = @[]
+    for i in 1 ..< n.len: argNodes.add(n[i])
+    if argNodes.anyIt(namedArgumentName(it).len > 0):
+      if not headInfo.found:
+        error("eponymBlock: named arguments need a known callable signature", n)
+      argNodes = orderedNamedArguments(argNodes,
+        headInfo.info.termParamNames, n)
     var args: seq[string] = @[]
-    for i in 1 ..< n.len:
-      let a = n[i]
+    for a in argNodes:
       # Parenthesize if arg is a call or obj-constr (Pi/Sig type args
       # parse as nnkObjConstr in expression position and need grouping too)
       if a.kind in {nnkCall, nnkObjConstr, nnkCommand}:
@@ -1488,7 +1582,8 @@ proc procDefToEponym(n: NimNode): string =
       paramStrs.add("(" & q & binderName(p[j]) & " : " & ty & ")")
       if p[^2].kind in {nnkIdent, nnkSym}:
         scopedLegacyValueTypeNames[binderName(p[j])] = $p[^2]
-      if callableInfo.explicitCount > 0:
+      if callableInfo.explicitCount > 0 or
+          callableInfo.termParamNames.len > 0:
         scopedLegacyCallInfo[binderName(p[j])] = callableInfo
       if ty == "Type 0":
         scopedLegacyTypeNames.incl(binderName(p[j]))

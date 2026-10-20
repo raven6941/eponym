@@ -1236,6 +1236,10 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   projections. Positive and compile-fail regressions cover
   `let nested = bundle.inner; nested.apply[...]` for imported records with
   colliding field names, both with inferred and explicitly declared let types.
+- [x] Lower Nim named arguments to the checked binder order. The runtime bridge
+  property exercises reordered calls to local and imported checked procedures
+  and to typed callbacks (200 generated input pairs); ordinary positional and
+  bracket applications retain their existing lowering.
 - [x] Track the required type-binder count through bracket-applied call heads.
   A compile-fail fixture verifies that a partially bracketed two-type generic
   cannot receive the next required type argument in parentheses. A positive

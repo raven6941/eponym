@@ -16,6 +16,7 @@ proc idNat : Nat -> Nat = lam (n : Nat). n
 
 proc hostStepNim(value: int): int = value + 7
 proc hostTripleNim(value: int): int = value * 3
+proc hostAddTwoNim(left, right: int): int = left + right
 proc hostString(value: string): string = value
 proc hostFailureNim(value: int): int =
   raise newException(IOError, "host adapter failed")
@@ -299,6 +300,11 @@ eponymBlock:
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
   proc generatedDefault(value: Int = 42): Int = value
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
+  proc generatedNamedAdd(left: Int, right: Int): Int =
+    generatedAdd(right = right, left = left)
+  proc generatedNamedCallback(
+      callback: Pi(left: Int, Pi(right: Int, Int)),
+      left: Int, right: Int): Int = callback(right = right, left = left)
   proc generatedNatId(value: Nat): Nat = value
   proc generatedBoolXor(left: Bool, right: Bool): Bool = left xor right
   proc generatedIntOne(): Int = 1
@@ -320,6 +326,7 @@ eponymBlock:
   bindPostulate(importedStep, hostStepNim)
   runtimeValue(importedIdentity)
   runtimeValue(importedApply)
+  proc namedImportedApply(value: Int): Int = importedApply(value = value)
 
 eponymBlock:
   import "fixtures/runtime_imported_vec.ep"
@@ -3246,6 +3253,7 @@ when isMainModule:
       let runtime = importedApplyRuntimeValue([intToValue(value)])
       let typedRuntime = importedApplyRuntimeValue(value)
       importedApply(value) == value + 7 and
+        namedImportedApply(value = value) == value + 7 and
         typedRuntime.value.whnfKind == wInt and
         typedRuntime.value.whnfIntVal == value + 7 and
         runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value + 7,
@@ -3283,6 +3291,18 @@ when isMainModule:
     generatedSigmaId((17, -9)) == (17, -9) and
     generatedOpaqueSigmaId((17, ChannelHandle(id: 1))) ==
       (17, ChannelHandle(id: 1))
+  let namedArgumentCalls = forAll(
+    "named arguments preserve checked callable parameter order", r, 200,
+    proc(r: var Rng): tuple[left, right: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[left, right: int]): bool =
+      generatedNamedAdd(input.left, input.right) == input.left + input.right and
+      generatedNamedCallback(hostAddTwoNim, input.left, input.right) ==
+        input.left + input.right,
+    proc(input: tuple[left, right: int]):
+        seq[tuple[left, right: int]] = @[])
+  if not namedArgumentCalls:
+    quit(1)
   let generatedRecordRoundTrips = forAll(
     "structural record codec preserves primitive and opaque fields", r, 200,
     proc(r: var Rng): int = r.genInt(-1000, 1000),
