@@ -259,7 +259,8 @@ proc nimExprToEponym(n: NimNode): string =
     for i in 1 ..< n.len:
       let arg = n[i]
       let value = nimExprToEponym(arg)
-      if arg.kind in {nnkCall, nnkCommand, nnkObjConstr, nnkInfix, nnkPrefix}:
+      if arg.kind in {nnkCall, nnkCommand, nnkObjConstr, nnkBracketExpr,
+                      nnkInfix, nnkPrefix}:
         parts.add("(" & value & ")")
       else:
         parts.add(value)
@@ -333,7 +334,8 @@ proc nimTypeToEponym(n: NimNode): string =
     var args: seq[string] = @[]
     for i in 1 ..< n.len:
       let a = n[i]
-      if (a.kind == nnkCall and a.len > 1) or a.kind == nnkObjConstr or
+      if (a.kind == nnkCall and a.len > 1) or a.kind in
+          {nnkObjConstr, nnkBracketExpr} or
           a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
                      nnkInt64Lit}:
         args.add("(" & nimTypeToEponym(a) & ")")
@@ -665,6 +667,11 @@ proc blockToEponym*(body: NimNode): string =
         # wrapper generator and never interpreted as an Eponym declaration.
         if st.len != 3 or st[1].kind != nnkIdent:
           error("runtimeType expects (EponymType, NimType)", st)
+      elif head == "runtimeVector":
+        # Structural runtime codec for a Vec family with canonical nil/cons
+        # constructor names.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("runtimeVector expects (VecFamily)", st)
       elif head == "runtimeValue":
         # Request a raw Eponym Value wrapper for a checked definition,
         # typically for a host interpreter of reified data.
@@ -692,6 +699,7 @@ type HostPostulateBinding = object
 type HostRuntimeType = object
   eponymName: string
   nimType: NimNode
+  isRuntimeVector: bool
 
 proc mentionsName(node: NimNode, name: string): bool
 
@@ -751,14 +759,19 @@ proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
   var seen = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
-        $st[0] == "runtimeType":
-      if st.len != 3 or st[1].kind != nnkIdent:
-        error("runtimeType expects (EponymType, NimType)", st)
+        $st[0] in ["runtimeType", "runtimeVector"]:
+      let isVector = $st[0] == "runtimeVector"
+      if (isVector and (st.len != 2 or st[1].kind != nnkIdent)) or
+          (not isVector and (st.len != 3 or st[1].kind != nnkIdent)):
+        error(if isVector: "runtimeVector expects (VecFamily)" else:
+          "runtimeType expects (EponymType, NimType)", st)
       let name = $st[1]
       if name in seen:
-        error("duplicate runtimeType mapping for '" & name & "'", st)
+        error("duplicate runtime type mapping for '" & name & "'", st)
       seen.incl(name)
-      result.add(HostRuntimeType(eponymName: name, nimType: st[2]))
+      result.add(HostRuntimeType(eponymName: name,
+        nimType: if isVector: ident"seq" else: st[2],
+        isRuntimeVector: isVector))
 
 proc validateHostBoolCodec(globals: Globals) =
   if "Bool" notin globals:
@@ -864,6 +877,38 @@ proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
     return (n[1][1], n[2])
   (n[1], n[2])
 
+proc runtimeVectorComponents(n: NimNode, familyName: string):
+    tuple[elementType, length: NimNode] =
+  if n.kind notin {nnkCall, nnkObjConstr, nnkBracketExpr} or n.len != 3 or
+      n[0].kind != nnkIdent or $n[0] != familyName:
+    return
+  (n[1], n[2])
+
+proc runtimeNatIndexExpr(n: NimNode): NimNode =
+  ## Lower the supported Nat index expressions to checked Nim int arithmetic.
+  if n.kind in {nnkIdent, nnkSym}:
+    if $n == "zero": return newLit(0)
+    return copyNimTree(n)
+  if n.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
+                nnkInt64Lit}:
+    if n.intVal < 0: return nil
+    return copyNimTree(n)
+  if n.kind == nnkCall and n.len >= 2 and n[0].kind == nnkIdent:
+    case $n[0]
+    of "suc":
+      if n.len != 2: return nil
+      let index = runtimeNatIndexExpr(n[1])
+      if index.isNil: return nil
+      return newCall(bindSym"natIndexSucc", index)
+    of "add", "mul":
+      if n.len != 3: return nil
+      let left = runtimeNatIndexExpr(n[1])
+      let right = runtimeNatIndexExpr(n[2])
+      if left.isNil or right.isNil: return nil
+      return newCall(if $n[0] == "add": bindSym"natIndexAdd" else:
+        bindSym"natIndexMul", left, right)
+  nil
+
 type RuntimeProcParts = object
   argTypes: seq[NimNode]
   resultType: NimNode
@@ -907,6 +952,15 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
       param[^2] = argType
       argIndex += param.len - 2
     return
+  for mapping in mappings:
+    if mapping.isRuntimeVector:
+      let vector = runtimeVectorComponents(n, mapping.eponymName)
+      if not vector.elementType.isNil:
+        if runtimeNatIndexExpr(vector.length).isNil: return nil
+        let elementType = runtimeNimType(vector.elementType, mappings,
+          records, allowDependentSigma)
+        if elementType.isNil: return nil
+        return newTree(nnkBracketExpr, ident"seq", elementType)
   let sigma = runtimeSigmaComponents(n, allowDependentSigma)
   if not sigma.first.isNil:
     let first = runtimeNimType(sigma.first, mappings, records,
@@ -1030,6 +1084,37 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       allowDependentSigma)
     if decodedResult.isNil: return nil
     return newProc(params = formal, body = newStmtList(decodedResult))
+  for mapping in mappings:
+    if mapping.isRuntimeVector:
+      let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
+      if not vector.elementType.isNil:
+        let expectedLength = runtimeNatIndexExpr(vector.length)
+        let elementNimType = runtimeNimType(vector.elementType, mappings,
+          records, allowDependentSigma)
+        if expectedLength.isNil or elementNimType.isNil: return nil
+        let itemSym = genSym(nskParam, "runtimeVectorItem")
+        let codecGlobalsSym = genSym(nskParam, "runtimeVectorGlobals")
+        if toValue:
+          let encodedItem = runtimeValueConversionExpr(vector.elementType,
+            elementNimType, itemSym, true, mappings, records,
+            codecGlobalsSym, allowDependentSigma)
+          if encodedItem.isNil: return nil
+          let encoder = newProc(params = @[bindSym"Value",
+            newIdentDefs(itemSym, elementNimType, newEmptyNode()),
+            newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
+            body = newStmtList(encodedItem))
+          return newCall(bindSym"seqToVecValue", value, expectedLength,
+            globals, newLit(mapping.eponymName), encoder)
+        let decodedItem = runtimeValueConversionExpr(vector.elementType,
+          elementNimType, itemSym, false, mappings, records,
+          codecGlobalsSym, allowDependentSigma)
+        if decodedItem.isNil: return nil
+        let decoder = newProc(params = @[elementNimType,
+          newIdentDefs(itemSym, bindSym"Value", newEmptyNode()),
+          newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
+          body = newStmtList(decodedItem))
+        return newCall(bindSym"vecValueToSeq", value, expectedLength,
+          globals, newLit(mapping.eponymName), decoder)
   let sigma = runtimeSigmaComponents(eponymType, allowDependentSigma)
   if not sigma.first.isNil:
     if nimType.kind notin {nnkTupleConstr, nnkTupleTy} or nimType.len != 2:
@@ -1101,11 +1186,18 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
   if simpleRuntimeCodec(eponymType) == "bool" or
       (simpleRuntimeCodec(eponymType) == "nat" and not toValue):
     return newCall(valueFn, value, globals)
+  if simpleRuntimeCodec(eponymType) == "nat" and toValue:
+    return newCall(bindSym"natToValue", value, globals)
+  if simpleRuntimeCodec(eponymType) == "nat" and not toValue:
+    return newCall(bindSym"valueToNat", value, globals)
   newCall(valueFn, value)
 
 proc genericRuntimeInfo(decl: NimNode,
                         mappings: seq[HostRuntimeType]): tuple[
     genericParams: NimNode, typeNames: seq[string],
+    genericNames: seq[NimNode], genericNatArgs: seq[bool],
+    genericBoolArgs: seq[bool], genericIntArgs: seq[bool],
+    genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
     codecMappings: seq[HostRuntimeType], error: string] =
   result.genericParams = newEmptyNode()
   result.codecMappings = mappings
@@ -1113,26 +1205,107 @@ proc genericRuntimeInfo(decl: NimNode,
     return
   result.genericParams = newNimNode(nnkGenericParams)
   for param in decl[2]:
-    if param.kind != nnkIdentDefs or param[^2].kind == nnkEmpty or
-        nimTypeToEponym(param[^2]) != "Type 0":
+    if param.kind != nnkIdentDefs or param[^2].kind == nnkEmpty:
+      result.error = "runtime wrappers require explicitly typed generic binders"
+      return
+    let binderType = nimTypeToEponym(param[^2])
+    var mappedBinder: HostRuntimeType
+    var hasMappedBinder = false
+    for mapping in mappings:
+      if mapping.eponymName == binderType:
+        mappedBinder = mapping
+        hasMappedBinder = true
+        break
+    if binderType notin ["Type 0", "Nat", "Bool", "Int"] and
+        not hasMappedBinder:
       result.error = "runtime wrappers currently support only type-level " &
-        "generic binders annotated with Univ"
+        "binders annotated with Univ, primitive value indices, or values " &
+        "with an explicit runtimeType mapping"
       return
     for i in 0 ..< param.len - 2:
       let name = $param[i]
-      if name in result.typeNames:
-        result.error = "duplicate generic runtime type parameter '" & name & "'"
+      if name in result.genericNames.mapIt($it):
+        result.error = "duplicate generic runtime parameter '" & name & "'"
         return
-      if decl.len > 6 and not decl[6].isNil and mentionsName(decl[6], name):
+      if binderType == "Type 0" and decl.len > 6 and not decl[6].isNil and
+          mentionsName(decl[6], name):
         result.error = "generic type parameter '" & name &
           "' is used by the runtime body; an explicit runtime type " &
           "representation is required"
         return
-      result.typeNames.add(name)
-      result.genericParams.add(newIdentDefs(copyNimTree(param[i]),
-        newEmptyNode(), newEmptyNode()))
-      result.codecMappings.add(HostRuntimeType(eponymName: name,
-        nimType: copyNimTree(param[i])))
+      let genericName = copyNimTree(param[i])
+      result.genericNames.add(genericName)
+      result.genericMappedTypes.add(nil)
+      result.genericMappedNimTypes.add(nil)
+      if binderType == "Type 0":
+        result.typeNames.add(name)
+        result.genericParams.add(newIdentDefs(copyNimTree(param[i]),
+          newEmptyNode(), newEmptyNode()))
+        result.genericNatArgs.add(false)
+        result.genericBoolArgs.add(false)
+        result.genericIntArgs.add(false)
+        result.codecMappings.add(HostRuntimeType(eponymName: name,
+          nimType: copyNimTree(param[i])))
+      elif binderType == "Nat":
+        let staticInt = newTree(nnkBracketExpr, ident"static", ident"int")
+        result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticInt,
+          newEmptyNode()))
+        result.genericNatArgs.add(true)
+        result.genericBoolArgs.add(false)
+        result.genericIntArgs.add(false)
+      elif binderType == "Bool":
+        let staticBool = newTree(nnkBracketExpr, ident"static", ident"bool")
+        result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticBool,
+          newEmptyNode()))
+        result.genericNatArgs.add(false)
+        result.genericBoolArgs.add(true)
+        result.genericIntArgs.add(false)
+      else:
+        if hasMappedBinder:
+          let staticMapped = newTree(nnkBracketExpr, ident"static",
+                                     copyNimTree(mappedBinder.nimType))
+          result.genericParams.add(newIdentDefs(copyNimTree(param[i]),
+            staticMapped, newEmptyNode()))
+          result.genericNatArgs.add(false)
+          result.genericBoolArgs.add(false)
+          result.genericIntArgs.add(false)
+          result.genericMappedTypes[^1] = ident(binderType)
+          result.genericMappedNimTypes[^1] = copyNimTree(mappedBinder.nimType)
+          continue
+        let staticInt = newTree(nnkBracketExpr, ident"static", ident"int")
+        result.genericParams.add(newIdentDefs(copyNimTree(param[i]), staticInt,
+          newEmptyNode()))
+        result.genericNatArgs.add(false)
+        result.genericBoolArgs.add(false)
+        result.genericIntArgs.add(true)
+
+proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
+    typeNames: seq[string], genericNames: seq[NimNode],
+    genericNatArgs: seq[bool], genericBoolArgs: seq[bool],
+    genericIntArgs: seq[bool],
+    genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
+    codecMappings: seq[HostRuntimeType],
+    error: string], globals: NimNode, mappings: seq[HostRuntimeType],
+    records: seq[HostRecord]): seq[NimNode] =
+  for i, genericName in generic.genericNames:
+    if generic.genericNatArgs[i]:
+      result.add(newCall(bindSym"natToValue", copyNimTree(genericName),
+                         globals))
+    elif generic.genericBoolArgs[i]:
+      result.add(newCall(bindSym"boolToValue", copyNimTree(genericName),
+                         globals))
+    elif generic.genericIntArgs[i]:
+      result.add(newCall(bindSym"intToValue", copyNimTree(genericName)))
+    elif not generic.genericMappedTypes[i].isNil:
+      let encoded = runtimeValueConversionExpr(
+        generic.genericMappedTypes[i], generic.genericMappedNimTypes[i],
+        copyNimTree(genericName), true, mappings, records, globals)
+      if encoded.isNil:
+        error("generic runtime value needs a codec for Eponym type '" &
+          repr(generic.genericMappedTypes[i]) & "'")
+      result.add(encoded)
+    else:
+      result.add(newCall(bindSym"vType", newLit(0)))
 
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
                  mappings: seq[HostRuntimeType], records: seq[HostRecord],
@@ -1387,8 +1560,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                                   codecMappings, records, checkedGlobals))
 
   var values = newNimNode(nnkBracket)
-  for _ in generic.typeNames:
-    values.add(newCall(bindSym"vType", newLit(0)))
+  for genericArg in genericRuntimeValueArgs(generic, globalsSym,
+      codecMappings, records):
+    values.add(genericArg)
   for i, argSym in argSyms:
     values.add(runtimeValueConversionExpr(argEponymTypes[i], argNimTypes[i],
       argSym, true, codecMappings, records, globalsSym,
@@ -1454,8 +1628,9 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
 
   let globalsSym = genSym(nskLet, "runtimeGlobals")
   var values = newNimNode(nnkBracket)
-  for _ in generic.typeNames:
-    values.add(newCall(bindSym"vType", newLit(0)))
+  for genericArg in genericRuntimeValueArgs(generic, globalsSym,
+      codecMappings, records):
+    values.add(genericArg)
   for i, argSym in argSyms:
     let converted = runtimeValueConversionExpr(eponymTypes[i], nimTypes[i],
       argSym, true, codecMappings, records, globalsSym,
@@ -1600,16 +1775,19 @@ macro eponymBlock*(body: untyped): untyped =
       error("eponymBlock runtimeType error: " & e.msg, body)
   for mapping in runtimeTypes:
     try:
-      let recordIndex = findHostRecord(records, mapping.eponymName)
-      if recordIndex >= 0:
-        let record = records[recordIndex]
-        if record.isVariant and
-            (record.hasDependentField or record.constructors.len == 0):
-          raise newException(ValueError,
-            "runtime enum codec for '" & mapping.eponymName &
-            "' requires only nullary constructors returning the unindexed family")
+      if mapping.isRuntimeVector:
+        validateHostVectorCodec(checkedGlobals, mapping.eponymName)
       else:
-        validateHostOpaqueType(checkedGlobals, mapping.eponymName)
+        let recordIndex = findHostRecord(records, mapping.eponymName)
+        if recordIndex >= 0:
+          let record = records[recordIndex]
+          if record.isVariant and
+              (record.hasDependentField or record.constructors.len == 0):
+            raise newException(ValueError,
+              "runtime enum codec for '" & mapping.eponymName &
+              "' requires only nullary constructors returning the unindexed family")
+        else:
+          validateHostOpaqueType(checkedGlobals, mapping.eponymName)
     except ValueError as e:
       error("eponymBlock runtimeType error: " & e.msg, body)
   for binding in bindings:
@@ -1704,8 +1882,12 @@ macro eponymBlock*(body: untyped): untyped =
         let defsSym = genSym(nskLet, "runtimeDefs")
         let bindingsSym = genSym(nskVar, "runtimeBindings")
         let argsSym = genSym(nskParam, "runtimeArguments")
-        let runtimeArgsSym = newCall(bindSym"prependErasedTypeArgs",
-          newLit(generic.typeNames.len), argsSym)
+        var genericValues = newNimNode(nnkBracket)
+        for genericArg in genericRuntimeValueArgs(generic, globalsSym,
+            runtimeTypes, records):
+          genericValues.add(copyNimTree(genericArg))
+        let runtimeArgsSym = newCall(bindSym"prependRuntimeArgs",
+          newTree(nnkPrefix, ident"@", genericValues), argsSym)
         let expectedArity = newLit(valueArity)
         var bindingStatements = newStmtList()
         for binding in bindings:
@@ -1728,7 +1910,7 @@ macro eponymBlock*(body: untyped): untyped =
         var rawProc = newNimNode(nnkProcDef)
         rawProc.add(newTree(nnkPostfix, ident("*"), runtimeName))
         rawProc.add(newEmptyNode())
-        rawProc.add(newEmptyNode())
+        rawProc.add(copyNimTree(generic.genericParams))
         var rawFormal = newNimNode(nnkFormalParams)
         rawFormal.add(parseExpr("tuple[value: Value, globals: Globals]"))
         rawFormal.add(newIdentDefs(argsSym,
@@ -1740,9 +1922,26 @@ macro eponymBlock*(body: untyped): untyped =
         rawProc.add(rawBody)
         result.add(rawProc)
         if valueArity == 0:
-          result.add quote do:
-            proc `runtimeName`*(): tuple[value: Value, globals: Globals] =
-              `runtimeName`([])
+          var forwarderBody = newStmtList()
+          var rawCallee: NimNode = copyNimTree(runtimeName)
+          if generic.genericNames.len > 0:
+            var genericCallArgs = newNimNode(nnkBracket)
+            for genericName in generic.genericNames:
+              genericCallArgs.add(copyNimTree(genericName))
+            rawCallee = newTree(nnkBracketExpr, rawCallee, genericCallArgs)
+          forwarderBody.add(newCall(rawCallee, newNimNode(nnkBracket)))
+          var forwarder = newNimNode(nnkProcDef)
+          forwarder.add(newTree(nnkPostfix, ident("*"),
+                                ident(d.name & "RuntimeValue")))
+          forwarder.add(newEmptyNode())
+          forwarder.add(copyNimTree(generic.genericParams))
+          var forwarderFormal = newNimNode(nnkFormalParams)
+          forwarderFormal.add(parseExpr("tuple[value: Value, globals: Globals]"))
+          forwarder.add(forwarderFormal)
+          forwarder.add(newEmptyNode())
+          forwarder.add(newEmptyNode())
+          forwarder.add(forwarderBody)
+          result.add(forwarder)
         else:
           let allowDependentSigma = d.name in trustedRuntimePairs
           let typedValueWrapper = typedRuntimeValueWrapper(procDecl,

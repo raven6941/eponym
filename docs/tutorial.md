@@ -102,6 +102,24 @@ Named non-dependent records can also map to Nim objects with `runtimeType`;
 record fields recursively use the `Int`/`Nat`, opaque, tuple, and record
 codecs. Records with fields indexed by earlier fields remain unsupported.
 
+The standard length-indexed `Vec` family can map to Nim sequences. Opt in with
+`runtimeVector(Vec)`; the wrapper checks that each sequence length agrees with
+its Nat index and encodes the checked `nil`/`cons` constructors:
+
+```nim
+eponymBlock:
+  import "lib/vec.ep"
+  runtimeVector(Vec)
+  proc keepVector[A: Univ, n: Nat](values: Vec[A, n]): Vec[A, n] = values
+
+doAssert keepVector[int, 3](@[2, 3, 5]) == @[2, 3, 5]
+```
+
+Vector elements use their own runtime codec, including opaque Nim values
+passed through a generic type parameter; nested vectors map to nested Nim
+sequences. Nat length expressions support indices, `zero`, `suc`, `add`, and
+`mul`.
+
 Now break it. Change the body to `addInt(x, y)` and recompile:
 
 ```

@@ -36,12 +36,23 @@ Nullary, unindexed `data` declarations can map to Nim enums with the same
 constructor names; constructor values are translated through their checked
 runtime identities. Data constructors with arguments or indexed results do
 not have an enum codec.
-Type-level generic binders written `[A: Univ]` also support generated Nim
-generic wrappers when `A` appears only in the checked signature and the
-remaining shape has codecs. Nim's concrete `A` values cross as opaque boxes;
-the runtime does not inspect their representation. Value-indexed binders and
-generic type parameters used by the runtime body still need explicit runtime
-representations.
+Type-level generic binders written `[A: Univ]` support generated Nim generic
+wrappers when `A` appears only in the checked signature and the remaining
+shape has codecs. Nim's concrete `A` values cross as opaque boxes; the runtime
+does not inspect their representation. Value-indexed Nat binders written
+`[n: Nat]` map to Nim `static[int]` parameters and cross as canonical checked
+Nat constructors when the Nat prelude is available. These binders can appear
+in signatures and checked runtime bodies; tests cover typed wrappers and both
+typed and raw `runtimeValue` overloads. Bool binders `[b: Bool]` map to Nim
+`static[bool]` and are encoded with the checked `true` and `false` constructors;
+typed wrappers and both typed and raw `runtimeValue` overloads are covered.
+Int binders `[i: Int]` map to Nim `static[int]` and cross as integer values;
+typed wrappers and typed/raw `runtimeValue` overloads are covered, including
+negative indices. A binder over an explicitly mapped runtime type uses
+`static[NimType]` and crosses through that type's runtime codec; tests cover
+opaque object and nullary enum values. The value must be representable as a
+Nim compile-time constant, and other unmapped value-indexed binders remain
+unsupported.
 `Nat` conversions reject negative values. An explicit `proc` declaration with
 an unsupported signature remains
 checked but emits a targeted compile-time error if called. Generated names
@@ -88,7 +99,14 @@ that definition opts in with `runtimePairTrusted(definition)`; its field codecs
 are checked recursively, while correspondence between host field values and
 their indices remains trusted. Without the opt-in, dependent `Sig` wrapper
 signatures remain unsupported. Records with dependent fields remain
-unsupported. A
+unsupported. The canonical length-indexed `Vec` family has an explicit
+`runtimeVector(Vec)` codec that maps `Vec[A, n]` to `seq[A]`. It checks the
+host sequence length and the runtime Nat index at each `cons` cell; the
+element type uses its recursive runtime codec, including nested vectors such
+as `Vec[Vec[Int, m], n]` mapped to `seq[seq[int]]`. The codec accepts Nat length
+expressions made from a static index, `zero`, `suc`, `add`, and `mul`. It
+requires the standard `nil` and `cons` constructor shape from `lib/vec.ep`.
+Other collections and data types with payload constructors remain unsupported. A
 mapped `Future[T]` can pass through an opaque postulate adapter as either an
 argument or result; the bridge preserves the same Nim future value. Eponym
 has no async effect, await, or cancellation operation. Completion, failure,
@@ -104,13 +122,13 @@ as generated wrappers. A 200-case property covers multi-argument callbacks
 with primitive and mapped opaque values in both directions. Returned callback
 types must use Nim's `{.closure.}` calling convention. Callback effects and
 behavior remain trusted host semantics.
-Structural codecs for collections beyond non-dependent two-field `Sig` tuples
-and named non-dependent records, payload-bearing data constructors, dependent
-signatures, value-indexed generic
-signatures, and generic binders used in runtime bodies, and structural
-inspection of closures remain unsupported. The session runtime demo includes a
-hand-written Nat LEB128 message codec, and the TCP adapter demo uses it over a
-loopback socket, but there is no reusable structural codec framework.
+Structural codecs for collections beyond `Vec`, non-dependent two-field `Sig`
+tuples, and named non-dependent records remain unsupported. Other
+payload-bearing data constructors, dependent records, non-Nat value-indexed
+generic signatures, and structural inspection of closures are also unsupported.
+The session runtime demo includes a hand-written Nat LEB128 message codec, and
+the TCP adapter demo uses it over a loopback socket, but there is no general
+structural codec framework.
 Nim's type checker checks the concrete adapter signature, but the mapping to
 the Eponym type and the adapter behavior remain trusted. Neither compiler
 proves that the host value satisfies a dependent index.

@@ -170,6 +170,76 @@ eponymBlock:
   runtimeValue(generatedGenericIdentity)
 
 eponymBlock:
+  import "../lib/nat.ep"
+  postulate(Int, Univ)
+  postulate(Channel, Nat -> Univ)
+  runtimeType(Channel, IndexedChannelHandle)
+  proc generatedGenericIndexedChannelIdentity[n: Nat](
+      channel: Channel[n]): Channel[n] = channel
+  runtimeValue(generatedGenericIndexedChannelIdentity)
+  proc generatedGenericNatValue[n: Nat](ignored: Int): Nat = n
+  runtimeValue(generatedGenericNatValue)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  proc generatedVectorIdentity[A: Univ, n: Nat](
+      values: Vec[A, n]): Vec[A, n] = values
+  proc generatedVectorSucIndex[n: Nat](
+      values: Vec[Int, suc(n)]): Nat = n
+  proc generatedVectorAddIndex[m, n: Nat](
+      values: Vec[Int, add(m, n)]): Int = addInt(0, 0)
+  proc generatedNestedVectorIdentity[m, n: Nat](
+      values: Vec[Vec[Int, m], n]): Vec[Vec[Int, m], n] = values
+  runtimeValue(generatedNestedVectorIdentity)
+
+eponymBlock:
+  import "../lib/bool.ep"
+  postulate(Int, Univ)
+  proc generatedGenericBoolValue[b: Bool](ignored: Int): Bool = b
+  runtimeValue(generatedGenericBoolValue)
+  proc generatedGenericIntValue[index: Int](ignored: Int): Int = index
+  runtimeValue(generatedGenericIntValue)
+
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
+  proc generatedGenericChannelValue[channel: Channel](ignored: Int):
+      Channel = channel
+  runtimeValue(generatedGenericChannelValue)
+
+proc checkGenericChannelValueAt[channel: static[ChannelHandle]](
+    ignored: int): bool =
+  let typedResult = generatedGenericChannelValue[channel](ignored)
+  let runtime = generatedGenericChannelValueRuntimeValue[channel](ignored)
+  let rawRuntime = generatedGenericChannelValueRuntimeValue[channel](
+    [intToValue(ignored)])
+  typedResult == channel and
+    valueToHost[ChannelHandle](runtime.value) == channel and
+    valueToHost[ChannelHandle](rawRuntime.value) == channel
+
+proc checkGenericIntValueAt[index: static[int]](ignored: int): bool =
+  let typedResult = generatedGenericIntValue[index](ignored)
+  let runtime = generatedGenericIntValueRuntimeValue[index](ignored)
+  let rawRuntime = generatedGenericIntValueRuntimeValue[index](
+    [intToValue(ignored)])
+  typedResult == index and valueToInt(runtime.value) == index and
+    valueToInt(rawRuntime.value) == index
+
+proc decodeRuntimeIntVector(value: Value, length: int,
+                            globals: Globals): seq[int] =
+  vecValueToSeq[int](value, length, globals, "Vec",
+    proc(item: Value, _: Globals): int = valueToInt(item))
+
+proc decodeRuntimeIntMatrix(value: Value, rows: int,
+                            globals: Globals): seq[seq[int]] =
+  vecValueToSeq[seq[int]](value, rows, globals, "Vec",
+    proc(row: Value, nestedGlobals: Globals): seq[int] =
+      decodeRuntimeIntVector(row, 2, nestedGlobals))
+
+eponymBlock:
   postulate(Int, Univ)
   proc generatedApplyNimCallback(
       callback: proc(value: Int): Int {.closure.}, value: Int): Int =
@@ -191,12 +261,27 @@ eponymBlock:
     sumSix(a, b, c, d, e, f)
 
 eponymBlock:
+  postulate(Int, Univ)
   data(Signal, Univ):
     proc signalStop(): Signal
     proc signalCaution(): Signal
     proc signalGo(): Signal
   runtimeType(Signal, RuntimeSignal)
   proc generatedSignalIdentity(value: Signal): Signal = value
+  proc generatedGenericSignalValue[signal: Signal](ignored: Int): Signal =
+    signal
+  runtimeValue(generatedGenericSignalValue)
+
+proc checkGenericSignalValueAt[signal: static[RuntimeSignal]](
+    ignored: int): bool =
+  let typedResult = generatedGenericSignalValue[signal](ignored)
+  let runtime = generatedGenericSignalValueRuntimeValue[signal](ignored)
+  let rawRuntime = generatedGenericSignalValueRuntimeValue[signal](
+    [intToValue(ignored)])
+  let names = @["signalStop", "signalCaution", "signalGo"]
+  typedResult == signal and
+    valueToEnum[RuntimeSignal](runtime.value, runtime.globals, names) == signal and
+    valueToEnum[RuntimeSignal](rawRuntime.value, rawRuntime.globals, names) == signal
 
 static:
   doAssert compiles(sampleTreeWithRuntimeValue(2))
@@ -205,6 +290,25 @@ static:
   doAssert not compiles(generatedBoolNot(1))
   doAssert compiles(generatedGenericIdentity(1))
   doAssert compiles(generatedGenericIdentity("opaque"))
+  doAssert compiles(generatedGenericIndexedChannelIdentity[17](
+    IndexedChannelHandle(index: 3, label: "generic-index")))
+  doAssert compiles(generatedGenericIndexedChannelIdentityRuntimeValue[17](
+    IndexedChannelHandle(index: 3, label: "generic-index")))
+  doAssert compiles(generatedGenericNatValue[17](3))
+  doAssert compiles(generatedGenericNatValueRuntimeValue[17](3))
+  doAssert compiles(generatedVectorIdentity[int, 4](@[1, 2, 3, 4]))
+  doAssert compiles(generatedVectorSucIndex[3](@[1, 2, 3, 4]))
+  doAssert compiles(generatedVectorAddIndex[2, 3](@[1, 2, 3, 4, 5]))
+  doAssert compiles(generatedNestedVectorIdentity[2, 3](
+    @[@[1, 2], @[3, 4], @[5, 6]]))
+  doAssert compiles(generatedGenericBoolValue[true](1))
+  doAssert compiles(generatedGenericBoolValue[false](1))
+  doAssert compiles(generatedGenericBoolValueRuntimeValue[true](1))
+  doAssert compiles(generatedGenericIntValue[-17](1))
+  doAssert compiles(generatedGenericIntValueRuntimeValue[-17](1))
+  doAssert compiles(generatedGenericChannelValue[
+    ChannelHandle(id: 7, label: "generic")](1))
+  doAssert not compiles(generatedGenericChannelValue[17](1))
   doAssert compiles(generatedApplyNimCallback(proc(value: int): int = value, 1))
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
@@ -216,6 +320,7 @@ static:
   doAssert not compiles(generatedSumSix(1, 2, 3, 4, 5))
   doAssert compiles(generatedSignalIdentity(signalGo))
   doAssert not compiles(generatedSignalIdentity(1))
+  doAssert compiles(generatedGenericSignalValue[signalGo](1))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -732,6 +837,145 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded.id == input.id and decoded.label == input.label,
     shrinkInt)
   if not genericOpaqueIdentityCases:
+    quit(1)
+
+  let genericNatIndexCases = forAll(
+    "generic Nat indices cross typed wrappers", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let input = IndexedChannelHandle(index: id, label: "generic-index/" & $id)
+      let typed = generatedGenericIndexedChannelIdentity[17](input)
+      let typedRuntime = generatedGenericIndexedChannelIdentityRuntimeValue[17](
+        input)
+      let rawRuntime = generatedGenericIndexedChannelIdentityRuntimeValue[17](
+        [toHostValue(input)])
+      typed == input and
+        valueToHost[IndexedChannelHandle](typedRuntime.value) == input and
+        valueToHost[IndexedChannelHandle](rawRuntime.value) == input,
+    shrinkInt)
+  if not genericNatIndexCases:
+    quit(1)
+
+  let genericNatBodyCases = forAll(
+    "Nat generic values are available in checked runtime bodies", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let typedRuntime = generatedGenericNatValueRuntimeValue[17](value)
+      let rawRuntime = generatedGenericNatValueRuntimeValue[17]([intToValue(value)])
+      generatedGenericNatValue[17](value) == 17 and
+        valueToNat(typedRuntime.value, typedRuntime.globals) == 17 and
+        valueToNat(rawRuntime.value, rawRuntime.globals) == 17,
+    shrinkInt)
+  if not genericNatBodyCases:
+    quit(1)
+
+  let vectorCodecCases = forAll(
+    "length-indexed Vec values cross as checked Nim sequences", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(seed: int): bool =
+      let values = @[seed, seed + 1, seed + 2, seed + 3]
+      let handles = @[
+        ChannelHandle(id: seed, label: "vec/" & $seed),
+        ChannelHandle(id: seed + 1, label: "vec/" & $(seed + 1)),
+        ChannelHandle(id: seed + 2, label: "vec/" & $(seed + 2)),
+        ChannelHandle(id: seed + 3, label: "vec/" & $(seed + 3))]
+      generatedVectorIdentity[int, 4](values) == values and
+        generatedVectorIdentity[ChannelHandle, 4](handles) == handles,
+    shrinkInt)
+  if not vectorCodecCases:
+    quit(1)
+  doAssert generatedVectorIdentity[int, 0](@[]) == @[]
+  doAssert generatedVectorSucIndex[3](@[1, 2, 3, 4]) == 3
+  doAssert generatedVectorAddIndex[2, 3](@[1, 2, 3, 4, 5]) == 0
+  var wrongVectorLengthRejected = false
+  try:
+    discard generatedVectorIdentity[int, 4](@[1, 2, 3])
+  except ValueError as error:
+    wrongVectorLengthRejected = "runtime Vec length mismatch" in error.msg
+  doAssert wrongVectorLengthRejected
+
+  let nestedVectorCases = forAll(
+    "nested length-indexed Vec values recurse through sequence codecs", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(seed: int): bool =
+      let matrix = @[
+        @[seed, seed + 1],
+        @[seed + 2, seed + 3],
+        @[seed + 4, seed + 5]]
+      let runtime = generatedNestedVectorIdentityRuntimeValue[2, 3](matrix)
+      let rawRuntime = generatedNestedVectorIdentityRuntimeValue[2, 3](
+        [runtime.value])
+      generatedNestedVectorIdentity[2, 3](matrix) == matrix and
+        decodeRuntimeIntMatrix(runtime.value, 3, runtime.globals) == matrix and
+        decodeRuntimeIntMatrix(rawRuntime.value, 3, rawRuntime.globals) == matrix,
+    shrinkInt)
+  if not nestedVectorCases:
+    quit(1)
+
+
+  let genericBoolCases = forAll(
+    "Bool generic values are available in checked runtime bodies", r, 200,
+    proc(r: var Rng): tuple[ignored: int, expected: bool] =
+      (r.genInt(-1000, 1000), r.genBool()),
+    proc(input: tuple[ignored: int, expected: bool]): bool =
+      let runtime = if input.expected:
+        generatedGenericBoolValueRuntimeValue[true](input.ignored)
+      else:
+        generatedGenericBoolValueRuntimeValue[false](input.ignored)
+      let rawRuntime = if input.expected:
+        generatedGenericBoolValueRuntimeValue[true]([intToValue(input.ignored)])
+      else:
+        generatedGenericBoolValueRuntimeValue[false]([intToValue(input.ignored)])
+      let typedResult = if input.expected:
+        generatedGenericBoolValue[true](input.ignored)
+      else:
+        generatedGenericBoolValue[false](input.ignored)
+      typedResult == input.expected and
+        valueToBool(runtime.value, runtime.globals) == input.expected and
+        valueToBool(rawRuntime.value, rawRuntime.globals) == input.expected)
+  if not genericBoolCases:
+    quit(1)
+
+  let genericIntCases = forAll(
+    "Int generic values are available in checked runtime bodies", r, 200,
+    proc(r: var Rng): tuple[selector: int, ignored: int] =
+      (r.genInt(0, 4), r.genInt(-1000, 1000)),
+    proc(input: tuple[selector: int, ignored: int]): bool =
+      case input.selector
+      of 0: checkGenericIntValueAt[-17](input.ignored)
+      of 1: checkGenericIntValueAt[-1](input.ignored)
+      of 2: checkGenericIntValueAt[0](input.ignored)
+      of 3: checkGenericIntValueAt[23](input.ignored)
+      else: checkGenericIntValueAt[1000](input.ignored))
+  if not genericIntCases:
+    quit(1)
+
+  let genericMappedCases = forAll(
+    "explicitly mapped opaque values are available as runtime generics",
+    r, 200,
+    proc(r: var Rng): tuple[selector: int, ignored: int] =
+      (r.genInt(0, 2), r.genInt(-1000, 1000)),
+    proc(input: tuple[selector: int, ignored: int]): bool =
+      case input.selector
+      of 0: checkGenericChannelValueAt[
+        ChannelHandle(id: 0, label: "generic-zero")](input.ignored)
+      of 1: checkGenericChannelValueAt[
+        ChannelHandle(id: 17, label: "generic-seventeen")](input.ignored)
+      else: checkGenericChannelValueAt[
+        ChannelHandle(id: -9, label: "generic-negative")](input.ignored))
+  if not genericMappedCases:
+    quit(1)
+
+  let genericEnumCases = forAll(
+    "mapped data constructors are available as runtime generics", r, 200,
+    proc(r: var Rng): tuple[selector: int, ignored: int] =
+      (r.genInt(0, 2), r.genInt(-1000, 1000)),
+    proc(input: tuple[selector: int, ignored: int]): bool =
+      case input.selector
+      of 0: checkGenericSignalValueAt[signalStop](input.ignored)
+      of 1: checkGenericSignalValueAt[signalCaution](input.ignored)
+      else: checkGenericSignalValueAt[signalGo](input.ignored))
+  if not genericEnumCases:
     quit(1)
 
   let callbackBridgeCases = forAll(

@@ -45,6 +45,9 @@ proc hostValueNary*(arity: int,
                     globals: Globals): Value
 proc validateHostValueNaryType*(globals: Globals,
                                 postulateName: string): int
+proc callRuntimeValue*(fn: Value, args: openArray[Value]): Value
+proc natToValue*(n: int, globals: Globals): Value
+proc valueToNat*(v: Value, globals: Globals): int
 
 # Cache: (baseDir, source) key -> checked module state. Retaining globals is
 # required for runtime postulate bindings to use the identities assigned by
@@ -191,6 +194,123 @@ proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
       "' to have type " & argTypeSig & " -> Sig(" & firstTypeName & ", " &
       secondTypeName & ") with " &
       (if allowDependentIndex: "a mapped pair" else: "a non-dependent pair"))
+
+proc validateHostVectorCodec*(globals: Globals, familyName: string) =
+  ## Accept the canonical length-indexed vector shape with `nil` and `cons`.
+  if familyName notin globals or "Nat" notin globals or
+      "nil" notin globals or "cons" notin globals:
+    raise newException(ValueError,
+      "runtimeVector requires the family, Nat, nil, and cons declarations")
+  let family = globals[familyName]
+  let nat = globals["Nat"]
+  let nilCtor = globals["nil"]
+  let consCtor = globals["cons"]
+  if family.tm.isNil or family.tm.kind != tR or family.tm.refIsDefn or
+      nat.tm.isNil or nat.tm.kind != tR or nilCtor.tm.isNil or
+      consCtor.tm.isNil or not nilCtor.isDataConstructor or
+      not consCtor.isDataConstructor:
+    raise newException(ValueError,
+      "runtimeVector requires a declared data family and its constructors")
+  let familyId = family.tm.refId
+  let natId = nat.tm.refId
+  let nilTy = nilCtor.ty
+  let consTy = consCtor.ty
+  if family.ty.isNil or family.ty.kind != tPi or
+      family.ty.dom.kind != tType or family.ty.scope.bdy.isNil or
+      family.ty.scope.bdy.kind != tPi or
+      opaqueTypeHeadId(family.ty.scope.bdy.dom) != natId or
+      family.ty.scope.bdy.scope.bdy.kind != tType:
+    raise newException(ValueError,
+      "runtimeVector family must have shape Type -> Nat -> Type")
+  if nilTy.isNil or nilTy.kind != tPi or nilTy.dom.kind != tType or
+      nilTy.impl or nilTy.qty == q0 or nilTy.scope.bdy.isNil or
+      opaqueTypeHeadId(nilTy.scope.bdy) != familyId:
+    raise newException(ValueError,
+      "runtimeVector nil constructor must take a type and return " & familyName)
+  if consTy.isNil or consTy.kind != tPi or consTy.dom.kind != tType or
+      consTy.impl or consTy.qty == q0:
+    raise newException(ValueError,
+      "runtimeVector cons constructor must take a type parameter")
+  let lengthBinder = consTy.scope.bdy
+  if lengthBinder.isNil or lengthBinder.kind != tPi or lengthBinder.impl or
+      lengthBinder.qty == q0 or
+      opaqueTypeHeadId(lengthBinder.dom) != natId:
+    raise newException(ValueError,
+      "runtimeVector cons must take a Nat tail length")
+  let elementBinder = lengthBinder.scope.bdy
+  if elementBinder.isNil or elementBinder.kind != tPi or elementBinder.impl or
+      elementBinder.qty == q0:
+    raise newException(ValueError,
+      "runtimeVector cons must take an element")
+  let tailBinder = elementBinder.scope.bdy
+  if tailBinder.isNil or tailBinder.kind != tPi or tailBinder.impl or
+      tailBinder.qty == q0 or opaqueTypeHeadId(tailBinder.dom) != familyId or
+      tailBinder.scope.bdy.isNil or tailBinder.scope.bdy.kind != tApp or
+      opaqueTypeHeadId(tailBinder.scope.bdy.fn) != familyId:
+    raise newException(ValueError,
+      "runtimeVector cons must take a tail and return " & familyName)
+
+proc natIndexSucc*(n: int): int =
+  if n < 0 or n == high(int):
+    raise newException(ValueError, "Nat index is outside Nim int range")
+  n + 1
+
+proc natIndexAdd*(a, b: int): int =
+  if a < 0 or b < 0 or b > high(int) - a:
+    raise newException(ValueError, "Nat index addition is outside Nim int range")
+  a + b
+
+proc natIndexMul*(a, b: int): int =
+  if a < 0 or b < 0 or (a != 0 and b > high(int) div a):
+    raise newException(ValueError, "Nat index multiplication is outside Nim int range")
+  a * b
+
+proc seqToVecValue*[T](items: seq[T], expectedLength: int, globals: Globals,
+    familyName: string,
+    encode: proc(item: T, globals: Globals): Value): Value =
+  if expectedLength < 0:
+    raise newException(ValueError, "Vec length cannot be negative")
+  if items.len != expectedLength:
+    raise newException(ValueError,
+      "runtime Vec length mismatch: expected " & $expectedLength &
+      ", got " & $items.len)
+  validateHostVectorCodec(globals, familyName)
+  result = callRuntimeValue(eval(globals["nil"].tm, @[]), @[vType(0)])
+  for i in countdown(items.high, 0):
+    let encodedItem = encode(items[i], globals)
+    let tailLength = natToValue(items.high - i, globals)
+    result = callRuntimeValue(eval(globals["cons"].tm, @[]),
+      @[vType(0), tailLength, encodedItem, result])
+
+proc vecValueToSeq*[T](value: Value, expectedLength: int, globals: Globals,
+    familyName: string,
+    decode: proc(value: Value, globals: Globals): T): seq[T] =
+  if expectedLength < 0:
+    raise newException(ValueError, "Vec length cannot be negative")
+  validateHostVectorCodec(globals, familyName)
+  result = newSeqOfCap[T](expectedLength)
+  let nilId = globals["nil"].tm.refId
+  let consId = globals["cons"].tm.refId
+  var current = value
+  for i in 0 ..< expectedLength:
+    if current.whnfKind != wRef or current.whnfRefId != consId or
+        current.whnfSpineLen != 4:
+      raise newException(ValueError,
+        "runtime value is not a Vec of the declared length")
+    for argIndex in 0 ..< current.whnfSpineLen:
+      if current.whnfSpineKind(argIndex) != eApp:
+        raise newException(ValueError,
+          "runtime Vec constructor has an invalid spine")
+    let expectedTailLength = expectedLength - i - 1
+    if valueToNat(current.whnfSpineArg(1), globals) != expectedTailLength:
+      raise newException(ValueError,
+        "runtime Vec tail index does not match its spine")
+    result.add(decode(current.whnfSpineArg(2), globals))
+    current = current.whnfSpineArg(3)
+  if current.whnfKind != wRef or current.whnfRefId != nilId or
+      current.whnfSpineLen != 1 or current.whnfSpineKind(0) != eApp:
+    raise newException(ValueError,
+      "runtime value is not a Vec of the declared length")
 
 proc validateHostMappedNaryType*(globals: Globals, postulateName: string,
                                  typeNames: openArray[string]) =
@@ -693,6 +813,16 @@ proc prependErasedTypeArgs*(typeArgCount: int,
   for arg in args:
     result.add(arg)
 
+proc prependRuntimeArgs*(genericArgs: openArray[Value],
+                         args: openArray[Value]): seq[Value] =
+  ## Add explicitly represented generic arguments (type and static value
+  ## indices) before the ordinary runtime values.
+  result = newSeqOfCap[Value](genericArgs.len + args.len)
+  for arg in genericArgs:
+    result.add(arg)
+  for arg in args:
+    result.add(arg)
+
 proc hostIntUnary*(implementation: proc(x: int): int): Value =
   ## Adapt a Nim Int -> Int procedure to a runtime postulate value. Nim
   ## checks the adapter's concrete signature; the implementation's behavior
@@ -753,6 +883,36 @@ proc hostOpaqueQuinary*[A, B, C, D, E, F](
 
 proc natToValue*(n: int): Value = vNatLit(n)
 
+proc canonicalNatConstructorIds(globals: Globals):
+    tuple[zeroId, sucId: int, valid: bool] =
+  if "Nat" notin globals or "zero" notin globals or "suc" notin globals:
+    return
+  let natType = globals["Nat"]
+  let zero = globals["zero"]
+  let suc = globals["suc"]
+  if natType.tm.isNil or natType.tm.kind != tR or zero.tm.isNil or
+      suc.tm.isNil or not zero.isDataConstructor or
+      not suc.isDataConstructor or zero.ty.isNil or suc.ty.isNil or
+      zero.ty.kind != tR or zero.ty.refId != natType.tm.refId or
+      suc.ty.kind != tPi or suc.ty.dom.kind != tR or
+      suc.ty.dom.refId != natType.tm.refId or
+      suc.ty.scope.bdy.kind != tR or
+      suc.ty.scope.bdy.refId != natType.tm.refId:
+    return
+  (zero.tm.refId, suc.tm.refId, true)
+
+proc natToValue*(n: int, globals: Globals): Value =
+  ## Prefer checked zero/suc constructors when available so Eponym definitions
+  ## that eliminate Nat values can compute; retain literals for opaque Nat.
+  if n < 0:
+    raise newException(ValueError, "Nat cannot be negative")
+  let constructors = canonicalNatConstructorIds(globals)
+  if not constructors.valid:
+    return natToValue(n)
+  result = eval(globals["zero"].tm, @[])
+  for _ in 0 ..< n:
+    result = callRuntimeValue(eval(globals["suc"].tm, @[]), @[result])
+
 proc valueToNat*(v: Value): int =
   ## Convert a primitive Eponym Nat value to a Nim int.
   if v.whnf.kind == wNatLit:
@@ -762,12 +922,11 @@ proc valueToNat*(v: Value): int =
 proc valueToNat*(v: Value, globals: Globals): int =
   ## Decode either a canonical Nat literal or its checked zero/suc constructor
   ## representation using the constructor identities from the same module.
-  if v.whnf.kind == wNatLit:
-    return v.whnf.natLitVal
-  if "zero" notin globals or "suc" notin globals:
+  if v.whnfKind == wNatLit:
+    return v.whnfNatLitVal
+  let constructors = canonicalNatConstructorIds(globals)
+  if not constructors.valid:
     raise newException(ValueError, "runtime Nat constructors are unavailable")
-  let zeroId = globals["zero"].tm.refId
-  let sucId = globals["suc"].tm.refId
   var current = v
   while true:
     case current.whnfKind
@@ -778,11 +937,11 @@ proc valueToNat*(v: Value, globals: Globals): int =
       return
     of wRef:
       let id = current.whnfRefId
-      if id == zeroId:
+      if id == constructors.zeroId:
         if current.whnfSpineLen != 0:
           raise newException(ValueError, "runtime value is not a Nat")
         return
-      if id != sucId or current.whnfSpineLen != 1 or
+      if id != constructors.sucId or current.whnfSpineLen != 1 or
           current.whnfSpineKind(0) != eApp:
         raise newException(ValueError, "runtime value is not a Nat")
       if result == high(int):
