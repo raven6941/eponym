@@ -272,6 +272,29 @@ eponymBlock:
   runtimeValue(generatedGenericPiWitnessProbe)
 
 eponymBlock:
+  postulate(Int, Univ)
+  postulate(Nat, Univ)
+  postulate(Token, Univ)
+  postulate(tokenValue, Token)
+  proc generatedSigmaWitnessSeed(): Int = 0
+  runtimeValue(generatedSigmaWitnessSeed)
+  proc generatedGenericNestedSigmaWitnessProbe[
+      pair: Sig(first: Token, Sig(count: Nat, Token))](ignored: Int): Int =
+    ignored
+  runtimeValue(generatedGenericNestedSigmaWitnessProbe)
+
+eponymBlock:
+  import "../lib/nat.ep"
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  proc generatedDependentSigmaWitnessSeed(): Int = 0
+  runtimeValue(generatedDependentSigmaWitnessSeed)
+  proc generatedGenericDependentSigmaWitnessProbe[
+      pair: Sig(length: Nat, Vec[Int, length])](ignored: Int): Int = ignored
+  runtimeValue(generatedGenericDependentSigmaWitnessProbe)
+
+eponymBlock:
   import "../lib/nat.ep"
   def(checkedNatIdentity, Nat -> Nat):
     clause([zero], zero)
@@ -1030,6 +1053,63 @@ proc generatedTokenIdentity (value : Token) : Token = value
   except ValueError:
     wrongGenericPiExpressionRejected = true
   doAssert wrongGenericPiExpressionRejected
+  let sigmaWitnessGlobals = generatedSigmaWitnessSeedRuntimeValue().globals
+  let sigmaWitnessToken = runtimeGlobalValue(sigmaWitnessGlobals, "tokenValue")
+  let genericNestedSigmaExpressionCases = forAll(
+    "generated runtime type expressions reify nested Sigma binders", r, 200,
+    proc(r: var Rng): tuple[count, ignored: int] =
+      (r.genInt(0, 100), r.genInt(-1000, 1000)),
+    proc(input: tuple[count, ignored: int]): bool =
+      let pair = pairValue(sigmaWitnessToken,
+        pairValue(natToValue(input.count, sigmaWitnessGlobals),
+          sigmaWitnessToken))
+      let returned = generatedGenericNestedSigmaWitnessProbeRuntimeValueDynamic(
+        pair, input.ignored)
+      valueToInt(returned.value) == input.ignored)
+  if not genericNestedSigmaExpressionCases:
+    quit(1)
+  var wrongNestedSigmaValueRejected = false
+  try:
+    let malformed = pairValue(sigmaWitnessToken,
+      pairValue(intToValue(1), sigmaWitnessToken))
+    discard generatedGenericNestedSigmaWitnessProbeRuntimeValueDynamic(
+      malformed, 0)
+  except ValueError:
+    wrongNestedSigmaValueRejected = true
+  doAssert wrongNestedSigmaValueRejected
+  let dependentSigmaWitnessGlobals =
+    generatedDependentSigmaWitnessSeedRuntimeValue().globals
+  let genericDependentSigmaExpressionCases = forAll(
+    "generated type expressions validate dependent Sigma Vec fields", r,
+    200,
+    proc(r: var Rng): tuple[length, ignored: int] =
+      (r.genInt(0, 20), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, ignored: int]): bool =
+      var elements = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        elements[i] = input.ignored + i
+      let vector = seqToVecValue[int](elements, input.length,
+        dependentSigmaWitnessGlobals, "Vec",
+        proc(item: int, _: Globals): Value = intToValue(item),
+        runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
+      let pair = pairValue(natToValue(input.length,
+        dependentSigmaWitnessGlobals), vector)
+      let returned = generatedGenericDependentSigmaWitnessProbeRuntimeValueDynamic(
+        pair, input.ignored)
+      valueToInt(returned.value) == input.ignored)
+  if not genericDependentSigmaExpressionCases:
+    quit(1)
+  var wrongDependentSigmaWitnessRejected = false
+  try:
+    let vector = seqToVecValue[int](@[3, 4], 2,
+      dependentSigmaWitnessGlobals, "Vec",
+      proc(item: int, _: Globals): Value = intToValue(item),
+      runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
+    discard generatedGenericDependentSigmaWitnessProbeRuntimeValueDynamic(
+      pairValue(natToValue(3, dependentSigmaWitnessGlobals), vector), 0)
+  except ValueError:
+    wrongDependentSigmaWitnessRejected = true
+  doAssert wrongDependentSigmaWitnessRejected
   var malformedNatTypeInferenceRejected = false
   try:
     let malformedNat = callRuntimeValue(

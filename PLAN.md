@@ -517,9 +517,11 @@ implementations.
 - [x] Property-test generated type-expression witnesses for named Pi binders
    in raw dynamic generic validation. A 200-case property accepts a checked
    `Token -> Token` identity and rejects a value with the wrong function type.
-- [ ] Add property coverage for generated runtime type-expression witnesses
+- [x] Add property coverage for generated runtime type-expression witnesses
    over nested and dependent Sigma domains, especially when their codomains
-   contain conditional indices and earlier generic values.
+   refer to earlier generic values. Two 200-case properties validate nested
+   pairs and `Sig(length: Nat, Vec[Int, length])`; malformed Nat fields and
+   mismatched vector indices are rejected.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

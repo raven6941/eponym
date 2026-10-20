@@ -52,17 +52,17 @@ their wrapper shape is supported; Eponym does not inspect the host
 representation. Structural or indexed values need codecs to inspect their
 shape. Runtime evaluation of type and index expressions supports a subset;
 arbitrary type-level Nim computation and every possible Eponym index
-expression are supported by generated codecs.
+expression are not supported by generated codecs.
 
-Host code can construct Pi and Sigma runtime type witnesses with
+Host code can build Pi and Sigma runtime type witnesses with
 `runtimeArrowType`, `runtimeDependentArrowType`, `runtimeSigmaType`, and
 `runtimeDependentSigmaType`; `validateRuntimeValueAgainstType` checks values
 against them. `runtimeValueTypeOf(value, globals)` can infer types from runtime
-syntax or checked globals, but cannot infer a type for an opaque host value
-without a stored witness. Generated wrappers can reify named Pi domains when
-checking raw generic values; nested and dependent Sigma witness coverage is
-still incomplete. These low-level helpers do not create typed wrappers for
-arbitrary dependent signatures.
+syntax or checked globals, but not from opaque host values without a stored
+witness. Generated wrappers can check named Pi domains and nested Sigma
+fields indexed by earlier binders, such as `Sig(length: Nat, Vec[Int,
+length])`. Broader dependent type expressions and arbitrary dependent generic
+wrappers remain unsupported.
 
 `RuntimeVariant` provides a checked structural view of data-family values:
 it checks constructor identity, family membership, arity, and spine shape,

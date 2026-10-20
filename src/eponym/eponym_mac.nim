@@ -2955,18 +2955,21 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     bindSym"RuntimeValueResult" else: resultType)
   var genericSyms: seq[NimNode] = @[]
   var genericNimTypes: seq[NimNode] = @[]
+  var genericValueHasCodec: seq[bool] = @[]
   for i, genericName in generic.genericNames:
     var dynamicType: NimNode = nil
+    var hasValueCodec = false
     if generic.genericNatArgs[i] or generic.genericIntArgs[i]:
       dynamicType = ident"int"
     elif generic.genericBoolArgs[i]:
       dynamicType = ident"bool"
     elif generic.genericValueArgs[i]:
-      if generic.genericValueTypes[i].isNil:
-        dynamicType = bindSym"RuntimeValue"
-      else:
+      if not generic.genericValueTypes[i].isNil:
         dynamicType = runtimeNimType(generic.genericValueTypes[i],
           generic.codecMappings, records, allowDependentSigma)
+        hasValueCodec = not dynamicType.isNil
+      if dynamicType.isNil:
+        dynamicType = bindSym"RuntimeValue"
     elif not generic.genericMappedTypes[i].isNil:
       dynamicType = copyNimTree(generic.genericMappedNimTypes[i])
     if dynamicType.isNil: return nil
@@ -2974,6 +2977,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     formal.add(newIdentDefs(sym, dynamicType, newEmptyNode()))
     genericSyms.add(sym)
     genericNimTypes.add(dynamicType)
+    genericValueHasCodec.add(hasValueCodec)
   var argSyms: seq[NimNode] = @[]
   var argNames: seq[string] = @[]
   var argEponymTypes: seq[NimNode] = @[]
@@ -3012,13 +3016,13 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     elif generic.genericIntArgs[i]:
       encodedGeneric = newCall(bindSym"intToValue", genericSym)
     elif generic.genericValueArgs[i]:
-      if generic.genericValueTypes[i].isNil:
-        encodedGeneric = copyNimTree(genericSym)
-      else:
+      if genericValueHasCodec[i]:
         encodedGeneric = runtimeValueConversionExpr(
           generic.genericValueTypes[i], genericNimTypes[i], genericSym,
           true, generic.codecMappings, records, globalsSym,
           allowDependentSigma, genericIndexOverrides)
+      else:
+        encodedGeneric = copyNimTree(genericSym)
     elif not generic.genericMappedTypes[i].isNil:
       encodedGeneric = runtimeValueConversionExpr(
         generic.genericMappedTypes[i], generic.genericMappedNimTypes[i],
@@ -3035,12 +3039,12 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
               mapping.eponymName == $mappedHead:
             validateEncodedMappedVariant = true
     let validateUnmappedValue = generic.genericValueArgs[i] and
-      generic.genericValueTypes[i].isNil
+      not genericValueHasCodec[i]
     if validateUnmappedValue or validateEncodedMappedVariant:
       let expectedType = runtimeTypeValueExpr(
         generic.genericValueTypeExprs[i], globalsSym, typeIndexOverrides)
       if expectedType.isNil: return nil
-      body.add(newCall(bindSym"validateRuntimeValueType",
+      body.add(newCall(bindSym"validateRuntimeValueAgainstType",
         if validateUnmappedValue: genericSym else: encodedGeneric,
         expectedType, globalsSym))
     typeIndexOverrides.add(($generic.genericNames[i], encodedGeneric))
@@ -3062,12 +3066,12 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     elif generic.genericIntArgs[i]:
       encoded = newCall(bindSym"intToValue", genericSyms[i])
     elif generic.genericValueArgs[i]:
-      if generic.genericValueTypes[i].isNil:
-        encoded = copyNimTree(genericSyms[i])
-      else:
+      if genericValueHasCodec[i]:
         encoded = runtimeValueConversionExpr(generic.genericValueTypes[i],
           genericNimTypes[i], genericSyms[i], true, generic.codecMappings,
           records, globalsSym, allowDependentSigma, indexOverrides)
+      else:
+        encoded = copyNimTree(genericSyms[i])
     else:
       encoded = runtimeValueConversionExpr(generic.genericMappedTypes[i],
         genericNimTypes[i], genericSyms[i], true, generic.codecMappings,
