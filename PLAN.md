@@ -43,7 +43,8 @@ wrappers support first-order `Int`/`Nat` and explicitly mapped opaque
 postulated types; unsupported signatures retain the legacy
 `varargs[int] -> int` wrapper. The first runtime call re-elaborates the block
 and caches its checked terms and globals for subsequent calls. External
-postulates can be bound for unary Int, unary opaque, and binary opaque shapes.
+postulates can be bound for unary Int, unary opaque, and opaque callbacks up
+to three curried arguments.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -267,9 +268,11 @@ implementations.
    Eponym inspects) from opaque handles (which Eponym only passes to a
    postulate and receives back). The current opaque mappings are restricted to
    named postulated Eponym types; structural codecs remain future work.
-- [ ] Specify supported ownership, aliasing, exception, async, and lifetime
-   behavior. In particular, decide how a QTT linear channel relates to a
-   Nim `ref`, `var`, or closure that may be aliased.
+- [x] Specify supported ownership, aliasing, exception, async, and lifetime
+   behavior. QTT linearity is limited to checked Eponym terms; boxed Nim refs
+   and closures may alias or be retained. Adapters pass values by value, have
+   no `var`/`lent` or explicit ownership-transfer form, propagate synchronous
+   exceptions, and pass mapped futures through opaquely.
 - [x] Keep this contract independent of a particular TCP library. A user or
    library author writes a narrow adapter over `std/net`, `asyncnet`, or
    another backend.
@@ -300,18 +303,25 @@ implementations.
    extra, and wrong-kind Nim arguments. `Nat` uses Nim `int` with a checked
    nonnegative conversion.
 - [x] Generate typed wrappers for explicitly mapped opaque Eponym postulates
-   using `runtimeType(EponymType, NimType)`. Mappings are accepted only for
-   named postulated Eponym types. Coverage includes a generated
+   and indexed type families using `runtimeType(EponymType, NimType)`.
+   Mappings are accepted only for named postulated types/families, never
+   transparent data definitions. Coverage includes a generated
    `proc(ChannelHandle, string): ChannelHandle` role with 200 property cases.
 - [ ] Add an explicit runtime type/codec description to each exported Eponym
    definition and support user-defined/structural Nim types, dependent
-   signatures, and generic or higher-order definitions. Unsupported shapes
-   still use the legacy `varargs[int]` wrapper, so generated ABI support is
-   partial.
+   signatures, and generic or higher-order definitions. Definitions without
+   a matching explicit Nim `proc` declaration still retain the legacy
+   `varargs[int]` compatibility wrapper; explicit `proc` declarations with
+   unsupported signatures fail clearly when called.
 - [ ] Validate the supported Eponym type shape and Nim adapter signature during
    macro expansion/compilation. Reject unsupported conversions with an
    error naming the Eponym binder and Nim type; never fall back to unchecked
    casts or late `ValueError`s for signature mismatches.
+- [x] For explicit `proc` declarations with no runtime codec, emit a
+   compile-time error template naming the unsupported Eponym result or
+   parameter type instead of silently generating a `varargs[int]` wrapper.
+   A negative fixture covers a missing opaque mapping. Full structural and
+   dependent codecs remain open.
 - [x] Keep runtime source re-elaboration outside the per-call path. The Nim
    macro VM's checked `Term`/`Value` objects contain runtime closures and
    cannot be retained directly as executable runtime values; the first call
@@ -337,8 +347,10 @@ implementations.
 
 - [x] Add explicit `bindPostulate(name, nimProc)` syntax for a declared
    postulate and Nim proc. Generated-wrapper bindings support unary
-   `Int -> Int`, unary opaque `T -> T`, and curried binary opaque `A -> B -> C`;
-   longer signatures remain unsupported.
+   `Int -> Int`, unary opaque `T -> T` / `T -> Nat`, mixed
+   `Nat -> A -> B`, unary opaque `A -> B`, curried binary opaque
+   `A -> B -> C`, and curried ternary opaque `A -> B -> C -> D`; longer
+   signatures remain unsupported.
 - [x] Use an explicit runtime binding environment keyed by
    checked postulate reference identity; do not use a process-global name or
    reference-ID registry. **Foundation complete:** `elabCheckDirState` and
@@ -356,11 +368,24 @@ implementations.
 - [x] Validate the `Int -> Int` Eponym contract during macro expansion and
    the Nim `proc(int): int` signature through generated calls. Compile-fail
    fixtures cover mismatches on each side.
-- [ ] Add missing/unreachable binding diagnostics. An invoked but unbound
-   postulate currently fails during runtime evaluation; unreachable bindings
-   are not diagnosed.
-- [ ] Specify exception and async behavior; add a later adapter form for
-   `Future[T]` rather than conflating synchronous and asynchronous effects.
+- [x] Report an invoked but unbound runtime postulate by name at the call
+   boundary instead of surfacing only a later `ValueError` during result
+   conversion.
+- [x] Diagnose a binding that no checked proc body references during macro
+   expansion. Compile-time call-graph reachability remains open because Nim
+   can call each generated wrapper independently; missing runtime bindings
+   still fail by name if reached.
+- [x] Specify synchronous exception behavior: exceptions raised by a Nim
+   adapter propagate unchanged through the checked runtime wrapper; property
+   tests verify the original exception type and message.
+- [x] Allow an explicitly mapped opaque `Future[T]` as the result of a
+   synchronous postulate callback and generated wrapper. The future passes
+   through unchanged; Eponym does not await it.
+- [x] Specify that mapped `Future[T]` values pass through postulate adapters
+  opaquely as arguments or results; Eponym does not await, cancel, observe
+  failure, or define async effects. A runtime identity check covers a future
+  argument. Keep this distinct from asynchronous effect semantics, which are
+  still unsupported.
 - [x] Extend the low-level typed adapter from scalar primitives to an opaque
    user-defined Nim value. The handle can cross a checked role and return to
    Nim; representation and behavior are explicitly trusted. Property tests
@@ -370,13 +395,31 @@ implementations.
    mappings for both Eponym argument types and the result type. A checked
    role dispatches a channel handle and a message string to a Nim callback;
    property tests cover 200 input pairs.
+- [x] Support a curried three-argument opaque adapter with explicit Nim type
+  checks for all parameters and the result. A generated wrapper and a 200-case
+  property test exercise a `Channel -> Message -> RequestId -> Channel`
+  postulate.
+- [x] Bind unary callbacks between distinct opaque mappings (`A -> B`) and
+  return a mapped `Future[T]` through an ordinary typed wrapper. Property tests
+  verify the future object and its result pass through unchanged; Eponym does
+  not await it.
+- [x] Accept a Nim closure as an explicitly mapped opaque callback argument to
+  a checked role. The generated Nim wrapper checks the closure signature, and
+  the bound adapter can invoke it; Eponym treats the closure body as trusted.
 - [x] Expose unary opaque and binary opaque bindings through `eponymBlock`;
    explicit `runtimeType` mappings connect Eponym postulates to Nim types.
    Nim checks adapter and generated wrapper signatures, and compile-fail
    coverage rejects a mismatched callback type.
-- [ ] Add a message codec and use an opaque handle to bind a protocol
-   operation through a Nim adapter. A TCP adapter should be one example, not
-   a dependency of the Eponym core.
+- [x] Add mixed primitive/opaque adapters for `opaque -> Nat` and
+  `Nat -> A -> B` postulates, including different Nim types for the opaque
+  argument and result. The in-memory session passes a Nat payload through a
+  checked send/receive pair; the TCP session returns a mapped result value.
+- [x] Add a message codec and use an opaque handle to bind protocol operations
+   through Nim adapters. The indexed session demo encodes Nat payloads as
+   canonical unsigned LEB128 bytes outside Eponym and runs checked sender and
+   receiver roles over the channel handle. A separate `std/net` demo uses the
+   same codec through a loopback TCP socket; transport libraries stay outside
+   the Eponym core.
 
 **Exit criteria:**
 
@@ -387,11 +430,17 @@ implementations.
 
 #### D. Make one end-to-end example use the checked role
 
+- [x] Add a minimal indexed session example whose sender and receiver roles
+  call bound Nim channel operations at runtime; property tests exercise 200
+  messages. The Paxos demo and its hand-mirrored driver remain open.
 - [ ] Replace the hand-mirrored `runPaxosRound` sequence with calls to the
    checked `proposer` and `acceptor` roles through bound mailbox operations.
-- [ ] Then provide a socket adapter with message encoding/decoding outside the
-   Eponym checker. Keep transport failure and serialization validity
-   explicit in the Nim result type.
+- [x] Provide a `std/net` loopback TCP adapter using the checked sender and
+  receiver roles, with message encoding/decoding outside Eponym. The checked
+  wrappers return explicitly mapped outcomes.
+- [x] Represent transport and serialization failures in explicit Nim result
+  values. The loopback integration test checks success, peer closure, and a
+  malformed Nat frame through the checked receiver role.
 - [ ] Make the buffer/borrow example route through bound postulates, and label
    what the linear checker establishes versus what the Nim buffer adapter
    must uphold.
@@ -468,18 +517,18 @@ implementations.
 
 ### Cross-stage validation and project claims
 
-- [ ] Add positive tests for every supported codec and callback shape, plus
-  compile-fail cases for type mismatch, missing binding, duplicate binding,
-  effectful unsupported expression, dependent-index mismatch, and linear
-  misuse.
+- [x] Add positive property coverage for each supported codec/callback shape,
+  plus compile-fail cases for type mismatch, missing and duplicate bindings,
+  unsupported operators, dependent-index mismatch, and linear misuse.
 - [ ] Add runtime integration examples that execute the exact Eponym-checked
   definition, not a mirrored Nim implementation.
-- [ ] Keep the README's examples classified as compile-time model checks,
-  runtime-integrated examples, or illustrative parallel implementations.
-  Remove or qualify claims when the implementation does not meet them.
+- [x] Classify the TCP/in-memory session, Paxos, borrow, and optimizer
+  examples by what Eponym checks, what Nim checks, and what remains trusted
+  or disconnected. The README links to the table; retain it as implementations
+  change and qualify claims when the implementation does not meet them.
 - [ ] Update `docs/known-limitations.md`, the trust model, the tutorial, syntax
   reference, and this plan in the same change when a stage lands.
-- [ ] Preserve a supported-claims table in the docs: “checked by Eponym”,
+- [x] Preserve a supported-claims table in the docs: “checked by Eponym”,
   “checked by Nim”, “trusted adapter”, and “not currently connected”.
 
 ### Dependencies and sequencing

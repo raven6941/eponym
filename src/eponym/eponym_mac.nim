@@ -14,6 +14,7 @@ import os  # issue #131: parentDir of the eponymBlock call site
 import strutils
 import sequtils
 import sets
+import tables
 
 # --- eponymBlock: Nim-block syntax (no """) ---------------------------------
 # Converts a block of (valid Nim) AST to Eponym source, elaborates it,
@@ -528,7 +529,7 @@ proc blockToEponym*(body: NimNode): string =
       elif head == "bindPostulate":
         # Host binding is consumed by eponymBlock after checking its Eponym
         # contract; it is not part of the Eponym source text.
-        if st.len notin {3, 4, 6} or st[1].kind != nnkIdent:
+        if st.len notin {3, 4, 5, 6, 7} or st[1].kind != nnkIdent:
           error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       elif head == "runtimeType":
         # Explicit opaque Nim/Eponym representation mapping, consumed by the
@@ -567,7 +568,7 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
         $st[0] == "bindPostulate":
-      if st.len notin {3, 4, 6} or st[1].kind != nnkIdent:
+      if st.len notin {3, 4, 5, 6, 7} or st[1].kind != nnkIdent:
         error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       let name = $st[1]
       if name in seen:
@@ -582,6 +583,31 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
                                      implementation: st[2],
                                      eponymTypes: typeNames))
 
+proc mentionsName(node: NimNode, name: string): bool =
+  if node.kind in {nnkIdent, nnkSym} and $node == name:
+    return true
+  for child in node:
+    if mentionsName(child, name):
+      return true
+
+proc bindingIsReferenced(body: NimNode, postulateName: string): bool =
+  ## A binding is useful only if some checked proc body calls its postulate.
+  ## This deliberately checks direct references; call-graph reachability is a
+  ## separate question because any generated wrapper can be called by Nim.
+  for st in body:
+    if st.kind == nnkProcDef and st.len > 6 and
+        mentionsName(st[6], postulateName):
+      return true
+
+proc isCheckedNatType(globals: Globals, typeName: string): bool =
+  ## Classify Nat by the checked declaration's identity, not by its spelling.
+  if "Nat" notin globals or typeName notin globals:
+    return false
+  let nat = globals["Nat"].tm
+  let candidate = globals[typeName].tm
+  not nat.isNil and not candidate.isNil and nat.kind == tR and
+    candidate.kind == tR and nat.refId == candidate.refId
+
 proc simpleRuntimeCodec(n: NimNode): string =
   if n.kind == nnkIdent:
     case $n
@@ -590,12 +616,15 @@ proc simpleRuntimeCodec(n: NimNode): string =
     else: result = ""
 
 proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType]): NimNode =
-  if n.kind == nnkIdent:
-    case $n
+  var head = n
+  while head.kind in {nnkCall, nnkCommand, nnkBracketExpr} and head.len > 0:
+    head = head[0]
+  if head.kind == nnkIdent:
+    case $head
     of "Int", "Nat": return ident("int")
     else:
       for mapping in mappings:
-        if mapping.eponymName == $n:
+        if mapping.eponymName == $head:
           return mapping.nimType
   nil
 
@@ -611,13 +640,28 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
   newTree(nnkBracketExpr, generic, nimType)
 
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
-                 mappings: seq[HostRuntimeType]): NimNode =
+                 mappings: seq[HostRuntimeType], checkedGlobals: Globals): NimNode =
   let nameLit = newLit(binding.postulateName)
   if binding.eponymTypes.len == 0:
     return newCall(bindSym"bindHostIntUnary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
+  var typeIndexes: seq[int] = @[]
+  let isNatType = proc(typeIndex: int): bool =
+    if typeIndex < 0 or typeIndex >= binding.eponymTypes.len: return false
+    let typeName = binding.eponymTypes[typeIndex]
+    isCheckedNatType(checkedGlobals, typeName)
+  if binding.eponymTypes.len == 2 and isNatType(1):
+    typeIndexes = @[0]
+  elif binding.eponymTypes.len == 2:
+    typeIndexes = @[0, 1]
+  elif binding.eponymTypes.len == 3 and isNatType(0):
+    typeIndexes = @[1, 2]
+  else:
+    for i in 0 ..< binding.eponymTypes.len:
+      typeIndexes.add(i)
   var typeArgs: seq[NimNode] = @[]
-  for eponymName in binding.eponymTypes:
+  for typeIndex in typeIndexes:
+    let eponymName = binding.eponymTypes[typeIndex]
     var nimType: NimNode = nil
     for mapping in mappings:
       if mapping.eponymName == eponymName:
@@ -627,21 +671,69 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       error("bindPostulate for '" & binding.postulateName &
         "' needs runtimeType(" & eponymName & ", NimType)")
     typeArgs.add(nimType)
-  let adapter = if typeArgs.len == 1: bindSym"bindHostOpaqueUnary"
-                else: bindSym"bindHostOpaqueBinary"
+  let natOpaqueHomogeneous = binding.eponymTypes.len == 3 and
+    isNatType(0) and typeArgs[0].repr == typeArgs[1].repr
+  let adapter =
+    if binding.eponymTypes.len == 1: bindSym"bindHostOpaqueUnary"
+    elif binding.eponymTypes.len == 2 and isNatType(1):
+      bindSym"bindHostOpaqueNatUnary"
+    elif binding.eponymTypes.len == 2: bindSym"bindHostOpaqueMapUnary"
+    elif binding.eponymTypes.len == 3 and isNatType(0):
+      if natOpaqueHomogeneous: bindSym"bindHostNatOpaqueBinary"
+      else: bindSym"bindHostNatOpaqueMapBinary"
+    elif binding.eponymTypes.len == 3: bindSym"bindHostOpaqueBinary"
+    elif binding.eponymTypes.len == 4: bindSym"bindHostOpaqueTernary"
+    else:
+      error("unsupported bindPostulate codec combination for '" &
+            binding.postulateName & "'")
   var genericAdapter = newNimNode(nnkBracketExpr)
   genericAdapter.add(adapter)
-  for typeArg in typeArgs:
+  let genericTypeArgs = if natOpaqueHomogeneous: typeArgs[0 .. 0] else: typeArgs
+  for typeArg in genericTypeArgs:
     genericAdapter.add(typeArg)
   var call = newCall(genericAdapter, bindingsSym, globalsSym, nameLit)
-  for eponymName in binding.eponymTypes:
-    call.add(newLit(eponymName))
+  if binding.eponymTypes.len == 2 and isNatType(1):
+    call.add(newLit(binding.eponymTypes[0]))
+  elif binding.eponymTypes.len == 3 and isNatType(0):
+    call.add(newLit(binding.eponymTypes[1]))
+    call.add(newLit(binding.eponymTypes[2]))
+  else:
+    for eponymName in binding.eponymTypes:
+      call.add(newLit(eponymName))
   call.add(binding.implementation)
   call
 
+proc unsupportedRuntimeWrapper(decl: NimNode, defName: string,
+                               mappings: seq[HostRuntimeType]): NimNode =
+  let params = decl[3]
+  var reason = "unsupported generic or higher-order signature"
+  if decl[2].kind != nnkEmpty:
+    reason = "generic Eponym procedures do not yet have runtime wrappers"
+  elif params.len == 0 or params[0].kind == nnkEmpty:
+    reason = "Eponym procedure has no explicit runtime result type"
+  elif runtimeNimType(params[0], mappings).isNil:
+    reason = "no runtime codec for Eponym result type '" & repr(params[0]) & "'"
+  else:
+    for i in 1 ..< params.len:
+      let p = params[i]
+      if p.kind != nnkIdentDefs:
+        reason = "unsupported Nim parameter declaration for Eponym procedure '" &
+          defName & "'"
+        break
+      if runtimeNimType(p[^2], mappings).isNil:
+        reason = "no runtime codec for Eponym parameter type '" & repr(p[^2]) & "'"
+        break
+  let name = ident(defName)
+  let message = newLit("eponymBlock wrapper '" & defName & "': " & reason &
+    "; add runtimeType for an opaque postulated type or use a supported primitive")
+  result = quote do:
+    template `name`*(args: varargs[untyped]): untyped =
+      {.error: `message`.}
+
 proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          bindings: seq[HostPostulateBinding],
-                         mappings: seq[HostRuntimeType]): NimNode =
+                         mappings: seq[HostRuntimeType],
+                         checkedGlobals: Globals): NimNode =
   ## Emit concrete Nim wrappers for non-generic first-order primitive and
   ## explicitly mapped opaque types.
   if decl.kind != nnkProcDef or decl[2].kind != nnkEmpty:
@@ -685,7 +777,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     wrapperBody.add(newVarStmt(bindingSym,
       newCall(bindSym"initRuntimeBindings")))
     for binding in bindings:
-      wrapperBody.add(bindingCall(binding, bindingSym, globalsSym, mappings))
+      wrapperBody.add(bindingCall(binding, bindingSym, globalsSym, mappings,
+                                  checkedGlobals))
 
   var values = newNimNode(nnkBracket)
   for i, argSym in argSyms:
@@ -749,6 +842,10 @@ macro eponymBlock*(body: untyped): untyped =
     error("eponymBlock parse error: " & e.msg, body)
 
   let bindings = hostPostulateBindings(body)
+  for binding in bindings:
+    if not bindingIsReferenced(body, binding.postulateName):
+      error("eponymBlock binding error: binding for postulate '" &
+        binding.postulateName & "' is unused by every proc body", body)
   let runtimeTypes = hostRuntimeTypes(body)
   for mapping in runtimeTypes:
     try:
@@ -767,13 +864,32 @@ macro eponymBlock*(body: untyped): untyped =
           raise newException(ValueError,
             "postulate '" & binding.postulateName & "' requires opaque Eponym type '" &
             required & "', not '" & binding.eponymTypes[0] & "'")
+      of 2:
+        if isCheckedNatType(checkedGlobals, binding.eponymTypes[1]):
+          validateHostOpaqueNatUnaryType(checkedGlobals,
+            binding.postulateName, binding.eponymTypes[0])
+        else:
+          validateHostOpaqueMapUnaryType(checkedGlobals,
+            binding.postulateName, binding.eponymTypes[0],
+            binding.eponymTypes[1])
       of 3:
-        validateHostOpaqueBinaryType(checkedGlobals, binding.postulateName,
+        if isCheckedNatType(checkedGlobals, binding.eponymTypes[0]):
+          validateHostNatOpaqueBinaryType(checkedGlobals,
+            binding.postulateName, binding.eponymTypes[1],
+            binding.eponymTypes[2])
+        else:
+          validateHostOpaqueBinaryType(checkedGlobals, binding.postulateName,
+            binding.eponymTypes[0], binding.eponymTypes[1],
+            binding.eponymTypes[2])
+      of 4:
+        validateHostOpaqueTernaryType(checkedGlobals, binding.postulateName,
           binding.eponymTypes[0], binding.eponymTypes[1],
-          binding.eponymTypes[2])
+          binding.eponymTypes[2], binding.eponymTypes[3])
       else:
         raise newException(ValueError,
-          "bindPostulate supports Int -> Int, opaque T -> T, and opaque A -> B -> C")
+          "bindPostulate supports Int -> Int, opaque T -> T, opaque T -> U, " &
+          "opaque T -> Nat, Nat -> opaque T -> opaque U, opaque A -> B -> C, " &
+          "and opaque A -> B -> C -> D")
     except ValueError as e:
       error("eponymBlock binding error: " & e.msg, body)
 
@@ -790,10 +906,13 @@ macro eponymBlock*(body: untyped): untyped =
         break
     if not procDecl.isNil:
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
-                                             bindings, runtimeTypes)
+                                             bindings, runtimeTypes,
+                                             checkedGlobals)
       if not typedWrapper.isNil:
         result.add(typedWrapper)
-        continue
+      else:
+        result.add(unsupportedRuntimeWrapper(procDecl, d.name, runtimeTypes))
+      continue
     if bindings.len == 0:
       result.add(quote do:
         proc `procName`*(args: varargs[int]): int =
@@ -812,7 +931,7 @@ macro eponymBlock*(body: untyped): untyped =
       )
       for binding in bindings:
         wrapperBody.add(bindingCall(binding, runtimeBindingsId, globalsId,
-                                    runtimeTypes))
+                                    runtimeTypes, checkedGlobals))
       wrapperBody.add(quote do:
         callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @`argsIdent`,
                        `runtimeBindingsId`)

@@ -7,13 +7,32 @@ design notes where the limit comes from.
 
 ## Embedding and runtime
 
+### What each layer establishes
+
+| Example or boundary | Checked by Eponym | Checked by Nim | Trusted or separate |
+|---|---|---|---|
+| `session_runtime_bindings.nim`, `session_tcp_bindings.nim` | The sender/receiver role and its session-indexed postulate calls | Generated wrapper and adapter signatures | Adapter behavior, message codec, and TCP transport |
+| `paxos_session.nim` | Proposer/acceptor session descriptions and roles | The hand-written mailbox driver compiles | Driver repeats the protocol; it does not call the checked roles |
+| `qtt_borrow.nim` | The modeled linear owner/borrow use and postulated operation sequence | The separate buffer driver compiles | Buffer exclusivity/lifetime and synchronization between driver and model |
+| `convex_opt.nim`, `convex_opt_vec.nim` | The reified objective and DCP certificate | Separate numeric implementation compiles | No connection from checked objective to the executed loss/gradient |
+| `bindPostulate` runtime bridge | Checked callers match the Eponym postulate type | Generated wrapper and Nim adapter signatures match declared mappings | Adapter implementation and opaque mappings uphold the postulate semantics |
+
+“Checked” in this table means the Eponym layer elaborates the definition and
+the kernel accepts its proof obligations. It does not imply that a separate
+Nim driver calls that definition or that the host implementation satisfies
+the postulated behavior.
+
 ### Callable definitions have a partial runtime bridge
 
 `eponymBlock` checks definitions at Nim compile time, then generates Nim
 wrappers for them. Top-level non-generic definitions whose parameters and
 result use primitive `Int` or `Nat` get fixed-arity Nim `proc` wrappers with
-`int` parameters and results. `Nat` conversions reject negative values. Other
-signatures still use the compatibility `varargs[int] -> int` wrapper in
+`int` parameters and results. Explicit `runtimeType` mappings add opaque
+postulated types and indexed families. `Nat` conversions reject negative
+values. An explicit `proc` declaration with an unsupported signature remains
+checked but emits a targeted compile-time error if called. Generated names
+without a matching `proc` declaration retain the compatibility
+`varargs[int] -> int` wrapper in
 [`eponym_mac.nim`](../src/eponym/eponym_mac.nim). At runtime,
 [`eponym_embed.nim`](../src/eponym/eponym_embed.nim) converts Nim integers to
 Eponym's primitive `Int`, applies the checked term, and converts an `Int`
@@ -24,15 +43,28 @@ signature.
 
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values and opaque boxes for arbitrary Nim payload
-types. Typed unary `T -> T` and binary `A -> B -> C` postulate adapters can
-pass Nim objects, references, strings, or other values through explicitly
-mapped Eponym types without exposing their representation. `eponymBlock` can
-generate typed wrappers for first-order definitions over mapped opaque types
-that correspond to named Eponym postulates. Tests exercise user-defined values
-through checked definitions and generated wrappers. This does not yet provide
-structural codecs for records or collections, callback shapes with more than
-two curried opaque arguments, closures as exported values, async results, or
-socket/channel protocols.
+types. Typed adapters support unary `T -> T`, `T -> U`, `T -> Nat`,
+`Nat -> A -> B`, binary `A -> B -> C`, and ternary `A -> B -> C -> D`
+postulate contracts.
+They can pass Nim objects, references, strings, or other values through
+explicitly mapped Eponym types without exposing their representation.
+`eponymBlock` can generate typed wrappers for first-order definitions over
+mapped opaque types that correspond to named Eponym postulates. Tests exercise
+user-defined values through checked definitions and generated wrappers. A
+mapped `Future[T]` can pass through an opaque postulate adapter as either an
+argument or result; the bridge preserves the same Nim future value. Eponym
+has no async effect, await, or cancellation operation. Completion, failure,
+and cancellation remain Nim runtime behavior: Eponym does not observe or
+transform them. The runtime bridge tests identity pass-through for a future
+argument and the existing future-result case.
+Nim closures can be passed into checked roles as opaque callback arguments,
+where a bound Nim postulate may invoke them; Eponym does not inspect their
+bodies. Returning closures from generated wrappers remains unsupported.
+Structural codecs for records or collections, dependent or generic signatures,
+callback shapes with more than three curried opaque arguments, and structural
+inspection of closures remain unsupported. The session runtime demo includes a
+hand-written Nat LEB128 message codec, and the TCP adapter demo uses it over a
+loopback socket, but there is no reusable structural codec framework.
 Nim's type checker checks the concrete adapter signature, but the mapping to
 the Eponym type and the adapter behavior remain trusted. Neither compiler
 proves that the host value satisfies a dependent index.
@@ -45,12 +77,21 @@ distinct Nim newtypes when Nim should enforce that distinction.
 
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
-opaque `T -> T`, and curried binary opaque `A -> B -> C` postulates. Opaque
-bindings require explicit `runtimeType(EponymType, NimType)` mappings to
-postulated Eponym types. Nim checks adapter and generated wrapper signatures;
-the implementation and mapping remain trusted. Longer callback shapes,
-structural codecs, and explicit missing-binding diagnostics are still
-unsupported. See the
+opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`,
+curried binary opaque `A -> B -> C`, and curried ternary opaque
+`A -> B -> C -> D` postulates.
+Opaque bindings require explicit `runtimeType(EponymType, NimType)` mappings
+to postulated Eponym types or
+type families. Nim checks adapter and generated wrapper signatures;
+the implementation and mapping remain trusted. Synchronous exceptions from a
+Nim adapter propagate unchanged to the caller. An invoked but unbound
+postulate raises a `ValueError` naming the postulate. `eponymBlock` rejects a
+binding that no checked proc body references, but does not determine whether
+that proc is reachable from an application entry point. Call-graph
+reachability, callbacks longer than three opaque arguments, and structural
+codecs remain unsupported. The TCP demo returns transport and codec failures
+through a mapped `TransportResult` value. Other adapters may still propagate
+synchronous exceptions. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the
 supported prototype and remaining work.
 
@@ -81,24 +122,39 @@ protocol, preserves a linear resource, or returns a value satisfying a
 dependent index. Such implementations remain part of the trust boundary.
 See the [trust model](trust-model.md).
 
-### Checked roles are not yet wired to their Nim backends
+### Nim ownership and lifetime at the runtime boundary
 
-Several embedding examples intentionally have a checked Eponym role and a
-separate ordinary-Nim driver. For example, `paxos_session.nim` checks
-`proposer` and `acceptor`, but `runPaxosRound` manually repeats the message
-sequence using mailboxes and assertions. `qtt_borrow.nim` checks a linear
-borrow API, while its buffer driver mirrors the operations separately.
-The Eponym roles do not invoke the backend postulates at runtime because
-postulate-to-Nim bindings are not implemented.
+The current adapters take and return Nim values by value. `toHostValue[T]`
+stores a Nim value in a rooted box for the runtime call. Ordinary object
+values follow Nim's copy and destructor rules; `ref` values, pointers, and
+closures still refer to their existing storage or captured environment, so
+boxing them does not remove aliases. The host adapter may retain or duplicate
+those references, and raw pointer validity remains the adapter author's
+responsibility. There is no adapter form that accepts `var`/`lent` parameters
+or transfers ownership explicitly.
 
-This means the examples demonstrate compile-time protocol/property checking,
-not yet an end-to-end application where the checked role drives a socket,
-buffer, or service implementation. A user must keep the checked protocol and
-the executable backend in sync by hand. The postulate binding experiment
-tracks the work needed to close this gap. These examples also do not prove
-anything about ordinary Nim channel aliases, sockets, or network message
-ordering until those concrete resources are represented at the Eponym/Nim
-boundary.
+Eponym enforces a linear channel's use in checked Eponym terms. It does not
+make a Nim `ref` or closure single-use, detect aliases held elsewhere, or
+prevent the adapter from retaining a handle. Generated wrappers create a
+call-local binding environment; synchronous adapter exceptions propagate
+unchanged. A mapped `Future[T]` is returned as an opaque Nim value and remains
+owned by the caller and Nim's normal lifetime rules; Eponym does not await or
+cancel it.
+
+### Some checked roles still have separate Nim drivers
+
+`session_runtime_bindings.nim` and `session_tcp_bindings.nim` run checked
+sender/receiver roles through typed Nim adapters; the latter uses a loopback
+TCP socket. The larger `paxos_session.nim` still checks `proposer` and
+`acceptor`, while `runPaxosRound` manually repeats the message sequence using
+mailboxes and assertions. `qtt_borrow.nim` checks a linear borrow API, while
+its buffer driver mirrors the operations separately.
+
+The integrated session examples establish that the checked roles execute
+through their bound postulates, but the adapter and transport remain trusted.
+The Eponym checker does not establish network ordering or inspect aliases in
+ordinary Nim. Paxos and buffer execution still require manual synchronization
+with their checked Eponym descriptions.
 
 ### Some examples certify a model, not the runtime computation
 

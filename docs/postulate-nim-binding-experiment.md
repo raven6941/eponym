@@ -95,12 +95,23 @@ coverage sends generated handle/message pairs through checked roles and
 receives the callback result. The generated wrapper and binding support is
 limited to these documented first-order forms.
 
+A Nim closure can also be an explicitly mapped opaque argument. For example,
+a postulate may take a mapped callback type and a mapped value type, while the
+Nim adapter invokes the callback. Nim checks the callback's concrete proc type
+at the generated wrapper; Eponym treats its body as opaque and trusted.
+Returning closures from generated wrappers is not supported.
+
 Generated `eponymBlock` wrappers support first-order primitive `Int` and
-`Nat` signatures and explicitly mapped opaque types. `bindPostulate` supports
-unary `Int -> Int`, unary opaque `T -> T`, and curried binary opaque
-`A -> B -> C` postulates. Longer callback signatures, async results,
-structural codecs, and missing-binding checks before invocation remain
-unsupported.
+`Nat` signatures and explicitly mapped opaque types or indexed families.
+`bindPostulate` supports unary `Int -> Int`, opaque `T -> T`, opaque `T -> U`,
+`T -> Nat`, `Nat -> A -> B`, curried binary opaque `A -> B -> C`, and curried
+ternary opaque `A -> B -> C -> D` postulates. A mapped `Future[T]` may be
+returned opaquely; it is not awaited and async failure/cancellation semantics
+are undefined. Longer callback signatures, structural codecs, and call-graph
+reachability checks remain unsupported. A binding unused by all checked proc bodies is rejected during
+macro expansion. An invoked unbound
+postulate raises a runtime `ValueError` naming the postulate. Exceptions raised
+by a synchronous Nim adapter propagate to the caller without wrapping.
 
 ## Suggested first vertical slice
 

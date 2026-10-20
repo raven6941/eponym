@@ -1,6 +1,6 @@
 ## Runtime bridge checks for Eponym values that do not use the generated Int ABI.
 
-import std/[os, tables]
+import std/[os, tables, strutils, asyncdispatch]
 import falsify
 import eponym_mac
 import eponym_embed
@@ -17,10 +17,14 @@ proc idNat : Nat -> Nat = lam (n : Nat). n
 proc hostStepNim(value: int): int = value + 7
 proc hostTripleNim(value: int): int = value * 3
 proc hostString(value: string): string = value
+proc hostFailureNim(value: int): int =
+  raise newException(IOError, "host adapter failed")
 
 type ChannelHandle = object
   id: int
   label: string
+
+type NimIntCallback = proc(value: int): int {.closure.}
 
 proc hostRotateChannel(channel: ChannelHandle): ChannelHandle =
   result = channel
@@ -31,6 +35,20 @@ proc hostRouteChannel(channel: ChannelHandle,
                       message: string): ChannelHandle =
   result = channel
   result.label.add(":" & message)
+
+proc hostRouteChannelWithId(channel: ChannelHandle, message: string,
+                            requestId: int): ChannelHandle =
+  result = channel
+  result.label.add(":" & message & "#" & $requestId)
+
+proc hostFutureForChannel(channel: ChannelHandle): Future[int] =
+  result = newFuture[int]("hostFutureForChannel")
+  result.complete(channel.id)
+
+proc hostFutureIdentity(value: Future[int]): Future[int] = value
+
+proc hostInvokeCallback(callback: NimIntCallback, value: int): int =
+  callback(value)
 
 proc hostWrongRoute(channel: int, message: string): int = channel + message.len
 
@@ -43,6 +61,12 @@ static:
     hostRouteChannel))
   doAssert not compiles(hostOpaqueBinary[ChannelHandle, string, ChannelHandle](
     hostWrongRoute))
+  doAssert compiles(hostOpaqueTernary[ChannelHandle, string, int,
+    ChannelHandle](hostRouteChannelWithId))
+  doAssert compiles(hostOpaqueMapUnary[ChannelHandle, Future[int]](
+    hostFutureForChannel))
+  doAssert compiles(hostOpaqueBinary[NimIntCallback, int, int](
+    hostInvokeCallback))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -54,18 +78,52 @@ eponymBlock:
   proc generatedNatId(value: Nat): Nat = value
 
 eponymBlock:
+  postulate(Int, Univ)
+  postulate(hostFailure, Int -> Int)
+  bindPostulate(hostFailure, hostFailureNim)
+  proc generatedFailureRole(value: Int): Int = hostFailure(value)
+
+eponymBlock:
   postulate(Channel, Univ)
   postulate(Message, Univ)
+  postulate(RequestId, Univ)
+  postulate(PendingResult, Univ)
+  postulate(Callback, Univ)
+  postulate(Sample, Univ)
   runtimeType(Channel, ChannelHandle)
   runtimeType(Message, string)
+  runtimeType(RequestId, int)
+  runtimeType(PendingResult, Future[int])
+  runtimeType(Callback, NimIntCallback)
+  runtimeType(Sample, int)
   postulate(rotateChannel, Channel -> Channel)
   bindPostulate(rotateChannel, hostRotateChannel, Channel)
   postulate(routeChannel, Channel -> Message -> Channel)
   bindPostulate(routeChannel, hostRouteChannel, Channel, Message, Channel)
+  postulate(routeChannelWithId,
+    Channel -> Message -> RequestId -> Channel)
+  bindPostulate(routeChannelWithId, hostRouteChannelWithId,
+    Channel, Message, RequestId, Channel)
+  postulate(startFuture, Channel -> PendingResult)
+  bindPostulate(startFuture, hostFutureForChannel, Channel, PendingResult)
+  postulate(passFuture, PendingResult -> PendingResult)
+  bindPostulate(passFuture, hostFutureIdentity, PendingResult)
+  postulate(invokeCallback, Callback -> Sample -> Sample)
+  bindPostulate(invokeCallback, hostInvokeCallback,
+    Callback, Sample, Sample)
   proc generatedRotateRole(channel: Channel): Channel =
     rotateChannel(channel)
   proc generatedRouteRole(channel: Channel, message: Message): Channel =
     routeChannel(channel, message)
+  proc generatedRouteWithIdRole(channel: Channel, message: Message,
+                                requestId: RequestId): Channel =
+    routeChannelWithId(channel, message, requestId)
+  proc generatedFutureRole(channel: Channel): PendingResult =
+    startFuture(channel)
+  proc generatedFutureInput(value: PendingResult): PendingResult =
+    passFuture(value)
+  proc generatedCallbackRole(callback: Callback, value: Sample): Sample =
+    invokeCallback(callback, value)
 
 static:
   doAssert compiles(generatedCheckedRole(35))
@@ -77,6 +135,11 @@ static:
   doAssert not compiles(generatedRotateRole("not a channel"))
   doAssert compiles(generatedRouteRole(ChannelHandle(id: 1), "hello"))
   doAssert not compiles(generatedRouteRole("not a channel", "hello"))
+  doAssert compiles(generatedRouteWithIdRole(ChannelHandle(id: 1), "hello", 2))
+  doAssert compiles(generatedFutureRole(ChannelHandle(id: 1)))
+  doAssert compiles(generatedFutureInput(newFuture[int]("typedFuture")))
+  doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
+  doAssert not compiles(generatedCallbackRole(42, 1))
 
 when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
@@ -109,6 +172,9 @@ when isMainModule:
   let generatedOpaqueWrapperWorks = generatedRouteRole(
     ChannelHandle(id: 17, label: "socket"), "generated").label ==
       "socket:generated"
+  let futureInput = newFuture[int]("futureArgument")
+  let generatedFutureInputPassesThrough =
+    generatedFutureInput(futureInput) == futureInput
   let generatedUnaryOpaqueWorks = generatedRotateRole(
     ChannelHandle(id: 18, label: "single")).id == 19
   let generatedUnaryOpaqueCases = forAll(
@@ -128,6 +194,11 @@ when isMainModule:
                                      $id)
       value.id == id and value.label == "channel:" & $id,
     shrinkInt)
+  var hostExceptionPropagated = false
+  try:
+    discard generatedFailureRole(1)
+  except IOError as e:
+    hostExceptionPropagated = e.msg == "host adapter failed"
 
   var rejectedNegativeNat = false
   try:
@@ -136,9 +207,10 @@ when isMainModule:
     rejectedNegativeNat = true
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
+      generatedFutureInputPassesThrough and
       generatedUnaryOpaqueWorks and generatedUnaryOpaqueCases and
       generatedOpaqueWrapperCases and
-      rejectedNegativeNat):
+      rejectedNegativeNat and hostExceptionPropagated):
     quit(1)
 
   # The runtime-binding work needs the exact global identities assigned by
@@ -154,6 +226,21 @@ proc opaqueRole : Channel -> Channel =
 proc routeRole : Channel -> Message -> Channel =
   lam (channel : Channel). lam (message : Message).
     routeChannel channel message
+postulate RequestId : Type 0
+postulate PendingResult : Type 0
+postulate Callback : Type 0
+postulate Sample : Type 0
+postulate routeChannelWithId : Channel -> Message -> RequestId -> Channel
+proc routeWithIdRole : Channel -> Message -> RequestId -> Channel =
+  lam (channel : Channel). lam (message : Message). lam (requestId : RequestId).
+    routeChannelWithId channel message requestId
+postulate startFuture : Channel -> PendingResult
+proc futureRole : Channel -> PendingResult =
+  lam (channel : Channel). startFuture channel
+postulate invokeCallback : Callback -> Sample -> Sample
+proc callbackRole : Callback -> Sample -> Sample =
+  lam (callback : Callback). lam (value : Sample).
+    invokeCallback callback value
 """
   let checked = elabCheckDirState(identityProgram, baseDir)
   let postulateId = checked.globals["hostStep"].tm.refId
@@ -165,6 +252,15 @@ proc routeRole : Channel -> Message -> Channel =
   let hostResult = callValueFuncDir(baseDir, identityProgram,
     "throughHelper", @[intToValue(35)], runtimeBindings)
   if valueToInt(hostResult) != 42:
+    quit(1)
+
+  var missingHostBindingDiagnosed = false
+  try:
+    discard callValueFuncDir(baseDir, identityProgram, "throughHelper",
+      @[intToValue(35)])
+  except ValueError as e:
+    missingHostBindingDiagnosed = "unbound runtime postulate 'hostStep'" in e.msg
+  if not missingHostBindingDiagnosed:
     quit(1)
 
   let hostDispatch = forAll("checked definitions dispatch to typed Nim postulates",
@@ -200,6 +296,44 @@ proc routeRole : Channel -> Message -> Channel =
   let routedChannel = valueToHost[ChannelHandle](routedValue)
   if routedChannel.id != originalChannel.id or
       routedChannel.label != "socket:payload":
+    quit(1)
+  var ternaryOpaqueBindings = initRuntimeBindings()
+  bindHostOpaqueTernary[ChannelHandle, string, int, ChannelHandle](
+    ternaryOpaqueBindings, cachedGlobals, "routeChannelWithId", "Channel",
+    "Message", "RequestId", "Channel", hostRouteChannelWithId)
+  let routedWithIdCases = forAll(
+    "three-argument opaque postulate dispatch", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let channel = ChannelHandle(id: id, label: "ch")
+      let message = $id
+      let requestId = -id
+      let value = callValueFuncDir(baseDir, identityProgram,
+        "routeWithIdRole", @[toHostValue(channel), toHostValue(message),
+          toHostValue(requestId)], ternaryOpaqueBindings)
+      let actual = valueToHost[ChannelHandle](value)
+      actual.id == id and actual.label == "ch:" & message & "#" &
+        $requestId,
+    shrinkInt)
+  if not routedWithIdCases:
+    quit(1)
+  let futureAdapterCases = forAll(
+    "opaque Future[T] results from typed postulate adapters", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let future = generatedFutureRole(ChannelHandle(id: id, label: "ch"))
+      future.finished and future.read() == id,
+    shrinkInt)
+  if not futureAdapterCases:
+    quit(1)
+  let callbackArgumentCases = forAll(
+    "Nim closures passed through checked opaque callback parameters", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(offset: int): bool =
+      let callback: NimIntCallback = proc(value: int): int = value + offset
+      generatedCallbackRole(callback, offset * 2) == offset * 3,
+    shrinkInt)
+  if not callbackArgumentCases:
     quit(1)
   var wrongBinaryMappingRejected = false
   try:

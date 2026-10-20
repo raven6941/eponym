@@ -192,6 +192,7 @@ time.
 | Bidirectional elaboration + conversion (kernel re-checks, LCF-style) | Termination beyond structural recursion + size-change (#36, #42) |
 | Eliminator iota rules (motive-validated by the kernel) | Girard's paradox from an inconsistent universe rule (the hierarchy is explicit, #52) |
 | QTT quantity discipline (linear used once, erased unused; inference for unannotated binders, #84) | Termination of type-level computation (author's problem) |
+| A checked caller's postulate type and the mapped Nim adapter signature | Adapter behavior, opaque type mappings, reference aliasing, and host lifetime rules |
 | Structural recursion for `red` rules and clause defs (#36); mutual recursion via size-change termination (#42) | Soundness of `postulate`d primops (host `Int` ops) |
 | Strict positivity of `data` declarations (#33) | Anything your own metaprogramming computes |
 | Universe hierarchy `Type l` + directional cumulativity (#52) | |

@@ -80,7 +80,9 @@ does not inspect or verify the Nim procedure body. Top-level, non-generic
 definitions over primitive `Int` and `Nat` generate fixed-arity Nim wrappers;
 `Nat` uses Nim `int` with nonnegative runtime checks. Other Eponym signatures
 need an explicit opaque mapping as shown below or an appropriate structural
-codec, which is not yet implemented. A reachable postulate without a
+codec, which is not yet implemented. Calling an explicit `proc` definition
+without a supported runtime mapping fails at compile time with the missing
+codec type in the diagnostic. A reachable postulate without a
 binding fails when evaluated; diagnostics for missing bindings at expansion
 time are not implemented.
 
@@ -109,10 +111,12 @@ eponymBlock:
 This generates a fixed-arity Nim wrapper for `checkedSend` and checks the
 adapter's Nim signature. Eponym can pass the opaque boxes to the postulate,
 but cannot inspect a `ChannelHandle` or prove that the Nim implementation
-follows a protocol. `runtimeType` mappings must name postulated Eponym types.
-Opaque bindings currently support unary `T -> T` and curried binary
-`A -> B -> C` contracts. Structured values and longer signatures still need
-explicit codec and adapter support.
+follows a protocol. `runtimeType` mappings must name postulated Eponym types or
+indexed type families. Opaque bindings support `T -> T`, `T -> Nat`,
+`Nat -> T -> U`, and curried binary `A -> B -> C` contracts when every opaque
+type is explicitly mapped. These shapes cover resource handles with primitive
+message values. Structured values and longer signatures still need explicit
+codec and adapter support.
 
 ## Sheds: `shedsBlock` (hole-driven development)
 
