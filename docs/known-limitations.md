@@ -178,7 +178,10 @@ references, earlier
 generic indices, applications, and integer literals. More complex type
 expressions remain unsupported. A 200-case `SizedTree[length]` property checks
 raw `Value` and mapped `RuntimeVariant` arguments and rejects an embedded
-length that differs from the generic index.
+length that differs from the generic index. Direct Bool-controlled conditional
+Nat indices are also supported in applied generic domains; a 200-case
+`SizedTree[if b: n else: m]` property covers both branches and rejects values
+whose embedded index does not match the selected branch.
 
 The low-level `RuntimeVariant` API provides a checked structural view for any
 declared data family when the caller supplies its constructor names. It
