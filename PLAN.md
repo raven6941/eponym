@@ -402,6 +402,17 @@ implementations.
    and recursively encodes the payload. A 200-case property covers `none`,
    `some`, primitive and opaque generic payloads, nested options, and typed/raw
    `runtimeValue` paths.
+- [x] Preserve concrete element type witnesses in runtime `Vec`, `List`, and
+   `Option` constructor values, including recursively nested collection types.
+   The witness builder lowers nested Vec lengths to runtime Nat values and
+   resolves generic element types through unique `runtimeType` mappings for an
+   unindexed Eponym type and its concrete Nim type. Mapped opaque boxes retain
+   that Eponym type witness so runtime inference can validate constructor
+   arguments; generated generic wrappers also pass the mapped type as the
+   checked body's type argument. 200-case properties validate mapped
+   `Vec[A,n]` values, reject an incorrect element type, and cover mapped
+   callback results through `vmap`, in addition to primitive Vecs including
+   the empty case and nested collection round trips.
 - [x] Add `runtimeCodec(EponymType, NimType, encoder, decoder)` for explicitly
    mapped named Eponym types and families. The typed encoder and decoder
    receive the module's `Globals`; generated wrappers and typed postulate
@@ -480,9 +491,10 @@ implementations.
   recursive payload codecs remain future work.
 - [x] Validate dynamic generic `Value` arguments against applied type
   expressions built from named types, earlier generic indices, applications,
-  and integer literals. A 200-case `SizedTree[length]` property checks raw and
-  mapped variant values and rejects an embedded length that differs from the
-  generic index. More complex type expressions remain unsupported.
+  integer literals, and direct Bool-controlled conditional Nat indices. A
+  200-case property checks raw and mapped `SizedTree[length]` values, plus both
+  branches of `SizedTree[if b: n else: m]`, and rejects mismatched embedded
+  indices. More complex type expressions remain unsupported.
 - [x] Lower conditional Nat indices of the form `if b: n else: m` in dynamic
    generic Vec and non-dependent Sigma value codecs. The Bool condition is a
    generic runtime parameter; both branch lengths are checked. A 200-case

@@ -65,6 +65,12 @@ type IndexedChannelHandle = object
   index: int
   label: string
 
+type BaseRuntimeHandle = ref object of RootObj
+  id: int
+
+type DerivedRuntimeHandle = ref object of BaseRuntimeHandle
+  label: string
+
 type RuntimeSignal = enum
   signalStop, signalCaution, signalGo
 
@@ -198,12 +204,27 @@ eponymBlock:
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
+  import "../lib/bool.ep"
   runtimeVariant(RuntimeTree)
   runtimeVariant(SizedTree)
   runtimeValue(treeIdentity)
   proc genericIndexedTreeProjection[length: Nat,
       tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
   runtimeValue(genericIndexedTreeProjection)
+  proc genericConditionalIndexedTreeProjection[b: Bool, n, m: Nat,
+      tree: SizedTree[if b: n else: m]](ignored: Int):
+      SizedTree[if b: n else: m] = tree
+  runtimeValue(genericConditionalIndexedTreeProjection)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  import "../lib/bool.ep"
+  proc genericUnmappedTreeSeed(): RuntimeTree = treeEmpty
+  runtimeValue(genericUnmappedTreeSeed)
+  proc genericConditionalRawTreeProjection[b: Bool, n, m: Nat,
+      tree: SizedTree[if b: n else: m]](ignored: Int):
+      SizedTree[if b: n else: m] = tree
+  runtimeValue(genericConditionalRawTreeProjection)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -265,6 +286,8 @@ eponymBlock:
 
 eponymBlock:
   import "../lib/vec.ep"
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
   runtimeVector(Vec)
   proc generatedGenericCallbackOverVector[A: Univ](
       callback: proc(value: A): A {.closure.}, values: Vec[A, 2]):
@@ -287,6 +310,8 @@ eponymBlock:
   import "../lib/bool.ep"
   import "../lib/vec.ep"
   postulate(Int, Univ)
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
   runtimeVector(Vec)
   proc generatedConditionalGenericVectorValue[b: Bool, n, m: Nat,
       values: Vec[Int, (if b: n else: m)]](ignored: Int):
@@ -298,6 +323,7 @@ eponymBlock:
   runtimeValue(generatedConditionalGenericSigmaValue)
   proc generatedVectorIdentity[A: Univ, n: Nat](
       values: Vec[A, n]): Vec[A, n] = values
+  runtimeValue(generatedVectorIdentity)
   proc generatedVectorSucIndex[n: Nat](
       values: Vec[Int, suc(n)]): Nat = n
   proc generatedVectorAddIndex[m, n: Nat](
@@ -787,6 +813,14 @@ eponymBlock:
   proc generatedImportedNamed(left, right: Int): Int =
     importedPick(right = right, left = left)
 
+eponymBlock:
+  postulate(BaseHandle, Univ)
+  postulate(DerivedHandle, Univ)
+  runtimeType(BaseHandle, BaseRuntimeHandle)
+  runtimeType(DerivedHandle, DerivedRuntimeHandle)
+  proc mappedGenericIdentity[A: Univ](value: A): A = value
+  runtimeValue(mappedGenericIdentity)
+
 static:
   doAssert compiles(generatedCheckedRole(35))
   doAssert compiles(generatedDefault())
@@ -941,6 +975,79 @@ when isMainModule:
   except ValueError:
     appliedGenericIndexRejected = true
   doAssert appliedGenericIndexRejected
+  let conditionalAppliedGenericCases = forAll(
+    "conditional applied generic domains validate RuntimeVariant values", r,
+    200,
+    proc(r: var Rng): tuple[condition: bool, yesLength, noLength: int] =
+      (r.genBool(), r.genInt(0, 20), r.genInt(0, 20)),
+    proc(input: tuple[condition: bool, yesLength, noLength: int]): bool =
+      let expectedLength = if input.condition:
+        input.yesLength else: input.noLength
+      let tree = runtimeVariantToValue(RuntimeVariant(
+        constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+        runtimeTreeConstructors)
+      let indexed = runtimeVariantToValue(RuntimeVariant(
+        constructor: "sizedTree",
+        arguments: @[natToValue(expectedLength, variantGlobals), tree]),
+        variantGlobals, "SizedTree", ["sizedTree"])
+      let mapped = valueToRuntimeVariant(indexed, variantGlobals,
+        "SizedTree", ["sizedTree"])
+      let typed = genericConditionalIndexedTreeProjectionDynamic(
+        input.condition, input.yesLength, input.noLength, mapped, 0)
+      let runtime = genericConditionalIndexedTreeProjectionRuntimeValueDynamic(
+        input.condition, input.yesLength, input.noLength, mapped, 0)
+      let rawSeed = genericUnmappedTreeSeedRuntimeValue()
+      let rawIndexed = callRuntimeValue(
+        runtimeGlobalValue(rawSeed.globals, "sizedTree"),
+        [natToValue(expectedLength, rawSeed.globals), rawSeed.value])
+      let raw = genericConditionalRawTreeProjectionRuntimeValueDynamic(
+        input.condition, input.yesLength, input.noLength, rawIndexed, 0)
+      let runtimeValue = valueToRuntimeVariant(runtime.value, runtime.globals,
+        "SizedTree", ["sizedTree"])
+      let rawVariant = valueToRuntimeVariant(raw.value, raw.globals,
+        "SizedTree", ["sizedTree"])
+      typed.constructor == "sizedTree" and
+        valueToNat(typed.arguments[0], variantGlobals) == expectedLength and
+        valueToNat(runtimeValue.arguments[0], runtime.globals) ==
+          expectedLength and
+        valueToNat(rawVariant.arguments[0], raw.globals) == expectedLength,
+    proc(input: tuple[condition: bool, yesLength, noLength: int]):
+        seq[tuple[condition: bool, yesLength, noLength: int]] = @[])
+  if not conditionalAppliedGenericCases:
+    quit(1)
+  let tree = runtimeVariantToValue(RuntimeVariant(
+    constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+    runtimeTreeConstructors)
+  let wrongLength = runtimeVariantToValue(RuntimeVariant(
+    constructor: "sizedTree", arguments: @[natToValue(9, variantGlobals),
+      tree]), variantGlobals, "SizedTree", ["sizedTree"])
+  let wrongConditionalTree = valueToRuntimeVariant(wrongLength,
+    variantGlobals, "SizedTree", ["sizedTree"])
+  var typedConditionalAppliedMismatchRejected = false
+  try:
+    discard genericConditionalIndexedTreeProjectionDynamic(
+      true, 3, 4, wrongConditionalTree, 0)
+  except ValueError:
+    typedConditionalAppliedMismatchRejected = true
+  doAssert typedConditionalAppliedMismatchRejected
+  var runtimeConditionalAppliedMismatchRejected = false
+  try:
+    discard genericConditionalIndexedTreeProjectionRuntimeValueDynamic(
+      true, 3, 4, wrongConditionalTree, 0)
+  except ValueError:
+    runtimeConditionalAppliedMismatchRejected = true
+  doAssert runtimeConditionalAppliedMismatchRejected
+  let rawSeed = genericUnmappedTreeSeedRuntimeValue()
+  let rawWrongLength = callRuntimeValue(
+    runtimeGlobalValue(rawSeed.globals, "sizedTree"),
+    [natToValue(9, rawSeed.globals), rawSeed.value])
+  var rawConditionalAppliedMismatchRejected = false
+  try:
+    discard genericConditionalRawTreeProjectionRuntimeValueDynamic(
+      true, 3, 4, rawWrongLength, 0)
+  except ValueError:
+    rawConditionalAppliedMismatchRejected = true
+  doAssert rawConditionalAppliedMismatchRejected
   var variantArityRejected = false
   try:
     discard runtimeVariantToValue(RuntimeVariant(
@@ -1543,6 +1650,8 @@ proc callbackRole : Callback -> Sample -> Sample =
       let expected = callback(value)
       let typed = generatedGenericMappedCallback(callback, value)
       let runtime = generatedGenericMappedCallbackRuntimeValue(callback, value)
+      validateRuntimeValueType(runtime.value,
+        runtimeGlobalValue(runtime.globals, "Channel"), runtime.globals)
       typed == expected and
         valueToHost[ChannelHandle](runtime.value) == expected)
   if not genericCallbackInferenceCases:
@@ -1562,6 +1671,12 @@ proc callbackRole : Callback -> Sample -> Sample =
       let typed = generatedGenericCallbackOverVector(callback, values)
       let runtime = generatedGenericCallbackOverVectorRuntimeValue(callback,
         values)
+      let expectedRuntimeType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [runtimeGlobalValue(runtime.globals, "Channel"),
+         natToValue(2, runtime.globals)])
+      validateRuntimeValueType(runtime.value, expectedRuntimeType,
+        runtime.globals)
       let decoded = vecValueToSeq[ChannelHandle](runtime.value, 2,
         runtime.globals, "Vec",
         proc(item: Value, _: Globals): ChannelHandle =
@@ -1660,11 +1775,60 @@ proc callbackRole : Callback -> Sample -> Sample =
         ChannelHandle(id: seed + 1, label: "vec/" & $(seed + 1)),
         ChannelHandle(id: seed + 2, label: "vec/" & $(seed + 2)),
         ChannelHandle(id: seed + 3, label: "vec/" & $(seed + 3))]
+      let runtimeHandles = generatedVectorIdentityRuntimeValue[
+        ChannelHandle, 4](handles)
+      let expectedHandleVectorType = callRuntimeValue(
+        runtimeGlobalValue(runtimeHandles.globals, "Vec"),
+        [runtimeGlobalValue(runtimeHandles.globals, "Channel"),
+         natToValue(4, runtimeHandles.globals)])
+      validateRuntimeValueType(runtimeHandles.value,
+        expectedHandleVectorType, runtimeHandles.globals)
+      let expectedIntVectorType = callRuntimeValue(
+        runtimeGlobalValue(runtimeHandles.globals, "Vec"),
+        [runtimeGlobalValue(runtimeHandles.globals, "Int"),
+         natToValue(4, runtimeHandles.globals)])
+      var mismatchedElementTypeRejected = false
+      try:
+        validateRuntimeValueType(runtimeHandles.value,
+          expectedIntVectorType, runtimeHandles.globals)
+      except ValueError:
+        mismatchedElementTypeRejected = true
       generatedVectorIdentity[int, 4](values) == values and
-        generatedVectorIdentity[ChannelHandle, 4](handles) == handles,
+        generatedVectorIdentity[ChannelHandle, 4](handles) == handles and
+        mismatchedElementTypeRejected and
+        vecValueToSeq[ChannelHandle](runtimeHandles.value, 4,
+          runtimeHandles.globals, "Vec",
+          proc(item: Value, _: Globals): ChannelHandle =
+            valueToHost[ChannelHandle](item)) == handles,
     shrinkInt)
   if not vectorCodecCases:
     quit(1)
+
+  let inheritedTypeWitnessCases = forAll(
+    "generic host type witnesses distinguish mapped object subtypes", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let baseInput = BaseRuntimeHandle(id: id)
+      let childInput = DerivedRuntimeHandle(id: id + 1,
+        label: "derived/" & $id)
+      let baseRuntime = mappedGenericIdentityRuntimeValue[
+        BaseRuntimeHandle](baseInput)
+      let childRuntime = mappedGenericIdentityRuntimeValue[
+        DerivedRuntimeHandle](childInput)
+      validateRuntimeValueType(baseRuntime.value,
+        runtimeGlobalValue(baseRuntime.globals, "BaseHandle"),
+        baseRuntime.globals)
+      validateRuntimeValueType(childRuntime.value,
+        runtimeGlobalValue(childRuntime.globals, "DerivedHandle"),
+        childRuntime.globals)
+      valueToHost[BaseRuntimeHandle](baseRuntime.value).id == id and
+        valueToHost[DerivedRuntimeHandle](childRuntime.value).id == id + 1 and
+        valueToHost[DerivedRuntimeHandle](childRuntime.value).label ==
+          "derived/" & $id,
+    shrinkInt)
+  if not inheritedTypeWitnessCases:
+    quit(1)
+
   let dependentCallbackCases = forAll(
     "callback result codecs receive their dependent Nat argument", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),
@@ -1739,6 +1903,11 @@ proc callbackRole : Callback -> Sample -> Sample =
         input.length, values, 0)
       let runtime = generatedGenericVectorValueBinderRuntimeValueDynamic(
         input.length, values, 0)
+      let expectedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [runtimeGlobalValue(runtime.globals, "Int"),
+         natToValue(input.length, runtime.globals)])
+      validateRuntimeValueType(runtime.value, expectedType, runtime.globals)
       typed == values and
         vecValueToSeq[int](runtime.value, input.length, runtime.globals,
           "Vec", proc(value: Value, _: Globals): int = valueToInt(value)) ==
@@ -1862,6 +2031,11 @@ proc callbackRole : Callback -> Sample -> Sample =
         handles[i] = ChannelHandle(id: input.seed + i,
           label: "list/" & $(input.seed + i))
       let intRuntime = generatedIntListIdentityRuntimeValue(values)
+      let expectedListType = callRuntimeValue(
+        runtimeGlobalValue(intRuntime.globals, "List"),
+        [runtimeGlobalValue(intRuntime.globals, "Int")])
+      validateRuntimeValueType(intRuntime.value, expectedListType,
+        intRuntime.globals)
       let rawIntRuntime = generatedIntListIdentityRuntimeValue([intRuntime.value])
       let runtime = generatedListIdentityRuntimeValue[int](values)
       let rawRuntime = generatedListIdentityRuntimeValue[int]([runtime.value])
@@ -1892,6 +2066,11 @@ proc callbackRole : Callback -> Sample -> Sample =
       let rawDecoded = valueToOption[int](rawRuntime.value, rawRuntime.globals,
         "Option", proc(item: Value, _: Globals): int = valueToHost[int](item))
       let primitiveRuntime = generatedPrimitiveOptionIdentityRuntimeValue(value)
+      let expectedOptionType = callRuntimeValue(
+        runtimeGlobalValue(primitiveRuntime.globals, "Option"),
+        [runtimeGlobalValue(primitiveRuntime.globals, "Int")])
+      validateRuntimeValueType(primitiveRuntime.value, expectedOptionType,
+        primitiveRuntime.globals)
       let primitiveDecoded = valueToOption[int](primitiveRuntime.value,
         primitiveRuntime.globals, "Option",
         proc(item: Value, _: Globals): int = valueToInt(item))
@@ -1943,6 +2122,15 @@ proc callbackRole : Callback -> Sample -> Sample =
         @[seed + 2, seed + 3],
         @[seed + 4, seed + 5]]
       let runtime = generatedNestedVectorIdentityRuntimeValue[2, 3](matrix)
+      let innerVectorType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [runtimeGlobalValue(runtime.globals, "Int"),
+         natToValue(2, runtime.globals)])
+      let expectedMatrixType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [innerVectorType, natToValue(3, runtime.globals)])
+      validateRuntimeValueType(runtime.value, expectedMatrixType,
+        runtime.globals)
       let rawRuntime = generatedNestedVectorIdentityRuntimeValue[2, 3](
         [runtime.value])
       generatedNestedVectorIdentity[2, 3](matrix) == matrix and

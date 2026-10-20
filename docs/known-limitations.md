@@ -144,6 +144,18 @@ element type uses its recursive runtime codec, including nested vectors such
 as `Vec[Vec[Int, m], n]` mapped to `seq[seq[int]]`. The codec accepts Nat length
 expressions made from a static index, `zero`, `suc`, `add`, and `mul`. It
 requires the standard `nil` and `cons` constructor shape from `lib/vec.ep`.
+Generated runtime `Vec`, `List`, and `Option` values retain concrete element
+type witnesses, including recursively nested built-in collection types. When an
+element type is a type-level generic, generated wrappers can derive its
+Eponym type witness from a unique `runtimeType` mapping for an unindexed Eponym
+type and the concrete Nim type. Opaque host boxes retain that witness for
+runtime type inference, and generated generic wrappers pass the witness as the
+checked body's type argument. This lets the bridge validate `Vec[A, n]` values
+and mapped callback results such as `vmap`. Generic types with no mapping,
+multiple Eponym mappings for the same Nim type, or only an indexed-family
+mapping remain opaque and cannot support full runtime type validation in that
+context. Raw `toHostValue` values also remain untyped unless the caller
+supplies them through a mapped generated codec.
 The standard unindexed `List[A]` family also has a `runtimeList(List)` codec
 that maps to `seq[A]`, checks constructor identities and spines, and recursively
 uses the element codec. A unary family with canonical `none` and `some`
@@ -177,7 +189,10 @@ references, earlier
 generic indices, applications, and integer literals. More complex type
 expressions remain unsupported. A 200-case `SizedTree[length]` property checks
 raw `Value` and mapped `RuntimeVariant` arguments and rejects an embedded
-length that differs from the generic index.
+length that differs from the generic index. Direct Bool-controlled conditional
+Nat indices are also supported in applied generic domains; a 200-case
+`SizedTree[if b: n else: m]` property covers both branches and rejects values
+whose embedded index does not match the selected branch.
 
 The low-level `RuntimeVariant` API provides a checked structural view for any
 declared data family when the caller supplies its constructor names. It
