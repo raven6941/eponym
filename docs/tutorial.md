@@ -38,6 +38,7 @@ you need to select a specific external `.ep` file.
 
 `hello.nim`:
 
+<!-- tutorial-smoke: hello -->
 ```nim
 import eponym_mac
 import eponym_embed
@@ -154,6 +155,7 @@ no need to define it yourself.
 
 `vecs.nim` (using the installed package prelude fallback):
 
+<!-- tutorial-smoke: vecs -->
 ```nim
 import eponym_mac
 import eponym_embed

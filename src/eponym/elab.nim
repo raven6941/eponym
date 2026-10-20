@@ -38,13 +38,15 @@ import mutual_termination  # Issue #42: mutual-block call-graph termination chec
 import elab_prof      # Issue #55: phase timers (zero-cost when -d:elabProfile off)
 import elab_trace     # Issue #83: structured elaboration trace (runtime flag)
 
-# Nimble installs the package prelude under its package root's `lib/`, while
-# this module lives under `src/eponym/`. Deriving the root from this source
-# file also works when the package is installed outside the user's project.
+# In a checkout this module lives under `src/eponym/`; Nimble installs it
+# flat beside the package's `lib/`. Try both roots so prelude lookup has the
+# same behavior before and after installation.
 proc packagePreludeTargets(importPath: string): seq[string] =
-  let packageRoot = parentDir(parentDir(parentDir(currentSourcePath())))
-  result.add(packageRoot / importPath)
-  result.add(packageRoot / "lib" / importPath)
+  let moduleDir = parentDir(currentSourcePath())
+  let checkoutRoot = parentDir(parentDir(moduleDir))
+  for root in [moduleDir, checkoutRoot]:
+    result.add(root / importPath)
+    result.add(root / "lib" / importPath)
 
 proc resolveImportTarget(importPath, baseDir: string): string =
   if isAbsolute(importPath):
