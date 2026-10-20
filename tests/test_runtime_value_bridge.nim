@@ -190,7 +190,8 @@ eponymBlock:
     field(x, Nat)
     field(channel, Channel)
   runtimeType(Point, RuntimePoint)
-  proc generatedPointId(value: Point): Point = value
+  proc generatedPointRebuild(value: Point): Point =
+    mkPoint(value.x, value.channel)
   record(Envelope):
     field(point, Point)
     field(note, Message)
@@ -284,7 +285,7 @@ static:
   doAssert compiles(generatedFutureRole(ChannelHandle(id: 1)))
   doAssert compiles(generatedFutureInput(newFuture[int]("typedFuture")))
   doAssert compiles(generatedOpaqueSigmaId((17, ChannelHandle(id: 1))))
-  doAssert compiles(generatedPointId(RuntimePoint(x: 17,
+  doAssert compiles(generatedPointRebuild(RuntimePoint(x: 17,
     channel: ChannelHandle(id: 1))))
   doAssert compiles(generatedSplitChannel(ChannelHandle(id: 17)))
   doAssert compiles(generatedSplitChannelWithNat(3,
@@ -348,7 +349,7 @@ when isMainModule:
     proc(n: int): bool =
       let input = RuntimePoint(x: abs(n mod 1000),
         channel: ChannelHandle(id: n, label: "point-" & $n))
-      generatedPointId(input) == input,
+      generatedPointRebuild(input) == input,
     shrinkInt)
   if not generatedRecordRoundTrips:
     quit(1)
