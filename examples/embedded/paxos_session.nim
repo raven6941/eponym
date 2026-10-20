@@ -1,195 +1,288 @@
 # Paxos, embedded (Issues #101, #120).
 #
-# The Paxos prepare/promise/accept/accepted exchange as dependent session
-# types (Issue #113). The session datatype has higher-order continuations:
-#   sendD (A : Type 0) (k : A -> Session)
-#   recvD (A : Type 0) (k : A -> Session)
-# so the continuation can depend on the value communicated.
+# The dependent session datatype describes prepare/promise/accept/accepted.
+# Continuations depend on the message values. Promise and ticket values cross
+# the runtime boundary as opaque Nim objects; the session channel is carried
+# separately and stays linear in the checked Eponym roles.
 #
-# The value discipline -- the proposer must accept *the value the acceptor
-# promised*, not substitute its own -- is enforced by unforgeable promise
-# tickets: `AcceptMsg` is postulated with *no constructors*, so the only
-# `AcceptMsg v` a proposer can ever hold is the ticket returned by the
-# acceptor's promise. The dependent session binds the received promise `pr`
-# and the accept step demands `AcceptMsg (fst (fst pv))`; the only inhabitant
-# available is `snd (fst pv)` itself. Substituting another value is not a
-# runtime consensus violation here -- it is a compile-time type error.
-#
-# Why this protocol is worth checking (Aaron's bar: enough surface area that
-# a programmer could reasonably mess up without guardrails):
-# - two roles, four messages each, in a fixed interleaved order
-#   (wrong order: 16a-paxos-wrong-order-neg.ep);
-# - the accept message must carry exactly the promised value
-#   (wrong value: 16b-paxos-wrong-value-neg.ep);
-# - every channel is linear (quantity 1): dropping or double-using a
-#   channel is rejected (Issue #64).
-#
-# Design note: the session datatype is higher-order (sendD/recvD). The value
-# dependency lives in the session term itself: after `recvD (Sig (v : Nat).
-# AcceptMsg v) propAfterPromise`, the continuation `propAfterPromise` is a
-# function of the received promise, and its body mentions `(fst pr)`. No
-# indexed session-state families (cf. the first-order encoding in #101,
-# which needed `accS2(v : Nat) : Session` as an external family).
-#
-# The channel operations are postulates (mock transport ops), exactly as in
-# session_types.nim: the types enforce the protocol, linearity is enforced
-# at use sites. The normal-Nim driver below binds the same message sequence
-# to a real (in-memory) transport, mirroring the checked roles step by
-# step -- the Wu & Xi "typed API over untrusted backend" architecture.
+# The proposer can only send an AcceptMsg indexed by the value in the received
+# Promise. The Promise and channel are returned in a dependent Sigma, so their
+# adapter uses the explicitly trusted pair codec: Nim supplies the channel
+# handle, while Eponym retains and checks the full indexed session type.
 
-import std/deques
+import std/[net, os, osproc]
+when isMainModule:
+  import std/strutils
 import eponym_mac
 import eponym_embed
+import session_runtime_bindings as codec
+
+type
+  PaxosChannel = ref object
+    socket: Socket
+    lastAccepted: int
+
+  PaxosTicket = object
+    value: int
+    nonce: int
+
+  PaxosPromise = object
+    value: int
+    ticket: PaxosTicket
+
+proc writeNat(channel: PaxosChannel, value: int) =
+  var frame = codec.encodeNatMessage(value)
+  var bytes = newStringOfCap(frame.len)
+  for item in frame:
+    bytes.add(char(item))
+  channel.socket.send(bytes)
+
+proc readNat(channel: PaxosChannel): int =
+  var frame: seq[byte] = @[]
+  for _ in 0 ..< 9:
+    let item = channel.socket.recv(1, timeout = 5000)
+    if item.len != 1:
+      raise newException(IOError, "Paxos peer closed during a Nat frame")
+    frame.add(byte(ord(item[0])))
+    if (frame[^1] and 0x80'u8) == 0:
+      return codec.decodeNatMessage(frame)
+  raise newException(IOError, "Paxos Nat frame is too long")
+
+proc ticketMatches(promise: PaxosPromise, ticket: PaxosTicket): bool =
+  ticket == promise.ticket and ticket.value == promise.value
+
+proc hostSendPrepare(ballot: int, channel: PaxosChannel): PaxosChannel =
+  channel.writeNat(ballot)
+  channel
+
+proc hostRecvPromise(ballot: int, channel: PaxosChannel):
+    tuple[promise: PaxosPromise, channel: PaxosChannel] =
+  let receivedBallot = channel.readNat()
+  if receivedBallot != ballot:
+    raise newException(IOError, "promise belongs to a different ballot")
+  let value = channel.readNat()
+  let nonce = channel.readNat()
+  (PaxosPromise(value: value,
+    ticket: PaxosTicket(value: value, nonce: nonce)), channel)
+
+proc hostPromiseValue(promise: PaxosPromise): int = promise.value
+
+proc hostPromiseTicket(promise: PaxosPromise): PaxosTicket = promise.ticket
+
+proc hostSendAccept(promise: PaxosPromise, ticket: PaxosTicket,
+                    channel: PaxosChannel): PaxosChannel =
+  if not ticketMatches(promise, ticket):
+    raise newException(IOError, "proposer sent a ticket for another value")
+  channel.writeNat(ticket.value)
+  channel.writeNat(ticket.nonce)
+  channel
+
+proc hostRecvAccepted(promise: PaxosPromise, ticket: PaxosTicket,
+                      channel: PaxosChannel):
+    tuple[accepted: int, channel: PaxosChannel] =
+  if not ticketMatches(promise, ticket):
+    raise newException(IOError, "proposer received acceptance for another value")
+  let accepted = channel.readNat()
+  if accepted != promise.value:
+    raise newException(IOError, "acceptor acknowledged a different value")
+  channel.lastAccepted = accepted
+  (accepted, channel)
+
+proc hostRecvPrepare(channel: PaxosChannel):
+    tuple[ballot: int, channel: PaxosChannel] =
+  (channel.readNat(), channel)
+
+proc hostSendPromise(ballot, stored: int, channel: PaxosChannel):
+    tuple[promise: PaxosPromise, channel: PaxosChannel] =
+  let nonce = ballot xor stored
+  let ticket = PaxosTicket(value: stored, nonce: nonce)
+  channel.writeNat(ballot)
+  channel.writeNat(stored)
+  channel.writeNat(nonce)
+  (PaxosPromise(value: stored, ticket: ticket), channel)
+
+proc hostRecvAccept(promise: PaxosPromise, channel: PaxosChannel):
+    tuple[ticket: PaxosTicket, channel: PaxosChannel] =
+  let value = channel.readNat()
+  let nonce = channel.readNat()
+  let ticket = PaxosTicket(value: value, nonce: nonce)
+  if not ticketMatches(promise, ticket):
+    raise newException(IOError, "acceptor received a ticket for another value")
+  (ticket, channel)
+
+proc hostSendAccepted(promise: PaxosPromise, ticket: PaxosTicket,
+                      channel: PaxosChannel): PaxosChannel =
+  if not ticketMatches(promise, ticket):
+    raise newException(IOError, "acceptor rejected a ticket for another value")
+  channel.writeNat(promise.value)
+  channel
 
 eponymBlock:
-  # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
-  # (was a per-file data(Nat, ...) redefinition before #131).
   import "../../lib/nat.ep"
 
-  # Dependent session datatype (Issue #113): continuations are functions
-  # of the communicated value.
   data(Session, Univ):
     proc sendD(A: Univ, k: A -> Session): Session
     proc recvD(A: Univ, k: A -> Session): Session
     proc endS(): Session
 
-  data(Chan, Session -> Univ):
-    proc mkChan(s: Session): Chan(s)
-
-  # Promise ticket, indexed by the promised value. Postulated with NO
-  # constructors: tickets are unforgeable. The acceptor's promise is the
-  # only source of AcceptMsg(v) inhabitants.
+  postulate(Chan, Session -> Univ)
+  postulate(Promise, Univ)
   postulate(AcceptMsg, Nat -> Univ)
+  runtimeType(Chan, PaxosChannel)
+  runtimeType(Promise, PaxosPromise)
+  runtimeType(AcceptMsg, PaxosTicket)
 
-  # Proposer protocol: send prepare(n); receive promise pr : Sig(v, AcceptMsg v);
-  # send accept carrying AcceptMsg(fst pr) -- the ticket for the promised value;
-  # receive accepted. The continuation after the promise mentions (fst pr).
-  # Continuations are named procs (functions A -> Session); the binder pr is
-  # bound by recvD itself, not passed as an external family parameter.
-  proc propAfterAccept(a: Nat): Session =
-    endS()
-  proc propAfterPromise(pr: Sig(v: Nat, AcceptMsg(v))): Session =
-    sendD(AcceptMsg(fst(pr)), lam(t, AcceptMsg(fst(pr)),
-      recvD(Nat, propAfterAccept)))
-  proc propAfterPrepare(n: Nat): Session =
-    recvD(Sig(v: Nat, AcceptMsg(v)), propAfterPromise)
-  proc propProto(): Session =
-    sendD(Nat, propAfterPrepare)
+  postulate(promiseValue, Promise -> Nat)
+  bindPostulate(promiseValue, hostPromiseValue, Promise, Nat)
+  postulate(promiseTicket,
+    Pi(promise: Promise, AcceptMsg(promiseValue(promise))))
+  bindPostulate(promiseTicket, hostPromiseTicket, Promise, AcceptMsg)
 
-  # Acceptor protocol: receive prepare(n); send promise (v, ticket);
-  # receive accept carrying AcceptMsg(fst pr); send accepted.
-  proc accAfterAccept(v2: Nat): Session =
-    endS()
-  proc accAfterPromise(pr: Sig(v: Nat, AcceptMsg(v))): Session =
-    recvD(AcceptMsg(fst(pr)), lam(t, AcceptMsg(fst(pr)),
-      sendD(Nat, accAfterAccept)))
-  proc accAfterPrepare(n: Nat): Session =
-    sendD(Sig(v: Nat, AcceptMsg(v)), accAfterPromise)
-  proc accProto(): Session =
-    recvD(Nat, accAfterPrepare)
+  proc propAfterAccept(accepted: Nat): Session = endS()
+  proc propAfterPromise(promise: Promise): Session =
+    sendD(AcceptMsg(promiseValue(promise)),
+      lam(ticket, AcceptMsg(promiseValue(promise)),
+        recvD(Nat, propAfterAccept)))
+  proc propAfterPrepare(ballot: Nat): Session =
+    recvD(Promise, propAfterPromise)
+  proc propProto(): Session = sendD(Nat, propAfterPrepare)
 
-  # --- Proposer operations (postulates: mock transport) ---
-  # Each step's channel type is the dependent session term; the value
-  # dependency (fst pr) is inside the session, not in an external family.
+  proc accAfterAccept(accepted: Nat): Session = endS()
+  proc accAfterPromise(promise: Promise): Session =
+    recvD(AcceptMsg(promiseValue(promise)),
+      lam(ticket, AcceptMsg(promiseValue(promise)),
+        sendD(Nat, accAfterAccept)))
+  proc accAfterPrepare(ballot: Nat): Session =
+    sendD(Promise, accAfterPromise)
+  proc accProto(): Session = recvD(Nat, accAfterPrepare)
+
   postulate(sendPrepare,
-    Pi(ch {.linear.}: Chan(propProto()),
-       n: Nat,
-       Chan(propAfterPrepare(n))))
-  postulate(recvPromise,
-    Pi(n: Nat,
-       ch {.linear.}: Chan(propAfterPrepare(n)),
-       Sig(pr: Sig(v: Nat, AcceptMsg(v)),
-         Chan(propAfterPromise(pr)))))
-  postulate(sendAccept,
-    Pi(pv: Sig(pr: Sig(v: Nat, AcceptMsg(v)),
-           Chan(propAfterPromise(pr))),
-       t: AcceptMsg(fst(fst(pv))),
-       Chan(recvD(Nat, propAfterAccept))))
-  postulate(recvAccepted,
-    Pi(pv: Sig(pr: Sig(v: Nat, AcceptMsg(v)),
-           Chan(propAfterPromise(pr))),
-       t: AcceptMsg(fst(fst(pv))),
-       ch {.linear.}: Chan(recvD(Nat, propAfterAccept)),
-       Sig(a: Nat, Chan(endS()))))
+    Pi(ballot: Nat,
+       ch {.linear.}: Chan(propProto()),
+       Chan(propAfterPrepare(ballot))))
+  bindPostulate(sendPrepare, hostSendPrepare, Nat, Chan, Chan)
 
-  # --- Acceptor operations (postulates: mock transport) ---
+  postulate(recvPromise,
+    Pi(ballot: Nat,
+       ch {.linear.}: Chan(propAfterPrepare(ballot)),
+       Sig(promise: Promise, Chan(propAfterPromise(promise)))))
+  bindPostulatePairTrusted(recvPromise, hostRecvPromise,
+    Nat, Chan, Promise, Chan)
+
+  postulate(sendAccept,
+    Pi(promise: Promise,
+       ticket: AcceptMsg(promiseValue(promise)),
+       ch {.linear.}: Chan(propAfterPromise(promise)),
+       Chan(recvD(Nat, propAfterAccept))))
+  bindPostulate(sendAccept, hostSendAccept,
+    Promise, AcceptMsg, Chan, Chan)
+
+  postulate(recvAccepted,
+    Pi(promise: Promise,
+       ticket: AcceptMsg(promiseValue(promise)),
+       ch {.linear.}: Chan(recvD(Nat, propAfterAccept)),
+       Sig(accepted: Nat, Chan(endS()))))
+  bindPostulatePair(recvAccepted, hostRecvAccepted,
+    Promise, AcceptMsg, Chan, Nat, Chan)
+
   postulate(recvPrepare,
     Pi(ch {.linear.}: Chan(accProto()),
-       Sig(n: Nat, Chan(accAfterPrepare(n)))))
+       Sig(ballot: Nat, Chan(accAfterPrepare(ballot)))))
+  bindPostulatePairTrusted(recvPrepare, hostRecvPrepare,
+    Chan, Nat, Chan)
+
   postulate(sendPromise,
-    Pi(n: Nat,
-       v: Nat,
-       ch {.linear.}: Chan(accAfterPrepare(n)),
-       Sig(pr: Sig(v0: Nat, AcceptMsg(v0)),
-         Chan(accAfterPromise(pr)))))
+    Pi(ballot: Nat,
+       stored: Nat,
+       ch {.linear.}: Chan(accAfterPrepare(ballot)),
+       Sig(promise: Promise, Chan(accAfterPromise(promise)))))
+  bindPostulatePairTrusted(sendPromise, hostSendPromise,
+    Nat, Nat, Chan, Promise, Chan)
+
   postulate(recvAccept,
-    Pi(pt: Sig(pr: Sig(v: Nat, AcceptMsg(v)),
-           Chan(accAfterPromise(pr))),
-       Sig(t: AcceptMsg(fst(fst(pt))),
+    Pi(promise: Promise,
+       ch {.linear.}: Chan(accAfterPromise(promise)),
+       Sig(ticket: AcceptMsg(promiseValue(promise)),
          Chan(sendD(Nat, accAfterAccept)))))
+  bindPostulatePair(recvAccept, hostRecvAccept,
+    Promise, Chan, AcceptMsg, Chan)
+
   postulate(sendAccepted,
-    Pi(pt: Sig(pr: Sig(v: Nat, AcceptMsg(v)),
-           Chan(accAfterPromise(pr))),
-       t: AcceptMsg(fst(fst(pt))),
-       am: Sig(t0: AcceptMsg(fst(fst(pt))),
-         Chan(sendD(Nat, accAfterAccept))),
-       v2: Nat,
+    Pi(promise: Promise,
+       ticket: AcceptMsg(promiseValue(promise)),
        ch {.linear.}: Chan(sendD(Nat, accAfterAccept)),
        Chan(endS())))
+  bindPostulate(sendAccepted, hostSendAccepted,
+    Promise, AcceptMsg, Chan, Chan)
 
-  # Proposer role: prepare(1) -> promise(pr) -> accept(snd pr) -> accepted.
-  # The ticket discipline (snd(fst(pv)) : AcceptMsg(fst(fst(pv)))) enforces
-  # the value match: the accept carries the ticket for the promised value.
-  proc proposer(ch {.linear.}: Chan(propProto())): Chan(endS()) =
-    let ch1 = sendPrepare(ch, 1)
-    let pv = recvPromise(1, ch1)
-    let ch3 = sendAccept(pv, snd(fst(pv)))
-    let ac = recvAccepted(pv, snd(fst(pv)), ch3)
-    snd(ac)
+  proc proposer(ballot: Nat, ch {.linear.}: Chan(propProto())):
+      Sig(accepted: Nat, Chan(endS())) =
+    let ch1 = sendPrepare(ballot, ch)
+    let promiseAndChannel = recvPromise(ballot, ch1)
+    let ch3 = sendAccept(fst(promiseAndChannel),
+      promiseTicket(fst(promiseAndChannel)), snd(promiseAndChannel))
+    recvAccepted(fst(promiseAndChannel),
+      promiseTicket(fst(promiseAndChannel)), ch3)
 
-  # Acceptor role: prepare(n) -> promise(stored) -> accept(_) -> accepted.
-  proc acceptor(ch {.linear.}: Chan(accProto())): Chan(endS()) =
-    let pn = recvPrepare(ch)
-    let n = fst(pn)
-    let ch1 = snd(pn)
-    let stored = zero()
-    let pt = sendPromise(n, stored, ch1)
-    let am = recvAccept(pt)
-    let t = fst(am)
-    let ch3 = snd(am)
-    sendAccepted(pt, t, am, stored, ch3)
+  proc acceptor(stored: Nat, ch {.linear.}: Chan(accProto())): Chan(endS()) =
+    let ballotAndChannel = recvPrepare(ch)
+    let promiseAndChannel = sendPromise(fst(ballotAndChannel), stored,
+      snd(ballotAndChannel))
+    let ticketAndChannel = recvAccept(fst(promiseAndChannel),
+      snd(promiseAndChannel))
+    sendAccepted(fst(promiseAndChannel), fst(ticketAndChannel),
+      snd(ticketAndChannel))
 
-# --- Normal Nim program: transport binding + driver -----------------------
-type Mailbox = object
-  queue: Deque[int]
+proc runPaxosAcceptor*(port, stored: int) =
+  var socket = newSocket()
+  defer: socket.close()
+  socket.connect("127.0.0.1", Port(port))
+  let channel = PaxosChannel(socket: socket)
+  discard acceptor(stored, channel)
 
-proc sendMsg(mb: var Mailbox, x: int) = mb.queue.addLast(x)
-proc recvMsg(mb: var Mailbox): int = mb.queue.popFirst()
+proc runPaxosRound*(ballot, acceptorStored: int): int =
+  if ballot < 0 or acceptorStored < 0:
+    raise newException(ValueError, "Paxos ballot and stored value must be Nats")
+  var listener = newSocket()
+  defer: listener.close()
+  listener.setSockOpt(OptReuseAddr, true)
+  listener.bindAddr(Port(0), "127.0.0.1")
+  listener.listen()
+  let (_, port) = listener.getLocalAddr()
 
-proc runPaxosRound(ballot: int, acceptorStored: int): int =
-  var propBox, accBox: Mailbox
-  sendMsg(accBox, ballot)
-  let n = recvMsg(accBox)
-  assert n == ballot, "ballot mismatch on the wire"
-  sendMsg(propBox, acceptorStored)
-  let promised = recvMsg(propBox)
-  sendMsg(accBox, promised)
-  let accepted = recvMsg(accBox)
-  assert accepted == acceptorStored,
-    "acceptor got accept for a value it never promised"
-  sendMsg(propBox, accepted)
-  let decided = recvMsg(propBox)
-  assert decided == promised, "proposer decided a value it was not promised"
-  decided
+  let child = startProcess(getAppFilename(),
+    args = @["--paxos-acceptor", $port, $acceptorStored],
+    options = {poParentStreams})
+  var childWaited = false
+  defer:
+    if not childWaited:
+      discard child.waitForExit()
+    child.close()
+  var peer: owned(Socket)
+  # This demo accepts only the acceptor subprocess started above, which
+  # connects immediately to the ephemeral loopback port. The blocking accept
+  # intentionally waits for that controlled child rather than an external peer.
+  listener.accept(peer)
+  let channel = PaxosChannel(socket: peer)
+  defer: channel.socket.close()
+  let acceptedAndChannel = proposer(ballot, channel)
+  if acceptedAndChannel[0] != acceptorStored:
+    raise newException(IOError, "checked proposer received the wrong accepted value")
+  let childStatus = child.waitForExit()
+  childWaited = true
+  if childStatus != 0:
+    raise newException(IOError, "checked acceptor process failed")
+  acceptedAndChannel[0]
 
 proc main() =
-  echo "paxos_session: Paxos with dependent session continuations (Issue #120)."
-  echo "  The protocol is a dependent session term; continuations are functions"
-  echo "  of the communicated value (Issue #113). Tickets (AcceptMsg v) remain"
-  echo "  the unforgeability mechanism. Wrong order / wrong value are"
-  echo "  compile-time errors (examples/ep/16a,16b-*-neg.ep)."
-  let decided = runPaxosRound(ballot = 1, acceptorStored = 42)
-  echo "  mock transport round: ballot 1, acceptor stored 42 -> decided ", decided
+  echo "paxos_session: dependent session roles over a Nim TCP adapter."
+  echo "  The checked proposer and acceptor share the value-indexed ticket API."
+  echo "  The host transport and the ticket/index mapping remain trusted."
+  let accepted = runPaxosRound(ballot = 1, acceptorStored = 42)
+  echo "  checked round: ballot 1, acceptor stored 42 -> accepted ", accepted
 
 when isMainModule:
-  main()
+  if paramCount() == 3 and paramStr(1) == "--paxos-acceptor":
+    runPaxosAcceptor(parseInt(paramStr(2)), parseInt(paramStr(3)))
+  else:
+    main()
