@@ -1151,6 +1151,16 @@ proc runtimeGlobalValue*(globals: Globals, name: string): Value =
       "runtime type expression refers to unknown Eponym name '" & name & "'")
   eval(globals[name].tm, @[])
 
+proc runtimeGlobalTypeWitness*(globals: Globals, name: string): Value =
+  ## Return a generic type witness only for a named, unindexed Eponym type.
+  ## A mapped indexed family needs its indices as well as its Nim type mapping.
+  if name notin globals or globals[name].tm.isNil or
+      globals[name].ty.isNil:
+    return nil
+  let declaredType = eval(globals[name].ty, @[])
+  if declaredType.whnfKind != wType: return nil
+  eval(globals[name].tm, @[])
+
 proc runtimeValueTerm(value: Value, globals: Globals): Term =
   if value.isNil: return nil
   case value.whnfKind
@@ -1167,6 +1177,11 @@ proc runtimeValueTerm(value: Value, globals: Globals): Term =
           if argument.isNil: return value.syn
           result = tmApp(result, argument)
         return
+    return value.syn
+  of wHost:
+    if not value.whnf.hostEponymType.isNil:
+      return Term(kind: tR, refId: -1,
+        refTyp: value.whnf.hostEponymType, refIsDefn: false, refVal: nil)
     return value.syn
   else:
     value.syn
@@ -1206,6 +1221,13 @@ proc inferRuntimeValueType(value: Value, globals: Globals,
           "runtime Value argument has no syntax for type inference")
       term = tmApp(term, argument)
     return infer(supply, term)
+  of wHost:
+    if not value.whnf.hostEponymType.isNil:
+      return value.whnf.hostEponymType
+    if value.syn.isNil:
+      raise newException(ValueError,
+        "runtime Value has no syntax for type inference")
+    return infer(supply, value.syn)
   else:
     if value.syn.isNil:
       raise newException(ValueError,
