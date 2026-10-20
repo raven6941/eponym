@@ -637,6 +637,9 @@ implementations.
      `runtimeVectorArray` representation. Imported dependent Sigma callbacks
      are supported with `runtimePairTrusted`; a 200-case property checks both
      wrappers and rejects wrong Vec lengths in inputs and callback results.
+     The generic type witness is inferred from a nonempty mapped `Vec[A,n]`
+     field inside the trusted Sigma, without an explicit Nim type argument;
+     the same property exercises generated and typed `RuntimeValue` wrappers.
      A nested `Option[Vec[A,2]]` callback composes Option and Vec codecs,
      including `none` and `some` cases, through generated and typed
      `RuntimeValue` wrappers (200 cases).

@@ -2635,7 +2635,7 @@ when isMainModule:
   let importedGenericDependentPairCallbackCases = forAll(
     "imported generic callbacks preserve dependent Sigma Vec indices", r, 200,
     proc(r: var Rng): tuple[length, seed, delta: int] =
-      (r.genInt(0, 8), r.genInt(-1000, 1000), r.genInt(-100, 100)),
+      (r.genInt(1, 8), r.genInt(-1000, 1000), r.genInt(-100, 100)),
     proc(input: tuple[length, seed, delta: int]): bool =
       var values: seq[ChannelHandle] = @[]
       var expected: seq[ChannelHandle] = @[]
@@ -2655,20 +2655,19 @@ when isMainModule:
             mapped.add(ChannelHandle(id: item.id + input.delta,
               label: item.label & "/mapped"))
           (value.length, mapped)
-      let typed = importedGenericDependentPairCallbackApply[ChannelHandle](
+      let typed = importedGenericDependentPairCallbackApply(callback, value)
+      let runtime = importedGenericDependentPairCallbackApplyRuntimeValue(
         callback, value)
-      let runtime = importedGenericDependentPairCallbackApplyRuntimeValue[
-        ChannelHandle](callback, value)
       var wrongLengthRejected = false
       try:
-        discard importedGenericDependentPairCallbackApply[ChannelHandle](
-          callback, (input.length + 1, values))
+        discard importedGenericDependentPairCallbackApply(callback,
+          (input.length + 1, values))
       except ValueError:
         wrongLengthRejected = true
       var wrongRuntimeInputRejected = false
       try:
-        discard importedGenericDependentPairCallbackApplyRuntimeValue[
-          ChannelHandle](callback, (input.length + 1, values))
+        discard importedGenericDependentPairCallbackApplyRuntimeValue(
+          callback, (input.length + 1, values))
       except ValueError:
         wrongRuntimeInputRejected = true
       let badCallback: proc(value: tuple[length: int,
@@ -2679,14 +2678,13 @@ when isMainModule:
           (value.length + 1, value.values)
       var wrongCallbackResultRejected = false
       try:
-        discard importedGenericDependentPairCallbackApply[ChannelHandle](
-          badCallback, value)
+        discard importedGenericDependentPairCallbackApply(badCallback, value)
       except ValueError:
         wrongCallbackResultRejected = true
       var wrongRuntimeCallbackResultRejected = false
       try:
-        discard importedGenericDependentPairCallbackApplyRuntimeValue[
-          ChannelHandle](badCallback, value)
+        discard importedGenericDependentPairCallbackApplyRuntimeValue(
+          badCallback, value)
       except ValueError:
         wrongRuntimeCallbackResultRejected = true
       typed == expectedPair and wrongLengthRejected and

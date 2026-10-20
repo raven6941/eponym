@@ -3810,7 +3810,7 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
     genericMappedTypes: seq[NimNode], genericMappedNimTypes: seq[NimNode],
     codecMappings: seq[HostRuntimeType], error: string],
     argSyms, argEponymTypes, argNimTypes: seq[NimNode], globals: NimNode,
-    records: seq[HostRecord]): tuple[statements: NimNode,
+    records: seq[HostRecord], allowDependentSigma = false): tuple[statements: NimNode,
       witnesses: seq[tuple[name: string, value: NimNode]],
       encodedArgs: seq[tuple[index: int, value: NimNode]]] =
   ## For a generic type used by a callback, infer indexed family arguments
@@ -3824,6 +3824,7 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
     var sourceIndex = -1
     var sourceSigmaFieldIndex = -1
     var sourceSigmaFieldNimType: NimNode = nil
+    var sourceSigmaIndexNames: seq[tuple[name: string, index: int]] = @[]
     var sourceOptionFamily = ""
     var sourceOptionNestedVector = false
     var sourceOptionNestedList = false
@@ -3837,17 +3838,39 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
           $eponymType == genericName:
         sourceIndex = i
         break
-      let sigmaFields = runtimeSigmaFields(eponymType)
+      let sigmaFields = runtimeSigmaFields(eponymType, allowDependentSigma)
       for fieldIndex, field in sigmaFields:
         if field.fieldType.kind in {nnkIdent, nnkSym} and
             $field.fieldType == genericName:
           let fieldNimType = runtimeNimType(field.fieldType,
-            generic.codecMappings, records)
+            generic.codecMappings, records, allowDependentSigma)
           if fieldNimType.isNil: continue
           sourceIndex = i
           sourceSigmaFieldIndex = fieldIndex
           sourceSigmaFieldNimType = fieldNimType
           break
+        for vectorMapping in generic.codecMappings:
+          if not vectorMapping.isRuntimeVector: continue
+          let vector = runtimeVectorComponents(field.fieldType,
+            vectorMapping.eponymName)
+          if vector.elementType.isNil or
+              not mentionsName(vector.elementType, genericName):
+            continue
+          let fieldNimType = runtimeNimType(field.fieldType,
+            generic.codecMappings, records, allowDependentSigma)
+          if fieldNimType.isNil: continue
+          sourceIndex = i
+          sourceSigmaFieldIndex = fieldIndex
+          sourceSigmaFieldNimType = fieldNimType
+          sourceVectorFamily = vectorMapping.eponymName
+          sourceVectorType = field.fieldType
+          for precedingFieldIndex in 0 ..< fieldIndex:
+            let preceding = sigmaFields[precedingFieldIndex]
+            if preceding.binder.len > 0:
+              sourceSigmaIndexNames.add((preceding.binder,
+                precedingFieldIndex))
+          break
+        if sourceIndex >= 0: break
       if sourceIndex >= 0: break
       for optionMapping in generic.codecMappings:
         if not optionMapping.isRuntimeOption: continue
@@ -3953,7 +3976,7 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         continue
       let sourceVectorNimType = if sourceVectorFamily.len > 0:
         let inferred = runtimeNimType(sourceVectorType,
-          generic.codecMappings, records)
+          generic.codecMappings, records, allowDependentSigma)
         if inferred.isNil: continue
         replaceTypeIdentifier(inferred, genericName, mapping.nimType)
         else: nil
@@ -3990,9 +4013,16 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
             newLit(sourceSigmaFieldIndex))
         else: copyNimTree(argSyms[sourceIndex])
       var encoded = if sourceVectorFamily.len > 0:
+        var sigmaIndexOverrides: seq[tuple[name: string,
+          value: NimNode]] = @[]
+        for (name, index) in sourceSigmaIndexNames:
+          sigmaIndexOverrides.add((name,
+            newTree(nnkBracketExpr, copyNimTree(argSyms[sourceIndex]),
+              newLit(index))))
         runtimeValueConversionExpr(sourceVectorType,
           sourceVectorNimType, copyNimTree(sourceValue), true,
-          generic.codecMappings, records, globals)
+          generic.codecMappings, records, globals, allowDependentSigma,
+          sigmaIndexOverrides)
       elif sourceListFamily.len > 0:
         runtimeValueConversionExpr(sourceListType,
           sourceListNimType, copyNimTree(sourceValue), true,
@@ -4360,7 +4390,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                                   records))
 
   let indexedWitnesses = indexedGenericTypeWitnesses(generic, argSyms,
-    argEponymTypes, argNimTypes, globalsSym, records)
+    argEponymTypes, argNimTypes, globalsSym, records, allowDependentSigma)
   wrapperBody.add(indexedWitnesses.statements)
   var values = newNimNode(nnkBracket)
   let genericArgs = genericRuntimeValueArgs(generic, globalsSym,
@@ -4805,7 +4835,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
 
   let globalsSym = genSym(nskLet, "runtimeGlobals")
   let indexedWitnesses = indexedGenericTypeWitnesses(generic, argSyms,
-    eponymTypes, nimTypes, globalsSym, records)
+    eponymTypes, nimTypes, globalsSym, records, allowDependentSigma)
   var values = newNimNode(nnkBracket)
   let genericArgs = genericRuntimeValueArgs(generic, globalsSym,
     codecMappings, records, indexedWitnesses.witnesses)
