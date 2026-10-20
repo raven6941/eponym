@@ -4762,7 +4762,8 @@ proc elabFile*(drv: var ModuleDriver, path: string,
       else:
         expandFilename(path)
     except OSError:
-      raise elabErr(importLoc, "import '" & path & "': file not found" &
+      raise elabErr(importLoc, "import '" & path & "': file not found at '" &
+        path & "'" &
         (if drv.loading.len > 0: " (imported from '" & drv.loading[^1] & "')"
          else: ""))
   if cpath in drv.loading:

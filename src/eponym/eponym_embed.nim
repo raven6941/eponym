@@ -742,9 +742,9 @@ proc bindHostNatOpaqueBinary*[T](bindings: var RuntimeBindings,
                 hostNatOpaqueBinary[T](globals, implementation))
 
 proc bindHostNatOpaqueMapBinary*[A, B](bindings: var RuntimeBindings,
-    globals: Globals, postulateName, opaqueArgType,
-    opaqueResultType: string, implementation: proc(n: int, x: A): B) =
-  ## Bind `Nat -> A -> B` where A and B are distinct opaque Nim mappings.
+    globals: Globals, postulateName, opaqueArgType, opaqueResultType: string,
+    implementation: proc(n: int, x: A): B) =
+  ## Bind `Nat -> A -> B` where A and B use distinct Nim representations.
   validateHostNatOpaqueBinaryType(globals, postulateName, opaqueArgType,
                                   opaqueResultType)
   bindHostValue(bindings, globals, postulateName,
@@ -1159,6 +1159,8 @@ proc valueToNat*(v: Value, globals: Globals): int =
     of wRef:
       let id = current.whnfRefId
       if id == constructors.zeroId:
+        if current.whnfSpineLen != 0:
+          raise newException(ValueError, "runtime value is not a Nat")
         return
       if id != constructors.sucId or current.whnfSpineLen != 1 or
           current.whnfSpineKind(0) != eApp:
