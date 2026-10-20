@@ -383,14 +383,19 @@ implementations.
    nested vectors through typed and raw `runtimeValue` interfaces. Preserve
    grouping for nested bracketed type and term applications in the Nim AST
    translator; a nested-vector type exposed a precedence bug in that path.
+- [x] Add `runtimeRecordTrusted(Record)` for mapped records with dependent
+   fields. Earlier field names are substituted into later codecs; supported
+   codecs still check constraints they represent (for example, a Vec field
+   against its preceding Nat length). A 200-case property covers typed and raw
+   runtime wrappers and rejects mismatched sequence lengths.
 - [x] Bridge multi-argument Nim closure types to curried Eponym function
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly
    mapped opaque arguments for callbacks passed into and returned from checked
    functions. Returned Nim closures require `{.closure.}`.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
-   definitions and extend support to other dependent structures, non-Nat
-   value-indexed generics, and other unsupported higher-order definitions.
+   definitions and extend support to remaining dependent structures,
+   unmapped value-indexed generics, and unsupported higher-order definitions.
    Definitions without a matching explicit Nim `proc` declaration still
    retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`
    declarations with unsupported signatures fail clearly when called.

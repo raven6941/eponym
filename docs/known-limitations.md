@@ -94,20 +94,25 @@ Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque
 leaves. Named non-dependent `record` declarations map to Nim objects via
 `runtimeType`, using the same recursive codecs in declaration order. Property
 tests cover primitive and opaque tuple fields and mixed primitive and opaque
-record fields. A dependent `Sig` can also be exposed by a typed wrapper when
-that definition opts in with `runtimePairTrusted(definition)`; its field codecs
-are checked recursively, while correspondence between host field values and
-their indices remains trusted. Without the opt-in, dependent `Sig` wrapper
-signatures remain unsupported. Records with dependent fields remain
-unsupported. The canonical length-indexed `Vec` family has an explicit
+record fields. Dependent records can opt in with
+`runtimeRecordTrusted(Record)` when every field has a codec. Earlier field
+names are substituted into later field codecs; for example, a `Vec` field is
+checked against its preceding Nat length field. Relationships not checked by
+the selected field codecs remain trusted. Without the opt-in, dependent record
+wrappers remain unsupported. A dependent `Sig` can also be exposed by a typed
+wrapper when that definition opts in with `runtimePairTrusted(definition)`; its
+field codecs are checked recursively, while correspondence between host field
+values and their indices remains trusted. Without the opt-in, dependent `Sig` wrapper
+signatures remain unsupported. The canonical length-indexed `Vec` family has
+an explicit
 `runtimeVector(Vec)` codec that maps `Vec[A, n]` to `seq[A]`. It checks the
 host sequence length and the runtime Nat index at each `cons` cell; the
 element type uses its recursive runtime codec, including nested vectors such
 as `Vec[Vec[Int, m], n]` mapped to `seq[seq[int]]`. The codec accepts Nat length
 expressions made from a static index, `zero`, `suc`, `add`, and `mul`. It
 requires the standard `nil` and `cons` constructor shape from `lib/vec.ep`.
-Other collections and data types with payload constructors remain unsupported. A
-mapped `Future[T]` can pass through an opaque postulate adapter as either an
+Other collections and data types with payload constructors remain unsupported.
+A mapped `Future[T]` can pass through an opaque postulate adapter as either an
 argument or result; the bridge preserves the same Nim future value. Eponym
 has no async effect, await, or cancellation operation. Completion, failure,
 and cancellation remain Nim runtime behavior: Eponym does not observe or

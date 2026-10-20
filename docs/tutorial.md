@@ -100,7 +100,10 @@ doAssert keepPair((3, -4)) == (3, -4)
 
 Named non-dependent records can also map to Nim objects with `runtimeType`;
 record fields recursively use the `Int`/`Nat`, opaque, tuple, and record
-codecs. Records with fields indexed by earlier fields remain unsupported.
+codecs. Records with dependent fields require `runtimeRecordTrusted(Name)`;
+earlier field names are substituted into later codecs. A Vec field checks its
+length against a preceding Nat field. Any index relationship the selected
+field codec cannot check remains trusted.
 
 The standard length-indexed `Vec` family can map to Nim sequences. Opt in with
 `runtimeVector(Vec)`; the wrapper checks that each sequence length agrees with

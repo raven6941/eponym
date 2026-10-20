@@ -181,8 +181,12 @@ First-order wrappers also support non-dependent `Sig(A, B)` values as
 two-element Nim tuples and non-dependent named Eponym records as mapped Nim
 objects. Both recursively use primitive `Int`/`Nat` codecs and explicitly
 mapped opaque leaves. Record fields follow declaration order internally, while
-Nim checks the named object fields and their types. Dependent `Sig` values and
-records with dependent fields do not have generated structural codecs.
+Nim checks the named object fields and their types. Records with dependent
+fields require `runtimeRecordTrusted(Record)` and a mapped Nim object. Earlier
+field names feed later codecs; structural codecs can validate relationships
+they represent, while any remaining index correspondence is trusted.
+Dependent `Sig` values still require the separate `runtimePairTrusted`
+definition opt-in.
 
 ## Sheds: `shedsBlock` (hole-driven development)
 

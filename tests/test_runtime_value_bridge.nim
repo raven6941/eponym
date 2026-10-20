@@ -34,6 +34,11 @@ type RuntimeEnvelope = object
   point: RuntimePoint
   note: string
 
+type RuntimeSizedVec = object
+  prefixLength: int
+  suffixLength: int
+  values: seq[int]
+
 type IndexedChannelHandle = object
   index: int
   label: string
@@ -193,6 +198,14 @@ eponymBlock:
   proc generatedNestedVectorIdentity[m, n: Nat](
       values: Vec[Vec[Int, m], n]): Vec[Vec[Int, m], n] = values
   runtimeValue(generatedNestedVectorIdentity)
+  record(SizedVec):
+    field(prefixLength, Nat)
+    field(suffixLength, Nat)
+    field(values, Vec[Int, add(prefixLength, suffixLength)])
+  runtimeType(SizedVec, RuntimeSizedVec)
+  runtimeRecordTrusted(SizedVec)
+  proc generatedSizedVecIdentity(value: SizedVec): SizedVec = value
+  runtimeValue(generatedSizedVecIdentity)
 
 eponymBlock:
   import "../lib/bool.ep"
@@ -301,6 +314,8 @@ static:
   doAssert compiles(generatedVectorAddIndex[2, 3](@[1, 2, 3, 4, 5]))
   doAssert compiles(generatedNestedVectorIdentity[2, 3](
     @[@[1, 2], @[3, 4], @[5, 6]]))
+  doAssert compiles(generatedSizedVecIdentity(
+    RuntimeSizedVec(prefixLength: 1, suffixLength: 1, values: @[7, 8])))
   doAssert compiles(generatedGenericBoolValue[true](1))
   doAssert compiles(generatedGenericBoolValue[false](1))
   doAssert compiles(generatedGenericBoolValueRuntimeValue[true](1))
@@ -912,6 +927,44 @@ proc callbackRole : Callback -> Sample -> Sample =
   if not nestedVectorCases:
     quit(1)
 
+  let dependentRecordCases = forAll(
+    "dependent records validate earlier Nat fields against Vec lengths",
+    r, 200,
+    proc(r: var Rng): tuple[prefixLength, suffixLength, seed: int] =
+      (r.genInt(0, 4), r.genInt(0, 4), r.genInt(-1000, 1000)),
+    proc(input: tuple[prefixLength, suffixLength, seed: int]): bool =
+      let length = input.prefixLength + input.suffixLength
+      var values = newSeq[int](length)
+      for i in 0 ..< values.len:
+        values[i] = input.seed + i
+      let value = RuntimeSizedVec(prefixLength: input.prefixLength,
+        suffixLength: input.suffixLength, values: values)
+      let runtime = generatedSizedVecIdentityRuntimeValue(value)
+      let rawRuntime = generatedSizedVecIdentityRuntimeValue([runtime.value])
+      let runtimeLength = valueToNat(runtimePairFirst(runtime.value),
+        runtime.globals) + valueToNat(runtimePairFirst(
+          runtimePairSecond(runtime.value)), runtime.globals)
+      let rawLength = valueToNat(runtimePairFirst(rawRuntime.value),
+        rawRuntime.globals) + valueToNat(runtimePairFirst(
+          runtimePairSecond(rawRuntime.value)), rawRuntime.globals)
+      generatedSizedVecIdentity(value) == value and
+        runtimeLength == length and
+        decodeRuntimeIntVector(runtimePairFirst(
+          runtimePairSecond(runtimePairSecond(runtime.value))), runtimeLength,
+          runtime.globals) == values and
+        rawLength == length and
+        decodeRuntimeIntVector(runtimePairFirst(
+          runtimePairSecond(runtimePairSecond(rawRuntime.value))), rawLength,
+          rawRuntime.globals) == values)
+  if not dependentRecordCases:
+    quit(1)
+  var dependentRecordMismatchRejected = false
+  try:
+    discard generatedSizedVecIdentity(RuntimeSizedVec(prefixLength: 1,
+      suffixLength: 2, values: @[1, 2]))
+  except ValueError as error:
+    dependentRecordMismatchRejected = "runtime Vec length mismatch" in error.msg
+  doAssert dependentRecordMismatchRejected
 
   let genericBoolCases = forAll(
     "Bool generic values are available in checked runtime bodies", r, 200,

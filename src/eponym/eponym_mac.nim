@@ -682,6 +682,11 @@ proc blockToEponym*(body: NimNode): string =
         # in one generated definition's typed runtime interface.
         if st.len != 2 or st[1].kind != nnkIdent:
           error("runtimePairTrusted expects (checkedDefinition)", st)
+      elif head == "runtimeRecordTrusted":
+        # Explicitly trust host values to satisfy dependent record indices;
+        # codecs still enforce any structural constraints they represent.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("runtimeRecordTrusted expects (RecordType)", st)
       else:
         error("eponymBlock: unsupported call: " & head, st)
     else:
@@ -713,8 +718,10 @@ type HostRecord = object
   hasDependentField: bool
   isVariant: bool
   constructors: seq[string]
+  trustDependentFields: bool
 
-proc hostRecords(body: NimNode): seq[HostRecord] =
+proc hostRecords(body: NimNode,
+                 trustedDependent: HashSet[string]): seq[HostRecord] =
   for st in body:
     if st.kind != nnkCall or st.len == 0 or st[0].kind != nnkIdent:
       continue
@@ -724,7 +731,8 @@ proc hostRecords(body: NimNode): seq[HostRecord] =
       st[3].kind == nnkStmtList
     if (not isRecord and not isVariant) or st[1].kind != nnkIdent:
       continue
-    var record = HostRecord(name: $st[1], isVariant: isVariant)
+    var record = HostRecord(name: $st[1], isVariant: isVariant,
+      trustDependentFields: $st[1] in trustedDependent)
     if isVariant:
       for ctor in st[3]:
         if ctor.kind != nnkProcDef or ctor[0].kind != nnkIdent or
@@ -862,6 +870,18 @@ proc trustedRuntimePairNames(body: NimNode): HashSet[string] =
         error("duplicate runtimePairTrusted declaration for '" & name & "'", st)
       result.incl(name)
 
+proc trustedRuntimeRecordNames(body: NimNode): HashSet[string] =
+  result = initHashSet[string]()
+  for st in body:
+    if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
+        $st[0] == "runtimeRecordTrusted":
+      if st.len != 2 or st[1].kind != nnkIdent:
+        error("runtimeRecordTrusted expects (RecordType)", st)
+      let name = $st[1]
+      if name in result:
+        error("duplicate runtimeRecordTrusted declaration for '" & name & "'", st)
+      result.incl(name)
+
 proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
     tuple[first, second: NimNode] =
   ## Runtime tuples represent only non-dependent two-field Sig types. Reject
@@ -889,6 +909,8 @@ proc runtimeNatIndexExpr(n: NimNode): NimNode =
   if n.kind in {nnkIdent, nnkSym}:
     if $n == "zero": return newLit(0)
     return copyNimTree(n)
+  if n.kind == nnkDotExpr:
+    return copyNimTree(n)
   if n.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
                 nnkInt64Lit}:
     if n.intVal < 0: return nil
@@ -908,6 +930,17 @@ proc runtimeNatIndexExpr(n: NimNode): NimNode =
       return newCall(if $n[0] == "add": bindSym"natIndexAdd" else:
         bindSym"natIndexMul", left, right)
   nil
+
+proc substituteRuntimeIndices(n: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
+  if n.kind in {nnkIdent, nnkSym}:
+    for override in overrides:
+      if $n == override.name:
+        return copyNimTree(override.value)
+    return copyNimTree(n)
+  result = copyNimTree(n)
+  for i in 0 ..< n.len:
+    result[i] = substituteRuntimeIndices(n[i], overrides)
 
 type RuntimeProcParts = object
   argTypes: seq[NimNode]
@@ -986,7 +1019,8 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
           if mapping.eponymName == $head:
             return mapping.nimType
         return nil
-      if record.hasDependentField or record.fields.len == 0:
+      if (record.hasDependentField and not record.trustDependentFields) or
+          record.fields.len == 0:
         return nil
       for field in record.fields:
         if runtimeNimType(field.eponymType, mappings, records,
@@ -1030,7 +1064,9 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                mappings: seq[HostRuntimeType],
                                records: seq[HostRecord],
                                globals: NimNode,
-                               allowDependentSigma = false): NimNode =
+                               allowDependentSigma = false,
+                               indexOverrides: seq[tuple[name: string,
+                                 value: NimNode]] = @[]): NimNode =
   let procParts = runtimeProcParts(eponymType)
   if not procParts.resultType.isNil:
     let resultNimType = runtimeNimType(procParts.resultType, mappings, records,
@@ -1051,7 +1087,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       for i, argType in procParts.argTypes:
         let decodedArg = runtimeValueConversionExpr(argType, argNimTypes[i],
           argValueSyms[i], false, mappings, records, globals,
-          allowDependentSigma)
+          allowDependentSigma, indexOverrides)
         if decodedArg.isNil: return nil
         decodedArgs.add(decodedArg)
       var hostResult = newCall(value)
@@ -1059,7 +1095,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         hostResult.add(decodedArg)
       let encodedResult = runtimeValueConversionExpr(procParts.resultType,
         resultNimType, hostResult, true, mappings, records, globals,
-        allowDependentSigma)
+        allowDependentSigma, indexOverrides)
       if encodedResult.isNil: return nil
       var callbackValue = encodedResult
       for i in countdown(argValueSyms.high, 0):
@@ -1073,7 +1109,8 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     var formal: seq[NimNode] = @[resultNimType]
     for i, argType in procParts.argTypes:
       let encodedArg = runtimeValueConversionExpr(argType, argNimTypes[i],
-        argSyms[i], true, mappings, records, globals, allowDependentSigma)
+        argSyms[i], true, mappings, records, globals, allowDependentSigma,
+        indexOverrides)
       if encodedArg.isNil: return nil
       encodedArgs.add(encodedArg)
       formal.add(newIdentDefs(argSyms[i], argNimTypes[i], newEmptyNode()))
@@ -1081,14 +1118,16 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       newTree(nnkPrefix, ident"@", encodedArgs))
     let decodedResult = runtimeValueConversionExpr(procParts.resultType,
       resultNimType, applied, false, mappings, records, globals,
-      allowDependentSigma)
+      allowDependentSigma, indexOverrides)
     if decodedResult.isNil: return nil
     return newProc(params = formal, body = newStmtList(decodedResult))
   for mapping in mappings:
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
       if not vector.elementType.isNil:
-        let expectedLength = runtimeNatIndexExpr(vector.length)
+        let resolvedLength = substituteRuntimeIndices(vector.length,
+                                                       indexOverrides)
+        let expectedLength = runtimeNatIndexExpr(resolvedLength)
         let elementNimType = runtimeNimType(vector.elementType, mappings,
           records, allowDependentSigma)
         if expectedLength.isNil or elementNimType.isNil: return nil
@@ -1097,7 +1136,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
         if toValue:
           let encodedItem = runtimeValueConversionExpr(vector.elementType,
             elementNimType, itemSym, true, mappings, records,
-            codecGlobalsSym, allowDependentSigma)
+            codecGlobalsSym, allowDependentSigma, indexOverrides)
           if encodedItem.isNil: return nil
           let encoder = newProc(params = @[bindSym"Value",
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
@@ -1107,7 +1146,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             globals, newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(vector.elementType,
           elementNimType, itemSym, false, mappings, records,
-          codecGlobalsSym, allowDependentSigma)
+          codecGlobalsSym, allowDependentSigma, indexOverrides)
         if decodedItem.isNil: return nil
         let decoder = newProc(params = @[elementNimType,
           newIdentDefs(itemSym, bindSym"Value", newEmptyNode()),
@@ -1122,18 +1161,20 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     if toValue:
       let first = runtimeValueConversionExpr(sigma.first, nimType[0],
         newTree(nnkBracketExpr, value, newLit(0)), true, mappings, records,
-        globals, allowDependentSigma)
+        globals, allowDependentSigma, indexOverrides)
       let second = runtimeValueConversionExpr(sigma.second, nimType[1],
         newTree(nnkBracketExpr, value, newLit(1)), true, mappings, records,
-        globals, allowDependentSigma)
+        globals, allowDependentSigma, indexOverrides)
       if first.isNil or second.isNil: return nil
       return newCall(bindSym"pairValue", first, second)
-    let firstValue = newCall(bindSym"whnfFst", value)
-    let secondValue = newCall(bindSym"whnfSnd", value)
+    let firstValue = newCall(bindSym"runtimePairFirst", value)
+    let secondValue = newCall(bindSym"runtimePairSecond", value)
     let first = runtimeValueConversionExpr(sigma.first, nimType[0],
-      firstValue, false, mappings, records, globals, allowDependentSigma)
+      firstValue, false, mappings, records, globals, allowDependentSigma,
+      indexOverrides)
     let second = runtimeValueConversionExpr(sigma.second, nimType[1],
-      secondValue, false, mappings, records, globals, allowDependentSigma)
+      secondValue, false, mappings, records, globals, allowDependentSigma,
+      indexOverrides)
     if first.isNil or second.isNil: return nil
     return newTree(nnkTupleConstr, first, second)
   if eponymType.kind == nnkIdent:
@@ -1151,36 +1192,47 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           return newCall(bindSym"enumToValue", value, globals, namesSeq)
         return newCall(newTree(nnkBracketExpr, bindSym"valueToEnum", nimType),
                        value, globals, namesSeq)
-      if record.hasDependentField or record.fields.len == 0:
+      if (record.hasDependentField and not record.trustDependentFields) or
+          record.fields.len == 0:
         return nil
       if toValue:
-        var tail = newCall(bindSym"unitValue")
-        for i in countdown(record.fields.high, 0):
-          let field = record.fields[i]
+        var convertedFields: seq[NimNode] = @[]
+        var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
+        for field in record.fields:
           let fieldType = runtimeNimType(field.eponymType, mappings, records,
                                          allowDependentSigma)
           if fieldType.isNil: return nil
           let fieldValue = newTree(nnkDotExpr, value, ident(field.name))
           let converted = runtimeValueConversionExpr(field.eponymType,
             fieldType, fieldValue, true, mappings, records, globals,
-            allowDependentSigma)
+            allowDependentSigma, indexOverrides)
           if converted.isNil: return nil
-          tail = newCall(bindSym"pairValue", converted, tail)
+          convertedFields.add(converted)
+          indexOverrides.add((field.name, fieldValue))
+        var tail = newCall(bindSym"unitValue")
+        for i in countdown(convertedFields.high, 0):
+          tail = newCall(bindSym"pairValue", convertedFields[i], tail)
         return tail
       var current = value
       var fields = newNimNode(nnkObjConstr)
       fields.add(nimType)
+      var decodeBody = newStmtList()
+      var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
       for field in record.fields:
         let fieldType = runtimeNimType(field.eponymType, mappings, records,
                                        allowDependentSigma)
         if fieldType.isNil: return nil
+        let fieldSym = genSym(nskLet, field.name)
         let converted = runtimeValueConversionExpr(field.eponymType,
-          fieldType, newCall(bindSym"whnfFst", current), false,
-          mappings, records, globals, allowDependentSigma)
+          fieldType, newCall(bindSym"runtimePairFirst", current), false,
+          mappings, records, globals, allowDependentSigma, indexOverrides)
         if converted.isNil: return nil
-        fields.add(newTree(nnkExprColonExpr, ident(field.name), converted))
-        current = newCall(bindSym"whnfSnd", current)
-      return fields
+        decodeBody.add(newLetStmt(fieldSym, converted))
+        fields.add(newTree(nnkExprColonExpr, ident(field.name), fieldSym))
+        indexOverrides.add((field.name, fieldSym))
+        current = newCall(bindSym"runtimePairSecond", current)
+      decodeBody.add(fields)
+      return newBlockStmt(decodeBody)
   let valueFn = runtimeValueConverter(eponymType, nimType, toValue, records)
   if valueFn.isNil: return nil
   if simpleRuntimeCodec(eponymType) == "bool" or
@@ -1747,7 +1799,19 @@ macro eponymBlock*(body: untyped): untyped =
       error("eponymBlock binding error: binding for postulate '" &
         binding.postulateName & "' is unused by every proc body", body)
   let runtimeTypes = hostRuntimeTypes(body)
-  let records = hostRecords(body)
+  let trustedRuntimeRecords = trustedRuntimeRecordNames(body)
+  let records = hostRecords(body, trustedRuntimeRecords)
+  for requested in trustedRuntimeRecords:
+    let recordIndex = findHostRecord(records, requested)
+    if recordIndex < 0 or records[recordIndex].isVariant:
+      error("runtimeRecordTrusted names no record: " & requested, body)
+    var hasRuntimeMapping = false
+    for mapping in runtimeTypes:
+      if mapping.eponymName == requested and not mapping.isRuntimeVector:
+        hasRuntimeMapping = true
+    if not hasRuntimeMapping:
+      error("runtimeRecordTrusted requires runtimeType(" & requested & ", NimType)",
+        body)
   let trustedRuntimePairs = trustedRuntimePairNames(body)
   for requested in trustedRuntimePairs:
     var found = false
