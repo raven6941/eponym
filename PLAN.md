@@ -504,6 +504,12 @@ implementations.
    runtime codec checks and through the checked Bool definitions for Eponym
    elaboration. A 200-case property covers typed and `RuntimeValue` dynamic
    wrappers; invalid lengths are rejected for every Bool input combination.
+- [x] Expose low-level runtime Pi and Sigma type builders for host-side checks,
+   including dependent codomains. Reserve fresh IDs beyond checked globals and
+   earlier binders; validate pair values recursively against dependent Sigma
+   fields. A 200-case property checks non-dependent and dependent pairs, rejects
+   mismatched fields and indices, and validates checked functions against both
+   non-dependent and dependent Pi witnesses.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

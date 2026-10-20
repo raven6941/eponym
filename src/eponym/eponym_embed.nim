@@ -1151,6 +1151,43 @@ proc runtimeGlobalValue*(globals: Globals, name: string): Value =
       "runtime type expression refers to unknown Eponym name '" & name & "'")
   eval(globals[name].tm, @[])
 
+proc runtimeDependentArrowType*(domain: Value, globals: Globals,
+    codomainFn: proc(argument: Value): Value {.closure.},
+    priorArguments: openArray[Value] = []): Value =
+  ## Build a dependent Pi type, reserving IDs used by checked globals and
+  ## earlier binders before introducing the new parameter.
+  if domain.isNil or codomainFn.isNil:
+    raise newException(ValueError, "cannot build an incomplete dependent Pi")
+  var supply = Supply()
+  for _, entry in globals.pairs:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      reserveFreshIdsThrough(supply, entry.tm.refId)
+  for prior in priorArguments:
+    if not prior.isNil and prior.whnfKind == wRef:
+      reserveFreshIdsThrough(supply, prior.whnfRefId)
+  let argument = freshPara(supply, domain)
+  let codomain = codomainFn(argument)
+  runtimeDependentPiType(domain, argument, codomain, codomainFn)
+
+proc runtimeDependentSigmaType*(domain: Value, globals: Globals,
+    codomainFn: proc(argument: Value): Value {.closure.},
+    priorArguments: openArray[Value] = []): Value =
+  ## Build a dependent Sigma type, reserving IDs used by checked globals and
+  ## earlier binders before introducing the new field.
+  if domain.isNil or codomainFn.isNil:
+    raise newException(ValueError,
+      "cannot build an incomplete dependent Sigma")
+  var supply = Supply()
+  for _, entry in globals.pairs:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      reserveFreshIdsThrough(supply, entry.tm.refId)
+  for prior in priorArguments:
+    if not prior.isNil and prior.whnfKind == wRef:
+      reserveFreshIdsThrough(supply, prior.whnfRefId)
+  let argument = freshPara(supply, domain)
+  let codomain = codomainFn(argument)
+  runtimeDependentSigmaType(domain, argument, codomain, codomainFn)
+
 proc runtimeGlobalTypeWitness*(globals: Globals, name: string): Value =
   ## Return a generic type witness only for a named, unindexed Eponym type.
   ## A mapped indexed family needs its indices as well as its Nim type mapping.
@@ -1242,8 +1279,41 @@ proc validateRuntimeValueType*(value, expectedType: Value,
   if value.isNil or expectedType.isNil:
     raise newException(ValueError, "cannot validate an incomplete runtime Value")
   var supply = Supply()
+  for _, entry in globals.pairs:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      reserveFreshIdsThrough(supply, entry.tm.refId)
   let inferred = inferRuntimeValueType(value, globals, supply)
   areEqual(supply, vStar(), inferred, expectedType)
+
+proc validateRuntimeValueAgainstType*(value, expectedType: Value,
+    globals: Globals) =
+  ## Validate pair values structurally against Sigma types. Other values use
+  ## ordinary checked runtime type inference, including Pi-valued callbacks.
+  if value.isNil or expectedType.isNil:
+    raise newException(ValueError, "cannot validate an incomplete runtime Value")
+  if expectedType.whnfKind == wRef and expectedType.whnfSpineLen == 0:
+    if "Int" in globals:
+      let intType = runtimeGlobalValue(globals, "Int")
+      if intType.whnfKind == wRef and
+          expectedType.whnfRefId == intType.whnfRefId:
+        if value.whnfKind == wInt: return
+        raise newException(ValueError, "runtime value type mismatch for Int")
+    if "Nat" in globals:
+      let natType = runtimeGlobalValue(globals, "Nat")
+      if natType.whnfKind == wRef and
+          expectedType.whnfRefId == natType.whnfRefId:
+        discard valueToNat(value, globals)
+        return
+  if expectedType.whnfKind == wSi:
+    if value.whnfKind != wPair:
+      raise newException(ValueError,
+        "runtime value is not a pair for the expected Sigma type")
+    let first = runtimePairFirst(value)
+    validateRuntimeValueAgainstType(first, expectedType.whnfDom, globals)
+    let codomain = whnfScopeApply(expectedType, first)
+    validateRuntimeValueAgainstType(runtimePairSecond(value), codomain, globals)
+    return
+  validateRuntimeValueType(value, expectedType, globals)
 
 proc prependErasedTypeArgs*(typeArgCount: int,
                             args: openArray[Value]): seq[Value] =
