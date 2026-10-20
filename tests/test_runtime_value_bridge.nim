@@ -133,6 +133,21 @@ eponymBlock:
     if false: addInt(19, 0) else: addInt(17, 0)
 
 eponymBlock:
+  postulate(Nat, Univ)
+  data(Tree, Univ):
+    proc leaf(): Tree
+    proc node(n: Nat, rest: Tree): Tree
+  proc sampleTree(): Tree = node(37, leaf())
+  runtimeValue(sampleTree)
+
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(hostPlusSeven, Int -> Int)
+  bindPostulate(hostPlusSeven, hostStepNim)
+  proc runtimeResult(): Int = hostPlusSeven(35)
+  runtimeValue(runtimeResult)
+
+eponymBlock:
   postulate(Int, Univ)
   postulate(hostFailure, Int -> Int)
   bindPostulate(hostFailure, hostFailureNim)
@@ -288,6 +303,16 @@ static:
     IndexedChannelHandle(index: 17, label: "indexed")))
 
 when isMainModule:
+  let treeRuntime = sampleTreeRuntimeValue()
+  let nodeId = treeRuntime.globals["node"].tm.refId
+  let leafId = treeRuntime.globals["leaf"].tm.refId
+  doAssert treeRuntime.value.whnfRefId == nodeId
+  doAssert treeRuntime.value.whnfSpineLen == 2
+  doAssert treeRuntime.value.whnfSpineArg(0).whnfNatLitVal == 37
+  doAssert treeRuntime.value.whnfSpineArg(1).whnfRefId == leafId
+  let boundRuntime = runtimeResultRuntimeValue()
+  doAssert boundRuntime.value.whnfKind == wInt
+  doAssert boundRuntime.value.whnfIntVal == 42
   let baseDir = currentSourcePath().parentDir.parentDir
   var r = initRng(424242'u64)
 

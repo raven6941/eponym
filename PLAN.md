@@ -20,12 +20,12 @@ Idris) stalled on the adoption problem — each asked programmers to buy a
 whole new ecosystem. A library in a language people already use is a much
 easier sell. The target case is a session-type library: protocol
 violations rejected at compile time through plain `send`/`recv` calls
-(issue #28). This is the intended destination, not the current experience:
-today's session examples check Eponym roles but do not bind their postulates
-to Nim transports or run those checked roles. The embedding applicability
-plan below tracks the implementation needed to close that gap. Deliberate-
-embedding prior art: Turnstile/Turnstile+ (the architectural ancestor —
-dependent type systems as macros), SynQ, Liquid Haskell.
+(issue #28). The in-memory and TCP session examples already run checked
+sender/receiver roles through bound Nim postulates. The single-variable DCP
+example interprets its checked objective at runtime. The embedding
+applicability plan below tracks remaining gaps. Deliberate-embedding prior
+art: Turnstile/Turnstile+ (the architectural ancestor — dependent type
+systems as macros), SynQ, Liquid Haskell.
 
 ## Architecture overview
 
@@ -485,16 +485,20 @@ implementations.
 
 #### E. Connect certified models to numeric execution
 
-- [ ] Choose one path: interpret a certified reified objective at runtime, or
-   generate its numeric implementation from that same expression.
-- [ ] Pass the exact Eponym objective/certificate to the solver API. Do not
-   separately restate the formula as Nim code without an explicit, tested
-   correspondence proof or code-generation path.
-- [ ] State which assumptions remain trusted: solver correctness, floating
-   point behavior, derivative implementation (unless generated), and
-   convergence conditions.
-- [ ] Update the single-variable and logistic-regression examples so changing
-   the checked objective necessarily changes the executed objective.
+- [x] Choose runtime interpretation for the single-variable DCP example.
+   `runtimeValue(prob)` exposes the checked definition's runtime Value; the
+   Nim interpreter evaluates the CExpr constructor tree. The vector logistic
+   example remains open.
+- [x] Pass the exact single-variable Eponym objective to ternary search
+   through that interpreter. A 300-case property test compares the result to
+   its known integer formula; the certificate is checked during elaboration.
+- [x] Document the trusted assumptions for the connected example: the CExpr
+   interpreter, integer overflow behavior, ternary-search correctness, and
+   convexity reasoning remain host/math assumptions. The vector example's
+   floating-point and gradient assumptions remain documented as disconnected.
+- [ ] Connect the logistic-regression example's checked objective to its
+   executed loss and gradient. `convex_opt.nim` now interprets its checked
+   objective; `convex_opt_vec.nim` still has a separately stated Nim loss.
 
 **Exit criteria:**
 

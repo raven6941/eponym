@@ -119,9 +119,10 @@ for verified components inside a larger Nim application.
   check (Issue #101): the DCP rule table (curvature composition rules)
   as `Affine`/`Convex` proof families over a small expression language;
   `minimize` demands a `Convex` certificate in the objective position.
-  The example proves `2*(x-3)^2 + x` convex by construction and then
-  optimizes it from Nim with ternary search — a *local* optimizer,
-  licensed by the compile-time convexity proof. Non-DCP objectives
+  The example proves `2*(x-3)^2 + x` convex by construction, then passes the
+  same checked `prob()` expression to a Nim interpreter and ternary search.
+  The search remains a trusted local optimizer, licensed by the compile-time
+  convexity proof. Non-DCP objectives
   (`x*x`) are compile-time errors (see 17a above), where CVXPY would
   raise DCPError at solve() time.
 - **convex_opt_vec.nim** — DCP with dimension-indexed vector variables
@@ -133,7 +134,8 @@ for verified components inside a larger Nim application.
   the softplus composition rule, non-obvious unlike least squares),
   plus a two-variable objective with different dimensions and a
   portfolio risk term (`quadForm` with a PSD side condition). The Nim
-  driver runs gradient descent on the certified objective. Dimension
+  driver still re-states the logistic loss and gradient in Nim; it is not yet
+  connected to the checked objective. Dimension
   mismatches and non-DCP vector products (`vMul`) are compile-time
   errors (see 18a/18b/18c above).
 - **qtt_borrow.nim** — QTT borrow checking as an embedded DSL (Issue

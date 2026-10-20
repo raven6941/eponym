@@ -16,21 +16,22 @@
 # nonnegativity of the scale is by construction (negative scaling would
 # flip convex to concave -- a separate `Concave` family, not needed here).
 #
-# The example: f(x) = 2*(x-3)^2 + x, convex by construction. `quadExpr` is
-# the reified expression, `quadConvex` its DCP certificate, and `prob`
-# shows `minimize` accepting it. `f` is the same formula as an evaluable
-# `Int -> Int` function; the Nim driver below minimizes it with ternary
-# search -- a *local* optimizer, licensed by the compile-time convexity
-# proof (for convex f, every local minimum is global).
+# The example: 2*(x-3)^2 + x, convex by construction. `quadExpr` is the
+# reified expression, `quadConvex` its DCP certificate, and `prob` shows
+# `minimize` accepting it. The Nim driver interprets the runtime Value of
+# `prob`, so its ternary search consumes the same expression the checker saw.
 #
 # Note the two-layer shape (cf. paxos_session.nim): the proof layer is
-# checked at compile time by the elaborator; the running layer is the
-# elaborated `f` called through the embedding. CVXPY's DCP check happens
+# checked at compile time by the elaborator; the running layer interprets
+# the checked objective through the Value bridge. CVXPY's DCP check happens
 # at solve() time, after the problem is built; here a DCP violation stops
 # compilation of this file.
 
+import std/tables
 import eponym_mac
 import eponym_embed
+import eponym_init
+import elab
 
 eponymBlock:
   # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
@@ -99,11 +100,13 @@ eponymBlock:
 
   # The problem: accepted only because the certificate checks.
   proc prob(): CExpr = minimize(quadExpr(), quadConvex())
-
-  # The same formula as a runnable function. The Nim driver calls this
-  # through the embedding.
-  proc f(x: Int): Int =
-    addInt(mulInt(2, mulInt(subInt(x, 3), subInt(x, 3))), x)
+  runtimeValue(prob)
+  proc shiftedExpr(): CExpr = ePlus(quadExpr(), eConst(11))
+  proc shiftedCert(): Convex(shiftedExpr()) =
+    cvPlus(quadExpr(), eConst(11), quadConvex(),
+      cvAffine(eConst(11), afConst(11)))
+  proc shiftedProb(): CExpr = minimize(shiftedExpr(), shiftedCert())
+  runtimeValue(shiftedProb)
 
 # --- Normal Nim program: optimize the certified-convex objective --------
 # Ternary search is a *local* method: it is only correct because `f` is
@@ -112,18 +115,67 @@ eponymBlock:
 # what rules that out. CVXPY would run its DCP check at solve() time;
 # here the check ran when this file was compiled.
 
-proc ternaryMin(lo, hi: int): tuple[xstar, fstar: int] =
+proc ctorArg(expr: Value, index: int): Value =
+  if expr.whnfKind != wRef or expr.whnfSpineLen <= index or
+      expr.whnfSpineKind(index) != eApp:
+    raise newException(ValueError, "malformed certified CExpr constructor")
+  expr.whnfSpineArg(index)
+
+proc ctorId(globals: Globals, name: string): int =
+  if name notin globals:
+    raise newException(ValueError, "certified CExpr constructor missing: " & name)
+  globals[name].tm.refId
+
+proc evalCertifiedExpr(expr: Value, x: int, globals: Globals): int =
+  let id = expr.whnfRefId
+  if id == ctorId(globals, "eVar"):
+    return x
+  if id == ctorId(globals, "eConst"):
+    let literal = ctorArg(expr, 0)
+    if literal.whnfKind != wInt:
+      raise newException(ValueError, "eConst payload is not an Int")
+    return literal.whnfIntVal
+  if id == ctorId(globals, "ePlus"):
+    return evalCertifiedExpr(ctorArg(expr, 0), x, globals) +
+      evalCertifiedExpr(ctorArg(expr, 1), x, globals)
+  if id == ctorId(globals, "eMinus"):
+    return evalCertifiedExpr(ctorArg(expr, 0), x, globals) -
+      evalCertifiedExpr(ctorArg(expr, 1), x, globals)
+  if id == ctorId(globals, "eScaleN"):
+    let scale = ctorArg(expr, 0)
+    if scale.whnfKind != wNatLit:
+      raise newException(ValueError, "eScaleN payload is not a Nat literal")
+    return scale.whnfNatLitVal * evalCertifiedExpr(ctorArg(expr, 1), x, globals)
+  if id == ctorId(globals, "eSq"):
+    let value = evalCertifiedExpr(ctorArg(expr, 0), x, globals)
+    return value * value
+  raise newException(ValueError, "unsupported constructor in certified CExpr")
+
+proc evalCertifiedObjectiveValue(checked: tuple[value: Value,
+                                               globals: Globals], x: int): int =
+  evalCertifiedExpr(checked.value, x, checked.globals)
+
+proc evalCertifiedObjective*(x: int): int =
+  evalCertifiedObjectiveValue(probRuntimeValue(), x)
+
+proc evalShiftedCertifiedObjective*(x: int): int =
+  evalCertifiedObjectiveValue(shiftedProbRuntimeValue(), x)
+
+proc ternaryMin(lo, hi: int,
+                checked: tuple[value: Value, globals: Globals]):
+    tuple[xstar, fstar: int] =
   var a = lo
   var b = hi
   while b - a > 3:
     let m1 = a + (b - a) div 3
     let m2 = b - (b - a) div 3
-    if f(m1) <= f(m2): b = m2
+    if evalCertifiedObjectiveValue(checked, m1) <=
+        evalCertifiedObjectiveValue(checked, m2): b = m2
     else: a = m1
   var best = a
-  var bestV = f(a)
+  var bestV = evalCertifiedObjectiveValue(checked, a)
   for x in (a + 1)..b:
-    let v = f(x)
+    let v = evalCertifiedObjectiveValue(checked, x)
     if v < bestV:
       best = x
       bestV = v
@@ -134,7 +186,8 @@ proc main() =
   echo "  f(x) = 2*(x-3)^2 + x elaborated with a Convex certificate;"
   echo "  `minimize` accepted it at compile time (x*x would not:"
   echo "  examples/ep/17a-convex-neg.ep)."
-  let (xstar, fstar) = ternaryMin(-100, 100)
+  let checkedProb = probRuntimeValue()
+  let (xstar, fstar) = ternaryMin(-100, 100, checkedProb)
   echo "  ternary search on [-100, 100]: x* = ", xstar, ", f(x*) = ", fstar
   echo "  (convexity certifies this local minimum is the global one)"
 
