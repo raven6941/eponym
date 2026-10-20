@@ -407,6 +407,10 @@ proc whnfNatSingVal*(v: Value): int =
   assert v.whnf.kind == wNatSing, "whnfNatSingVal of non-natsing"
   v.whnf.natSingVal
 
+proc whnfHostTypeName*(v: Value): string =
+  assert v.whnf.kind == wHost, "whnfHostTypeName of non-host"
+  v.whnf.hostTypeName
+
 proc whnfPrimOp*(v: Value): PrimOp =
   ## Issue #50: operator of a wPrim value (REPL printer).
   assert v.whnf.kind == wPrim, "whnfPrimOp of non-prim"
