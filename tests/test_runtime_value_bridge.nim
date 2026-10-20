@@ -267,7 +267,10 @@ eponymBlock:
       values: Vec[Int, add(m, n)]): Int = addInt(0, 0)
   proc generatedNestedVectorIdentity[m, n: Nat](
       values: Vec[Vec[Int, m], n]): Vec[Vec[Int, m], n] = values
+  proc generatedGenericVectorValueBinder[n: Nat,
+      values: Vec[Int, n]](ignored: Int): Vec[Int, n] = values
   runtimeValue(generatedNestedVectorIdentity)
+  runtimeValue(generatedGenericVectorValueBinder)
   proc generatedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
@@ -1573,6 +1576,39 @@ proc callbackRole : Callback -> Sample -> Sample =
     shrinkInt)
   if not dynamicGenericVectorCases:
     quit(1)
+  let dynamicGenericValueVectorCases = forAll(
+    "dynamic generic Vec values cross typed wrappers", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 30), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        values[i] = input.seed + i
+      let typed = generatedGenericVectorValueBinderDynamic(
+        input.length, values, 0)
+      let runtime = generatedGenericVectorValueBinderRuntimeValueDynamic(
+        input.length, values, 0)
+      typed == values and
+        vecValueToSeq[int](runtime.value, input.length, runtime.globals,
+          "Vec", proc(value: Value, _: Globals): int = valueToInt(value)) ==
+            values)
+  if not dynamicGenericValueVectorCases:
+    quit(1)
+  var dynamicGenericValueVectorMismatchRejected = false
+  try:
+    discard generatedGenericVectorValueBinderDynamic(3, @[1, 2], 0)
+  except ValueError as error:
+    dynamicGenericValueVectorMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert dynamicGenericValueVectorMismatchRejected
+  var runtimeGenericValueVectorMismatchRejected = false
+  try:
+    discard generatedGenericVectorValueBinderRuntimeValueDynamic(
+      3, @[1, 2], 0)
+  except ValueError as error:
+    runtimeGenericValueVectorMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert runtimeGenericValueVectorMismatchRejected
   var dynamicGenericMismatchRejected = false
   try:
     discard generatedVectorSucIndexDynamic(3, @[1, 2])
