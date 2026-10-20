@@ -1811,6 +1811,56 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
   let generic = if toValue: bindSym"toHostValue" else: bindSym"valueToHost"
   newTree(nnkBracketExpr, generic, nimType)
 
+proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]]): NimNode
+
+proc runtimeRepresentedTypeValueExpr(n, globals: NimNode,
+    mappings: seq[HostRuntimeType],
+    overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
+  for mapping in mappings:
+    if mapping.isRuntimeVector:
+      let vector = runtimeVectorComponents(n, mapping.eponymName)
+      if not vector.elementType.isNil:
+        let elementType = runtimeRepresentedTypeValueExpr(
+          vector.elementType, globals, mappings, overrides)
+        let length = runtimeNatIndexExpr(vector.length, overrides)
+        if elementType.isNil or length.isNil: return nil
+        return newCall(bindSym"callRuntimeValue",
+          newCall(bindSym"runtimeGlobalValue", globals,
+            newLit(mapping.eponymName)),
+          newTree(nnkBracket, elementType,
+            newCall(bindSym"natToValue", length, globals)))
+    elif mapping.isRuntimeList:
+      let elementType = runtimeListElementType(n, mapping.eponymName)
+      if not elementType.isNil:
+        let representedElement = runtimeRepresentedTypeValueExpr(
+          elementType, globals, mappings, overrides)
+        if representedElement.isNil: return nil
+        return newCall(bindSym"callRuntimeValue",
+          newCall(bindSym"runtimeGlobalValue", globals,
+            newLit(mapping.eponymName)),
+          newTree(nnkBracket, representedElement))
+    elif mapping.isRuntimeOption:
+      let elementType = runtimeOptionElementType(n, mapping.eponymName)
+      if not elementType.isNil:
+        let representedElement = runtimeRepresentedTypeValueExpr(
+          elementType, globals, mappings, overrides)
+        if representedElement.isNil: return nil
+        return newCall(bindSym"callRuntimeValue",
+          newCall(bindSym"runtimeGlobalValue", globals,
+            newLit(mapping.eponymName)),
+          newTree(nnkBracket, representedElement))
+  if n.kind in {nnkIdent, nnkSym} and $n notin ["Int", "Nat", "Bool"]:
+    var hasRuntimeType = false
+    for mapping in mappings:
+      if mapping.eponymName == $n and
+          not (mapping.nimType.kind in {nnkIdent, nnkSym} and
+            $mapping.nimType == mapping.eponymName):
+        hasRuntimeType = true
+        break
+    if not hasRuntimeType: return nil
+  runtimeTypeValueExpr(n, globals, overrides)
+
 proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                toValue: bool,
                                mappings: seq[HostRuntimeType],
@@ -1941,6 +1991,11 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
+          let elementTypeValue = runtimeRepresentedTypeValueExpr(
+            vector.elementType, globals, mappings, indexOverrides)
+          if not elementTypeValue.isNil:
+            return newCall(bindSym"seqToVecValue", value, expectedLength,
+              globals, newLit(mapping.eponymName), encoder, elementTypeValue)
           return newCall(bindSym"seqToVecValue", value, expectedLength,
             globals, newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(vector.elementType,
@@ -1970,6 +2025,11 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
+          let elementTypeValue = runtimeRepresentedTypeValueExpr(
+            elementType, globals, mappings, indexOverrides)
+          if not elementTypeValue.isNil:
+            return newCall(bindSym"seqToListValue", value, globals,
+              newLit(mapping.eponymName), encoder, elementTypeValue)
           return newCall(bindSym"seqToListValue", value, globals,
             newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(elementType,
@@ -2000,6 +2060,11 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
+          let elementTypeValue = runtimeRepresentedTypeValueExpr(
+            elementType, globals, mappings, indexOverrides)
+          if not elementTypeValue.isNil:
+            return newCall(bindSym"optionToValue", value, globals,
+              newLit(mapping.eponymName), encoder, elementTypeValue)
           return newCall(bindSym"optionToValue", value, globals,
             newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(elementType,

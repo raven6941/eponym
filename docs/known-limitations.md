@@ -145,6 +145,12 @@ element type uses its recursive runtime codec, including nested vectors such
 as `Vec[Vec[Int, m], n]` mapped to `seq[seq[int]]`. The codec accepts Nat length
 expressions made from a static index, `zero`, `suc`, `add`, and `mul`. It
 requires the standard `nil` and `cons` constructor shape from `lib/vec.ep`.
+Generated runtime `Vec`, `List`, and `Option` values retain concrete element
+type witnesses, including recursively nested built-in collection types. When an
+element type is an unresolved type-level generic, the bridge cannot yet derive
+its Eponym runtime type from the inferred Nim type and uses the legacy
+placeholder witness; generic callback/container combinations may therefore
+not pass full runtime type validation.
 The standard unindexed `List[A]` family also has a `runtimeList(List)` codec
 that maps to `seq[A]`, checks constructor identities and spines, and recursively
 uses the element codec. A unary family with canonical `none` and `some`

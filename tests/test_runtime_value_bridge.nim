@@ -1839,6 +1839,11 @@ proc callbackRole : Callback -> Sample -> Sample =
         input.length, values, 0)
       let runtime = generatedGenericVectorValueBinderRuntimeValueDynamic(
         input.length, values, 0)
+      let expectedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [runtimeGlobalValue(runtime.globals, "Int"),
+         natToValue(input.length, runtime.globals)])
+      validateRuntimeValueType(runtime.value, expectedType, runtime.globals)
       typed == values and
         vecValueToSeq[int](runtime.value, input.length, runtime.globals,
           "Vec", proc(value: Value, _: Globals): int = valueToInt(value)) ==
@@ -2028,6 +2033,11 @@ proc callbackRole : Callback -> Sample -> Sample =
         handles[i] = ChannelHandle(id: input.seed + i,
           label: "list/" & $(input.seed + i))
       let intRuntime = generatedIntListIdentityRuntimeValue(values)
+      let expectedListType = callRuntimeValue(
+        runtimeGlobalValue(intRuntime.globals, "List"),
+        [runtimeGlobalValue(intRuntime.globals, "Int")])
+      validateRuntimeValueType(intRuntime.value, expectedListType,
+        intRuntime.globals)
       let rawIntRuntime = generatedIntListIdentityRuntimeValue([intRuntime.value])
       let runtime = generatedListIdentityRuntimeValue[int](values)
       let rawRuntime = generatedListIdentityRuntimeValue[int]([runtime.value])
@@ -2058,6 +2068,11 @@ proc callbackRole : Callback -> Sample -> Sample =
       let rawDecoded = valueToOption[int](rawRuntime.value, rawRuntime.globals,
         "Option", proc(item: Value, _: Globals): int = valueToHost[int](item))
       let primitiveRuntime = generatedPrimitiveOptionIdentityRuntimeValue(value)
+      let expectedOptionType = callRuntimeValue(
+        runtimeGlobalValue(primitiveRuntime.globals, "Option"),
+        [runtimeGlobalValue(primitiveRuntime.globals, "Int")])
+      validateRuntimeValueType(primitiveRuntime.value, expectedOptionType,
+        primitiveRuntime.globals)
       let primitiveDecoded = valueToOption[int](primitiveRuntime.value,
         primitiveRuntime.globals, "Option",
         proc(item: Value, _: Globals): int = valueToInt(item))
@@ -2109,6 +2124,15 @@ proc callbackRole : Callback -> Sample -> Sample =
         @[seed + 2, seed + 3],
         @[seed + 4, seed + 5]]
       let runtime = generatedNestedVectorIdentityRuntimeValue[2, 3](matrix)
+      let innerVectorType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [runtimeGlobalValue(runtime.globals, "Int"),
+         natToValue(2, runtime.globals)])
+      let expectedMatrixType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [innerVectorType, natToValue(3, runtime.globals)])
+      validateRuntimeValueType(runtime.value, expectedMatrixType,
+        runtime.globals)
       let rawRuntime = generatedNestedVectorIdentityRuntimeValue[2, 3](
         [runtime.value])
       generatedNestedVectorIdentity[2, 3](matrix) == matrix and

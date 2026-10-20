@@ -402,6 +402,12 @@ implementations.
    and recursively encodes the payload. A 200-case property covers `none`,
    `some`, primitive and opaque generic payloads, nested options, and typed/raw
    `runtimeValue` paths.
+- [x] Preserve concrete element type witnesses in runtime `Vec`, `List`, and
+   `Option` constructor values, including recursively nested collection types.
+   The witness builder lowers nested Vec lengths to runtime Nat values and
+   declines unresolved generic type variables. The 200-case bridge property
+   validates the full runtime type of primitive Vec values, including the
+   empty case; existing nested collection round trips cover recursive codecs.
 - [x] Add `runtimeCodec(EponymType, NimType, encoder, decoder)` for explicitly
    mapped named Eponym types and families. The typed encoder and decoder
    receive the module's `Globals`; generated wrappers and typed postulate
