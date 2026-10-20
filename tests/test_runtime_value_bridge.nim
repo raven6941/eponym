@@ -365,7 +365,8 @@ eponymBlock:
     field(x, Nat)
     field(channel, Channel)
   runtimeType(Point, RuntimePoint)
-  proc generatedPointId(value: Point): Point = value
+  proc generatedPointRebuild(value: Point): Point =
+    mkPoint(value.x, value.channel)
   record(Envelope):
     field(point, Point)
     field(note, Message)
@@ -479,7 +480,7 @@ static:
   doAssert compiles(generatedFutureRole(ChannelHandle(id: 1)))
   doAssert compiles(generatedFutureInput(newFuture[int]("typedFuture")))
   doAssert compiles(generatedOpaqueSigmaId((17, ChannelHandle(id: 1))))
-  doAssert compiles(generatedPointId(RuntimePoint(x: 17,
+  doAssert compiles(generatedPointRebuild(RuntimePoint(x: 17,
     channel: ChannelHandle(id: 1))))
   doAssert compiles(generatedSplitChannel(ChannelHandle(id: 17)))
   doAssert compiles(generatedSplitChannelWithNat(3,
@@ -561,7 +562,7 @@ when isMainModule:
     proc(n: int): bool =
       let input = RuntimePoint(x: abs(n mod 1000),
         channel: ChannelHandle(id: n, label: "point-" & $n))
-      generatedPointId(input) == input,
+      generatedPointRebuild(input) == input,
     shrinkInt)
   if not generatedRecordRoundTrips:
     quit(1)
@@ -767,6 +768,15 @@ proc callbackRole : Callback -> Sample -> Sample =
   let postulateId = checked.globals["hostStep"].tm.refId
   let cachedGlobals = getGlobalsDir(baseDir, identityProgram)
   if cachedGlobals["hostStep"].tm.refId != postulateId:
+    quit(1)
+  let malformedZero = eval(
+    tmApp(cachedGlobals["zero"].tm, tmInt(1)), @[])
+  var appliedZeroRejected = false
+  try:
+    discard valueToNat(malformedZero, cachedGlobals)
+  except ValueError:
+    appliedZeroRejected = true
+  if not appliedZeroRejected:
     quit(1)
   var runtimeBindings = initRuntimeBindings()
   runtimeBindings.bindHostIntUnary(cachedGlobals, "hostStep", hostStepNim)
