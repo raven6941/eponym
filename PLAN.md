@@ -782,6 +782,13 @@ implementations.
      `Sig` argument. A 50-case property checks generated and `RuntimeValue`
      callback wrappers, preserves the other tuple field, and rejects callback
      results whose indexed payload has the wrong type.
+   - [x] Let Nim infer a mapped generic host type from a non-callback value
+     argument when a callback also mentions that type. The generated wrapper
+     defers only that callback parameter's Nim type inference; its adapter
+     body still invokes the callback with the codec-derived concrete argument
+     and result types. A 200-case property covers local and imported generated
+     and `RuntimeValue` wrappers, while a compile-fail fixture rejects an
+     incompatible callback signature.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.

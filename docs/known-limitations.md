@@ -335,6 +335,12 @@ appears inside a mapped `Vec`, `List`, or `Option`, or a supported nondependent
 `Sig` tuple or a `runtimeDataVariant` family; the direct leaf `runtimeType` or
 `runtimeCodec` mapping is carried into the recursive callback adapter.
 Separate 200-case properties cover these shapes over a custom mapped object.
+When a generic host type appears in both a callback parameter and a separate
+value parameter, Nim can infer the generic type from the value even if the
+callback comes first in the call. The generated adapter invokes that callback
+using the codec-derived concrete signature, so an incompatible callback still
+fails Nim compilation. This works for local and imported definitions, through
+generated wrappers and typed `RuntimeValue` overloads.
 An imported dependent `Sig` callback can opt into typed tuple codecs with
 `runtimePairTrusted`; recursive Vec codecs still check represented lengths.
 Properties reject wrong Vec lengths in both callback inputs and results.

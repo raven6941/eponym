@@ -795,6 +795,15 @@ eponymBlock:
 
 eponymBlock:
   postulate(Int, Univ)
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
+  proc generatedGenericMappedCallback[A: Univ](
+      callback: proc(value: A): A {.closure.}, value: A): A =
+    callback(value)
+  runtimeValue(generatedGenericMappedCallback)
+
+eponymBlock:
+  postulate(Int, Univ)
   proc generatedRuntimeIncrementValue(): proc(value: Int): Int {.closure.} =
     lam(value, Int, addInt(value, 1))
   proc generatedApplyGenericFunction[callback: Int -> Int](value: Int): Int =
@@ -2437,6 +2446,24 @@ when isMainModule:
         valueToHost[ImportedToken](runtime.value) == expected)
   if not importedGenericCallbackCases:
     quit(1)
+  let localGenericCallbackInferenceCases = forAll(
+    "local generic callback types infer from a later mapped value", r, 200,
+    proc(r: var Rng): tuple[id, delta: int] =
+      (r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[id, delta: int]): bool =
+      let value = ChannelHandle(id: input.id, label: "local-generic")
+      let callback: proc(value: ChannelHandle): ChannelHandle {.closure.} =
+        proc(value: ChannelHandle): ChannelHandle =
+          ChannelHandle(id: value.id + input.delta,
+            label: value.label & "/callback")
+      let expected = callback(value)
+      let typed = generatedGenericMappedCallback(callback, value)
+      let runtime = generatedGenericMappedCallbackRuntimeValue(callback,
+        value)
+      typed == expected and
+        valueToHost[ChannelHandle](runtime.value) == expected)
+  if not localGenericCallbackInferenceCases:
+    quit(1)
   let importedGenericCodecCallbackCases = forAll(
     "imported generic callbacks use custom runtimeCodec mappings", r, 200,
     proc(r: var Rng): tuple[id, delta: int, label, suffix: string] =
@@ -2649,22 +2676,20 @@ when isMainModule:
           (int, Option[RuntimeStructuredVariant]) {.closure.} =
         proc(value: (int, Option[RuntimeStructuredVariant])):
             (int, Option[RuntimeStructuredVariant]) = value
-      let typed = importedGenericIndexedSigmaOptionCallbackApply[
-        RuntimeStructuredVariant](callback, value)
-      let runtime = importedGenericIndexedSigmaOptionCallbackApplyRuntimeValue[
-        RuntimeStructuredVariant](callback, value)
+      let typed = importedGenericIndexedSigmaOptionCallbackApply(callback,
+        value)
+      let runtime = importedGenericIndexedSigmaOptionCallbackApplyRuntimeValue(
+        callback, value)
       var typedNoneRejected = false
       try:
-        discard importedGenericIndexedSigmaOptionCallbackApply[
-          RuntimeStructuredVariant](callback,
+        discard importedGenericIndexedSigmaOptionCallbackApply(callback,
           (input.tag, none(RuntimeStructuredVariant)))
       except ValueError:
         typedNoneRejected = true
       var runtimeNoneRejected = false
       try:
-        discard importedGenericIndexedSigmaOptionCallbackApplyRuntimeValue[
-          RuntimeStructuredVariant](callback,
-          (input.tag, none(RuntimeStructuredVariant)))
+        discard importedGenericIndexedSigmaOptionCallbackApplyRuntimeValue(
+          callback, (input.tag, none(RuntimeStructuredVariant)))
       except ValueError:
         runtimeNoneRejected = true
       let decoded = valueToOption[RuntimeStructuredVariant](

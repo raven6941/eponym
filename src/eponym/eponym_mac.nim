@@ -3722,6 +3722,29 @@ proc genericRuntimeInfo(decl: NimNode,
         result.genericValueArgs[^1] = true
         result.genericValueTypeNames[^1] = binderType
 
+proc callbackCanDeferGenericInference(params: NimNode, paramIndex: int,
+    typeNames: seq[string], typeBodyArgs: seq[bool]): bool =
+  ## Nim cannot infer a generic type from a later value argument when an
+  ## earlier callback parameter constrains that same type. Leave the callback
+  ## parameter auto-typed in that case; the generated adapter body still checks
+  ## its argument and result types when it invokes the callback.
+  if paramIndex <= 0 or paramIndex >= params.len or
+      params[paramIndex].kind != nnkIdentDefs:
+    return false
+  let callbackType = params[paramIndex][^2]
+  if runtimeProcParts(callbackType).resultType.isNil: return false
+  for genericIndex, genericName in typeNames:
+    if genericIndex >= typeBodyArgs.len or not typeBodyArgs[genericIndex] or
+        not mentionsName(callbackType, genericName):
+      continue
+    for otherIndex in 1 ..< params.len:
+      if otherIndex == paramIndex or params[otherIndex].kind != nnkIdentDefs:
+        continue
+      let otherType = params[otherIndex][^2]
+      if runtimeProcParts(otherType).resultType.isNil and
+          mentionsName(otherType, genericName):
+        return true
+
 proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
     typeNames: seq[string], genericNames: seq[NimNode],
     genericNatArgs: seq[bool], genericBoolArgs: seq[bool],
@@ -4396,7 +4419,10 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
       let argSym = genSym(nskParam, $argName)
       let defaultValue = if p[^1].kind == nnkEmpty: newEmptyNode()
                          else: copyNimTree(p[^1])
-      formal.add(newIdentDefs(argSym, argType, defaultValue))
+      let formalType = if callbackCanDeferGenericInference(params, i,
+          generic.typeNames, generic.genericTypeBodyArgs): ident"auto"
+        else: argType
+      formal.add(newIdentDefs(argSym, formalType, defaultValue))
       argSyms.add(argSym)
       argNames.add($argName)
       argEponymTypes.add(p[^2])
@@ -4858,7 +4884,10 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
     for j in 0 ..< p.len - 2:
       let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
       let argSym = genSym(nskParam, $argName)
-      formal.add(newIdentDefs(argSym, nimType, newEmptyNode()))
+      let formalType = if callbackCanDeferGenericInference(params, i,
+          generic.typeNames, generic.genericTypeBodyArgs): ident"auto"
+        else: nimType
+      formal.add(newIdentDefs(argSym, formalType, newEmptyNode()))
       argSyms.add(argSym)
       argNames.add($argName)
       eponymTypes.add(p[^2])
