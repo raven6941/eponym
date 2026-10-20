@@ -194,6 +194,16 @@ Nat indices are also supported in applied generic domains; a 200-case
 `SizedTree[if b: n else: m]` property covers both branches and rejects values
 whose embedded index does not match the selected branch.
 
+Host code can construct non-dependent and dependent Pi/Sigma runtime type
+witnesses with `runtimeArrowType`, `runtimeDependentArrowType`,
+`runtimeSigmaType`, and `runtimeDependentSigmaType`. The dependent builders
+reserve fresh reference IDs beyond checked globals and earlier binders. The
+low-level `validateRuntimeValueAgainstType` recursively checks pair values
+against Sigma domains and codomains; other values use inferred runtime types.
+Generated wrappers still support only the documented generic binder and codec
+shapes, so these builders do not make arbitrary dependent generic binders
+available automatically.
+
 The low-level `RuntimeVariant` API provides a checked structural view for any
 declared data family when the caller supplies its constructor names. It
 preserves constructor identity and raw argument `Value`s, checking family

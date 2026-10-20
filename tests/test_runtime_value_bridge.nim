@@ -903,6 +903,83 @@ when isMainModule:
 
   let variantSrc = readFile(baseDir / "tests/fixtures/runtime_variant.ep")
   let variantGlobals = getGlobalsDir(baseDir, variantSrc)
+  let runtimeNatType = runtimeGlobalValue(variantGlobals, "Nat")
+  let runtimeIntType = runtimeGlobalValue(variantGlobals, "Int")
+  let runtimeTreeType = runtimeGlobalValue(variantGlobals, "RuntimeTree")
+  let runtimePairType = runtimeSigmaType(runtimeIntType, runtimeNatType)
+  let sigmaTypeCases = forAll(
+    "runtime Sigma type witnesses validate pair payloads", r, 200,
+    proc(r: var Rng): tuple[integer, natural: int] =
+      (r.genInt(-1000, 1000), r.genInt(0, 1000)),
+    proc(input: tuple[integer, natural: int]): bool =
+      let pair = pairValue(intToValue(input.integer),
+        natToValue(input.natural, variantGlobals))
+      validateRuntimeValueAgainstType(pair, runtimePairType, variantGlobals)
+      true)
+  if not sigmaTypeCases:
+    quit(1)
+  var wrongSigmaFieldRejected = false
+  try:
+    validateRuntimeValueAgainstType(
+      pairValue(intToValue(1), intToValue(2)), runtimePairType,
+      variantGlobals)
+  except ValueError:
+    wrongSigmaFieldRejected = true
+  doAssert wrongSigmaFieldRejected
+
+  let runtimeSizedTreeType = runtimeDependentSigmaType(runtimeNatType,
+    variantGlobals, proc(length: Value): Value =
+      callRuntimeValue(runtimeGlobalValue(variantGlobals, "SizedTree"),
+        [length]))
+  let dependentSigmaCases = forAll(
+    "runtime dependent Sigma witnesses validate selected indexed fields",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let tree = runtimeVariantToValue(RuntimeVariant(
+        constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+        ["treeEmpty", "treeNode"])
+      let sizedTree = runtimeVariantToValue(RuntimeVariant(
+        constructor: "sizedTree",
+        arguments: @[natToValue(length, variantGlobals), tree]),
+        variantGlobals, "SizedTree", ["sizedTree"])
+      let value = pairValue(natToValue(length, variantGlobals), sizedTree)
+      validateRuntimeValueAgainstType(value, runtimeSizedTreeType,
+        variantGlobals)
+      true)
+  if not dependentSigmaCases:
+    quit(1)
+  var wrongDependentSigmaFieldRejected = false
+  try:
+    let tree = runtimeVariantToValue(RuntimeVariant(
+      constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+      ["treeEmpty", "treeNode"])
+    let sizedTree = runtimeVariantToValue(RuntimeVariant(
+      constructor: "sizedTree",
+      arguments: @[natToValue(4, variantGlobals), tree]),
+      variantGlobals, "SizedTree", ["sizedTree"])
+    validateRuntimeValueAgainstType(
+      pairValue(natToValue(3, variantGlobals), sizedTree),
+      runtimeSizedTreeType, variantGlobals)
+  except ValueError:
+    wrongDependentSigmaFieldRejected = true
+  doAssert wrongDependentSigmaFieldRejected
+
+  let runtimeIdentity = eval(variantGlobals["treeIdentity"].tm, @[])
+  let runtimeArrow = runtimeArrowType(runtimeTreeType, runtimeTreeType)
+  validateRuntimeValueType(runtimeIdentity, runtimeArrow, variantGlobals)
+  let runtimeDependentArrow = runtimeDependentArrowType(runtimeTreeType,
+    variantGlobals, proc(_: Value): Value = runtimeTreeType)
+  validateRuntimeValueType(runtimeIdentity, runtimeDependentArrow,
+    variantGlobals)
+  var wrongArrowDomainRejected = false
+  try:
+    validateRuntimeValueType(runtimeIdentity,
+      runtimeArrowType(runtimeNatType, runtimeTreeType), variantGlobals)
+  except ValueError:
+    wrongArrowDomainRejected = true
+  doAssert wrongArrowDomainRejected
+
   const runtimeTreeConstructors = ["treeEmpty", "treeNode"]
   let rawVariantCases = forAll(
     "generic structural codecs preserve payload-bearing data constructors",
