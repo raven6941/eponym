@@ -22,6 +22,13 @@ import elab
 import eponym_init
 import preterm  # Quantity constants for validating supported adapter shapes
 
+type
+  ## Public aliases for runtime values in generated wrapper signatures. Users
+  ## can call raw-value wrappers by importing eponym_embed alone.
+  RuntimeValue* = Value
+  RuntimeGlobals* = Globals
+  RuntimeValueResult* = tuple[value: RuntimeValue, globals: RuntimeGlobals]
+
 proc hostIntUnary*(implementation: proc(x: int): int): Value
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
 proc hostOpaqueMapUnary*[A, B](implementation: proc(x: A): B): Value

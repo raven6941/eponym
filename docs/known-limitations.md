@@ -169,9 +169,12 @@ behavior remain trusted host semantics.
 Dynamic generic wrappers accept unmapped named Eponym value binders as `Value`
 parameters and validate that each value inhabits its declared named type
 before checked evaluation. `nameRuntimeValueDynamic` returns the checked
-result and globals without requiring a result codec. Applied or indexed
-binder domains still need runtime type-expression validation; use the raw
-`RuntimeValue` interface when that check is unavailable.
+result and globals without requiring a result codec. The generated signatures
+use the public `RuntimeValue`, `RuntimeGlobals`, and `RuntimeValueResult`
+aliases from `eponym_embed`, so callers need not import internal runtime types.
+Applied or indexed binder domains still need runtime type-expression
+validation; use the raw `RuntimeValue` interface when that check is
+unavailable.
 
 Structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
 `Sig` tuples, and named records. Records with dependent fields

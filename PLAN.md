@@ -467,7 +467,8 @@ implementations.
   generic wrappers. Validate that each value inhabits its declared named type
   before checked evaluation. A 200-case property passes an unmapped data
   constructor through a generic projection; applied/indexed binder domains
-  still need runtime type-expression validation.
+  still need runtime type-expression validation. Generated signatures use the
+  public `RuntimeValue` and `RuntimeValueResult` aliases from `eponym_embed`.
 - [x] Lower conditional Nat indices of the form `if b: n else: m` in dynamic
    generic Vec and non-dependent Sigma value codecs. The Bool condition is a
    generic runtime parameter; both branch lengths are checked. A 200-case
