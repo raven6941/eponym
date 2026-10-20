@@ -99,7 +99,10 @@ A Nim closure can also be an explicitly mapped opaque argument. For example,
 a postulate may take a mapped callback type and a mapped value type, while the
 Nim adapter invokes the callback. Nim checks the callback's concrete proc type
 at the generated wrapper; Eponym treats its body as opaque and trusted.
-Returning closures from generated wrappers is not supported.
+Unary Nim proc types with supported leaf codecs bridge in both directions:
+Nim callbacks become runtime host functions, and checked Eponym closures
+become callable Nim closures. The Nim proc type must use `{.closure.}`; proc
+types with multiple parameters remain unsupported.
 
 Generated `eponymBlock` wrappers support first-order primitive `Int` and
 `Nat` signatures, non-dependent `Sig(A, B)` tuples and named records whose
