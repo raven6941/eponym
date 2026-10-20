@@ -3822,6 +3822,8 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
         not generic.genericTypeBodyArgs[genericIndex]:
       continue
     var sourceIndex = -1
+    var sourceSigmaFieldIndex = -1
+    var sourceSigmaFieldNimType: NimNode = nil
     var sourceOptionFamily = ""
     var sourceOptionNestedVector = false
     var sourceOptionNestedList = false
@@ -3835,6 +3837,18 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
           $eponymType == genericName:
         sourceIndex = i
         break
+      let sigmaFields = runtimeSigmaFields(eponymType)
+      for fieldIndex, field in sigmaFields:
+        if field.fieldType.kind in {nnkIdent, nnkSym} and
+            $field.fieldType == genericName:
+          let fieldNimType = runtimeNimType(field.fieldType,
+            generic.codecMappings, records)
+          if fieldNimType.isNil: continue
+          sourceIndex = i
+          sourceSigmaFieldIndex = fieldIndex
+          sourceSigmaFieldNimType = fieldNimType
+          break
+      if sourceIndex >= 0: break
       for optionMapping in generic.codecMappings:
         if not optionMapping.isRuntimeOption: continue
         var elementType = eponymType
@@ -3963,13 +3977,17 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
           sourceListNimType
         else: copyNimTree(mapping.nimType)
       let condition = newTree(nnkInfix, ident"is",
-        copyNimTree(argNimTypes[sourceIndex]), sourceType)
+        copyNimTree(if sourceSigmaFieldIndex >= 0:
+          sourceSigmaFieldNimType else: argNimTypes[sourceIndex]), sourceType)
       let sourceValue = if sourceOptionFamily.len > 0:
         block:
           var nested = copyNimTree(argSyms[sourceIndex])
           for _ in 0 ..< sourceOptionDepth:
             nested = newCall(bindSym"get", nested)
           nested
+        elif sourceSigmaFieldIndex >= 0:
+          newTree(nnkBracketExpr, copyNimTree(argSyms[sourceIndex]),
+            newLit(sourceSigmaFieldIndex))
         else: copyNimTree(argSyms[sourceIndex])
       var encoded = if sourceVectorFamily.len > 0:
         runtimeValueConversionExpr(sourceVectorType,
@@ -4057,8 +4075,9 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
     result.statements.add(newLetStmt(packageSym, packageExpr))
     result.witnesses.add((genericName,
       newDotExpr(copyNimTree(packageSym), ident"type")))
-    result.encodedArgs.add((sourceIndex,
-      newDotExpr(copyNimTree(packageSym), ident"value")))
+    if sourceSigmaFieldIndex < 0:
+      result.encodedArgs.add((sourceIndex,
+        newDotExpr(copyNimTree(packageSym), ident"value")))
 
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
                  mappings: seq[HostRuntimeType],

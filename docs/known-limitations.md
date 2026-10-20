@@ -350,19 +350,18 @@ erased type argument and check callback inputs/results. Both
 properties, including rejection of a callback result with the wrong index.
 When the only representative is nested in a structural value, or no
 representative exists (`none` or an empty collection), callers still need an
-explicit witness, except for a direct `Option.some(value)` argument with a
-mapped indexed payload. The wrapper infers that payload's index; `none` reports
-that it cannot infer one and directs callers to use `some(value)` or the raw
-generic `RuntimeValue` interface with an explicit type Value. Nonempty
-`Vec[A,n]` and `List[A]` values also provide a witness from their encoded
-elements; Vec and List work directly and nested in `Option`. Generated and
-typed `RuntimeValue` wrappers validate callback indices. For indexed container
-witnesses, the runtime bridge projects the element type from the outer
+explicit witness, with these supported paths: a direct `Option.some(value)`
+argument with a mapped indexed payload; nonempty `Vec[A,n]` or `List[A]`
+values, directly or nested in `Option`; and a direct generic field in a
+nondependent `Sig` tuple. The wrappers infer the payload's index and validate
+callback inputs/results. `none` reports that it cannot infer an Option witness
+and directs callers to use `some(value)` or the raw generic `RuntimeValue`
+interface with an explicit type Value. Empty Vec and List values still need an
+explicit witness. For indexed container witnesses, the runtime bridge projects
+the element type from the outer
 constructor and validates the structure against that expected type, avoiding
-recursive type inference over the complete container. An empty
-`Vec[A, zero]` or `List[A]` has no representative element and still needs an
-explicit witness. A vector with the wrong declared length is rejected by the
-ordinary length check.
+recursive type inference over the complete container. A vector with the wrong
+declared length is rejected by the ordinary length check.
 A `some(value)` at any depth of nested Option layers can provide an indexed
 witness, as long as every layer contains a value. Empty layers cannot provide
 the witness and raise a `ValueError` directing callers to supply an explicit

@@ -772,6 +772,10 @@ implementations.
      the represented nested type. A 50-case property checks generated and
      `RuntimeValue` calls, rejects callback results with a mismatched index,
      and rejects missing witnesses when either layer is `none`.
+   - [x] Infer indexed witnesses from a direct generic field in a nondependent
+     `Sig` argument. A 50-case property checks generated and `RuntimeValue`
+     callback wrappers, preserves the other tuple field, and rejects callback
+     results whose indexed payload has the wrong type.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.

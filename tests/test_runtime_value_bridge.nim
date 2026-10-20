@@ -486,6 +486,7 @@ eponymBlock:
   runtimeDataVariant(SizedTree)
   runtimeValue(importedGenericIndexedOptionCallbackApply)
   runtimeValue(importedGenericIndexedNestedOptionCallbackApply)
+  runtimeValue(importedGenericIndexedSigmaCallbackApply)
 
 eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
@@ -1939,6 +1940,56 @@ when isMainModule:
         missingWitnessRejected and missingRuntimeWitnessRejected,
     shrinkInt)
   if not nestedOptionWitnessCases:
+    quit(1)
+  let indexedSigmaWitnessCases = forAll(
+    "generic callbacks infer indexed witnesses from Sigma fields", r, 50,
+    proc(r: var Rng): tuple[tag, length: int] =
+      (r.genInt(-1000, 1000), r.genInt(0, 100)),
+    proc(input: tuple[tag, length: int]): bool =
+      let tree = RuntimeStructuredVariant(constructor: "sizedTree",
+        arguments: @[
+          RuntimeStructuredValue(kind: rsvNat, natValue: input.length),
+          RuntimeStructuredValue(kind: rsvVariant,
+            variantValue: RuntimeStructuredVariant(constructor: "treeEmpty"))])
+      let value = (input.tag, tree)
+      let callback: proc(value: tuple[tag: int,
+          payload: RuntimeStructuredVariant]): tuple[tag: int,
+          payload: RuntimeStructuredVariant] {.closure.} =
+        proc(value: tuple[tag: int, payload: RuntimeStructuredVariant]):
+            tuple[tag: int, payload: RuntimeStructuredVariant] = value
+      let typed = importedGenericIndexedSigmaCallbackApply(callback, value)
+      let runtime = importedGenericIndexedSigmaCallbackApplyRuntimeValue(
+        callback, value)
+      let expectedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "SizedTree"),
+        [natToValue(input.length, runtime.globals)])
+      validateRuntimeValueType(runtimePairSecond(runtime.value), expectedType,
+        runtime.globals)
+      let badCallback: proc(value: tuple[tag: int,
+          payload: RuntimeStructuredVariant]): tuple[tag: int,
+          payload: RuntimeStructuredVariant] {.closure.} =
+        proc(value: tuple[tag: int, payload: RuntimeStructuredVariant]):
+            tuple[tag: int, payload: RuntimeStructuredVariant] =
+          var payload = value.payload
+          inc payload.arguments[0].natValue
+          (value.tag, payload)
+      var typedWrongIndexRejected = false
+      try:
+        discard importedGenericIndexedSigmaCallbackApply(badCallback, value)
+      except ValueError:
+        typedWrongIndexRejected = true
+      var runtimeWrongIndexRejected = false
+      try:
+        discard importedGenericIndexedSigmaCallbackApplyRuntimeValue(
+          badCallback, value)
+      except ValueError:
+        runtimeWrongIndexRejected = true
+      typed[0] == input.tag and
+        typed[1].arguments[0].natValue == input.length and
+        valueToInt(runtimePairFirst(runtime.value)) == input.tag and
+        typedWrongIndexRejected and runtimeWrongIndexRejected,
+    proc(input: tuple[tag, length: int]): seq[tuple[tag, length: int]] = @[])
+  if not indexedSigmaWitnessCases:
     quit(1)
   let nestedIndexedOptionCallbackCases = forAll(
     "generic callbacks infer indexed witnesses inside Option and Vec", r, 50,
