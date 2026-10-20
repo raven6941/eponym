@@ -424,6 +424,12 @@ implementations.
    recursive runtime codecs; 200-case properties cover primitive and explicitly
    mapped opaque arguments for callbacks passed into and returned from checked
    functions. Returned Nim closures require `{.closure.}`.
+- [x] Let Nim infer a mapped generic host type from a non-callback value
+  argument when a callback also mentions that type. The generated wrapper
+  defers the callback parameter's Nim type inference; its body still checks
+  the callback's concrete argument and result types. A 200-case property
+  covers generated and typed `RuntimeValue` wrappers, and a negative fixture
+  rejects an incompatible callback signature.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

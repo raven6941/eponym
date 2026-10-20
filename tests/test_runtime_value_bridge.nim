@@ -200,6 +200,14 @@ eponymBlock:
   runtimeValue(generatedGenericIdentity)
 
 eponymBlock:
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
+  proc generatedGenericMappedCallback[A: Univ](
+      callback: proc(value: A): A {.closure.}, value: A): A =
+    callback(value)
+  runtimeValue(generatedGenericMappedCallback)
+
+eponymBlock:
   import "../lib/nat.ep"
   postulate(Int, Univ)
   postulate(Channel, Nat -> Univ)
@@ -1251,6 +1259,24 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded.id == input.id and decoded.label == input.label,
     shrinkInt)
   if not genericOpaqueIdentityCases:
+    quit(1)
+
+  let genericCallbackInferenceCases = forAll(
+    "generic callback type infers from a later mapped value", r, 200,
+    proc(r: var Rng): tuple[id, delta: int] =
+      (r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[id, delta: int]): bool =
+      let value = ChannelHandle(id: input.id, label: "generic-callback")
+      let callback: proc(value: ChannelHandle): ChannelHandle {.closure.} =
+        proc(value: ChannelHandle): ChannelHandle =
+          ChannelHandle(id: value.id + input.delta,
+            label: value.label & "/callback")
+      let expected = callback(value)
+      let typed = generatedGenericMappedCallback(callback, value)
+      let runtime = generatedGenericMappedCallbackRuntimeValue(callback, value)
+      typed == expected and
+        valueToHost[ChannelHandle](runtime.value) == expected)
+  if not genericCallbackInferenceCases:
     quit(1)
 
   let genericNatIndexCases = forAll(
