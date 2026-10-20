@@ -1,6 +1,6 @@
 ## Runtime bridge checks for Eponym values that do not use the generated Int ABI.
 
-import std/[os, tables, strutils, asyncdispatch]
+import std/[os, tables, strutils, asyncdispatch, options]
 import falsify
 import eponym_mac
 import eponym_embed
@@ -215,6 +215,17 @@ eponymBlock:
   runtimeValue(generatedIntListIdentity)
   proc generatedListIdentity[A: Univ](values: List[A]): List[A] = values
   runtimeValue(generatedListIdentity)
+
+eponymBlock:
+  import "../lib/option.ep"
+  postulate(Int, Univ)
+  runtimeOption(Option)
+  proc generatedPrimitiveOptionIdentity(value: Option[Int]): Option[Int] = value
+  runtimeValue(generatedPrimitiveOptionIdentity)
+  proc generatedNestedOptionIdentity(
+      value: Option[Option[Int]]): Option[Option[Int]] = value
+  proc generatedOptionIdentity[A: Univ](value: Option[A]): Option[A] = value
+  runtimeValue(generatedOptionIdentity)
 
 eponymBlock:
   import "../lib/bool.ep"
@@ -962,6 +973,43 @@ proc callbackRole : Callback -> Sample -> Sample =
   if not listCodecCases:
     quit(1)
   doAssert generatedListIdentity[int](@[]) == @[]
+
+  let optionCodecCases = forAll(
+    "Option values cross as checked none/some constructors", r, 200,
+    proc(r: var Rng): tuple[present: bool, seed: int] =
+      (r.genBool(), r.genInt(-1000, 1000)),
+    proc(input: tuple[present: bool, seed: int]): bool =
+      let value = if input.present: some(input.seed) else: none(int)
+      let runtime = generatedOptionIdentityRuntimeValue[int](value)
+      let rawRuntime = generatedOptionIdentityRuntimeValue[int]([runtime.value])
+      let decoded = valueToOption[int](runtime.value, runtime.globals, "Option",
+        proc(item: Value, _: Globals): int = valueToHost[int](item))
+      let rawDecoded = valueToOption[int](rawRuntime.value, rawRuntime.globals,
+        "Option", proc(item: Value, _: Globals): int = valueToHost[int](item))
+      let primitiveRuntime = generatedPrimitiveOptionIdentityRuntimeValue(value)
+      let primitiveDecoded = valueToOption[int](primitiveRuntime.value,
+        primitiveRuntime.globals, "Option",
+        proc(item: Value, _: Globals): int = valueToInt(item))
+      let opaque = some(ChannelHandle(id: input.seed,
+        label: "option/" & $input.seed))
+      let nested = some(value)
+      generatedOptionIdentity[int](value) == value and
+        generatedOptionIdentity[ChannelHandle](opaque) == opaque and
+        generatedPrimitiveOptionIdentity(value) == value and
+        generatedNestedOptionIdentity(nested) == nested and
+        decoded == value and rawDecoded == value and primitiveDecoded == value,
+    )
+  if not optionCodecCases:
+    quit(1)
+  let optionGlobals = generatedPrimitiveOptionIdentityRuntimeValue(
+    none(int)).globals
+  var malformedOptionRejected = false
+  try:
+    discard valueToOption[int](intToValue(7), optionGlobals, "Option",
+      proc(item: Value, _: Globals): int = valueToInt(item))
+  except ValueError:
+    malformedOptionRejected = true
+  doAssert malformedOptionRejected
 
   let nestedVectorCases = forAll(
     "nested length-indexed Vec values recurse through sequence codecs", r, 200,

@@ -75,6 +75,8 @@ for (path, expected) in [
      "typed n-ary adapter requires postulate 'sumSix' to have type Int -> Int -> Int -> Int -> Nat -> Int -> Int"),
     ("tests/fixtures/embedded_err_runtime_enum_payload.nim",
      "requires only nullary constructors returning the unindexed family"),
+    ("tests/fixtures/embedded_err_runtime_option_shape.nim",
+     "runtimeOption requires a Type -> Type family"),
     ("tests/fixtures/embedded_err_dependent_sigma_postulate_binding.nim",
      "structured pair adapter requires postulate 'makeDependentPair'"),
     ("tests/fixtures/embedded_err_pair_binding_nim_type.nim", "type mismatch"),
