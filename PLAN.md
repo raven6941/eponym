@@ -480,9 +480,10 @@ implementations.
   recursive payload codecs remain future work.
 - [x] Validate dynamic generic `Value` arguments against applied type
   expressions built from named types, earlier generic indices, applications,
-  and integer literals. A 200-case `SizedTree[length]` property checks raw and
-  mapped variant values and rejects an embedded length that differs from the
-  generic index. More complex type expressions remain unsupported.
+  integer literals, and direct Bool-controlled conditional Nat indices. A
+  200-case property checks raw and mapped `SizedTree[length]` values, plus both
+  branches of `SizedTree[if b: n else: m]`, and rejects mismatched embedded
+  indices. More complex type expressions remain unsupported.
 - [x] Lower conditional Nat indices of the form `if b: n else: m` in dynamic
    generic Vec and non-dependent Sigma value codecs. The Bool condition is a
    generic runtime parameter; both branch lengths are checked. A 200-case
