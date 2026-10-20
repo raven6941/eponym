@@ -1321,8 +1321,6 @@ proc runtimeTermTypeAst(term: Term, ctx: seq[string],
             name.add('_')
         let argType = runtimeTermTypeAst(current.dom, callbackCtx, refNames)
         if argType.isNil: return nil
-        for previousName in callbackNames:
-          if mentionsName(argType, previousName): return nil
         callbackParams.add(newIdentDefs(ident(name), argType,
           newEmptyNode()))
         callbackNames.add(name)
@@ -1331,8 +1329,6 @@ proc runtimeTermTypeAst(term: Term, ctx: seq[string],
         inc argumentIndex
       let callbackResult = runtimeTermTypeAst(current, callbackCtx, refNames)
       if callbackResult.isNil: return nil
-      for name in callbackNames:
-        if mentionsName(callbackResult, name): return nil
       callbackParams[0] = callbackResult
       result = newNimNode(nnkProcTy)
       result.add(callbackParams)
