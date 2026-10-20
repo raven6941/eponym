@@ -1274,7 +1274,8 @@ macro eponymBlock*(body: untyped): untyped =
         var bindingStatements = newStmtList()
         for binding in bindings:
           bindingStatements.add(bindingCall(binding, bindingsSym, globalsSym,
-                                            runtimeTypes, records))
+                                            runtimeTypes, records,
+                                            checkedGlobals))
         result.add quote do:
           proc `runtimeName`*(): tuple[value: Value, globals: Globals] =
             let `globalsSym` = getGlobalsDir(`dirLit`, `srcLit`)
