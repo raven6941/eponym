@@ -19,12 +19,22 @@ proc hostTripleNim(value: int): int = value * 3
 proc hostString(value: string): string = value
 proc hostFailureNim(value: int): int =
   raise newException(IOError, "host adapter failed")
+proc rawRuntimeIdentity(value: Value): Value = value
+proc makeIndexedRuntimeValues(length: int): seq[int] =
+  for i in 0 ..< length: result.add(i - length)
+proc makeWrongIndexedRuntimeValues(length: int): seq[int] =
+  newSeq[int](length + 1)
+proc checkDependentVectorCallback(length: int, values: seq[int]): int =
+  if values.len != length:
+    raise newException(ValueError, "callback Vec length mismatch")
+  length
 
 type ChannelHandle = object
   id: int
   label: string
 
 type NimIntCallback = proc(value: int): int {.closure.}
+type RawRuntimeCallback = proc(value: Value): Value {.closure.}
 
 type RuntimePoint = object
   x: int
@@ -38,6 +48,10 @@ type RuntimeSizedVec = object
   prefixLength: int
   suffixLength: int
   values: seq[int]
+
+type RuntimeDependentPairEnvelope = object
+  base: int
+  payload: tuple[count: int, values: seq[int]]
 
 type IndexedChannelHandle = object
   index: int
@@ -155,6 +169,11 @@ eponymBlock:
   runtimeValue(importedApply)
 
 eponymBlock:
+  import "fixtures/runtime_imported_vec.ep"
+  runtimeVector(Vec)
+  runtimeValue(importedVectorIdentity)
+
+eponymBlock:
   postulate(Nat, Univ)
   data(Tree, Univ):
     proc leaf(): Tree
@@ -204,6 +223,14 @@ eponymBlock:
   proc generatedNestedVectorIdentity[m, n: Nat](
       values: Vec[Vec[Int, m], n]): Vec[Vec[Int, m], n] = values
   runtimeValue(generatedNestedVectorIdentity)
+  proc generatedDependentPairVecIdentity(
+      value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
+      Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
+  runtimePairTrusted(generatedDependentPairVecIdentity)
+  proc generatedShadowedDependentPairVecIdentity(
+      value: Sig(length: Nat, Sig(length: Nat, Vec[Int, length]))):
+      Sig(length: Nat, Sig(length: Nat, Vec[Int, length])) = value
+  runtimePairTrusted(generatedShadowedDependentPairVecIdentity)
   record(SizedVec):
     field(prefixLength, Nat)
     field(suffixLength, Nat)
@@ -212,6 +239,19 @@ eponymBlock:
   runtimeRecordTrusted(SizedVec)
   proc generatedSizedVecIdentity(value: SizedVec): SizedVec = value
   runtimeValue(generatedSizedVecIdentity)
+
+eponymBlock:
+  import "../lib/nat.ep"
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  record(DependentPairEnvelope):
+    field(base, Nat)
+    field(payload, Sig(count: Nat, Vec[Int, add(base, count)]))
+  runtimeType(DependentPairEnvelope, RuntimeDependentPairEnvelope)
+  runtimeRecordTrusted(DependentPairEnvelope)
+  proc generatedDependentPairEnvelopeIdentity(
+      value: DependentPairEnvelope): DependentPairEnvelope = value
 
 eponymBlock:
   import "../lib/list.ep"
@@ -249,6 +289,19 @@ eponymBlock:
       Channel = channel
   runtimeValue(generatedGenericChannelValue)
 
+eponymBlock:
+  postulate(Nat, Univ)
+  proc generatedGenericNatProjection[n: Nat](): Nat = n
+  runtimeValue(generatedGenericNatProjection)
+
+proc rawGenericNatAt(index: int): bool =
+  let runtime = generatedGenericNatProjectionRuntimeValueRaw(
+    [vNatLit(index)], [])
+  let dynamicRuntime = generatedGenericNatProjectionRuntimeValueDynamic(index)
+  valueToNat(runtime.value, runtime.globals) == index and
+    valueToNat(dynamicRuntime.value, dynamicRuntime.globals) == index and
+    generatedGenericNatProjectionDynamic(index) == index
+
 proc checkGenericChannelValueAt[channel: static[ChannelHandle]](
     ignored: int): bool =
   let typedResult = generatedGenericChannelValue[channel](ignored)
@@ -256,6 +309,7 @@ proc checkGenericChannelValueAt[channel: static[ChannelHandle]](
   let rawRuntime = generatedGenericChannelValueRuntimeValue[channel](
     [intToValue(ignored)])
   typedResult == channel and
+    generatedGenericChannelValueDynamic(channel, ignored) == channel and
     valueToHost[ChannelHandle](runtime.value) == channel and
     valueToHost[ChannelHandle](rawRuntime.value) == channel
 
@@ -265,7 +319,8 @@ proc checkGenericIntValueAt[index: static[int]](ignored: int): bool =
   let rawRuntime = generatedGenericIntValueRuntimeValue[index](
     [intToValue(ignored)])
   typedResult == index and valueToInt(runtime.value) == index and
-    valueToInt(rawRuntime.value) == index
+    valueToInt(rawRuntime.value) == index and
+    generatedGenericIntValueDynamic(index, ignored) == index
 
 proc decodeRuntimeIntVector(value: Value, length: int,
                             globals: Globals): seq[int] =
@@ -345,6 +400,31 @@ eponymBlock:
   proc generatedTwoArgumentAdder(seed: Int):
       proc(left, right: Int): Int {.closure.} =
     lam(left, Int, lam(right, Int, addInt(seed, addInt(left, right))))
+
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(Token, Univ)
+  proc generatedRawTokenCallbackEcho(
+      callback: proc(value: Token): Token {.closure, rawValue.}):
+      proc(value: Token): Token {.closure, rawValue.} = callback
+  runtimeValue(generatedRawTokenCallbackEcho)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  proc generatedApplyIndexedCallback(
+      callback: proc(length: Nat): Vec[Int, length] {.closure.},
+      length: Nat): Vec[Int, length] = callback(length)
+  runtimeValue(generatedApplyIndexedCallback)
+  proc generatedApplyDependentVectorCallback(
+      callback: proc(length: Nat, values: Vec[Int, length]): Nat {.closure.},
+      length: Nat, values: Vec[Int, length]): Nat = callback(length, values)
+  proc generatedDependentVectorCallback():
+      proc(length: Nat, values: Vec[Int, length]): Nat {.closure.} =
+    lam(length, Nat, lam(values, Vec(Int, length), length))
+  runtimeValue(generatedApplyDependentVectorCallback)
+  runtimeValue(generatedDependentVectorCallback)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -534,6 +614,23 @@ proc hostRepeatIndexedChannel(index: int, channel: IndexedChannelHandle):
     tuple[first: IndexedChannelHandle, second: IndexedChannelHandle] =
   (channel, IndexedChannelHandle(index: index, label: channel.label & "/copy"))
 
+proc hostMakeIndexedVector(seed: int): tuple[count: int, values: seq[int]] =
+  result.count = abs(seed mod 20)
+  for i in 0 ..< result.count:
+    result.values.add(seed + i)
+  if seed == low(int):
+    if result.values.len > 0: result.values.setLen(result.values.len - 1)
+    else: result.values.add(seed)
+
+proc hostMakeVectorForIndex(index, seed: int):
+    tuple[marker: int, values: seq[int]] =
+  result.marker = seed
+  for i in 0 ..< index:
+    result.values.add(seed + i)
+  if seed == low(int):
+    if result.values.len > 0: result.values.setLen(result.values.len - 1)
+    else: result.values.add(seed)
+
 eponymBlock:
   import "../lib/nat.ep"
   postulate(Channel, Nat -> Univ)
@@ -556,6 +653,42 @@ eponymBlock:
   proc generatedRepeatIndexedChannel(index: Nat, channel: Channel(index)):
       Sig(first: Channel(index), Channel(index)) =
     repeatIndexedChannel(index, channel)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  postulate(makeIndexedVector,
+    Int -> Sig(count: Nat, Vec[Int, count]))
+  bindPostulatePairTrusted(makeIndexedVector, hostMakeIndexedVector,
+    Int, Nat, Vec)
+  proc generatedMakeIndexedVector(seed: Int):
+      Sig(count: Nat, Vec[Int, count]) = makeIndexedVector(seed)
+  runtimePairTrusted(generatedMakeIndexedVector)
+
+eponymBlock:
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  postulate(makeVectorForIndex,
+    Pi(index: Nat, seed: Int, Sig(marker: Int, Vec[Int, index])))
+  bindPostulatePairTrusted(makeVectorForIndex, hostMakeVectorForIndex,
+    Nat, Int, Int, Vec)
+  proc generatedVectorArgIdentity(index: Nat,
+      values: Vec[Int, index]): Vec[Int, index] = values
+  runtimeValue(generatedVectorArgIdentity)
+  proc generatedVectorForIndex(index: Nat, seed: Int):
+      Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(index, seed)
+  runtimePairTrusted(generatedVectorForIndex)
+
+eponymBlock:
+  import "fixtures/runtime_pair_postulate.ep"
+  runtimeVector(Vec)
+  bindPostulatePairTrusted(makeVectorForIndex, hostMakeVectorForIndex,
+    Nat, Int, Int, Vec)
+  proc generatedImportedVectorForIndex(index: Nat, seed: Int):
+      Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(index, seed)
+  runtimePairTrusted(generatedImportedVectorForIndex)
 
 static:
   doAssert compiles(generatedCheckedRole(35))
@@ -632,9 +765,58 @@ when isMainModule:
     proc(r: var Rng): int = r.genInt(-1000, 1000),
     proc(value: int): bool =
       let runtime = importedIdentityRuntimeValue([intToValue(value)])
-      runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value,
+      let typedRuntime = importedIdentityRuntimeValue(value)
+      importedIdentity(value) == value and
+        typedRuntime.value.whnfKind == wInt and
+        typedRuntime.value.whnfIntVal == value and
+        runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value,
     shrinkInt)
   if not importedRuntimeCases:
+    quit(1)
+
+  let importedDependentVectorCases = forAll(
+    "typed imported wrappers carry dependent Vec indices", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let values = makeIndexedRuntimeValues(length)
+      let direct = importedVectorIdentity(length, values)
+      let runtime = importedVectorIdentityRuntimeValue(length, values)
+      let decoded = vecValueToSeq[int](runtime.value, length, runtime.globals,
+        "Vec", proc(item: Value, _: Globals): int = valueToInt(item))
+      direct == values and decoded == values,
+    shrinkInt)
+  if not importedDependentVectorCases:
+    quit(1)
+  var importedVectorMismatchRejected = false
+  try:
+    discard importedVectorIdentity(3, @[1, 2])
+  except ValueError as error:
+    importedVectorMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert importedVectorMismatchRejected
+
+  let rawGenericNatCases = forAll(
+    "raw runtimeValue accepts Eponym generic arguments as Values", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 1000),
+    proc(index: int): bool = rawGenericNatAt(index),
+    shrinkInt)
+  if not rawGenericNatCases:
+    quit(1)
+
+  let rawCallbackCases = forAll(
+    "raw Value callbacks bridge unmapped higher-order types", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let callback: RawRuntimeCallback =
+        generatedRawTokenCallbackEcho(rawRuntimeIdentity)
+      let wrapperResult = valueToInt(callback(intToValue(value))) == value
+      let runtime = generatedRawTokenCallbackEchoRuntimeValue(
+        rawRuntimeIdentity)
+      let runtimeResult = valueToInt(callRuntimeValue(runtime.value,
+        [intToValue(value)])) == value
+      wrapperResult and runtimeResult,
+    shrinkInt)
+  if not rawCallbackCases:
     quit(1)
 
   var importedArityRejected = false
@@ -650,7 +832,11 @@ when isMainModule:
     proc(r: var Rng): int = r.genInt(-1000, 1000),
     proc(value: int): bool =
       let runtime = importedApplyRuntimeValue([intToValue(value)])
-      runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value + 7,
+      let typedRuntime = importedApplyRuntimeValue(value)
+      importedApply(value) == value + 7 and
+        typedRuntime.value.whnfKind == wInt and
+        typedRuntime.value.whnfIntVal == value + 7 and
+        runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value + 7,
     shrinkInt)
   if not importedPostulateCases:
     quit(1)
@@ -738,6 +924,57 @@ when isMainModule:
       generatedIndexedChannelIndex(IndexedChannelHandle(index: index,
         label: "index-" & $index)) == index,
     shrinkInt)
+  let generatedTrustedDependentPairAdapterCases = forAll(
+    "trusted host pair adapters preserve dependent Vec indices", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(seed: int): bool =
+      let pairResult = generatedMakeIndexedVector(seed)
+      pairResult[0] == abs(seed mod 20) and
+        pairResult[1].len == pairResult[0] and
+        pairResult[1] == hostMakeIndexedVector(seed).values,
+    shrinkInt)
+  let generatedOuterDependentVectorCases = forAll(
+    "function arguments and host pair results share an outer Nat index", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(index: int): bool =
+      var values: seq[int] = @[]
+      for i in 0 ..< index: values.add(i - index)
+      let wrapperRoundTrip =
+        generatedVectorArgIdentity(index, values) == values
+      let runtime = generatedVectorArgIdentityRuntimeValue(index, values)
+      let runtimeRoundTrip = vecValueToSeq[int](runtime.value, index,
+        runtime.globals, "Vec",
+        proc(value: Value, globals: Globals): int = valueToInt(value)) == values
+      let pairResult = generatedVectorForIndex(index, -index)
+      let pairRoundTrip = pairResult[0] == -index and
+        pairResult[1].len == index
+      let importedPairResult = generatedImportedVectorForIndex(index, -index)
+      let importedPairRoundTrip = importedPairResult[0] == -index and
+        importedPairResult[1].len == index
+      var inputMismatchRejected = false
+      try:
+        discard generatedVectorArgIdentity(index, values & @[index])
+      except ValueError:
+        inputMismatchRejected = true
+      var adapterMismatchRejected = false
+      try:
+        discard generatedVectorForIndex(index, low(int))
+      except ValueError:
+        adapterMismatchRejected = true
+      var importedAdapterMismatchRejected = false
+      try:
+        discard generatedImportedVectorForIndex(index, low(int))
+      except ValueError:
+        importedAdapterMismatchRejected = true
+      wrapperRoundTrip and runtimeRoundTrip and pairRoundTrip and
+        importedPairRoundTrip and inputMismatchRejected and
+        adapterMismatchRejected and importedAdapterMismatchRejected,
+    shrinkInt)
+  var dependentPairAdapterMismatchRejected = false
+  try:
+    discard generatedMakeIndexedVector(low(int))
+  except ValueError:
+    dependentPairAdapterMismatchRejected = true
   if not generatedTrustedDependentPairCases:
     quit(1)
   let generatedTrustedDependentResultCases = forAll(
@@ -748,6 +985,61 @@ when isMainModule:
         index: index, label: "wrapper-" & $index))
       pairOutput[0] == index and pairOutput[1] == IndexedChannelHandle(
         index: index, label: "wrapper-" & $index & "/indexed"),
+    shrinkInt)
+  let generatedDependentPairVecCases = forAll(
+    "trusted dependent Sigma checks its Vec length", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(n: int): bool =
+      let length = n mod 20
+      var values: seq[int] = @[]
+      for i in 0 ..< length: values.add(i + n)
+      let input = (length, (n, values))
+      let roundTrips = generatedDependentPairVecIdentity(input) == input
+      let badValues = if values.len == 0: @[n] else: values[0 ..< values.len - 1]
+      var mismatchRejected = false
+      try:
+        discard generatedDependentPairVecIdentity((length, (n, badValues)))
+      except ValueError:
+        mismatchRejected = true
+      roundTrips and mismatchRejected,
+    shrinkInt)
+  let generatedDependentPairEnvelopeCases = forAll(
+    "dependent record and Sigma indices compose through Vec codecs", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(n: int): bool =
+      let base = n mod 10
+      let count = (n div 3) mod 10
+      var values: seq[int] = @[]
+      for i in 0 ..< base + count: values.add(i + n)
+      let input = RuntimeDependentPairEnvelope(base: base,
+        payload: (count, values))
+      let roundTrips = generatedDependentPairEnvelopeIdentity(input) == input
+      var mismatchRejected = false
+      try:
+        var bad = input
+        bad.payload.values.add(n)
+        discard generatedDependentPairEnvelopeIdentity(bad)
+      except ValueError:
+        mismatchRejected = true
+      roundTrips and mismatchRejected,
+    shrinkInt)
+  let generatedShadowedDependentPairVecCases = forAll(
+    "nested Sigma index shadowing uses the nearest binder", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(n: int): bool =
+      let outerLength = n mod 20
+      let innerLength = (n div 3) mod 20
+      var values: seq[int] = @[]
+      for i in 0 ..< innerLength: values.add(i + n)
+      let input = (outerLength, (innerLength, values))
+      let roundTrips = generatedShadowedDependentPairVecIdentity(input) == input
+      var mismatchRejected = false
+      try:
+        discard generatedShadowedDependentPairVecIdentity(
+          (outerLength, (innerLength, values & @[n])))
+      except ValueError:
+        mismatchRejected = true
+      roundTrips and mismatchRejected,
     shrinkInt)
   if not generatedTrustedDependentResultCases:
     quit(1)
@@ -847,6 +1139,12 @@ when isMainModule:
       generatedBinaryPairBindingCases and
       generatedTernaryPairBindingCases and
       generatedTrustedDependentPairCases and
+      generatedTrustedDependentPairAdapterCases and
+      generatedOuterDependentVectorCases and
+      dependentPairAdapterMismatchRejected and
+      generatedDependentPairVecCases and
+      generatedDependentPairEnvelopeCases and
+      generatedShadowedDependentPairVecCases and
       generatedPairWithExternalIndexCases and
       generatedNestedRecordRoundTrips and
       generatedFutureInputPassesThrough and
@@ -1010,6 +1308,74 @@ proc callbackRole : Callback -> Sample -> Sample =
     shrinkInt)
   if not vectorCodecCases:
     quit(1)
+  let dependentCallbackCases = forAll(
+    "callback result codecs receive their dependent Nat argument", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let expected = makeIndexedRuntimeValues(length)
+      let typed = generatedApplyIndexedCallback(makeIndexedRuntimeValues,
+        length)
+      let runtime = generatedApplyIndexedCallbackRuntimeValue(
+        makeIndexedRuntimeValues, length)
+      typed == expected and vecValueToSeq[int](runtime.value, length,
+        runtime.globals, "Vec", proc(item: Value, _: Globals): int =
+          valueToInt(item)) == expected,
+    shrinkInt)
+  if not dependentCallbackCases:
+    quit(1)
+  var dependentCallbackMismatchRejected = false
+  try:
+    discard generatedApplyIndexedCallback(makeWrongIndexedRuntimeValues, 3)
+  except ValueError as error:
+    dependentCallbackMismatchRejected = "runtime Vec length mismatch" in error.msg
+  doAssert dependentCallbackMismatchRejected
+  let dependentCallbackArgumentCases = forAll(
+    "callback arguments carry earlier indices into dependent codecs", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(length: int): bool =
+      let values = makeIndexedRuntimeValues(length)
+      let applied = generatedApplyDependentVectorCallback(
+        checkDependentVectorCallback, length, values)
+      let runtimeApplied = generatedApplyDependentVectorCallbackRuntimeValue(
+        checkDependentVectorCallback, length, values)
+      let returned = generatedDependentVectorCallback()
+      let returnedValue = returned(length, values)
+      let runtimeReturned = generatedDependentVectorCallbackRuntimeValue()
+      let runtimeReturnedValue = valueToNat(callRuntimeValue(
+        runtimeReturned.value, [natToValue(length, runtimeReturned.globals),
+          seqToVecValue[int](values, length, runtimeReturned.globals, "Vec",
+            proc(item: int, _: Globals): Value = intToValue(item))]),
+        runtimeReturned.globals)
+      applied == length and valueToNat(runtimeApplied.value,
+        runtimeApplied.globals) == length and
+        returnedValue == length and runtimeReturnedValue == length,
+    shrinkInt)
+  if not dependentCallbackArgumentCases:
+    quit(1)
+  var dependentCallbackArgumentMismatchRejected = false
+  try:
+    discard generatedApplyDependentVectorCallback(checkDependentVectorCallback,
+      3, @[1, 2])
+  except ValueError as error:
+    dependentCallbackArgumentMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert dependentCallbackArgumentMismatchRejected
+  let dynamicGenericVectorCases = forAll(
+    "dynamic Nat generics index dependent Vec wrappers", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(index: int): bool =
+      var values: seq[int] = @[]
+      for i in 0 .. index: values.add(i - index)
+      generatedVectorSucIndexDynamic(index, values) == index,
+    shrinkInt)
+  if not dynamicGenericVectorCases:
+    quit(1)
+  var dynamicGenericMismatchRejected = false
+  try:
+    discard generatedVectorSucIndexDynamic(3, @[1, 2])
+  except ValueError as error:
+    dynamicGenericMismatchRejected = "runtime Vec length mismatch" in error.msg
+  doAssert dynamicGenericMismatchRejected
   doAssert generatedVectorIdentity[int, 0](@[]) == @[]
   doAssert generatedVectorSucIndex[3](@[1, 2, 3, 4]) == 3
   doAssert generatedVectorAddIndex[2, 3](@[1, 2, 3, 4, 5]) == 0
@@ -1179,6 +1545,8 @@ proc callbackRole : Callback -> Sample -> Sample =
       else:
         generatedGenericBoolValue[false](input.ignored)
       typedResult == input.expected and
+        generatedGenericBoolValueDynamic(input.expected, input.ignored) ==
+          input.expected and
         valueToBool(runtime.value, runtime.globals) == input.expected and
         valueToBool(rawRuntime.value, rawRuntime.globals) == input.expected)
   if not genericBoolCases:
