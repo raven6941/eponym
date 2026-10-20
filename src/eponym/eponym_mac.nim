@@ -636,11 +636,15 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
     return newCall(bindSym"bindHostIntUnary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
   var typeIndexes: seq[int] = @[]
-  if binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+  let isNatType = proc(typeIndex: int): bool =
+    if typeIndex < 0 or typeIndex >= binding.eponymTypes.len: return false
+    let typeName = binding.eponymTypes[typeIndex]
+    typeName == "Nat"
+  if binding.eponymTypes.len == 2 and isNatType(1):
     typeIndexes = @[0]
   elif binding.eponymTypes.len == 2:
     typeIndexes = @[0, 1]
-  elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
+  elif binding.eponymTypes.len == 3 and isNatType(0):
     typeIndexes = @[1, 2]
   else:
     for i in 0 ..< binding.eponymTypes.len:
@@ -659,11 +663,11 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
     typeArgs.add(nimType)
   let adapter =
     if binding.eponymTypes.len == 1: bindSym"bindHostOpaqueUnary"
-    elif binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+    elif binding.eponymTypes.len == 2 and isNatType(1):
       bindSym"bindHostOpaqueNatUnary"
     elif binding.eponymTypes.len == 2: bindSym"bindHostOpaqueMapUnary"
-    elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
-      bindSym"bindHostNatOpaqueMapBinary"
+    elif binding.eponymTypes.len == 3 and isNatType(0):
+      bindSym"bindHostNatOpaqueBinary"
     elif binding.eponymTypes.len == 3: bindSym"bindHostOpaqueBinary"
     elif binding.eponymTypes.len == 4: bindSym"bindHostOpaqueTernary"
     else:
@@ -674,9 +678,9 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
   for typeArg in typeArgs:
     genericAdapter.add(typeArg)
   var call = newCall(genericAdapter, bindingsSym, globalsSym, nameLit)
-  if binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+  if binding.eponymTypes.len == 2 and isNatType(1):
     call.add(newLit(binding.eponymTypes[0]))
-  elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
+  elif binding.eponymTypes.len == 3 and isNatType(0):
     call.add(newLit(binding.eponymTypes[1]))
     call.add(newLit(binding.eponymTypes[2]))
   else:

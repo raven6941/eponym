@@ -259,15 +259,6 @@ proc bindHostNatOpaqueBinary*[T](bindings: var RuntimeBindings,
   bindHostValue(bindings, globals, postulateName,
                 hostNatOpaqueBinary[T](implementation))
 
-proc bindHostNatOpaqueMapBinary*[A, B](bindings: var RuntimeBindings,
-    globals: Globals, postulateName, opaqueArgType,
-    opaqueResultType: string, implementation: proc(n: int, x: A): B) =
-  ## Bind `Nat -> A -> B` where A and B are distinct opaque Nim mappings.
-  validateHostNatOpaqueBinaryType(globals, postulateName, opaqueArgType,
-                                  opaqueResultType)
-  bindHostValue(bindings, globals, postulateName,
-                hostNatOpaqueMapBinary[A, B](implementation))
-
 proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int =
   validateHostOpaqueType(globals, typeName)
   let entry = globals[typeName]
