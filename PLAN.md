@@ -708,8 +708,13 @@ implementations.
      generic value binder domains. The runtime type witness selects the branch
      from the checked Bool value, while tuple codecs use the corresponding Nim
      `bool` for host-side length checks. A 200-case property covers both
-     branches through typed and `RuntimeValue` wrappers; negative cases reject
-     wrong Vec lengths in each branch.
+     branches through typed and `RuntimeValue` wrappers for direct Vec and
+     Sigma binders; negative cases reject wrong Vec lengths in each branch.
+   - [x] Use recursive structural codecs to infer Nim representations for
+     generic value binders over mapped families such as `Vec[A, n]`. A direct
+     Vec binder maps to `seq[A]` instead of an incomplete bare `seq` mapping.
+     The conditional-index property exercises both typed and `RuntimeValue`
+     wrappers and rejects wrong lengths in either Bool branch.
    - [x] Preserve the full locally declared Sigma result type when generating
      `bindPostulatePairTrusted`, so recursive codecs can enforce represented
      constraints such as a Vec length indexed by the first field. A 200-case

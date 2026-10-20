@@ -3656,6 +3656,10 @@ proc genericRuntimeInfo(decl: NimNode,
     var mappedBinder: HostRuntimeType
     var hasMappedBinder = false
     for mapping in mappings:
+      if mapping.isRuntimeVector or mapping.isRuntimeList or
+          mapping.isRuntimeOption or mapping.isRuntimeVariant or
+          mapping.isRuntimeStructuredVariant:
+        continue
       if mapping.eponymName == binderType or
           mapping.eponymName == binderTypeHeadName:
         mappedBinder = mapping

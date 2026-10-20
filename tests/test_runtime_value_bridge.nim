@@ -698,6 +698,10 @@ eponymBlock:
       pair: Sig(length: Nat, Vec[Int, (if b: n else: m)])](ignored: Int):
       Sig(length: Nat, Vec[Int, (if b: n else: m)]) = pair
   runtimeValue(generatedConditionalSigmaBinder)
+  proc generatedConditionalVectorValueBinder[b: Bool, n, m: Nat,
+      values: Vec[Int, (if b: n else: m)]](ignored: Int):
+      Vec[Int, (if b: n else: m)] = values
+  runtimeValue(generatedConditionalVectorValueBinder)
 
 eponymBlock:
   import "../lib/nat.ep"
@@ -4573,7 +4577,7 @@ proc callbackRole : Callback -> Sample -> Sample =
   if not dynamicGenericVectorCases:
     quit(1)
   let conditionalGenericSigmaCases = forAll(
-    "conditional generic domain indices validate dynamic Sigma values", r, 200,
+    "conditional indices validate dynamic Sigma and Vec values", r, 200,
     proc(r: var Rng): tuple[condition: bool, yesLength, noLength, seed: int] =
       (r.genBool(), r.genInt(0, 12), r.genInt(0, 12),
        r.genInt(-1000, 1000)),
@@ -4588,6 +4592,10 @@ proc callbackRole : Callback -> Sample -> Sample =
         input.yesLength, input.noLength, pair, 0)
       let runtime = generatedConditionalSigmaBinderRuntimeValueDynamic(
         input.condition, input.yesLength, input.noLength, pair, 0)
+      let typedVector = generatedConditionalVectorValueBinderDynamic(
+        input.condition, input.yesLength, input.noLength, elements, 0)
+      let runtimeVector = generatedConditionalVectorValueBinderRuntimeValueDynamic(
+        input.condition, input.yesLength, input.noLength, elements, 0)
       let expectedType = runtimeSigmaType(
         runtimeGlobalValue(runtime.globals, "Nat"),
         callRuntimeValue(runtimeGlobalValue(runtime.globals, "Vec"),
@@ -4595,11 +4603,20 @@ proc callbackRole : Callback -> Sample -> Sample =
            natToValue(length, runtime.globals)]))
       validateRuntimeValueAgainstType(runtime.value, expectedType,
         runtime.globals)
-      typed == pair and
+      let expectedVectorType = callRuntimeValue(
+        runtimeGlobalValue(runtimeVector.globals, "Vec"),
+        [runtimeGlobalValue(runtimeVector.globals, "Int"),
+         natToValue(length, runtimeVector.globals)])
+      validateRuntimeValueType(runtimeVector.value, expectedVectorType,
+        runtimeVector.globals)
+      typed == pair and typedVector == elements and
         valueToNat(runtimePairFirst(runtime.value), runtime.globals) == 7 and
         vecValueToSeq[int](runtimePairSecond(runtime.value), length,
           runtime.globals, "Vec",
-          proc(value: Value, _: Globals): int = valueToInt(value)) == elements)
+          proc(value: Value, _: Globals): int = valueToInt(value)) == elements and
+        vecValueToSeq[int](runtimeVector.value, length, runtimeVector.globals,
+          "Vec", proc(value: Value, _: Globals): int = valueToInt(value)) ==
+            elements)
   if not conditionalGenericSigmaCases:
     quit(1)
   for condition in [true, false]:
@@ -4613,6 +4630,13 @@ proc callbackRole : Callback -> Sample -> Sample =
       typedConditionalLengthRejected =
         "runtime Vec length mismatch" in error.msg
     doAssert typedConditionalLengthRejected
+    var typedVectorLengthRejected = false
+    try:
+      discard generatedConditionalVectorValueBinderDynamic(condition, 2, 4,
+        invalidValues, 0)
+    except ValueError as error:
+      typedVectorLengthRejected = "runtime Vec length mismatch" in error.msg
+    doAssert typedVectorLengthRejected
     var runtimeConditionalLengthRejected = false
     try:
       discard generatedConditionalSigmaBinderRuntimeValueDynamic(condition,
@@ -4621,6 +4645,13 @@ proc callbackRole : Callback -> Sample -> Sample =
       runtimeConditionalLengthRejected =
         "runtime Vec length mismatch" in error.msg
     doAssert runtimeConditionalLengthRejected
+    var runtimeVectorLengthRejected = false
+    try:
+      discard generatedConditionalVectorValueBinderRuntimeValueDynamic(
+        condition, 2, 4, invalidValues, 0)
+    except ValueError as error:
+      runtimeVectorLengthRejected = "runtime Vec length mismatch" in error.msg
+    doAssert runtimeVectorLengthRejected
   let dynamicSigmaBinderCases = forAll(
     "dynamic generic binders encode and validate Sigma tuple values", r, 200,
     proc(r: var Rng): tuple[first, natField, last, ignored: int] =
