@@ -183,10 +183,10 @@ proc useEra (0 ch : Type 0) (x : Type 0) : Type 0 = x
   proc useLin(ch {.linear.}: Univ, x: Univ): Univ = x
   proc useEra(ch {.erased.}: Univ, x: Univ): Univ = x
 
-# integer literals; `1` is the unit type in surface syntax, so the Nat
-# literal one is spelled `(suc zero)` (issues #8, #115)
+# Integer literal one uses `01` because `1` is the unit type in surface
+# syntax. Expected-type overloading still selects Nat or Int (issues #8, #115).
 conforms """proc three : Nat = 3
-proc one : Nat = (suc zero)
+proc one : Nat = 01
 """:
   proc three(): Nat = 3
   proc one(): Nat = 1
