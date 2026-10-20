@@ -409,9 +409,14 @@ proc nimExprToEponym(n: NimNode): string =
           # (issue #151: typed lets keep their annotation)
           let name = $def[0]
           var tyAnn = ""
+          var isNatBinding = false
           if def[1].kind != nnkEmpty:
-            tyAnn = " : " & nimTypeToEponym(def[1])
+            let declaredType = nimTypeToEponym(def[1])
+            tyAnn = " : " & declaredType
+            isNatBinding = declaredType == "Nat"
           let val = nimExprToEponym(def[2])
+          if isNatBinding or isLegacyNatExpr(def[2]):
+            scopedNatNames.incl(name)
           lets.add((name, tyAnn, val))
       else:
         # Final expression (or single expression)
