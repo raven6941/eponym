@@ -704,6 +704,12 @@ implementations.
      binders as `Value` parameters. Named and supported applied/indexed binder
      domains are checked against their Eponym types; more complex type
      expressions remain unsupported.
+   - [x] Support direct Bool generic conditions in Nat indices inside dynamic
+     generic value binder domains. The runtime type witness selects the branch
+     from the checked Bool value, while tuple codecs use the corresponding Nim
+     `bool` for host-side length checks. A 200-case property covers both
+     branches through typed and `RuntimeValue` wrappers; negative cases reject
+     wrong Vec lengths in each branch.
    - [x] Preserve the full locally declared Sigma result type when generating
      `bindPostulatePairTrusted`, so recursive codecs can enforce represented
      constraints such as a Vec length indexed by the first field. A 200-case

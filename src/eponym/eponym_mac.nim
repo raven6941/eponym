@@ -1439,7 +1439,8 @@ proc nimTypeToEponym(n: NimNode): string =
       let a = n[i]
       if (a.kind == nnkCall and
           (a.len > 1 or a[0].kind == nnkBracketExpr)) or a.kind in
-          {nnkObjConstr, nnkBracketExpr} or
+          {nnkObjConstr, nnkBracketExpr, nnkIfExpr, nnkIfStmt,
+           nnkStmtListExpr} or
           a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
                      nnkInt64Lit}:
         args.add("(" & nimTypeToEponym(a) & ")")
@@ -2599,6 +2600,9 @@ proc runtimeNatIndexExpr(n: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]] = @[]): NimNode =
   ## Lower supported Nat index expressions to checked Nim int arithmetic,
   ## substituting nearer Sigma/record binders as ordinary Nim operands.
+  if n.kind == nnkStmtListExpr:
+    if n.len != 1: return nil
+    return runtimeNatIndexExpr(n[0], overrides)
   if n.kind in {nnkIdent, nnkSym}:
     if overrides.len > 0:
       for i in countdown(overrides.high, 0):
@@ -2612,6 +2616,43 @@ proc runtimeNatIndexExpr(n: NimNode,
                 nnkInt64Lit}:
     if n.intVal < 0: return nil
     return copyNimTree(n)
+  if n.kind in {nnkIfExpr, nnkIfStmt}:
+    var branches: seq[tuple[condition, value: NimNode]] = @[]
+    var elseBranch: NimNode = nil
+    for branch in n:
+      case branch.kind
+      of nnkElifExpr, nnkElifBranch:
+        if branch.len != 2 or branch[0].kind notin {nnkIdent, nnkSym}:
+          return nil
+        var condition = copyNimTree(branch[0])
+        if overrides.len > 0:
+          for i in countdown(overrides.high, 0):
+            if $branch[0] == overrides[i].name:
+              condition = copyNimTree(overrides[i].value)
+              break
+        var valueNode = branch[1]
+        if valueNode.kind == nnkStmtList:
+          if valueNode.len != 1: return nil
+          valueNode = valueNode[0]
+        let value = runtimeNatIndexExpr(valueNode, overrides)
+        if value.isNil: return nil
+        branches.add((condition, value))
+      of nnkElseExpr, nnkElse:
+        if branch.len != 1: return nil
+        elseBranch = branch[0]
+      else:
+        return nil
+    if branches.len == 0 or elseBranch.isNil: return nil
+    if elseBranch.kind == nnkStmtList:
+      if elseBranch.len != 1: return nil
+      elseBranch = elseBranch[0]
+    result = runtimeNatIndexExpr(elseBranch, overrides)
+    if result.isNil: return nil
+    for i in countdown(branches.high, 0):
+      result = newTree(nnkIfExpr,
+        newTree(nnkElifExpr, branches[i].condition, branches[i].value),
+        newTree(nnkElseExpr, result))
+    return
   if n.kind == nnkCall and n.len >= 2 and n[0].kind == nnkIdent:
     case $n[0]
     of "suc":
@@ -4553,6 +4594,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
 proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
   if n.isNil: return nil
+  if n.kind == nnkStmtListExpr:
+    if n.len != 1: return nil
+    return runtimeTypeValueExpr(n[0], globals, overrides)
   if n.kind in {nnkCall, nnkObjConstr} and n.len > 0 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Sig":
     let fields = runtimeSigmaFields(n, allowDependent = true)
@@ -4584,6 +4628,40 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
       newCall(bindSym"runtimeDependentSigmaType", domain, globals,
         callback, newTree(nnkPrefix, ident"@", priorArguments))
     return buildSigma(0, overrides)
+  if n.kind in {nnkIfExpr, nnkIfStmt}:
+    var branches: seq[tuple[condition, value: NimNode]] = @[]
+    var elseBranch: NimNode = nil
+    for branch in n:
+      case branch.kind
+      of nnkElifExpr, nnkElifBranch:
+        if branch.len != 2: return nil
+        let conditionValue = runtimeTypeValueExpr(branch[0], globals,
+          overrides)
+        if conditionValue.isNil: return nil
+        var valueNode = branch[1]
+        if valueNode.kind == nnkStmtList:
+          if valueNode.len != 1: return nil
+          valueNode = valueNode[0]
+        let value = runtimeTypeValueExpr(valueNode, globals, overrides)
+        if value.isNil: return nil
+        branches.add((newCall(bindSym"valueToBool", conditionValue, globals),
+          value))
+      of nnkElseExpr, nnkElse:
+        if branch.len != 1: return nil
+        elseBranch = branch[0]
+      else:
+        return nil
+    if branches.len == 0 or elseBranch.isNil: return nil
+    if elseBranch.kind == nnkStmtList:
+      if elseBranch.len != 1: return nil
+      elseBranch = elseBranch[0]
+    result = runtimeTypeValueExpr(elseBranch, globals, overrides)
+    if result.isNil: return nil
+    for i in countdown(branches.high, 0):
+      result = newTree(nnkIfExpr,
+        newTree(nnkElifExpr, branches[i].condition, branches[i].value),
+        newTree(nnkElseExpr, result))
+    return
   if n.kind in {nnkCall, nnkObjConstr} and n.len > 0 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Pi":
     return runtimePiTypeValueExpr(n, globals, overrides)
@@ -4840,6 +4918,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
   body.add(newLetStmt(globalsSym,
     newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
   var typeIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
+  var genericIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, genericSym in genericSyms:
     var encodedGeneric: NimNode
     if generic.genericNatArgs[i]:
@@ -4853,14 +4932,14 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
         encodedGeneric = runtimeValueConversionExpr(
           generic.genericValueTypeExprs[i], genericNimTypes[i], genericSym,
           true, generic.codecMappings, records, globalsSym,
-          allowDependentSigma, @[], typeIndexOverrides)
+          allowDependentSigma, genericIndexOverrides, typeIndexOverrides)
       else:
         encodedGeneric = copyNimTree(genericSym)
     elif not generic.genericMappedTypes[i].isNil:
       encodedGeneric = runtimeValueConversionExpr(
         generic.genericMappedTypes[i], generic.genericMappedNimTypes[i],
         genericSym, true, generic.codecMappings, records, globalsSym,
-        allowDependentSigma, @[], typeIndexOverrides)
+        allowDependentSigma, genericIndexOverrides, typeIndexOverrides)
     if encodedGeneric.isNil: return nil
     var validateEncodedMappedVariant = false
     if not generic.genericValueArgs[i] and
@@ -4879,6 +4958,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
         encodedGeneric, expectedType, globalsSym,
         runtimeStructuredCodecsExpr(generic.codecMappings, records)))
     typeIndexOverrides.add(($generic.genericNames[i], encodedGeneric))
+    genericIndexOverrides.add(($generic.genericNames[i], genericSym))
   body.add(newLetStmt(defsSym,
     newCall(bindSym"getDefsDir", dirLit, srcLit)))
   body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))

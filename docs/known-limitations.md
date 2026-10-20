@@ -298,8 +298,11 @@ type expressions built from named references, applications, earlier generic
 indices, and integer literals. A 200-case `SizedTree[length]` property checks
 both raw `Value` and mapped `RuntimeStructuredVariant` arguments, and rejects an
 embedded index that differs from `length`. More complex binder type
-expressions remain unsupported. Dynamic generic binders whose domain is a
-Sigma type can use the standard flat tuple representation; the runtime bridge
+expressions remain unsupported except for direct Bool-controlled conditional
+Nat indices. A 200-case property covers a conditional index inside a Sigma
+generic value through typed and `RuntimeValue` dynamic wrappers, with wrong
+lengths rejected for both Bool branches. Dynamic generic binders whose domain
+is a Sigma type can use the standard flat tuple representation; the runtime bridge
 encodes the tuple and validates each field against the checked Sigma type,
 including dependent fields whose types use earlier tuple values. Dependent
 Sigma tuple codecs require the checked definition's explicit
@@ -393,7 +396,11 @@ type argument through the raw generic `RuntimeValue` interface.
 A property covers an indexed `SizedTree` identity through the raw generic
 `RuntimeValue` interface.
 More complex generic domain expressions outside the supported type-expression
-forms and structural inspection of closures are unsupported.
+forms and structural inspection of closures are unsupported. Direct Bool
+generic conditions in Nat indices inside dynamic generic value binders are
+supported; the Nim codec uses the Bool parameter to compute the host-side
+length, and the runtime witness selects the corresponding branch from its
+checked Bool value.
 Non-dependent function domains written with `->` are now supported for dynamic
 generic binders: the runtime bridge infers a checked Eponym closure's function
 type, validates it against the declared arrow type, and permits calling it.
