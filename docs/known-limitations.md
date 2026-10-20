@@ -40,8 +40,11 @@ opaque values work when their element type has a codec. Dynamic generic value
 binders also support `Vec`, non-dependent `Sig`, `List`, and `Option` when the
 corresponding codecs are registered.
 Dependent Sigma binders can also be passed as raw `RuntimeValue`s and checked
-against generated witnesses. Typed Nim tuples require `runtimePairTrusted`
-and codecs that can check the dependent fields.
+against generated witnesses. When the field codecs can reconstruct and check
+the generated Sigma witness, Eponym also generates a typed Nim tuple wrapper
+without `runtimePairTrusted`; it rejects a tuple whose Vec field disagrees
+with its Nat field. Other dependent tuple shapes still need the explicit trust
+opt-in and codecs that can check their fields.
 
 Other types can still be checked by Eponym but may have no typed Nim wrapper.
 Use `runtimeValue(name)` for the lower-level `Value` interface, or register a
