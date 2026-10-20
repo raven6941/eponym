@@ -437,6 +437,10 @@ implementations.
 - [x] Preserve Nim default parameter values on generated typed wrappers and
    typed `RuntimeValue` overloads. Compile-time and runtime regressions cover
    omitted defaults, positional overrides, and named overrides.
+- [x] Lower named arguments in checked local and imported procedure calls to
+   their declared binder order. Separate 200-case properties check reordered
+   calls to each; unknown, duplicate, and missing required arguments receive
+   compile-time errors.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

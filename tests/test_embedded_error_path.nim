@@ -96,7 +96,13 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_unsupported_operator.nim",
      "unsupported pure operator 'div'"),
     ("tests/fixtures/embedded_err_if_missing_else.nim",
-     "requires a condition and an else branch")]:
+     "requires a condition and an else branch"),
+    ("tests/fixtures/embedded_err_named_argument_unknown.nim",
+     "unknown named argument 'other'"),
+    ("tests/fixtures/embedded_err_named_argument_duplicate.nim",
+     "duplicate argument for 'left'"),
+    ("tests/fixtures/embedded_err_named_argument_missing.nim",
+     "missing argument for 'right'")]:
   if not checkFixture(path, expected):
     inc failed
 

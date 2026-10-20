@@ -73,6 +73,11 @@ Nim default parameter values are preserved on generated typed wrappers and
 typed `RuntimeValue` overloads, so callers can omit those arguments or
 override them positionally or by name.
 
+Inside `eponymBlock`, named term arguments are reordered for calls to known
+local and imported declarations. Unknown names, duplicate arguments, and
+omitted required arguments produce compile-time diagnostics. Calls through
+arbitrary callable aliases still need signature metadata to support names.
+
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values, canonical Bool constructors, nullary
 unindexed data constructors mapped to Nim enums, and opaque boxes for arbitrary
