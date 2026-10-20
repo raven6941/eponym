@@ -69,6 +69,8 @@ for (path, expected) in [
      "Bool constructor 'true' is not declared; import bool.ep"),
     ("tests/fixtures/embedded_err_generic_runtime_index.nim",
      "only type-level generic binders annotated with Univ"),
+    ("tests/fixtures/embedded_err_binding_quinary_nim_type.nim",
+     "type mismatch"),
     ("tests/fixtures/embedded_err_dependent_sigma_postulate_binding.nim",
      "structured pair adapter requires postulate 'makeDependentPair'"),
     ("tests/fixtures/embedded_err_pair_binding_nim_type.nim", "type mismatch"),

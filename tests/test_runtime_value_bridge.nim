@@ -82,6 +82,12 @@ proc hostRouteChannelWithPhase(channel: ChannelHandle, message: string,
   result = channel
   result.label.add(":" & message & "#" & $requestId & "/" & $phase)
 
+proc hostRouteChannelWithSample(channel: ChannelHandle, message: string,
+                                requestId, phase, sample: int): ChannelHandle =
+  result = channel
+  result.label.add(":" & message & "#" & $requestId & "/" & $phase &
+    "/" & $sample)
+
 proc hostFutureForChannel(channel: ChannelHandle): Future[int] =
   result = newFuture[int]("hostFutureForChannel")
   result.complete(channel.id)
@@ -228,6 +234,10 @@ eponymBlock:
     Channel -> Message -> RequestId -> Phase -> Channel)
   bindPostulate(routeChannelWithPhase, hostRouteChannelWithPhase,
     Channel, Message, RequestId, Phase, Channel)
+  postulate(routeChannelWithSample,
+    Channel -> Message -> RequestId -> Phase -> Sample -> Channel)
+  bindPostulate(routeChannelWithSample, hostRouteChannelWithSample,
+    Channel, Message, RequestId, Phase, Sample, Channel)
   postulate(startFuture, Channel -> PendingResult)
   bindPostulate(startFuture, hostFutureForChannel, Channel, PendingResult)
   postulate(passFuture, PendingResult -> PendingResult)
@@ -246,6 +256,10 @@ eponymBlock:
                                    requestId: RequestId,
                                    phase: Phase): Channel =
     routeChannelWithPhase(channel, message, requestId, phase)
+  proc generatedRouteWithSampleRole(channel: Channel, message: Message,
+                                    requestId: RequestId, phase: Phase,
+                                    sample: Sample): Channel =
+    routeChannelWithSample(channel, message, requestId, phase, sample)
   proc generatedFutureRole(channel: Channel): PendingResult =
     startFuture(channel)
   proc generatedFutureInput(value: PendingResult): PendingResult =
@@ -643,6 +657,20 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded.id == input.id and decoded.label == input.label,
     shrinkInt)
   if not genericOpaqueIdentityCases:
+    quit(1)
+
+  let quinaryWrapperCases = forAll(
+    "five-argument opaque postulate dispatch", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let channel = ChannelHandle(id: id, label: "ch")
+      let message = $id
+      let actual = generatedRouteWithSampleRole(channel, message, id,
+        -id, id * 2)
+      actual.id == id and actual.label == "ch:" & message & "#" & $id &
+        "/" & $(-id) & "/" & $(id * 2),
+    shrinkInt)
+  if not quinaryWrapperCases:
     quit(1)
 
   var opaqueBindings = initRuntimeBindings()

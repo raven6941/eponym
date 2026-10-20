@@ -107,7 +107,7 @@ fields have runtime codecs, and explicitly mapped opaque types or indexed
 families. Dependent Sigma values and records with dependent fields remain
 unsupported.
 `bindPostulate` supports unary `Int -> Int`, opaque `T -> T`, opaque `T -> U`,
-`T -> Nat`, `Nat -> A -> B`, and curried opaque postulates with up to four
+`T -> Nat`, `Nat -> A -> B`, and curried opaque postulates with up to five
 arguments. A mapped `Future[T]` may be
 returned opaquely; it is not awaited and async failure/cancellation semantics
 are undefined. `bindPostulatePair` supports one to three codec-supported
