@@ -259,6 +259,9 @@ proc runPaxosRound*(ballot, acceptorStored: int): int =
       discard child.waitForExit()
     child.close()
   var peer: owned(Socket)
+  # This demo accepts only the acceptor subprocess started above, which
+  # connects immediately to the ephemeral loopback port. The blocking accept
+  # intentionally waits for that controlled child rather than an external peer.
   listener.accept(peer)
   let channel = PaxosChannel(socket: peer)
   defer: channel.socket.close()
