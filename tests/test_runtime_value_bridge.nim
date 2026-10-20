@@ -174,6 +174,12 @@ eponymBlock:
     callback(value)
   proc generatedAdder(seed: Int): proc(value: Int): Int {.closure.} =
     lam(value, Int, addInt(seed, value))
+  proc generatedApplyTwoArgumentCallback(
+      callback: proc(left, right: Int): Int {.closure.},
+      left, right: Int): Int = callback(left, right)
+  proc generatedTwoArgumentAdder(seed: Int):
+      proc(left, right: Int): Int {.closure.} =
+    lam(left, Int, lam(right, Int, addInt(seed, addInt(left, right))))
 
 eponymBlock:
   data(Signal, Univ):
@@ -194,6 +200,9 @@ static:
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
   doAssert compiles(generatedAdder(3)(4))
+  doAssert compiles(generatedApplyTwoArgumentCallback(
+    proc(left, right: int): int = left + right, 1, 2))
+  doAssert compiles(generatedTwoArgumentAdder(3)(4, 5))
   doAssert compiles(generatedSignalIdentity(signalGo))
   doAssert not compiles(generatedSignalIdentity(1))
 
@@ -293,6 +302,14 @@ eponymBlock:
     value
   proc generatedCallbackRole(callback: Callback, value: Sample): Sample =
     invokeCallback(callback, value)
+  proc generatedApplyMappedCallback(
+      callback: proc(channel: Channel, message: Message): Channel {.closure.},
+      channel: Channel, message: Message): Channel =
+    callback(channel, message)
+  proc generatedReturnMappedCallback():
+      proc(channel: Channel, message: Message): Channel {.closure.} =
+    lam(channel, Channel, lam(message, Message,
+      routeChannel(channel, message)))
 
 proc hostIndexedChannelParts(channel: IndexedChannelHandle):
     tuple[index: int, next: IndexedChannelHandle] =
@@ -359,6 +376,11 @@ static:
     note: "ok")))
   doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
   doAssert not compiles(generatedCallbackRole(42, 1))
+  doAssert compiles(generatedApplyMappedCallback(
+    proc(channel: ChannelHandle, message: string): ChannelHandle = channel,
+    ChannelHandle(id: 1), "mapped"))
+  doAssert compiles(generatedReturnMappedCallback()(
+    ChannelHandle(id: 1), "mapped"))
   doAssert compiles(generatedIndexedChannelIndex(
     IndexedChannelHandle(index: 17, label: "indexed")))
   doAssert compiles(generatedSplitIndexedChannel(
@@ -839,6 +861,43 @@ proc callbackRole : Callback -> Sample -> Sample =
       generatedCallbackRole(callback, offset * 2) == offset * 3,
     shrinkInt)
   if not callbackArgumentCases:
+    quit(1)
+  let mappedCallbackCases = forAll(
+    "multi-argument callbacks use mapped opaque Nim values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let input = ChannelHandle(id: id, label: "callback-" & $id)
+      let callback: proc(channel: ChannelHandle,
+          message: string): ChannelHandle {.closure.} =
+        proc(channel: ChannelHandle, message: string): ChannelHandle =
+          result = channel
+          result.label.add("/" & message)
+      generatedApplyMappedCallback(callback, input, "mapped") ==
+        ChannelHandle(id: id, label: "callback-" & $id & "/mapped"),
+    shrinkInt)
+  if not mappedCallbackCases:
+    quit(1)
+  let mappedReturnedCallbackCases = forAll(
+    "checked multi-argument closures return mapped opaque Nim values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let input = ChannelHandle(id: id, label: "returned-" & $id)
+      generatedReturnMappedCallback()(input, "mapped") ==
+        ChannelHandle(id: id, label: "returned-" & $id & ":mapped"),
+    shrinkInt)
+  if not mappedReturnedCallbackCases:
+    quit(1)
+  let twoArgumentCallbackCases = forAll(
+    "multi-argument Nim closures cross checked Eponym functions", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(seed: int): bool =
+      let callback: proc(left, right: int): int {.closure.} =
+        proc(left, right: int): int = left * 2 + right
+      generatedApplyTwoArgumentCallback(callback, seed, -seed) == seed and
+        generatedTwoArgumentAdder(seed)(seed + 1, seed + 2) ==
+          seed + (seed + 1) + (seed + 2),
+    shrinkInt)
+  if not twoArgumentCallbackCases:
     quit(1)
   var wrongBinaryMappingRejected = false
   try:

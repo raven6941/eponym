@@ -97,17 +97,17 @@ transform them. The runtime bridge tests identity pass-through for a future
 argument and the existing future-result case.
 Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
-bodies. Unary Nim proc types with supported leaf codecs
-also bridge to and from Eponym function values: Nim callbacks become runtime
-host functions, and checked Eponym closures become callable Nim closures.
-Returned callback types must use Nim's `{.closure.}` calling convention.
-Multi-argument Nim proc types and effectful callback behavior remain outside
-this bridge.
+bodies. Nim proc types with supported leaf codecs also bridge to and from
+Eponym function values. A multi-argument Nim proc is represented as a curried
+chain of Eponym functions; arguments and results use the same recursive codecs
+as generated wrappers. A 200-case property covers multi-argument callbacks
+with primitive and mapped opaque values in both directions. Returned callback
+types must use Nim's `{.closure.}` calling convention. Callback effects and
+behavior remain trusted host semantics.
 Structural codecs for collections beyond non-dependent two-field `Sig` tuples
 and named non-dependent records, payload-bearing data constructors, dependent
 signatures, value-indexed generic
-signatures, and generic binders used in runtime bodies,
-callback shapes with more than five curried opaque arguments, and structural
+signatures, and generic binders used in runtime bodies, and structural
 inspection of closures remain unsupported. The session runtime demo includes a
 hand-written Nat LEB128 message codec, and the TCP adapter demo uses it over a
 loopback socket, but there is no reusable structural codec framework.
@@ -145,10 +145,10 @@ Nim adapter propagate unchanged to the caller. An invoked but unbound
 postulate raises a `ValueError` naming the postulate. `eponymBlock` rejects a
 binding that no checked proc body references, but does not determine whether
 that proc is reachable from an application entry point. Call-graph
-reachability, callbacks with more than five opaque arguments, and structural
-codecs remain unsupported. The TCP demo returns transport and codec failures
-through a mapped `TransportResult` value. Other adapters may still propagate
-synchronous exceptions. See the
+reachability, postulate bindings with more than five curried arguments, and
+structural codecs remain unsupported. The TCP demo returns transport and codec
+failures through a mapped `TransportResult` value. Other adapters may still
+propagate synchronous exceptions. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the
 supported prototype and remaining work.
 

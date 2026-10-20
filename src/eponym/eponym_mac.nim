@@ -341,12 +341,22 @@ proc nimTypeToEponym(n: NimNode): string =
         args.add(nimTypeToEponym(a))
     head & " " & args.join(" ")
   of nnkProcTy:
-    if n.len != 2 or n[0].kind != nnkFormalParams or n[0].len != 2 or
-        n[0][1].kind != nnkIdentDefs or n[0][1].len != 3:
-      error("runtime proc types currently require exactly one named argument", n)
-    let argName = if n[0][1][0].kind == nnkEmpty: "callbackArg" else: $n[0][1][0]
-    "Pi (" & argName & " : " & nimTypeToEponym(n[0][1][^2]) & "). " &
-      nimTypeToEponym(n[0][0])
+    if n.len != 2 or n[0].kind != nnkFormalParams or n[0].len < 2:
+      error("runtime proc types require at least one named argument", n)
+    var resultType = nimTypeToEponym(n[0][0])
+    var params: seq[(string, NimNode)] = @[]
+    for i in 1 ..< n[0].len:
+      let p = n[0][i]
+      if p.kind != nnkIdentDefs or p.len < 3:
+        error("runtime proc types require ordinary named arguments", p)
+      for j in 0 ..< p.len - 2:
+        let name = if p[j].kind == nnkEmpty: "callbackArg" & $params.len
+                   else: $p[j]
+        params.add((name, p[^2]))
+    for i in countdown(params.high, 0):
+      resultType = "Pi (" & params[i][0] & " : " &
+        nimTypeToEponym(params[i][1]) & "). " & resultType
+    resultType
   of nnkCall:
     # Tactic term in type position (issue #151): byTac(refl) -> by refl.
     if n[0].kind == nnkIdent and $n[0] == "byTac":
@@ -854,11 +864,22 @@ proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
     return (n[1][1], n[2])
   (n[1], n[2])
 
-proc runtimeProcParts(n: NimNode): tuple[argType, resultType: NimNode] =
+type RuntimeProcParts = object
+  argTypes: seq[NimNode]
+  resultType: NimNode
+
+proc runtimeProcParts(n: NimNode): RuntimeProcParts =
   if n.kind != nnkProcTy or n.len != 2 or n[0].kind != nnkFormalParams or
-      n[0].len != 2 or n[0][1].kind != nnkIdentDefs or n[0][1].len != 3:
+      n[0].len < 2:
     return
-  (n[0][1][^2], n[0][0])
+  for i in 1 ..< n[0].len:
+    let p = n[0][i]
+    if p.kind != nnkIdentDefs or p.len < 3:
+      return RuntimeProcParts()
+    for _ in 0 ..< p.len - 2:
+      result.argTypes.add(p[^2])
+  if result.argTypes.len > 0:
+    result.resultType = n[0][0]
 
 proc hasClosurePragma(n: NimNode): bool =
   if n.kind == nnkProcTy and n.len == 2 and n[1].kind == nnkPragma:
@@ -870,16 +891,21 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
                     records: seq[HostRecord],
                     allowDependentSigma = false): NimNode =
   let procParts = runtimeProcParts(n)
-  if not procParts.argType.isNil:
+  if not procParts.resultType.isNil:
     if not hasClosurePragma(n): return nil
-    let argType = runtimeNimType(procParts.argType, mappings, records,
-                                 allowDependentSigma)
     let resultType = runtimeNimType(procParts.resultType, mappings, records,
                                     allowDependentSigma)
-    if argType.isNil or resultType.isNil: return nil
+    if resultType.isNil: return nil
     result = copyNimTree(n)
     result[0][0] = resultType
-    result[0][1][^2] = argType
+    var argIndex = 0
+    for i in 1 ..< result[0].len:
+      let param = result[0][i]
+      let argType = runtimeNimType(procParts.argTypes[argIndex], mappings,
+        records, allowDependentSigma)
+      if argType.isNil: return nil
+      param[^2] = argType
+      argIndex += param.len - 2
     return
   let sigma = runtimeSigmaComponents(n, allowDependentSigma)
   if not sigma.first.isNil:
@@ -952,42 +978,58 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                globals: NimNode,
                                allowDependentSigma = false): NimNode =
   let procParts = runtimeProcParts(eponymType)
-  if not procParts.argType.isNil:
-    let argNimType = runtimeNimType(procParts.argType, mappings, records,
-                                    allowDependentSigma)
+  if not procParts.resultType.isNil:
     let resultNimType = runtimeNimType(procParts.resultType, mappings, records,
                                        allowDependentSigma)
-    if argNimType.isNil or resultNimType.isNil: return nil
-    let argSym = genSym(nskParam, "runtimeCallbackArgument")
+    if resultNimType.isNil: return nil
+    var argNimTypes: seq[NimNode] = @[]
+    var argValueSyms: seq[NimNode] = @[]
+    var argSyms: seq[NimNode] = @[]
+    for i, argType in procParts.argTypes:
+      let argNimType = runtimeNimType(argType, mappings, records,
+                                      allowDependentSigma)
+      if argNimType.isNil: return nil
+      argNimTypes.add(argNimType)
+      argValueSyms.add(genSym(nskParam, "runtimeCallbackValue" & $i))
+      argSyms.add(genSym(nskParam, "runtimeCallbackArgument" & $i))
     if toValue:
-      let decodedArg = runtimeValueConversionExpr(procParts.argType,
-        argNimType, argSym, false, mappings, records, globals,
-        allowDependentSigma)
-      if decodedArg.isNil: return nil
-      let hostResult = newCall(value, decodedArg)
+      var decodedArgs: seq[NimNode] = @[]
+      for i, argType in procParts.argTypes:
+        let decodedArg = runtimeValueConversionExpr(argType, argNimTypes[i],
+          argValueSyms[i], false, mappings, records, globals,
+          allowDependentSigma)
+        if decodedArg.isNil: return nil
+        decodedArgs.add(decodedArg)
+      var hostResult = newCall(value)
+      for decodedArg in decodedArgs:
+        hostResult.add(decodedArg)
       let encodedResult = runtimeValueConversionExpr(procParts.resultType,
         resultNimType, hostResult, true, mappings, records, globals,
         allowDependentSigma)
       if encodedResult.isNil: return nil
-      let hostCallback = newProc(
-        params = @[bindSym"Value",
-          newIdentDefs(argSym, bindSym"Value", newEmptyNode())],
-        body = newStmtList(encodedResult))
-      return newCall(bindSym"vHostFunc", hostCallback)
-    let encodedArg = runtimeValueConversionExpr(procParts.argType,
-      argNimType, argSym, true, mappings, records, globals,
-      allowDependentSigma)
-    if encodedArg.isNil: return nil
+      var callbackValue = encodedResult
+      for i in countdown(argValueSyms.high, 0):
+        let callbackBody = newStmtList(callbackValue)
+        let hostCallback = newProc(params = @[bindSym"Value",
+          newIdentDefs(argValueSyms[i], bindSym"Value", newEmptyNode())],
+          body = callbackBody)
+        callbackValue = newCall(bindSym"vHostFunc", hostCallback)
+      return callbackValue
+    var encodedArgs = newNimNode(nnkBracket)
+    var formal: seq[NimNode] = @[resultNimType]
+    for i, argType in procParts.argTypes:
+      let encodedArg = runtimeValueConversionExpr(argType, argNimTypes[i],
+        argSyms[i], true, mappings, records, globals, allowDependentSigma)
+      if encodedArg.isNil: return nil
+      encodedArgs.add(encodedArg)
+      formal.add(newIdentDefs(argSyms[i], argNimTypes[i], newEmptyNode()))
     let applied = newCall(bindSym"callRuntimeValue", value,
-      newTree(nnkBracket, encodedArg))
+      newTree(nnkPrefix, ident"@", encodedArgs))
     let decodedResult = runtimeValueConversionExpr(procParts.resultType,
       resultNimType, applied, false, mappings, records, globals,
       allowDependentSigma)
     if decodedResult.isNil: return nil
-    return newProc(
-      params = @[resultNimType,
-        newIdentDefs(argSym, argNimType, newEmptyNode())],
-      body = newStmtList(decodedResult))
+    return newProc(params = formal, body = newStmtList(decodedResult))
   let sigma = runtimeSigmaComponents(eponymType, allowDependentSigma)
   if not sigma.first.isNil:
     if nimType.kind notin {nnkTupleConstr, nnkTupleTy} or nimType.len != 2:
