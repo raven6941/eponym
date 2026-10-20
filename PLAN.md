@@ -672,7 +672,9 @@ implementations.
 - [x] Use square brackets for explicit Eponym binders (`A`, indices such as
    `n`), parentheses for term arguments, and braces for implicit binders.
    Generic declarations, bracketed type applications, and bracketed term
-   applications are covered; call-style forms remain supported for migration.
+   applications are covered; recognized call-style explicit applications now
+   fail with a migration diagnostic. Indirect callable aliases and some
+   computed index forms still need a complete rejection audit before release.
 - [x] Resolve relative `.ep` imports source-relative first, then from the
   installed package's `lib/` directory. Absolute paths remain explicit
   overrides; a prelude-resolution test checks nested imports without vendoring.

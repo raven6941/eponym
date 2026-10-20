@@ -48,7 +48,7 @@ proc packagePreludeTargets(importPath: string): seq[string] =
     result.add(root / importPath)
     result.add(root / "lib" / importPath)
 
-proc resolveImportTarget(importPath, baseDir: string): string =
+proc resolveImportTarget*(importPath, baseDir: string): string =
   if isAbsolute(importPath):
     if fileExists(importPath): return importPath
     return ""

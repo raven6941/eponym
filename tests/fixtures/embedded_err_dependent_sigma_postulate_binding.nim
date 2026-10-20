@@ -10,11 +10,11 @@ proc hostDependentPair(channel: ChannelHandle): tuple[length: int,
 eponymBlock:
   import "../../lib/nat.ep"
   import "../../lib/vec.ep"
-  postulate(Channel, Univ)
+  postulate(Channel, Type 0)
   postulate(makeDependentPair,
-    Channel -> Sig(length: Nat, Vec(Nat, length)))
+    Channel -> Sig(length: Nat, Vec[Nat, length]))
   runtimeType(Channel, ChannelHandle)
   bindPostulatePair(makeDependentPair, hostDependentPair,
     Channel, Nat, Vec)
   proc useDependentPair(channel: Channel):
-      Sig(length: Nat, Vec(Nat, length)) = makeDependentPair(channel)
+      Sig(length: Nat, Vec[Nat, length]) = makeDependentPair(channel)

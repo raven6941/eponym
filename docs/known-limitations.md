@@ -290,9 +290,11 @@ file. Clean-install resolution is covered by a separate-project test. See
 
 The embedded syntax is Nim-shaped but is not ordinary Nim semantics. Explicit
 Eponym parameters can use Nim square brackets, as in `Vec[A, n]` and
-`cons[A, n](x, xs)`; legacy call-style forms remain accepted. Generic Eponym
-definitions can be checked, but the generated Nim runtime wrapper for a
-generic definition is not implemented yet.
+`cons[A, n](x, xs)`; recognized legacy call-style explicit applications now fail with a migration
+diagnostic. A complete audit of indirect callable aliases and index-producing
+expressions remains follow-up work. Generic Eponym definitions can be checked,
+but the generated Nim runtime wrapper for a generic definition is not
+implemented yet.
 
 Pure `if`/`elif`/`else` expressions lower to nested checked `ifThenElse`
 calls when `lib/bool.ep` is imported. Each condition must have type `Bool`,

@@ -18,7 +18,7 @@
 #   relative to this file's directory; pulls in Nat/Vec/etc. from the prelude
 #   instead of redefining them per file (`data(Nat, Univ):` block syntax still
 #   works for local datatypes)
-# - `Vec(A, zero())` — call syntax for type application (vs `Vec A zero`)
+# - `Vec[A, zero()]` — brackets hold explicit type and length arguments
 # - `vecnil` — Nim keyword workaround; maps to Eponym `nil` constructor
 # - `Nat -> Univ` — infix `->` for Pi types (valid Nim, right-associative)
 #
@@ -49,10 +49,10 @@ eponymBlock:
   # semantics as string syntax. (Exception: `1` is the unit type in
   # surface syntax, so the Nat literal one is written `suc(zero())`.)
 
-  # Build a 3-element vector. Return type `Vec(Int, 3)` uses Nat literal.
+  # Build a 3-element vector. Return type `Vec[Int, 3]` uses Nat literal.
   # The body constructs 3 `cons` cells with Nat literal indices.
-  proc mkVec3(a: Int, b: Int, c: Int): Vec(Int, 3) =
-    cons(Int, 2, a, cons(Int, 1, b, cons(Int, 0, c, vecnil(Int))))
+  proc mkVec3(a: Int, b: Int, c: Int): Vec[Int, 3] =
+    cons[Int, 2](a, cons[Int, 1](b, cons[Int, 0](c, vecnil[Int]())))
 
   # 3-element dot product. The `let` bindings build `Vec Int 3` values,
   # proving at the type level that arity matches (3 weights, 3 inputs).
@@ -82,10 +82,10 @@ proc main() =
   echo "Weights: ", w1, ", ", w2, ", ", w3
 
   # Verified: dot3's eponymBlock was elaborated at compile time.
-  # The `Vec(Int, three())` types ensure the implementation builds
+  # The `Vec[Int, three()]` types ensure the implementation builds
   # 3-element vectors; a 2-element bug would be a type error.
   let fused = dot3(w1, w2, w3, x1, x2, x3)
-  echo "Fused result: ", fused  # 1650
+  echo "Fused result: ", fused # 1650
 
   if fused > 1000: echo "Threshold exceeded!"
   else: echo "Within normal range."

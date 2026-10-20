@@ -165,9 +165,9 @@ conforms """data Vec (A : Type 0) : Pi (n : Nat). Vec A n -> Type 0 where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 """:
-  data(Vec, [A: Univ], Pi(n: Nat, Vec(A, n) -> Univ)):
-    proc vecnil(): Vec(A, zero)
-    proc cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, suc(n))
+  data(Vec, [A: Univ], Pi(n: Nat, Vec[A, n] -> Univ)):
+    proc vecnil(): Vec[A, zero]
+    proc cons(n: Nat, x: A, xs: Vec[A, n]): Vec[A, suc(n)]
 
 # import declaration (parse-only; the path need not resolve here)
 conforms """import "lib/nat.ep"
