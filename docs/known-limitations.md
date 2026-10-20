@@ -69,6 +69,12 @@ Nim's type checker checks the concrete adapter signature, but the mapping to
 the Eponym type and the adapter behavior remain trusted. Neither compiler
 proves that the host value satisfies a dependent index.
 
+Distinct Eponym names may share one Nim representation, for example
+`RequestId` and `Sample` both mapped to `int`. Checked Eponym identities stay
+distinct at the bridge boundary, but a Nim adapter signature sees only `int`
+and cannot prevent adapter code from confusing their semantic roles. Use
+distinct Nim newtypes when Nim should enforce that distinction.
+
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
 opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`,
