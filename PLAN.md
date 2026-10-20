@@ -448,6 +448,10 @@ implementations.
 - [x] Reorder named arguments for Nim callback parameters from their declared
    `proc` type. A 200-case property covers both generated and typed
    `RuntimeValue` wrappers for a two-argument callback.
+- [x] Preserve callable signature metadata through simple local `let` aliases
+   of known procedures and Nim callback parameters. A 200-case property checks
+   callback and local procedure aliases through generated wrappers; the callback
+   property also covers typed `RuntimeValue` calls.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

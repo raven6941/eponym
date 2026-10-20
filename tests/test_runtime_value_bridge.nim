@@ -154,6 +154,9 @@ eponymBlock:
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
   proc generatedNamedAdd(left: Int, right: Int): Int =
     generatedAdd(right = right, left = left)
+  proc generatedNamedAlias(left: Int, right: Int): Int =
+    let operation = generatedAdd
+    operation(right = right, left = left)
   proc generatedDefaultThenValue(value: Int = 42,
       adjustment: Int): Int = addInt(value, adjustment)
   proc generatedDefaultGap(adjustment: Int): Int =
@@ -438,7 +441,9 @@ eponymBlock:
     lam(value, Int, addInt(seed, value))
   proc generatedApplyTwoArgumentCallback(
       callback: proc(left, right: Int): Int {.closure.},
-      left, right: Int): Int = callback(right = right, left = left)
+      left, right: Int): Int =
+    let reordered = callback
+    reordered(right = right, left = left)
   runtimeValue(generatedApplyTwoArgumentCallback)
   proc generatedTwoArgumentAdder(seed: Int):
       proc(left, right: Int): Int {.closure.} =
@@ -746,6 +751,7 @@ static:
   doAssert compiles(generatedDefaultRuntimeValue(value = 7))
   doAssert compiles(generatedAdd(20, 22))
   doAssert compiles(generatedNamedAdd(20, 22))
+  doAssert compiles(generatedNamedAlias(20, 22))
   doAssert compiles(generatedDefaultGap(10))
   doAssert compiles(generatedTrailingDefaultCall(10))
   doAssert compiles(generatedImportedNamed(20, 22))
@@ -944,7 +950,9 @@ when isMainModule:
     proc(r: var Rng): tuple[left, right: int] =
       (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
     proc(input: tuple[left, right: int]): bool =
-      generatedNamedAdd(input.left, input.right) == input.left + input.right,
+      generatedNamedAdd(input.left, input.right) == input.left + input.right and
+      generatedNamedAlias(input.left, input.right) ==
+        input.left + input.right,
     proc(input: tuple[left, right: int]):
         seq[tuple[left, right: int]] = @[])
   if not namedArgumentCalls:

@@ -474,6 +474,8 @@ proc nimCommandToEponym(n: NimNode): string =
     appendArg(n[i])
   nimExprToEponym(n[0]) & " " & args.join(" ")
 
+proc legacyCallInfoFromNimType(ty: NimNode): LegacyCallInfo
+
 proc nimExprToEponym(n: NimNode): string =
   ## Convert a Nim expression AST to Eponym source string.
   case n.kind
@@ -518,6 +520,15 @@ proc nimExprToEponym(n: NimNode): string =
             tyAnn = " : " & declaredType
             isNatBinding = declaredType == "Nat"
           let val = nimExprToEponym(def[2])
+          let callInfoSource = if def[2].kind in {nnkIdent, nnkSym}:
+            $def[2] else: ""
+          if callInfoSource in legacyCallInfo and
+              legacyCallInfo[callInfoSource].termCount > 0:
+            legacyCallInfo[name] = legacyCallInfo[callInfoSource]
+          elif def[1].kind == nnkProcTy:
+            let callInfo = legacyCallInfoFromNimType(def[1])
+            if callInfo.termCount > 0:
+              legacyCallInfo[name] = callInfo
           if isNatBinding or isLegacyNatExpr(def[2]):
             scopedNatNames.incl(name)
           lets.add((name, tyAnn, val))
@@ -862,8 +873,7 @@ proc procDefToEponym(n: NimNode): string =
       paramStrs.add("(" & q & binderName(p[j]) & " : " & ty & ")")
       if ty == "Type 0": scopedLegacyTypeNames.incl(binderName(p[j]))
       if ty == "Nat": scopedNatNames.incl(binderName(p[j]))
-  var priorCallableInfos: seq[tuple[name: string, found: bool,
-      info: LegacyCallInfo]] = @[]
+  let priorCallableInfos = toSeq(legacyCallInfo.pairs)
   for i in 1 ..< params.len:
     let formal = params[i]
     if formal.kind != nnkIdentDefs: continue
@@ -873,17 +883,11 @@ proc procDefToEponym(n: NimNode): string =
       let nameNode = if formal[j].kind == nnkPragmaExpr:
         formal[j][0] else: formal[j]
       let name = $nameNode
-      let hadInfo = name in legacyCallInfo
-      let previous = if hadInfo: legacyCallInfo[name] else:
-        LegacyCallInfo()
-      priorCallableInfos.add((name, hadInfo, previous))
       legacyCallInfo[name] = callableInfo
   let body = nimExprToEponym(n[6])
-  for previous in priorCallableInfos:
-    if previous.found:
-      legacyCallInfo[previous.name] = previous.info
-    else:
-      legacyCallInfo.del(previous.name)
+  legacyCallInfo.clear()
+  for (callName, callInfo) in priorCallableInfos:
+    legacyCallInfo[callName] = callInfo
   scopedLegacyTypeNames.clear()
   for typeName in priorScopedTypeNames: scopedLegacyTypeNames.incl(typeName)
   scopedNatNames.clear()

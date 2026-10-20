@@ -80,7 +80,9 @@ arbitrary callable aliases still need signature metadata to support names.
 Known local procedures also apply Nim defaults at checked call sites, including
 when named arguments skip a preceding defaulted parameter.
 Named calls through Nim callback parameters use the parameter names declared in
-their `proc` type. Callable local aliases still need separate scope tracking.
+their `proc` type. Simple local `let` aliases of known procedures and callbacks
+retain that signature metadata. More complex aliases, such as partial
+applications and conditional callees, still need explicit callable metadata.
 
 The low-level `Value` call path (`callValueFunc` / `callValueFuncDir`) now
 supports primitive Int/Nat values, canonical Bool constructors, nullary
