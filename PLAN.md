@@ -570,7 +570,9 @@ implementations.
    signatures. A further 200-case dependent Pi property covers a callback
    taking `Nat` and `Vec[Int, length]` and returning `Vec[Int, length]`;
    typed and raw-result wrappers preserve the index, and malformed input or
-   output lengths are rejected.
+   output lengths are rejected. A separate 200-case property passes a mapped
+   Nim `ChannelHandle` object through a generic Pi callback using the explicit
+   `runtimeType` mapping, through both typed and raw-result wrappers.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

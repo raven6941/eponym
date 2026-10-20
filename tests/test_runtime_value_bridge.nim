@@ -445,6 +445,14 @@ eponymBlock:
   runtimeValue(generatedSizedVecIdentity)
 
 eponymBlock:
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
+  proc generatedMappedGenericPiCallbackBinder[
+      callback: Pi(value: Channel, Channel)](value: Channel): Channel =
+    callback(value)
+  runtimeValue(generatedMappedGenericPiCallbackBinder)
+
+eponymBlock:
   import "../lib/nat.ep"
   import "../lib/vec.ep"
   postulate(Int, Univ)
@@ -756,6 +764,11 @@ static:
   doAssert not compiles(generatedDependentPiCallbackBinderDynamic(
     proc(length: string, values: seq[int]): seq[int] {.closure.} = values,
     3, @[1, 2, 3]))
+  doAssert compiles(generatedMappedGenericPiCallbackBinderDynamic(
+    proc(value: ChannelHandle): ChannelHandle {.closure.} = value,
+    ChannelHandle(id: 1)))
+  doAssert not compiles(generatedMappedGenericPiCallbackBinderDynamic(
+    proc(value: int): int {.closure.} = value, ChannelHandle(id: 1)))
   doAssert compiles(generatedTwoArgumentAdder(3)(4, 5))
   doAssert compiles(generatedSumSix(1, 2, 3, 4, 5, 6))
   doAssert not compiles(generatedSumSix(1, 2, 3, 4, 5))
@@ -2446,6 +2459,28 @@ proc callbackRole : Callback -> Sample -> Sample =
         valueToInt(runtime.value) ==
           input.left + input.right + input.offset)
   if not dynamicGenericPiBinaryCallbackCases:
+    quit(1)
+  let mappedGenericPiCallbackCases = forAll(
+    "generic Pi callbacks preserve mapped Nim object values", r, 200,
+    proc(r: var Rng): tuple[id, delta: int] =
+      (r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[id, delta: int]): bool =
+      let channel = ChannelHandle(id: input.id, label: "pi/" & $input.id)
+      let callback: proc(value: ChannelHandle): ChannelHandle {.closure.} =
+        proc(value: ChannelHandle): ChannelHandle =
+          ChannelHandle(id: value.id + input.delta,
+            label: value.label & "/callback")
+      let expected = callback(channel)
+      let typed = generatedMappedGenericPiCallbackBinderDynamic(callback,
+        channel)
+      let runtime =
+        generatedMappedGenericPiCallbackBinderRuntimeValueDynamic(callback,
+          channel)
+      validateRuntimeValueType(runtime.value,
+        runtimeGlobalValue(runtime.globals, "Channel"), runtime.globals)
+      typed == expected and valueToHost[ChannelHandle](runtime.value) ==
+        expected)
+  if not mappedGenericPiCallbackCases:
     quit(1)
   let dynamicDependentPiCallbackCases = forAll(
     "dependent generic Pi callbacks preserve Vec indices", r, 200,
