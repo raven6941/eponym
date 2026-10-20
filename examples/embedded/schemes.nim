@@ -25,26 +25,25 @@ eponymBlock:
     suc(suc(zero()))
 
   # Unfused: ana then cata, via the intermediate 2-list
-  #   cons (suc zero) (cons (suc zero) (nil Nat)).
+  #   cons[Nat, 1](suc zero, cons[Nat, 1](suc zero, nil[Nat]())).
   proc unfused(): Nat =
-    length(Nat, replicate(Nat, two(), suc(zero())))
+    length[Nat](replicate[Nat](two(), suc(zero())))
 
   # Fused: one pass, no intermediate list.
   proc fused(): Nat =
     fusedLenRep(two())
 
   # Both evaluate to suc (suc zero); `refl` proves it.
-  proc deforestDemo(): Eq(Nat, unfused(), fused()) =
-    refl(Nat, unfused())
+  proc deforestDemo(): Eq[Nat, unfused(), fused()] =
+    refl[Nat](unfused())
 
   # The same story for map fusion: two passes become one, by the checked
   # law `cataMapFusion` (lib/schemes.ep). Here the algebra is `length`'s,
   # so mapping then measuring is measuring directly.
-  proc mapThenLength(xs: List(Nat)): Eq(Nat, length(Nat, map(Nat, Nat, suc, xs)),
-                                       length(Nat, xs)) =
-    cataMapFusion(Nat, Nat, lam(u, List(Nat), Nat), zero(),
-                  lam(x, Nat, lam(tl, List(Nat), lam(ih, Nat, suc(ih)))),
-                  suc, xs)
+  proc mapThenLength(xs: List[Nat]): Eq[Nat, length[Nat](map[Nat, Nat](suc, xs)),
+      length[Nat](xs)] =
+    cataMapFusion[Nat, Nat](lam(u, List[Nat], Nat), zero(), lam(x, Nat, lam(tl, List[
+        Nat], lam(ih, Nat, suc(ih)))), suc, xs)
 
 # --- Normal Nim program ------------------------------------------------
 # Plain Nim from here: IO, config, orchestration. The deforestation

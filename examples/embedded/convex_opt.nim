@@ -56,30 +56,30 @@ eponymBlock:
   # Affine expressions: the DCP base cases (constants, the variable) and
   # the affine-preserving compositions.
   data(Affine, CExpr -> Univ):
-    proc afVar(): Affine(eVar())
-    proc afConst(c: Int): Affine(eConst(c))
-    proc afPlus(e1: CExpr, e2: CExpr, h1: Affine(e1), h2: Affine(e2)):
-      Affine(ePlus(e1, e2))
-    proc afMinus(e1: CExpr, e2: CExpr, h1: Affine(e1), h2: Affine(e2)):
-      Affine(eMinus(e1, e2))
-    proc afScaleN(k: Nat, e: CExpr, h: Affine(e)): Affine(eScaleN(k, e))
+    proc afVar(): Affine[eVar()]
+    proc afConst(c: Int): Affine[eConst(c)]
+    proc afPlus(e1: CExpr, e2: CExpr, h1: Affine[e1], h2: Affine[e2]):
+      Affine[ePlus(e1, e2)]
+    proc afMinus(e1: CExpr, e2: CExpr, h1: Affine[e1], h2: Affine[e2]):
+      Affine[eMinus(e1, e2)]
+    proc afScaleN(k: Nat, e: CExpr, h: Affine[e]): Affine[eScaleN(k, e)]
 
   # Convex expressions: the DCP composition rules as constructors.
   # cvSq/cvExp demand an *affine* argument (convex atom of affine is
   # convex; of general convex it is not DCP-certifiable without sign
   # info -- the conservative gap DCP is known for).
   data(Convex, CExpr -> Univ):
-    proc cvAffine(e: CExpr, h: Affine(e)): Convex(e)
-    proc cvPlus(e1: CExpr, e2: CExpr, h1: Convex(e1), h2: Convex(e2)):
-      Convex(ePlus(e1, e2))
-    proc cvScaleN(k: Nat, e: CExpr, h: Convex(e)): Convex(eScaleN(k, e))
-    proc cvSq(e: CExpr, h: Affine(e)): Convex(eSq(e))
-    proc cvExp(e: CExpr, h: Affine(e)): Convex(eExp(e))
-    proc cvMax(e1: CExpr, e2: CExpr, h1: Convex(e1), h2: Convex(e2)):
-      Convex(eMax(e1, e2))
+    proc cvAffine(e: CExpr, h: Affine[e]): Convex[e]
+    proc cvPlus(e1: CExpr, e2: CExpr, h1: Convex[e1], h2: Convex[e2]):
+      Convex[ePlus(e1, e2)]
+    proc cvScaleN(k: Nat, e: CExpr, h: Convex[e]): Convex[eScaleN(k, e)]
+    proc cvSq(e: CExpr, h: Affine[e]): Convex[eSq(e)]
+    proc cvExp(e: CExpr, h: Affine[e]): Convex[eExp(e)]
+    proc cvMax(e1: CExpr, e2: CExpr, h1: Convex[e1], h2: Convex[e2]):
+      Convex[eMax(e1, e2)]
 
   # The objective position: minimize demands the convexity certificate.
-  proc minimize(e: CExpr, h: Convex(e)): CExpr = e
+  proc minimize(e: CExpr, h: Convex[e]): CExpr = e
 
   # f(x) = 2*(x-3)^2 + x, as a reified expression...
   # Integer literals overload: 2 elaborates as Nat (eScaleN's scalar),
@@ -91,7 +91,7 @@ eponymBlock:
   # ...with its DCP certificate, built bottom-up from the rule table:
   # x-3 affine, sq of affine convex, nonneg scale of convex convex,
   # x affine hence convex, sum of convex convex.
-  proc quadConvex(): Convex(quadExpr()) =
+  proc quadConvex(): Convex[quadExpr()] =
     cvPlus(eScaleN(2, eSq(eMinus(eVar(), eConst(3)))), eVar(),
       cvScaleN(2, eSq(eMinus(eVar(), eConst(3))),
         cvSq(eMinus(eVar(), eConst(3)),
@@ -102,7 +102,7 @@ eponymBlock:
   proc prob(): CExpr = minimize(quadExpr(), quadConvex())
   runtimeValue(prob)
   proc shiftedExpr(): CExpr = ePlus(quadExpr(), eConst(11))
-  proc shiftedCert(): Convex(shiftedExpr()) =
+  proc shiftedCert(): Convex[shiftedExpr()] =
     cvPlus(quadExpr(), eConst(11), quadConvex(),
       cvAffine(eConst(11), afConst(11)))
   proc shiftedProb(): CExpr = minimize(shiftedExpr(), shiftedCert())
