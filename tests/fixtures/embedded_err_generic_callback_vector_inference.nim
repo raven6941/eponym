@@ -10,8 +10,8 @@ eponymBlock:
   import "../../lib/vec.ep"
   runtimeVector(Vec)
   proc mappedCallback[A: Univ](
-      callback: proc(value: A): A {.closure.}, values: Vec[A, 2]):
-      proc(value: A): A {.closure.} = callback
+      callback: proc(value: A): A {.closure.}, values: Vec[A, 2]): Vec[A, 2] =
+    vmap(callback, values)
   runtimeValue(mappedCallback)
 
 discard mappedCallback(proc(value: bool): bool = not value,

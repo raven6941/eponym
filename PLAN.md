@@ -430,8 +430,9 @@ implementations.
   callback parameter's Nim type inference; its body still checks the
   callback's concrete argument and result types. A 200-case property covers
   generated and typed `RuntimeValue` wrappers for direct generic values and
-  a returned callback with its type inferred through a Vec argument. Negative
-  fixtures reject incompatible callback signatures in both forms.
+  `vmap` over a Vec whose generic type is inferred from the later value
+  argument. Negative fixtures reject incompatible callback signatures in both
+  forms; the vector property also rejects wrong lengths through both wrappers.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
@@ -441,12 +442,8 @@ implementations.
    `runtimeCodec` mappings, and explicit trusted opt-ins for dependent records
    and pairs. Remaining gaps include broader automatic codec coverage,
    additional dependent forms, unmapped value-indexed generics, and other
-   higher-order signatures. A local `vmap(callback, values)` experiment over a
-   mapped `Vec[A, 2]` compiles, but its runtime wrapper currently fails with
-   `stuck application` while evaluating the polymorphic vector function; add a
-   focused reproducer and support this callback-in-container execution path.
-   Unsupported cases must continue to fail with a precise compile-time
-   diagnostic.
+   higher-order signatures. Unsupported cases must continue to fail with a
+   precise compile-time diagnostic.
    Definitions without a matching explicit Nim `proc` declaration still
    retain the legacy `varargs[int]` compatibility wrapper; explicit `proc`
    declarations with unsupported signatures fail clearly when called.

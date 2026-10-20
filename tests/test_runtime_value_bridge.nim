@@ -212,7 +212,7 @@ eponymBlock:
   runtimeVector(Vec)
   proc generatedGenericCallbackOverVector[A: Univ](
       callback: proc(value: A): A {.closure.}, values: Vec[A, 2]):
-      proc(value: A): A {.closure.} = callback
+      Vec[A, 2] = vmap(callback, values)
   runtimeValue(generatedGenericCallbackOverVector)
 
 eponymBlock:
@@ -1297,13 +1297,14 @@ proc callbackRole : Callback -> Sample -> Sample =
       let callback: proc(value: ChannelHandle): ChannelHandle {.closure.} =
         proc(value: ChannelHandle): ChannelHandle =
           ChannelHandle(id: value.id + 1, label: value.label & "/returned")
-      let probe = ChannelHandle(id: input.first, label: "probe")
-      let expected = callback(probe)
-      let typed = generatedGenericCallbackOverVector(callback, values)(probe)
+      let expected = @[callback(values[0]), callback(values[1])]
+      let typed = generatedGenericCallbackOverVector(callback, values)
       let runtime = generatedGenericCallbackOverVectorRuntimeValue(callback,
         values)
-      let runtimeResult = callRuntimeValue(runtime.value,
-        @[toHostValue(probe)])
+      let decoded = vecValueToSeq[ChannelHandle](runtime.value, 2,
+        runtime.globals, "Vec",
+        proc(item: Value, _: Globals): ChannelHandle =
+          valueToHost[ChannelHandle](item))
       var typedLengthRejected = false
       try:
         discard generatedGenericCallbackOverVector(callback, @[values[0]])
@@ -1315,8 +1316,7 @@ proc callbackRole : Callback -> Sample -> Sample =
           @[values[0]])
       except ValueError as error:
         runtimeLengthRejected = "runtime Vec length mismatch" in error.msg
-      typed == expected and
-        valueToHost[ChannelHandle](runtimeResult) == expected and
+      typed == expected and decoded == expected and
         typedLengthRejected and runtimeLengthRejected)
   if not genericCallbackVectorInferenceCases:
     quit(1)
