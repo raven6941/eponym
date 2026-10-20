@@ -3849,6 +3849,29 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
           sourceSigmaFieldIndex = fieldIndex
           sourceSigmaFieldNimType = fieldNimType
           break
+        for optionMapping in generic.codecMappings:
+          if not optionMapping.isRuntimeOption: continue
+          var elementType = field.fieldType
+          var optionDepth = 0
+          while true:
+            let inner = runtimeOptionElementType(elementType,
+              optionMapping.eponymName)
+            if inner.isNil: break
+            inc optionDepth
+            elementType = inner
+          if optionDepth == 0 or elementType.kind notin {nnkIdent, nnkSym} or
+              $elementType != genericName:
+            continue
+          let fieldNimType = runtimeNimType(field.fieldType,
+            generic.codecMappings, records, allowDependentSigma)
+          if fieldNimType.isNil: continue
+          sourceIndex = i
+          sourceSigmaFieldIndex = fieldIndex
+          sourceSigmaFieldNimType = fieldNimType
+          sourceOptionFamily = optionMapping.eponymName
+          sourceOptionDepth = optionDepth
+          break
+        if sourceIndex >= 0: break
         for vectorMapping in generic.codecMappings:
           if not vectorMapping.isRuntimeVector: continue
           let vector = runtimeVectorComponents(field.fieldType,
@@ -4004,7 +4027,11 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
           sourceSigmaFieldNimType else: argNimTypes[sourceIndex]), sourceType)
       let sourceValue = if sourceOptionFamily.len > 0:
         block:
-          var nested = copyNimTree(argSyms[sourceIndex])
+          var nested = if sourceSigmaFieldIndex >= 0:
+            newTree(nnkBracketExpr, copyNimTree(argSyms[sourceIndex]),
+              newLit(sourceSigmaFieldIndex))
+          else:
+            copyNimTree(argSyms[sourceIndex])
           for _ in 0 ..< sourceOptionDepth:
             nested = newCall(bindSym"get", nested)
           nested
@@ -4042,7 +4069,11 @@ proc indexedGenericTypeWitnesses(generic: tuple[genericParams: NimNode,
           genericName & "' from none; pass nested some(value) or use the raw " &
           "RuntimeValue API with an explicit type argument")
         var optionChecks = newStmtList()
-        var optionCursor = copyNimTree(argSyms[sourceIndex])
+        var optionCursor = if sourceSigmaFieldIndex >= 0:
+          newTree(nnkBracketExpr, copyNimTree(argSyms[sourceIndex]),
+            newLit(sourceSigmaFieldIndex))
+        else:
+          copyNimTree(argSyms[sourceIndex])
         for _ in 0 ..< sourceOptionDepth:
           optionChecks.add(newTree(nnkIfStmt, newTree(nnkElifBranch,
             newCall(bindSym"isNone", copyNimTree(optionCursor)),

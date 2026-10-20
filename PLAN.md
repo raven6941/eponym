@@ -640,6 +640,9 @@ implementations.
      The generic type witness is inferred from a nonempty mapped `Vec[A,n]`
      field inside the trusted Sigma, without an explicit Nim type argument;
      the same property exercises generated and typed `RuntimeValue` wrappers.
+     A 50-case property also checks witness inference from `some(value)` in a
+     Sigma Option field containing an indexed data variant; `none` is rejected
+     because it carries no value from which to recover the index.
      A nested `Option[Vec[A,2]]` callback composes Option and Vec codecs,
      including `none` and `some` cases, through generated and typed
      `RuntimeValue` wrappers (200 cases).

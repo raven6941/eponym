@@ -487,6 +487,7 @@ eponymBlock:
   runtimeValue(importedGenericIndexedOptionCallbackApply)
   runtimeValue(importedGenericIndexedNestedOptionCallbackApply)
   runtimeValue(importedGenericIndexedSigmaCallbackApply)
+  runtimeValue(importedGenericIndexedSigmaOptionCallbackApply)
 
 eponymBlock:
   import "fixtures/runtime_imported_generic.ep"
@@ -2631,6 +2632,55 @@ when isMainModule:
         runtime.globals)
       typed == expected and (first, second) == expected)
   if not importedGenericSigmaCallbackCases:
+    quit(1)
+  let indexedSigmaOptionWitnessCases = forAll(
+    "generic callbacks infer indexed witnesses from Sigma Option.some", r, 50,
+    proc(r: var Rng): tuple[tag, index: int] =
+      (r.genInt(-1000, 1000), r.genInt(0, 100)),
+    proc(input: tuple[tag, index: int]): bool =
+      let payload = some(RuntimeStructuredVariant(constructor: "sizedTree",
+        arguments: @[
+          RuntimeStructuredValue(kind: rsvNat, natValue: input.index),
+          RuntimeStructuredValue(kind: rsvVariant,
+            variantValue: RuntimeStructuredVariant(
+              constructor: "treeEmpty"))]))
+      let value = (input.tag, payload)
+      let callback: proc(value: (int, Option[RuntimeStructuredVariant])):
+          (int, Option[RuntimeStructuredVariant]) {.closure.} =
+        proc(value: (int, Option[RuntimeStructuredVariant])):
+            (int, Option[RuntimeStructuredVariant]) = value
+      let typed = importedGenericIndexedSigmaOptionCallbackApply[
+        RuntimeStructuredVariant](callback, value)
+      let runtime = importedGenericIndexedSigmaOptionCallbackApplyRuntimeValue[
+        RuntimeStructuredVariant](callback, value)
+      var typedNoneRejected = false
+      try:
+        discard importedGenericIndexedSigmaOptionCallbackApply[
+          RuntimeStructuredVariant](callback,
+          (input.tag, none(RuntimeStructuredVariant)))
+      except ValueError:
+        typedNoneRejected = true
+      var runtimeNoneRejected = false
+      try:
+        discard importedGenericIndexedSigmaOptionCallbackApplyRuntimeValue[
+          RuntimeStructuredVariant](callback,
+          (input.tag, none(RuntimeStructuredVariant)))
+      except ValueError:
+        runtimeNoneRejected = true
+      let decoded = valueToOption[RuntimeStructuredVariant](
+        runtimePairSecond(runtime.value), runtime.globals, "Option",
+        proc(item: Value, globals: Globals): RuntimeStructuredVariant =
+          valueToRuntimeStructuredVariant(item, globals, "SizedTree",
+            ["sizedTree"]))
+      typed[0] == input.tag and typed[1].isSome and
+        typed[1].get.constructor == "sizedTree" and
+        typed[1].get.arguments[0].natValue == input.index and
+        valueToInt(runtimePairFirst(runtime.value)) == input.tag and
+        decoded.isSome and decoded.get.constructor == "sizedTree" and
+        decoded.get.arguments[0].natValue == input.index and
+        typedNoneRejected and runtimeNoneRejected,
+    proc(input: tuple[tag, index: int]): seq[tuple[tag, index: int]] = @[])
+  if not indexedSigmaOptionWitnessCases:
     quit(1)
   let importedGenericDependentPairCallbackCases = forAll(
     "imported generic callbacks preserve dependent Sigma Vec indices", r, 200,

@@ -28,6 +28,11 @@ proc importedGenericIndexedNestedOptionCallbackApply (A : Type 0)
 proc importedGenericIndexedSigmaCallbackApply (A : Type 0)
     (callback : (Sig (tag : Int). A) -> (Sig (tag : Int). A))
     (value : Sig (tag : Int). A) : Sig (tag : Int). A = callback value
+proc importedGenericIndexedSigmaOptionCallbackApply (A : Type 0)
+    (callback : (Sig (tag : Int). Option A) ->
+      (Sig (tag : Int). Option A))
+    (value : Sig (tag : Int). Option A) : Sig (tag : Int). Option A =
+    callback value
 proc importedGenericIndexedNestedOptionVectorCallbackApply (A : Type 0)
     (callback : Option (Vec A (suc (suc zero))) ->
       Option (Vec A (suc (suc zero))))
