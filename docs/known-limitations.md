@@ -54,9 +54,15 @@ opaque object and nullary enum values. The value must be representable as a
 Nim compile-time constant, and other unmapped value-indexed binders remain
 unsupported.
 When a generic type appears in both a callback parameter and a later ordinary
-value parameter, generated wrappers let Nim infer the type from the value.
-The callback's concrete signature is still checked when the wrapper invokes
-it, so an incompatible callback fails compilation.
+value parameter, generated wrappers let Nim infer the type from the value,
+including when a later `Vec[A, n]` argument maps to `seq[A]`. The callback's
+concrete signature is still checked when the wrapper invokes or returns it,
+so an incompatible callback fails compilation.
+Executing an imported polymorphic container function such as `vmap` over a
+Nim callback remains unverified: a local `vmap(callback, values)` experiment
+compiled but its runtime wrapper failed with `stuck application`. Passing and
+returning the callback itself works; the evaluator failure needs an isolated
+reproducer before this higher-order container path can be claimed as supported.
 `Nat` conversions reject negative values. An explicit `proc` declaration with
 an unsupported signature remains
 checked but emits a targeted compile-time error if called. Generated names

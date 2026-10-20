@@ -71,6 +71,8 @@ for (path, expected) in [
      "values with an explicit runtimeType mapping"),
     ("tests/fixtures/embedded_err_generic_callback_inference.nim",
      "type mismatch"),
+    ("tests/fixtures/embedded_err_generic_callback_vector_inference.nim",
+     "type mismatch"),
     ("tests/fixtures/embedded_err_binding_quinary_nim_type.nim",
      "type mismatch"),
     ("tests/fixtures/embedded_err_binding_senary_eponym_type.nim",

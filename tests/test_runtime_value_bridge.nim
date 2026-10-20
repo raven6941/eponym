@@ -208,6 +208,14 @@ eponymBlock:
   runtimeValue(generatedGenericMappedCallback)
 
 eponymBlock:
+  import "../lib/vec.ep"
+  runtimeVector(Vec)
+  proc generatedGenericCallbackOverVector[A: Univ](
+      callback: proc(value: A): A {.closure.}, values: Vec[A, 2]):
+      proc(value: A): A {.closure.} = callback
+  runtimeValue(generatedGenericCallbackOverVector)
+
+eponymBlock:
   import "../lib/nat.ep"
   postulate(Int, Univ)
   postulate(Channel, Nat -> Univ)
@@ -1277,6 +1285,40 @@ proc callbackRole : Callback -> Sample -> Sample =
       typed == expected and
         valueToHost[ChannelHandle](runtime.value) == expected)
   if not genericCallbackInferenceCases:
+    quit(1)
+
+  let genericCallbackVectorInferenceCases = forAll(
+    "generic callback type infers from a later mapped vector argument", r, 200,
+    proc(r: var Rng): tuple[first, second: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[first, second: int]): bool =
+      let values = @[ChannelHandle(id: input.first, label: "first"),
+        ChannelHandle(id: input.second, label: "second")]
+      let callback: proc(value: ChannelHandle): ChannelHandle {.closure.} =
+        proc(value: ChannelHandle): ChannelHandle =
+          ChannelHandle(id: value.id + 1, label: value.label & "/returned")
+      let probe = ChannelHandle(id: input.first, label: "probe")
+      let expected = callback(probe)
+      let typed = generatedGenericCallbackOverVector(callback, values)(probe)
+      let runtime = generatedGenericCallbackOverVectorRuntimeValue(callback,
+        values)
+      let runtimeResult = callRuntimeValue(runtime.value,
+        @[toHostValue(probe)])
+      var typedLengthRejected = false
+      try:
+        discard generatedGenericCallbackOverVector(callback, @[values[0]])
+      except ValueError as error:
+        typedLengthRejected = "runtime Vec length mismatch" in error.msg
+      var runtimeLengthRejected = false
+      try:
+        discard generatedGenericCallbackOverVectorRuntimeValue(callback,
+          @[values[0]])
+      except ValueError as error:
+        runtimeLengthRejected = "runtime Vec length mismatch" in error.msg
+      typed == expected and
+        valueToHost[ChannelHandle](runtimeResult) == expected and
+        typedLengthRejected and runtimeLengthRejected)
+  if not genericCallbackVectorInferenceCases:
     quit(1)
 
   let genericNatIndexCases = forAll(
