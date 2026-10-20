@@ -407,7 +407,8 @@ proc natIndexMul*(a, b: int): int =
 
 proc seqToVecValue*[T](items: seq[T], expectedLength: int, globals: Globals,
     familyName: string,
-    encode: proc(item: T, globals: Globals): Value): Value =
+    encode: proc(item: T, globals: Globals): Value,
+    elementType: Value = nil): Value =
   if expectedLength < 0:
     raise newException(ValueError, "Vec length cannot be negative")
   if items.len != expectedLength:
@@ -415,12 +416,13 @@ proc seqToVecValue*[T](items: seq[T], expectedLength: int, globals: Globals,
       "runtime Vec length mismatch: expected " & $expectedLength &
       ", got " & $items.len)
   validateHostVectorCodec(globals, familyName)
-  result = callRuntimeValue(eval(globals["nil"].tm, @[]), @[vType(0)])
+  let representedType = if elementType.isNil: vType(0) else: elementType
+  result = callRuntimeValue(eval(globals["nil"].tm, @[]), @[representedType])
   for i in countdown(items.high, 0):
     let encodedItem = encode(items[i], globals)
     let tailLength = natToValue(items.high - i, globals)
     result = callRuntimeValue(eval(globals["cons"].tm, @[]),
-      @[vType(0), tailLength, encodedItem, result])
+      @[representedType, tailLength, encodedItem, result])
 
 proc vecValueToSeq*[T](value: Value, expectedLength: int, globals: Globals,
     familyName: string,
@@ -454,13 +456,15 @@ proc vecValueToSeq*[T](value: Value, expectedLength: int, globals: Globals,
 
 proc seqToListValue*[T](items: seq[T], globals: Globals,
     familyName: string,
-    encode: proc(item: T, globals: Globals): Value): Value =
+    encode: proc(item: T, globals: Globals): Value,
+    elementType: Value = nil): Value =
   validateHostListCodec(globals, familyName)
-  result = callRuntimeValue(eval(globals["nil"].tm, @[]), @[vType(0)])
+  let representedType = if elementType.isNil: vType(0) else: elementType
+  result = callRuntimeValue(eval(globals["nil"].tm, @[]), @[representedType])
   for i in countdown(items.high, 0):
     let encodedItem = encode(items[i], globals)
     result = callRuntimeValue(eval(globals["cons"].tm, @[]),
-      @[vType(0), encodedItem, result])
+      @[representedType, encodedItem, result])
 
 proc listValueToSeq*[T](value: Value, globals: Globals,
     familyName: string,
@@ -487,13 +491,15 @@ proc listValueToSeq*[T](value: Value, globals: Globals,
 
 proc optionToValue*[T](hostValue: Option[T], globals: Globals,
     familyName: string,
-    encode: proc(item: T, globals: Globals): Value): Value =
+    encode: proc(item: T, globals: Globals): Value,
+    elementType: Value = nil): Value =
   validateHostOptionCodec(globals, familyName)
+  let representedType = if elementType.isNil: vType(0) else: elementType
   if hostValue.isSome:
     let encoded = encode(hostValue.get, globals)
     return callRuntimeValue(eval(globals["some"].tm, @[]),
-      @[vType(0), encoded])
-  callRuntimeValue(eval(globals["none"].tm, @[]), @[vType(0)])
+      @[representedType, encoded])
+  callRuntimeValue(eval(globals["none"].tm, @[]), @[representedType])
 
 proc valueToOption*[T](value: Value, globals: Globals,
     familyName: string,
