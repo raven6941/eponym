@@ -26,30 +26,31 @@ and expression forms are listed in the syntax reference.
 ## Checked definitions need a runtime path
 
 Eponym checks definitions at compile time. A checked definition is callable
-from Nim only when the generated wrapper can convert its arguments and result
-to runtime values. The common cases are:
+from Nim only when its generated wrapper can convert arguments and results to
+runtime values. Common runtime representations include:
 
 - `Int`, `Nat`, and `Bool` (`Bool` requires `lib/bool.ep`);
-- explicitly mapped opaque Nim types, registered with `runtimeType` or
-  `runtimeCodec`;
-- supported structures: non-dependent `Sig` pairs, named records, standard
-  `Vec`, `List`, and `Option` types.
+- opaque Nim types registered with `runtimeType` or `runtimeCodec`;
+- non-dependent `Sig` pairs, named records, and the standard `Vec`, `List`,
+  and `Option` types.
 
 For example, `runtimeVector(Vec)` maps `Vec[Int, n]` to `seq[int]` and checks
 that the sequence length matches `n`. Nested vectors and vectors of mapped
-opaque values work when their element type has a codec.
+opaque values work when their element type has a codec. Dynamic generic value
+binders also support `Vec`, non-dependent `Sig`, `List`, and `Option` when the
+corresponding codecs are registered.
 
 Other types can still be checked by Eponym but may have no typed Nim wrapper.
-Use `runtimeValue(name)` for the lower-level `Value` interface, or provide a
-`runtimeCodec`. Some advanced shapes need explicit opt-ins such as
+Use `runtimeValue(name)` for the lower-level `Value` interface, or register a
+`runtimeCodec`. Some dependent records and pairs need explicit opt-ins such as
 `runtimeRecordTrusted` or `runtimePairTrusted`; these check field
-representations but trust relationships that the selected field codecs cannot
-check. `RuntimeVariant` exposes constructor identity and raw payload values,
-so callers decode payloads themselves.
+representations but trust relationships the selected field codecs cannot
+check. `RuntimeVariant` checks constructor identity, family membership, arity,
+and spine shape, but leaves payloads as raw `Value`s for the caller to decode.
 
 Generic type parameters can pass values through as opaque host values when
 their wrapper shape is supported; Eponym does not inspect the host
-representation. Structural or indexed values need codecs to inspect their
+representation. Structural and indexed values need codecs to inspect their
 shape. Runtime evaluation of type and index expressions supports a subset;
 arbitrary type-level Nim computation and every possible Eponym index
 expression are not supported by generated codecs.
@@ -63,10 +64,6 @@ witness. Generated wrappers can check named Pi domains and nested Sigma
 fields indexed by earlier binders, such as `Sig(length: Nat, Vec[Int,
 length])`. Broader dependent type expressions and arbitrary dependent generic
 wrappers remain unsupported.
-
-`RuntimeVariant` provides a checked structural view of data-family values:
-it checks constructor identity, family membership, arity, and spine shape,
-but leaves payloads as raw `Value`s for the caller to decode.
 
 ## Postulates connect checked code to host code
 

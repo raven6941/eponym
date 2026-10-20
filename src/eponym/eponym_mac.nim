@@ -2339,6 +2339,12 @@ proc genericRuntimeInfo(decl: NimNode,
       if mapping.eponymName == binderTypeHeadName:
         if mapping.isRuntimeVector:
           hasStructuralValueCodec = true
+        elif mapping.isRuntimeList and
+            not runtimeListElementType(param[^2], mapping.eponymName).isNil:
+          hasStructuralValueCodec = true
+        elif mapping.isRuntimeOption and
+            not runtimeOptionElementType(param[^2], mapping.eponymName).isNil:
+          hasStructuralValueCodec = true
         else:
           mappedBinder = mapping
           hasMappedBinder = true

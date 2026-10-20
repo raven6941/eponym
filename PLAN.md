@@ -474,6 +474,10 @@ implementations.
    are composed, and indexed Vec fields are length-checked. A 200-case
    property exercises typed and `RuntimeValue` dynamic wrappers and rejects a
    Sigma containing a Vec of the wrong length.
+- [x] Generate typed dynamic wrappers for generic value binders whose domain
+   is `List[A]` or `Option[A]` when the matching runtime codec is registered.
+   Recursive element codecs are reused; 200-case properties cover typed and
+   `RuntimeValue` dynamic wrappers for `List[Int]` and `Option[Int]`.
 - [x] Accept unmapped named Eponym values as `Value` arguments in dynamic
   generic wrappers. Validate that each value inhabits its declared named type
   before checked evaluation. A 200-case property passes an unmapped data

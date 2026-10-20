@@ -420,6 +420,9 @@ eponymBlock:
   runtimeValue(generatedIntListIdentity)
   proc generatedListIdentity[A: Univ](values: List[A]): List[A] = values
   runtimeValue(generatedListIdentity)
+  proc generatedGenericListValueBinder[values: List[Int]](
+      ignored: Int): List[Int] = values
+  runtimeValue(generatedGenericListValueBinder)
 
 eponymBlock:
   import "../lib/option.ep"
@@ -431,6 +434,9 @@ eponymBlock:
       value: Option[Option[Int]]): Option[Option[Int]] = value
   proc generatedOptionIdentity[A: Univ](value: Option[A]): Option[A] = value
   runtimeValue(generatedOptionIdentity)
+  proc generatedGenericOptionValueBinder[value: Option[Int]](
+      ignored: Int): Option[Int] = value
+  runtimeValue(generatedGenericOptionValueBinder)
 
 eponymBlock:
   import "../lib/bool.ep"
@@ -2345,6 +2351,22 @@ proc callbackRole : Callback -> Sample -> Sample =
   if not listCodecCases:
     quit(1)
   doAssert generatedListIdentity[int](@[]) == @[]
+  let dynamicGenericListCases = forAll(
+    "generic List values use the registered dynamic codec", r, 200,
+    proc(r: var Rng): tuple[length, seed, ignored: int] =
+      (r.genInt(0, 12), r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed, ignored: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        values[i] = input.seed + i
+      let typed = generatedGenericListValueBinderDynamic(values,
+        input.ignored)
+      let runtime = generatedGenericListValueBinderRuntimeValueDynamic(values,
+        input.ignored)
+      typed == values and decodeRuntimeIntList(runtime.value,
+        runtime.globals) == values)
+  if not dynamicGenericListCases:
+    quit(1)
 
   let optionCodecCases = forAll(
     "Option values cross as checked none/some constructors", r, 200,
@@ -2377,6 +2399,21 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded == value and rawDecoded == value and primitiveDecoded == value,
     )
   if not optionCodecCases:
+    quit(1)
+  let dynamicGenericOptionCases = forAll(
+    "generic Option values use the registered dynamic codec", r, 200,
+    proc(r: var Rng): tuple[present: bool, seed, ignored: int] =
+      (r.genBool(), r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[present: bool, seed, ignored: int]): bool =
+      let value = if input.present: some(input.seed) else: none(int)
+      let typed = generatedGenericOptionValueBinderDynamic(value,
+        input.ignored)
+      let runtime = generatedGenericOptionValueBinderRuntimeValueDynamic(value,
+        input.ignored)
+      let decoded = valueToOption[int](runtime.value, runtime.globals,
+        "Option", proc(item: Value, _: Globals): int = valueToInt(item))
+      typed == value and decoded == value)
+  if not dynamicGenericOptionCases:
     quit(1)
   let optionGlobals = generatedPrimitiveOptionIdentityRuntimeValue(
     none(int)).globals
