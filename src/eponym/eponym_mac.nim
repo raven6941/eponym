@@ -2435,7 +2435,12 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
           repr(generic.genericMappedTypes[i]) & "'")
       result.add(encoded)
     else:
-      result.add(newCall(bindSym"vType", newLit(0)))
+      let typeWitness = runtimeGenericTypeWitnessExpr(genericName, globals,
+        mappings)
+      if typeWitness.isNil:
+        result.add(newCall(bindSym"vType", newLit(0)))
+      else:
+        result.add(newCall(bindSym"runtimeTypeWitnessOrUniverse", typeWitness))
 
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
                  mappings: seq[HostRuntimeType], records: seq[HostRecord],
