@@ -152,6 +152,8 @@ eponymBlock:
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
   proc generatedDefault(value: Int = 42): Int = value
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
+  proc generatedNamedAdd(left: Int, right: Int): Int =
+    generatedAdd(right = right, left = left)
   runtimeValue(generatedDefault)
   proc generatedNatId(value: Nat): Nat = value
   proc generatedSigmaId(value: Sig(Nat, Int)): Sig(Nat, Int) = value
@@ -721,6 +723,11 @@ eponymBlock:
       Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(index, seed)
   runtimePairTrusted(generatedImportedVectorForIndex)
 
+eponymBlock:
+  import "fixtures/runtime_imported_named.ep"
+  proc generatedImportedNamed(left, right: Int): Int =
+    importedPick(right = right, left = left)
+
 static:
   doAssert compiles(generatedCheckedRole(35))
   doAssert compiles(generatedDefault())
@@ -729,6 +736,8 @@ static:
   doAssert compiles(generatedDefaultRuntimeValue())
   doAssert compiles(generatedDefaultRuntimeValue(value = 7))
   doAssert compiles(generatedAdd(20, 22))
+  doAssert compiles(generatedNamedAdd(20, 22))
+  doAssert compiles(generatedImportedNamed(20, 22))
   doAssert not compiles(generatedAdd(42))
   doAssert not compiles(generatedAdd("20", 22))
   doAssert compiles(generatedNatId(17))
@@ -903,7 +912,7 @@ when isMainModule:
     generatedDefault(17) == 17 and
     valueToInt(generatedDefaultRuntimeValue().value) == 42 and
     valueToInt(generatedDefaultRuntimeValue(value = 17).value) == 17 and
-    generatedAdd(20, 22) == 42 and
+    generatedAdd(20, 22) == 42 and generatedNamedAdd(20, 22) == 42 and
     generatedNatId(17) == 17 and generatedArithmetic(5, 7, 3) == -27 and
     generatedSigmaId((17, -9)) == (17, -9) and
     generatedOpaqueSigmaId((17, ChannelHandle(id: 1))) ==
@@ -918,6 +927,26 @@ when isMainModule:
       valueToInt(generatedDefaultRuntimeValue(value = value).value) == value,
     shrinkInt)
   if not generatedDefaultCases:
+    quit(1)
+  let namedArgumentCalls = forAll(
+    "named arguments preserve checked callable parameter order", r, 200,
+    proc(r: var Rng): tuple[left, right: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[left, right: int]): bool =
+      generatedNamedAdd(input.left, input.right) == input.left + input.right,
+    proc(input: tuple[left, right: int]):
+        seq[tuple[left, right: int]] = @[])
+  if not namedArgumentCalls:
+    quit(1)
+  let importedNamedArgumentCalls = forAll(
+    "named arguments reorder imported checked callables", r, 200,
+    proc(r: var Rng): tuple[left, right: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[left, right: int]): bool =
+      generatedImportedNamed(input.left, input.right) == input.left,
+    proc(input: tuple[left, right: int]):
+        seq[tuple[left, right: int]] = @[])
+  if not importedNamedArgumentCalls:
     quit(1)
   let generatedRecordRoundTrips = forAll(
     "structural record codec preserves primitive and opaque fields", r, 200,

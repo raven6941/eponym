@@ -23,6 +23,7 @@ template rawValue* {.pragma.}
 type LegacyCallInfo = object
   explicitCount: int
   termCount: int
+  termParamNames: seq[string]
   firstExplicitNat: bool
   requiresBrackets: bool
 
@@ -131,6 +132,52 @@ proc nimFormalArgCount(formal: NimNode): int =
     if param.kind == nnkIdentDefs:
       result += param.len - 2
 
+proc nimFormalArgNames(formal: NimNode): seq[string] =
+  if formal.kind != nnkFormalParams: return
+  for i in 1 ..< formal.len:
+    let param = formal[i]
+    if param.kind != nnkIdentDefs: continue
+    for j in 0 ..< param.len - 2:
+      let name = if param[j].kind == nnkPragmaExpr: param[j][0] else: param[j]
+      result.add(binderName(name))
+
+proc namedArgumentName(arg: NimNode): string =
+  if arg.kind == nnkExprEqExpr and arg.len == 2 and
+      arg[0].kind in {nnkIdent, nnkSym}:
+    result = $arg[0]
+
+proc orderNamedArguments(args: seq[NimNode], names: seq[string],
+    call: NimNode): seq[NimNode] =
+  if args.allIt(namedArgumentName(it).len == 0): return args
+  if names.len == 0:
+    error("eponymBlock: named arguments need a known callable signature", call)
+  var ordered = newSeq[NimNode](names.len)
+  var nextPositional = 0
+  for arg in args:
+    let name = namedArgumentName(arg)
+    var index = -1
+    if name.len > 0:
+      for i, paramName in names:
+        if paramName == name:
+          index = i
+          break
+      if index < 0:
+        error("eponymBlock: unknown named argument '" & name & "'", arg)
+    else:
+      while nextPositional < ordered.len and not ordered[nextPositional].isNil:
+        inc nextPositional
+      if nextPositional >= ordered.len:
+        error("eponymBlock: too many arguments", call)
+      index = nextPositional
+      inc nextPositional
+    if not ordered[index].isNil:
+      error("eponymBlock: duplicate argument for '" & names[index] & "'", arg)
+    ordered[index] = if name.len > 0: arg[1] else: arg
+  for i, value in ordered:
+    if value.isNil:
+      error("eponymBlock: missing argument for '" & names[i] & "'", call)
+    result.add(value)
+
 proc nimGenericParamCount(params: NimNode): int =
   if params.kind == nnkGenericParams:
     for param in params:
@@ -147,10 +194,9 @@ proc nimIndexArity(kind: NimNode): int =
 proc registerLegacyInfo(name: string, explicitCount, termCount: int,
                         firstExplicitNat = false,
                         requiresBrackets = false) =
-  if explicitCount > 0:
-    legacyCallInfo[name] = LegacyCallInfo(explicitCount: explicitCount,
-      termCount: termCount, firstExplicitNat: firstExplicitNat,
-      requiresBrackets: requiresBrackets)
+  legacyCallInfo[name] = LegacyCallInfo(explicitCount: explicitCount,
+    termCount: termCount, firstExplicitNat: firstExplicitNat,
+    requiresBrackets: requiresBrackets)
 
 proc firstSurfaceExplicitIsNat(tele: seq[tuple[name: string, ty: PreTerm,
     impl: bool, erased: bool, qty: Qty]]): bool =
@@ -191,6 +237,9 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
         declaration.def.tele.len - explicitCount,
         firstSurfaceExplicitIsNat(declaration.def.tele),
         surfaceRequiresBrackets(declaration.def.tele))
+      for binder in declaration.def.tele:
+        if not binder.impl and binder.ty.kind notin {pkUniv, pkUnivN}:
+          legacyCallInfo[declaration.def.name].termParamNames.add(binder.name)
       if declaration.def.retTy.kind == pkVar and
           declaration.def.retTy.name == "Nat":
         legacyNatFunctions.incl(declaration.def.name)
@@ -208,6 +257,9 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
           constructor.tele.len - extraImplicit,
           firstSurfaceExplicitIsNat(constructor.tele),
           familyParams > 0 or surfaceRequiresBrackets(constructor.tele))
+        for binder in constructor.tele:
+          if not binder.impl and binder.ty.kind notin {pkUniv, pkUnivN}:
+            legacyCallInfo[constructor.name].termParamNames.add(binder.name)
         if constructor.name == "nil":
           registerLegacyInfo("vecnil", familyParams + extraImplicit,
             constructor.tele.len - extraImplicit)
@@ -237,6 +289,9 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
       registerLegacyInfo($statement[0], genericCount,
         nimFormalArgCount(statement[3]), firstGenericIsNat,
         genericCount > 0)
+      if $statement[0] in legacyCallInfo:
+        legacyCallInfo[$statement[0]].termParamNames =
+          nimFormalArgNames(statement[3])
       if statement[3].kind == nnkFormalParams and statement[3].len > 0 and
           statement[3][0].kind in {nnkIdent, nnkSym} and
           $statement[3][0] == "Nat":
@@ -264,6 +319,9 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
               let termCount = nimFormalArgCount(constructor[3])
               registerLegacyInfo($constructor[0], paramCount, termCount,
                 requiresBrackets = paramCount > 0)
+              if $constructor[0] in legacyCallInfo:
+                legacyCallInfo[$constructor[0]].termParamNames =
+                  nimFormalArgNames(constructor[3])
               if $statement[1] == "Nat":
                 legacyNatConstructors.incl($constructor[0])
     of nnkImportStmt:
@@ -470,10 +528,17 @@ proc nimExprToEponym(n: NimNode): string =
              nimTypeToEponym(n[2]) & "). " & nimExprToEponym(n[3])
     warnCallStyleExplicitArgs(n)
     # f(a, b) -> f a b (with parens for nested calls to preserve grouping)
+    var callArgs: seq[NimNode] = @[]
+    for i in 1 ..< n.len: callArgs.add(n[i])
+    let headName = if n[0].kind in {nnkIdent, nnkSym}: $n[0] else: ""
+    if callArgs.anyIt(namedArgumentName(it).len > 0):
+      if headName.len == 0 or headName notin legacyCallInfo:
+        error("eponymBlock: named arguments need a known callable signature", n)
+      callArgs = orderNamedArguments(callArgs,
+        legacyCallInfo[headName].termParamNames, n)
     let head = nimExprToEponym(n[0])
     var args: seq[string] = @[]
-    for i in 1 ..< n.len:
-      let a = n[i]
+    for a in callArgs:
       # Parenthesize if arg is a call or obj-constr (Pi/Sig type args
       # parse as nnkObjConstr in expression position and need grouping too)
       if a.kind in {nnkCall, nnkObjConstr, nnkCommand}:
