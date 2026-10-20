@@ -392,10 +392,10 @@ proc nimExprToEponym(n: NimNode): string =
     # eponymBlock bodies (e.g. cons(Int, 2, a, ...), eConst 3) now elaborate
     # per their expected type instead of always becoming Nat suc-chains.
     # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so
-    # the Nat literal one is spelled `suc zero` here (as in string syntax).
+    # the Nat literal one is spelled `01` here (as in standalone syntax).
     let v = n.intVal
     if v < 0: error("negative integer literal", n)
-    if v == 1: "(suc zero)" else: $v
+    if v == 1: "01" else: $v
   of nnkStmtList:
     # Proc body: convert let-statements to nested let...in, final expr is body
     if n.len == 0: error("eponymBlock: empty proc body", n)
