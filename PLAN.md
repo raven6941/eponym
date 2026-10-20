@@ -441,6 +441,10 @@ implementations.
    their declared binder order. Separate 200-case properties check reordered
    calls to each; unknown, duplicate, and missing required arguments receive
    compile-time errors.
+- [x] Apply Nim defaults when checked local procedure calls omit positional
+   trailing arguments or skip defaulted arguments with named calls. A 200-case
+   property covers both forms; missing required arguments remain compile-time
+   errors.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

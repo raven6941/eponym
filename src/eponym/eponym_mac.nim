@@ -24,6 +24,7 @@ type LegacyCallInfo = object
   explicitCount: int
   termCount: int
   termParamNames: seq[string]
+  termParamDefaults: seq[NimNode]
   firstExplicitNat: bool
   requiresBrackets: bool
 
@@ -141,16 +142,36 @@ proc nimFormalArgNames(formal: NimNode): seq[string] =
       let name = if param[j].kind == nnkPragmaExpr: param[j][0] else: param[j]
       result.add(binderName(name))
 
+proc nimFormalArgDefaults(formal: NimNode): seq[NimNode] =
+  if formal.kind != nnkFormalParams: return
+  for i in 1 ..< formal.len:
+    let param = formal[i]
+    if param.kind != nnkIdentDefs: continue
+    for _ in 0 ..< param.len - 2:
+      result.add(if param[^1].kind == nnkEmpty: nil
+                 else: copyNimTree(param[^1]))
+
 proc namedArgumentName(arg: NimNode): string =
   if arg.kind == nnkExprEqExpr and arg.len == 2 and
       arg[0].kind in {nnkIdent, nnkSym}:
     result = $arg[0]
 
-proc orderNamedArguments(args: seq[NimNode], names: seq[string],
-    call: NimNode): seq[NimNode] =
-  if args.allIt(namedArgumentName(it).len == 0): return args
+proc orderCallArguments(args: seq[NimNode], names: seq[string],
+    defaults: seq[NimNode], call: NimNode): seq[NimNode] =
+  let hasNamed = args.anyIt(namedArgumentName(it).len > 0)
   if names.len == 0:
-    error("eponymBlock: named arguments need a known callable signature", call)
+    if hasNamed:
+      error("eponymBlock: named arguments need a known callable signature", call)
+    return args
+  if not hasNamed:
+    result = args
+    while result.len < names.len:
+      let i = result.len
+      if i >= defaults.len or defaults[i].isNil:
+        error("eponymBlock: missing required argument for '" & names[i] & "'",
+          call)
+      result.add(copyNimTree(defaults[i]))
+    return
   var ordered = newSeq[NimNode](names.len)
   var nextPositional = 0
   for arg in args:
@@ -175,8 +196,13 @@ proc orderNamedArguments(args: seq[NimNode], names: seq[string],
     ordered[index] = if name.len > 0: arg[1] else: arg
   for i, value in ordered:
     if value.isNil:
-      error("eponymBlock: missing argument for '" & names[i] & "'", call)
-    result.add(value)
+      if i < defaults.len and not defaults[i].isNil:
+        result.add(copyNimTree(defaults[i]))
+      else:
+        error("eponymBlock: missing required argument for '" & names[i] & "'",
+          call)
+    else:
+      result.add(value)
 
 proc nimGenericParamCount(params: NimNode): int =
   if params.kind == nnkGenericParams:
@@ -240,6 +266,7 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
       for binder in declaration.def.tele:
         if not binder.impl and binder.ty.kind notin {pkUniv, pkUnivN}:
           legacyCallInfo[declaration.def.name].termParamNames.add(binder.name)
+          legacyCallInfo[declaration.def.name].termParamDefaults.add(nil)
       if declaration.def.retTy.kind == pkVar and
           declaration.def.retTy.name == "Nat":
         legacyNatFunctions.incl(declaration.def.name)
@@ -260,6 +287,7 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
         for binder in constructor.tele:
           if not binder.impl and binder.ty.kind notin {pkUniv, pkUnivN}:
             legacyCallInfo[constructor.name].termParamNames.add(binder.name)
+            legacyCallInfo[constructor.name].termParamDefaults.add(nil)
         if constructor.name == "nil":
           registerLegacyInfo("vecnil", familyParams + extraImplicit,
             constructor.tele.len - extraImplicit)
@@ -292,6 +320,8 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
       if $statement[0] in legacyCallInfo:
         legacyCallInfo[$statement[0]].termParamNames =
           nimFormalArgNames(statement[3])
+        legacyCallInfo[$statement[0]].termParamDefaults =
+          nimFormalArgDefaults(statement[3])
       if statement[3].kind == nnkFormalParams and statement[3].len > 0 and
           statement[3][0].kind in {nnkIdent, nnkSym} and
           $statement[3][0] == "Nat":
@@ -322,6 +352,8 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
               if $constructor[0] in legacyCallInfo:
                 legacyCallInfo[$constructor[0]].termParamNames =
                   nimFormalArgNames(constructor[3])
+                legacyCallInfo[$constructor[0]].termParamDefaults =
+                  nimFormalArgDefaults(constructor[3])
               if $statement[1] == "Nat":
                 legacyNatConstructors.incl($constructor[0])
     of nnkImportStmt:
@@ -539,8 +571,13 @@ proc nimExprToEponym(n: NimNode): string =
     if callArgs.anyIt(namedArgumentName(it).len > 0):
       if headName.len == 0 or headName notin legacyCallInfo:
         error("eponymBlock: named arguments need a known callable signature", n)
-      callArgs = orderNamedArguments(callArgs,
-        legacyCallInfo[headName].termParamNames, n)
+      callArgs = orderCallArguments(callArgs,
+        legacyCallInfo[headName].termParamNames,
+        legacyCallInfo[headName].termParamDefaults, n)
+    elif headName.len > 0 and headName in legacyCallInfo:
+      callArgs = orderCallArguments(callArgs,
+        legacyCallInfo[headName].termParamNames,
+        legacyCallInfo[headName].termParamDefaults, n)
     let head = nimExprToEponym(n[0])
     var args: seq[string] = @[]
     for a in callArgs:

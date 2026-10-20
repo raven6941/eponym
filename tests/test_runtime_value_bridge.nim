@@ -154,6 +154,14 @@ eponymBlock:
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
   proc generatedNamedAdd(left: Int, right: Int): Int =
     generatedAdd(right = right, left = left)
+  proc generatedDefaultThenValue(value: Int = 42,
+      adjustment: Int): Int = addInt(value, adjustment)
+  proc generatedDefaultGap(adjustment: Int): Int =
+    generatedDefaultThenValue(adjustment = adjustment)
+  proc generatedTrailingDefault(value: Int, adjustment: Int = 5): Int =
+    addInt(value, adjustment)
+  proc generatedTrailingDefaultCall(value: Int): Int =
+    generatedTrailingDefault(value)
   runtimeValue(generatedDefault)
   proc generatedNatId(value: Nat): Nat = value
   proc generatedSigmaId(value: Sig(Nat, Int)): Sig(Nat, Int) = value
@@ -738,6 +746,8 @@ static:
   doAssert compiles(generatedDefaultRuntimeValue(value = 7))
   doAssert compiles(generatedAdd(20, 22))
   doAssert compiles(generatedNamedAdd(20, 22))
+  doAssert compiles(generatedDefaultGap(10))
+  doAssert compiles(generatedTrailingDefaultCall(10))
   doAssert compiles(generatedImportedNamed(20, 22))
   doAssert not compiles(generatedAdd(42))
   doAssert not compiles(generatedAdd("20", 22))
@@ -948,6 +958,19 @@ when isMainModule:
     proc(input: tuple[left, right: int]):
         seq[tuple[left, right: int]] = @[])
   if not importedNamedArgumentCalls:
+    quit(1)
+  let checkedCallDefaults = forAll(
+    "checked procedure calls apply positional and named defaults", r, 200,
+    proc(r: var Rng): tuple[value, adjustment: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[value, adjustment: int]): bool =
+      generatedDefaultGap(input.adjustment) == 42 + input.adjustment and
+      generatedTrailingDefaultCall(input.value) == input.value + 5 and
+      generatedDefaultThenValue(input.value, input.adjustment) ==
+        input.value + input.adjustment,
+    proc(input: tuple[value, adjustment: int]):
+        seq[tuple[value, adjustment: int]] = @[])
+  if not checkedCallDefaults:
     quit(1)
   let generatedRecordRoundTrips = forAll(
     "structural record codec preserves primitive and opaque fields", r, 200,
