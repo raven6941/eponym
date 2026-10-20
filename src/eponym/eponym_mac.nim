@@ -668,6 +668,13 @@ proc blockToEponym*(body: NimNode): string =
         # wrapper generator and never interpreted as an Eponym declaration.
         if st.len != 3 or st[1].kind != nnkIdent:
           error("runtimeType expects (EponymType, NimType)", st)
+      elif head == "runtimeCodec":
+        # Typed host codec for any named Eponym type or family.
+        if st.len != 5 or st[1].kind != nnkIdent or
+            st[3].kind notin {nnkIdent, nnkSym} or
+            st[4].kind notin {nnkIdent, nnkSym}:
+          error("runtimeCodec expects (EponymType, NimType, encoder, decoder)",
+            st)
       elif head == "runtimeVector":
         # Structural runtime codec for a Vec family with canonical nil/cons
         # constructor names.
@@ -716,6 +723,9 @@ type HostRuntimeType = object
   isRuntimeVector: bool
   isRuntimeList: bool
   isRuntimeOption: bool
+  isRuntimeCodec: bool
+  encoder: NimNode
+  decoder: NimNode
 
 proc mentionsName(node: NimNode, name: string): bool
 
@@ -779,17 +789,22 @@ proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
         $st[0] in ["runtimeType", "runtimeVector", "runtimeList",
-                   "runtimeOption"]:
+                   "runtimeOption", "runtimeCodec"]:
       let isVector = $st[0] == "runtimeVector"
       let isList = $st[0] == "runtimeList"
       let isOption = $st[0] == "runtimeOption"
+      let isCodec = $st[0] == "runtimeCodec"
       if ((isVector or isList or isOption) and
           (st.len != 2 or st[1].kind != nnkIdent)) or
-          (not isVector and not isList and not isOption and
+          (isCodec and (st.len != 5 or st[1].kind != nnkIdent or
+            st[3].kind notin {nnkIdent, nnkSym} or
+            st[4].kind notin {nnkIdent, nnkSym})) or
+          (not isVector and not isList and not isOption and not isCodec and
             (st.len != 3 or st[1].kind != nnkIdent)):
         error(if isVector: "runtimeVector expects (VecFamily)"
           elif isList: "runtimeList expects (ListFamily)"
           elif isOption: "runtimeOption expects (OptionFamily)"
+          elif isCodec: "runtimeCodec expects (EponymType, NimType, encoder, decoder)"
           else: "runtimeType expects (EponymType, NimType)", st)
       let name = $st[1]
       if name in seen:
@@ -799,7 +814,9 @@ proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
         nimType: if isVector or isList: ident"seq"
           elif isOption: ident"Option" else: st[2],
         isRuntimeVector: isVector, isRuntimeList: isList,
-        isRuntimeOption: isOption))
+        isRuntimeOption: isOption, isRuntimeCodec: isCodec,
+        encoder: if isCodec: st[3] else: nil,
+        decoder: if isCodec: st[4] else: nil))
 
 proc validateHostBoolCodec(globals: Globals) =
   if "Bool" notin globals:
@@ -936,6 +953,11 @@ proc runtimeOptionElementType(n: NimNode, familyName: string): NimNode =
     return nil
   n[1]
 
+proc runtimeTypeHead(n: NimNode): NimNode =
+  result = n
+  while result.kind in {nnkCall, nnkCommand, nnkBracketExpr} and result.len > 0:
+    result = result[0]
+
 proc runtimeNatIndexExpr(n: NimNode): NimNode =
   ## Lower the supported Nat index expressions to checked Nim int arithmetic.
   if n.kind in {nnkIdent, nnkSym}:
@@ -1017,6 +1039,11 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
       param[^2] = argType
       argIndex += param.len - 2
     return
+  let typeHead = runtimeTypeHead(n)
+  if typeHead.kind == nnkIdent:
+    for mapping in mappings:
+      if mapping.isRuntimeCodec and mapping.eponymName == $typeHead:
+        return mapping.nimType
   for mapping in mappings:
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(n, mapping.eponymName)
@@ -1167,6 +1194,12 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       allowDependentSigma, indexOverrides)
     if decodedResult.isNil: return nil
     return newProc(params = formal, body = newStmtList(decodedResult))
+  let typeHead = runtimeTypeHead(eponymType)
+  if typeHead.kind == nnkIdent:
+    for mapping in mappings:
+      if mapping.isRuntimeCodec and mapping.eponymName == $typeHead:
+        let codec = copyNimTree(if toValue: mapping.encoder else: mapping.decoder)
+        return newCall(codec, value, globals)
   for mapping in mappings:
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
@@ -1523,29 +1556,37 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
         adapterValue = newCall(bindSym"vHostFunc", partialProc)
     return newCall(bindSym"bindHostValue", bindingsSym, globalsSym,
                    nameLit, adapterValue)
-  if binding.eponymTypes.len >= 7:
-    let argumentCount = binding.eponymTypes.len - 1
+  var adapterTypes = binding.eponymTypes
+  var usesCustomCodec = false
+  for typeName in binding.eponymTypes:
+    for mapping in mappings:
+      if mapping.eponymName == typeName and mapping.isRuntimeCodec:
+        usesCustomCodec = true
+  if binding.eponymTypes.len == 1 and usesCustomCodec:
+    adapterTypes = @[binding.eponymTypes[0], binding.eponymTypes[0]]
+  if binding.eponymTypes.len >= 7 or usesCustomCodec:
+    let argumentCount = adapterTypes.len - 1
     var decodedArgs: seq[NimNode] = @[]
     for i in 0 ..< argumentCount:
-      let eponymType = ident(binding.eponymTypes[i])
+      let eponymType = ident(adapterTypes[i])
       let nimType = runtimeNimType(eponymType, mappings, records)
       if nimType.isNil:
         error("bindPostulate for '" & binding.postulateName &
           "' needs a runtime codec for argument type '" &
-          binding.eponymTypes[i] & "'")
+          adapterTypes[i] & "'")
       let decoded = runtimeValueConversionExpr(eponymType, nimType,
         newTree(nnkBracketExpr, ident"runtimeArguments", newLit(i)), false,
         mappings, records, ident"runtimeGlobals")
       if decoded.isNil:
         error("bindPostulate could not build a runtime codec for argument '" &
-          binding.eponymTypes[i] & "'")
+          adapterTypes[i] & "'")
       decodedArgs.add(decoded)
-    let resultEponymType = ident(binding.eponymTypes[^1])
+    let resultEponymType = ident(adapterTypes[^1])
     let resultNimType = runtimeNimType(resultEponymType, mappings, records)
     if resultNimType.isNil:
       error("bindPostulate for '" & binding.postulateName &
         "' needs a runtime codec for result type '" &
-        binding.eponymTypes[^1] & "'")
+        adapterTypes[^1] & "'")
     var implementationCall = newCall(binding.implementation)
     for decodedArg in decodedArgs:
       implementationCall.add(decodedArg)
@@ -1554,7 +1595,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       ident"runtimeGlobals")
     if encodedResult.isNil:
       error("bindPostulate could not build a runtime codec for result '" &
-        binding.eponymTypes[^1] & "'")
+        adapterTypes[^1] & "'")
     let runtimeArgsSym = ident"runtimeArguments"
     let runtimeGlobalsSym = ident"runtimeGlobals"
     let adapterBody = newStmtList(encodedResult)
@@ -1913,7 +1954,8 @@ macro eponymBlock*(body: untyped): untyped =
     var hasRuntimeMapping = false
     for mapping in runtimeTypes:
       if mapping.eponymName == requested and not mapping.isRuntimeVector and
-          not mapping.isRuntimeList and not mapping.isRuntimeOption:
+          not mapping.isRuntimeList and not mapping.isRuntimeOption and
+          not mapping.isRuntimeCodec:
         hasRuntimeMapping = true
     if not hasRuntimeMapping:
       error("runtimeRecordTrusted requires runtimeType(" & requested & ", NimType)",
@@ -1951,6 +1993,8 @@ macro eponymBlock*(body: untyped): untyped =
         validateHostListCodec(checkedGlobals, mapping.eponymName)
       elif mapping.isRuntimeOption:
         validateHostOptionCodec(checkedGlobals, mapping.eponymName)
+      elif mapping.isRuntimeCodec:
+        validateHostRuntimeCodecType(checkedGlobals, mapping.eponymName)
       else:
         let recordIndex = findHostRecord(records, mapping.eponymName)
         if recordIndex >= 0:
@@ -1978,9 +2022,17 @@ macro eponymBlock*(body: untyped): untyped =
           binding.eponymTypes[binding.pairArgCount + 1],
           binding.trustedPairIndex)
         continue
-      if binding.eponymTypes.len >= 7:
+      var usesCustomCodec = false
+      for typeName in binding.eponymTypes:
+        for mapping in runtimeTypes:
+          if mapping.eponymName == typeName and mapping.isRuntimeCodec:
+            usesCustomCodec = true
+      if binding.eponymTypes.len >= 7 or usesCustomCodec:
+        var adapterTypes = binding.eponymTypes
+        if binding.eponymTypes.len == 1:
+          adapterTypes = @[binding.eponymTypes[0], binding.eponymTypes[0]]
         validateHostMappedNaryType(checkedGlobals, binding.postulateName,
-                                   binding.eponymTypes)
+                                   adapterTypes)
         continue
       case binding.eponymTypes.len
       of 0:
