@@ -12,6 +12,8 @@ is your problem.
 
 See [known limitations](docs/known-limitations.md) for the current Nim
 runtime boundary, supported embedding surface, and code-generation gaps.
+See the [release notes](docs/release-notes.md) for user-visible behavior
+changes.
 
 ### Deliberate points of departure
 

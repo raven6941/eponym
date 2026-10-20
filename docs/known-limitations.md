@@ -115,6 +115,12 @@ Nim's type checker checks the concrete adapter signature, but the mapping to
 the Eponym type and the adapter behavior remain trusted. Neither compiler
 proves that the host value satisfies a dependent index.
 
+Distinct Eponym names may share one Nim representation, for example
+`RequestId` and `Sample` both mapped to `int`. Checked Eponym identities stay
+distinct at the bridge boundary, but a Nim adapter signature sees only `int`
+and cannot prevent adapter code from confusing their semantic roles. Use
+distinct Nim newtypes when Nim should enforce that distinction.
+
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
 opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`, and curried
@@ -248,5 +254,9 @@ generic definition is not implemented yet.
 
 Pure `if`/`elif`/`else` expressions lower to nested checked `ifThenElse`
 calls when `lib/bool.ep` is imported. Each condition must have type `Bool`,
-and each branch must be one Eponym expression. This does not enable ordinary
-effectful Nim control flow inside the block.
+and each branch must be one Eponym expression. The branches are delayed with
+unit lambdas and only the selected branch is evaluated, matching Nim's
+conditional evaluation even when a branch calls a bound postulate. This does
+not enable ordinary effectful Nim control flow inside the block. The Nim
+integer literal `1` is emitted using Eponym's unambiguous `01` spelling, so
+expected-type checking can select `Int` or `Nat`.
