@@ -286,6 +286,8 @@ eponymBlock:
 
 eponymBlock:
   import "../lib/vec.ep"
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
   runtimeVector(Vec)
   proc generatedGenericCallbackOverVector[A: Univ](
       callback: proc(value: A): A {.closure.}, values: Vec[A, 2]):
@@ -1648,6 +1650,8 @@ proc callbackRole : Callback -> Sample -> Sample =
       let expected = callback(value)
       let typed = generatedGenericMappedCallback(callback, value)
       let runtime = generatedGenericMappedCallbackRuntimeValue(callback, value)
+      validateRuntimeValueType(runtime.value,
+        runtimeGlobalValue(runtime.globals, "Channel"), runtime.globals)
       typed == expected and
         valueToHost[ChannelHandle](runtime.value) == expected)
   if not genericCallbackInferenceCases:
@@ -1667,6 +1671,12 @@ proc callbackRole : Callback -> Sample -> Sample =
       let typed = generatedGenericCallbackOverVector(callback, values)
       let runtime = generatedGenericCallbackOverVectorRuntimeValue(callback,
         values)
+      let expectedRuntimeType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [runtimeGlobalValue(runtime.globals, "Channel"),
+         natToValue(2, runtime.globals)])
+      validateRuntimeValueType(runtime.value, expectedRuntimeType,
+        runtime.globals)
       let decoded = vecValueToSeq[ChannelHandle](runtime.value, 2,
         runtime.globals, "Vec",
         proc(item: Value, _: Globals): ChannelHandle =
