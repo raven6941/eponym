@@ -110,8 +110,8 @@ fields have runtime codecs, and explicitly mapped opaque types or indexed
 families. Dependent Sigma values and records with dependent fields remain
 unsupported.
 `bindPostulate` supports unary `Int -> Int`, opaque `T -> T`, opaque `T -> U`,
-`T -> Nat`, `Nat -> A -> B`, and curried opaque postulates with up to five
-arguments. A mapped `Future[T]` may be
+`T -> Nat`, `Nat -> A -> B`, and typed curried postulates of arbitrary arity
+when every argument and result has a runtime codec. A mapped `Future[T]` may be
 returned opaquely; it is not awaited and async failure/cancellation semantics
 are undefined. `bindPostulatePair` supports one to three codec-supported
 named arguments with a non-dependent Sigma result, encoded as a typed Nim

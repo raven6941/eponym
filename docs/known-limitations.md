@@ -60,8 +60,8 @@ supports primitive Int/Nat values, canonical Bool constructors, nullary
 unindexed data constructors mapped to Nim enums, and opaque boxes for arbitrary
 Nim payload types. Typed adapters support unary
 `T -> T`, `T -> U`, `T -> Nat`,
-`Nat -> A -> B`, and opaque postulate contracts with up to five curried
-arguments.
+`Nat -> A -> B`, and typed curried postulate contracts of arbitrary arity
+when every argument and result type has a runtime codec.
 They can pass Nim objects, references, strings, or other values through
 explicitly mapped Eponym types without exposing their representation.
 `eponymBlock` can generate typed wrappers for first-order definitions over
@@ -124,7 +124,7 @@ distinct Nim newtypes when Nim should enforce that distinction.
 This is an ABI/runtime limitation, not an elaborator restriction. The
 `eponymBlock` macro supports `bindPostulate` for unary `Int -> Int`, unary
 opaque `T -> T`, opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`, and curried
-opaque postulates with up to five arguments.
+opaque postulates with typed runtime codecs for every argument and result.
 `bindPostulatePair` additionally binds one to three codec-supported named
 arguments to a non-dependent `Sig(B, C)` result using recursive tuple codecs.
 It checks the declared argument type heads and tuple field type heads; indices
@@ -145,10 +145,9 @@ Nim adapter propagate unchanged to the caller. An invoked but unbound
 postulate raises a `ValueError` naming the postulate. `eponymBlock` rejects a
 binding that no checked proc body references, but does not determine whether
 that proc is reachable from an application entry point. Call-graph
-reachability, postulate bindings with more than five curried arguments, and
-structural codecs remain unsupported. The TCP demo returns transport and codec
-failures through a mapped `TransportResult` value. Other adapters may still
-propagate synchronous exceptions. See the
+reachability and structural codecs remain unsupported. The TCP demo returns
+transport and codec failures through a mapped `TransportResult` value. Other
+adapters may still propagate synchronous exceptions. See the
 [postulate binding experiment](postulate-nim-binding-experiment.md) for the
 supported prototype and remaining work.
 
