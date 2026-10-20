@@ -585,11 +585,14 @@ The embedded syntax is Nim-shaped but is not ordinary Nim semantics. Explicit
 Eponym parameters use square brackets, as in `Vec[A, n]` and
 `cons[A, n](x, xs)`. Calls to known Eponym signatures with required explicit
 binders are compile-time errors; Nim command-style applications are checked
-too. The guard reads local Nim declarations and imported `.ep` signatures.
-Implicit binders can still be inferred in ordinary value calls. Unambiguous
-legacy applications with excess arguments or a type name in the explicit
-position are rejected. The metadata audit is still open for qualified call
-heads and declaration forms the scanner may miss.
+too. The guard follows known signatures through local and imported definitions,
+returned calls, callback parameters, local aliases, conditionals, type
+ascriptions, and typed record-field projections. Implicit binders can still be
+inferred in ordinary value calls. Unambiguous legacy applications with excess
+arguments or a type name in the explicit position are rejected. The guard is
+metadata-driven: where overloaded or ambiguous Nim field/callable shapes do not
+identify one Eponym signature, it avoids guessing. Unsupported Nim AST forms
+are rejected by the converter rather than treated as Nim computations.
 Supported
 generic definitions have generated Nim wrappers for type parameters, Nat and
 Int indices, Bool indices, and values with explicit runtime mappings. Other

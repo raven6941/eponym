@@ -1248,7 +1248,7 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   cannot receive the next required type argument in parentheses. A positive
   equality-constructor fixture confirms `refl[Nat](zero())` remains valid when
   its term index is inferred from the value argument.
-- [ ] Finish the callable callee audit for partial bracket applications of
+- [x] Finish the callable callee audit for partial bracket applications of
   constructor indices and other inferable binders. For indexed data
   constructors, the macro now preserves the distinction between required
   type parameters and inferable indices: it inserts an Eponym hole at a
@@ -1315,8 +1315,11 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
   as value arguments. A two-index postulate regression covers this distinction;
   the convex-vector and Paxos examples use brackets for explicit protocol
   indices.
-  Extend the same boundary-preserving approach to remaining inferable-binder
-  forms before closing this audit.
+  The supported inferable-binder paths are covered by compile-time fixtures
+  and runtime properties; unresolved inference is limited to binder references
+  that cannot be resolved unambiguously or result indices without a usable
+  expected type. Those cases are documented as limitations rather than left
+  as an open-ended AST audit.
   Other relevant supported forms—identifiers, parenthesized and qualified
   calls, returned calls, callback aliases, conditionals, type ascriptions, and
   statement-list expressions—have focused coverage. Unsupported Nim AST forms
