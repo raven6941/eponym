@@ -195,8 +195,11 @@ eponymBlock:
   import "fixtures/runtime_imported_value.ep"
   bindPostulate(importedStep, hostStepNim)
   runtimeType(Channel, ChannelHandle)
+  runtimeType(Sample, int)
+  runtimeList(List)
   runtimeValue(importedIdentity)
   runtimeValue(importedGenericIdentity)
+  runtimeValue(importedListMap)
   runtimeValue(importedApply)
 
 eponymBlock:
@@ -1368,6 +1371,28 @@ proc generatedTokenIdentity (value : Token) : Token = value
         valueToHost[ChannelHandle](typedChannelRuntime.value) == channel,
     shrinkInt)
   if not importedGenericIdentityCases:
+    quit(1)
+
+  let importedGenericCallbackCases = forAll(
+    "imported polymorphic list map bridges a Nim closure", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 12), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var channels = newSeq[ChannelHandle](input.length)
+      var expected = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        channels[i] = ChannelHandle(id: input.seed + i,
+          label: "map/" & $(input.seed + i))
+        expected[i] = input.seed + i
+      let mapper: proc(value: ChannelHandle): int {.closure.} =
+        proc(value: ChannelHandle): int = value.id
+      let direct = importedListMap[ChannelHandle, int](mapper, channels)
+      let runtime = importedListMapRuntimeValue[ChannelHandle, int](mapper,
+        channels)
+      direct == expected and
+        listValueToSeq[int](runtime.value, runtime.globals, "List",
+          proc(item: Value, _: Globals): int = valueToHost[int](item)) == direct)
+  if not importedGenericCallbackCases:
     quit(1)
 
   let importedDependentVectorCases = forAll(

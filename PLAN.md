@@ -426,9 +426,11 @@ implementations.
    comes from an imported `.ep` module and has no local Nim `proc` declaration.
    It exposes a raw `openArray[Value] -> (Value, Globals)` wrapper and
    reconstructs typed wrappers for supported imported Pi signatures, including
-   type-level `Univ` binders. A 200-case property covers an imported
-   polymorphic identity with `int` and a mapped Nim object through direct,
-   typed `RuntimeValue`, and explicit raw calls. Other properties call an
+   type-level `Univ` binders and non-dependent callback arrows. A 200-case
+   property covers an imported polymorphic identity with `int` and a mapped
+   Nim object through direct, typed `RuntimeValue`, and explicit raw calls; a
+   second property maps `List[ChannelHandle]` through an imported `List.map`
+   using a Nim closure and checks the mapped result. Other properties call an
    imported checked identity and dispatch an imported postulate to a bound Nim
    implementation; a negative runtime check rejects mismatched raw arity.
    Directory-aware runtime state retains imported bodies, and a checked-term
@@ -548,8 +550,8 @@ implementations.
    higher-order signatures. Unsupported
    cases must continue to fail with a precise compile-time diagnostic.
    Imported signatures outside the current Pi reconstruction grammar still
-   need a raw `Value` wrapper; explicit local `proc` declarations with
-   unsupported signatures fail clearly when called.
+   need a raw `Value` wrapper; dependent callback signatures and explicit local
+   `proc` declarations with unsupported signatures fail clearly when called.
 - [x] Reconstruct typed wrappers for local clause-style definitions from
    their checked Pi signatures. Two 200-case properties cover direct calls
    and typed and raw `RuntimeValue` access for a `Nat -> Nat` identity and a
