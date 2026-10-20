@@ -161,18 +161,21 @@ proc evalCertifiedObjective*(x: int): int =
 proc evalShiftedCertifiedObjective*(x: int): int =
   evalCertifiedObjectiveValue(shiftedProbRuntimeValue(), x)
 
-proc ternaryMin(lo, hi: int): tuple[xstar, fstar: int] =
+proc ternaryMin(lo, hi: int,
+                checked: tuple[value: Value, globals: Globals]):
+    tuple[xstar, fstar: int] =
   var a = lo
   var b = hi
   while b - a > 3:
     let m1 = a + (b - a) div 3
     let m2 = b - (b - a) div 3
-    if evalCertifiedObjective(m1) <= evalCertifiedObjective(m2): b = m2
+    if evalCertifiedObjectiveValue(checked, m1) <=
+        evalCertifiedObjectiveValue(checked, m2): b = m2
     else: a = m1
   var best = a
-  var bestV = evalCertifiedObjective(a)
+  var bestV = evalCertifiedObjectiveValue(checked, a)
   for x in (a + 1)..b:
-    let v = evalCertifiedObjective(x)
+    let v = evalCertifiedObjectiveValue(checked, x)
     if v < bestV:
       best = x
       bestV = v
@@ -183,7 +186,8 @@ proc main() =
   echo "  f(x) = 2*(x-3)^2 + x elaborated with a Convex certificate;"
   echo "  `minimize` accepted it at compile time (x*x would not:"
   echo "  examples/ep/17a-convex-neg.ep)."
-  let (xstar, fstar) = ternaryMin(-100, 100)
+  let checkedProb = probRuntimeValue()
+  let (xstar, fstar) = ternaryMin(-100, 100, checkedProb)
   echo "  ternary search on [-100, 100]: x* = ", xstar, ", f(x*) = ", fstar
   echo "  (convexity certifies this local minimum is the global one)"
 

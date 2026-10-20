@@ -328,12 +328,16 @@ proc ifExprToEponym(n: NimNode): string =
     if elseBranch.len != 1:
       error("eponymBlock: else branch must be one expression", elseBranch)
     elseBranch = elseBranch[0]
-  var fallback = nimExprToEponym(elseBranch)
+  # Eponym applications are strict, while Nim conditionals evaluate only the
+  # selected branch. Pass each branch as a unit thunk so a postulate (or any
+  # other runtime-bound operation) in the unselected branch is not evaluated.
+  var fallback = "(lam (_ : 1). " & nimExprToEponym(elseBranch) & ")"
   for i in countdown(branches.high, 0):
     let (condition, body) = branches[i]
-    fallback = "ifThenElse (" & nimExprToEponym(condition) & ") (" &
-      nimExprToEponym(branchExpr(body)) & ") (" & fallback & ")"
-  fallback
+    let yesBranch = "(lam (_ : 1). " & nimExprToEponym(branchExpr(body)) & ")"
+    fallback = "ifThenElse (" & nimExprToEponym(condition) & ") " &
+      yesBranch & " (" & fallback & ")"
+  "(" & fallback & ") <>"
 
 proc nimCommandLamToEponym(n: NimNode): string =
   ## Convert Nim's command-form untyped lambda (`lam x. body`) to Eponym
@@ -404,8 +408,9 @@ proc nimExprToEponym(n: NimNode): string =
     # as string syntax. This also resolves Issue #8: nested literals in
     # eponymBlock bodies (e.g. cons(Int, 2, a, ...), eConst 3) now elaborate
     # per their expected type instead of always becoming Nat suc-chains.
-    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so
-    # the Nat literal one is spelled `01` here (as in standalone syntax).
+    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so use
+    # the parser's unambiguous integer spelling `01`. Expected-type
+    # overloading then selects Nat or Int, just as it does for other literals.
     let v = n.intVal
     if v < 0: error("negative integer literal", n)
     if v == 1: "01" else: $v
@@ -1263,7 +1268,7 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
       let trustedPairIndex = $st[0] == "bindPostulatePairTrusted"
       if pairResult:
         if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
-          error("bindPostulatePair expects (name, nimProc, Argument[, Argument...], First, Second)", st)
+          error($st[0] & " expects (name, nimProc, Argument[, Argument...], First, Second)", st)
       elif st.len < 3 or st[1].kind != nnkIdent:
         error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       let name = $st[1]
@@ -1351,6 +1356,15 @@ proc bindingIsReferenced(body: NimNode, postulateName: string,
   for definition in allDefs:
     if checkedDefReferences(definition, refId): return true
   false
+
+proc isCheckedNatType(globals: Globals, typeName: string): bool =
+  ## Classify Nat by the checked declaration's identity, not by its spelling.
+  if "Nat" notin globals or typeName notin globals:
+    return false
+  let nat = globals["Nat"].tm
+  let candidate = globals[typeName].tm
+  not nat.isNil and not candidate.isNil and nat.kind == tR and
+    candidate.kind == tR and nat.refId == candidate.refId
 
 proc simpleRuntimeCodec(n: NimNode): string =
   if n.kind == nnkIdent:
@@ -2040,13 +2054,17 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
       result.add(newCall(bindSym"vType", newLit(0)))
 
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
-                 mappings: seq[HostRuntimeType],
-                 records: seq[HostRecord]): NimNode =
+                 mappings: seq[HostRuntimeType], records: seq[HostRecord],
+                 checkedGlobals: Globals): NimNode =
   let nameLit = newLit(binding.postulateName)
   if binding.rawValue:
     return newCall(bindSym"bindHostValueNary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
   if binding.pairResult:
+    let bindingForm = if binding.trustedPairIndex:
+      "bindPostulatePairTrusted"
+    else:
+      "bindPostulatePair"
     let pairType = if not binding.pairResultType.isNil:
       copyNimTree(binding.pairResultType)
     else:
@@ -2056,7 +2074,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
     let pairNimType = runtimeNimType(pairType, mappings, records,
                                     binding.trustedPairIndex)
     if pairNimType.isNil:
-      error("bindPostulatePair needs runtime codecs for both pair fields")
+      error(bindingForm & " needs runtime codecs for both pair fields")
     var runtimeArgs: seq[NimNode] = @[]
     var decodedArgs: seq[NimNode] = @[]
     var adapterBody = newStmtList()
@@ -2065,14 +2083,14 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       let eponymArgType = ident(binding.eponymTypes[i])
       let nimArgType = runtimeNimType(eponymArgType, mappings, records)
       if nimArgType.isNil:
-        error("bindPostulatePair needs a runtime codec for argument '" &
+        error(bindingForm & " needs a runtime codec for argument '" &
           binding.eponymTypes[i] & "'")
       let runtimeArg = genSym(nskParam, "runtimeArgument")
       runtimeArgs.add(runtimeArg)
       let decoded = runtimeValueConversionExpr(eponymArgType, nimArgType,
         runtimeArg, false, mappings, records, globalsSym)
       if decoded.isNil:
-        error("bindPostulatePair could not build an argument codec")
+        error(bindingForm & " could not build an argument codec")
       let decodedArg = genSym(nskLet, "hostPairArgument")
       adapterBody.add(newLetStmt(decodedArg, decoded))
       decodedArgs.add(decodedArg)
@@ -2084,7 +2102,7 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       hostResult, true, mappings, records, globalsSym,
       binding.trustedPairIndex, pairIndexOverrides)
     if encodedResult.isNil:
-      error("bindPostulatePair could not build a value codec")
+      error(bindingForm & " could not build a value codec")
     var implementationCall = newCall(binding.implementation)
     for decodedArg in decodedArgs:
       implementationCall.add(decodedArg)
@@ -2157,11 +2175,15 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
     return newCall(bindSym"bindHostIntUnary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
   var typeIndexes: seq[int] = @[]
-  if binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+  let isNatType = proc(typeIndex: int): bool =
+    if typeIndex < 0 or typeIndex >= binding.eponymTypes.len: return false
+    let typeName = binding.eponymTypes[typeIndex]
+    isCheckedNatType(checkedGlobals, typeName)
+  if binding.eponymTypes.len == 2 and isNatType(1):
     typeIndexes = @[0]
   elif binding.eponymTypes.len == 2:
     typeIndexes = @[0, 1]
-  elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
+  elif binding.eponymTypes.len == 3 and isNatType(0):
     typeIndexes = @[1, 2]
   else:
     for i in 0 ..< binding.eponymTypes.len:
@@ -2178,13 +2200,16 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       error("bindPostulate for '" & binding.postulateName &
         "' needs runtimeType(" & eponymName & ", NimType)")
     typeArgs.add(nimType)
+  let natOpaqueHomogeneous = binding.eponymTypes.len == 3 and
+    isNatType(0) and typeArgs[0].repr == typeArgs[1].repr
   let adapter =
     if binding.eponymTypes.len == 1: bindSym"bindHostOpaqueUnary"
-    elif binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+    elif binding.eponymTypes.len == 2 and isNatType(1):
       bindSym"bindHostOpaqueNatUnary"
     elif binding.eponymTypes.len == 2: bindSym"bindHostOpaqueMapUnary"
-    elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
-      bindSym"bindHostNatOpaqueMapBinary"
+    elif binding.eponymTypes.len == 3 and isNatType(0):
+      if natOpaqueHomogeneous: bindSym"bindHostNatOpaqueBinary"
+      else: bindSym"bindHostNatOpaqueMapBinary"
     elif binding.eponymTypes.len == 3: bindSym"bindHostOpaqueBinary"
     elif binding.eponymTypes.len == 4: bindSym"bindHostOpaqueTernary"
     elif binding.eponymTypes.len == 5: bindSym"bindHostOpaqueQuaternary"
@@ -2194,12 +2219,13 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
             binding.postulateName & "'")
   var genericAdapter = newNimNode(nnkBracketExpr)
   genericAdapter.add(adapter)
-  for typeArg in typeArgs:
+  let genericTypeArgs = if natOpaqueHomogeneous: typeArgs[0 .. 0] else: typeArgs
+  for typeArg in genericTypeArgs:
     genericAdapter.add(typeArg)
   var call = newCall(genericAdapter, bindingsSym, globalsSym, nameLit)
-  if binding.eponymTypes.len == 2 and binding.eponymTypes[1] == "Nat":
+  if binding.eponymTypes.len == 2 and isNatType(1):
     call.add(newLit(binding.eponymTypes[0]))
-  elif binding.eponymTypes.len == 3 and binding.eponymTypes[0] == "Nat":
+  elif binding.eponymTypes.len == 3 and isNatType(0):
     call.add(newLit(binding.eponymTypes[1]))
     call.add(newLit(binding.eponymTypes[2]))
   else:
@@ -2252,6 +2278,7 @@ proc unreconstructableRuntimeWrapper(defName: string): NimNode =
 proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          bindings: seq[HostPostulateBinding],
                          mappings: seq[HostRuntimeType],
+                         checkedGlobals: Globals,
                          records: seq[HostRecord],
                          allowDependentSigma = false): NimNode =
   ## Emit concrete Nim wrappers for first-order types, including generic type
@@ -2307,8 +2334,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     wrapperBody.add(newVarStmt(bindingSym,
       newCall(bindSym"initRuntimeBindings")))
     for binding in bindings:
-      wrapperBody.add(bindingCall(binding, bindingSym, globalsSym, codecMappings,
-                                  records))
+      wrapperBody.add(bindingCall(binding, bindingSym, globalsSym,
+                                  codecMappings, records, checkedGlobals))
 
   var values = newNimNode(nnkBracket)
   for genericArg in genericRuntimeValueArgs(generic, globalsSym,
@@ -2344,7 +2371,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
 
 proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     defName: string, bindings: seq[HostPostulateBinding],
-    mappings: seq[HostRuntimeType], records: seq[HostRecord],
+    mappings: seq[HostRuntimeType], checkedGlobals: Globals,
+    records: seq[HostRecord],
     allowDependentSigma = false,
     returnRuntimeValue = false): NimNode =
   ## Emit a sibling wrapper where supported value-indexed generics are
@@ -2411,7 +2439,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
   body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))
   for binding in bindings:
     body.add(bindingCall(binding, bindingsSym, globalsSym,
-                         generic.codecMappings, records))
+                         generic.codecMappings, records, checkedGlobals))
   var values = newNimNode(nnkBracket)
   var indexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, genericName in generic.genericNames:
@@ -2462,6 +2490,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
 proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
                               bindings: seq[HostPostulateBinding],
                               mappings: seq[HostRuntimeType],
+                              checkedGlobals: Globals,
                               records: seq[HostRecord],
                               allowDependentSigma = false): NimNode =
   ## Emit a typed host-argument overload that returns the checked result as a
@@ -2530,7 +2559,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   if bindings.len > 0:
     for binding in bindings:
       body.add(bindingCall(binding, bindingSym, globalsSym, codecMappings,
-                           records))
+                           records, checkedGlobals))
   let runtimeCall = newCall(bindSym"callDefValueWithBindings",
     newCall(bindSym"findDef", defsSym, nameLit), valuesSeq, bindingSym)
   body.add(newLetStmt(runtimeValueSym,
@@ -2557,7 +2586,7 @@ proc checkedLambdaArity(definition: ElabDef): int =
 proc rawRuntimeValueWrapper(baseDir, src, defName: string,
     expectedArity: int,
     bindings: seq[HostPostulateBinding], mappings: seq[HostRuntimeType],
-    records: seq[HostRecord]): NimNode =
+    records: seq[HostRecord], checkedGlobals: Globals): NimNode =
   ## Expose an imported checked definition when no local Nim signature is
   ## available. Callers explicitly pass its arguments as Eponym Values.
   let argsSym = genSym(nskParam, "runtimeArguments")
@@ -2580,7 +2609,8 @@ proc rawRuntimeValueWrapper(baseDir, src, defName: string,
     newCall(bindSym"getDefsDir", dirLit, srcLit)))
   body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))
   for binding in bindings:
-    body.add(bindingCall(binding, bindingsSym, globalsSym, mappings, records))
+    body.add(bindingCall(binding, bindingsSym, globalsSym, mappings, records,
+                         checkedGlobals))
   body.add(newLetStmt(valueSym,
     newCall(bindSym"callDefValueWithBindings",
       newCall(bindSym"findDef", defsSym, nameLit), argsSym, bindingsSym,
@@ -2784,7 +2814,7 @@ macro eponymBlock*(body: untyped): untyped =
             "postulate '" & binding.postulateName & "' requires opaque Eponym type '" &
             required & "', not '" & binding.eponymTypes[0] & "'")
       of 2:
-        if binding.eponymTypes[1] == "Nat":
+        if isCheckedNatType(checkedGlobals, binding.eponymTypes[1]):
           validateHostOpaqueNatUnaryType(checkedGlobals,
             binding.postulateName, binding.eponymTypes[0])
         else:
@@ -2792,7 +2822,7 @@ macro eponymBlock*(body: untyped): untyped =
             binding.postulateName, binding.eponymTypes[0],
             binding.eponymTypes[1])
       of 3:
-        if binding.eponymTypes[0] == "Nat":
+        if isCheckedNatType(checkedGlobals, binding.eponymTypes[0]):
           validateHostNatOpaqueBinaryType(checkedGlobals,
             binding.postulateName, binding.eponymTypes[1],
             binding.eponymTypes[2])
@@ -2882,7 +2912,7 @@ macro eponymBlock*(body: untyped): untyped =
             newCall(bindSym"initRuntimeBindings")))
           for binding in bindings:
             rawBody.add(bindingCall(binding, bindingsSym, globalsSym,
-                                    runtimeTypes, records))
+                                    runtimeTypes, records, checkedGlobals))
           let allArgsSeq = genSym(nskLet, "allRuntimeArguments")
           rawBody.add(newLetStmt(allArgsSeq, newCall(bindSym"concat",
             newCall(bindSym"toSeq", genericArgsSym),
@@ -2924,7 +2954,8 @@ macro eponymBlock*(body: untyped): untyped =
         var bindingStatements = newStmtList()
         for binding in bindings:
           bindingStatements.add(bindingCall(binding, bindingsSym, globalsSym,
-                                            runtimeTypes, records))
+                                            runtimeTypes, records,
+                                            checkedGlobals))
         var rawBody = newStmtList()
         rawBody.add quote do:
           if `argsSym`.len != `expectedArity`:
@@ -2977,26 +3008,27 @@ macro eponymBlock*(body: untyped): untyped =
         else:
           let allowDependentSigma = d.name in trustedRuntimePairs
           let typedValueWrapper = typedRuntimeValueWrapper(procDecl,
-            baseDir, src, d.name, bindings, runtimeTypes, records,
-            allowDependentSigma)
+            baseDir, src, d.name, bindings, runtimeTypes, checkedGlobals,
+            records, allowDependentSigma)
           if not typedValueWrapper.isNil:
             result.add(typedValueWrapper)
       let allowDependentSigma = d.name in trustedRuntimePairs
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
-        bindings, runtimeTypes, records, allowDependentSigma)
+        bindings, runtimeTypes, checkedGlobals, records, allowDependentSigma)
       if not typedWrapper.isNil:
         result.add(typedWrapper)
       else:
         result.add(unsupportedRuntimeWrapper(procDecl, d.name, runtimeTypes,
           records, allowDependentSigma))
       let dynamicWrapper = dynamicGenericRuntimeWrapper(procDecl, baseDir,
-        src, d.name, bindings, runtimeTypes, records, allowDependentSigma)
+        src, d.name, bindings, runtimeTypes, checkedGlobals, records,
+        allowDependentSigma)
       if not dynamicWrapper.isNil:
         result.add(dynamicWrapper)
       if d.name in runtimeValueNames:
         let dynamicRuntimeValueWrapper = dynamicGenericRuntimeWrapper(procDecl,
-          baseDir, src, d.name, bindings, runtimeTypes, records,
-          allowDependentSigma, returnRuntimeValue = true)
+          baseDir, src, d.name, bindings, runtimeTypes, checkedGlobals,
+          records, allowDependentSigma, returnRuntimeValue = true)
         if not dynamicRuntimeValueWrapper.isNil:
           result.add(dynamicRuntimeValueWrapper)
         else:
@@ -3008,7 +3040,7 @@ macro eponymBlock*(body: untyped): untyped =
     if d.name in runtimeValueNames:
       result.add(rawRuntimeValueWrapper(baseDir, src, d.name,
         checkedLambdaArity(d), bindings,
-        runtimeTypes, records))
+        runtimeTypes, records, checkedGlobals))
     result.add(unreconstructableRuntimeWrapper(d.name))
   for requested in runtimeValueNames:
     var localDef = false
@@ -3027,16 +3059,18 @@ macro eponymBlock*(body: untyped): untyped =
           checkedGlobals)
         if not importedDecl.isNil:
           let typedImportedWrapper = typedRuntimeWrapper(importedDecl,
-            baseDir, src, requested, bindings, runtimeTypes, records)
+            baseDir, src, requested, bindings, runtimeTypes, checkedGlobals,
+            records)
           if not typedImportedWrapper.isNil:
             result.add(typedImportedWrapper)
           let typedImportedValueWrapper = typedRuntimeValueWrapper(
             importedDecl, baseDir, src, requested, bindings, runtimeTypes,
-            records)
+            checkedGlobals, records)
           if not typedImportedValueWrapper.isNil:
             result.add(typedImportedValueWrapper)
         result.add(rawRuntimeValueWrapper(baseDir, src, requested,
-          checkedLambdaArity(importedDef), bindings, runtimeTypes, records))
+          checkedLambdaArity(importedDef), bindings, runtimeTypes, records,
+          checkedGlobals))
 
 macro eponym*(src: string): untyped =
   ## Elaborate and typecheck a surface program at compile time.

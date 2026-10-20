@@ -647,6 +647,8 @@ proc substSpine*(t: Term, spine: seq[Term]): Term =
 
 proc eval*(t: Term, env: seq[Value]): Value  # forward
 type RuntimeBindings* = Table[int, Value]
+  ## Nim Table assignments share backing storage. Build bindings before
+  ## evaluation starts and treat them as immutable afterward.
 
 proc evalWithBindings*(t: Term, env: seq[Value],
                        bindings: RuntimeBindings): Value  # forward
