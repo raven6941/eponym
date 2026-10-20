@@ -149,12 +149,13 @@ type witnesses, including recursively nested built-in collection types. When an
 element type is a type-level generic, generated wrappers can derive its
 Eponym type witness from a unique `runtimeType` mapping for an unindexed Eponym
 type and the concrete Nim type. Opaque host boxes retain that witness for
-runtime type inference, so a `Vec[A, n]` can be checked with mapped Nim
-elements. Generic types with no mapping, multiple Eponym mappings for the same
-Nim type, or only an indexed-family mapping remain opaque and cannot support
-full runtime type validation in that context. Raw `toHostValue` values also
-remain untyped unless the caller supplies them through a mapped generated
-codec.
+runtime type inference, and generated generic wrappers pass the witness as the
+checked body's type argument. This lets the bridge validate `Vec[A, n]` values
+and mapped callback results such as `vmap`. Generic types with no mapping,
+multiple Eponym mappings for the same Nim type, or only an indexed-family
+mapping remain opaque and cannot support full runtime type validation in that
+context. Raw `toHostValue` values also remain untyped unless the caller
+supplies them through a mapped generated codec.
 The standard unindexed `List[A]` family also has a `runtimeList(List)` codec
 that maps to `seq[A]`, checks constructor identities and spines, and recursively
 uses the element codec. A unary family with canonical `none` and `some`

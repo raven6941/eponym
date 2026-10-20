@@ -1161,6 +1161,9 @@ proc runtimeGlobalTypeWitness*(globals: Globals, name: string): Value =
   if declaredType.whnfKind != wType: return nil
   eval(globals[name].tm, @[])
 
+proc runtimeTypeWitnessOrUniverse*(witness: Value): Value =
+  if witness.isNil: vType(0) else: witness
+
 proc runtimeValueTerm(value: Value, globals: Globals): Term =
   if value.isNil: return nil
   case value.whnfKind

@@ -408,8 +408,10 @@ implementations.
    resolves generic element types through unique `runtimeType` mappings for an
    unindexed Eponym type and its concrete Nim type. Mapped opaque boxes retain
    that Eponym type witness so runtime inference can validate constructor
-   arguments. A 200-case bridge property validates mapped `Vec[A,n]` values and
-   rejects an incorrect element type, in addition to primitive Vecs including
+   arguments; generated generic wrappers also pass the mapped type as the
+   checked body's type argument. 200-case properties validate mapped
+   `Vec[A,n]` values, reject an incorrect element type, and cover mapped
+   callback results through `vmap`, in addition to primitive Vecs including
    the empty case and nested collection round trips.
 - [x] Add `runtimeCodec(EponymType, NimType, encoder, decoder)` for explicitly
    mapped named Eponym types and families. The typed encoder and decoder
