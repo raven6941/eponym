@@ -714,7 +714,7 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
       let trustedPairIndex = $st[0] == "bindPostulatePairTrusted"
       if pairResult:
         if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
-          error("bindPostulatePair expects (name, nimProc, Argument[, Argument...], First, Second)", st)
+          error($st[0] & " expects (name, nimProc, Argument[, Argument...], First, Second)", st)
       elif st.len notin {3, 4, 5, 6, 7, 8} or st[1].kind != nnkIdent:
         error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       let name = $st[1]
@@ -886,32 +886,36 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
                  records: seq[HostRecord]): NimNode =
   let nameLit = newLit(binding.postulateName)
   if binding.pairResult:
+    let bindingForm = if binding.trustedPairIndex:
+      "bindPostulatePairTrusted"
+    else:
+      "bindPostulatePair"
     let pairType = newCall(ident"Sig",
       ident(binding.eponymTypes[binding.pairArgCount]),
       ident(binding.eponymTypes[binding.pairArgCount + 1]))
     let pairNimType = runtimeNimType(pairType, mappings, records)
     if pairNimType.isNil:
-      error("bindPostulatePair needs runtime codecs for both pair fields")
+      error(bindingForm & " needs runtime codecs for both pair fields")
     var runtimeArgs: seq[NimNode] = @[]
     var decodedArgs: seq[NimNode] = @[]
     for i in 0 ..< binding.pairArgCount:
       let eponymArgType = ident(binding.eponymTypes[i])
       let nimArgType = runtimeNimType(eponymArgType, mappings, records)
       if nimArgType.isNil:
-        error("bindPostulatePair needs a runtime codec for argument '" &
+        error(bindingForm & " needs a runtime codec for argument '" &
           binding.eponymTypes[i] & "'")
       let runtimeArg = genSym(nskParam, "runtimeArgument")
       runtimeArgs.add(runtimeArg)
       let decoded = runtimeValueConversionExpr(eponymArgType, nimArgType,
         runtimeArg, false, mappings, records)
       if decoded.isNil:
-        error("bindPostulatePair could not build an argument codec")
+        error(bindingForm & " could not build an argument codec")
       decodedArgs.add(decoded)
     let hostResult = genSym(nskLet, "hostPairResult")
     let encodedResult = runtimeValueConversionExpr(pairType, pairNimType,
       hostResult, true, mappings, records)
     if encodedResult.isNil:
-      error("bindPostulatePair could not build a value codec")
+      error(bindingForm & " could not build a value codec")
     var adapterBody = newStmtList()
     var implementationCall = newCall(binding.implementation)
     for decodedArg in decodedArgs:
