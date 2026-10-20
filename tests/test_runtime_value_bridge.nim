@@ -408,12 +408,19 @@ eponymBlock:
   proc generatedValidatedDependentSigmaValueBinder[
       pair: Sig(length: Nat, Vec[Int, length])](ignored: Int):
       Sig(length: Nat, Vec[Int, length]) = pair
+  proc generatedGenericPiCallbackBinder[
+      callback: Pi(value: Int, Int)](value: Int): Int = callback(value)
+  proc generatedGenericPiBinaryCallbackBinder[
+      callback: Pi(left: Int, right: Int, Int)](left, right: Int): Int =
+    callback(left, right)
   runtimeValue(generatedNestedVectorIdentity)
   runtimeValue(generatedGenericVectorValueBinder)
   runtimeValue(generatedGenericSigmaValueBinder)
   runtimePairTrusted(generatedGenericDependentSigmaValueBinder)
   runtimeValue(generatedGenericDependentSigmaValueBinder)
   runtimeValue(generatedValidatedDependentSigmaValueBinder)
+  runtimeValue(generatedGenericPiCallbackBinder)
+  runtimeValue(generatedGenericPiBinaryCallbackBinder)
   proc generatedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
@@ -729,6 +736,14 @@ static:
   doAssert compiles(generatedAdder(3)(4))
   doAssert compiles(generatedApplyTwoArgumentCallback(
     proc(left, right: int): int = left + right, 1, 2))
+  doAssert compiles(generatedGenericPiCallbackBinderDynamic(
+    proc(value: int): int {.closure.} = value, 1))
+  doAssert not compiles(generatedGenericPiCallbackBinderDynamic(
+    proc(value: string): string {.closure.} = value, 1))
+  doAssert compiles(generatedGenericPiBinaryCallbackBinderDynamic(
+    proc(left, right: int): int {.closure.} = left + right, 1, 2))
+  doAssert not compiles(generatedGenericPiBinaryCallbackBinderDynamic(
+    proc(left: string, right: int): int {.closure.} = right, 1, 2))
   doAssert compiles(generatedTwoArgumentAdder(3)(4, 5))
   doAssert compiles(generatedSumSix(1, 2, 3, 4, 5, 6))
   doAssert not compiles(generatedSumSix(1, 2, 3, 4, 5))
@@ -2387,6 +2402,38 @@ proc callbackRole : Callback -> Sample -> Sample =
           proc(value: Value, _: Globals): int = valueToInt(value)) ==
             pair[1])
   if not dynamicGenericValueSigmaCases:
+    quit(1)
+  let dynamicGenericPiCallbackCases = forAll(
+    "generic Pi value binders accept checked Nim closures", r, 200,
+    proc(r: var Rng): tuple[offset, value: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[offset, value: int]): bool =
+      let callback: proc(value: int): int {.closure.} =
+        proc(value: int): int = value + input.offset
+      let typed = generatedGenericPiCallbackBinderDynamic(callback,
+        input.value)
+      let runtime = generatedGenericPiCallbackBinderRuntimeValueDynamic(
+        callback, input.value)
+      typed == input.value + input.offset and
+        valueToInt(runtime.value) == input.value + input.offset)
+  if not dynamicGenericPiCallbackCases:
+    quit(1)
+  let dynamicGenericPiBinaryCallbackCases = forAll(
+    "generic multi-argument Pi values accept typed Nim closures", r, 200,
+    proc(r: var Rng): tuple[offset, left, right: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000),
+       r.genInt(-1000, 1000)),
+    proc(input: tuple[offset, left, right: int]): bool =
+      let callback: proc(left, right: int): int {.closure.} =
+        proc(left, right: int): int = left + right + input.offset
+      let typed = generatedGenericPiBinaryCallbackBinderDynamic(callback,
+        input.left, input.right)
+      let runtime = generatedGenericPiBinaryCallbackBinderRuntimeValueDynamic(
+        callback, input.left, input.right)
+      typed == input.left + input.right + input.offset and
+        valueToInt(runtime.value) ==
+          input.left + input.right + input.offset)
+  if not dynamicGenericPiBinaryCallbackCases:
     quit(1)
   let dynamicGenericDependentSigmaCases = forAll(
     "dependent Sigma generic binders retain their Vec index", r, 200,

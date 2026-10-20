@@ -1218,6 +1218,14 @@ proc runtimeValueTerm(value: Value, globals: Globals): Term =
           result = tmApp(result, argument)
         return
     return value.syn
+  of wLam:
+    if not value.whnf.hostFunctionType.isNil:
+      return Term(kind: tR, refId: -1,
+        refTyp: value.whnf.hostFunctionType, refIsDefn: false, refVal: nil)
+    if value.syn.isNil:
+      raise newException(ValueError,
+        "runtime Value has no syntax for type inference")
+    return value.syn
   of wHost:
     if not value.whnf.hostEponymType.isNil:
       return Term(kind: tR, refId: -1,
@@ -1269,6 +1277,13 @@ proc inferRuntimeValueType(value: Value, globals: Globals,
           "runtime Value argument has no syntax for type inference")
       term = tmApp(term, argument)
     return infer(supply, term)
+  of wLam:
+    if not value.whnf.hostFunctionType.isNil:
+      return value.whnf.hostFunctionType
+    if value.syn.isNil:
+      raise newException(ValueError,
+        "runtime Value has no syntax for type inference")
+    return infer(supply, value.syn)
   of wHost:
     if not value.whnf.hostEponymType.isNil:
       return value.whnf.hostEponymType
