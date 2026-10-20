@@ -1634,6 +1634,22 @@ proc runtimeDependentArrowType*(domain: Value, globals: Globals,
   let codomain = codomainFn(argument)
   runtimeDependentPiType(domain, argument, codomain, codomainFn)
 
+proc runtimeDependentSigmaType*(domain: Value, globals: Globals,
+    codomainFn: proc(argument: Value): Value {.closure.},
+    priorArguments: openArray[Value] = []): Value =
+  ## Build a dependent Sigma type, reserving reference IDs used by globals
+  ## and earlier binders before introducing this pair's first field.
+  var supply = Supply()
+  for _, entry in globals.pairs:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      reserveFreshIdsThrough(supply, entry.tm.refId)
+  for prior in priorArguments:
+    if not prior.isNil and prior.whnfKind == wRef:
+      reserveFreshIdsThrough(supply, prior.whnfRefId)
+  let argument = freshPara(supply, domain)
+  let codomain = codomainFn(argument)
+  runtimeDependentSigmaType(domain, argument, codomain, codomainFn)
+
 proc runtimeValueTerm(value: Value, globals: Globals): Term =
   if value.isNil: return nil
   case value.whnfKind

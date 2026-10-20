@@ -567,8 +567,13 @@ implementations.
   `Sig` types as flat Nim tuples using the recursive Sigma codec. Runtime type
   witnesses validate the pair fields before checked evaluation. A 200-case
   property covers typed and `RuntimeValue` dynamic wrappers and rejects a
-  negative value in a Nat field. Dependent Sigma binder domains remain
-  unsupported.
+  negative value in a Nat field.
+- [x] Instantiate dependent Sigma runtime witnesses from earlier tuple fields
+  for dynamic generic value binders. This continues to require the existing
+  `runtimePairTrusted` opt-in for a checked definition. A 200-case property
+  covers typed and `RuntimeValue` wrappers for `Sig(length: Nat,
+  Vec[Int, length])` and rejects a tuple whose vector length disagrees with
+  its Nat field.
 - [x] Propagate earlier callback arguments into dependent callback result
   codecs and later callback argument codecs. 200-case properties check Nim
   `Nat -> Vec[Int, n]` and `Nat -> Vec[Int, n] -> Nat` callbacks through

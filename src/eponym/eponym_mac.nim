@@ -4555,16 +4555,35 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
   if n.isNil: return nil
   if n.kind in {nnkCall, nnkObjConstr} and n.len > 0 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Sig":
-    let fields = runtimeSigmaFields(n)
+    let fields = runtimeSigmaFields(n, allowDependent = true)
     if fields.len < 2: return nil
-    result = runtimeTypeValueExpr(fields[^1].fieldType, globals, overrides)
-    if result.isNil: return nil
-    for i in countdown(fields.high - 1, 0):
-      let domain = runtimeTypeValueExpr(fields[i].fieldType, globals,
-        overrides)
+    proc buildSigma(index: int,
+        localOverrides: seq[tuple[name: string, value: NimNode]]): NimNode =
+      if index == fields.high:
+        return runtimeTypeValueExpr(fields[index].fieldType, globals,
+          localOverrides)
+      let domain = runtimeTypeValueExpr(fields[index].fieldType, globals,
+        localOverrides)
       if domain.isNil: return nil
-      result = newCall(bindSym"runtimeSigmaType", domain, result)
-    return
+      var codomainOverrides = localOverrides
+      var argument: NimNode = nil
+      if fields[index].binder.len > 0:
+        argument = ident"runtimeSigmaArgument"
+        codomainOverrides.add((fields[index].binder, argument))
+      let codomain = buildSigma(index + 1, codomainOverrides)
+      if codomain.isNil: return nil
+      if argument.isNil:
+        return newCall(bindSym"runtimeSigmaType", domain, codomain)
+      let callback = newProc(
+        params = @[bindSym"Value",
+          newIdentDefs(argument, bindSym"Value", newEmptyNode())],
+        body = newStmtList(codomain))
+      var priorArguments = newNimNode(nnkBracket)
+      for override in localOverrides:
+        priorArguments.add(copyNimTree(override.value))
+      newCall(bindSym"runtimeDependentSigmaType", domain, globals,
+        callback, newTree(nnkPrefix, ident"@", priorArguments))
+    return buildSigma(0, overrides)
   if n.kind in {nnkCall, nnkObjConstr} and n.len > 0 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Pi":
     return runtimePiTypeValueExpr(n, globals, overrides)

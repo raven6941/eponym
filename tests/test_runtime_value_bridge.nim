@@ -744,6 +744,11 @@ eponymBlock:
       value: Sig(length: Nat, Sig(length: Nat, Vec[Int, length]))):
       Sig(length: Nat, Sig(length: Nat, Vec[Int, length])) = value
   runtimePairTrusted(generatedShadowedDependentPairVecIdentity)
+  proc generatedDependentSigmaValueBinder[
+      pair: Sig(length: Nat, Vec[Int, length])](ignored: Int):
+      Sig(length: Nat, Vec[Int, length]) = pair
+  runtimePairTrusted(generatedDependentSigmaValueBinder)
+  runtimeValue(generatedDependentSigmaValueBinder)
   record(SizedVec):
     field(prefixLength, Nat)
     field(suffixLength, Nat)
@@ -4585,6 +4590,32 @@ proc callbackRole : Callback -> Sample -> Sample =
   except ValueError:
     negativeSigmaNatRejected = true
   doAssert negativeSigmaNatRejected
+  let dynamicDependentSigmaBinderCases = forAll(
+    "dynamic generic binders validate dependent Sigma tuple values", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 12), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var elements: seq[int] = @[]
+      for i in 0 ..< input.length:
+        elements.add(input.seed + i)
+      let sigmaValue = (input.length, elements)
+      let typed = generatedDependentSigmaValueBinderDynamic(sigmaValue, 0)
+      let runtime = generatedDependentSigmaValueBinderRuntimeValueDynamic(
+        sigmaValue, 0)
+      typed == sigmaValue and
+        valueToNat(runtimePairFirst(runtime.value), runtime.globals) ==
+          input.length and
+        vecValueToSeq[int](runtimePairSecond(runtime.value), input.length,
+          runtime.globals, "Vec",
+          proc(value: Value, _: Globals): int = valueToInt(value)) == elements)
+  if not dynamicDependentSigmaBinderCases:
+    quit(1)
+  var dependentSigmaLengthRejected = false
+  try:
+    discard generatedDependentSigmaValueBinderDynamic((3, @[1, 2]), 0)
+  except ValueError as error:
+    dependentSigmaLengthRejected = "runtime Vec length mismatch" in error.msg
+  doAssert dependentSigmaLengthRejected
   var dynamicGenericMismatchRejected = false
   try:
     discard generatedVectorSucIndexDynamic(3, @[1, 2])

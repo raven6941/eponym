@@ -299,13 +299,14 @@ indices, and integer literals. A 200-case `SizedTree[length]` property checks
 both raw `Value` and mapped `RuntimeStructuredVariant` arguments, and rejects an
 embedded index that differs from `length`. More complex binder type
 expressions remain unsupported. Dynamic generic binders whose domain is a
-non-dependent Sigma type can use the standard flat tuple representation; the
-runtime bridge encodes the tuple and validates each field against the checked
-Sigma type. A property covers typed and `RuntimeValue` dynamic wrappers and
-rejects a negative value in a Nat field. Dependent Sigma binder domains still
-need an explicit raw `Value` argument because their runtime type witness must
-instantiate later field types from earlier tuple values. Results remain raw
-`Value`s when no host representation is mapped.
+Sigma type can use the standard flat tuple representation; the runtime bridge
+encodes the tuple and validates each field against the checked Sigma type,
+including dependent fields whose types use earlier tuple values. Dependent
+Sigma tuple codecs require the checked definition's explicit
+`runtimePairTrusted` opt-in. Properties cover typed and `RuntimeValue` dynamic
+wrappers, reject a negative value in a Nat field, and reject a vector whose
+length disagrees with its Nat field. Results remain raw `Value`s when no host
+representation is mapped.
 
 The low-level `RuntimeVariant` API provides a checked structural view for any
 declared data family when the caller supplies its constructor names. It

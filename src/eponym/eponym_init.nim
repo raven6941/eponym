@@ -917,6 +917,16 @@ proc runtimeSigmaType*(domain, codomain: Value): Value =
   let scope = Scope(adv: "_", bdy: codomain.syn)
   vSi(domain, ScoVal(syn: scope,
     fn: proc(_: Value): Value = codomain))
+proc runtimeDependentSigmaType*(domain, argument, codomain: Value,
+    codomainFn: proc(argument: Value): Value {.closure.}): Value =
+  ## Build a dependent Sigma runtime type after probing its codomain with a
+  ## fresh parameter. The supplied function remains the authoritative scope.
+  if domain.isNil or argument.isNil or codomain.isNil or
+      argument.whnf.kind != wRef:
+    raise newException(ValueError,
+      "cannot build an incomplete dependent Sigma")
+  let scope = abstractR(argument.whnf.refId, "_", codomain.syn)
+  vSi(domain, ScoVal(syn: scope, fn: codomainFn))
 
 proc vAbsurd(): Value =
   eval(tmPi(tStar(), "T", vv(0)), @[])   # Pi(T:? ). T, as in the paper
