@@ -452,6 +452,12 @@ implementations.
    of known procedures and Nim callback parameters. A 200-case property checks
    callback and local procedure aliases through generated wrappers; the callback
    property also covers typed `RuntimeValue` calls.
+- [x] Generate typed dynamic wrappers for generic value binders whose domain
+   is an indexed `Vec` with an existing runtime codec. The wrapper accepts the
+   corresponding Nim `seq`, encodes it against the earlier generic indices,
+   and rejects a sequence with the wrong length. A 200-case property exercises
+   both the typed dynamic wrapper and `RuntimeValue` dynamic wrapper, including
+   wrong-length rejection.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
@@ -459,10 +465,10 @@ implementations.
    definitions, `runtimeValue` access to checked results, callback values with
    recursive codecs, standard `Vec`, `List`, and `Option` codecs, custom
    `runtimeCodec` mappings, and explicit trusted opt-ins for dependent records
-   and pairs. Remaining gaps include broader automatic codec coverage,
-   additional dependent forms, unmapped value-indexed generics, and other
-   higher-order signatures. Unsupported cases must continue to fail with a
-   precise compile-time diagnostic.
+   and pairs. Remaining gaps include generic value binders outside indexed
+   `Vec`, dependent Sigma generic binders, broader automatic codec coverage,
+   additional dependent forms, and other higher-order signatures. Unsupported
+   cases must continue to fail with a precise compile-time diagnostic.
    Definitions without a matching explicit Nim `proc` declaration still
    need a typed wrapper when their checked signature is reconstructable;
    explicit `proc` declarations with unsupported signatures fail clearly
