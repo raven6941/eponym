@@ -150,7 +150,9 @@ eponymBlock:
   postulate(hostPlusSeven, Int -> Int)
   bindPostulate(hostPlusSeven, hostStepNim)
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
+  proc generatedDefault(value: Int = 42): Int = value
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
+  runtimeValue(generatedDefault)
   proc generatedNatId(value: Nat): Nat = value
   proc generatedSigmaId(value: Sig(Nat, Int)): Sig(Nat, Int) = value
   proc generatedArithmetic(left: Int, right: Int, scale: Int): Int =
@@ -722,6 +724,11 @@ eponymBlock:
 
 static:
   doAssert compiles(generatedCheckedRole(35))
+  doAssert compiles(generatedDefault())
+  doAssert compiles(generatedDefault(7))
+  doAssert compiles(generatedDefault(value = 7))
+  doAssert compiles(generatedDefaultRuntimeValue())
+  doAssert compiles(generatedDefaultRuntimeValue(value = 7))
   doAssert compiles(generatedAdd(20, 22))
   doAssert not compiles(generatedAdd(42))
   doAssert not compiles(generatedAdd("20", 22))
@@ -893,11 +900,26 @@ when isMainModule:
   # Value-based evaluator path.
   let compat = callIntFuncDir(baseDir, program, "double", @[21]) == 42
   let generatedBindingWorks = generatedCheckedRole(35) == 42
-  let generatedTypedWrappersWork = generatedAdd(20, 22) == 42 and
+  let generatedTypedWrappersWork = generatedDefault() == 42 and
+    generatedDefault(17) == 17 and
+    valueToInt(generatedDefaultRuntimeValue().value) == 42 and
+    valueToInt(generatedDefaultRuntimeValue(value = 17).value) == 17 and
+    generatedAdd(20, 22) == 42 and
     generatedNatId(17) == 17 and generatedArithmetic(5, 7, 3) == -27 and
     generatedSigmaId((17, -9)) == (17, -9) and
     generatedOpaqueSigmaId((17, ChannelHandle(id: 1))) ==
       (17, ChannelHandle(id: 1))
+  let generatedDefaultCases = forAll(
+    "generated wrappers preserve omitted and overridden Nim defaults", r,
+    200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      generatedDefault() == 42 and generatedDefault(value) == value and
+      valueToInt(generatedDefaultRuntimeValue().value) == 42 and
+      valueToInt(generatedDefaultRuntimeValue(value = value).value) == value,
+    shrinkInt)
+  if not generatedDefaultCases:
+    quit(1)
   let generatedRecordRoundTrips = forAll(
     "structural record codec preserves primitive and opaque fields", r, 200,
     proc(r: var Rng): int = r.genInt(-1000, 1000),

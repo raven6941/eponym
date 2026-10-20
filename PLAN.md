@@ -434,6 +434,9 @@ implementations.
   `vmap` over a Vec whose generic type is inferred from the later value
   argument. Negative fixtures reject incompatible callback signatures in both
   forms; the vector property also rejects wrong lengths through both wrappers.
+- [x] Preserve Nim default parameter values on generated typed wrappers and
+   typed `RuntimeValue` overloads. Compile-time and runtime regressions cover
+   omitted defaults, positional overrides, and named overrides.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
