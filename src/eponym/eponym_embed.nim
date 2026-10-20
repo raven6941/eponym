@@ -26,6 +26,8 @@ proc hostOpaqueMapUnary*[A, B](implementation: proc(x: A): B): Value
 proc hostOpaqueBinary*[A, B, C](implementation: proc(x: A, y: B): C): Value
 proc hostOpaqueTernary*[A, B, C, D](
   implementation: proc(x: A, y: B, z: C): D): Value
+proc hostOpaqueQuaternary*[A, B, C, D, E](
+  implementation: proc(w: A, x: B, y: C, z: D): E): Value
 proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value
 proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value
 proc hostNatOpaqueMapBinary*[A, B](
@@ -333,6 +335,37 @@ proc validateHostOpaqueTernaryType*(globals: Globals, postulateName,
       "' to have type " & firstTypeName & " -> " & secondTypeName & " -> " &
       thirdTypeName & " -> " & resultTypeName)
 
+proc validateHostOpaqueQuaternaryType*(globals: Globals, postulateName,
+    firstTypeName, secondTypeName, thirdTypeName, fourthTypeName,
+    resultTypeName: string) =
+  ## Validate a curried opaque contract `A -> B -> C -> D -> E`.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  let ids = [opaqueTypeId(globals, firstTypeName, postulateName),
+    opaqueTypeId(globals, secondTypeName, postulateName),
+    opaqueTypeId(globals, thirdTypeName, postulateName),
+    opaqueTypeId(globals, fourthTypeName, postulateName),
+    opaqueTypeId(globals, resultTypeName, postulateName)]
+  var current = entry.ty
+  for i in 0 ..< 4:
+    if current.isNil or current.kind != tPi or current.impl or
+        current.qty == q0 or opaqueTypeHeadId(current.dom) != ids[i]:
+      raise newException(ValueError,
+        "opaque quaternary adapter requires postulate '" & postulateName &
+        "' to have type " & firstTypeName & " -> " & secondTypeName &
+        " -> " & thirdTypeName & " -> " & fourthTypeName & " -> " &
+        resultTypeName)
+    current = current.scope.bdy
+  if current.isNil or opaqueTypeHeadId(current) != ids[4]:
+    raise newException(ValueError,
+      "opaque quaternary adapter requires postulate '" & postulateName &
+      "' to have type " & firstTypeName & " -> " & secondTypeName & " -> " &
+      thirdTypeName & " -> " & fourthTypeName & " -> " & resultTypeName)
+
 proc bindHostOpaqueBinary*[A, B, C](bindings: var RuntimeBindings,
                                     globals: Globals, postulateName,
                                     firstTypeName, secondTypeName,
@@ -355,6 +388,16 @@ proc bindHostOpaqueTernary*[A, B, C, D](bindings: var RuntimeBindings,
     secondTypeName, thirdTypeName, resultTypeName)
   bindHostValue(bindings, globals, postulateName,
                 hostOpaqueTernary[A, B, C, D](implementation))
+
+proc bindHostOpaqueQuaternary*[A, B, C, D, E](bindings: var RuntimeBindings,
+    globals: Globals, postulateName, firstTypeName, secondTypeName,
+    thirdTypeName, fourthTypeName, resultTypeName: string,
+    implementation: proc(w: A, x: B, y: C, z: D): E) =
+  ## Bind a Nim `proc(A, B, C, D): E` to a four-argument opaque contract.
+  validateHostOpaqueQuaternaryType(globals, postulateName, firstTypeName,
+    secondTypeName, thirdTypeName, fourthTypeName, resultTypeName)
+  bindHostValue(bindings, globals, postulateName,
+    hostOpaqueQuaternary[A, B, C, D, E](implementation))
 
 proc bindHostOpaqueUnary*[T](bindings: var RuntimeBindings, globals: Globals,
                              postulateName, eponymTypeName: string,
@@ -439,6 +482,17 @@ proc hostOpaqueTernary*[A, B, C, D](
       vHostFunc(proc(third: Value): Value =
         toHostValue(implementation(valueToHost[A](first),
           valueToHost[B](second), valueToHost[C](third))))))
+
+proc hostOpaqueQuaternary*[A, B, C, D, E](
+    implementation: proc(w: A, x: B, y: C, z: D): E): Value =
+  ## Adapt four typed Nim arguments to a curried Eponym runtime function.
+  vHostFunc(proc(first: Value): Value =
+    vHostFunc(proc(second: Value): Value =
+      vHostFunc(proc(third: Value): Value =
+        vHostFunc(proc(fourth: Value): Value =
+          toHostValue(implementation(valueToHost[A](first),
+            valueToHost[B](second), valueToHost[C](third),
+            valueToHost[D](fourth)))))))
 
 proc natToValue*(n: int): Value = vNatLit(n)
 
