@@ -549,6 +549,10 @@ implementations.
    the mapped encoder/decoder and preserve the concrete type witness; a
    200-case property checks `vmap` over custom-coded `Tree` values and rejects
    a vector with the wrong length.
+- [x] Validate custom-codec values passed to dynamic generic binders over
+   applied data families against the full runtime type expression. A 200-case
+   property checks `SizedTree[length]` values through typed and raw-result
+   wrappers and rejects an encoded index that differs from the supplied Nat.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
@@ -556,8 +560,8 @@ implementations.
    definitions, `runtimeValue` access to checked results, callback values with
    recursive codecs, standard `Vec`, `List`, and `Option` codecs, custom
    `runtimeCodec` mappings, and explicit trusted opt-ins for dependent records
-   and pairs. Remaining gaps include generic value binders outside indexed
-   `Vec`, `List`, `Option`, and supported Sigma codecs; typed dependent Sigma
+   and pairs. Remaining gaps include unmapped generic values and dependent
+   structures without a supported runtime type witness; typed dependent Sigma
    binders without the trusted opt-in or supported field codecs; broader
    automatic codec coverage, additional dependent forms, and other
    higher-order signatures. Unsupported

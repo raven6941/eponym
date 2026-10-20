@@ -568,6 +568,22 @@ proc reverseRuntimeTree(values: seq[int]): seq[int] =
   for i in countdown(values.high, 0):
     result.add(values[i])
 
+proc encodeRuntimeSizedTree(values: seq[int], globals: Globals): Value =
+  let encodedTree = encodeRuntimeTree(values, globals)
+  runtimeVariantToValue(RuntimeVariant(constructor: "sizedTree",
+    arguments: @[natToValue(values.len, globals), encodedTree]), globals,
+    "SizedTree", ["sizedTree"])
+
+proc decodeRuntimeSizedTree(value: Value, globals: Globals): seq[int] =
+  let variant = valueToRuntimeVariant(value, globals, "SizedTree",
+    ["sizedTree"])
+  if variant.arguments.len != 2:
+    raise newException(ValueError, "SizedTree has an invalid runtime spine")
+  let length = valueToNat(variant.arguments[0], globals)
+  result = decodeRuntimeTree(variant.arguments[1], globals)
+  if result.len != length:
+    raise newException(ValueError, "SizedTree index does not match payload")
+
 eponymBlock:
   import "../lib/vec.ep"
   postulate(Int, Univ)
@@ -585,6 +601,16 @@ eponymBlock:
       callback: proc(value: A): A {.closure.}, values: Vec[A, n]): Vec[A, n] =
     vmap(callback, values)
   runtimeValue(generatedGenericTreeVectorMap)
+  proc generatedGenericTreeValueBinder[tree: Tree](ignored: Int): Tree = tree
+  runtimeValue(generatedGenericTreeValueBinder)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  runtimeCodec(SizedTree, seq[int], encodeRuntimeSizedTree,
+    decodeRuntimeSizedTree)
+  proc generatedGenericSizedTreeBinder[length: Nat,
+      tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
+  runtimeValue(generatedGenericSizedTreeBinder)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -2691,6 +2717,58 @@ proc callbackRole : Callback -> Sample -> Sample =
         wrongLengthRejected = "runtime Vec length mismatch" in error.msg
       typed == expected and decoded == expected and wrongLengthRejected)
   if not genericCustomCodecVectorCases:
+    quit(1)
+  let genericCustomCodecValueCases = forAll(
+    "mapped custom values cross as dynamic generic binders", r, 200,
+    proc(r: var Rng): tuple[values: seq[int], ignored: int] =
+      result.values = newSeq[int](r.genInt(0, 8))
+      for i in 0 ..< result.values.len:
+        result.values[i] = r.genInt(-1000, 1000)
+      result.ignored = r.genInt(-1000, 1000)
+    ,
+    proc(input: tuple[values: seq[int], ignored: int]): bool =
+      let typed = generatedGenericTreeValueBinderDynamic(input.values,
+        input.ignored)
+      let runtime = generatedGenericTreeValueBinderRuntimeValueDynamic(
+        input.values, input.ignored)
+      validateRuntimeValueType(runtime.value,
+        runtimeGlobalValue(runtime.globals, "Tree"), runtime.globals)
+      typed == input.values and
+        decodeRuntimeTree(runtime.value, runtime.globals) == input.values)
+  if not genericCustomCodecValueCases:
+    quit(1)
+  let indexedCustomCodecValueCases = forAll(
+    "indexed custom codecs validate dynamic generic values", r, 200,
+    proc(r: var Rng): tuple[length, seed, ignored: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed, ignored: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< values.len:
+        values[i] = input.seed + i
+      let typed = generatedGenericSizedTreeBinderDynamic(input.length,
+        values, input.ignored)
+      let runtime = generatedGenericSizedTreeBinderRuntimeValueDynamic(
+        input.length, values, input.ignored)
+      let expectedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "SizedTree"),
+        [natToValue(input.length, runtime.globals)])
+      validateRuntimeValueType(runtime.value, expectedType, runtime.globals)
+      let decoded = decodeRuntimeSizedTree(runtime.value, runtime.globals)
+      var typedMismatchRejected = false
+      try:
+        discard generatedGenericSizedTreeBinderDynamic(input.length,
+          values & @[input.seed], input.ignored)
+      except ValueError:
+        typedMismatchRejected = true
+      var runtimeMismatchRejected = false
+      try:
+        discard generatedGenericSizedTreeBinderRuntimeValueDynamic(
+          input.length, values & @[input.seed], input.ignored)
+      except ValueError:
+        runtimeMismatchRejected = true
+      typed == values and decoded == values and typedMismatchRejected and
+        runtimeMismatchRejected)
+  if not indexedCustomCodecValueCases:
     quit(1)
 
   let nestedVectorCases = forAll(
