@@ -792,6 +792,13 @@ implementations.
    Other higher-order and dependent signatures still need explicit runtime
    codecs or raw `Value` interfaces. Unsupported typed wrappers must continue
    to fail with a precise compile-time diagnostic.
+   - [ ] Infer an indexed generic type witness from a nonempty `List[A]`
+     nested in a Sigma value. Standalone List witnesses and direct generic
+     Sigma fields are supported, but `Sig (tag: Int). List A` currently fails
+     with the generic-witness diagnostic because the bridge does not inspect
+     that nested List. Cover generated wrappers and typed `RuntimeValue`
+     calls with properties for round trips, mismatched indexed elements, and
+     the explicit-witness requirement for empty lists.
    Definitions whose signatures cannot be reconstructed expose the raw
    `Value` interface when requested; calling their generated name produces a
    compile-time diagnostic. Explicit `proc` declarations with unsupported

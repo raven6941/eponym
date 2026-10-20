@@ -348,6 +348,12 @@ For fixed vector lengths, the same generic callback bridge also supports Nim
 arrays through `runtimeVectorArray(Vec)`.
 Other structural callback families and generic leaf types without a unique
 direct mapping remain unsupported.
+If a generic callback's only indexed-type witness is inside a Sigma field of
+type `List[A]`, such as `Sig (tag: Int). List A`, the wrapper currently reports
+that it needs a direct generic value argument. It does not yet inspect List
+elements nested in Sigma values. Standalone List witnesses and direct generic
+Sigma fields are supported; adding witness inference through a Sigma List is
+tracked in [`PLAN.md`](../PLAN.md#embedding-applicability-plan).
 `runtimeValueTypeOf(value, globals)` recovers the checked type of a runtime
 Value, including represented family indices. Imported generic callback
 wrappers can use a direct value argument of the same generic type to infer the
