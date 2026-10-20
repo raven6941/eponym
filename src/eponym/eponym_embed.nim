@@ -630,6 +630,8 @@ proc valueToNat*(v: Value, globals: Globals): int =
     of wRef:
       let id = current.whnfRefId
       if id == zeroId:
+        if current.whnfSpineLen != 0:
+          raise newException(ValueError, "runtime value is not a Nat")
         return
       if id != sucId or current.whnfSpineLen != 1 or
           current.whnfSpineKind(0) != eApp:

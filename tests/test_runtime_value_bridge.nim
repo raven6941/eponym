@@ -555,6 +555,15 @@ proc callbackRole : Callback -> Sample -> Sample =
   let cachedGlobals = getGlobalsDir(baseDir, identityProgram)
   if cachedGlobals["hostStep"].tm.refId != postulateId:
     quit(1)
+  let malformedZero = eval(
+    tmApp(cachedGlobals["zero"].tm, tmInt(1)), @[])
+  var appliedZeroRejected = false
+  try:
+    discard valueToNat(malformedZero, cachedGlobals)
+  except ValueError:
+    appliedZeroRejected = true
+  if not appliedZeroRejected:
+    quit(1)
   var runtimeBindings = initRuntimeBindings()
   runtimeBindings.bindHostIntUnary(cachedGlobals, "hostStep", hostStepNim)
   let hostResult = callValueFuncDir(baseDir, identityProgram,
