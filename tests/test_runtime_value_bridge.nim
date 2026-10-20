@@ -263,6 +263,15 @@ eponymBlock:
   runtimeValue(generatedGenericIdentity)
 
 eponymBlock:
+  postulate(Int, Univ)
+  postulate(Token, Univ)
+  proc generatedTokenIdentity(value: Token): Token = value
+  runtimeValue(generatedTokenIdentity)
+  proc generatedGenericPiWitnessProbe[
+      callback: Pi(value: Token, Token)](ignored: Int): Int = ignored
+  runtimeValue(generatedGenericPiWitnessProbe)
+
+eponymBlock:
   import "../lib/nat.ep"
   def(checkedNatIdentity, Nat -> Nat):
     clause([zero], zero)
@@ -980,6 +989,55 @@ when isMainModule:
   let runtimeIdentity = eval(variantGlobals["treeIdentity"].tm, @[])
   let runtimeArrow = runtimeArrowType(runtimeTreeType, runtimeTreeType)
   validateRuntimeValueType(runtimeIdentity, runtimeArrow, variantGlobals)
+  let inferredFunctionType = runtimeValueTypeOf(runtimeIdentity,
+    variantGlobals)
+  validateRuntimeValueType(runtimeIdentity, inferredFunctionType,
+    variantGlobals)
+  let runtimeTypeInferenceCases = forAll(
+    "runtime type inference preserves primitive values and checked functions",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(0, 1000),
+    proc(n: int): bool =
+      let natType = runtimeValueTypeOf(natToValue(n, variantGlobals),
+        variantGlobals)
+      let intType = runtimeValueTypeOf(intToValue(n), variantGlobals)
+      natType.whnfKind == wRef and
+        natType.whnfRefId == runtimeNatType.whnfRefId and
+        intType.whnfKind == wRef and
+        intType.whnfRefId == runtimeIntType.whnfRefId)
+  if not runtimeTypeInferenceCases:
+    quit(1)
+  let witnessSource = """
+postulate Int : Type 0
+postulate Token : Type 0
+proc generatedTokenIdentity (value : Token) : Token = value
+"""
+  let tokenIdentityValue = callValueFuncDir(baseDir, witnessSource,
+    "generatedTokenIdentity", [])
+  let genericPiExpressionCases = forAll(
+    "generated runtime type expressions reify named Pi binders", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let returned = generatedGenericPiWitnessProbeRuntimeValueDynamic(
+        tokenIdentityValue, value)
+      valueToInt(returned.value) == value)
+  if not genericPiExpressionCases:
+    quit(1)
+  var wrongGenericPiExpressionRejected = false
+  try:
+    discard generatedGenericPiWitnessProbeRuntimeValueDynamic(
+      intToValue(1), 0)
+  except ValueError:
+    wrongGenericPiExpressionRejected = true
+  doAssert wrongGenericPiExpressionRejected
+  var malformedNatTypeInferenceRejected = false
+  try:
+    let malformedNat = callRuntimeValue(
+      eval(variantGlobals["suc"].tm, @[]), [intToValue(1)])
+    discard runtimeValueTypeOf(malformedNat, variantGlobals)
+  except ValueError:
+    malformedNatTypeInferenceRejected = true
+  doAssert malformedNatTypeInferenceRejected
   let runtimeDependentArrow = runtimeDependentArrowType(runtimeTreeType,
     variantGlobals, proc(_: Value): Value = runtimeTreeType)
   validateRuntimeValueType(runtimeIdentity, runtimeDependentArrow,

@@ -1544,6 +1544,25 @@ proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
     return (n[1][1], n[2], $n[1][0])
   (n[1], n[2], "")
 
+proc runtimeSigmaFields(n: NimNode, allowDependent = false):
+    seq[tuple[fieldType: NimNode, binder: string]] =
+  ## Flatten a right-nested Sigma telescope. Each field binder scopes over
+  ## the remaining fields, matching Eponym's right-associated pair values.
+  var current = n
+  while current.kind in {nnkCall, nnkObjConstr} and current.len == 3 and
+      current[0].kind in {nnkIdent, nnkSym} and $current[0] == "Sig":
+    let binder = current[1]
+    if binder.kind == nnkExprColonExpr:
+      if binder.len != 2 or binder[0].kind notin {nnkIdent, nnkSym} or
+          (mentionsName(current[2], $binder[0]) and not allowDependent):
+        return @[]
+      result.add((binder[1], $binder[0]))
+    else:
+      result.add((binder, ""))
+    current = current[2]
+  if result.len == 0: return
+  result.add((current, ""))
+
 proc runtimeVectorComponents(n: NimNode, familyName: string):
     tuple[elementType, length: NimNode] =
   if n.kind notin {nnkCall, nnkObjConstr, nnkBracketExpr} or n.len != 3 or
@@ -1817,6 +1836,42 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
 
 proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode
+
+proc runtimePiTypeValueExpr(n, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
+  if n.kind notin {nnkCall, nnkObjConstr} or n.len < 3 or
+      n[0].kind notin {nnkIdent, nnkSym} or $n[0] != "Pi":
+    return nil
+  var binders: seq[tuple[name: string, domain: NimNode]] = @[]
+  for i in 1 ..< n.len - 1:
+    let binder = n[i]
+    if binder.kind != nnkExprColonExpr or binder.len != 2 or
+        binder[0].kind notin {nnkIdent, nnkSym}:
+      return nil
+    binders.add(($binder[0], binder[1]))
+  proc build(index: int,
+      localOverrides: seq[tuple[name: string, value: NimNode]]): NimNode =
+    let domain = runtimeTypeValueExpr(binders[index].domain, globals,
+      localOverrides)
+    if domain.isNil: return nil
+    let argument = ident"runtimePiArgument"
+    var codomainOverrides = localOverrides
+    codomainOverrides.add((binders[index].name, argument))
+    let codomain = if index + 1 < binders.len:
+      build(index + 1, codomainOverrides)
+    else:
+      runtimeTypeValueExpr(n[^1], globals, codomainOverrides)
+    if codomain.isNil: return nil
+    let callback = newProc(
+      params = @[bindSym"Value",
+        newIdentDefs(argument, bindSym"Value", newEmptyNode())],
+      body = newStmtList(codomain))
+    var priorArguments = newNimNode(nnkBracket)
+    for override in localOverrides:
+      priorArguments.add(copyNimTree(override.value))
+    newCall(bindSym"runtimeDependentArrowType", domain, globals, callback,
+      newTree(nnkPrefix, ident"@", priorArguments))
+  build(0, overrides)
 
 proc runtimeGenericTypeWitnessExpr(n, globals: NimNode,
     mappings: seq[HostRuntimeType]): NimNode =
@@ -2766,6 +2821,37 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
   if n.kind == nnkStmtListExpr:
     if n.len != 1: return nil
     return runtimeTypeValueExpr(n[0], globals, overrides)
+  if n.kind in {nnkCall, nnkObjConstr} and n.len > 0 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Sig":
+    let fields = runtimeSigmaFields(n, allowDependent = true)
+    if fields.len < 2: return nil
+    proc buildSigma(index: int,
+        localOverrides: seq[tuple[name: string, value: NimNode]]): NimNode =
+      if index == fields.high:
+        return runtimeTypeValueExpr(fields[index].fieldType, globals,
+          localOverrides)
+      let domain = runtimeTypeValueExpr(fields[index].fieldType, globals,
+        localOverrides)
+      if domain.isNil: return nil
+      var codomainOverrides = localOverrides
+      var argument: NimNode = nil
+      if fields[index].binder.len > 0:
+        argument = ident"runtimeSigmaArgument"
+        codomainOverrides.add((fields[index].binder, argument))
+      let codomain = buildSigma(index + 1, codomainOverrides)
+      if codomain.isNil: return nil
+      if argument.isNil:
+        return newCall(bindSym"runtimeSigmaType", domain, codomain)
+      let callback = newProc(
+        params = @[bindSym"Value",
+          newIdentDefs(argument, bindSym"Value", newEmptyNode())],
+        body = newStmtList(codomain))
+      var priorArguments = newNimNode(nnkBracket)
+      for override in localOverrides:
+        priorArguments.add(copyNimTree(override.value))
+      newCall(bindSym"runtimeDependentSigmaType", domain, globals,
+        callback, newTree(nnkPrefix, ident"@", priorArguments))
+    return buildSigma(0, overrides)
   if n.kind in {nnkIdent, nnkSym}:
     if overrides.len > 0:
       for i in countdown(overrides.high, 0):
@@ -2798,8 +2884,7 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
           valueNode = valueNode[0]
         let value = runtimeTypeValueExpr(valueNode, globals, overrides)
         if value.isNil: return nil
-        branches.add((newCall(bindSym"valueToBool", conditionValue, globals),
-          value))
+        branches.add((conditionValue, value))
       of nnkElseExpr, nnkElse:
         if branch.len != 1: return nil
         elseBranch = branch[0]
@@ -2811,11 +2896,23 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
       elseBranch = elseBranch[0]
     result = runtimeTypeValueExpr(elseBranch, globals, overrides)
     if result.isNil: return nil
+    let ifThenElse = newCall(bindSym"runtimeGlobalValue", globals,
+      newLit("ifThenElse"))
     for i in countdown(branches.high, 0):
-      result = newTree(nnkIfExpr,
-        newTree(nnkElifExpr, branches[i].condition, branches[i].value),
-        newTree(nnkElseExpr, result))
+      let branchType = newCall(bindSym"runtimeValueTypeOf",
+        branches[i].value, globals)
+      result = newCall(bindSym"callRuntimeValue", ifThenElse,
+        newTree(nnkBracket, branchType, branches[i].condition,
+          branches[i].value, result))
     return
+  if n.kind in {nnkCall, nnkObjConstr} and n.len > 0 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Pi":
+    return runtimePiTypeValueExpr(n, globals, overrides)
+  if n.kind == nnkInfix and n.len == 3 and $n[0] == "->":
+    let domain = runtimeTypeValueExpr(n[1], globals, overrides)
+    let codomain = runtimeTypeValueExpr(n[2], globals, overrides)
+    if domain.isNil or codomain.isNil: return nil
+    return newCall(bindSym"runtimeArrowType", domain, codomain)
   if n.kind in {nnkCall, nnkCommand, nnkBracketExpr, nnkObjConstr,
                 nnkInfix} and n.len >= 2:
     let fnNode = if n.kind == nnkInfix:
