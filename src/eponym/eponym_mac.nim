@@ -77,6 +77,19 @@ proc unwrapParens(n: NimNode): NimNode =
 
 proc nimTypeCallInfo(ty: NimNode): LegacyCallInfo
 
+proc surfaceValueType(expr: NimNode): string =
+  let value = unwrapParens(expr)
+  case value.kind
+  of nnkIdent, nnkSym:
+    result = scopedLegacyValueTypeNames.getOrDefault($value)
+  of nnkDotExpr:
+    if value.len == 2 and value[1].kind in {nnkIdent, nnkSym}:
+      let parentType = surfaceValueType(value[0])
+      result = legacyRecordFieldTypeNames.getOrDefault(
+        parentType & "." & $value[1])
+  else:
+    discard
+
 proc commandArgumentCount(n: NimNode): int =
   ## Match nimCommandToEponym's flattening of whitespace-separated command
   ## arguments. A command-form lambda is one argument, even though its body
@@ -169,18 +182,6 @@ proc callInfoForHead(n: NimNode,
   of nnkDotExpr:
     if head.len == 2 and head[1].kind in {nnkIdent, nnkSym}:
       let field = $head[1]
-      proc surfaceValueType(expr: NimNode): string =
-        let value = unwrapParens(expr)
-        case value.kind
-        of nnkIdent, nnkSym:
-          return scopedLegacyValueTypeNames.getOrDefault($value)
-        of nnkDotExpr:
-          if value.len == 2 and value[1].kind in {nnkIdent, nnkSym}:
-            let parentType = surfaceValueType(value[0])
-            return legacyRecordFieldTypeNames.getOrDefault(
-              parentType & "." & $value[1])
-        else:
-          discard
       let receiverType = surfaceValueType(head[0])
       if receiverType.len > 0:
         let key = receiverType & "." & field
@@ -422,6 +423,14 @@ proc registerScopedLetCallInfo(body: NimNode) =
         scopedLegacyCallInfo.del(name)
         if info.explicitCount > 0:
           scopedLegacyCallInfo[name] = info
+        scopedLegacyValueTypeNames.del(name)
+        let declaredType = binding[^2]
+        let valueType = if declaredType.kind in {nnkIdent, nnkSym}:
+          $declaredType
+        else:
+          surfaceValueType(binding[^1])
+        if valueType.len > 0:
+          scopedLegacyValueTypeNames[name] = valueType
 
 proc registerLegacyInfo(name: string, explicitCount, termCount: int,
                         requiresBrackets = false,

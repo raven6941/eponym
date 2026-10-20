@@ -131,6 +131,11 @@ eponymBlock:
       value: Vec[Nat, 0]): Vec[Nat, 0] =
     bundle.inner.apply[zero()](value)
 
+  proc bracketAliasedNestedImportedCallableRecordField(bundle: HandlerBundle,
+      value: Vec[Nat, 0]): Vec[Nat, 0] =
+    let nested = bundle.inner
+    nested.apply[zero()](value)
+
   proc bracketLocalIndexedConstructor(value: Nat,
       tail: LocalVec[Nat, 0]): LocalVec[Nat, 1] =
     localCons[Nat, zero()](value, tail)

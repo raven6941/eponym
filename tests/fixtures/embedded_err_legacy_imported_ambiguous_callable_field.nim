@@ -6,4 +6,5 @@ eponymBlock:
 
   proc oldNestedImportedFieldType(
       bundle: HandlerBundle, value: Vec[Nat, 0]): Vec[Nat, 0] =
-    bundle.inner.apply(zero(), value)
+    let nested = bundle.inner
+    nested.apply(zero(), value)
