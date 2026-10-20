@@ -22,6 +22,13 @@ import elab
 import eponym_init
 import preterm  # Quantity constants for validating supported adapter shapes
 
+type
+  ## Public aliases for runtime values in generated wrapper signatures. Users
+  ## can call raw-value wrappers by importing eponym_embed alone.
+  RuntimeValue* = Value
+  RuntimeGlobals* = Globals
+  RuntimeValueResult* = tuple[value: RuntimeValue, globals: RuntimeGlobals]
+
 proc hostIntUnary*(implementation: proc(x: int): int): Value
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
 proc hostOpaqueMapUnary*[A, B](implementation: proc(x: A): B): Value
@@ -1023,6 +1030,31 @@ proc valueToEnum*[T: enum](value: Value, globals: Globals,
           "Nim enum type has no member named '" & constructorName & "'")
   raise newException(ValueError,
     "runtime value is not one of the mapped Eponym constructors")
+
+proc validateRuntimeValueType*(value: Value, globals: Globals,
+                               typeName: string) =
+  ## Check an unmapped generic Value against a named Eponym type. This is a
+  ## runtime type check, not a host representation mapping.
+  if typeName notin globals or value.isNil or value.syn.isNil:
+    raise newException(ValueError,
+      "cannot validate runtime Value against Eponym type '" & typeName & "'")
+  var supply = Supply()
+  var inferred: Value
+  case value.whnfKind
+  of wInt:
+    if "Int" notin globals:
+      raise newException(ValueError,
+        "cannot validate an Int Value without the Int declaration")
+    inferred = eval(globals["Int"].tm, @[])
+  of wNatLit:
+    if "Nat" notin globals:
+      raise newException(ValueError,
+        "cannot validate a Nat Value without the Nat declaration")
+    inferred = eval(globals["Nat"].tm, @[])
+  else:
+    inferred = infer(supply, value.syn)
+  let expected = eval(globals[typeName].tm, @[])
+  areEqual(supply, vStar(), inferred, expected)
 
 proc prependErasedTypeArgs*(typeArgCount: int,
                             args: openArray[Value]): seq[Value] =

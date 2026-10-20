@@ -70,7 +70,7 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_bool_without_prelude.nim",
      "Bool constructor 'true' is not declared; import bool.ep"),
     ("tests/fixtures/embedded_err_generic_runtime_index.nim",
-     "values with an explicit runtimeType mapping"),
+     "type mismatch"),
     ("tests/fixtures/embedded_err_generic_callback_inference.nim",
      "type mismatch"),
     ("tests/fixtures/embedded_err_generic_callback_vector_inference.nim",
