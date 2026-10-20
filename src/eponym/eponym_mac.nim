@@ -2660,6 +2660,11 @@ macro eponymBlock*(body: untyped): untyped =
           allowDependentSigma, returnRuntimeValue = true)
         if not dynamicRuntimeValueWrapper.isNil:
           result.add(dynamicRuntimeValueWrapper)
+        else:
+          let generic = genericRuntimeInfo(procDecl, runtimeTypes)
+          if generic.error.len > 0:
+            error("eponymBlock runtimeValue wrapper '" & d.name & "': " &
+              generic.error, procDecl)
       continue
     if d.name in runtimeValueNames:
       result.add(rawRuntimeValueWrapper(baseDir, src, d.name,
