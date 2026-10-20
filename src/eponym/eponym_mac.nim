@@ -625,6 +625,20 @@ proc blockToEponym*(body: NimNode): string =
         # contract; it is not part of the Eponym source text.
         if st.len notin {3, 4, 5, 6, 7, 8} or st[1].kind != nnkIdent:
           error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
+      elif head == "bindPostulatePair":
+        # Typed adapter for A1 -> ... -> An -> Sig(B, C).
+        if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
+          error("bindPostulatePair expects (name, nimProc, Argument[, Argument...], First, Second)", st)
+        for i in 3 ..< st.len:
+          if st[i].kind != nnkIdent:
+            error("bindPostulatePair Eponym types must be identifiers", st[i])
+      elif head == "bindPostulatePairTrusted":
+        # Same codec as bindPostulatePair, with a trusted dependent index.
+        if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
+          error("bindPostulatePairTrusted expects (name, nimProc, Argument[, Argument...], First, Second)", st)
+        for i in 3 ..< st.len:
+          if st[i].kind != nnkIdent:
+            error("bindPostulatePairTrusted Eponym types must be identifiers", st[i])
       elif head == "runtimeType":
         # Explicit opaque Nim/Eponym representation mapping, consumed by the
         # wrapper generator and never interpreted as an Eponym declaration.
@@ -639,6 +653,9 @@ type HostPostulateBinding = object
   postulateName: string
   implementation: NimNode
   eponymTypes: seq[string]
+  pairResult: bool
+  pairArgCount: int
+  trustedPairIndex: bool
 
 type HostRuntimeType = object
   eponymName: string
@@ -697,8 +714,14 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   var seen = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
-        $st[0] == "bindPostulate":
-      if st.len notin {3, 4, 5, 6, 7, 8} or st[1].kind != nnkIdent:
+        $st[0] in ["bindPostulate", "bindPostulatePair",
+                   "bindPostulatePairTrusted"]:
+      let pairResult = $st[0] != "bindPostulate"
+      let trustedPairIndex = $st[0] == "bindPostulatePairTrusted"
+      if pairResult:
+        if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
+          error($st[0] & " expects (name, nimProc, Argument[, Argument...], First, Second)", st)
+      elif st.len notin {3, 4, 5, 6, 7, 8} or st[1].kind != nnkIdent:
         error("bindPostulate expects (postulateName, nimProcedure[, EponymType...])", st)
       let name = $st[1]
       if name in seen:
@@ -711,7 +734,11 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
         typeNames.add($st[i])
       result.add(HostPostulateBinding(postulateName: name,
                                      implementation: st[2],
-                                     eponymTypes: typeNames))
+                                     eponymTypes: typeNames,
+                                     pairResult: pairResult,
+                                     pairArgCount: if pairResult:
+                                       typeNames.len - 2 else: 0,
+                                     trustedPairIndex: trustedPairIndex))
 
 proc mentionsName(node: NimNode, name: string): bool =
   if node.kind in {nnkIdent, nnkSym} and $node == name:
@@ -748,7 +775,8 @@ proc simpleRuntimeCodec(n: NimNode): string =
 proc runtimeSigmaComponents(n: NimNode): tuple[first, second: NimNode] =
   ## Runtime tuples represent only non-dependent two-field Sig types. Reject
   ## dependent tails rather than erasing the first component from their type.
-  if n.kind != nnkCall or n.len != 3 or n[0].kind != nnkIdent or
+  if n.kind notin {nnkCall, nnkObjConstr} or n.len != 3 or
+      n[0].kind != nnkIdent or
       $n[0] != "Sig":
     return
   if n[1].kind == nnkExprColonExpr:
@@ -869,8 +897,59 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
   newCall(valueFn, value)
 
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
-                 mappings: seq[HostRuntimeType], checkedGlobals: Globals): NimNode =
+                 mappings: seq[HostRuntimeType], records: seq[HostRecord],
+                 checkedGlobals: Globals): NimNode =
   let nameLit = newLit(binding.postulateName)
+  if binding.pairResult:
+    let bindingForm = if binding.trustedPairIndex:
+      "bindPostulatePairTrusted"
+    else:
+      "bindPostulatePair"
+    let pairType = newCall(ident"Sig",
+      ident(binding.eponymTypes[binding.pairArgCount]),
+      ident(binding.eponymTypes[binding.pairArgCount + 1]))
+    let pairNimType = runtimeNimType(pairType, mappings, records)
+    if pairNimType.isNil:
+      error(bindingForm & " needs runtime codecs for both pair fields")
+    var runtimeArgs: seq[NimNode] = @[]
+    var decodedArgs: seq[NimNode] = @[]
+    for i in 0 ..< binding.pairArgCount:
+      let eponymArgType = ident(binding.eponymTypes[i])
+      let nimArgType = runtimeNimType(eponymArgType, mappings, records)
+      if nimArgType.isNil:
+        error(bindingForm & " needs a runtime codec for argument '" &
+          binding.eponymTypes[i] & "'")
+      let runtimeArg = genSym(nskParam, "runtimeArgument")
+      runtimeArgs.add(runtimeArg)
+      let decoded = runtimeValueConversionExpr(eponymArgType, nimArgType,
+        runtimeArg, false, mappings, records)
+      if decoded.isNil:
+        error(bindingForm & " could not build an argument codec")
+      decodedArgs.add(decoded)
+    let hostResult = genSym(nskLet, "hostPairResult")
+    let encodedResult = runtimeValueConversionExpr(pairType, pairNimType,
+      hostResult, true, mappings, records)
+    if encodedResult.isNil:
+      error(bindingForm & " could not build a value codec")
+    var adapterBody = newStmtList()
+    var implementationCall = newCall(binding.implementation)
+    for decodedArg in decodedArgs:
+      implementationCall.add(decodedArg)
+    adapterBody.add(newLetStmt(hostResult, implementationCall))
+    adapterBody.add(encodedResult)
+    var adapterValue = newCall(bindSym"vHostFunc",
+      newProc(params = @[bindSym"Value",
+        newIdentDefs(runtimeArgs[^1], bindSym"Value", newEmptyNode())],
+        body = adapterBody))
+    if binding.pairArgCount > 1:
+      for i in countdown(binding.pairArgCount - 2, 0):
+        let partialBody = newStmtList(adapterValue)
+        let partialProc = newProc(params = @[bindSym"Value",
+          newIdentDefs(runtimeArgs[i], bindSym"Value", newEmptyNode())],
+          body = partialBody)
+        adapterValue = newCall(bindSym"vHostFunc", partialProc)
+    return newCall(bindSym"bindHostValue", bindingsSym, globalsSym,
+                   nameLit, adapterValue)
   if binding.eponymTypes.len == 0:
     return newCall(bindSym"bindHostIntUnary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
@@ -1010,7 +1089,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
       newCall(bindSym"initRuntimeBindings")))
     for binding in bindings:
       wrapperBody.add(bindingCall(binding, bindingSym, globalsSym, mappings,
-                                  checkedGlobals))
+                                  records, checkedGlobals))
 
   var values = newNimNode(nnkBracket)
   for i, argSym in argSyms:
@@ -1090,6 +1169,14 @@ macro eponymBlock*(body: untyped): untyped =
       error("eponymBlock runtimeType error: " & e.msg, body)
   for binding in bindings:
     try:
+      if binding.pairResult:
+        let pairArgs = binding.eponymTypes[0 ..< binding.pairArgCount]
+        validateHostSigmaAdapterType(checkedGlobals,
+          binding.postulateName, pairArgs,
+          binding.eponymTypes[binding.pairArgCount],
+          binding.eponymTypes[binding.pairArgCount + 1],
+          binding.trustedPairIndex)
+        continue
       case binding.eponymTypes.len
       of 0:
         validateHostIntUnaryType(checkedGlobals, binding.postulateName)
@@ -1173,7 +1260,7 @@ macro eponymBlock*(body: untyped): untyped =
       )
       for binding in bindings:
         wrapperBody.add(bindingCall(binding, runtimeBindingsId, globalsId,
-                                    runtimeTypes, checkedGlobals))
+                                    runtimeTypes, records, checkedGlobals))
       wrapperBody.add(quote do:
         callIntFuncDir(`dirLit`, `srcLit`, `nameLit`, @`argsIdent`,
                        `runtimeBindingsId`)

@@ -16,6 +16,7 @@
 
 import tables
 import sequtils
+import strutils
 import elab
 import eponym_init
 import preterm  # Quantity constants for validating supported adapter shapes
@@ -99,6 +100,78 @@ proc bindHostValue*(bindings: var RuntimeBindings, globals: Globals,
       "duplicate runtime binding for postulate: " & postulateName)
   bindings[id] = implementation
 
+proc opaqueTypeHeadId(ty: Term): int
+
+proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
+    argTypeNames: openArray[string], firstTypeName, secondTypeName: string,
+    allowDependentIndex = false) =
+  ## Validate named arguments followed by a non-dependent Sigma result:
+  ## A1 -> ... -> An -> Sig(B, C). The Sigma fields are checked by their
+  ## type-family heads; indices on named families remain part of the trusted
+  ## host codec boundary.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  for typeName in argTypeNames:
+    if typeName notin globals or globals[typeName].tm.isNil or
+        globals[typeName].tm.kind != tR:
+      raise newException(ValueError,
+        "structured adapter type is not a declared Eponym type: " & typeName)
+  for typeName in [firstTypeName, secondTypeName]:
+    if typeName notin globals or globals[typeName].tm.isNil or
+        globals[typeName].tm.kind != tR:
+      raise newException(ValueError,
+        "structured adapter type is not a declared Eponym type: " & typeName)
+  let expectedFirstId = globals[firstTypeName].tm.refId
+  let expectedSecondId = globals[secondTypeName].tm.refId
+  var current = entry.ty
+  var validArguments = true
+  for argTypeName in argTypeNames:
+    if current.isNil or current.kind != tPi or current.impl or
+        current.qty == q0 or
+        opaqueTypeHeadId(current.dom) != globals[argTypeName].tm.refId:
+      validArguments = false
+      break
+    current = current.scope.bdy
+  let pairTy = current
+  var dependent = false
+  proc referencesSigmaBinder(term: Term, depth: int): bool =
+    if term.isNil: return false
+    if term.kind == tV: return term.idx == depth
+    case term.kind
+    of tPi, tSi, tLam:
+      referencesSigmaBinder(term.dom, depth) or
+        referencesSigmaBinder(term.scope.bdy, depth + 1)
+    of tApp:
+      referencesSigmaBinder(term.fn, depth) or
+        referencesSigmaBinder(term.arg, depth)
+    of tPair:
+      referencesSigmaBinder(term.pFst, depth) or
+        referencesSigmaBinder(term.pSnd, depth) or
+        referencesSigmaBinder(term.pScope.bdy, depth + 1)
+    of tFst, tSnd, tAbsurd:
+      referencesSigmaBinder(term.sub, depth)
+    of tLet:
+      referencesSigmaBinder(term.letVal, depth) or
+        referencesSigmaBinder(term.letTy, depth) or
+        referencesSigmaBinder(term.letScope.bdy, depth + 1)
+    of tR, tV, tMeta, tC, tInt, tPrim, tNatLit, tNatSing, tType: false
+  if pairTy != nil and pairTy.kind == tSi:
+    dependent = referencesSigmaBinder(pairTy.scope.bdy, 0)
+  if not validArguments or pairTy.isNil or pairTy.kind != tSi or
+      pairTy.impl or (dependent and not allowDependentIndex) or
+      opaqueTypeHeadId(pairTy.dom) != expectedFirstId or
+      opaqueTypeHeadId(pairTy.scope.bdy) != expectedSecondId:
+    let argTypeSig = argTypeNames.join(" -> ")
+    raise newException(ValueError,
+      "structured pair adapter requires postulate '" & postulateName &
+      "' to have type " & argTypeSig & " -> Sig(" & firstTypeName & ", " &
+      secondTypeName & ") with " &
+      (if allowDependentIndex: "a mapped pair" else: "a non-dependent pair"))
+
 proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
   ## Require an Eponym postulate with the exact runtime shape `Int -> Int`.
   ## Used at macro expansion and again at runtime before binding.
@@ -120,7 +193,6 @@ proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
       "Nim proc(int): int requires Eponym postulate '" & postulateName &
       "' to have type Int -> Int")
 
-proc opaqueTypeHeadId(ty: Term): int
 proc opaqueTypeName(globals: Globals, typeId: int,
                     postulateName: string): string
 proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int

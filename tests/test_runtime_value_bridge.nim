@@ -34,6 +34,10 @@ type RuntimeEnvelope = object
   point: RuntimePoint
   note: string
 
+type IndexedChannelHandle = object
+  index: int
+  label: string
+
 proc hostWrongFour(channel: ChannelHandle, message: string,
                    requestId, phase: int): int = channel.id + requestId + phase
 
@@ -41,6 +45,27 @@ proc hostRotateChannel(channel: ChannelHandle): ChannelHandle =
   result = channel
   inc result.id
   result.label.add("*")
+
+proc hostSplitChannel(channel: ChannelHandle): tuple[count: int,
+    remainder: ChannelHandle] =
+  result.count = channel.id
+  result.remainder = channel
+  inc result.remainder.id
+  result.remainder.label.add("/split")
+
+proc hostSplitChannelWithNat(n: int, channel: ChannelHandle):
+    tuple[count: int, remainder: ChannelHandle] =
+  result.count = n + channel.id
+  result.remainder = channel
+  inc result.remainder.id
+  result.remainder.label.add("/split-nat")
+
+proc hostSplitChannelWithTwoNats(first, second: int, channel: ChannelHandle):
+    tuple[count: int, remainder: ChannelHandle] =
+  result.count = first + second + channel.id
+  result.remainder = channel
+  inc result.remainder.id
+  result.remainder.label.add("/split-two")
 
 proc hostRouteChannel(channel: ChannelHandle,
                       message: string): ChannelHandle =
@@ -129,6 +154,23 @@ eponymBlock:
   runtimeType(PendingResult, Future[int])
   runtimeType(Callback, NimIntCallback)
   runtimeType(Sample, int)
+  postulate(splitChannel, Channel -> Sig(Nat, Channel))
+  bindPostulatePair(splitChannel, hostSplitChannel, Channel, Nat, Channel)
+  proc generatedSplitChannel(channel: Channel): Sig(Nat, Channel) =
+    splitChannel(channel)
+  postulate(splitChannelWithNat,
+    Nat -> Channel -> Sig(Nat, Channel))
+  bindPostulatePair(splitChannelWithNat, hostSplitChannelWithNat,
+    Nat, Channel, Nat, Channel)
+  proc generatedSplitChannelWithNat(n: Nat, channel: Channel):
+      Sig(Nat, Channel) = splitChannelWithNat(n, channel)
+  postulate(splitChannelWithTwoNats,
+    Nat -> Nat -> Channel -> Sig(Nat, Channel))
+  bindPostulatePair(splitChannelWithTwoNats, hostSplitChannelWithTwoNats,
+    Nat, Nat, Channel, Nat, Channel)
+  proc generatedSplitChannelWithTwoNats(first, second: Nat,
+      channel: Channel): Sig(Nat, Channel) =
+    splitChannelWithTwoNats(first, second, channel)
   record(Point):
     field(x, Nat)
     field(channel, Channel)
@@ -179,6 +221,34 @@ eponymBlock:
   proc generatedCallbackRole(callback: Callback, value: Sample): Sample =
     invokeCallback(callback, value)
 
+proc hostIndexedChannelParts(channel: IndexedChannelHandle):
+    tuple[index: int, next: IndexedChannelHandle] =
+  (channel.index, IndexedChannelHandle(index: channel.index,
+    label: channel.label & "/indexed"))
+
+proc hostRepeatIndexedChannel(index: int, channel: IndexedChannelHandle):
+    tuple[first: IndexedChannelHandle, second: IndexedChannelHandle] =
+  (channel, IndexedChannelHandle(index: index, label: channel.label & "/copy"))
+
+eponymBlock:
+  import "../lib/nat.ep"
+  postulate(Channel, Nat -> Univ)
+  runtimeType(Channel, IndexedChannelHandle)
+  postulate(splitIndexedChannel,
+    Channel(0) -> Sig(index: Nat, Channel(index)))
+  bindPostulatePairTrusted(splitIndexedChannel, hostIndexedChannelParts,
+    Channel, Nat, Channel)
+  postulate(repeatIndexedChannel,
+    Pi(index: Nat, channel: Channel(index),
+       Sig(first: Channel(index), Channel(index))))
+  bindPostulatePair(repeatIndexedChannel, hostRepeatIndexedChannel,
+    Nat, Channel, Channel, Channel)
+  proc generatedIndexedChannelIndex(channel: Channel(0)): Nat =
+    fst(splitIndexedChannel(channel))
+  proc generatedRepeatIndexedChannel(index: Nat, channel: Channel(index)):
+      Sig(first: Channel(index), Channel(index)) =
+    repeatIndexedChannel(index, channel)
+
 static:
   doAssert compiles(generatedCheckedRole(35))
   doAssert compiles(generatedAdd(20, 22))
@@ -202,11 +272,20 @@ static:
   doAssert compiles(generatedOpaqueSigmaId((17, ChannelHandle(id: 1))))
   doAssert compiles(generatedPointRebuild(RuntimePoint(x: 17,
     channel: ChannelHandle(id: 1))))
+  doAssert compiles(generatedSplitChannel(ChannelHandle(id: 17)))
+  doAssert compiles(generatedSplitChannelWithNat(3,
+    ChannelHandle(id: 17)))
+  doAssert compiles(generatedSplitChannelWithTwoNats(3, 4,
+    ChannelHandle(id: 17)))
   doAssert compiles(generatedEnvelopeId(RuntimeEnvelope(
     point: RuntimePoint(x: 17, channel: ChannelHandle(id: 1)),
     note: "ok")))
   doAssert compiles(generatedCallbackRole(proc(value: int): int = value + 1, 1))
   doAssert not compiles(generatedCallbackRole(42, 1))
+  doAssert compiles(generatedIndexedChannelIndex(
+    IndexedChannelHandle(index: 17, label: "indexed")))
+  doAssert compiles(generatedRepeatIndexedChannel(17,
+    IndexedChannelHandle(index: 17, label: "indexed")))
 
 when isMainModule:
   let baseDir = currentSourcePath().parentDir.parentDir
@@ -248,6 +327,66 @@ when isMainModule:
       generatedPointRebuild(input) == input,
     shrinkInt)
   if not generatedRecordRoundTrips:
+    quit(1)
+  let generatedPairBindingCases = forAll(
+    "typed host adapters can return non-dependent Sigma values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let nat = abs(id)
+      let input = ChannelHandle(id: nat, label: "split-" & $nat)
+      let pairResult = generatedSplitChannel(input)
+      pairResult[0] == nat and pairResult[1] ==
+        ChannelHandle(id: nat + 1, label: "split-" & $nat & "/split"),
+    shrinkInt)
+  if not generatedPairBindingCases:
+    quit(1)
+  let generatedBinaryPairBindingCases = forAll(
+    "two-argument typed adapters return non-dependent Sigma values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let left = abs(n mod 1000)
+      let right = abs((n div 3) mod 1000)
+      let channel = ChannelHandle(id: left, label: "binary-" & $right)
+      let pairResult = generatedSplitChannelWithNat(right, channel)
+      pairResult[0] == right + left and pairResult[1] ==
+        ChannelHandle(id: left + 1, label: "binary-" & $right & "/split-nat"),
+    shrinkInt)
+  if not generatedBinaryPairBindingCases:
+    quit(1)
+  let generatedTernaryPairBindingCases = forAll(
+    "three-argument typed adapters return non-dependent Sigma values", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let first = abs(n mod 1000)
+      let second = abs((n div 5) mod 1000)
+      let channel = ChannelHandle(id: first, label: "ternary-" & $second)
+      let pairResult = generatedSplitChannelWithTwoNats(first, second, channel)
+      pairResult[0] == first + second + first and pairResult[1] ==
+        ChannelHandle(id: first + 1,
+          label: "ternary-" & $second & "/split-two"),
+    shrinkInt)
+  if not generatedTernaryPairBindingCases:
+    quit(1)
+  let generatedTrustedDependentPairCases = forAll(
+    "explicit trusted codecs carry a dependent Sigma field", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 1000),
+    proc(index: int): bool =
+      generatedIndexedChannelIndex(IndexedChannelHandle(index: index,
+        label: "index-" & $index)) == index,
+    shrinkInt)
+  if not generatedTrustedDependentPairCases:
+    quit(1)
+  let generatedPairWithExternalIndexCases = forAll(
+    "non-dependent Sigma tails may use earlier Pi indices", r, 200,
+    proc(r: var Rng): int = r.genInt(0, 1000),
+    proc(index: int): bool =
+      let channel = IndexedChannelHandle(index: index,
+        label: "outer-" & $index)
+      let pairResult = generatedRepeatIndexedChannel(index, channel)
+      pairResult[0] == channel and pairResult[1] ==
+        IndexedChannelHandle(index: index, label: channel.label & "/copy"),
+    shrinkInt)
+  if not generatedPairWithExternalIndexCases:
     quit(1)
   let generatedNestedRecordRoundTrips = forAll(
     "nested structural record codecs preserve recursive fields", r, 200,
@@ -329,6 +468,11 @@ when isMainModule:
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
       generatedRecordRoundTrips and
+      generatedPairBindingCases and
+      generatedBinaryPairBindingCases and
+      generatedTernaryPairBindingCases and
+      generatedTrustedDependentPairCases and
+      generatedPairWithExternalIndexCases and
       generatedNestedRecordRoundTrips and
       generatedFutureInputPassesThrough and
       generatedPureConditionalsWork and
