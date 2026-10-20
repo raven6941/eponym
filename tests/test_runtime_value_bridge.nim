@@ -198,12 +198,27 @@ eponymBlock:
 
 eponymBlock:
   import "fixtures/runtime_variant.ep"
+  import "../lib/bool.ep"
   runtimeVariant(RuntimeTree)
   runtimeVariant(SizedTree)
   runtimeValue(treeIdentity)
   proc genericIndexedTreeProjection[length: Nat,
       tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
   runtimeValue(genericIndexedTreeProjection)
+  proc genericConditionalIndexedTreeProjection[b: Bool, n, m: Nat,
+      tree: SizedTree[if b: n else: m]](ignored: Int):
+      SizedTree[if b: n else: m] = tree
+  runtimeValue(genericConditionalIndexedTreeProjection)
+
+eponymBlock:
+  import "fixtures/runtime_variant.ep"
+  import "../lib/bool.ep"
+  proc genericUnmappedTreeSeed(): RuntimeTree = treeEmpty
+  runtimeValue(genericUnmappedTreeSeed)
+  proc genericConditionalRawTreeProjection[b: Bool, n, m: Nat,
+      tree: SizedTree[if b: n else: m]](ignored: Int):
+      SizedTree[if b: n else: m] = tree
+  runtimeValue(genericConditionalRawTreeProjection)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -941,6 +956,79 @@ when isMainModule:
   except ValueError:
     appliedGenericIndexRejected = true
   doAssert appliedGenericIndexRejected
+  let conditionalAppliedGenericCases = forAll(
+    "conditional applied generic domains validate RuntimeVariant values", r,
+    200,
+    proc(r: var Rng): tuple[condition: bool, yesLength, noLength: int] =
+      (r.genBool(), r.genInt(0, 20), r.genInt(0, 20)),
+    proc(input: tuple[condition: bool, yesLength, noLength: int]): bool =
+      let expectedLength = if input.condition:
+        input.yesLength else: input.noLength
+      let tree = runtimeVariantToValue(RuntimeVariant(
+        constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+        runtimeTreeConstructors)
+      let indexed = runtimeVariantToValue(RuntimeVariant(
+        constructor: "sizedTree",
+        arguments: @[natToValue(expectedLength, variantGlobals), tree]),
+        variantGlobals, "SizedTree", ["sizedTree"])
+      let mapped = valueToRuntimeVariant(indexed, variantGlobals,
+        "SizedTree", ["sizedTree"])
+      let typed = genericConditionalIndexedTreeProjectionDynamic(
+        input.condition, input.yesLength, input.noLength, mapped, 0)
+      let runtime = genericConditionalIndexedTreeProjectionRuntimeValueDynamic(
+        input.condition, input.yesLength, input.noLength, mapped, 0)
+      let rawSeed = genericUnmappedTreeSeedRuntimeValue()
+      let rawIndexed = callRuntimeValue(
+        runtimeGlobalValue(rawSeed.globals, "sizedTree"),
+        [natToValue(expectedLength, rawSeed.globals), rawSeed.value])
+      let raw = genericConditionalRawTreeProjectionRuntimeValueDynamic(
+        input.condition, input.yesLength, input.noLength, rawIndexed, 0)
+      let runtimeValue = valueToRuntimeVariant(runtime.value, runtime.globals,
+        "SizedTree", ["sizedTree"])
+      let rawVariant = valueToRuntimeVariant(raw.value, raw.globals,
+        "SizedTree", ["sizedTree"])
+      typed.constructor == "sizedTree" and
+        valueToNat(typed.arguments[0], variantGlobals) == expectedLength and
+        valueToNat(runtimeValue.arguments[0], runtime.globals) ==
+          expectedLength and
+        valueToNat(rawVariant.arguments[0], raw.globals) == expectedLength,
+    proc(input: tuple[condition: bool, yesLength, noLength: int]):
+        seq[tuple[condition: bool, yesLength, noLength: int]] = @[])
+  if not conditionalAppliedGenericCases:
+    quit(1)
+  let tree = runtimeVariantToValue(RuntimeVariant(
+    constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
+    runtimeTreeConstructors)
+  let wrongLength = runtimeVariantToValue(RuntimeVariant(
+    constructor: "sizedTree", arguments: @[natToValue(9, variantGlobals),
+      tree]), variantGlobals, "SizedTree", ["sizedTree"])
+  let wrongConditionalTree = valueToRuntimeVariant(wrongLength,
+    variantGlobals, "SizedTree", ["sizedTree"])
+  var typedConditionalAppliedMismatchRejected = false
+  try:
+    discard genericConditionalIndexedTreeProjectionDynamic(
+      true, 3, 4, wrongConditionalTree, 0)
+  except ValueError:
+    typedConditionalAppliedMismatchRejected = true
+  doAssert typedConditionalAppliedMismatchRejected
+  var runtimeConditionalAppliedMismatchRejected = false
+  try:
+    discard genericConditionalIndexedTreeProjectionRuntimeValueDynamic(
+      true, 3, 4, wrongConditionalTree, 0)
+  except ValueError:
+    runtimeConditionalAppliedMismatchRejected = true
+  doAssert runtimeConditionalAppliedMismatchRejected
+  let rawSeed = genericUnmappedTreeSeedRuntimeValue()
+  let rawWrongLength = callRuntimeValue(
+    runtimeGlobalValue(rawSeed.globals, "sizedTree"),
+    [natToValue(9, rawSeed.globals), rawSeed.value])
+  var rawConditionalAppliedMismatchRejected = false
+  try:
+    discard genericConditionalRawTreeProjectionRuntimeValueDynamic(
+      true, 3, 4, rawWrongLength, 0)
+  except ValueError:
+    rawConditionalAppliedMismatchRejected = true
+  doAssert rawConditionalAppliedMismatchRejected
   var variantArityRejected = false
   try:
     discard runtimeVariantToValue(RuntimeVariant(
