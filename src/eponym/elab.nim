@@ -4777,6 +4777,17 @@ proc elabCheckDir*(src: string, baseDir: string,
   var drv = initModuleDriver(handlers)
   drv.elabDeclsDir(decls, baseDir, "<eponymBlock>")
 
+proc elabCheckDirState*(src: string, baseDir: string,
+                        handlers: seq[ConvHandler] = @[]):
+    tuple[defs: seq[ElabDef], globals: Globals] =
+  ## Directory-aware elaboration result for runtime/code-generation clients
+  ## that need the exact global reference identities used by checking.
+  ## Kept separate from elabCheckDir so existing callers retain their API.
+  let decls = parseProgram(src)
+  var drv = initModuleDriver(handlers)
+  let defs = drv.elabDeclsDir(decls, baseDir, "<eponymBlock>")
+  (defs, drv.globals)
+
 proc elabCheckFile*(path: string,
                     handlers: seq[ConvHandler] = @[]): seq[ElabDef] =
   ## Issue #49: elaborate a file on disk with `import` support (fresh driver).

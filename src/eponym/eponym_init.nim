@@ -24,6 +24,7 @@
 import sequtils
 import tables
 import hashes
+import typetraits
 import preterm  # for Quantity (Issue #64)
 import abilities # Issue #177: operator pegs on tPi
 import elab_prof  # Issue #55: phase timers
@@ -58,7 +59,7 @@ type
     ##   <: Nat lives in the elaborator's conversion (defaultConv), not in
     ##   the kernel's symmetric conversion.
   WhnfKind* = enum wRef, wPi, wSi, wLam, wPair, wConst, wRed, wInt, wPrim,
-                     wNatLit, wNatSing, wType
+                     wNatLit, wNatSing, wType, wHost
   ## wType: a level-annotated universe value `Type l` (Issue #52).
   ## wInt: a primitive integer value (Experiment 11).
   ## wNatLit: a primitive Nat literal value (Issue #93); definitionally
@@ -164,6 +165,9 @@ type
       natLitVal*: int
     of wNatSing:
       natSingVal*: int
+    of wHost:
+      hostPayload*: RootRef
+      hostTypeName*: string
     of wPrim:
       op: PrimOp
       pargs: seq[Value]  # accumulated so far (function position order)
@@ -403,6 +407,10 @@ proc whnfNatSingVal*(v: Value): int =
   assert v.whnf.kind == wNatSing, "whnfNatSingVal of non-natsing"
   v.whnf.natSingVal
 
+proc whnfHostTypeName*(v: Value): string =
+  assert v.whnf.kind == wHost, "whnfHostTypeName of non-host"
+  v.whnf.hostTypeName
+
 proc whnfPrimOp*(v: Value): PrimOp =
   ## Issue #50: operator of a wPrim value (REPL printer).
   assert v.whnf.kind == wPrim, "whnfPrimOp of non-prim"
@@ -638,12 +646,24 @@ proc substSpine*(t: Term, spine: seq[Term]): Term =
 ## --- evaluation (§6.6) -------------------------------------------------------
 
 proc eval*(t: Term, env: seq[Value]): Value  # forward
+type RuntimeBindings* = Table[int, Value]
+  ## Nim Table assignments share backing storage. Build bindings before
+  ## evaluation starts and treat them as immutable afterward.
 
-proc evalScope(sc: Scope, env: seq[Value]): ScoVal =
+proc evalWithBindings*(t: Term, env: seq[Value],
+                       bindings: RuntimeBindings): Value  # forward
+
+proc evalScope(sc: Scope, env: seq[Value],
+               bindings: RuntimeBindings): ScoVal =
   ScoVal(syn: Scope(adv: sc.adv, bdy: substEnv(sc.bdy, env, 1)),
-         fn: proc(x: Value): Value = eval(sc.bdy, envAdd(env, x)))
+         fn: proc(x: Value): Value =
+           evalWithBindings(sc.bdy, envAdd(env, x), bindings))
 
-proc fireRed(elimId: int, rule: RedRule, args: seq[Value]): Whnf =
+proc applyWhnfWithBindings(f, a: Value,
+                           bindings: RuntimeBindings): Whnf
+
+proc fireRed(elimId: int, rule: RedRule, args: seq[Value],
+             bindings: RuntimeBindings): Whnf =
   ## Experiment 4: try to fire a registered reduction rule. `args` has
   ## length rule.nargs (last = scrutinee), in application order.
   let scrut = args[^1]
@@ -666,18 +686,19 @@ proc fireRed(elimId: int, rule: RedRule, args: seq[Value]): Whnf =
     for i in countdown(args.high - 1, 0):
       spine.add(args[i].syn)
     let inst = substSpine(rule.cases[scrut.whnf.refId], spine)
-    return eval(inst, @[]).whnf
+    return evalWithBindings(inst, @[], bindings).whnf
   # fully applied but the scrutinee is not constructor-headed: neutral
   Whnf(kind: wRef, refId: elimId, spine: args.mapIt(ElimV(kind: eApp, arg: it)))
 
-proc applyWhnf*(f, a: Value): Whnf =
+proc applyWhnfWithBindings(f, a: Value,
+                           bindings: RuntimeBindings): Whnf =
   ## the computational half of $$ for application
   case f.whnf.kind
   of wLam: f.whnf.lscope.fn(a).whnf       # beta, by host application
   of wRed:                                # Experiment 4: registered eliminator
     let args2 = f.whnf.args & @[a]
     if args2.len == f.whnf.rule.nargs:
-      fireRed(f.whnf.elimId, f.whnf.rule, args2)
+      fireRed(f.whnf.elimId, f.whnf.rule, args2, bindings)
     elif args2.len < f.whnf.rule.nargs:
       Whnf(kind: wRed, elimId: f.whnf.elimId, rule: f.whnf.rule, args: args2)
     else:
@@ -705,6 +726,9 @@ proc applyWhnf*(f, a: Value): Whnf =
          spine: f.whnf.spine & @[ElimV(kind: eApp, arg: a)])
   else: raise newException(ValueError, "stuck application")
 
+proc applyWhnf*(f, a: Value): Whnf =
+  applyWhnfWithBindings(f, a, initTable[int, Value]())
+
 proc vApp(f, a: Value): Value =
   Value(syn: tmApp(f.syn, a.syn), whnf: applyWhnf(f, a))
 
@@ -729,10 +753,20 @@ proc vAbsurdV(z: Value): Value =
                      spine: z.whnf.spine & @[ElimV(kind: eAbsurd)]))
   else: raise newException(ValueError, "absurd of canonical empty (impossible)")
 
-proc evalWhnf(t: Term, env: seq[Value]): Whnf =
+proc evalWhnf(t: Term, env: seq[Value],
+              bindings: RuntimeBindings): Whnf =
   case t.kind
   of tR:
-    if t.refIsDefn: t.refVal.whnf   # unfold definitions; syn keeps the R node
+    if t.refId in bindings: bindings[t.refId].whnf
+    elif t.refIsDefn:
+      # A cached definition value may contain closures created before the
+      # runtime binding environment existed. Re-evaluate its stored syntax
+      # when bindings are active so indirect calls can reach bound postulates.
+      if bindings.len > 0 and not t.refVal.isNil and
+          t.refVal.whnf.kind != wRed:
+        evalWithBindings(t.refVal.syn, @[], bindings).whnf
+      else:
+        t.refVal.whnf
     else: Whnf(kind: wRef, refId: t.refId, spine: newSeq[ElimV]())
   of tV: env[t.idx].whnf
   of tC: Whnf(kind: wConst, c: t.c)
@@ -741,15 +775,15 @@ proc evalWhnf(t: Term, env: seq[Value]): Whnf =
   of tNatLit: Whnf(kind: wNatLit, natLitVal: t.natLitVal)
   of tNatSing: Whnf(kind: wNatSing, natSingVal: t.natSingVal)
   of tPrim: Whnf(kind: wPrim, op: t.primOp, pargs: @[])
-  of tPi: Whnf(kind: wPi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env), qty: t.qty)
-  of tSi: Whnf(kind: wSi, dom: eval(t.dom, env), tscope: evalScope(t.scope, env), qty: t.qty)
-  of tLam: Whnf(kind: wLam, lscope: evalScope(t.scope, env))
-  of tPair: Whnf(kind: wPair, fstV: eval(t.pFst, env), sndV: eval(t.pSnd, env))
-  of tApp: applyWhnf(eval(t.fn, env), eval(t.arg, env))
-  of tFst: projWhnf(eval(t.sub, env), true)
-  of tSnd: projWhnf(eval(t.sub, env), false)
-  of tAbsurd: vAbsurdV(eval(t.sub, env)).whnf
-  of tLet: evalWhnf(t.letScope.bdy, envAdd(env, eval(t.letVal, env)))
+  of tPi: Whnf(kind: wPi, dom: evalWithBindings(t.dom, env, bindings), tscope: evalScope(t.scope, env, bindings), qty: t.qty)
+  of tSi: Whnf(kind: wSi, dom: evalWithBindings(t.dom, env, bindings), tscope: evalScope(t.scope, env, bindings), qty: t.qty)
+  of tLam: Whnf(kind: wLam, lscope: evalScope(t.scope, env, bindings))
+  of tPair: Whnf(kind: wPair, fstV: evalWithBindings(t.pFst, env, bindings), sndV: evalWithBindings(t.pSnd, env, bindings))
+  of tApp: applyWhnfWithBindings(evalWithBindings(t.fn, env, bindings), evalWithBindings(t.arg, env, bindings), bindings)
+  of tFst: projWhnf(evalWithBindings(t.sub, env, bindings), true)
+  of tSnd: projWhnf(evalWithBindings(t.sub, env, bindings), false)
+  of tAbsurd: vAbsurdV(evalWithBindings(t.sub, env, bindings)).whnf
+  of tLet: evalWhnf(t.letScope.bdy, envAdd(env, evalWithBindings(t.letVal, env, bindings)), bindings)
   of tMeta:
     # The elaborator zonks (substitutes all solutions) before any core
     # operation; reaching here means the invariant was violated.
@@ -759,7 +793,15 @@ proc evalWhnf(t: Term, env: seq[Value]): Whnf =
 proc eval*(t: Term, env: seq[Value]): Value =
   profilePhase(epEval):
       ## eval t γ = close t γ ⇓ whnv t γ  (paper §6.6)
-      Value(syn: substEnv(t, env, 0), whnf: evalWhnf(t, env))
+      evalWithBindings(t, env, initTable[int, Value]())
+
+proc evalWithBindings*(t: Term, env: seq[Value],
+                       bindings: RuntimeBindings): Value =
+  ## Runtime evaluation with explicit postulate implementations. This
+  ## environment is separate from compile-time evaluation, where postulates
+  ## remain rigid neutral references.
+  profilePhase(epEval):
+    Value(syn: substEnv(t, env, 0), whnf: evalWhnf(t, env, bindings))
 
 ## --- smart value constructors (§6.5) ------------------------------------------
 
@@ -773,6 +815,44 @@ proc vOne(): Value =
 
 proc vInt*(n: int): Value =
   Value(syn: tmInt(n), whnf: Whnf(kind: wInt, intVal: n))
+
+proc vHostFunc*(fn: proc(x: Value): Value): Value =
+  ## Runtime-only unary host function value. It is intentionally not used by
+  ## the elaborator or kernel; the postulate contract remains the trusted
+  ## declaration at the host boundary.
+  let scope = Scope(adv: "host", bdy: vv(0))
+  Value(syn: tmLam(tStar(), scope.adv, scope.bdy),
+        whnf: Whnf(kind: wLam, lscope: ScoVal(syn: scope, fn: fn)))
+
+proc vNatLit*(n: int): Value =
+  ## Construct a primitive Nat value for host/runtime adapters.
+  if n < 0:
+    raise newException(ValueError, "Nat cannot be negative")
+  Value(syn: tmNatLit(n), whnf: Whnf(kind: wNatLit, natLitVal: n))
+
+type HostBox[T] = ref object of RootObj
+  value: T
+
+proc toHostValue*[T](hostValue: T): Value =
+  ## Box any Nim value as an opaque runtime value for passage to a host
+  ## postulate. Eponym cannot inspect the payload.
+  let box = HostBox[T](value: hostValue)
+  Value(syn: tStar(),
+        whnf: Whnf(kind: wHost, hostPayload: RootRef(box),
+                   hostTypeName: name(T)))
+
+proc valueToHost*[T](value: Value): T =
+  ## Recover a value previously boxed with toHostValue[T]. Both the recorded
+  ## Nim type name and runtime box type are checked before unboxing.
+  if value.whnf.kind != wHost:
+    raise newException(ValueError, "runtime value is not an opaque Nim value")
+  if value.whnf.hostTypeName != name(T):
+    raise newException(ValueError,
+      "opaque Nim value has type " & value.whnf.hostTypeName &
+      ", not " & name(T))
+  if not (value.whnf.hostPayload of HostBox[T]):
+    raise newException(ValueError, "opaque Nim value box type mismatch")
+  cast[HostBox[T]](value.whnf.hostPayload).value
 
 proc vPrim*(op: PrimOp, ty: Term): Value =
   ## A primitive Int operation, accumulating args (Experiment 11).
@@ -1050,6 +1130,9 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
       raise newException(ValueError, "primitive op mismatch")
     for i in 0 ..< a.whnf.pargs.len:
       structuralEq(s, a.whnf.pargs[i], b.whnf.pargs[i], qtySubsumption)
+  of wHost:
+    raise newException(ValueError,
+      "opaque Nim values cannot participate in Eponym conversion")
 
 proc areEqual*(s: var Supply, ty, a, b: Value, qtySubsumption = false) =
   ## type-directed conversion (§6.7). Exported for the elaborator's

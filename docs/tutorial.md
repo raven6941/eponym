@@ -75,10 +75,14 @@ What just happened:
   is a primitive integer operation.
   The prelude (`lib/nat.ep`) defines `Nat` inductively instead — we will
   use it in the next section.
-- A call like `double(21)` re-elaborates the block at runtime (cached
-  after the first call) and evaluates the checked term. Runtime calls
-  work for definitions over `Int`; everything else in the block is still
-  fully checked at compile time.
+- A call like `double(21)` re-elaborates the block on its first runtime call
+  (then uses the cache) and evaluates the checked term. Generated wrappers
+  support first-order `Int`/`Nat` and explicitly mapped opaque postulated
+  types; other definitions are still checked at compile time.
+- This partial runtime bridge is a known limitation, not a limit on
+  what the elaborator can check. See [known limitations](known-limitations.md)
+  and the [postulate binding experiment](postulate-nim-binding-experiment.md)
+  for the path toward callable Nim-backed operations.
 
 Now break it. Change the body to `addInt(x, y)` and recompile:
 
