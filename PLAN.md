@@ -458,6 +458,11 @@ implementations.
    and rejects a sequence with the wrong length. A 200-case property exercises
    both the typed dynamic wrapper and `RuntimeValue` dynamic wrapper, including
    wrong-length rejection.
+- [x] Generate typed dynamic wrappers for generic value binders whose domain
+   is a non-dependent Sigma with codec-supported fields. Nested field codecs
+   are composed, and indexed Vec fields are length-checked. A 200-case
+   property exercises typed and `RuntimeValue` dynamic wrappers and rejects a
+   Sigma containing a Vec of the wrong length.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

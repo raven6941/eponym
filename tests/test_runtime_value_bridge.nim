@@ -269,8 +269,12 @@ eponymBlock:
       values: Vec[Vec[Int, m], n]): Vec[Vec[Int, m], n] = values
   proc generatedGenericVectorValueBinder[n: Nat,
       values: Vec[Int, n]](ignored: Int): Vec[Int, n] = values
+  proc generatedGenericSigmaValueBinder[
+      pair: Sig(marker: Int, Vec[Int, 2])](ignored: Int):
+      Sig(marker: Int, Vec[Int, 2]) = pair
   runtimeValue(generatedNestedVectorIdentity)
   runtimeValue(generatedGenericVectorValueBinder)
+  runtimeValue(generatedGenericSigmaValueBinder)
   proc generatedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
@@ -1594,6 +1598,30 @@ proc callbackRole : Callback -> Sample -> Sample =
             values)
   if not dynamicGenericValueVectorCases:
     quit(1)
+  let dynamicGenericValueSigmaCases = forAll(
+    "dynamic generic Sigma values use recursive runtime codecs", r, 200,
+    proc(r: var Rng): tuple[marker, first, second: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000),
+       r.genInt(-1000, 1000)),
+    proc(input: tuple[marker, first, second: int]): bool =
+      let pair = (input.marker, @[input.first, input.second])
+      let typed = generatedGenericSigmaValueBinderDynamic(pair, 0)
+      let runtime = generatedGenericSigmaValueBinderRuntimeValueDynamic(pair, 0)
+      typed == pair and valueToInt(runtimePairFirst(runtime.value)) ==
+        input.marker and
+        vecValueToSeq[int](runtimePairSecond(runtime.value), 2,
+          runtime.globals, "Vec",
+          proc(value: Value, _: Globals): int = valueToInt(value)) ==
+            pair[1])
+  if not dynamicGenericValueSigmaCases:
+    quit(1)
+  var dynamicGenericValueSigmaMismatchRejected = false
+  try:
+    discard generatedGenericSigmaValueBinderDynamic((1, @[2, 3, 4]), 0)
+  except ValueError as error:
+    dynamicGenericValueSigmaMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert dynamicGenericValueSigmaMismatchRejected
   var dynamicGenericValueVectorMismatchRejected = false
   try:
     discard generatedGenericVectorValueBinderDynamic(3, @[1, 2], 0)

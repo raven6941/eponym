@@ -313,6 +313,7 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
       let genericCount = nimGenericParamCount(statement[2])
       let firstGenericIsNat = statement[2].kind == nnkGenericParams and
         statement[2].len > 0 and statement[2][0].kind == nnkIdentDefs and
+        statement[2][0][^2].kind in {nnkIdent, nnkSym} and
         $statement[2][0][^2] == "Nat"
       registerLegacyInfo($statement[0], genericCount,
         nimFormalArgCount(statement[3]), firstGenericIsNat,
@@ -2048,7 +2049,8 @@ proc genericRuntimeInfo(decl: NimNode,
     let binderHeadName = if binderHead.kind == nnkIdent: $binderHead else: ""
     var mappedBinder: HostRuntimeType
     var hasMappedBinder = false
-    var hasStructuralValueCodec = false
+    var hasStructuralValueCodec =
+      not runtimeSigmaComponents(param[^2]).first.isNil
     for mapping in mappings:
       if mapping.eponymName == binderType:
         mappedBinder = mapping
