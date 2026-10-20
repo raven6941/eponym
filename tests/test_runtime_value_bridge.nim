@@ -69,6 +69,7 @@ static:
     hostInvokeCallback))
 
 eponymBlock:
+  import "../lib/bool.ep"
   postulate(Int, Univ)
   postulate(Nat, Univ)
   postulate(hostPlusSeven, Int -> Int)
@@ -76,6 +77,14 @@ eponymBlock:
   proc generatedCheckedRole(value: Int): Int = hostPlusSeven(value)
   proc generatedAdd(left: Int, right: Int): Int = addInt(left, right)
   proc generatedNatId(value: Nat): Nat = value
+  proc generatedArithmetic(left: Int, right: Int, scale: Int): Int =
+    let difference = left - right
+    let subtotal = difference + -right
+    subtotal * scale
+  proc generatedChooseTrue(): Int =
+    if true: addInt(19, 0) else: addInt(17, 0)
+  proc generatedChooseFalse(): Int =
+    if false: addInt(19, 0) else: addInt(17, 0)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -131,6 +140,9 @@ static:
   doAssert not compiles(generatedAdd(42))
   doAssert not compiles(generatedAdd("20", 22))
   doAssert compiles(generatedNatId(17))
+  doAssert compiles(generatedArithmetic(1, 2, 3))
+  doAssert compiles(generatedChooseTrue())
+  doAssert compiles(generatedChooseFalse())
   doAssert compiles(generatedRotateRole(ChannelHandle(id: 1)))
   doAssert not compiles(generatedRotateRole("not a channel"))
   doAssert compiles(generatedRouteRole(ChannelHandle(id: 1), "hello"))
@@ -168,13 +180,24 @@ when isMainModule:
   let compat = callIntFuncDir(baseDir, program, "double", @[21]) == 42
   let generatedBindingWorks = generatedCheckedRole(35) == 42
   let generatedTypedWrappersWork = generatedAdd(20, 22) == 42 and
-    generatedNatId(17) == 17
+    generatedNatId(17) == 17 and generatedArithmetic(5, 7, 3) == -27
+  let generatedPureConditionalsWork = generatedChooseTrue() == 19 and
+    generatedChooseFalse() == 17
   let generatedOpaqueWrapperWorks = generatedRouteRole(
     ChannelHandle(id: 17, label: "socket"), "generated").label ==
       "socket:generated"
   let futureInput = newFuture[int]("futureArgument")
   let generatedFutureInputPassesThrough =
     generatedFutureInput(futureInput) == futureInput
+  let arithmeticCases = forAll("Nim-shaped checked Int arithmetic", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(n: int): bool =
+      let right = n div 2
+      let scale = (n mod 9) + 1
+      generatedArithmetic(n, right, scale) == (n - right - right) * scale,
+    shrinkInt)
+  if not arithmeticCases:
+    quit(1)
   let generatedUnaryOpaqueWorks = generatedRotateRole(
     ChannelHandle(id: 18, label: "single")).id == 19
   let generatedUnaryOpaqueCases = forAll(
@@ -208,6 +231,7 @@ when isMainModule:
   if not (intRoundTrips and natRoundTrips and compat and generatedBindingWorks and
       generatedTypedWrappersWork and generatedOpaqueWrapperWorks and
       generatedFutureInputPassesThrough and
+      generatedPureConditionalsWork and
       generatedUnaryOpaqueWorks and generatedUnaryOpaqueCases and
       generatedOpaqueWrapperCases and
       rejectedNegativeNat and hostExceptionPropagated):

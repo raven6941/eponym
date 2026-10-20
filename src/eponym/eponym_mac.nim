@@ -66,6 +66,44 @@ proc qtyPrefix(n: NimNode): string =
 proc nimExprToEponym(n: NimNode): string
 proc nimTypeToEponym(n: NimNode): string
 
+proc ifExprToEponym(n: NimNode): string =
+  var branches: seq[(NimNode, NimNode)] = @[]
+  var elseBranch: NimNode = nil
+  for branch in n:
+    case branch.kind
+    of nnkElifExpr, nnkElifBranch:
+      if branch.len != 2:
+        error("eponymBlock: if branch must have one condition and body", branch)
+      branches.add((branch[0], branch[1]))
+    of nnkElseExpr, nnkElse:
+      if branch.len != 1:
+        error("eponymBlock: else branch must have one body", branch)
+      elseBranch = branch[0]
+    else:
+      error("eponymBlock: unsupported if branch " & $branch.kind, branch)
+  if branches.len == 0 or elseBranch.isNil:
+    error("eponymBlock: pure if expression requires a condition and an else branch", n)
+  proc branchExpr(branch: NimNode): NimNode =
+    if branch.kind == nnkStmtList:
+      if branch.len != 1:
+        error("eponymBlock: if branch must be one expression", branch)
+      return branch[0]
+    branch
+  if elseBranch.kind == nnkStmtList:
+    if elseBranch.len != 1:
+      error("eponymBlock: else branch must be one expression", elseBranch)
+    elseBranch = elseBranch[0]
+  # Eponym applications are strict, while Nim conditionals evaluate only the
+  # selected branch. Pass each branch as a unit thunk so a postulate (or any
+  # other runtime-bound operation) in the unselected branch is not evaluated.
+  var fallback = "(lam (_ : 1). " & nimExprToEponym(elseBranch) & ")"
+  for i in countdown(branches.high, 0):
+    let (condition, body) = branches[i]
+    let yesBranch = "(lam (_ : 1). " & nimExprToEponym(branchExpr(body)) & ")"
+    fallback = "ifThenElse (" & nimExprToEponym(condition) & ") " &
+      yesBranch & " (" & fallback & ")"
+  "(" & fallback & ") <>"
+
 proc nimCommandLamToEponym(n: NimNode): string =
   ## Convert Nim's command-form untyped lambda (`lam x. body`) to Eponym
   ## syntax. Nim represents a nested chain such as `lam x. lam y. body`
@@ -135,11 +173,12 @@ proc nimExprToEponym(n: NimNode): string =
     # as string syntax. This also resolves Issue #8: nested literals in
     # eponymBlock bodies (e.g. cons(Int, 2, a, ...), eConst 3) now elaborate
     # per their expected type instead of always becoming Nat suc-chains.
-    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so
-    # the Nat literal one is spelled `suc zero` here (as in string syntax).
+    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so use
+    # the parser's unambiguous integer spelling `01`. Expected-type
+    # overloading then selects Nat or Int, just as it does for other literals.
     let v = n.intVal
     if v < 0: error("negative integer literal", n)
-    if v == 1: "(suc zero)" else: $v
+    if v == 1: "01" else: $v
   of nnkStmtList:
     # Proc body: convert let-statements to nested let...in, final expr is body
     if n.len == 0: error("eponymBlock: empty proc body", n)
@@ -213,6 +252,35 @@ proc nimExprToEponym(n: NimNode): string =
     else: "(" & n.mapIt(nimExprToEponym(it)).join(", ") & ")"
   of nnkCommand:
     nimCommandToEponym(n)
+  of nnkBracketExpr:
+    if n.len < 2:
+      error("eponymBlock: bracket application needs explicit arguments", n)
+    var parts = @[nimExprToEponym(n[0])]
+    for i in 1 ..< n.len:
+      let arg = n[i]
+      let value = nimExprToEponym(arg)
+      if arg.kind in {nnkCall, nnkCommand, nnkObjConstr, nnkInfix, nnkPrefix}:
+        parts.add("(" & value & ")")
+      else:
+        parts.add(value)
+    parts.join(" ")
+  of nnkInfix:
+    let prim = case $n[0]
+      of "+": "addInt"
+      of "-": "subInt"
+      of "*": "mulInt"
+      else: error("eponymBlock: unsupported pure operator '" & $n[0] & "'",
+                  n[0])
+    prim & " (" & nimExprToEponym(n[1]) & ") (" &
+      nimExprToEponym(n[2]) & ")"
+  of nnkPrefix:
+    if $n[0] == "-":
+      "subInt 0 (" & nimExprToEponym(n[1]) & ")"
+    else:
+      error("eponymBlock: unsupported pure prefix operator '" & $n[0] & "'",
+            n[0])
+  of nnkIfExpr, nnkIfStmt:
+    ifExprToEponym(n)
   of nnkDotExpr:
     # p.x -> (p).x (record projection, issue #37; the surface parser
     # resolves it against the record table at elaboration time).
@@ -258,6 +326,20 @@ proc nimTypeToEponym(n: NimNode): string =
     let v = n.intVal
     if v < 0: error("negative integer literal in type", n)
     if v == 1: "(suc zero)" else: $v
+  of nnkBracketExpr:
+    if n.len < 2:
+      error("eponymBlock: bracket type application needs explicit arguments", n)
+    let head = nimTypeToEponym(n[0])
+    var args: seq[string] = @[]
+    for i in 1 ..< n.len:
+      let a = n[i]
+      if (a.kind == nnkCall and a.len > 1) or a.kind == nnkObjConstr or
+          a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
+                     nnkInt64Lit}:
+        args.add("(" & nimTypeToEponym(a) & ")")
+      else:
+        args.add(nimTypeToEponym(a))
+    head & " " & args.join(" ")
   of nnkCall:
     # Tactic term in type position (issue #151): byTac(refl) -> by refl.
     if n[0].kind == nnkIdent and $n[0] == "byTac":
@@ -363,11 +445,20 @@ proc patToEponym(n: NimNode): string =
     nimExprToEponym(n)
 
 proc procDefToEponym(n: NimNode): string =
-  ## Convert nnkProcDef to "proc name (params) : ret = body".
-  # n[0] = name, n[1] = empty (pragma?), n[2] = empty (generic?), 
+  ## Convert nnkProcDef to "proc name (generic binders) (params) : ret = body".
+  # n[0] = name, n[1] = empty (pragma?), n[2] = generic params,
   # n[3] = formal params, n[4] = empty, n[5] = empty, n[6] = body
   let name = $n[0]
   let params = n[3]  # nnkFormalParams: [returnType, param1, param2, ...]
+  var genericBinders: seq[string] = @[]
+  if n[2].kind != nnkEmpty:
+    for genericParam in n[2]:
+      if genericParam.kind != nnkIdentDefs or
+          genericParam[^2].kind == nnkEmpty:
+        error("eponymBlock: explicit generic parameters need Eponym type annotations", genericParam)
+      let ty = nimTypeToEponym(genericParam[^2])
+      for i in 0 ..< genericParam.len - 2:
+        genericBinders.add("(" & binderName(genericParam[i]) & " : " & ty & ")")
   var paramStrs: seq[string] = @[]
   var retTy = "Type 0"
   if params.len > 0 and params[0].kind != nnkEmpty:
@@ -379,7 +470,10 @@ proc procDefToEponym(n: NimNode): string =
       let q = qtyPrefix(p[j])
       paramStrs.add("(" & q & binderName(p[j]) & " : " & ty & ")")
   let body = nimExprToEponym(n[6])
-  "proc " & name & " " & paramStrs.join(" ") & " : " & retTy & " = " & body & "\n"
+  let genericStr = if genericBinders.len == 0: ""
+                   else: " " & genericBinders.join(" ")
+  "proc " & name & genericStr & " " & paramStrs.join(" ") & " : " & retTy &
+    " = " & body & "\n"
 
 proc defCallToEponym(st: NimNode): string =
   ## def(isZero, Nat -> Bool):

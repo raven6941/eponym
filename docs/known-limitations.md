@@ -186,9 +186,17 @@ resolve automatically from the installed package. See
 
 ## Surface syntax
 
-The embedded syntax is Nim-shaped but is not ordinary Nim semantics. For
-example, explicit Eponym parameters currently use call-style forms such as
-`Vec(A, n)` and `cons(A, n, x, xs)`, rather than Nim's generic bracket
-convention. A proposal to investigate brackets for explicit Eponym binders
-is tracked separately; this page should be updated when a concrete syntax
-decision is made.
+The embedded syntax is Nim-shaped but is not ordinary Nim semantics. Explicit
+Eponym parameters can use Nim square brackets, as in `Vec[A, n]` and
+`cons[A, n](x, xs)`; legacy call-style forms remain accepted. Generic Eponym
+definitions can be checked, but the generated Nim runtime wrapper for a
+generic definition is not implemented yet.
+
+Pure `if`/`elif`/`else` expressions lower to nested checked `ifThenElse`
+calls when `lib/bool.ep` is imported. Each condition must have type `Bool`,
+and each branch must be one Eponym expression. The branches are delayed with
+unit lambdas and only the selected branch is evaluated, matching Nim's
+conditional evaluation even when a branch calls a bound postulate. This does
+not enable ordinary effectful Nim control flow inside the block. The Nim
+integer literal `1` is emitted using Eponym's unambiguous `01` spelling, so
+expected-type checking can select `Int` or `Nat`.

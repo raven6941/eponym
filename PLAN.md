@@ -493,15 +493,24 @@ implementations.
 
 #### G. Improve the Nim surface and onboarding
 
-- [ ] Keep the current supported AST boundary explicit in the syntax reference.
-- [ ] Prototype a small pure Nim-looking subset (`let`, selected arithmetic,
-   and `if` expressions) by lowering it to Eponym terms. Effects, arbitrary
-   procedure calls, macros, mutation, and IO remain outside unless introduced
-   as explicit trusted bindings.
-- [ ] Decide the parameter convention: square brackets for explicit Eponym
-   binders (`A`, indices such as `n`), parentheses for term arguments, and
-   braces for implicit binders. Preserve a migration path from call-style
-   forms such as `cons(A, n, x, xs)` and `Vec(A, n)`.
+- [x] Keep the current supported AST boundary explicit in the syntax reference,
+  tutorial, trust model, and known-limitations page.
+- [x] Lower Nim `Int` expressions using `let`, unary minus, and `+`, `-`, `*`
+  to the existing checked Eponym primitives. A 200-case property test compares
+  generated wrappers with Nim arithmetic over values that avoid overflow.
+- [x] Lower single and chained `if/elif/else` expressions through the checked
+  `ifThenElse` definition in `lib/bool.ep`. Branches are unit thunks, so only
+  the chosen branch runs, matching Nim conditional evaluation even when a
+  branch calls a bound postulate. A 200-case property checks effect counts and
+  results; a compile-fail test covers a missing `else`. Arbitrary Nim control
+  flow, macros, mutation, and IO remain outside unless explicitly bound.
+- [x] Emit Nim's integer literal `1` as unambiguous Eponym `01`, preserving
+  expected-type selection between `Int` and `Nat`. A 200-case `x + 1` property
+  and surface-conformance fixture cover the behavior.
+- [x] Use square brackets for explicit Eponym binders (`A`, indices such as
+   `n`), parentheses for term arguments, and braces for implicit binders.
+   Generic declarations, bracketed type applications, and bracketed term
+   applications are covered; call-style forms remain supported for migration.
 - [ ] Make installed preludes discoverable by the package without requiring
    users to copy `.ep` files beside every source file; define deterministic
    resolution order (source-relative, package prelude, explicit override)
@@ -526,8 +535,8 @@ implementations.
   examples by what Eponym checks, what Nim checks, and what remains trusted
   or disconnected. The README links to the table; retain it as implementations
   change and qualify claims when the implementation does not meet them.
-- [ ] Update `docs/known-limitations.md`, the trust model, the tutorial, syntax
-  reference, and this plan in the same change when a stage lands.
+- [x] Update `docs/known-limitations.md`, the trust model, the tutorial, syntax
+  reference, and this plan alongside the surface-syntax stage.
 - [x] Preserve a supported-claims table in the docs: “checked by Eponym”,
   “checked by Nim”, “trusted adapter”, and “not currently connected”.
 

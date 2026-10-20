@@ -46,11 +46,15 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | Inside `eponymBlock` | Meaning |
 |---|---|
 | `proc f(x: T): U = term` | Eponym definition; `term` must use Eponym forms |
+| `proc f[A: Univ, n: Nat](x: A): Vec[A, n] = ...` | Explicit Eponym binders; the annotation grammar is Eponym, and generic runtime wrappers remain unsupported |
+| `cons[A, n](x, xs)`, `Vec[A, n]` | Square brackets supply explicit Eponym parameters; parentheses supply term arguments. Call-style forms remain supported during migration. |
 | `let x = term` in a definition body | Eponym local binding; one or more lets may precede the final term |
+| `left + right`, `left - right`, `left * right`, `-value` | Lowered to checked Eponym `Int` primitives; the Eponym checker enforces operand types |
+| `if condition: yes elif other: maybe else: no` | Pure conditional chain lowered to nested `ifThenElse` calls from `lib/bool.ep`; import that file, use `Bool` conditions, and provide one expression per branch |
 | `addInt(x, y)`, `suc(n)`, `f x`, `lam(x, T, body)` | Eponym applications and lambda forms, translated by the macro |
 | `import "lib/nat.ep"` | Eponym module import, not a Nim module import |
-| `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported only for unary `Int -> Int` contracts |
-| `echo`, `for`, `var`, `if`, Nim library calls | Not supported as host Nim statements/expressions in the block |
+| `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported shapes are listed in [known limitations](known-limitations.md) |
+| `echo`, `for`, `var`, effectful Nim control flow, Nim library calls | Not supported as host Nim statements/expressions in the block |
 
 Put ordinary computation, IO, control flow, and Nim library calls outside
 the block. Call the generated wrappers from Nim, and pass values across the

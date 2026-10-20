@@ -66,7 +66,11 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_binding_unused.nim",
      "binding for postulate 'hostStepPostulate' is unused"),
     ("tests/fixtures/embedded_err_binding_duplicate.nim",
-     "duplicate bindPostulate for 'hostStepPostulate'")]:
+     "duplicate bindPostulate for 'hostStepPostulate'"),
+    ("tests/fixtures/embedded_err_unsupported_operator.nim",
+     "unsupported pure operator 'div'"),
+    ("tests/fixtures/embedded_err_if_missing_else.nim",
+     "requires a condition and an else branch")]:
   if not checkFixture(path, expected):
     inc failed
 
