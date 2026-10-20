@@ -85,9 +85,15 @@ no-argument helper. When every parameter has a runtime codec, parameterized
 definitions also get a Nim-typed overload that converts arguments and returns
 the result as a `Value`. Mapped host values are not checked against dependent
 indices. A raw `openArray[Value]` overload remains available and checks only
-argument count; callers must construct those values correctly. The helper
-applies the block's declared `bindPostulate` adapters; unbound postulates
-remain neutral. It does not generate a structural Nim result type, so callers
+argument count for definitions with a local Nim signature; callers must
+construct those values correctly. `runtimeValue(importedDefinition)` also
+works for definitions imported from `.ep` files without a local Nim signature
+and exposes only the raw Value interface. Imported checked bodies can invoke
+postulates bound by `bindPostulate` in the same block. The helper applies the
+block's declared adapters; unbound postulates remain neutral. It does not
+generate a structural Nim result type, but checks the imported definition's
+fixed argument count from its checked lambda telescope. Callers still supply
+well-formed Values. Callers
 must handle unsupported constructors and neutral values explicitly. A
 non-dependent `Sig(A, B)` runtime type is structurally mapped to a two-element
 Nim tuple, recursively supporting `Int`, `Nat`, and explicitly mapped opaque

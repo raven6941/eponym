@@ -880,6 +880,44 @@ proc bindingIsReferenced(body: NimNode, postulateName: string): bool =
         mentionsName(st[6], postulateName):
       return true
 
+proc termReferencesRef(term: Term, refId: int): bool =
+  ## Whether a checked term mentions a global, including under binders.
+  if term.isNil: return false
+  case term.kind
+  of tR: term.refId == refId
+  of tPi, tSi, tLam:
+    termReferencesRef(term.dom, refId) or
+      termReferencesRef(term.scope.bdy, refId)
+  of tPair:
+    termReferencesRef(term.pFst, refId) or
+      termReferencesRef(term.pSnd, refId) or
+      termReferencesRef(term.pScope.bdy, refId)
+  of tApp: termReferencesRef(term.fn, refId) or termReferencesRef(term.arg, refId)
+  of tFst, tSnd, tAbsurd: termReferencesRef(term.sub, refId)
+  of tLet:
+    termReferencesRef(term.letVal, refId) or
+      termReferencesRef(term.letTy, refId) or
+      termReferencesRef(term.letScope.bdy, refId)
+  of tMeta:
+    for item in term.metaSpine:
+      if termReferencesRef(item, refId): return true
+    false
+  of tV, tC, tType, tInt, tNatLit, tNatSing, tPrim: false
+
+proc checkedDefReferences(definition: ElabDef, refId: int): bool =
+  termReferencesRef(definition.tyTm, refId) or
+    termReferencesRef(definition.tmTm, refId)
+
+proc bindingIsReferenced(body: NimNode, postulateName: string,
+                         allDefs: seq[ElabDef], globals: Globals): bool =
+  ## Keep checking local Nim bodies, and include checked imported bodies.
+  if bindingIsReferenced(body, postulateName): return true
+  if postulateName notin globals: return false
+  let refId = globals[postulateName].tm.refId
+  for definition in allDefs:
+    if checkedDefReferences(definition, refId): return true
+  false
+
 proc isCheckedNatType(globals: Globals, typeName: string): bool =
   ## Classify Nat by the checked declaration's identity, not by its spelling.
   if "Nat" notin globals or typeName notin globals:
@@ -1868,6 +1906,60 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   result.add(newEmptyNode())
   result.add(body)
 
+proc checkedLambdaArity(definition: ElabDef): int =
+  ## Imported definitions have no Nim declaration from which to get arity.
+  ## Their checked lambda telescope is the source of truth for the raw ABI.
+  var body = definition.tmTm
+  while not body.isNil and body.kind == tLam:
+    inc result
+    body = body.scope.bdy
+
+proc rawRuntimeValueWrapper(baseDir, src, defName: string,
+    expectedArity: int,
+    bindings: seq[HostPostulateBinding], mappings: seq[HostRuntimeType],
+    records: seq[HostRecord], checkedGlobals: Globals): NimNode =
+  ## Expose an imported checked definition when no local Nim signature is
+  ## available. Callers explicitly pass its arguments as Eponym Values.
+  let argsSym = genSym(nskParam, "runtimeArguments")
+  let globalsSym = genSym(nskLet, "runtimeGlobals")
+  let defsSym = genSym(nskLet, "runtimeDefs")
+  let bindingsSym = genSym(nskVar, "runtimeBindings")
+  let valueSym = genSym(nskLet, "runtimeValue")
+  let dirLit = newLit(baseDir)
+  let srcLit = newLit(src)
+  let nameLit = newLit(defName)
+  let arityLit = newLit(expectedArity)
+  var body = newStmtList()
+  body.add quote do:
+    if `argsSym`.len != `arityLit`:
+      raise newException(ValueError,
+        "runtimeValue argument count mismatch for " & `nameLit`)
+  body.add(newLetStmt(globalsSym,
+    newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+  body.add(newLetStmt(defsSym,
+    newCall(bindSym"getDefsDir", dirLit, srcLit)))
+  body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))
+  for binding in bindings:
+    body.add(bindingCall(binding, bindingsSym, globalsSym, mappings, records,
+                         checkedGlobals))
+  body.add(newLetStmt(valueSym,
+    newCall(bindSym"callDefValueWithBindings",
+      newCall(bindSym"findDef", defsSym, nameLit), argsSym, bindingsSym,
+      globalsSym)))
+  body.add(newTree(nnkTupleConstr, valueSym, globalsSym))
+  result = newNimNode(nnkProcDef)
+  result.add(newTree(nnkPostfix, ident"*", ident(defName & "RuntimeValue")))
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  var formal = newNimNode(nnkFormalParams)
+  formal.add(parseExpr("tuple[value: Value, globals: Globals]"))
+  formal.add(newIdentDefs(argsSym,
+    newTree(nnkBracketExpr, ident"openArray", bindSym"Value"), newEmptyNode()))
+  result.add(formal)
+  result.add(newEmptyNode())
+  result.add(newEmptyNode())
+  result.add(body)
+
 macro eponymBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
@@ -1904,10 +1996,12 @@ macro eponymBlock*(body: untyped): untyped =
   # Issue #131: imports resolve relative to the calling Nim file's dir.
   let baseDir = callerDir(body)
   var defs: seq[ElabDef]
+  var allDefs: seq[ElabDef]
   var checkedGlobals: Globals
   try:
-    let checked = elabCheckDirState(src, baseDir)
+    let checked = elabCheckDirStateAll(src, baseDir)
     defs = checked.defs
+    allDefs = checked.allDefs
     checkedGlobals = checked.globals
   except ElabError as e:
     error("eponymBlock elaboration error: " & e.msg, body)
@@ -1916,7 +2010,7 @@ macro eponymBlock*(body: untyped): untyped =
 
   for requested in runtimeValueNames:
     var found = false
-    for d in defs:
+    for d in allDefs:
       if d.name == requested: found = true
     if not found:
       error("runtimeValue names no checked definition: " & requested, body)
@@ -1925,8 +2019,9 @@ macro eponymBlock*(body: untyped): untyped =
       if st.kind == nnkProcDef and $st[0] == requested:
         declaration = st
         break
-    if declaration.isNil or
-        declaration[3].len == 0 or declaration[3][0].kind == nnkEmpty:
+    if declaration.isNil:
+      continue # Imported checked definitions use the raw Value ABI.
+    if declaration[3].len == 0 or declaration[3][0].kind == nnkEmpty:
       error("runtimeValue requires a checked definition with a result: " &
         requested, body)
     if declaration[2].kind != nnkEmpty:
@@ -1941,7 +2036,8 @@ macro eponymBlock*(body: untyped): untyped =
 
   let bindings = hostPostulateBindings(body)
   for binding in bindings:
-    if not bindingIsReferenced(body, binding.postulateName):
+    if not bindingIsReferenced(body, binding.postulateName, allDefs,
+                               checkedGlobals):
       error("eponymBlock binding error: binding for postulate '" &
         binding.postulateName & "' is unused by every proc body", body)
   let runtimeTypes = hostRuntimeTypes(body)
@@ -2184,6 +2280,10 @@ macro eponymBlock*(body: untyped): untyped =
         result.add(unsupportedRuntimeWrapper(procDecl, d.name, runtimeTypes,
           records, allowDependentSigma))
       continue
+    if d.name in runtimeValueNames:
+      result.add(rawRuntimeValueWrapper(baseDir, src, d.name,
+        checkedLambdaArity(d), bindings,
+        runtimeTypes, records, checkedGlobals))
     if bindings.len == 0:
       result.add(quote do:
         proc `procName`*(args: varargs[int]): int =
@@ -2209,6 +2309,22 @@ macro eponymBlock*(body: untyped): untyped =
       )
       wrapper[6] = wrapperBody
       result.add(wrapper)
+  for requested in runtimeValueNames:
+    var localDef = false
+    for d in defs:
+      if d.name == requested:
+        localDef = true
+        break
+    if not localDef:
+      var importedDef: ElabDef
+      for d in allDefs:
+        if d.name == requested:
+          importedDef = d
+          break
+      if importedDef.name.len > 0:
+        result.add(rawRuntimeValueWrapper(baseDir, src, requested,
+          checkedLambdaArity(importedDef), bindings, runtimeTypes, records,
+          checkedGlobals))
 
 macro eponym*(src: string): untyped =
   ## Elaborate and typecheck a surface program at compile time.

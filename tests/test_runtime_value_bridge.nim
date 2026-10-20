@@ -149,6 +149,12 @@ eponymBlock:
     if false: addInt(19, 0) else: addInt(17, 0)
 
 eponymBlock:
+  import "fixtures/runtime_imported_value.ep"
+  bindPostulate(importedStep, hostStepNim)
+  runtimeValue(importedIdentity)
+  runtimeValue(importedApply)
+
+eponymBlock:
   postulate(Nat, Univ)
   data(Tree, Univ):
     proc leaf(): Tree
@@ -620,6 +626,34 @@ when isMainModule:
   doAssert boundRuntime.value.whnfIntVal == 42
   let baseDir = currentSourcePath().parentDir.parentDir
   var r = initRng(424242'u64)
+
+  let importedRuntimeCases = forAll(
+    "raw runtimeValue access reaches imported checked definitions", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let runtime = importedIdentityRuntimeValue([intToValue(value)])
+      runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value,
+    shrinkInt)
+  if not importedRuntimeCases:
+    quit(1)
+
+  var importedArityRejected = false
+  try:
+    discard importedIdentityRuntimeValue([])
+  except ValueError as error:
+    importedArityRejected =
+      "runtimeValue argument count mismatch for importedIdentity" in error.msg
+  doAssert importedArityRejected
+
+  let importedPostulateCases = forAll(
+    "imported checked definitions dispatch bound host postulates", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let runtime = importedApplyRuntimeValue([intToValue(value)])
+      runtime.value.whnfKind == wInt and runtime.value.whnfIntVal == value + 7,
+    shrinkInt)
+  if not importedPostulateCases:
+    quit(1)
 
   let intRoundTrips = forAll("runtime Int Values through checked definitions",
     r, 200,

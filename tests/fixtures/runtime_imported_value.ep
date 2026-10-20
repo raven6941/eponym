@@ -1,0 +1,5 @@
+postulate Int : Type 0
+postulate importedStep : Int -> Int
+
+proc importedIdentity (value : Int) : Int = value
+proc importedApply (value : Int) : Int = importedStep value
