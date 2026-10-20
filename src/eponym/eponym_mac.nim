@@ -914,7 +914,8 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       return fields
   let valueFn = runtimeValueConverter(eponymType, nimType, toValue, records)
   if valueFn.isNil: return nil
-  if simpleRuntimeCodec(eponymType) == "bool":
+  if simpleRuntimeCodec(eponymType) == "bool" or
+      (simpleRuntimeCodec(eponymType) == "nat" and not toValue):
     return newCall(valueFn, value, globals)
   newCall(valueFn, value)
 

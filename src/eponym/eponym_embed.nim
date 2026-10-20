@@ -31,7 +31,11 @@ proc hostOpaqueQuaternary*[A, B, C, D, E](
   implementation: proc(w: A, x: B, y: C, z: D): E): Value
 proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value
 proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value
+proc hostNatOpaqueBinary*[T](globals: Globals,
+  implementation: proc(n: int, x: T): T): Value
 proc hostNatOpaqueMapBinary*[A, B](
+  implementation: proc(n: int, x: A): B): Value
+proc hostNatOpaqueMapBinary*[A, B](globals: Globals,
   implementation: proc(n: int, x: A): B): Value
 proc hostValueNary*(arity: int,
                     implementation: proc(args: seq[Value],
@@ -369,7 +373,7 @@ proc bindHostNatOpaqueBinary*[T](bindings: var RuntimeBindings,
   validateHostNatOpaqueBinaryType(globals, postulateName, opaqueArgType,
                                   opaqueResultType)
   bindHostValue(bindings, globals, postulateName,
-                hostNatOpaqueBinary[T](implementation))
+                hostNatOpaqueBinary[T](globals, implementation))
 
 proc bindHostNatOpaqueMapBinary*[A, B](bindings: var RuntimeBindings,
     globals: Globals, postulateName, opaqueArgType,
@@ -378,7 +382,7 @@ proc bindHostNatOpaqueMapBinary*[A, B](bindings: var RuntimeBindings,
   validateHostNatOpaqueBinaryType(globals, postulateName, opaqueArgType,
                                   opaqueResultType)
   bindHostValue(bindings, globals, postulateName,
-                hostNatOpaqueMapBinary[A, B](implementation))
+                hostNatOpaqueMapBinary[A, B](globals, implementation))
 
 proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int =
   validateHostOpaqueType(globals, typeName)
@@ -645,6 +649,8 @@ proc valueToNat*(v: Value): int =
 proc valueToNat*(v: Value, globals: Globals): int =
   ## Decode either a canonical Nat literal or its checked zero/suc constructor
   ## representation using the constructor identities from the same module.
+  if v.whnf.kind == wNatLit:
+    return v.whnf.natLitVal
   if "zero" notin globals or "suc" notin globals:
     raise newException(ValueError, "runtime Nat constructors are unavailable")
   let zeroId = globals["zero"].tm.refId
@@ -684,12 +690,29 @@ proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value =
       toHostValue(implementation(valueToNat(natValue),
                                  valueToHost[T](opaqueValue)))))
 
+proc hostNatOpaqueBinary*[T](globals: Globals,
+    implementation: proc(n: int, x: T): T): Value =
+  ## Decode constructor-based Nat values using the bound module's constructors.
+  vHostFunc(proc(natValue: Value): Value =
+    vHostFunc(proc(opaqueValue: Value): Value =
+      toHostValue(implementation(valueToNat(natValue, globals),
+                                 valueToHost[T](opaqueValue)))))
+
 proc hostNatOpaqueMapBinary*[A, B](
     implementation: proc(n: int, x: A): B): Value =
   ## Adapt a Nat and opaque argument to a potentially different opaque result.
   vHostFunc(proc(natValue: Value): Value =
     vHostFunc(proc(opaqueValue: Value): Value =
       toHostValue(implementation(valueToNat(natValue),
+                                 valueToHost[A](opaqueValue)))))
+
+proc hostNatOpaqueMapBinary*[A, B](globals: Globals,
+    implementation: proc(n: int, x: A): B): Value =
+  ## Decode constructor-based Nat arguments using the bound module's
+  ## constructors.
+  vHostFunc(proc(natValue: Value): Value =
+    vHostFunc(proc(opaqueValue: Value): Value =
+      toHostValue(implementation(valueToNat(natValue, globals),
                                  valueToHost[A](opaqueValue)))))
 
 proc hostValueNary*(arity: int,

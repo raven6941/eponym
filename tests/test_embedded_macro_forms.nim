@@ -13,15 +13,16 @@ import eponym_mac
 import eponym_embed
 
 eponymBlock:
-  # --- smoke 07 embedded: Bool via postulate/elim/red ---
-  postulate(Bool, Univ)
-  postulate(true, Bool)
-  postulate(false, Bool)
-  elim(boolElim, Pi(C: Bool -> Univ, C(true) -> C(false) -> Pi(b: Bool, C(b))))
-  red(boolElim(C, t, f, true), t)
-  red(boolElim(C, t, f, false), f)
-  proc notFn(b: Bool): Bool =
-    boolElim(lam(u, Bool, Bool), false, true, b)
+  # --- smoke 07 embedded: a custom Boolean-like type, not the Bool codec ---
+  postulate(BoolD, Univ)
+  postulate(trueD, BoolD)
+  postulate(falseD, BoolD)
+  elim(boolElimD, Pi(C: BoolD -> Univ,
+    C(trueD) -> C(falseD) -> Pi(b: BoolD, C(b))))
+  red(boolElimD(C, t, f, trueD), t)
+  red(boolElimD(C, t, f, falseD), f)
+  proc notFn(b: BoolD): BoolD =
+    boolElimD(lam(u, BoolD, BoolD), falseD, trueD, b)
 
   # --- smoke 08 embedded: Nat via postulate/elim/red ---
   postulate(Nat, Univ)
@@ -34,9 +35,9 @@ eponymBlock:
   proc two(): Nat = suc(suc(zero))
   proc addN(m: Nat, n: Nat): Nat =
     natElim(lam(u, Nat, Nat), m, lam(p, Nat, lam(ih, Nat, suc(ih))), n)
-  proc zeroAfterStep(n: Nat): Bool =
-    natElim(lam(u, Nat, Bool), true,
-            lam (n: Nat). lam (ih: Bool). false, n)
+  proc zeroAfterStep(n: Nat): BoolD =
+    natElim(lam(u, Nat, BoolD), trueD,
+            lam (n: Nat). lam (ih: BoolD). falseD, n)
 
   # --- smoke 14 embedded: tactics ---
   postulate(Int, Univ)
