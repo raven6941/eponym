@@ -188,5 +188,9 @@ generic definition is not implemented yet.
 
 Pure `if`/`elif`/`else` expressions lower to nested checked `ifThenElse`
 calls when `lib/bool.ep` is imported. Each condition must have type `Bool`,
-and each branch must be one Eponym expression. This does not enable ordinary
-effectful Nim control flow inside the block.
+and each branch must be one Eponym expression. The branches are delayed with
+unit lambdas and only the selected branch is evaluated, matching Nim's
+conditional evaluation even when a branch calls a bound postulate. This does
+not enable ordinary effectful Nim control flow inside the block. The Nim
+integer literal `1` is emitted using Eponym's unambiguous `01` spelling, so
+expected-type checking can select `Int` or `Nat`.
