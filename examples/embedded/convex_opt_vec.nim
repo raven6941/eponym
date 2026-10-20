@@ -245,8 +245,7 @@ proc checkedLogisticObjective*(A: FMat, b: FVec): CheckedObjective =
   for row in A:
     if row.len != columns:
       raise newException(ValueError, "logistic matrix rows have inconsistent widths")
-  result = lrProbRuntimeValue([
-    natToValue(A.len), natToValue(columns), toHostValue(A), toHostValue(b)])
+  result = lrProbRuntimeValue(A.len, columns, A, b)
 
 proc evalVectorExpr(expr: Value, weights: FVec,
                     checked: CheckedObjective): FVec =
@@ -303,8 +302,7 @@ proc evalCheckedShiftedLogistic*(A: FMat, b, weights: FVec): float =
   discard checkedLogisticObjective(A, b)
   if weights.len != A[0].len:
     raise newException(ValueError, "weight dimension does not match checked objective")
-  let checked = shiftedLrProbRuntimeValue([
-    natToValue(A.len), natToValue(weights.len), toHostValue(A), toHostValue(b)])
+  let checked = shiftedLrProbRuntimeValue(A.len, weights.len, A, b)
   objectiveValue(checked, weights)
 
 proc loss(checked: CheckedObjective, weights: FVec): float =

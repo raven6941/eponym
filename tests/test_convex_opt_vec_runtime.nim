@@ -3,6 +3,10 @@ import std/math
 import falsify
 import ../examples/embedded/convex_opt_vec as convex
 
+static:
+  doAssert compiles(convex.lrProbRuntimeValue(1, 1, @[@[1.0]], @[0.0]))
+  doAssert not compiles(convex.lrProbRuntimeValue(1, 1, "not a matrix", @[0.0]))
+
 proc referenceLoss(A: convex.FMat, b, weights: convex.FVec): float =
   for i in 0 ..< A.len:
     var affine = -b[i]

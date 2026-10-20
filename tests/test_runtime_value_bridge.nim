@@ -150,6 +150,23 @@ eponymBlock:
   runtimeValue(runtimeResult)
 
 eponymBlock:
+  import "../lib/bool.ep"
+  proc generatedBoolNot(value: Bool): Bool =
+    if value: false else: true
+
+eponymBlock:
+  proc generatedGenericIdentity[A: Univ](value: A): A = value
+  runtimeValue(generatedGenericIdentity)
+
+static:
+  doAssert compiles(sampleTreeWithRuntimeValue(2))
+  doAssert not compiles(sampleTreeWithRuntimeValue("not a Nat"))
+  doAssert compiles(generatedBoolNot(true))
+  doAssert not compiles(generatedBoolNot(1))
+  doAssert compiles(generatedGenericIdentity(1))
+  doAssert compiles(generatedGenericIdentity("opaque"))
+
+eponymBlock:
   postulate(Int, Univ)
   postulate(hostFailure, Int -> Int)
   bindPostulate(hostFailure, hostFailureNim)
@@ -312,9 +329,11 @@ when isMainModule:
   doAssert treeRuntime.value.whnfSpineLen == 2
   doAssert treeRuntime.value.whnfSpineArg(0).whnfNatLitVal == 37
   doAssert treeRuntime.value.whnfSpineArg(1).whnfRefId == leafId
-  let parameterizedTree = sampleTreeWithRuntimeValue([natToValue(91)])
+  let parameterizedTree = sampleTreeWithRuntimeValue(91)
   doAssert parameterizedTree.value.whnfRefId == nodeId
   doAssert parameterizedTree.value.whnfSpineArg(0).whnfNatLitVal == 91
+  let rawParameterizedTree = sampleTreeWithRuntimeValue([natToValue(91)])
+  doAssert rawParameterizedTree.value.whnfRefId == nodeId
   var wrongRuntimeArityRejected = false
   try:
     discard sampleTreeWithRuntimeValue([])
@@ -592,6 +611,38 @@ proc callbackRole : Callback -> Sample -> Sample =
       valueToInt(value) == hostStepNim(n),
     shrinkInt)
   if not hostDispatch:
+    quit(1)
+
+  let boolCodecCases = forAll("generated Bool wrappers preserve constructors",
+    r, 200,
+    proc(r: var Rng): bool = r.genBool(),
+    proc(value: bool): bool = generatedBoolNot(value) == not value)
+  if not boolCodecCases:
+    quit(1)
+
+  let genericIdentityCases = forAll(
+    "polymorphic identity wrappers preserve arbitrary host values",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool = generatedGenericIdentity(value) == value and
+      valueToHost[int](generatedGenericIdentityRuntimeValue(value).value) == value,
+    shrinkInt)
+  if not genericIdentityCases:
+    quit(1)
+
+  let genericOpaqueIdentityCases = forAll(
+    "polymorphic identity wrappers round-trip boxed user objects",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(id: int): bool =
+      let input = ChannelHandle(id: id, label: "generic/" & $id)
+      let generated = generatedGenericIdentity(input)
+      let runtime = generatedGenericIdentityRuntimeValue(input)
+      let decoded = valueToHost[ChannelHandle](runtime.value)
+      generated.id == input.id and generated.label == input.label and
+        decoded.id == input.id and decoded.label == input.label,
+    shrinkInt)
+  if not genericOpaqueIdentityCases:
     quit(1)
 
   var opaqueBindings = initRuntimeBindings()

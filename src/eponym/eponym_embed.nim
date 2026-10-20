@@ -31,7 +31,11 @@ proc hostOpaqueQuaternary*[A, B, C, D, E](
   implementation: proc(w: A, x: B, y: C, z: D): E): Value
 proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value
 proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value
+proc hostNatOpaqueBinary*[T](globals: Globals,
+  implementation: proc(n: int, x: T): T): Value
 proc hostNatOpaqueMapBinary*[A, B](
+  implementation: proc(n: int, x: A): B): Value
+proc hostNatOpaqueMapBinary*[A, B](globals: Globals,
   implementation: proc(n: int, x: A): B): Value
 proc hostValueNary*(arity: int,
                     implementation: proc(args: seq[Value],
@@ -369,7 +373,7 @@ proc bindHostNatOpaqueBinary*[T](bindings: var RuntimeBindings,
   validateHostNatOpaqueBinaryType(globals, postulateName, opaqueArgType,
                                   opaqueResultType)
   bindHostValue(bindings, globals, postulateName,
-                hostNatOpaqueBinary[T](implementation))
+                hostNatOpaqueBinary[T](globals, implementation))
 
 proc bindHostNatOpaqueMapBinary*[A, B](bindings: var RuntimeBindings,
     globals: Globals, postulateName, opaqueArgType, opaqueResultType: string,
@@ -378,7 +382,7 @@ proc bindHostNatOpaqueMapBinary*[A, B](bindings: var RuntimeBindings,
   validateHostNatOpaqueBinaryType(globals, postulateName, opaqueArgType,
                                   opaqueResultType)
   bindHostValue(bindings, globals, postulateName,
-                hostNatOpaqueMapBinary[A, B](implementation))
+                hostNatOpaqueMapBinary[A, B](globals, implementation))
 
 proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int =
   validateHostOpaqueType(globals, typeName)
@@ -558,6 +562,36 @@ proc valueToInt*(v: Value): int =
   # Force evaluation if it's not yet a wInt
   raise newException(ValueError, "value is not an Int")
 
+proc boolToValue*(value: bool, globals: Globals): Value =
+  ## Encode a Nim bool using the checked Bool constructors from this module.
+  let constructorName = if value: "true" else: "false"
+  if constructorName notin globals:
+    raise newException(ValueError,
+      "runtime Bool constructors are unavailable (import bool.ep)")
+  eval(globals[constructorName].tm, @[])
+
+proc valueToBool*(value: Value, globals: Globals): bool =
+  ## Decode only the canonical `true` and `false` constructors.
+  if "true" notin globals or "false" notin globals:
+    raise newException(ValueError,
+      "runtime Bool constructors are unavailable (import bool.ep)")
+  let valueId = runtimeReferenceId(value)
+  let trueId = globals["true"].tm.refId
+  let falseId = globals["false"].tm.refId
+  if valueId == trueId: return true
+  if valueId == falseId: return false
+  raise newException(ValueError, "runtime value is not a canonical Bool")
+
+proc prependErasedTypeArgs*(typeArgCount: int,
+                            args: openArray[Value]): seq[Value] =
+  ## Runtime computation does not inspect type-level generic binders. Supply
+  ## one inert universe value for each such binder before the term arguments.
+  result = newSeqOfCap[Value](typeArgCount + args.len)
+  for _ in 0 ..< typeArgCount:
+    result.add(vType(0))
+  for arg in args:
+    result.add(arg)
+
 proc hostIntUnary*(implementation: proc(x: int): int): Value =
   ## Adapt a Nim Int -> Int procedure to a runtime postulate value. Nim
   ## checks the adapter's concrete signature; the implementation's behavior
@@ -615,6 +649,8 @@ proc valueToNat*(v: Value): int =
 proc valueToNat*(v: Value, globals: Globals): int =
   ## Decode either a canonical Nat literal or its checked zero/suc constructor
   ## representation using the constructor identities from the same module.
+  if v.whnf.kind == wNatLit:
+    return v.whnf.natLitVal
   if "zero" notin globals or "suc" notin globals:
     raise newException(ValueError, "runtime Nat constructors are unavailable")
   let zeroId = globals["zero"].tm.refId
@@ -656,12 +692,29 @@ proc hostNatOpaqueBinary*[T](implementation: proc(n: int, x: T): T): Value =
       toHostValue(implementation(valueToNat(natValue),
                                  valueToHost[T](opaqueValue)))))
 
+proc hostNatOpaqueBinary*[T](globals: Globals,
+    implementation: proc(n: int, x: T): T): Value =
+  ## Decode constructor-based Nat values using the bound module's constructors.
+  vHostFunc(proc(natValue: Value): Value =
+    vHostFunc(proc(opaqueValue: Value): Value =
+      toHostValue(implementation(valueToNat(natValue, globals),
+                                 valueToHost[T](opaqueValue)))))
+
 proc hostNatOpaqueMapBinary*[A, B](
     implementation: proc(n: int, x: A): B): Value =
   ## Adapt a Nat and opaque argument to a potentially different opaque result.
   vHostFunc(proc(natValue: Value): Value =
     vHostFunc(proc(opaqueValue: Value): Value =
       toHostValue(implementation(valueToNat(natValue),
+                                 valueToHost[A](opaqueValue)))))
+
+proc hostNatOpaqueMapBinary*[A, B](globals: Globals,
+    implementation: proc(n: int, x: A): B): Value =
+  ## Decode constructor-based Nat arguments using the bound module's
+  ## constructors.
+  vHostFunc(proc(natValue: Value): Value =
+    vHostFunc(proc(opaqueValue: Value): Value =
+      toHostValue(implementation(valueToNat(natValue, globals),
                                  valueToHost[A](opaqueValue)))))
 
 proc hostValueNary*(arity: int,
@@ -705,7 +758,8 @@ proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
   if refId >= 0:
     for name, entry in globals.pairs:
       if not entry.tm.isNil and entry.tm.kind == tR and
-          not entry.tm.refIsDefn and entry.tm.refId == refId:
+          not entry.tm.refIsDefn and entry.tm.refId == refId and
+          not entry.isDataConstructor:
         raise newException(ValueError,
           "unbound runtime postulate '" & name & "' while evaluating '" &
           d.name & "'")

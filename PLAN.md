@@ -333,9 +333,26 @@ implementations.
    Eponym signature is preserved, while matching a host field to its index
    remains explicitly trusted. A 200-case indexed-family property exercises
    this path; the ordinary pair adapter still rejects the same shape.
-- [ ] Add an explicit runtime type/codec description to each exported Eponym
-   definition and support user-defined/structural Nim types, dependent
-   signatures, and generic or higher-order definitions. Definitions without
+- [x] Generate typed host-argument overloads for `runtimeValue(name)` when a
+   non-generic definition's parameter types have runtime codecs. Nim checks
+   the concrete mapped argument types; the result remains a runtime `Value`,
+   and correspondence between mapped host values and dependent indices is
+   trusted. Logistic regression exercises indexed matrix/vector inputs.
+- [x] Add a `Bool`/Nim `bool` codec backed by the checked `true` and `false`
+   constructors from `bool.ep`. Generated wrappers compute checked Bool
+   definitions and round-trip both constructor cases in a 200-case property;
+   runtime missing-postulate diagnostics recognize data constructors as valid
+   results.
+- [x] Generate typed wrappers for type-level generic binders `[A: Univ]` when
+   the binder is used only in the checked signature. Nim values of generic
+   type `A` pass through opaque boxes; runtime computation uses the same
+   checked body. A 200-case property covers primitive and user-defined Nim
+   values through both the generated wrapper and typed `runtimeValue` helper.
+   Value-indexed binders and bodies that inspect generic type arguments still
+   require an explicit runtime representation.
+- [ ] Add explicit runtime type/codec descriptions for exported Eponym
+   definitions and extend support to dependent signatures, value-indexed
+   generics, and higher-order definitions. Definitions without
    a matching explicit Nim `proc` declaration still retain the legacy
    `varargs[int]` compatibility wrapper; explicit `proc` declarations with
    unsupported signatures fail clearly when called.
