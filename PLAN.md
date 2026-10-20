@@ -478,6 +478,11 @@ implementations.
    is `List[A]` or `Option[A]` when the matching runtime codec is registered.
    Recursive element codecs are reused; 200-case properties cover typed and
    `RuntimeValue` dynamic wrappers for `List[Int]` and `Option[Int]`.
+- [x] Support raw `RuntimeValue` and typed Nim tuple dynamic wrappers for
+   dependent Sigma generic binders. Raw values are checked against the
+   generated witness without an opt-in; typed tuples require
+   `runtimePairTrusted` and codec-supported fields. 200-case properties cover
+   `Sig(length: Nat, Vec[Int, length])` and reject mismatched indices.
 - [x] Accept unmapped named Eponym values as `Value` arguments in dynamic
   generic wrappers. Validate that each value inhabits its declared named type
   before checked evaluation. A 200-case property passes an unmapped data
@@ -534,8 +539,10 @@ implementations.
    recursive codecs, standard `Vec`, `List`, and `Option` codecs, custom
    `runtimeCodec` mappings, and explicit trusted opt-ins for dependent records
    and pairs. Remaining gaps include generic value binders outside indexed
-   `Vec`, dependent Sigma generic binders, broader automatic codec coverage,
-   additional dependent forms, and other higher-order signatures. Unsupported
+   `Vec`, `List`, `Option`, and supported Sigma codecs; typed dependent Sigma
+   binders without the trusted opt-in or supported field codecs; broader
+   automatic codec coverage, additional dependent forms, and other
+   higher-order signatures. Unsupported
    cases must continue to fail with a precise compile-time diagnostic.
    Definitions without a matching explicit Nim `proc` declaration still
    need a typed wrapper when their checked signature is reconstructable;
