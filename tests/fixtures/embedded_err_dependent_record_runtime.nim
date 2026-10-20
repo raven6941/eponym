@@ -10,7 +10,7 @@ eponymBlock:
   import "../../lib/vec.ep"
   record(Point):
     field(length, Nat)
-    field(values, Vec(Nat, length))
+    field(values, Vec[Nat, length])
   runtimeType(Point, RuntimePoint)
   proc pointId(value: Point): Point = value
 
