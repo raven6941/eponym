@@ -290,8 +290,20 @@ eponymBlock:
   proc generatedConditionalGenericSigmaValue[b: Bool, n, m: Nat,
       pair: Sig(length: Nat, Vec[Int, (if b: n else: m)])](ignored: Int):
       Sig(length: Nat, Vec[Int, (if b: n else: m)]) = pair
+  proc generatedAndConditionalVectorValue[b, c: Bool, n, m: Nat,
+      values: Vec[Int, (if b and c: n else: m)]](ignored: Int):
+      Vec[Int, (if b and c: n else: m)] = values
+  proc generatedNotConditionalVectorValue[b: Bool, n, m: Nat,
+      values: Vec[Int, (if not b: n else: m)]](ignored: Int):
+      Vec[Int, (if not b: n else: m)] = values
+  proc generatedOrConditionalVectorValue[b, c: Bool, n, m: Nat,
+      values: Vec[Int, (if b or c: n else: m)]](ignored: Int):
+      Vec[Int, (if b or c: n else: m)] = values
   runtimeValue(generatedConditionalGenericVectorValue)
   runtimeValue(generatedConditionalGenericSigmaValue)
+  runtimeValue(generatedAndConditionalVectorValue)
+  runtimeValue(generatedNotConditionalVectorValue)
+  runtimeValue(generatedOrConditionalVectorValue)
   proc generatedVectorIdentity[A: Univ, n: Nat](
       values: Vec[A, n]): Vec[A, n] = values
   proc generatedVectorSucIndex[n: Nat](
@@ -1745,6 +1757,72 @@ proc callbackRole : Callback -> Sample -> Sample =
           proc(value: Value, _: Globals): int = valueToInt(value)) == values)
   if not conditionalGenericValueCases:
     quit(1)
+  let logicalConditionalVectorCases = forAll(
+    "logical Bool expressions select dynamic generic Vec indices", r, 200,
+    proc(r: var Rng): tuple[b, c: bool, yesLength, noLength, seed: int] =
+      (r.genBool(), r.genBool(), r.genInt(0, 12), r.genInt(0, 12),
+       r.genInt(-1000, 1000)),
+    proc(input: tuple[b, c: bool, yesLength, noLength, seed: int]): bool =
+      proc checkVector(expectedLength: int, typed: seq[int], value: Value,
+          globals: Globals): bool =
+        typed.len == expectedLength and
+          vecValueToSeq[int](value, expectedLength, globals, "Vec",
+            proc(value: Value, _: Globals): int = valueToInt(value)) == typed
+      let andLength = if input.b and input.c:
+        input.yesLength else: input.noLength
+      let notLength = if not input.b:
+        input.yesLength else: input.noLength
+      let orLength = if input.b or input.c:
+        input.yesLength else: input.noLength
+      var andValues = newSeq[int](andLength)
+      var notValues = newSeq[int](notLength)
+      var orValues = newSeq[int](orLength)
+      for i in 0 ..< andLength: andValues[i] = input.seed + i
+      for i in 0 ..< notLength: notValues[i] = input.seed - i
+      for i in 0 ..< orLength: orValues[i] = input.seed * (i + 1)
+      let andTyped = generatedAndConditionalVectorValueDynamic(
+        input.b, input.c, input.yesLength, input.noLength, andValues, 0)
+      let andRuntime = generatedAndConditionalVectorValueRuntimeValueDynamic(
+        input.b, input.c, input.yesLength, input.noLength, andValues, 0)
+      let notTyped = generatedNotConditionalVectorValueDynamic(
+        input.b, input.yesLength, input.noLength, notValues, 0)
+      let notRuntime = generatedNotConditionalVectorValueRuntimeValueDynamic(
+        input.b, input.yesLength, input.noLength, notValues, 0)
+      let orTyped = generatedOrConditionalVectorValueDynamic(
+        input.b, input.c, input.yesLength, input.noLength, orValues, 0)
+      let orRuntime = generatedOrConditionalVectorValueRuntimeValueDynamic(
+        input.b, input.c, input.yesLength, input.noLength, orValues, 0)
+      checkVector(andLength, andTyped, andRuntime.value, andRuntime.globals) and
+        checkVector(notLength, notTyped, notRuntime.value, notRuntime.globals) and
+        checkVector(orLength, orTyped, orRuntime.value, orRuntime.globals))
+  if not logicalConditionalVectorCases:
+    quit(1)
+  for b in [false, true]:
+    for c in [false, true]:
+      let andLength = if b and c: 2 else: 4
+      let notLength = if not b: 2 else: 4
+      let orLength = if b or c: 2 else: 4
+      var andRejected = false
+      try:
+        discard generatedAndConditionalVectorValueDynamic(
+          b, c, 2, 4, newSeq[int](andLength + 1), 0)
+      except ValueError as error:
+        andRejected = "runtime Vec length mismatch" in error.msg
+      doAssert andRejected
+      var notRejected = false
+      try:
+        discard generatedNotConditionalVectorValueDynamic(
+          b, 2, 4, newSeq[int](notLength + 1), 0)
+      except ValueError as error:
+        notRejected = "runtime Vec length mismatch" in error.msg
+      doAssert notRejected
+      var orRejected = false
+      try:
+        discard generatedOrConditionalVectorValueDynamic(
+          b, c, 2, 4, newSeq[int](orLength + 1), 0)
+      except ValueError as error:
+        orRejected = "runtime Vec length mismatch" in error.msg
+      doAssert orRejected
   for condition in [true, false]:
     let expectedLength = if condition: 2 else: 4
     let invalidValues = newSeq[int](expectedLength + 1)
