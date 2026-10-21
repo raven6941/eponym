@@ -12,6 +12,7 @@ type
   Loc* = object
     line*: int
     col*: int
+    source*: string
 
   Quantity* = enum
     q0      # erased (Experiment 9; must not be used)

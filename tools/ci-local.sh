@@ -47,6 +47,8 @@ for f in eponym_init preterm parse_surf elab unify eponym_mac egraph eponym_embe
 done
 echo "=== examples ==="
 nim c -r --hints:off $P "tests/run_examples.nim"
+echo "=== imported source locations ==="
+nim c -r --hints:off $P "tests/test_imported_source_locations.nim"
 echo "=== error-message snapshots (issue #34) ==="
 nim c -r --hints:off $P "tests/error_snapshots.nim"
 echo "=== elaboration trace (issue #83) ==="
