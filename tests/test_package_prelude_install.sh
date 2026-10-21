@@ -80,6 +80,7 @@ eponymBlock:
     addHostOffsetPostulate(natToInt(value))
 
 doAssert convertNatThenCallHost(5) == 12
+EOF
 cat > "$eponymTmpDir/project/scalars.nim" <<'EOF'
 import eponym_mac
 import eponym_embed
