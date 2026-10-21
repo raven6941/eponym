@@ -1756,6 +1756,31 @@ proc runtimeNatIndexExpr(n: NimNode,
         bindSym"natIndexMul", left, right)
   nil
 
+proc runtimeSigmaComponentsForCodec(n: NimNode,
+    mappings: seq[HostRuntimeType], allowDependentSigma: bool):
+    tuple[first, second: NimNode, binder: string] =
+  ## A dependent pair can omit the trust opt-in only when the dependency is
+  ## enforced by a registered Vec codec: the preceding field must be Nat, and
+  ## its name may occur only in the Vec length, where encoding checks it.
+  result = runtimeSigmaComponents(n, allowDependentSigma)
+  if not result.first.isNil or allowDependentSigma:
+    return
+  let dependent = runtimeSigmaComponents(n, allowDependent = true)
+  if dependent.first.isNil or dependent.binder.len == 0 or
+      simpleRuntimeCodec(dependent.first) != "nat":
+    return
+  for mapping in mappings:
+    if not mapping.isRuntimeVector:
+      continue
+    let vector = runtimeVectorComponents(dependent.second,
+      mapping.eponymName)
+    if vector.elementType.isNil or
+        not mentionsName(vector.length, dependent.binder) or
+        mentionsName(vector.elementType, dependent.binder) or
+        runtimeNatIndexExpr(vector.length).isNil:
+      continue
+    return dependent
+
 type RuntimeProcParts = object
   argTypes: seq[NimNode]
   argNames: seq[string]
@@ -1884,7 +1909,8 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
           allowDependentSigma)
         if nimElementType.isNil: return nil
         return newTree(nnkBracketExpr, bindSym"Option", nimElementType)
-  let sigma = runtimeSigmaComponents(n, allowDependentSigma)
+  let sigma = runtimeSigmaComponentsForCodec(n, mappings,
+    allowDependentSigma)
   if not sigma.first.isNil:
     let first = runtimeNimType(sigma.first, mappings, records,
                                allowDependentSigma)
@@ -2442,7 +2468,8 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           body = newStmtList(decodedItem))
         return newCall(bindSym"valueToOption", value, globals,
           newLit(mapping.eponymName), decoder)
-  let sigma = runtimeSigmaComponents(eponymType, allowDependentSigma)
+  let sigma = runtimeSigmaComponentsForCodec(eponymType, mappings,
+    allowDependentSigma)
   if not sigma.first.isNil:
     if nimType.kind notin {nnkTupleConstr, nnkTupleTy} or nimType.len != 2:
       return nil
@@ -2588,7 +2615,8 @@ proc genericRuntimeInfo(decl: NimNode,
     var mappedBinder: HostRuntimeType
     var hasMappedBinder = false
     var hasStructuralValueCodec =
-      not runtimeSigmaComponents(param[^2], allowDependentSigma).first.isNil
+      not runtimeSigmaComponentsForCodec(param[^2], mappings,
+        allowDependentSigma).first.isNil
     if hasRecordValueCodec:
       hasStructuralValueCodec = true
     if allowGenericFunctionValues and
