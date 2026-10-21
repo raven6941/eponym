@@ -1115,6 +1115,14 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
         # Deliberate raw runtime escape hatch; the Nim adapter owns codecs.
         if st.len != 3 or st[1].kind != nnkIdent:
           error("bindPostulateValue expects (postulateName, nimProcedure)", st)
+      elif head == "bindPostulateMutable":
+        # Explicit mutable-local adapter; host mutation is trusted and its
+        # resulting value must be returned through the postulate result.
+        if st.len < 4 or st[1].kind != nnkIdent:
+          error("bindPostulateMutable expects (postulateName, nimProcedure, EponymArgument[, ...], EponymResult)", st)
+        for i in 3 ..< st.len:
+          if st[i].kind != nnkIdent:
+            error("bindPostulateMutable Eponym types must be identifiers", st[i])
       elif head == "bindPostulatePair":
         # Typed adapter for A1 -> ... -> An -> Sig(B, C).
         if st.len notin {6, 7, 8} or st[1].kind != nnkIdent:
@@ -1209,6 +1217,7 @@ type HostPostulateBinding = object
   pairArgCount: int
   trustedPairIndex: bool
   rawValue: bool
+  mutableArgs: bool
 
 type HostRuntimeType = object
   eponymName: string
@@ -1523,8 +1532,9 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
         $st[0] in ["bindPostulate", "bindPostulateValue", "bindPostulatePair",
-                   "bindPostulatePairTrusted"]:
+                   "bindPostulatePairTrusted", "bindPostulateMutable"]:
       let rawValue = $st[0] == "bindPostulateValue"
+      let mutableArgs = $st[0] == "bindPostulateMutable"
       let pairResult = $st[0] in ["bindPostulatePair", "bindPostulatePairTrusted"]
       let trustedPairIndex = $st[0] == "bindPostulatePairTrusted"
       if pairResult:
@@ -1562,7 +1572,8 @@ proc hostPostulateBindings(body: NimNode): seq[HostPostulateBinding] =
                                      pairArgCount: if pairResult:
                                        typeNames.len - 2 else: 0,
                                      trustedPairIndex: trustedPairIndex,
-                                     rawValue: rawValue))
+                                     rawValue: rawValue,
+                                     mutableArgs: mutableArgs))
 
 proc mentionsName(node: NimNode, name: string): bool =
   if node.kind in {nnkIdent, nnkSym} and $node == name:
@@ -3016,9 +3027,10 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
         usesCustomCodec = true
   if binding.eponymTypes.len == 1 and usesCustomCodec:
     adapterTypes = @[binding.eponymTypes[0], binding.eponymTypes[0]]
-  if binding.eponymTypes.len >= 7 or usesCustomCodec:
+  if binding.eponymTypes.len >= 7 or usesCustomCodec or binding.mutableArgs:
     let argumentCount = adapterTypes.len - 1
     var decodedArgs: seq[NimNode] = @[]
+    var decodedArgDecls = newStmtList()
     for i in 0 ..< argumentCount:
       let eponymType = ident(adapterTypes[i])
       let nimType = runtimeNimType(eponymType, mappings, records)
@@ -3032,7 +3044,12 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       if decoded.isNil:
         error("bindPostulate could not build a runtime codec for argument '" &
           adapterTypes[i] & "'")
-      decodedArgs.add(decoded)
+      if binding.mutableArgs:
+        let decodedArg = genSym(nskVar, "hostArgument")
+        decodedArgs.add(decodedArg)
+        decodedArgDecls.add(newVarStmt(decodedArg, decoded))
+      else:
+        decodedArgs.add(decoded)
     let resultEponymType = ident(adapterTypes[^1])
     let resultNimType = runtimeNimType(resultEponymType, mappings, records)
     if resultNimType.isNil:
@@ -3050,7 +3067,8 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
         adapterTypes[^1] & "'")
     let runtimeArgsSym = ident"runtimeArguments"
     let runtimeGlobalsSym = ident"runtimeGlobals"
-    let adapterBody = newStmtList(encodedResult)
+    var adapterBody = decodedArgDecls
+    adapterBody.add(encodedResult)
     let adapter = newProc(params = @[bindSym"RuntimeValue",
       newIdentDefs(runtimeArgsSym,
         newTree(nnkBracketExpr, ident"seq", bindSym"RuntimeValue"), newEmptyNode()),
@@ -3987,8 +4005,10 @@ macro eponymBlock*(body: untyped): untyped =
           binding.eponymTypes[3], binding.eponymTypes[4],
           binding.eponymTypes[5])
       else:
+        let bindingForm = if binding.mutableArgs:
+          "bindPostulateMutable" else: "bindPostulate"
         raise newException(ValueError,
-          "bindPostulate supports Int -> Int, opaque T -> T, opaque T -> U, " &
+          bindingForm & " supports Int -> Int, opaque T -> T, opaque T -> U, " &
           "opaque T -> Nat, Nat -> opaque T -> opaque U, opaque A -> B -> C, " &
           "opaque A -> B -> C -> D, opaque A -> B -> C -> D -> E, and " &
           "opaque A -> B -> C -> D -> E -> F")

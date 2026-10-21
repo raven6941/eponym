@@ -783,6 +783,13 @@ implementations.
    client uses it to run its `withBorrow`/`readB`/`writeB`/`endB` sequence;
    300 property cases exercise different buffer contents. This low-level form
    checks postulate arity but leaves Value conversion and semantics to Nim.
+- [x] Add an explicit `bindPostulateMutable` adapter for Nim procedures with
+   `var` parameters. It decodes checked arguments to mutable locals and encodes
+   the returned value, preserving copy-in/result-out semantics; caller-visible
+   mutation and ownership transfer remain outside the checked Eponym model.
+   A 200-case property exercises mutation, read-only value access, and the
+   returned checked value. `docs/known-limitations.md` records the trust and
+   ownership boundary.
 
 **Exit criteria:**
 
@@ -917,8 +924,8 @@ implementations.
   tutorial and ran the installed-prelude runtime example.
 - [x] Map parse and elaboration diagnostics for local `eponymBlock`s back to
   the nearest Nim definition-body expression. A compile-fail fixture verifies
-  the reported file and line. Blocks importing `.ep` modules still use
-  generated Eponym coordinates; imported-file source tracking remains open.
+  the reported file and line. Imported `.ep` diagnostics retain their source
+  path, line, and column (issue #347).
 - [x] Add a type-preserving `debugEcho[A](value)` postulate in `lib/debug.ep`
   with an explicit `bindPostulateValue` runtime adapter. A 200-case property
   verifies the checked call returns each value and invokes the trace adapter

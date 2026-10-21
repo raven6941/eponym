@@ -148,10 +148,9 @@ types can be recovered by the core inferencer.
 
 For `eponymBlock`s without Eponym module imports, elaboration and parse errors
 include the source filename, line, and column of the nearest Nim definition
-body expression. Blocks that import `.ep` files still report generated
-Eponym-source positions; tracking positions through imported files remains
-open. The `eponym"..."` form reports positions within its Eponym string, not
-Nim source expressions.
+body expression. Errors in imported `.ep` files report that file's path, line,
+and column. The `eponym"..."` form reports positions within its Eponym string,
+not Nim source expressions.
 
 Checked definitions can emit a runtime debug trace by importing
 `lib/debug.ep` and binding its generic `debugEcho` postulate to
@@ -200,6 +199,37 @@ that `rotateNim` has the mapped Nim signature. Neither checker proves that
 the Nim implementation behaves as promised, or that an opaque host value
 satisfies a dependent index. Codecs, mappings, adapters, and their behavior
 are trusted at that boundary.
+
+Ordinary `bindPostulate` bindings expect Nim value parameters. When an
+existing Nim adapter accepts a `var` parameter, use the explicit
+`bindPostulateMutable` form. It decodes each argument into a mutable local,
+calls the Nim procedure, and encodes its return value as the postulate result:
+
+```nim
+proc updateBufferNim(buffer: var seq[byte], amount: int): seq[byte] =
+  buffer.add(byte(amount))
+  buffer
+
+eponymBlock:
+  postulate(Buffer, Univ)
+  runtimeType(Buffer, seq[byte])
+  postulate(updateBuffer, Buffer -> Int -> Buffer)
+  bindPostulateMutable(updateBuffer, updateBufferNim, Buffer, Int, Buffer)
+  proc checkedUpdate(buffer: Buffer, amount: Int): Buffer =
+    updateBuffer(buffer, amount)
+```
+
+The host procedure may take its buffer as `var seq[byte]` and return the
+updated sequence. This adapter uses copy-in/result-out value semantics:
+mutation of a decoded local only reaches checked code through the returned
+value. It does not transfer ownership or mutate the Nim variable passed to the
+generated checked wrapper. If you need caller-visible mutation, keep that
+operation in ordinary Nim code and model the checked result explicitly. Nim's
+[`lent T`](https://nim-lang.org/docs/destructors.html#lent-type) is a borrowed
+return type, not a parameter type; use an ordinary value parameter for a
+read-only adapter. The adapter is trusted to preserve
+the declared type and any indexed relationships, just like other bound
+postulates.
 
 Nim proc values with supported codecs can cross as callback arguments;
 noncapturing callbacks with the default `nimcall` convention are supported.
