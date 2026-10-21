@@ -398,6 +398,8 @@ eponymBlock:
   proc generatedVectorIdentity[A: Univ, n: Nat](
       values: Vec[A, n]): Vec[A, n] = values
   runtimeValue(generatedVectorIdentity)
+  proc generatedEmptyIntVector(): Vec[Int, 0] = nil
+  runtimeValue(generatedEmptyIntVector)
   proc generatedVectorSucIndex[n: Nat](
       values: Vec[Int, suc(n)]): Nat = n
   proc generatedVectorAddIndex[m, n: Nat](
@@ -2445,6 +2447,7 @@ proc callbackRole : Callback -> Sample -> Sample =
       except ValueError:
         mismatchedElementTypeRejected = true
       generatedVectorIdentity[int, 4](values) == values and
+        generatedEmptyIntVector() == @[] and
         generatedVectorIdentity[ChannelHandle, 4](handles) == handles and
         mismatchedElementTypeRejected and
         vecValueToSeq[ChannelHandle](runtimeHandles.value, 4,
