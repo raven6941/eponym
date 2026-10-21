@@ -19,6 +19,7 @@ import sequtils
 import strutils
 import options
 import macros  # NimNode fields of HostRuntimeType
+import erasure # Runtime evaluation uses QTT-erased checked terms
 import elab
 import eponym_init
 import preterm  # Quantity constants for validating supported adapter shapes
@@ -1715,8 +1716,10 @@ proc callRuntimeValue*(fn: Value, args: openArray[Value]): Value =
 
 proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
                                bindings: RuntimeBindings): Value =
-  ## Evaluate a checked definition with explicit host postulate bindings.
-  let t = d.tmTm
+  ## Evaluate the runtime form of a checked definition with explicit host
+  ## postulate bindings. Raw `evalWithBindings` remains available for tools
+  ## that intentionally evaluate the unerased core term.
+  let t = eraseQ0Arguments(d.tmTm)
   var fn = evalWithBindings(t, @[], bindings)
   for arg in args:
     fn = vAppWithBindings(fn, arg, bindings)
@@ -1774,7 +1777,7 @@ proc defnValue*(baseDir, src: string, refId: int,
         raise newException(ValueError,
           "codegen: no cached value for definition refId " & $refId)
       if bindings.len > 0 and t.refVal.whnf.kind != wRed:
-        return evalWithBindings(t.refVal.syn, @[], bindings)
+        return evalWithBindings(eraseQ0Arguments(t.refVal.syn), @[], bindings)
       return t.refVal
   raise newException(ValueError,
     "codegen: unknown definition refId " & $refId & " in " & src)

@@ -11,6 +11,7 @@
 ## #19's framing, Phase 2 is measured against Phase 1's compiled output).
 
 import std/[tables, macros, sequtils, strutils, times]
+import falsify
 import eponym_init
 import eponym_embed
 import eponym_mac
@@ -312,30 +313,33 @@ block:
     interpreted.whnfKind == wInt and interpreted.whnfIntVal == 42,
     "generated higher-order q0 closures are nullary, capture outer values, and agree with the unary interpreter")
 
-block:
-  let rtGlobals = getGlobals(prog)
-  let tickId = rtGlobals["tickNat"].tm.refId
-  var generatedCalls = 0
-  var generatedBindings = testPostulateBindings()
-  generatedBindings[tickId] = vHostFunc(proc(x: Value): Value =
-    inc generatedCalls
-    x)
-  let generated = eponymCompiled_q0EffectCall(
-    @[natToValue(3, natGlobals)], generatedBindings)
-  var interpretedCalls = 0
-  var interpretedBindings = testPostulateBindings()
-  interpretedBindings[tickId] = vHostFunc(proc(x: Value): Value =
-    inc interpretedCalls
-    x)
-  let interpreted = callValueFuncDir("", prog, "q0EffectCall",
-    @[natToValue(3, natGlobals)], interpretedBindings)
-  expect(valueToNat(generated, natGlobals) == 7 and
-    valueToNat(interpreted, natGlobals) == 7,
-    "generated q0 closure body returns the interpreter result")
-  expect(generatedCalls == 1 and interpretedCalls == 2,
-    "generated q0 closure runs its body once (" & $generatedCalls &
-      "); interpreter evaluates the source q0 argument too (" &
-      $interpretedCalls & ")")
+var q0EffectRng = initRng(0x368'u64)
+let q0EffectCases = forAll(
+  "compiled and Value runtime paths erase effects in q0 arguments",
+  q0EffectRng, 200,
+  proc(r: var Rng): int = r.genInt(0, 100),
+  proc(n: int): bool =
+    let rtGlobals = getGlobals(prog)
+    let tickId = rtGlobals["tickNat"].tm.refId
+    var generatedCalls = 0
+    var generatedBindings = testPostulateBindings()
+    generatedBindings[tickId] = vHostFunc(proc(x: Value): Value =
+      inc generatedCalls
+      x)
+    let generated = eponymCompiled_q0EffectCall(
+      @[natToValue(n, natGlobals)], generatedBindings)
+    var interpretedCalls = 0
+    var interpretedBindings = testPostulateBindings()
+    interpretedBindings[tickId] = vHostFunc(proc(x: Value): Value =
+      inc interpretedCalls
+      x)
+    let interpreted = callValueFuncDir("", prog, "q0EffectCall",
+      @[natToValue(n, natGlobals)], interpretedBindings)
+    valueToNat(generated, natGlobals) == 7 and
+      valueToNat(interpreted, natGlobals) == 7 and
+      generatedCalls == 1 and interpretedCalls == 1)
+expect(q0EffectCases,
+  "runtime interpreter and generated q0 closures each run only the retained body effect")
 
 # --- fragment boundaries: these get Phase-1 procs but no repr procs ---
 expect("tickTwice" notin reprCompiledNames(),

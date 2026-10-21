@@ -175,6 +175,14 @@ against the postulate type. The callback body remains trusted.
 - Are bindings direct Nim symbols, explicit adapter closures, or a generated
   record of operations?
 - How are exceptions and async results represented at the checked boundary?
+  **Current decision:** adapter exceptions propagate unchanged. A mapped
+  `Future[T]` is an opaque value that can pass through a synchronous wrapper;
+  Eponym does not await it, observe failure, cancel it, or track async effects.
+  Bound Nim callbacks and postulates are trusted implementations: their
+  Eponym signatures are checked, but their bodies and host effects are not
+  inspected. QTT q0 arguments are erased at public runtime entrypoints,
+  including effects they might contain; put required operations in qω or q1
+  positions. There is no effect row or host-effect checker.
 - Does a linear channel token have a runtime representation that prevents
   accidental aliasing, or is linearity only a static contract?
 - What codecs are required for structured data whose values must be

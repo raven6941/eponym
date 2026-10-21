@@ -15,6 +15,10 @@ proc idNat : Nat -> Nat = lam (n : Nat). n
 """
 
 proc hostStepNim(value: int): int = value + 7
+var importedQ0TickCalls = 0
+proc hostImportedQ0Tick(value: int): int =
+  inc importedQ0TickCalls
+  value
 proc hostTripleNim(value: int): int = value * 3
 proc hostNimcallIncrement(value: int): int = value + 1
 proc hostCdeclStepNim(value: int): int {.cdecl.} = value + 9
@@ -214,6 +218,8 @@ eponymBlock:
 eponymBlock:
   import "fixtures/runtime_imported_value.ep"
   bindPostulate(importedStep, hostStepNim)
+  bindPostulate(importedQ0Tick, hostImportedQ0Tick)
+  proc generatedImportedQ0Effect(value: Int): Int = importedQ0Effect(value)
   runtimeType(Channel, ChannelHandle)
   runtimeType(Sample, int)
   runtimeList(List)
@@ -221,6 +227,7 @@ eponymBlock:
   runtimeValue(importedGenericIdentity)
   runtimeValue(importedListMap)
   runtimeValue(importedApply)
+  runtimeValue(generatedImportedQ0Effect)
 
 eponymBlock:
   import "fixtures/runtime_imported_indexed_callback.ep"
@@ -1175,6 +1182,17 @@ when isMainModule:
   doAssert boundRuntime.value.whnfIntVal == 42
   let baseDir = currentSourcePath().parentDir.parentDir
   var r = initRng(424242'u64)
+
+  let importedQ0EffectCases = forAll(
+    "compiled caller erases q0 effects inside an imported interpreter fallback",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(0, 100),
+    proc(value: int): bool =
+      importedQ0TickCalls = 0
+      generatedImportedQ0Effect(value) == 7 and importedQ0TickCalls == 1,
+    shrinkInt)
+  if not importedQ0EffectCases:
+    quit(1)
 
   let mutablePostulateCases = forAll(
     "var and value Nim postulate adapters use checked value codecs",

@@ -362,6 +362,10 @@ proc neutralVar*(lvl: int): Value =
   Value(syn: vv(lvl), whnf: Whnf(kind: wRef, refId: -(lvl + 1), spine: @[]))
 
 proc whnfKind*(v: Value): WhnfKind = v.whnf.kind
+proc whnfPiQty*(v: Value): Quantity =
+  ## Quantity of a weak-head function type, for checked core transforms.
+  assert v.whnf.kind == wPi, "whnfPiQty of non-Pi value"
+  v.whnf.qty
 proc whnfRefId*(v: Value): int = v.whnf.refId
 proc whnfSpineLen*(v: Value): int = v.whnf.spine.len
 proc whnfSpineArg*(v: Value, i: int): Value = v.whnf.spine[i].arg

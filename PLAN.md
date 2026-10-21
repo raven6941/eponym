@@ -1008,11 +1008,13 @@ implementations.
   slot. The interpreter remains unary. A differential test passes a generated
   q0 closure through a higher-order postulate and verifies a q0 argument's
   effects are skipped while the closure body runs exactly once.
-- [ ] Resolve effect semantics for q0 arguments. Postulate effects are not
-  tracked, so generated execution skips effects in a q0 argument while direct
-  evaluation of the unerased source can run them. Decide whether to enforce
-  purity for erased computations or make erased evaluation the consistent
-  runtime contract, and test both execution paths.
+- [x] Make erased execution the consistent public runtime contract for q0
+  arguments. Both generated code and public interpreted entrypoints erase the
+  argument, including effects hidden in bound postulates; raw
+  `evalWithBindings` remains an explicitly lower-level evaluator of unerased
+  terms. Property tests cover direct and imported definitions. Effects are
+  still not tracked or checked for purity, so required operations must use a
+  qω or q1 position.
 - [x] Validate every baked global refId/name pair against the macro-time
   `Globals` table before code emission, including constructor IDs used by
   eliminator dispatch. A regression simulates a changed refId and checks that
