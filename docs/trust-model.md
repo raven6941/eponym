@@ -198,6 +198,18 @@ time.
   type and recursively encodes both fields. `bindPostulatePairTrusted` permits
   a dependent result when its fields have codecs; Nim does not prove that a
   host field matches its Eponym index, so the adapter author owns that guarantee.
+- **Postulate bindings are block-level axioms.** Declare `bindPostulate` in
+  the same `eponymBlock` as the postulate and checked definitions that use it.
+  The binding is not part of the Eponym type: the checker checks each call
+  against the postulate signature, and Nim checks the adapter's mapped
+  signature, but neither proves the adapter's behavior. A generated checked
+  wrapper does not expose the internal adapter as an argument or encode its
+  identity in the wrapper signature. We keep the binding visible once beside
+  the postulate rather than repeating it at each use site; repetition would
+  not add a proof obligation or make the host implementation verified. When
+  reviewing a checked role, inspect the block's bindings as part of the trust
+  boundary. Imported `.ep` definitions use the binding supplied by the block
+  that instantiates them.
 - **Host evaluation inside types.** There is no general splice of arbitrary
   Nim code into types; the trust boundary is that *you* are the compiler
   plugin. Any Nim computation you run to produce or check an Eponym program
