@@ -1756,12 +1756,42 @@ proc runtimeNatIndexExpr(n: NimNode,
         bindSym"natIndexMul", left, right)
   nil
 
+proc runtimeIndexDependencyCodecSupports(n: NimNode, binder: string,
+    mappings: seq[HostRuntimeType]): bool =
+  ## Check that every occurrence of an outer Sigma index is guarded by a
+  ## structural codec that validates the corresponding host value.
+  if not mentionsName(n, binder): return true
+  for mapping in mappings:
+    if mapping.isRuntimeVector:
+      let vector = runtimeVectorComponents(n, mapping.eponymName)
+      if not vector.elementType.isNil and
+          not runtimeNatIndexExpr(vector.length).isNil:
+        return runtimeIndexDependencyCodecSupports(vector.elementType,
+          binder, mappings)
+    elif mapping.isRuntimeList:
+      let elementType = runtimeListElementType(n, mapping.eponymName)
+      if not elementType.isNil:
+        return runtimeIndexDependencyCodecSupports(elementType, binder,
+          mappings)
+    elif mapping.isRuntimeOption:
+      let elementType = runtimeOptionElementType(n, mapping.eponymName)
+      if not elementType.isNil:
+        return runtimeIndexDependencyCodecSupports(elementType, binder,
+          mappings)
+  let sigma = runtimeSigmaComponents(n, allowDependent = true)
+  if not sigma.first.isNil:
+    return runtimeIndexDependencyCodecSupports(sigma.first, binder,
+      mappings) and runtimeIndexDependencyCodecSupports(sigma.second, binder,
+      mappings)
+  false
+
 proc runtimeSigmaComponentsForCodec(n: NimNode,
     mappings: seq[HostRuntimeType], allowDependentSigma: bool):
     tuple[first, second: NimNode, binder: string] =
   ## A dependent pair can omit the trust opt-in only when the dependency is
-  ## enforced by a registered Vec codec: the preceding field must be Nat, and
-  ## its name may occur only in the Vec length, where encoding checks it.
+  ## enforced by registered structural codecs: the preceding field must be
+  ## Nat, and its name may occur only in index expressions where encoding
+  ## checks the corresponding host values.
   result = runtimeSigmaComponents(n, allowDependentSigma)
   if not result.first.isNil or allowDependentSigma:
     return
@@ -1769,16 +1799,8 @@ proc runtimeSigmaComponentsForCodec(n: NimNode,
   if dependent.first.isNil or dependent.binder.len == 0 or
       simpleRuntimeCodec(dependent.first) != "nat":
     return
-  for mapping in mappings:
-    if not mapping.isRuntimeVector:
-      continue
-    let vector = runtimeVectorComponents(dependent.second,
-      mapping.eponymName)
-    if vector.elementType.isNil or
-        not mentionsName(vector.length, dependent.binder) or
-        mentionsName(vector.elementType, dependent.binder) or
-        runtimeNatIndexExpr(vector.length).isNil:
-      continue
+  if runtimeIndexDependencyCodecSupports(dependent.second, dependent.binder,
+      mappings):
     return dependent
 
 type RuntimeProcParts = object

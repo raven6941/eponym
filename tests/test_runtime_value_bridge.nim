@@ -454,8 +454,8 @@ eponymBlock:
   runtimePairTrusted(generatedGenericDependentPairValueBinder)
   runtimeValue(generatedGenericDependentPairValueBinder)
   proc generatedValidatedDependentPairValueBinder[
-      pair: Sig(length: Nat, Vec[Int, suc(length)])](ignored: Int):
-      Sig(length: Nat, Vec[Int, suc(length)]) = pair
+      pair: Sig(length: Nat, Vec[Vec[Int, length], suc(length)])](ignored: Int):
+      Sig(length: Nat, Vec[Vec[Int, length], suc(length)]) = pair
   runtimeValue(generatedValidatedDependentPairValueBinder)
   proc generatedShadowedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(length: Nat, Vec[Int, length]))):
@@ -2863,9 +2863,11 @@ proc callbackRole : Callback -> Sample -> Sample =
     proc(r: var Rng): tuple[length: int, seed: int] =
       (r.genInt(0, 30), r.genInt(-1000, 1000)),
     proc(input: tuple[length: int, seed: int]): bool =
-      var values = newSeq[int](input.length + 1)
+      var values = newSeq[seq[int]](input.length + 1)
       for i in 0 ..< values.len:
-        values[i] = input.seed + i
+        values[i] = newSeq[int](input.length)
+        for j in 0 ..< values[i].len:
+          values[i][j] = input.seed + i + j
       let pair = (input.length, values)
       let typed = generatedValidatedDependentPairValueBinderDynamic(pair, 0)
       let runtime =
@@ -2873,19 +2875,29 @@ proc callbackRole : Callback -> Sample -> Sample =
       typed == pair and
         valueToNat(runtimePairFirst(runtime.value), runtime.globals) ==
           input.length and
-        vecValueToSeq[int](runtimePairSecond(runtime.value),
+        vecValueToSeq[seq[int]](runtimePairSecond(runtime.value),
           input.length + 1, runtime.globals, "Vec",
-          proc(value: Value, _: Globals): int = valueToInt(value)) == values)
+          proc(value: Value, globals: Globals): seq[int] =
+            vecValueToSeq[int](value, input.length, globals, "Vec",
+              proc(item: Value, _: Globals): int = valueToInt(item))) == values)
   if not validatedDependentGenericSigmaCases:
     quit(1)
   var validatedDependentGenericSigmaMismatchRejected = false
   try:
     discard generatedValidatedDependentPairValueBinderDynamic(
-      (3, @[1, 2, 3]), 0)
+      (3, @[@[1, 2, 3], @[1, 2, 3], @[1, 2, 3]]), 0)
   except ValueError as error:
     validatedDependentGenericSigmaMismatchRejected =
       "runtime Vec length mismatch" in error.msg
   doAssert validatedDependentGenericSigmaMismatchRejected
+  var validatedNestedDependentGenericSigmaMismatchRejected = false
+  try:
+    discard generatedValidatedDependentPairValueBinderDynamic(
+      (3, @[@[1, 2], @[1, 2, 3], @[1, 2, 3], @[1, 2, 3]]), 0)
+  except ValueError as error:
+    validatedNestedDependentGenericSigmaMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert validatedNestedDependentGenericSigmaMismatchRejected
   var dependentGenericSigmaMismatchRejected = false
   try:
     discard generatedGenericDependentPairValueBinderDynamic((3, @[1, 2]), 0)

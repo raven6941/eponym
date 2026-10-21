@@ -47,9 +47,10 @@ with its Nat field. Other dependent tuple shapes still need the explicit trust
 opt-in and codecs that can check their fields. Generic dependent Sigma binders
 can use `runtimePairTrusted(definition)` to enable typed dynamic wrappers; the
 opt-in trusts correspondence with the dependent index while available codecs
-still check their fields. Without that opt-in, dependent indices are accepted
-automatically when registered structural codecs validate every occurrence,
-including nested Vec length constraints.
+still check their fields. Without that opt-in, Eponym accepts a dependency only
+when every occurrence is inside a registered structural codec that checks it,
+including nested Vec length constraints. Other dependent shapes remain
+unsupported without the explicit opt-in.
 
 Other types can still be checked by Eponym but may have no typed Nim wrapper.
 Use `runtimeValue(name)` for the lower-level `Value` interface, or register a
