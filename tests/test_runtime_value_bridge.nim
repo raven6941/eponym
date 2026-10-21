@@ -16,6 +16,8 @@ proc idNat : Nat -> Nat = lam (n : Nat). n
 
 proc hostStepNim(value: int): int = value + 7
 proc hostTripleNim(value: int): int = value * 3
+proc hostNimcallIncrement(value: int): int = value + 1
+proc hostCdeclStepNim(value: int): int {.cdecl.} = value + 9
 proc hostString(value: string): string = value
 proc hostFailureNim(value: int): int =
   raise newException(IOError, "host adapter failed")
@@ -667,6 +669,12 @@ eponymBlock:
   proc generatedApplyNimCallback(
       callback: proc(value: Int): Int {.closure.}, value: Int): Int =
     callback(value)
+  proc generatedApplyNimcallCallback(
+      callback: proc(value: Int): Int, value: Int): Int =
+    callback(value)
+  proc generatedApplyCdeclCallback(
+      callback: proc(value: Int): Int {.cdecl.}, value: Int): Int =
+    callback(value)
   proc generatedAdder(seed: Int): proc(value: Int): Int {.closure.} =
     lam(value, Int, addInt(seed, value))
   proc generatedApplyTwoArgumentCallback(
@@ -766,6 +774,8 @@ static:
     ChannelHandle(id: 7, label: "generic")](1))
   doAssert not compiles(generatedGenericChannelValue[17](1))
   doAssert compiles(generatedApplyNimCallback(proc(value: int): int = value, 1))
+  doAssert compiles(generatedApplyNimcallCallback(hostNimcallIncrement, 1))
+  doAssert compiles(generatedApplyCdeclCallback(hostCdeclStepNim, 1))
   doAssert not compiles(generatedApplyNimCallback(
     proc(value: string): string = value, 1))
   doAssert compiles(generatedAdder(3)(4))
@@ -3349,6 +3359,16 @@ proc callbackRole : Callback -> Sample -> Sample =
       generatedApplyNimCallback(callback, value) == value * factor + 7,
     shrinkInt)
   if not callbackBridgeCases:
+    quit(1)
+
+  let nimcallCallbackCases = forAll(
+    "Nim callbacks cross into checked function arguments", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      generatedApplyNimcallCallback(hostNimcallIncrement, value) == value + 1 and
+        generatedApplyCdeclCallback(hostCdeclStepNim, value) == value + 9,
+    shrinkInt)
+  if not nimcallCallbackCases:
     quit(1)
 
   let returnedClosureCases = forAll(

@@ -114,11 +114,13 @@ the Nim implementation behaves as promised, or that an opaque host value
 satisfies a dependent index. Codecs, mappings, adapters, and their behavior
 are trusted at that boundary.
 
-Callback values can cross when their Nim proc type has supported codecs;
-returned callbacks must use `{.closure.}`. Eponym checks the callback type,
-not its Nim body or effects. Async values such as `Future[T]` may pass through
-as opaque mapped values, but Eponym has no `await`, cancellation, or async
-effect system. Nim exceptions from adapters propagate to the caller.
+Nim proc values with supported codecs can cross as callback arguments;
+noncapturing callbacks with the default `nimcall` convention are supported.
+Callbacks returned to Nim must use `{.closure.}`, since checked functions can
+capture runtime state. Eponym checks callback types, not Nim bodies or effects.
+Async values such as `Future[T]` may pass through as opaque mapped values, but
+Eponym has no `await`, cancellation, or async effect system. Nim exceptions
+from adapters propagate to the caller.
 
 Dynamic generic binders whose Eponym type is a Pi function also get a typed
 Nim `{.closure.}` overload when all callback argument and result types have

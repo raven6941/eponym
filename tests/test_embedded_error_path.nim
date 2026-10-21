@@ -83,6 +83,8 @@ for (path, expected) in [
      "requires only nullary constructors returning the unindexed family"),
     ("tests/fixtures/embedded_err_runtime_option_shape.nim",
      "runtimeOption requires a Type -> Type family"),
+    ("tests/fixtures/embedded_err_runtime_nimcall_result.nim",
+     "Nim function results require {.closure.}"),
     ("tests/fixtures/embedded_err_runtime_codec_signature.nim", "type mismatch"),
     ("tests/fixtures/embedded_err_dependent_sigma_postulate_binding.nim",
      "structured pair adapter requires postulate 'makeDependentPair'"),
