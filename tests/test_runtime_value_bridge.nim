@@ -1277,12 +1277,7 @@ proc generatedTokenIdentity (value : Token) : Token = value
       var elements = newSeq[int](input.length)
       for i in 0 ..< input.length:
         elements[i] = input.ignored + i
-      let vector = seqToVecValue[int](elements, input.length,
-        dependentSigmaWitnessGlobals, "Vec",
-        proc(item: int, _: Globals): Value = intToValue(item),
-        runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
-      let pair = pairValue(natToValue(input.length,
-        dependentSigmaWitnessGlobals), vector)
+      let pair = (input.length, elements)
       let returned = generatedGenericDependentSigmaWitnessProbeRuntimeValueDynamic(
         pair, input.ignored)
       valueToInt(returned.value) == input.ignored)
@@ -1290,12 +1285,8 @@ proc generatedTokenIdentity (value : Token) : Token = value
     quit(1)
   var wrongDependentSigmaWitnessRejected = false
   try:
-    let vector = seqToVecValue[int](@[3, 4], 2,
-      dependentSigmaWitnessGlobals, "Vec",
-      proc(item: int, _: Globals): Value = intToValue(item),
-      runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
     discard generatedGenericDependentSigmaWitnessProbeRuntimeValueDynamic(
-      pairValue(natToValue(3, dependentSigmaWitnessGlobals), vector), 0)
+      (3, @[3, 4]), 0)
   except ValueError:
     wrongDependentSigmaWitnessRejected = true
   doAssert wrongDependentSigmaWitnessRejected
@@ -1307,12 +1298,7 @@ proc generatedTokenIdentity (value : Token) : Token = value
       var elements = newSeq[int](input.length)
       for i in 0 ..< input.length:
         elements[i] = input.ignored + i
-      let vector = seqToVecValue[int](elements, input.length,
-        dependentSigmaWitnessGlobals, "Vec",
-        proc(item: int, _: Globals): Value = intToValue(item),
-        runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
-      let pair = pairValue(natToValue(input.length,
-        dependentSigmaWitnessGlobals), vector)
+      let pair = (input.length, elements)
       let returned = generatedRawDependentSigmaGenericProbeRuntimeValueDynamic(
         pair, input.ignored)
       valueToInt(returned.value) == input.ignored)
@@ -1320,12 +1306,8 @@ proc generatedTokenIdentity (value : Token) : Token = value
     quit(1)
   var wrongRawDependentSigmaRejected = false
   try:
-    let vector = seqToVecValue[int](@[3, 4], 2,
-      dependentSigmaWitnessGlobals, "Vec",
-      proc(item: int, _: Globals): Value = intToValue(item),
-      runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
     discard generatedRawDependentSigmaGenericProbeRuntimeValueDynamic(
-      pairValue(natToValue(3, dependentSigmaWitnessGlobals), vector), 0)
+      (3, @[3, 4]), 0)
   except ValueError:
     wrongRawDependentSigmaRejected = true
   doAssert wrongRawDependentSigmaRejected

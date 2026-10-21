@@ -1983,12 +1983,19 @@ proc hasCodecBackedDynamicValueBinder(decl: NimNode,
     mappings: seq[HostRuntimeType], records: seq[HostRecord]): bool =
   if decl.kind != nnkProcDef or decl[2].kind == nnkEmpty: return false
   for param in decl[2]:
-    if param.kind != nnkIdentDefs or
-        not (containsDependentSigma(param[^2]) or
-          containsEponymPiType(param[^2])):
+    if param.kind != nnkIdentDefs:
       continue
-    if not runtimeNimType(param[^2], mappings, records,
+    let hasDependentSigma = containsDependentSigma(param[^2])
+    let hasPi = containsEponymPiType(param[^2])
+    if not hasDependentSigma and not hasPi:
+      continue
+    if runtimeNimType(param[^2], mappings, records,
         allowDependentSigma = true).isNil:
+      continue
+    # Avoid generating a duplicate when the ordinary dynamic wrapper already
+    # has the same codec-backed host signature. Pi callbacks still need the
+    # explicit function-value path even when their Nim type has a codec.
+    if hasPi or runtimeNimType(param[^2], mappings, records).isNil:
       return true
 
 proc runtimeValueConverter(eponymType, nimType: NimNode,
