@@ -121,6 +121,11 @@ Dynamic generic binders whose Eponym type is a Pi function also get a typed
 Nim `{.closure.}` overload when all callback argument and result types have
 codecs. Nim checks the proc signature, and the bridge checks the value against
 the checked Pi type; the raw `RuntimeValue` overload remains available.
+Dependent callback indices also flow through argument and result codecs: a
+callback taking `Nat` and `Vec[Int, length]` and returning
+`Vec[Int, length]` checks both vector lengths. Explicitly mapped opaque types
+can also serve as callback arguments or results. Computed indices such as
+`add(left, right)` are checked too when the expression has a runtime codec.
 
 ## Static checks do not manage Nim resources or optimize code
 

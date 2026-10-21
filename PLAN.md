@@ -567,7 +567,15 @@ implementations.
    `RuntimeValue` overload, and validate the host callback against its Pi
    witness. 200-case unary and multi-argument properties cover typed and
    raw-result wrappers; compile-time checks reject mismatched callback
-   signatures.
+   signatures. A further 200-case dependent Pi property covers a callback
+   taking `Nat` and `Vec[Int, length]` and returning `Vec[Int, length]`;
+   typed and raw-result wrappers preserve the index, and malformed input or
+   output lengths are rejected. A separate 200-case property passes a mapped
+   Nim `ChannelHandle` object through a generic Pi callback using the explicit
+   `runtimeType` mapping, through both typed and raw-result wrappers. Another
+   property covers a callback whose Vec index is computed as
+   `add(left, right)`, with negative checks for mismatched input and output
+   lengths.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

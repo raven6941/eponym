@@ -413,6 +413,16 @@ eponymBlock:
   proc generatedGenericPiBinaryCallbackBinder[
       callback: Pi(left: Int, right: Int, Int)](left, right: Int): Int =
     callback(left, right)
+  proc generatedDependentPiCallbackBinder[
+      callback: Pi(length: Nat, values: Vec[Int, length],
+                   Vec[Int, length])](length: Nat,
+                                      values: Vec[Int, length]):
+      Vec[Int, length] = callback(length, values)
+  proc generatedComputedDependentPiCallbackBinder[
+      callback: Pi(left: Nat, right: Nat,
+        values: Vec[Int, add(left, right)], Vec[Int, add(left, right)])](
+        left, right: Nat, values: Vec[Int, add(left, right)]):
+      Vec[Int, add(left, right)] = callback(left, right, values)
   runtimeValue(generatedNestedVectorIdentity)
   runtimeValue(generatedGenericVectorValueBinder)
   runtimeValue(generatedGenericSigmaValueBinder)
@@ -421,6 +431,8 @@ eponymBlock:
   runtimeValue(generatedValidatedDependentSigmaValueBinder)
   runtimeValue(generatedGenericPiCallbackBinder)
   runtimeValue(generatedGenericPiBinaryCallbackBinder)
+  runtimeValue(generatedDependentPiCallbackBinder)
+  runtimeValue(generatedComputedDependentPiCallbackBinder)
   proc generatedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
@@ -437,6 +449,14 @@ eponymBlock:
   runtimeRecordTrusted(SizedVec)
   proc generatedSizedVecIdentity(value: SizedVec): SizedVec = value
   runtimeValue(generatedSizedVecIdentity)
+
+eponymBlock:
+  postulate(Channel, Univ)
+  runtimeType(Channel, ChannelHandle)
+  proc generatedMappedGenericPiCallbackBinder[
+      callback: Pi(value: Channel, Channel)](value: Channel): Channel =
+    callback(value)
+  runtimeValue(generatedMappedGenericPiCallbackBinder)
 
 eponymBlock:
   import "../lib/nat.ep"
@@ -744,6 +764,24 @@ static:
     proc(left, right: int): int {.closure.} = left + right, 1, 2))
   doAssert not compiles(generatedGenericPiBinaryCallbackBinderDynamic(
     proc(left: string, right: int): int {.closure.} = right, 1, 2))
+  doAssert compiles(generatedDependentPiCallbackBinderDynamic(
+    proc(length: int, values: seq[int]): seq[int] {.closure.} = values,
+    3, @[1, 2, 3]))
+  doAssert not compiles(generatedDependentPiCallbackBinderDynamic(
+    proc(length: string, values: seq[int]): seq[int] {.closure.} = values,
+    3, @[1, 2, 3]))
+  doAssert compiles(generatedComputedDependentPiCallbackBinderDynamic(
+    proc(left, right: int, values: seq[int]): seq[int] {.closure.} = values,
+    2, 3, @[1, 2, 3, 4, 5]))
+  doAssert not compiles(generatedComputedDependentPiCallbackBinderDynamic(
+    proc(left: string, right: int, values: seq[int]): seq[int] {.closure.} =
+      values,
+    2, 3, @[1, 2, 3, 4, 5]))
+  doAssert compiles(generatedMappedGenericPiCallbackBinderDynamic(
+    proc(value: ChannelHandle): ChannelHandle {.closure.} = value,
+    ChannelHandle(id: 1)))
+  doAssert not compiles(generatedMappedGenericPiCallbackBinderDynamic(
+    proc(value: int): int {.closure.} = value, ChannelHandle(id: 1)))
   doAssert compiles(generatedTwoArgumentAdder(3)(4, 5))
   doAssert compiles(generatedSumSix(1, 2, 3, 4, 5, 6))
   doAssert not compiles(generatedSumSix(1, 2, 3, 4, 5))
@@ -2435,6 +2473,107 @@ proc callbackRole : Callback -> Sample -> Sample =
           input.left + input.right + input.offset)
   if not dynamicGenericPiBinaryCallbackCases:
     quit(1)
+  let mappedGenericPiCallbackCases = forAll(
+    "generic Pi callbacks preserve mapped Nim object values", r, 200,
+    proc(r: var Rng): tuple[id, delta: int] =
+      (r.genInt(-1000, 1000), r.genInt(-100, 100)),
+    proc(input: tuple[id, delta: int]): bool =
+      let channel = ChannelHandle(id: input.id, label: "pi/" & $input.id)
+      let callback: proc(value: ChannelHandle): ChannelHandle {.closure.} =
+        proc(value: ChannelHandle): ChannelHandle =
+          ChannelHandle(id: value.id + input.delta,
+            label: value.label & "/callback")
+      let expected = callback(channel)
+      let typed = generatedMappedGenericPiCallbackBinderDynamic(callback,
+        channel)
+      let runtime =
+        generatedMappedGenericPiCallbackBinderRuntimeValueDynamic(callback,
+          channel)
+      validateRuntimeValueType(runtime.value,
+        runtimeGlobalValue(runtime.globals, "Channel"), runtime.globals)
+      typed == expected and valueToHost[ChannelHandle](runtime.value) ==
+        expected)
+  if not mappedGenericPiCallbackCases:
+    quit(1)
+  let dynamicDependentPiCallbackCases = forAll(
+    "dependent generic Pi callbacks preserve Vec indices", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 20), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        values[i] = input.seed + i
+      let callback: proc(length: int, values: seq[int]): seq[int] {.closure.} =
+        proc(length: int, values: seq[int]): seq[int] = values
+      let typed = generatedDependentPiCallbackBinderDynamic(callback,
+        input.length, values)
+      let runtime = generatedDependentPiCallbackBinderRuntimeValueDynamic(
+        callback, input.length, values)
+      typed == values and
+        vecValueToSeq[int](runtime.value, input.length, runtime.globals,
+          "Vec", proc(value: Value, _: Globals): int = valueToInt(value)) ==
+            values)
+  if not dynamicDependentPiCallbackCases:
+    quit(1)
+  let computedDependentPiCallbackCases = forAll(
+    "generic Pi callbacks preserve computed Vec indices", r, 200,
+    proc(r: var Rng): tuple[left, right, seed: int] =
+      (r.genInt(0, 10), r.genInt(0, 10), r.genInt(-1000, 1000)),
+    proc(input: tuple[left, right, seed: int]): bool =
+      var values = newSeq[int](input.left + input.right)
+      for i in 0 ..< values.len:
+        values[i] = input.seed + i
+      let callback: proc(left, right: int, values: seq[int]): seq[int]
+          {.closure.} =
+        proc(left, right: int, values: seq[int]): seq[int] = values
+      let typed = generatedComputedDependentPiCallbackBinderDynamic(
+        callback, input.left, input.right, values)
+      let runtime = generatedComputedDependentPiCallbackBinderRuntimeValueDynamic(
+        callback, input.left, input.right, values)
+      typed == values and
+        vecValueToSeq[int](runtime.value, input.left + input.right,
+          runtime.globals, "Vec",
+          proc(value: Value, _: Globals): int = valueToInt(value)) == values)
+  if not computedDependentPiCallbackCases:
+    quit(1)
+  var computedCallbackInputMismatchRejected = false
+  try:
+    let callback: proc(left, right: int, values: seq[int]): seq[int]
+        {.closure.} =
+      proc(left, right: int, values: seq[int]): seq[int] = values
+    discard generatedComputedDependentPiCallbackBinderDynamic(callback, 2, 3,
+      @[1, 2, 3, 4])
+  except ValueError:
+    computedCallbackInputMismatchRejected = true
+  doAssert computedCallbackInputMismatchRejected
+  var computedCallbackOutputMismatchRejected = false
+  try:
+    let callback: proc(left, right: int, values: seq[int]): seq[int]
+        {.closure.} =
+      proc(left, right: int, values: seq[int]): seq[int] = values & @[999]
+    discard generatedComputedDependentPiCallbackBinderDynamic(callback, 2, 3,
+      @[1, 2, 3, 4, 5])
+  except ValueError:
+    computedCallbackOutputMismatchRejected = true
+  doAssert computedCallbackOutputMismatchRejected
+  var dependentCallbackResultMismatchRejected = false
+  try:
+    let malformedCallback: proc(length: int, values: seq[int]): seq[int]
+        {.closure.} = proc(length: int, values: seq[int]): seq[int] =
+      values & @[999]
+    discard generatedDependentPiCallbackBinderDynamic(malformedCallback,
+      2, @[1, 2])
+  except ValueError:
+    dependentCallbackResultMismatchRejected = true
+  doAssert dependentCallbackResultMismatchRejected
+  var dependentCallbackInputMismatchRejected = false
+  try:
+    let callback: proc(length: int, values: seq[int]): seq[int] {.closure.} =
+      proc(length: int, values: seq[int]): seq[int] = values
+    discard generatedDependentPiCallbackBinderDynamic(callback, 3, @[1, 2])
+  except ValueError:
+    dependentCallbackInputMismatchRejected = true
+  doAssert dependentCallbackInputMismatchRejected
   let dynamicGenericDependentSigmaCases = forAll(
     "dependent Sigma generic binders retain their Vec index", r, 200,
     proc(r: var Rng): tuple[length, seed, ignored: int] =
