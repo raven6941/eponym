@@ -1151,6 +1151,10 @@ type HostRuntimeType = object
   encoder: NimNode
   decoder: NimNode
 
+proc isSyntheticGenericRuntimeType(mapping: HostRuntimeType): bool =
+  mapping.nimType.kind in {nnkIdent, nnkSym} and
+    $mapping.nimType == mapping.eponymName
+
 proc mentionsName(node: NimNode, name: string): bool
 
 type HostRecordField = object
@@ -1811,6 +1815,102 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
   let generic = if toValue: bindSym"toHostValue" else: bindSym"valueToHost"
   newTree(nnkBracketExpr, generic, nimType)
 
+proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]]): NimNode
+
+proc runtimeGenericTypeWitnessExpr(n, globals: NimNode,
+    mappings: seq[HostRuntimeType]): NimNode =
+  if n.kind notin {nnkIdent, nnkSym}: return nil
+  if $n in ["Int", "Nat", "Bool"]: return nil
+  for mapping in mappings:
+    if mapping.eponymName == $n and
+        not isSyntheticGenericRuntimeType(mapping): return nil
+  let typeName = copyNimTree(n)
+  var branches = newNimNode(nnkWhenStmt)
+  var candidateNames = initHashSet[string]()
+  for mapping in mappings:
+    if isSyntheticGenericRuntimeType(mapping) or
+        mapping.isRuntimeVector or mapping.isRuntimeList or
+        mapping.isRuntimeOption or mapping.isRuntimeVariant or
+        mapping.isRuntimeCodec:
+      continue
+    let nimTypeName = mapping.nimType.repr
+    if nimTypeName.len == 0 or nimTypeName in candidateNames: continue
+    var sameNimTypeCount = 0
+    for other in mappings:
+      if not isSyntheticGenericRuntimeType(other) and
+          not other.isRuntimeVector and not other.isRuntimeList and
+          not other.isRuntimeOption and not other.isRuntimeVariant and
+          not other.isRuntimeCodec and other.nimType.repr == nimTypeName:
+        inc sameNimTypeCount
+    if sameNimTypeCount != 1: continue
+    candidateNames.incl(nimTypeName)
+    let condition = newCall(newTree(nnkBracketExpr,
+      bindSym"sameHostType", copyNimTree(typeName),
+      copyNimTree(mapping.nimType)))
+    let witness = newCall(bindSym"runtimeGlobalTypeWitness", globals,
+      newLit(mapping.eponymName))
+    branches.add(newTree(nnkElifBranch, condition,
+      newStmtList(newAssignment(ident"runtimeTypeWitness", witness))))
+  if branches.len == 0: return nil
+  branches.add(newTree(nnkElse, newStmtList()))
+  let witnessSym = ident"runtimeTypeWitness"
+  let body = newStmtList(
+    newTree(nnkVarSection,
+      newIdentDefs(witnessSym, bindSym"Value", newNilLit())),
+    branches,
+    witnessSym)
+  newTree(nnkBlockExpr, newEmptyNode(), body)
+
+proc runtimeRepresentedTypeValueExpr(n, globals: NimNode,
+    mappings: seq[HostRuntimeType],
+    overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
+  for mapping in mappings:
+    if mapping.isRuntimeVector:
+      let vector = runtimeVectorComponents(n, mapping.eponymName)
+      if not vector.elementType.isNil:
+        let elementType = runtimeRepresentedTypeValueExpr(
+          vector.elementType, globals, mappings, overrides)
+        let length = runtimeNatIndexExpr(vector.length, overrides)
+        if elementType.isNil or length.isNil: return nil
+        return newCall(bindSym"callRuntimeValue",
+          newCall(bindSym"runtimeGlobalValue", globals,
+            newLit(mapping.eponymName)),
+          newTree(nnkBracket, elementType,
+            newCall(bindSym"natToValue", length, globals)))
+    elif mapping.isRuntimeList:
+      let elementType = runtimeListElementType(n, mapping.eponymName)
+      if not elementType.isNil:
+        let representedElement = runtimeRepresentedTypeValueExpr(
+          elementType, globals, mappings, overrides)
+        if representedElement.isNil: return nil
+        return newCall(bindSym"callRuntimeValue",
+          newCall(bindSym"runtimeGlobalValue", globals,
+            newLit(mapping.eponymName)),
+          newTree(nnkBracket, representedElement))
+    elif mapping.isRuntimeOption:
+      let elementType = runtimeOptionElementType(n, mapping.eponymName)
+      if not elementType.isNil:
+        let representedElement = runtimeRepresentedTypeValueExpr(
+          elementType, globals, mappings, overrides)
+        if representedElement.isNil: return nil
+        return newCall(bindSym"callRuntimeValue",
+          newCall(bindSym"runtimeGlobalValue", globals,
+            newLit(mapping.eponymName)),
+          newTree(nnkBracket, representedElement))
+  if n.kind in {nnkIdent, nnkSym}:
+    let genericWitness = runtimeGenericTypeWitnessExpr(n, globals, mappings)
+    if not genericWitness.isNil: return genericWitness
+  if n.kind in {nnkIdent, nnkSym} and $n notin ["Int", "Nat", "Bool"]:
+    var hasRuntimeType = false
+    for mapping in mappings:
+      if mapping.eponymName == $n and
+          not isSyntheticGenericRuntimeType(mapping):
+        hasRuntimeType = true
+        break
+    if not hasRuntimeType: return nil
+  runtimeTypeValueExpr(n, globals, overrides)
+
 proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
                                toValue: bool,
                                mappings: seq[HostRuntimeType],
@@ -1918,6 +2018,16 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             familyName, constructors)
         return newCall(bindSym"valueToRuntimeVariant", value, globals,
           familyName, constructors)
+    if toValue and eponymType.kind in {nnkIdent, nnkSym}:
+      for mapping in mappings:
+        if mapping.eponymName == $typeHead and
+            not isSyntheticGenericRuntimeType(mapping) and
+            not mapping.isRuntimeCodec and not mapping.isRuntimeVariant and
+            not mapping.isRuntimeVector and not mapping.isRuntimeList and
+            not mapping.isRuntimeOption and
+            findHostRecord(records, mapping.eponymName) < 0:
+          return newCall(bindSym"toHostValueWithType", value,
+            runtimeTypeValueExpr(eponymType, globals, indexOverrides))
   for mapping in mappings:
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
@@ -1941,6 +2051,11 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
+          let elementTypeValue = runtimeRepresentedTypeValueExpr(
+            vector.elementType, globals, mappings, indexOverrides)
+          if not elementTypeValue.isNil:
+            return newCall(bindSym"seqToVecValue", value, expectedLength,
+              globals, newLit(mapping.eponymName), encoder, elementTypeValue)
           return newCall(bindSym"seqToVecValue", value, expectedLength,
             globals, newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(vector.elementType,
@@ -1970,6 +2085,11 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
+          let elementTypeValue = runtimeRepresentedTypeValueExpr(
+            elementType, globals, mappings, indexOverrides)
+          if not elementTypeValue.isNil:
+            return newCall(bindSym"seqToListValue", value, globals,
+              newLit(mapping.eponymName), encoder, elementTypeValue)
           return newCall(bindSym"seqToListValue", value, globals,
             newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(elementType,
@@ -2000,6 +2120,11 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             newIdentDefs(itemSym, elementNimType, newEmptyNode()),
             newIdentDefs(codecGlobalsSym, bindSym"Globals", newEmptyNode())],
             body = newStmtList(encodedItem))
+          let elementTypeValue = runtimeRepresentedTypeValueExpr(
+            elementType, globals, mappings, indexOverrides)
+          if not elementTypeValue.isNil:
+            return newCall(bindSym"optionToValue", value, globals,
+              newLit(mapping.eponymName), encoder, elementTypeValue)
           return newCall(bindSym"optionToValue", value, globals,
             newLit(mapping.eponymName), encoder)
         let decodedItem = runtimeValueConversionExpr(elementType,
@@ -2043,6 +2168,16 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
     if first.isNil or second.isNil: return nil
     return newTree(nnkTupleConstr, first, second)
   if eponymType.kind == nnkIdent:
+    var isDeclaredType = $eponymType in ["Int", "Nat", "Bool"] or
+      findHostRecord(records, $eponymType) >= 0
+    for mapping in mappings:
+      if mapping.eponymName == $eponymType and
+          not isSyntheticGenericRuntimeType(mapping): isDeclaredType = true
+    if toValue and not isDeclaredType:
+      let representedType = runtimeRepresentedTypeValueExpr(eponymType,
+        globals, mappings, indexOverrides)
+      if not representedType.isNil:
+        return newCall(bindSym"toHostValueWithType", value, representedType)
     let recordIndex = findHostRecord(records, $eponymType)
     if recordIndex >= 0:
       let record = records[recordIndex]
@@ -2300,7 +2435,12 @@ proc genericRuntimeValueArgs(generic: tuple[genericParams: NimNode,
           repr(generic.genericMappedTypes[i]) & "'")
       result.add(encoded)
     else:
-      result.add(newCall(bindSym"vType", newLit(0)))
+      let typeWitness = runtimeGenericTypeWitnessExpr(genericName, globals,
+        mappings)
+      if typeWitness.isNil:
+        result.add(newCall(bindSym"vType", newLit(0)))
+      else:
+        result.add(newCall(bindSym"runtimeTypeWitnessOrUniverse", typeWitness))
 
 proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode,
                  mappings: seq[HostRuntimeType], records: seq[HostRecord],
@@ -2623,6 +2763,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
 proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
   if n.isNil: return nil
+  if n.kind == nnkStmtListExpr:
+    if n.len != 1: return nil
+    return runtimeTypeValueExpr(n[0], globals, overrides)
   if n.kind in {nnkIdent, nnkSym}:
     if overrides.len > 0:
       for i in countdown(overrides.high, 0):
@@ -2639,6 +2782,40 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     return newCall(bindSym"intToValue", newLit(-n[1].intVal))
   if n.kind == nnkPar and n.len == 1:
     return runtimeTypeValueExpr(n[0], globals, overrides)
+  if n.kind in {nnkIfExpr, nnkIfStmt}:
+    var branches: seq[tuple[condition, value: NimNode]] = @[]
+    var elseBranch: NimNode = nil
+    for branch in n:
+      case branch.kind
+      of nnkElifExpr, nnkElifBranch:
+        if branch.len != 2: return nil
+        let conditionValue = runtimeTypeValueExpr(branch[0], globals,
+          overrides)
+        if conditionValue.isNil: return nil
+        var valueNode = branch[1]
+        if valueNode.kind == nnkStmtList:
+          if valueNode.len != 1: return nil
+          valueNode = valueNode[0]
+        let value = runtimeTypeValueExpr(valueNode, globals, overrides)
+        if value.isNil: return nil
+        branches.add((newCall(bindSym"valueToBool", conditionValue, globals),
+          value))
+      of nnkElseExpr, nnkElse:
+        if branch.len != 1: return nil
+        elseBranch = branch[0]
+      else:
+        return nil
+    if branches.len == 0 or elseBranch.isNil: return nil
+    if elseBranch.kind == nnkStmtList:
+      if elseBranch.len != 1: return nil
+      elseBranch = elseBranch[0]
+    result = runtimeTypeValueExpr(elseBranch, globals, overrides)
+    if result.isNil: return nil
+    for i in countdown(branches.high, 0):
+      result = newTree(nnkIfExpr,
+        newTree(nnkElifExpr, branches[i].condition, branches[i].value),
+        newTree(nnkElseExpr, result))
+    return
   if n.kind in {nnkCall, nnkCommand, nnkBracketExpr, nnkObjConstr,
                 nnkInfix} and n.len >= 2:
     let fnNode = if n.kind == nnkInfix:
@@ -2728,6 +2905,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
   body.add(newLetStmt(globalsSym,
     newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
   var typeIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
+  var genericIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, genericSym in genericSyms:
     var encodedGeneric: NimNode
     if generic.genericNatArgs[i]:
@@ -2737,12 +2915,18 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     elif generic.genericIntArgs[i]:
       encodedGeneric = newCall(bindSym"intToValue", genericSym)
     elif generic.genericValueArgs[i]:
-      encodedGeneric = copyNimTree(genericSym)
+      if generic.genericValueTypes[i].isNil:
+        encodedGeneric = copyNimTree(genericSym)
+      else:
+        encodedGeneric = runtimeValueConversionExpr(
+          generic.genericValueTypes[i], genericNimTypes[i], genericSym,
+          true, generic.codecMappings, records, globalsSym,
+          allowDependentSigma, genericIndexOverrides)
     elif not generic.genericMappedTypes[i].isNil:
       encodedGeneric = runtimeValueConversionExpr(
         generic.genericMappedTypes[i], generic.genericMappedNimTypes[i],
         genericSym, true, generic.codecMappings, records, globalsSym,
-        allowDependentSigma)
+        allowDependentSigma, genericIndexOverrides)
     if encodedGeneric.isNil: return nil
     var validateEncodedMappedVariant = false
     if not generic.genericValueArgs[i] and
@@ -2763,6 +2947,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
         if validateUnmappedValue: genericSym else: encodedGeneric,
         expectedType, globalsSym))
     typeIndexOverrides.add(($generic.genericNames[i], encodedGeneric))
+    genericIndexOverrides.add(($generic.genericNames[i], genericSym))
   body.add(newLetStmt(defsSym,
     newCall(bindSym"getDefsDir", dirLit, srcLit)))
   body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))

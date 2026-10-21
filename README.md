@@ -56,10 +56,9 @@ mapped opaque postulated types. The new session runtime demo connects checked
 roles to Nim adapters, and `paxos_session.nim` runs its checked proposer and
 acceptor through bound TCP adapters. The borrowing and optimization examples
 still have separate hand-written drivers. The
-[support table](docs/known-limitations.md#what-each-layer-establishes)
-classifies what each example checks, what Nim validates, and what remains
-trusted or disconnected.
-See [known limitations](docs/known-limitations.md) for the exact boundary.
+The [known limitations](docs/known-limitations.md) page summarizes what
+Eponym checks, which definitions have generated runtime wrappers, and which
+parts of the Nim boundary remain trusted or disconnected.
 
 ## Why embedded
 

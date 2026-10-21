@@ -168,6 +168,7 @@ type
     of wHost:
       hostPayload*: RootRef
       hostTypeName*: string
+      hostEponymType*: Value
     of wPrim:
       op: PrimOp
       pargs: seq[Value]  # accumulated so far (function position order)
@@ -859,7 +860,27 @@ proc toHostValue*[T](hostValue: T): Value =
   let box = HostBox[T](value: hostValue)
   Value(syn: tStar(),
         whnf: Whnf(kind: wHost, hostPayload: RootRef(box),
-                   hostTypeName: name(T)))
+                   hostTypeName: name(T), hostEponymType: nil))
+
+proc toHostValueWithType*[T](hostValue: T, eponymType: Value): Value =
+  ## Box a mapped Nim value and retain the Eponym type supplied by the
+  ## explicit runtime mapping. The synthetic neutral syntax is used only by
+  ## runtime type inference; the payload remains opaque to Eponym.
+  let box = HostBox[T](value: hostValue)
+  let hostTerm = if eponymType.isNil:
+    tStar()
+  else:
+    Term(kind: tR, refId: -1, refTyp: eponymType,
+      refIsDefn: false, refVal: nil)
+  Value(syn: hostTerm,
+        whnf: Whnf(kind: wHost, hostPayload: RootRef(box),
+                   hostTypeName: name(T), hostEponymType: eponymType))
+
+func sameHostType*[A, B](): bool =
+  ## Exact generic type-name comparison for generated `when` branches. Nim's
+  ## `is` relation also accepts object subtypes, which can select the wrong
+  ## Eponym mapping when a mapped type inherits from another mapped type.
+  name(A) == name(B)
 
 proc valueToHost*[T](value: Value): T =
   ## Recover a value previously boxed with toHostValue[T]. Both the recorded
