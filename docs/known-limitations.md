@@ -194,6 +194,13 @@ postulate(rotate, Channel -> Channel)
 bindPostulate(rotate, rotateNim, Channel, Channel)
 ```
 
+The binding applies to calls throughout this `eponymBlock`, including calls
+from imported `.ep` definitions. Checked definitions use the postulate name;
+they do not repeat the Nim implementation at each call site, and the generated
+wrapper signature does not reveal which Nim procedure fulfills an internal
+postulate. Keep the binding next to its postulate and review it as part of the
+block's trusted code.
+
 The Eponym checker verifies calls against `rotate`'s Eponym type. Nim checks
 that `rotateNim` has the mapped Nim signature. Neither checker proves that
 the Nim implementation behaves as promised, or that an opaque host value

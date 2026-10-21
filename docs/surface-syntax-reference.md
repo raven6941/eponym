@@ -114,6 +114,12 @@ codec type in the diagnostic. A reachable postulate without a
 binding fails when evaluated; diagnostics for missing bindings at expansion
 time are not implemented.
 
+The binding is declared once in the block and applies to checked uses there,
+including imported definitions. Use sites name the postulate, while the
+trusted binding remains beside its declaration for review. The generated
+checked wrapper signature does not identify the Nim implementation; that
+implementation is not evidence in the Eponym type.
+
 Use `bindPostulateMutable` when an existing adapter needs `var` parameters.
 It decodes arguments to mutable locals, invokes the Nim procedure,
 and encodes its return value. The declared Eponym postulate still describes

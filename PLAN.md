@@ -783,6 +783,11 @@ implementations.
    client uses it to run its `withBorrow`/`readB`/`writeB`/`endB` sequence;
    300 property cases exercise different buffer contents. This low-level form
    checks postulate arity but leaves Value conversion and semantics to Nim.
+- [x] Settle the postulate-binding visibility policy: one block-level binding
+   is reviewed beside its postulate and applies throughout that block,
+   including imported definitions. Call sites and generated checked-wrapper
+   signatures do not repeat or encode the host implementation because it is
+   trusted input, not evidence checked by Eponym (#337).
 - [x] Add an explicit `bindPostulateMutable` adapter for Nim procedures with
    `var` parameters. It decodes checked arguments to mutable locals and encodes
    the returned value, preserving copy-in/result-out semantics; caller-visible
