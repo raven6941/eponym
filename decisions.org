@@ -3528,3 +3528,27 @@
   is a section of the trace document.
   Status: DECIDED (#355 deliverable; #67 verdict recorded).
 
+* 2026-10-21 — Runtime effects in quantity-0 arguments (#375)
+
+  Context: QTT erasure replaces a checked q0 argument with an inert witness.
+  Generated execution therefore skips calls to bound Nim postulates inside
+  that argument, while direct evaluation of the unerased source had run
+  them. The discrepancy made observable behavior depend on the execution
+  path. The current type system has no host-effect rows and cannot establish
+  that an adapter is pure.
+  Options considered: (a) add purity/effect tracking before erasure; (b) make
+  public interpreted runtime calls erase q0 arguments to match generated
+  code; (c) preserve effects in generated code. Decision: (b). Both generated
+  and public interpreted runtime entrypoints erase q0 arguments, including
+  effects they contain. Raw =evalWithBindings= remains a lower-level evaluator
+  for tools that intentionally inspect or run unerased core terms. Required
+  operations belong in qω or q1 positions.
+  Consequences: q0 is a runtime erasure guarantee, not an effect guarantee.
+  Bound Nim adapters remain trusted and their effects are not checked.
+  Adapter exceptions propagate unchanged. A mapped =Future[T]= passes as an
+  opaque value; Eponym does not await, cancel, observe failure, or define async
+  effects. Property tests cover generated/interpreted parity and imported
+  interpreter fallbacks. See =docs/trust-model.md= and
+  =docs/known-limitations.md= for the public boundary description.
+  Status: DECIDED (#375).
+

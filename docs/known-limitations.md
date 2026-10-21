@@ -141,20 +141,19 @@ expression are not supported by generated codecs.
 
 The core QTT erasure pass (`eraseQ0Arguments`) replaces a checked quantity-0
 application's argument with an inert unit witness, so the argument computation
-is not evaluated. This can skip effects hidden in a bound postulate: the
-current type system does not track effectful Nim calls, so an operation that
-must run cannot be placed in a q0 argument. The direct evaluator of the
-unerased source still runs that argument. Generated typed wrappers and
-compiled-proc computational
+is not evaluated. Public generated and interpreted runtime entrypoints both
+apply erasure; the lower-level `evalWithBindings` evaluator can still evaluate
+the unerased source. The type system does not track Nim effects or enforce
+purity, so an operation that must run cannot be placed in a q0 argument.
+Generated typed wrappers and compiled-proc computational
 argument vectors omit quantity-0 values. A separate witness vector may carry a
 q0 value only to instantiate a dependent runtime type, such as a Vec length;
 the compiled body never receives it as a computational argument. The scalar
 representation backend also omits q0 formals and local-call arguments.
 Generated higher-order `Value` code represents q0 lambdas as nullary
 closures; the interpreter keeps its unary representation. Differential tests
-pass a generated q0 closure through a higher-order postulate and confirm a
-generated q0 application skips its argument while running the closure body
-once. Erasure requires a closed,
+check that generated and interpreted runtime entrypoints erase q0 arguments
+and run only the retained closure body. Erasure requires a closed,
 zonked term whose function types can be recovered by the core inferencer.
 
 For `eponymBlock`s without Eponym module imports, elaboration and parse errors
@@ -253,9 +252,9 @@ Nim proc values with supported codecs can cross as callback arguments;
 noncapturing callbacks with the default `nimcall` convention are supported.
 Callbacks returned to Nim must use `{.closure.}`, since checked functions can
 capture runtime state. Eponym checks callback types, not Nim bodies or effects.
-Async values such as `Future[T]` may pass through as opaque mapped values, but
-Eponym has no `await`, cancellation, or async effect system. Nim exceptions
-from adapters propagate to the caller.
+Async values such as `Future[T]` may pass through as opaque mapped values;
+Eponym does not await, observe failure, cancel, or track async effects. Nim
+exceptions from adapters propagate unchanged to the caller.
 
 Dynamic generic binders whose Eponym type is a Pi function also get a typed
 Nim `{.closure.}` overload when all callback argument and result types have

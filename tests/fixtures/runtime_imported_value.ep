@@ -4,9 +4,12 @@ postulate Int : Type 0
 postulate Channel : Type 0
 postulate Sample : Type 0
 postulate importedStep : Int -> Int
+postulate importedQ0Tick : Int -> Int
 
 proc importedIdentity (value : Int) : Int = value
 proc importedGenericIdentity (A : Type 0) (value : A) : A = value
 proc importedListMap (A : Type 0) (B : Type 0) (f : A -> B)
     (values : List A) : List B = map A B f values
 proc importedApply (value : Int) : Int = importedStep value
+proc importedQ0Effect (value : Int) : Int =
+  (lam (0 proof : Int). importedQ0Tick 7) (importedQ0Tick value)

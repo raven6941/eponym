@@ -43,10 +43,10 @@ proc eraseQ0Arguments*(tm: Term): Term =
       let f = walk(t.fn, env)
       let closedFn = substSpine(t.fn, env.mapIt(it.syn))
       let fnTy = infer(supply, closedFn)
-      if fnTy.syn.isNil or fnTy.syn.kind != tPi:
+      if fnTy.whnf.kind != wPi:
         raise newException(ValueError,
           "cannot erase application whose checked function type is not Pi")
-      let arg = if fnTy.syn.qty == q0: tmC(cVoid) else: walk(t.arg, env)
+      let arg = if fnTy.whnfPiQty == q0: tmC(cVoid) else: walk(t.arg, env)
       tmApp(f, arg)
     of tPair:
       let a = walk(t.pFst, env)
