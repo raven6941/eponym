@@ -59,9 +59,10 @@ field has a runtime codec; nested Vec fields retain their length checks.
 Dependent Sigma generic binders, other structural values without a registered
 codec, and unmapped Eponym values remain unsupported by typed dynamic wrappers.
 Dynamic generic Vec and non-dependent Sigma codecs can evaluate conditional Nat
-indices of the form `if b: n else: m` when `b` is a Bool generic parameter and
-both branches use supported Nat-index expressions. Compound Boolean conditions
-remain unsupported in runtime type/index evaluation.
+indices when their conditions use Bool generic parameters, `not`, `and`, and
+`or`, and both branches use supported Nat-index expressions. Other Boolean
+expressions and indirect aliases remain unsupported in runtime type/index
+evaluation.
 When a generic type appears in both a callback parameter and a later ordinary
 value parameter, generated wrappers let Nim infer the type from the value,
 including when a later `Vec[A, n]` argument maps to `seq[A]`. The callback's

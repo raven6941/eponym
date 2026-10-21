@@ -625,6 +625,7 @@ proc nimExprToEponym(n: NimNode): string =
       of "+": "addInt"
       of "-": "subInt"
       of "*": "mulInt"
+      of "and", "or": $n[0]
       else: error("eponymBlock: unsupported pure operator '" & $n[0] & "'",
                   n[0])
     prim & " (" & nimExprToEponym(n[1]) & ") (" &
@@ -632,6 +633,8 @@ proc nimExprToEponym(n: NimNode): string =
   of nnkPrefix:
     if $n[0] == "-":
       "subInt 0 (" & nimExprToEponym(n[1]) & ")"
+    elif $n[0] == "not":
+      "not (" & nimExprToEponym(n[1]) & ")"
     else:
       error("eponymBlock: unsupported pure prefix operator '" & $n[0] & "'",
             n[0])
@@ -1561,6 +1564,29 @@ proc runtimeTypeHead(n: NimNode): NimNode =
   while result.kind in {nnkCall, nnkCommand, nnkBracketExpr} and result.len > 0:
     result = result[0]
 
+proc runtimeBoolIndexExpr(n: NimNode,
+    overrides: seq[tuple[name: string, value: NimNode]] = @[]): NimNode =
+  ## Lower the Bool subset accepted in runtime conditional Nat indices.
+  if n.kind in {nnkStmtListExpr, nnkPar}:
+    if n.len != 1: return nil
+    return runtimeBoolIndexExpr(n[0], overrides)
+  if n.kind in {nnkIdent, nnkSym}:
+    if overrides.len > 0:
+      for i in countdown(overrides.high, 0):
+        if $n == overrides[i].name:
+          return copyNimTree(overrides[i].value)
+    return copyNimTree(n)
+  if n.kind == nnkPrefix and n.len == 2 and $n[0] == "not":
+    let operand = runtimeBoolIndexExpr(n[1], overrides)
+    if operand.isNil: return nil
+    return newTree(nnkPrefix, copyNimTree(n[0]), operand)
+  if n.kind == nnkInfix and n.len == 3 and $n[0] in ["and", "or"]:
+    let left = runtimeBoolIndexExpr(n[1], overrides)
+    let right = runtimeBoolIndexExpr(n[2], overrides)
+    if left.isNil or right.isNil: return nil
+    return newTree(nnkInfix, copyNimTree(n[0]), left, right)
+  nil
+
 proc runtimeNatIndexExpr(n: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]] = @[]): NimNode =
   ## Lower supported Nat index expressions to checked Nim int arithmetic,
@@ -1587,13 +1613,9 @@ proc runtimeNatIndexExpr(n: NimNode,
     for branch in n:
       case branch.kind
       of nnkElifExpr, nnkElifBranch:
-        if branch.len != 2 or branch[0].kind notin {nnkIdent, nnkSym}:
-          return nil
-        var condition = copyNimTree(branch[0])
-        for i in countdown(overrides.high, 0):
-          if $branch[0] == overrides[i].name:
-            condition = copyNimTree(overrides[i].value)
-            break
+        if branch.len != 2: return nil
+        let condition = runtimeBoolIndexExpr(branch[0], overrides)
+        if condition.isNil: return nil
         var valueNode = branch[1]
         if valueNode.kind == nnkStmtList:
           if valueNode.len != 1: return nil
