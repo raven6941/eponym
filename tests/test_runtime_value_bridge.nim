@@ -569,16 +569,22 @@ proc reverseRuntimeTree(values: seq[int]): seq[int] =
     result.add(values[i])
 
 eponymBlock:
+  import "../lib/vec.ep"
   postulate(Int, Univ)
   data(Tree, Univ):
     proc treeEmpty(): Tree
     proc treeNode(value: Int, tail: Tree): Tree
   runtimeCodec(Tree, seq[int], encodeRuntimeTree, decodeRuntimeTree)
+  runtimeVector(Vec)
   postulate(treeReverse, Tree -> Tree)
   bindPostulate(treeReverse, reverseRuntimeTree, Tree)
   proc generatedTreeIdentity(value: Tree): Tree = value
   runtimeValue(generatedTreeIdentity)
   proc generatedBoundTreeReverse(value: Tree): Tree = treeReverse(value)
+  proc generatedGenericTreeVectorMap[A: Univ, n: Nat](
+      callback: proc(value: A): A {.closure.}, values: Vec[A, n]): Vec[A, n] =
+    vmap(callback, values)
+  runtimeValue(generatedGenericTreeVectorMap)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -2654,6 +2660,37 @@ proc callbackRole : Callback -> Sample -> Sample =
         decodeRuntimeTree(rawRuntime.value, rawRuntime.globals) == values,
     )
   if not customCodecCases:
+    quit(1)
+
+  let genericCustomCodecVectorCases = forAll(
+    "generic Vec callbacks use a custom element codec", r, 200,
+    proc(r: var Rng): tuple[first, second, seed: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000),
+       r.genInt(-1000, 1000)),
+    proc(input: tuple[first, second, seed: int]): bool =
+      let values = @[@[input.first, input.seed], @[input.second]]
+      let callback: proc(value: seq[int]): seq[int] {.closure.} =
+        proc(value: seq[int]): seq[int] = reverseRuntimeTree(value)
+      let expected = @[reverseRuntimeTree(values[0]),
+                       reverseRuntimeTree(values[1])]
+      let typed = generatedGenericTreeVectorMap[seq[int], 2](callback, values)
+      let runtime = generatedGenericTreeVectorMapRuntimeValue[seq[int], 2](
+        callback, values)
+      let expectedType = callRuntimeValue(
+        runtimeGlobalValue(runtime.globals, "Vec"),
+        [runtimeGlobalValue(runtime.globals, "Tree"),
+         natToValue(2, runtime.globals)])
+      validateRuntimeValueType(runtime.value, expectedType, runtime.globals)
+      let decoded = vecValueToSeq[seq[int]](runtime.value, 2,
+        runtime.globals, "Vec", decodeRuntimeTree)
+      var wrongLengthRejected = false
+      try:
+        discard generatedGenericTreeVectorMap[seq[int], 2](callback,
+          @[values[0]])
+      except ValueError as error:
+        wrongLengthRejected = "runtime Vec length mismatch" in error.msg
+      typed == expected and decoded == expected and wrongLengthRejected)
+  if not genericCustomCodecVectorCases:
     quit(1)
 
   let nestedVectorCases = forAll(
