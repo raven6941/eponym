@@ -424,6 +424,12 @@ eponymBlock:
         values: Vec[Int, add(left, right)], Vec[Int, add(left, right)])](
         left, right: Nat, values: Vec[Int, add(left, right)]):
       Vec[Int, add(left, right)] = callback(left, right, values)
+  proc generatedApplyNestedPiCallback[
+      callback: Pi(inner: Pi(value: Int, Int), Int)](
+        inner: Pi(value: Int, Int)): Int = callback(inner)
+  proc generatedReturnNestedPiCallback[
+      callback: Pi(value: Int, Pi(seed: Int, Int))](value: Int):
+      Pi(seed: Int, Int) = callback(value)
   runtimeValue(generatedNestedVectorIdentity)
   runtimeValue(generatedGenericVectorValueBinder)
   runtimeValue(generatedGenericSigmaValueBinder)
@@ -434,6 +440,8 @@ eponymBlock:
   runtimeValue(generatedGenericPiBinaryCallbackBinder)
   runtimeValue(generatedDependentPiCallbackBinder)
   runtimeValue(generatedComputedDependentPiCallbackBinder)
+  runtimeValue(generatedApplyNestedPiCallback)
+  runtimeValue(generatedReturnNestedPiCallback)
   proc generatedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
@@ -784,6 +792,20 @@ static:
     proc(left: string, right: int, values: seq[int]): seq[int] {.closure.} =
       values,
     2, 3, @[1, 2, 3, 4, 5]))
+  doAssert compiles(generatedApplyNestedPiCallbackDynamic(
+    proc(inner: proc(value: int): int {.closure.}): int {.closure.} =
+      inner(3),
+    proc(value: int): int {.closure.} = value + 1))
+  doAssert not compiles(generatedApplyNestedPiCallbackDynamic(
+    proc(inner: proc(value: string): string {.closure.}): string {.closure.} =
+      inner("wrong"),
+    proc(value: int): int {.closure.} = value + 1))
+  doAssert compiles(generatedReturnNestedPiCallbackDynamic(
+    proc(value, seed: int): int {.closure.} = value + seed,
+    3))
+  doAssert not compiles(generatedReturnNestedPiCallbackDynamic(
+    proc(value: string, seed: int): string {.closure.} = value & $seed,
+    3))
   doAssert compiles(generatedDependentCustomPiCallbackBinderDynamic(
     proc(length: int, tree: seq[int]): seq[int] {.closure.} = tree,
     3, @[1, 2, 3]))
@@ -2665,6 +2687,40 @@ proc callbackRole : Callback -> Sample -> Sample =
   except ValueError:
     customCallbackOutputMismatchRejected = true
   doAssert customCallbackOutputMismatchRejected
+  let nestedPiCallbackCases = forAll(
+    "higher-order generic Pi callbacks bridge nested closures", r, 200,
+    proc(r: var Rng): tuple[base, input: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[base, input: int]): bool =
+      let inner: proc(value: int): int {.closure.} =
+        proc(value: int): int = value + input.base
+      let callback: proc(inner: proc(value: int): int {.closure.}): int
+          {.closure.} =
+        proc(inner: proc(value: int): int {.closure.}): int =
+          inner(input.input)
+      let expected = input.input + input.base
+      let typed = generatedApplyNestedPiCallbackDynamic(callback, inner)
+      let runtime = generatedApplyNestedPiCallbackRuntimeValueDynamic(
+        callback, inner)
+      typed == expected and valueToInt(runtime.value) == expected)
+  if not nestedPiCallbackCases:
+    quit(1)
+  let nestedPiResultCallbackCases = forAll(
+    "higher-order generic Pi callbacks return nested closures", r, 200,
+    proc(r: var Rng): tuple[value, seed: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[value, seed: int]): bool =
+      let callback: proc(value, seed: int): int {.closure.} =
+        proc(value, seed: int): int = value + seed
+      let typed = generatedReturnNestedPiCallbackDynamic(callback,
+        input.value)
+      let runtime = generatedReturnNestedPiCallbackRuntimeValueDynamic(
+        callback, input.value)
+      typed(input.seed) == input.value + input.seed and
+        valueToInt(callRuntimeValue(runtime.value,
+          @[intToValue(input.seed)])) == input.value + input.seed)
+  if not nestedPiResultCallbackCases:
+    quit(1)
   var computedCallbackInputMismatchRejected = false
   try:
     let callback: proc(left, right: int, values: seq[int]): seq[int]

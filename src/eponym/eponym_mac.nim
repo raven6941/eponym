@@ -1967,6 +1967,26 @@ proc runtimeValueConverter(eponymType, nimType: NimNode,
 proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode
 
+proc runtimeTypeReferencesName(n: NimNode, name: string,
+    shadowed: seq[string] = @[]): bool =
+  if n.isNil: return false
+  if n.kind in {nnkIdent, nnkSym}:
+    return $n == name and name notin shadowed
+  if n.kind in {nnkCall, nnkObjConstr} and n.len >= 3 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] in ["Pi", "Sig"]:
+    var localShadowed = shadowed
+    for i in 1 ..< n.len - 1:
+      let binder = n[i]
+      if binder.kind != nnkExprColonExpr or binder.len != 2:
+        return true # Conservatively retain overrides for unknown syntax.
+      if runtimeTypeReferencesName(binder[1], name, localShadowed):
+        return true
+      localShadowed.add($binder[0])
+    return runtimeTypeReferencesName(n[^1], name, localShadowed)
+  for child in n:
+    if runtimeTypeReferencesName(child, name, shadowed): return true
+  false
+
 proc runtimePiTypeValueExpr(n, globals: NimNode,
     overrides: seq[tuple[name: string, value: NimNode]]): NimNode =
   if n.kind notin {nnkCall, nnkObjConstr} or n.len < 3 or
@@ -1997,8 +2017,10 @@ proc runtimePiTypeValueExpr(n, globals: NimNode,
         newIdentDefs(argument, bindSym"Value", newEmptyNode())],
       body = newStmtList(codomain))
     var priorArguments = newNimNode(nnkBracket)
-    for override in localOverrides:
-      priorArguments.add(copyNimTree(override.value))
+    for i, override in localOverrides:
+      if i >= overrides.len or runtimeTypeReferencesName(n,
+          overrides[i].name):
+        priorArguments.add(copyNimTree(override.value))
     newCall(bindSym"runtimeDependentArrowType", domain, globals, callback,
       newTree(nnkPrefix, ident"@", priorArguments))
   build(0, overrides)
@@ -3105,8 +3127,10 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
           newIdentDefs(argument, bindSym"Value", newEmptyNode())],
         body = newStmtList(codomain))
       var priorArguments = newNimNode(nnkBracket)
-      for override in localOverrides:
-        priorArguments.add(copyNimTree(override.value))
+      for i, override in localOverrides:
+        if i >= overrides.len or runtimeTypeReferencesName(n,
+            overrides[i].name):
+          priorArguments.add(copyNimTree(override.value))
       newCall(bindSym"runtimeDependentSigmaType", domain, globals,
         callback, newTree(nnkPrefix, ident"@", priorArguments))
     return buildSigma(0, overrides)
