@@ -1076,28 +1076,39 @@ proc validateRuntimeVariantArguments(constructorName: string,
         "' argument " & $index & " has the wrong type: " & error.msg)
     currentType = whnfScopeApply(currentType, argument)
 
-proc validateRuntimeConstructorValue(value: Value, globals: Globals) =
+proc validateRuntimeConstructorValue(value, expectedType: Value,
+    globals: Globals): bool =
   ## Runtime primitive terms do not carry their Eponym type in their syntax.
   ## Validate constructor applications through their checked Pi domains so
   ## those terms cannot be smuggled into an unrelated constructor field.
-  if value.isNil or value.whnfKind != wRef: return
+  if value.isNil or value.whnfKind != wRef: return false
   for name, entry in globals.pairs:
     if not entry.isDataConstructor or entry.tm.isNil or
         entry.tm.kind != tR or entry.tm.refId != value.whnfRefId:
       continue
-    let expectedArity = runtimeVariantArity(entry)
-    if value.whnfSpineLen != expectedArity:
+    if value.whnfSpineLen != runtimeVariantArity(entry):
       raise newException(ValueError,
         "runtime constructor '" & name & "' has an invalid spine")
-    var arguments: seq[Value] = @[]
+    var currentType = eval(entry.ty, @[])
     for index in 0 ..< value.whnfSpineLen:
       if value.whnfSpineKind(index) != eApp:
         raise newException(ValueError,
           "runtime constructor '" & name &
           "' spine contains a non-argument field")
-      arguments.add(value.whnfSpineArg(index))
-    validateRuntimeVariantArguments(name, arguments, globals)
-    return
+      let argument = value.whnfSpineArg(index)
+      if currentType.isNil or currentType.whnfKind != wPi:
+        raise newException(ValueError,
+          "runtime constructor '" & name &
+          "' has no domain for argument " & $index)
+      validateRuntimeValueAgainstType(argument, currentType.whnfDom, globals)
+      currentType = whnfScopeApply(currentType, argument)
+    var supply = Supply()
+    for _, globalEntry in globals.pairs:
+      if not globalEntry.tm.isNil and globalEntry.tm.kind == tR:
+        reserveFreshIdsThrough(supply, globalEntry.tm.refId)
+    areEqual(supply, vStar(), currentType, expectedType)
+    return true
+  false
 
 proc validateRuntimeVariantConstructors*(globals: Globals,
     familyName: string, constructors: openArray[string]) =
@@ -1367,7 +1378,6 @@ proc validateRuntimeValueAgainstType*(value, expectedType: Value,
   if expectedNat:
     discard valueToNat(value, globals)
     return
-  validateRuntimeConstructorValue(value, globals)
   if expectedType.whnfKind == wSi:
     if value.whnfKind != wPair:
       raise newException(ValueError,
@@ -1377,6 +1387,7 @@ proc validateRuntimeValueAgainstType*(value, expectedType: Value,
     let codomain = whnfScopeApply(expectedType, first)
     validateRuntimeValueAgainstType(runtimePairSecond(value), codomain, globals)
     return
+  if validateRuntimeConstructorValue(value, expectedType, globals): return
   validateRuntimeValueType(value, expectedType, globals)
 
 proc prependErasedTypeArgs*(typeArgCount: int,

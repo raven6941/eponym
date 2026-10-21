@@ -199,7 +199,9 @@ witnesses with `runtimeArrowType`, `runtimeDependentArrowType`,
 `runtimeSigmaType`, and `runtimeDependentSigmaType`. The dependent builders
 reserve fresh reference IDs beyond checked globals and earlier binders. The
 low-level `validateRuntimeValueAgainstType` recursively checks pair values
-against Sigma domains and codomains; other values use inferred runtime types.
+against Sigma domains and codomains, and checks constructor applications
+through their declared Pi domains. Primitive Int/Nat values are accepted only
+at their matching Eponym types.
 Generated wrappers still support only the documented generic binder and codec
 shapes, so these builders do not make arbitrary dependent generic binders
 available automatically.
