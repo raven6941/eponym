@@ -1603,6 +1603,16 @@ proc runtimeSigmaComponents(n: NimNode, allowDependent = false):
     return (n[1][1], n[2], $n[1][0])
   (n[1], n[2], "")
 
+proc containsDependentSigma(n: NimNode): bool =
+  if n.kind in {nnkCall, nnkObjConstr} and n.len == 3 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Sig" and
+      n[1].kind == nnkExprColonExpr and n[1].len == 2 and
+      n[1][0].kind in {nnkIdent, nnkSym} and
+      mentionsName(n[2], $n[1][0]):
+    return true
+  for child in n:
+    if containsDependentSigma(child): return true
+
 proc runtimeSigmaFields(n: NimNode, allowDependent = false):
     seq[tuple[fieldType: NimNode, binder: string]] =
   ## Flatten a right-nested Sigma telescope. Each field binder scopes over
@@ -1872,6 +1882,16 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
         if mapping.eponymName == $head:
           return mapping.nimType
   nil
+
+proc hasCodecBackedDependentSigmaBinder(decl: NimNode,
+    mappings: seq[HostRuntimeType], records: seq[HostRecord]): bool =
+  if decl.kind != nnkProcDef or decl[2].kind == nnkEmpty: return false
+  for param in decl[2]:
+    if param.kind != nnkIdentDefs or not containsDependentSigma(param[^2]):
+      continue
+    if not runtimeNimType(param[^2], mappings, records,
+        allowDependentSigma = true).isNil:
+      return true
 
 proc runtimeValueConverter(eponymType, nimType: NimNode,
                            toValue: bool,
@@ -3063,9 +3083,12 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     allowDependentSigma = false,
     returnRuntimeValue = false): NimNode =
   ## Emit a sibling wrapper where supported value-indexed generics are
-  ## ordinary runtime parameters instead of Nim `static` parameters.
+  ## ordinary runtime parameters instead of Nim `static` parameters. For
+  ## dependent Sigma values, the caller can request a typed overload whose
+  ## codecs are checked against the generated Sigma witness.
   let generic = genericRuntimeInfo(decl, mappings, allowGenericValues = true,
-    allowUnmappedValues = true, allowDependentSigma = allowDependentSigma)
+    allowUnmappedValues = true,
+    allowDependentSigma = allowDependentSigma)
   if generic.error.len > 0 or generic.genericNames.len == 0 or
       generic.typeNames.len > 0:
     return nil
@@ -3075,7 +3098,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     nil
   else:
     runtimeNimType(params[0], generic.codecMappings, records,
-                   allowDependentSigma)
+      allowDependentSigma)
   if not returnRuntimeValue and resultType.isNil: return nil
   var formal = newNimNode(nnkFormalParams)
   formal.add(if returnRuntimeValue:
@@ -3173,8 +3196,11 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
             validateEncodedIndexedCodec = true
     let validateUnmappedValue = generic.genericValueArgs[i] and
       not genericValueHasCodec[i]
+    let validateCodecBackedDependentSigma =
+      generic.genericValueArgs[i] and genericValueHasCodec[i] and
+      containsDependentSigma(generic.genericValueTypeExprs[i])
     if validateUnmappedValue or validateEncodedMappedVariant or
-        validateEncodedIndexedCodec:
+        validateEncodedIndexedCodec or validateCodecBackedDependentSigma:
       let expectedType = runtimeTypeValueExpr(
         generic.genericValueTypeExprs[i], globalsSym, typeIndexOverrides)
       if expectedType.isNil: return nil
@@ -3790,6 +3816,15 @@ macro eponymBlock*(body: untyped): untyped =
         allowDependentSigma)
       if not dynamicWrapper.isNil:
         result.add(dynamicWrapper)
+      let addValidatedDependentSigmaOverloads =
+        not allowDependentSigma and
+        hasCodecBackedDependentSigmaBinder(procDecl, runtimeTypes, records)
+      if addValidatedDependentSigmaOverloads:
+        let validatedDependentSigmaWrapper = dynamicGenericRuntimeWrapper(
+          procDecl, baseDir, src, d.name, bindings, runtimeTypes,
+          checkedGlobals, records, allowDependentSigma = true)
+        if not validatedDependentSigmaWrapper.isNil:
+          result.add(validatedDependentSigmaWrapper)
       if d.name in runtimeValueNames:
         let dynamicRuntimeValueWrapper = dynamicGenericRuntimeWrapper(procDecl,
           baseDir, src, d.name, bindings, runtimeTypes, checkedGlobals,
@@ -3801,6 +3836,13 @@ macro eponymBlock*(body: untyped): untyped =
           if generic.error.len > 0:
             error("eponymBlock runtimeValue wrapper '" & d.name & "': " &
               generic.error, procDecl)
+        if addValidatedDependentSigmaOverloads:
+          let validatedDependentSigmaRuntimeValueWrapper =
+            dynamicGenericRuntimeWrapper(procDecl, baseDir, src, d.name,
+              bindings, runtimeTypes, checkedGlobals, records,
+              allowDependentSigma = true, returnRuntimeValue = true)
+          if not validatedDependentSigmaRuntimeValueWrapper.isNil:
+            result.add(validatedDependentSigmaRuntimeValueWrapper)
       continue
     if d.name in runtimeValueNames:
       result.add(rawRuntimeValueWrapper(baseDir, src, d.name,

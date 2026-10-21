@@ -405,11 +405,15 @@ eponymBlock:
   proc generatedGenericDependentSigmaValueBinder[
       pair: Sig(length: Nat, Vec[Int, length])](ignored: Int):
       Sig(length: Nat, Vec[Int, length]) = pair
+  proc generatedValidatedDependentSigmaValueBinder[
+      pair: Sig(length: Nat, Vec[Int, length])](ignored: Int):
+      Sig(length: Nat, Vec[Int, length]) = pair
   runtimeValue(generatedNestedVectorIdentity)
   runtimeValue(generatedGenericVectorValueBinder)
   runtimeValue(generatedGenericSigmaValueBinder)
   runtimePairTrusted(generatedGenericDependentSigmaValueBinder)
   runtimeValue(generatedGenericDependentSigmaValueBinder)
+  runtimeValue(generatedValidatedDependentSigmaValueBinder)
   proc generatedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
@@ -611,6 +615,10 @@ eponymBlock:
   proc generatedGenericSizedTreeBinder[length: Nat,
       tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
   runtimeValue(generatedGenericSizedTreeBinder)
+  proc generatedValidatedCustomDependentSigmaBinder[
+      pair: Sig(length: Nat, SizedTree[length])](ignored: Int):
+      Sig(length: Nat, SizedTree[length]) = pair
+  runtimeValue(generatedValidatedCustomDependentSigmaBinder)
 
 eponymBlock:
   postulate(Int, Univ)
@@ -2402,6 +2410,25 @@ proc callbackRole : Callback -> Sample -> Sample =
         typed == pair)
   if not dynamicGenericDependentSigmaCases:
     quit(1)
+  let validatedDependentSigmaCases = forAll(
+    "dependent Sigma generic binders validate without a trusted opt-in", r,
+    200,
+    proc(r: var Rng): tuple[length, seed, ignored: int] =
+      (r.genInt(0, 20), r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed, ignored: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        values[i] = input.seed + i
+      let pair = (input.length, values)
+      let runtime =
+        generatedValidatedDependentSigmaValueBinderRuntimeValueDynamic(
+          pair, input.ignored)
+      generatedValidatedDependentSigmaValueBinderDynamic(pair,
+        input.ignored) == pair and
+        valueToNat(runtimePairFirst(runtime.value), runtime.globals) ==
+          input.length)
+  if not validatedDependentSigmaCases:
+    quit(1)
   let conditionalGenericValueCases = forAll(
     "Bool conditional indices validate generic Vec and Sigma values", r, 200,
     proc(r: var Rng): tuple[condition: bool, yesLength, noLength, seed: int] =
@@ -2532,6 +2559,14 @@ proc callbackRole : Callback -> Sample -> Sample =
     dynamicGenericDependentSigmaMismatchRejected =
       "runtime Vec length mismatch" in error.msg
   doAssert dynamicGenericDependentSigmaMismatchRejected
+  var validatedDependentSigmaMismatchRejected = false
+  try:
+    discard generatedValidatedDependentSigmaValueBinderDynamic((3, @[1, 2]), 0)
+  except ValueError as error:
+    validatedDependentSigmaMismatchRejected =
+      "runtime Vec length mismatch" in error.msg or
+      "runtime value does not match its expected Eponym type" in error.msg
+  doAssert validatedDependentSigmaMismatchRejected
   var dynamicGenericValueVectorMismatchRejected = false
   try:
     discard generatedGenericVectorValueBinderDynamic(3, @[1, 2], 0)
@@ -2769,6 +2804,34 @@ proc callbackRole : Callback -> Sample -> Sample =
       typed == values and decoded == values and typedMismatchRejected and
         runtimeMismatchRejected)
   if not indexedCustomCodecValueCases:
+    quit(1)
+  let customDependentSigmaCases = forAll(
+    "dependent Sigma generic binders validate custom codec indices", r, 200,
+    proc(r: var Rng): tuple[length, seed, ignored: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed, ignored: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< values.len:
+        values[i] = input.seed + i
+      let pair = (input.length, values)
+      let typed = generatedValidatedCustomDependentSigmaBinderDynamic(
+        pair, input.ignored)
+      let runtime = generatedValidatedCustomDependentSigmaBinderRuntimeValueDynamic(
+        pair, input.ignored)
+      let expectedType = runtimeDependentSigmaType(
+        runtimeGlobalValue(runtime.globals, "Nat"), runtime.globals,
+        proc(length: Value): Value = callRuntimeValue(
+          runtimeGlobalValue(runtime.globals, "SizedTree"), [length]))
+      validateRuntimeValueAgainstType(runtime.value, expectedType,
+        runtime.globals)
+      var mismatchRejected = false
+      try:
+        discard generatedValidatedCustomDependentSigmaBinderDynamic(
+          (input.length + 1, values), input.ignored)
+      except ValueError:
+        mismatchRejected = true
+      typed == pair and mismatchRejected)
+  if not customDependentSigmaCases:
     quit(1)
 
   let nestedVectorCases = forAll(
