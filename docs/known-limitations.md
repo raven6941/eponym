@@ -141,10 +141,14 @@ expression are not supported by generated codecs.
 
 The core QTT erasure pass (`eraseQ0Arguments`) replaces a checked quantity-0
 application's argument with an inert unit witness, so the argument computation
-is not evaluated. The current interpreter and host-call ABI still retain the
-parameter/application slot; full ABI erasure and generated native code are
-future codegen work. Erasure requires a closed, zonked term whose function
-types can be recovered by the core inferencer.
+is not evaluated. Generated typed wrappers and compiled-proc computational
+argument vectors omit quantity-0 values. A separate witness vector may carry a
+q0 value only to instantiate a dependent runtime type, such as a Vec length;
+the compiled body never receives it as a computational argument. The scalar
+representation backend also omits q0 formals and local-call arguments. The
+generic `Value` closure model still represents a q0 lambda as a unary closure
+and internally applies its witness. Erasure requires a closed, zonked term
+whose function types can be recovered by the core inferencer.
 
 For `eponymBlock`s without Eponym module imports, elaboration and parse errors
 include the source filename, line, and column of the nearest Nim definition

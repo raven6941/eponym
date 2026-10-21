@@ -3240,6 +3240,26 @@ proc unreconstructableRuntimeWrapper(defName: string): NimNode =
     template `name`*(args: varargs[untyped]): untyped =
       {.error: `message`.}
 
+proc runtimePiValueSlots(globals: Globals, defName: string,
+                         wrapperNames: seq[string]):
+                         tuple[slots: seq[bool], aligned: bool] =
+  ## Whether each checked Pi binder needs a runtime argument. Also verify
+  ## that wrapper values correspond to binders in the same order; otherwise
+  ## generated code must keep the interpreter path.
+  result.aligned = defName in globals
+  if not result.aligned: return
+  var ty = globals[defName].ty
+  var i = 0
+  while not ty.isNil and ty.kind == tPi:
+    if i >= wrapperNames.len or
+        cmpIgnoreStyle(ty.scope.adv, wrapperNames[i]) != 0:
+      result.aligned = false
+    result.slots.add(ty.qty != q0)
+    ty = ty.scope.bdy
+    inc i
+  if i != wrapperNames.len:
+    result.aligned = false
+
 proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          bindings: seq[HostPostulateBinding],
                          mappings: seq[HostRuntimeType],
@@ -3320,11 +3340,31 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     if values[^1].isNil: return nil
     wrapperIndexOverrides.add((argNames[i], argSym))
   let valuesSeq = newTree(nnkPrefix, ident("@"), values)
+  var wrapperValueNames = generic.genericNames.mapIt($it)
+  wrapperValueNames.add(argNames)
+  let piValueSlots = runtimePiValueSlots(checkedGlobals, defName,
+    wrapperValueNames)
+  let piRuntimeSlots = piValueSlots.slots
+  let runtimeValues = newNimNode(nnkBracket)
+  let q0Values = newNimNode(nnkBracket)
+  let slotAlignmentMatches = piValueSlots.aligned and
+    piRuntimeSlots.len == values.len
+  if slotAlignmentMatches:
+    for i, value in values:
+      if piRuntimeSlots[i]: runtimeValues.add(value)
+      else: q0Values.add(value)
+  let runtimeValuesSeq = newTree(nnkPrefix, ident("@"), runtimeValues)
+  let q0ValuesSeq = newTree(nnkPrefix, ident("@"), q0Values)
   var callArgs = @[dirLit, srcLit, nameLit, valuesSeq]
   if not bindingSym.isNil: callArgs.add(bindingSym)
   let runtimeValue = genSym(nskLet, "runtimeValue")
-  let compiledName = compiled.getOrDefault(defName, "")
+  var compiledName = compiled.getOrDefault(defName, "")
   let compiledReprName = compiledRepr.getOrDefault(defName, "")
+  if compiledName.len > 0 and not slotAlignmentMatches:
+    # The legacy interpreter path re-elaborates omitted implicits. Keep it
+    # when the macro-time source telescope cannot be aligned exactly with
+    # the checked Pi telescope used by generated code.
+    compiledName = ""
   # Issue #330: when the definition has a representation-specialized proc
   # and the wrapper boundary is the identity (every formal and the result
   # are already the host representation — v1: `int`), call it directly with
@@ -3333,6 +3373,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   # identity on this fragment, and the repr body computes the same function
   # (primops fire as Nim arithmetic on both sides).
   var useRepr = compiledReprName.len > 0 and
+    slotAlignmentMatches and
     resultType.kind in {nnkIdent, nnkSym} and $resultType == "int"
   if useRepr:
     for at in argNimTypes:
@@ -3340,18 +3381,23 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
         useRepr = false
         break
   if useRepr:
+    if piRuntimeSlots.len != generic.genericNames.len + argSyms.len:
+      useRepr = false
     var reprCall = newCall(ident(compiledReprName))
-    for argSym in argSyms:
-      reprCall.add(argSym)
-    result = newNimNode(nnkProcDef)
-    result.add(newTree(nnkPostfix, ident("*"), ident(defName)))
-    result.add(newEmptyNode())
-    result.add(generic.genericParams)
-    result.add(formal)
-    result.add(newEmptyNode())
-    result.add(newEmptyNode())
-    result.add(reprCall)
-    return result
+    for i, argSym in argSyms:
+      let slot = generic.genericNames.len + i
+      if slot < piRuntimeSlots.len and piRuntimeSlots[slot]:
+        reprCall.add(argSym)
+    if useRepr:
+      result = newNimNode(nnkProcDef)
+      result.add(newTree(nnkPostfix, ident("*"), ident(defName)))
+      result.add(newEmptyNode())
+      result.add(generic.genericParams)
+      result.add(formal)
+      result.add(newEmptyNode())
+      result.add(newEmptyNode())
+      result.add(reprCall)
+      return result
   if compiledName.len > 0:
     # Issue #329: the definition has a native Value proc; evaluate through
     # it instead of re-walking the definition's term per call. The typed
@@ -3361,7 +3407,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     else:
       bindingSym
     wrapperBody.add(newLetStmt(runtimeValue,
-      newCall(ident(compiledName), valuesSeq, bindingsArg)))
+      newCall(ident(compiledName), runtimeValuesSeq, bindingsArg,
+        q0ValuesSeq)))
   else:
     wrapperBody.add(newLetStmt(runtimeValue,
       newCall(bindSym"callValueFuncDir", callArgs)))
@@ -3779,11 +3826,26 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
     for binding in bindings:
       body.add(bindingCall(binding, bindingSym, globalsSym, codecMappings,
                            records, checkedGlobals))
+  var wrapperValueNames = generic.genericNames.mapIt($it)
+  wrapperValueNames.add(argNames)
+  let piValueSlots = runtimePiValueSlots(checkedGlobals, defName,
+    wrapperValueNames)
+  let piRuntimeSlots = piValueSlots.slots
+  let compiledArgs = newNimNode(nnkBracket)
+  let q0Args = newNimNode(nnkBracket)
+  let slotAlignmentMatches = piValueSlots.aligned and
+    piRuntimeSlots.len == values.len
+  if slotAlignmentMatches:
+    for i, value in values:
+      if piRuntimeSlots[i]: compiledArgs.add(value)
+      else: q0Args.add(value)
+  let compiledArgsSeq = newTree(nnkPrefix, ident("@"), compiledArgs)
+  let q0ArgsSeq = newTree(nnkPrefix, ident("@"), q0Args)
+  let compiledName = compiled.getOrDefault(defName, "")
   let runtimeCall =
-    if compiled.getOrDefault(defName, "").len > 0:
+    if compiledName.len > 0 and slotAlignmentMatches:
       # Issue #329: evaluate through the definition's native Value proc.
-      newCall(ident(compiled.getOrDefault(defName, "")), valuesSeq,
-        bindingSym)
+      newCall(ident(compiledName), compiledArgsSeq, bindingSym, q0ArgsSeq)
     else:
       newCall(bindSym"callDefValueWithBindings",
         newCall(bindSym"findDef", defsSym, nameLit), valuesSeq, bindingSym)

@@ -993,9 +993,20 @@ implementations.
   stuck eliminators over neutral scrutinees, effect counting (no
   duplicated/dropped postulate effects), and source-mapped errors.
   Full local CI passed for this phase.
-- [ ] Remove q0 binders and application slots from generated runtime calling
-  conventions once the backend can represent erased functions without the
-  interpreter's current ABI shape.
+- [x] Omit q0 binders from generated typed-wrapper and Phase-1 compiled-proc
+  computational argument vectors. A separate q0 witness vector carries
+  checked values only to instantiate dependent runtime types; these witnesses
+  do not enter computation. Property coverage checks dependent Vec arguments
+  and results through both typed and raw runtime-value wrappers.
+- [x] Omit q0 formals and local-call arguments in the scalar representation
+  backend. A differential test covers inferred and explicit q0 binders,
+  leading and interleaved q0 positions, and the typed wrapper checks 200
+  generated values for both layouts.
+- [ ] Give the generic `Value` closure representation a no-argument form for
+  q0 lambdas so generated higher-order Value code can omit the internal unit
+  closure/application slot too. The current Value backend still uses a unary
+  closure internally, with an inert unit witness; the interpreter semantics
+  and observable results remain unchanged.
 - [x] Validate every baked global refId/name pair against the macro-time
   `Globals` table before code emission, including constructor IDs used by
   eliminator dispatch. A regression simulates a changed refId and checks that
