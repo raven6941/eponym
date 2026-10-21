@@ -1,8 +1,12 @@
+import "../../lib/nat.ep"
+
 postulate Int : Type 0
 data RuntimeTree : Type 0 where
 | treeEmpty : RuntimeTree
 | treeNode (value : Int) (tail : RuntimeTree) : RuntimeTree
 proc treeIdentity : RuntimeTree -> RuntimeTree =
   lam (tree : RuntimeTree). tree
+data SizedTree (length : Nat) : Type 0 where
+| sizedTree (tree : RuntimeTree) : SizedTree length
 data OtherTree : Type 0 where
 | otherTree : OtherTree
