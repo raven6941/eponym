@@ -1,5 +1,9 @@
 # Known limitations
 
+<!-- Maintainer note (#372, 2026-10-21): a codegen or interop merge must update
+this page in the same PR when it changes runtime behavior, tiering, or
+wrapper/codec coverage. Re-sync passes are not deferred "for later". -->
+
 Eponym checks a small dependent language embedded in Nim. It is useful when
 you want a compile-time guarantee about a protocol, shape, or resource use;
 it does not turn an `eponymBlock` into an ordinary Nim procedure body. This
@@ -40,9 +44,10 @@ the runtime's Nim `int`; larger Nat values cannot fit in primitive `Int`.
 There is no `Int -> Nat` conversion helper yet; any such conversion must
 reject negative integers. Conversion stays explicit because postulates can
 hide host effects that their Eponym type does not prove absent, so implicit
-insertion could hide a call to user code. The current interpreter evaluates
-Nat folds recursively, which can limit performance and stack depth for large
-runtime values.
+insertion could hide a call to user code. Nat folds evaluate recursively in
+the interpreter tier, which can limit performance and stack depth for large
+runtime values; the representation tier compiles `natElim` to an iterative
+fold, avoiding that limit.
 
 ```nim
 eponymBlock:
@@ -154,8 +159,7 @@ Generated higher-order `Value` code represents q0 lambdas as nullary
 closures; the interpreter keeps its unary representation. Differential tests
 pass a generated q0 closure through a higher-order postulate and confirm a
 generated q0 application skips its argument while running the closure body
-once. Erasure requires a closed,
-zonked term whose function types can be recovered by the core inferencer.
+once. Erasure requires a closed, zonked term whose function types can be recovered by the core inferencer.
 
 For `eponymBlock`s without Eponym module imports, elaboration and parse errors
 include the source filename, line, and column of the nearest Nim definition
@@ -272,18 +276,30 @@ can also serve as callback arguments or results. Computed indices such as
 Custom codecs for indexed families are checked against dependent callback
 indices on both input and output.
 
-## Static checks do not manage Nim resources or optimize code
+## Static checks do not manage Nim resources
 
 Linear and erased quantities apply to variables inside checked Eponym terms.
 They do not inspect aliases or ownership in surrounding Nim code. For
 example, Eponym can check that a modeled channel is consumed once, but it
 cannot tell whether two Nim references alias the same socket.
 
-Quantitative checking currently provides guarantees, not a general code
-generation optimization: Eponym does not automatically turn linear values
-into in-place mutation or destination-passing Nim code. Runtime wrappers
-evaluate checked Eponym values through the runtime bridge; ordinary Nim code
-remains the place to choose data structures and performance strategies.
+Quantitative checking already drives code generation where the
+representation choice follows the quantity: erasure (#328) and the
+representation tier (#330) omit quantity-0 formals and use plain host
+representations wherever the block's `runtimeType` mapping permits them.
+What quantitative checking does *not* yet do is turn linear (quantity-1)
+values into in-place mutation or destination-passing Nim code — that is
+Phase 3 (#331), still guarantees-only.
+
+Checked definitions compile to native Nim procs per definition:
+in-fragment definitions run compiled `eponymCompiled_<name>` procs (Phase 1
+`Value` backend) or, when their signature maps to plain host types,
+`eponymCompiledRepr_<name>` procs (Phase 2 representation tier, emitting
+direct host code such as Nim arithmetic). Definitions outside the compiled
+fragments keep the interpreter as a per-definition fallback. See the
+[pipeline trace](paxos-pipeline-trace.md) for the stage layout. Ordinary Nim
+code remains the place to choose data structures and performance strategies
+the compiler does not yet exploit.
 
 ## Some demos still have host-side parts
 
