@@ -378,6 +378,9 @@ eponymBlock:
   runtimeValue(generatedIntListIdentity)
   proc generatedListIdentity[A: Univ](values: List[A]): List[A] = values
   runtimeValue(generatedListIdentity)
+  proc generatedGenericListValueBinder[values: List[Int]](
+      ignored: Int): List[Int] = values
+  runtimeValue(generatedGenericListValueBinder)
 
 eponymBlock:
   import "../lib/option.ep"
@@ -389,6 +392,9 @@ eponymBlock:
       value: Option[Option[Int]]): Option[Option[Int]] = value
   proc generatedOptionIdentity[A: Univ](value: Option[A]): Option[A] = value
   runtimeValue(generatedOptionIdentity)
+  proc generatedGenericOptionValueBinder[value: Option[Int]](
+      ignored: Int): Option[Int] = value
+  runtimeValue(generatedGenericOptionValueBinder)
 
 eponymBlock:
   import "../lib/bool.ep"
@@ -2215,6 +2221,22 @@ proc callbackRole : Callback -> Sample -> Sample =
   if not listCodecCases:
     quit(1)
   doAssert generatedListIdentity[int](@[]) == @[]
+  let genericListValueCases = forAll(
+    "generic List binders cross dynamic wrappers through the List codec",
+    r, 200,
+    proc(r: var Rng): seq[int] =
+      result = newSeq[int](r.genInt(0, 8))
+      for i in 0 ..< result.len:
+        result[i] = r.genInt(-1000, 1000)
+    ,
+    proc(values: seq[int]): bool =
+      let typed = generatedGenericListValueBinderDynamic(values, 0)
+      let runtime = generatedGenericListValueBinderRuntimeValueDynamic(
+        values, 0)
+      typed == values and
+        decodeRuntimeIntList(runtime.value, runtime.globals) == values)
+  if not genericListValueCases:
+    quit(1)
 
   let optionCodecCases = forAll(
     "Option values cross as checked none/some constructors", r, 200,
@@ -2247,6 +2269,21 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded == value and rawDecoded == value and primitiveDecoded == value,
     )
   if not optionCodecCases:
+    quit(1)
+  let genericOptionValueCases = forAll(
+    "generic Option binders cross dynamic wrappers through the Option codec",
+    r, 200,
+    proc(r: var Rng): tuple[present: bool, seed: int] =
+      (r.genBool(), r.genInt(-1000, 1000)),
+    proc(input: tuple[present: bool, seed: int]): bool =
+      let value = if input.present: some(input.seed) else: none(int)
+      let typed = generatedGenericOptionValueBinderDynamic(value, 0)
+      let runtime = generatedGenericOptionValueBinderRuntimeValueDynamic(
+        value, 0)
+      let decoded = valueToOption[int](runtime.value, runtime.globals,
+        "Option", proc(item: Value, _: Globals): int = valueToInt(item))
+      typed == value and decoded == value)
+  if not genericOptionValueCases:
     quit(1)
   let optionGlobals = generatedPrimitiveOptionIdentityRuntimeValue(
     none(int)).globals

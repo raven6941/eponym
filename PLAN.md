@@ -535,6 +535,11 @@ implementations.
    need a typed wrapper when their checked signature is reconstructable;
    explicit `proc` declarations with unsupported signatures fail clearly
    when called.
+- [x] Support dynamic generic value binders whose domains use the standard
+   `List` and `Option` codecs. Their typed wrappers take Nim `seq` and
+   `Option` values, encode through the registered structural codecs, and expose
+   `RuntimeValue` result helpers. Separate 200-case properties cover both
+   shapes.
 - [x] Reconstruct typed wrappers for local clause-style definitions from
    their checked Pi signatures. Two 200-case properties cover direct calls
    and typed and raw `RuntimeValue` access for a `Nat -> Nat` identity and a
