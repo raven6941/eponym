@@ -3016,7 +3016,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   ## variables represented as opaque host boxes.
   if decl.kind != nnkProcDef:
     return nil
-  let generic = genericRuntimeInfo(decl, mappings)
+  let generic = genericRuntimeInfo(decl, mappings,
+    allowDependentSigma = allowDependentSigma)
   if generic.error.len > 0: return nil
   let codecMappings = generic.codecMappings
   let params = decl[3]
@@ -3434,7 +3435,8 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   ## only codecs explicitly described by runtimeType and the primitive codecs.
   if decl.kind != nnkProcDef:
     return nil
-  let generic = genericRuntimeInfo(decl, mappings)
+  let generic = genericRuntimeInfo(decl, mappings,
+    allowDependentSigma = allowDependentSigma)
   if generic.error.len > 0: return nil
   let codecMappings = generic.codecMappings
   let params = decl[3]
@@ -3817,7 +3819,8 @@ macro eponymBlock*(body: untyped): untyped =
     if not procDecl.isNil:
       if d.name in runtimeValueNames:
         let params = procDecl[3]
-        let generic = genericRuntimeInfo(procDecl, runtimeTypes)
+        let generic = genericRuntimeInfo(procDecl, runtimeTypes,
+          allowDependentSigma = d.name in trustedRuntimePairs)
         var valueArity = 0
         for i in 1 ..< params.len:
           valueArity += params[i].len - 2
@@ -3987,7 +3990,8 @@ macro eponymBlock*(body: untyped): untyped =
         if not dynamicRuntimeValueWrapper.isNil:
           result.add(dynamicRuntimeValueWrapper)
         else:
-          let generic = genericRuntimeInfo(procDecl, runtimeTypes)
+          let generic = genericRuntimeInfo(procDecl, runtimeTypes,
+            allowDependentSigma = d.name in trustedRuntimePairs)
           if generic.error.len > 0:
             error("eponymBlock runtimeValue wrapper '" & d.name & "': " &
               generic.error, procDecl)
