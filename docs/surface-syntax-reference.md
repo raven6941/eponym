@@ -58,6 +58,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported shapes are listed in [known limitations](known-limitations.md) |
 | `runtimeCodec(Tree, NimType, encode, decode)` | Register typed Nim encoders/decoders for a named Eponym type or family; the codec implementation is trusted |
 | `runtimeValue(checkedDefinition)` | Expose checked values and globals; imported definitions without a local Nim signature use the raw `Value` ABI |
+| `debugEcho[A](value)` | Opt-in runtime trace from `lib/debug.ep`; bind `debugEcho` with `debugEchoRuntimeValue` or a custom raw adapter |
 | `echo`, `for`, `var`, effectful Nim control flow, Nim library calls | Not supported as host Nim statements/expressions in the block |
 
 Put ordinary computation, IO, control flow, and Nim library calls outside

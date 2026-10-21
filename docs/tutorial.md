@@ -234,6 +234,26 @@ eponymBlock:
 The conversion is explicit so a call from `Nat` to `Int` is visible in the
 checked source.
 
+For a runtime trace from a checked definition, import `lib/debug.ep` and bind
+its type-preserving postulate to the raw Value adapter. The trace runs when
+the generated Nim wrapper calls the checked definition:
+
+```nim
+import eponym_mac
+import eponym_embed
+
+eponymBlock:
+  postulate(Int, Univ)
+  import "lib/debug.ep"
+  bindPostulateValue(debugEcho, debugEchoRuntimeValue)
+  proc inspect(value: Int): Int = debugEcho[Int](value)
+
+discard inspect(42) # prints 42, then returns 42
+```
+
+The adapter is trusted Nim code and may perform IO. Eponym checks the
+type-preserving call but does not model that effect.
+
 ## 4. Why bother: a protocol, stated once as a type
 
 Dependent types earn their keep when the type states something a

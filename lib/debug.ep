@@ -1,0 +1,6 @@
+# Explicit runtime debug output for checked definitions.
+#
+# Import this module and bind `debugEcho` to the raw runtime adapter
+# `debugEchoRuntimeValue` (or to a host adapter with a different output sink).
+# The postulate is type-preserving; its output effect is trusted Nim behavior.
+postulate debugEcho : (A : Type 0) -> A -> A

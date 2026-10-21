@@ -111,6 +111,21 @@ parameter/application slot; full ABI erasure and generated native code are
 future codegen work. Erasure requires a closed, zonked term whose function
 types can be recovered by the core inferencer.
 
+For `eponymBlock`s without Eponym module imports, elaboration and parse errors
+include the source filename, line, and column of the nearest Nim definition
+body expression. Blocks that import `.ep` files still report generated
+Eponym-source positions; tracking positions through imported files remains
+open. The `eponym"..."` form reports positions within its Eponym string, not
+Nim source expressions.
+
+Checked definitions can emit a runtime debug trace by importing
+`lib/debug.ep` and binding its generic `debugEcho` postulate to
+`debugEchoRuntimeValue` (or a custom `bindPostulateValue` adapter). It returns
+the value unchanged and prints its Eponym representation when the checked
+wrapper runs. This is an explicit, trusted Nim effect; checking or compiling
+the definition does not print. Opaque host payloads are shown only by Nim type
+name.
+
 A `runtimeCodec` mapping for an unindexed Eponym type can also supply the
 runtime type witness and encoder/decoder for a generic type parameter. This
 lets generic wrappers and callbacks process mapped values inside containers,

@@ -54,6 +54,10 @@ for path in ["tests/fixtures/embedded_err_unbound.nim",
   if not checkFixture(path):
     inc failed
 
+if not checkFixture("tests/fixtures/embedded_err_source_map.nim",
+    "embedded_err_source_map.nim(8,"):
+  inc failed
+
 for (path, expected) in [
     ("tests/fixtures/embedded_err_binding_eponym_type.nim",
      "eponymBlock binding error"),
