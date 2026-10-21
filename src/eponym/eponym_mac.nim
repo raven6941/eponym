@@ -1287,18 +1287,6 @@ type HostPostulateBinding = object
   rawValue: bool
   mutableArgs: bool
 
-type HostRuntimeType = object
-  eponymName: string
-  nimType: NimNode
-  isRuntimeVector: bool
-  isRuntimeList: bool
-  isRuntimeOption: bool
-  isRuntimeVariant: bool
-  isRuntimeCodec: bool
-  isGenericTypeWitnessable: bool
-  encoder: NimNode
-  decoder: NimNode
-
 proc isSyntheticGenericRuntimeType(mapping: HostRuntimeType): bool =
   mapping.nimType.kind in {nnkIdent, nnkSym} and
     $mapping.nimType == mapping.eponymName
@@ -3258,7 +3246,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          checkedGlobals: Globals,
                          records: seq[HostRecord],
                          allowDependentSigma = false,
-                         compiled: Table[string, string]): NimNode =
+                         compiled: Table[string, string],
+                         compiledRepr: Table[string, string] =
+                           initTable[string, string]()): NimNode =
   ## Emit concrete Nim wrappers for first-order types, including generic type
   ## variables represented as opaque host boxes.
   if decl.kind != nnkProcDef:
@@ -3334,6 +3324,34 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   if not bindingSym.isNil: callArgs.add(bindingSym)
   let runtimeValue = genSym(nskLet, "runtimeValue")
   let compiledName = compiled.getOrDefault(defName, "")
+  let compiledReprName = compiledRepr.getOrDefault(defName, "")
+  # Issue #330: when the definition has a representation-specialized proc
+  # and the wrapper boundary is the identity (every formal and the result
+  # are already the host representation — v1: `int`), call it directly with
+  # the host arguments. No Value is allocated and no codec runs; the
+  # conversion the interpreter path performs (intToValue/valueToInt) is the
+  # identity on this fragment, and the repr body computes the same function
+  # (primops fire as Nim arithmetic on both sides).
+  var useRepr = compiledReprName.len > 0 and
+    resultType.kind in {nnkIdent, nnkSym} and $resultType == "int"
+  if useRepr:
+    for at in argNimTypes:
+      if at.kind notin {nnkIdent, nnkSym} or $at != "int":
+        useRepr = false
+        break
+  if useRepr:
+    var reprCall = newCall(ident(compiledReprName))
+    for argSym in argSyms:
+      reprCall.add(argSym)
+    result = newNimNode(nnkProcDef)
+    result.add(newTree(nnkPostfix, ident("*"), ident(defName)))
+    result.add(newEmptyNode())
+    result.add(generic.genericParams)
+    result.add(formal)
+    result.add(newEmptyNode())
+    result.add(newEmptyNode())
+    result.add(reprCall)
+    return result
   if compiledName.len > 0:
     # Issue #329: the definition has a native Value proc; evaluate through
     # it instead of re-walking the definition's term per call. The typed
@@ -4102,7 +4120,7 @@ macro eponymBlock*(body: untyped): untyped =
         break
     cgUserLines[d.name] = userLine
   let cgBlock = compileBlockProcs(defs, checkedGlobals, baseDir, src,
-    cgLocFile, cgUserLines)
+    cgLocFile, cgUserLines, runtimeTypes)
 
   result = newStmtList()
   let dirLit = newLit(baseDir)
@@ -4268,7 +4286,7 @@ macro eponymBlock*(body: untyped): untyped =
       let allowDependentSigma = d.name in trustedRuntimePairs
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
         bindings, runtimeTypes, checkedGlobals, records, allowDependentSigma,
-        cgBlock.compiled)
+        cgBlock.compiled, cgBlock.compiledRepr)
       if not typedWrapper.isNil:
         result.add(typedWrapper)
       else:
