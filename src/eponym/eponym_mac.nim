@@ -2554,6 +2554,7 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
 
 proc genericRuntimeInfo(decl: NimNode,
                         mappings: seq[HostRuntimeType],
+                        records: seq[HostRecord],
                         allowGenericValues = false,
                         allowUnmappedValues = false,
                         allowDependentSigma = false,
@@ -2579,18 +2580,28 @@ proc genericRuntimeInfo(decl: NimNode,
     let binderTypeHead = runtimeTypeHead(param[^2])
     let binderTypeHeadName = if binderTypeHead.kind == nnkIdent:
       $binderTypeHead else: ""
+    let hostRecordIndex = findHostRecord(records, binderTypeHeadName)
+    let hasRecordValueCodec = hostRecordIndex >= 0 and
+      not records[hostRecordIndex].isVariant and
+      not runtimeNimType(param[^2], mappings, records,
+        allowDependentSigma).isNil
     var mappedBinder: HostRuntimeType
     var hasMappedBinder = false
     var hasStructuralValueCodec =
       not runtimeSigmaComponents(param[^2], allowDependentSigma).first.isNil
+    if hasRecordValueCodec:
+      hasStructuralValueCodec = true
     if allowGenericFunctionValues and
         containsEponymPiType(param[^2]):
       hasStructuralValueCodec = true
     for mapping in mappings:
       if mapping.eponymName == binderType:
-        mappedBinder = mapping
-        hasMappedBinder = true
-        break
+        if hasRecordValueCodec:
+          hasStructuralValueCodec = true
+        else:
+          mappedBinder = mapping
+          hasMappedBinder = true
+          break
       if mapping.eponymName == binderTypeHeadName:
         if mapping.isRuntimeVector:
           hasStructuralValueCodec = true
@@ -2599,6 +2610,8 @@ proc genericRuntimeInfo(decl: NimNode,
           hasStructuralValueCodec = true
         elif mapping.isRuntimeOption and
             not runtimeOptionElementType(param[^2], mapping.eponymName).isNil:
+          hasStructuralValueCodec = true
+        elif hasRecordValueCodec:
           hasStructuralValueCodec = true
         else:
           mappedBinder = mapping
@@ -2994,7 +3007,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   ## variables represented as opaque host boxes.
   if decl.kind != nnkProcDef:
     return nil
-  let generic = genericRuntimeInfo(decl, mappings,
+  let generic = genericRuntimeInfo(decl, mappings, records,
     allowDependentSigma = allowDependentSigma)
   if generic.error.len > 0: return nil
   let codecMappings = generic.codecMappings
@@ -3206,7 +3219,8 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
   ## ordinary runtime parameters instead of Nim `static` parameters. For
   ## dependent Sigma values, the caller can request a typed overload whose
   ## codecs are checked against the generated Sigma witness.
-  let generic = genericRuntimeInfo(decl, mappings, allowGenericValues = true,
+  let generic = genericRuntimeInfo(decl, mappings, records,
+    allowGenericValues = true,
     allowUnmappedValues = true,
     allowDependentSigma = allowDependentSigma,
     allowGenericFunctionValues = allowGenericFunctionValues)
@@ -3405,7 +3419,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   ## only codecs explicitly described by runtimeType and the primitive codecs.
   if decl.kind != nnkProcDef:
     return nil
-  let generic = genericRuntimeInfo(decl, mappings,
+  let generic = genericRuntimeInfo(decl, mappings, records,
     allowDependentSigma = allowDependentSigma)
   if generic.error.len > 0: return nil
   let codecMappings = generic.codecMappings
@@ -3789,7 +3803,7 @@ macro eponymBlock*(body: untyped): untyped =
     if not procDecl.isNil:
       if d.name in runtimeValueNames:
         let params = procDecl[3]
-        let generic = genericRuntimeInfo(procDecl, runtimeTypes,
+        let generic = genericRuntimeInfo(procDecl, runtimeTypes, records,
           allowDependentSigma = d.name in trustedRuntimePairs)
         var valueArity = 0
         for i in 1 ..< params.len:
@@ -3960,7 +3974,7 @@ macro eponymBlock*(body: untyped): untyped =
         if not dynamicRuntimeValueWrapper.isNil:
           result.add(dynamicRuntimeValueWrapper)
         else:
-          let generic = genericRuntimeInfo(procDecl, runtimeTypes,
+          let generic = genericRuntimeInfo(procDecl, runtimeTypes, records,
             allowDependentSigma = d.name in trustedRuntimePairs)
           if generic.error.len > 0:
             error("eponymBlock runtimeValue wrapper '" & d.name & "': " &

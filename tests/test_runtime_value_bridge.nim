@@ -457,6 +457,9 @@ eponymBlock:
   runtimeRecordTrusted(SizedVec)
   proc generatedSizedVecIdentity(value: SizedVec): SizedVec = value
   runtimeValue(generatedSizedVecIdentity)
+  proc generatedGenericSizedVecValueBinder[value: SizedVec](
+      ignored: Int): SizedVec = value
+  runtimeValue(generatedGenericSizedVecValueBinder)
 
 eponymBlock:
   postulate(Channel, Univ)
@@ -3250,6 +3253,37 @@ proc callbackRole : Callback -> Sample -> Sample =
           rawRuntime.globals) == values)
   if not dependentRecordCases:
     quit(1)
+  let genericDependentRecordCases = forAll(
+    "trusted dependent record binders use dynamic runtime codecs", r, 200,
+    proc(r: var Rng): tuple[prefixLength, suffixLength, seed: int] =
+      (r.genInt(0, 4), r.genInt(0, 4), r.genInt(-1000, 1000)),
+    proc(input: tuple[prefixLength, suffixLength, seed: int]): bool =
+      let length = input.prefixLength + input.suffixLength
+      var values = newSeq[int](length)
+      for i in 0 ..< values.len:
+        values[i] = input.seed + i
+      let value = RuntimeSizedVec(prefixLength: input.prefixLength,
+        suffixLength: input.suffixLength, values: values)
+      let typed = generatedGenericSizedVecValueBinderDynamic(value, 0)
+      let runtime = generatedGenericSizedVecValueBinderRuntimeValueDynamic(
+        value, 0)
+      let runtimeLength = valueToNat(runtimePairFirst(runtime.value),
+        runtime.globals) + valueToNat(runtimePairFirst(
+          runtimePairSecond(runtime.value)), runtime.globals)
+      typed == value and runtimeLength == length and
+        decodeRuntimeIntVector(runtimePairFirst(
+          runtimePairSecond(runtimePairSecond(runtime.value))), runtimeLength,
+          runtime.globals) == values)
+  if not genericDependentRecordCases:
+    quit(1)
+  var genericDependentRecordMismatchRejected = false
+  try:
+    discard generatedGenericSizedVecValueBinderDynamic(
+      RuntimeSizedVec(prefixLength: 1, suffixLength: 2, values: @[1, 2]), 0)
+  except ValueError as error:
+    genericDependentRecordMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert genericDependentRecordMismatchRejected
   var dependentRecordMismatchRejected = false
   try:
     discard generatedSizedVecIdentity(RuntimeSizedVec(prefixLength: 1,
