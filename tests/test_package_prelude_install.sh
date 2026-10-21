@@ -81,6 +81,18 @@ eponymBlock:
 
 doAssert convertNatThenCallHost(5) == 12
 EOF
+cat > "$eponymTmpDir/project/debug.nim" <<'EOF'
+import eponym_mac
+import eponym_embed
+
+eponymBlock:
+  postulate(Int, Univ)
+  import "lib/debug.ep"
+  bindPostulateValue(debugEcho, debugEchoRuntimeValue)
+  proc checkedDebugEcho(value: Int): Int = debugEcho[Int](value)
+
+doAssert checkedDebugEcho(42) == 42
+EOF
 
 cd "$eponymTmpDir/project"
 nim c -r --path:"$eponymTmpDir/package" \
@@ -101,3 +113,6 @@ nim c -r --path:"$eponymTmpDir/package" \
 nim c -r --path:"$eponymTmpDir/package" \
   --nimcache:"$eponymTmpDir/nat-to-int-cache" \
   --out:"$eponymTmpDir/nat_to_int" nat_to_int.nim
+nim c -r --path:"$eponymTmpDir/package" \
+  --nimcache:"$eponymTmpDir/debug-cache" \
+  --out:"$eponymTmpDir/debug" debug.nim

@@ -38,6 +38,9 @@ chain. `tests/run_examples.nim` elaborates every file with
 - **eq.ep** — propositional equality: `Eq` (indexed family), `refl`,
   `cong`, `sym`, `trans`.
 - **bool.ep** — `Bool`, `not`/`and`/`or`; lemma `notNot`.
+- **debug.ep** — type-preserving `debugEcho[A]` postulate for explicit
+  runtime tracing. Bind it to `debugEchoRuntimeValue` or a custom adapter;
+  output occurs only when a checked runtime wrapper executes.
 - **list.ep** — `List`, `map`/`append`/`length`; lemmas `mapId`,
   `mapComp` (fusion), `appendAssoc`, `appendNilR`, `lengthAppend`.
 - **nat_lemmas.ep** — `addZeroR`/`addSucR` (induction), `addComm`/`addAssoc`

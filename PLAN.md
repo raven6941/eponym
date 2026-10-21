@@ -901,8 +901,12 @@ implementations.
   the nearest Nim definition-body expression. A compile-fail fixture verifies
   the reported file and line. Blocks importing `.ep` modules still use
   generated Eponym coordinates; imported-file source tracking remains open.
-- [ ] Add a checked-code debug-print form with explicit runtime behavior so
-  Nim programmers can inspect values while a checked definition runs.
+- [x] Add a type-preserving `debugEcho[A](value)` postulate in `lib/debug.ep`
+  with an explicit `bindPostulateValue` runtime adapter. A 200-case property
+  verifies the checked call returns each value and invokes the trace adapter
+  exactly once. The adapter is trusted Nim IO and is not run during checking.
+- [ ] Preserve source positions through imported `.ep` modules so diagnostics
+  can report the original imported-file location.
 - [ ] Revisit the first-use time estimate after installation and editor setup
    are streamlined.
 

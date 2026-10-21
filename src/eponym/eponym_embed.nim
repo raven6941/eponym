@@ -56,6 +56,10 @@ proc validateHostValueNaryType*(globals: Globals,
 proc callRuntimeValue*(fn: Value, args: openArray[Value]): Value
 proc natToValue*(n: int, globals: Globals): Value
 proc valueToNat*(v: Value, globals: Globals): int
+proc runtimeValueDebugString*(value: RuntimeValue,
+                              globals: RuntimeGlobals): string
+proc debugEchoRuntimeValue*(args: seq[RuntimeValue],
+                            globals: RuntimeGlobals): RuntimeValue
 
 # Cache: (baseDir, source) key -> checked module state. Retaining globals is
 # required for runtime postulate bindings to use the identities assigned by
@@ -1599,6 +1603,36 @@ proc valueToNat*(v: Value, globals: Globals): int =
       current = current.whnfSpineArg(0)
     else:
       raise newException(ValueError, "runtime value is not a Nat")
+
+proc runtimeValueDebugString*(value: RuntimeValue,
+                              globals: RuntimeGlobals): string =
+  ## Render a checked runtime value for an explicitly bound debug postulate.
+  ## Opaque Nim objects are identified by their mapped Nim type, without
+  ## exposing their payload.
+  if value.isNil:
+    return "<nil runtime value>"
+  if value.whnf.isNil:
+    return "<runtime value without a weak-head form>"
+  if value.whnf.kind == wHost:
+    return "<opaque Nim " & value.whnf.hostTypeName & ">"
+  var refNames = initTable[int, string]()
+  for name, entry in globals:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      refNames[entry.tm.refId] = name
+  if value.syn.isNil:
+    return "<runtime value without syntax>"
+  prettyTerm(value.syn, @[], refNames)
+
+proc debugEchoRuntimeValue*(args: seq[RuntimeValue],
+                            globals: RuntimeGlobals): RuntimeValue =
+  ## Runtime adapter for the generic `debugEcho` postulate in `lib/debug.ep`.
+  ## Its first argument is the explicit Eponym type parameter, followed by
+  ## the value to display. The debug operation returns that value unchanged.
+  if args.len != 2:
+    raise newException(ValueError,
+      "debugEcho runtime adapter expects a type and a value")
+  echo runtimeValueDebugString(args[1], globals)
+  args[1]
 
 proc hostOpaqueNatUnary*[T](implementation: proc(x: T): int): Value =
   ## Adapt an opaque Nim argument and primitive Nat result to a unary Eponym
