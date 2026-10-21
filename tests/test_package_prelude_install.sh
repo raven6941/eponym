@@ -66,6 +66,21 @@ eponymBlock:
 doAssert keepOption[int](some(7)) == some(7)
 doAssert keepOption[int](none(int)).isNone
 EOF
+cat > "$eponymTmpDir/project/nat_to_int.nim" <<'EOF'
+import eponym_mac
+import eponym_embed
+
+proc addHostOffset(value: int): int = value + 7
+
+eponymBlock:
+  import "lib/nat_to_int.ep"
+  postulate(addHostOffsetPostulate, Int -> Int)
+  bindPostulate(addHostOffsetPostulate, addHostOffset)
+  proc convertNatThenCallHost(value: Nat): Int =
+    addHostOffsetPostulate(natToInt(value))
+
+doAssert convertNatThenCallHost(5) == 12
+EOF
 
 cd "$eponymTmpDir/project"
 nim c -r --path:"$eponymTmpDir/package" \
@@ -83,3 +98,6 @@ nim c -r --path:"$eponymTmpDir/package" \
 nim c -r --path:"$eponymTmpDir/package" \
   --nimcache:"$eponymTmpDir/options-cache" \
   --out:"$eponymTmpDir/options" options.nim
+nim c -r --path:"$eponymTmpDir/package" \
+  --nimcache:"$eponymTmpDir/nat-to-int-cache" \
+  --out:"$eponymTmpDir/nat_to_int" nat_to_int.nim

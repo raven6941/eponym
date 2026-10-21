@@ -23,6 +23,25 @@ outside the block. Pure `if`/`elif`/`else` expressions are supported when
 `lib/bool.ep` is imported; only the selected branch runs. Supported operators
 and expression forms are listed in the syntax reference.
 
+## `Nat` and `Int` conversions are explicit
+
+`Nat` and primitive `Int` are distinct Eponym types. A `Nat` is not silently
+accepted where `Int` is expected. Import `lib/nat_to_int.ep` and call
+`natToInt(n)` to convert it. The direction is total for values represented by
+the runtime's Nim `int`; larger Nat values cannot fit in primitive `Int`.
+There is no `Int -> Nat` conversion helper yet; any such conversion must
+reject negative integers. Conversion stays explicit because postulates can
+hide host effects that their Eponym type does not prove absent, so implicit
+insertion could hide a call to user code. The current interpreter evaluates
+Nat folds recursively, which can limit performance and stack depth for large
+runtime values.
+
+```nim
+eponymBlock:
+  import "lib/nat_to_int.ep"
+  proc sendCount(count: Nat): Int = natToInt(count)
+```
+
 ## Checked definitions need a runtime path
 
 Eponym checks definitions at compile time. A checked definition is callable
