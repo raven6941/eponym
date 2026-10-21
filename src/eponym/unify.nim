@@ -73,6 +73,7 @@ type
   ConvResult* = object
     verdict*: ConvVerdict
     evidence*: Term  # proof of `Eq goalTy a b`; set iff verdict == cvDischargedEv
+    normalizedShape*: Term  # optional handler-supplied normalized side for profiling
   ConvDecide* = proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
                      ctxLen: int, goalTy: Term): ConvResult {.closure.}
   ConvHandler* = object
@@ -129,6 +130,17 @@ type
     # cacheConvHandler (elab.nim). Counters, never consulted for verdicts.
     convCacheProbes*: int
     convCacheHits*: int
+    # Issue #241: profile-only counts for repeated arithmetic-evidence
+    # candidates. These never affect a checking verdict.
+    arithEvidenceGoalKeys*: HashSet[string]
+    arithEvidenceGoalProbes*: int
+    arithEvidenceGoalHits*: int
+    arithEvidencePairKeys*: HashSet[string]
+    arithEvidencePairProbes*: int
+    arithEvidencePairHits*: int
+    arithEvidenceNormalizedKeys*: HashSet[string]
+    arithEvidenceNormalizedProbes*: int
+    arithEvidenceNormalizedHits*: int
     convHandlers*: seq[ConvHandler]  # Experiment 41: handler stack (top = last)
     extDischarges*: int  # Experiment 41: discharges by coreValid=false handlers
     # Issue #66: quantity variables. Declaration-scoped: the elaborator
@@ -249,6 +261,12 @@ proc initMetaStore*(): MetaStore =
             namedHoles: initTable[string, NamedHoleEntry](),
             allowHoles: false,
             convCache: initEGraph(), convHandlers: @[], extDischarges: 0,
+            arithEvidenceGoalKeys: initHashSet[string](),
+            arithEvidenceGoalProbes: 0, arithEvidenceGoalHits: 0,
+            arithEvidencePairKeys: initHashSet[string](),
+            arithEvidencePairProbes: 0, arithEvidencePairHits: 0,
+            arithEvidenceNormalizedKeys: initHashSet[string](),
+            arithEvidenceNormalizedProbes: 0, arithEvidenceNormalizedHits: 0,
             qvarNames: initTable[string, int](), qvarSols: @[],
             qvarPending: initTable[string, seq[tuple[varName: string, loc: Loc]]](),
             ctorTable: initCtorTable(),

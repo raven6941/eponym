@@ -35,6 +35,9 @@ type ElabProfileDetail* = enum
 
 const ElabProfile* {.booldefine.} = false
   ## Compile with `-d:elabProfile` to enable.
+const ProfileArithEvidenceCacheCandidates* {.booldefine.} = true
+  ## With profiling enabled, count repeated goal/proof shapes without reusing
+  ## any cached result. Disable with `-d:profileArithEvidenceCacheCandidates=false`.
 
 {.push warning[UnusedImport]: off.}
 import std/monotimes  # MonoTime, getMonoTime

@@ -3437,3 +3437,23 @@
   Vec/seq match-compilation work in #330; scalar Phase 2 work is not
   blocked by it.
   Status: DECIDED (checkpoint execution in #355).
+
+* 2026-10-21 — No arithmetic evidence cache (#241)
+
+  The #241 experiment measured the =lib/nat_lemmas.ep= corpus with the
+  monotonic wall clock and counted alpha-stable closed goal shapes plus exact
+  goal/evidence pairs. Across the two arithmetic goals in three profiled runs
+  there were zero repeated normalized goals and zero repeated exact
+  goal/evidence pairs. The #240 breakdown attributes about 3.2 ms to
+  arithmetic normalization, 0.2 ms to evidence construction, and about 1.91 s
+  to bare-core checking. A cache
+  keyed only by the goal cannot skip checking a different handler proof while
+  retaining that proof term in the elaborated program; reusing an older proof
+  would require a separate proof-reuse/erasure argument. Exact goal-plus-proof
+  memoization is safe but has no candidate hits in this corpus.
+
+  No evidence cache was added. With candidate-key profiling enabled, the
+  three-run mean wall time was 3.824 s; without candidate-key collection it
+  was 3.831 s. The 7 ms difference is within run-to-run noise, and there are
+  no hits from which a cache could save work. Treat #241 as a negative result;
+  reopen only with a workload that demonstrates repeated safe candidates.
