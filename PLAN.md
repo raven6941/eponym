@@ -392,6 +392,11 @@ implementations.
    codecs still check constraints they represent (for example, a Vec field
    against its preceding Nat length). A 200-case property covers typed and raw
    runtime wrappers and rejects mismatched sequence lengths.
+- [x] Support `runtimeRecordTrusted` on generic dependent record binders.
+   Typed and raw-result dynamic wrappers use the registered record codec, while
+   codec-enforced Vec lengths remain checked. A 200-case property rejects a
+   mismatched record length; a compile-fail fixture confirms the opt-in is
+   required.
 - [x] Add `runtimeList(List)` for the standard unindexed `List[A]` family.
    It maps recursively codec-supported elements to `seq[A]` and validates
    `nil`/`cons` constructor identities and application spines. A 200-case
@@ -576,6 +581,10 @@ implementations.
    A 200-case property covers typed and raw-result wrappers for
    `Sig(length: Nat, Vec[Int, length])` and rejects an encoded vector with a
    mismatched length.
+- [x] Automatically allow dependent Sigma codecs when each dependent index
+   occurrence lies in a structural codec that validates the corresponding
+   host value. A 200-case nested-Vec property checks constraints at both levels;
+   unsupported dependencies continue to require the explicit trust opt-in.
 - [x] Support the explicit `runtimePairTrusted` opt-in for generic dependent
    Sigma binders when the available codecs cannot reconstruct the full witness.
    Typed and raw-result overloads still apply field codecs, and a 200-case

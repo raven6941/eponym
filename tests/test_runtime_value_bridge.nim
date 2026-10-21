@@ -453,6 +453,10 @@ eponymBlock:
       Sig(length: Nat, Vec[Int, length]) = pair
   runtimePairTrusted(generatedGenericDependentPairValueBinder)
   runtimeValue(generatedGenericDependentPairValueBinder)
+  proc generatedValidatedDependentPairValueBinder[
+      pair: Sig(length: Nat, Vec[Vec[Int, length], suc(length)])](ignored: Int):
+      Sig(length: Nat, Vec[Vec[Int, length], suc(length)]) = pair
+  runtimeValue(generatedValidatedDependentPairValueBinder)
   proc generatedShadowedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(length: Nat, Vec[Int, length]))):
       Sig(length: Nat, Sig(length: Nat, Vec[Int, length])) = value
@@ -465,6 +469,9 @@ eponymBlock:
   runtimeRecordTrusted(SizedVec)
   proc generatedSizedVecIdentity(value: SizedVec): SizedVec = value
   runtimeValue(generatedSizedVecIdentity)
+  proc generatedGenericSizedVecValueBinder[value: SizedVec](
+      ignored: Int): SizedVec = value
+  runtimeValue(generatedGenericSizedVecValueBinder)
 
 eponymBlock:
   postulate(Channel, Univ)
@@ -1270,12 +1277,7 @@ proc generatedTokenIdentity (value : Token) : Token = value
       var elements = newSeq[int](input.length)
       for i in 0 ..< input.length:
         elements[i] = input.ignored + i
-      let vector = seqToVecValue[int](elements, input.length,
-        dependentSigmaWitnessGlobals, "Vec",
-        proc(item: int, _: Globals): Value = intToValue(item),
-        runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
-      let pair = pairValue(natToValue(input.length,
-        dependentSigmaWitnessGlobals), vector)
+      let pair = (input.length, elements)
       let returned = generatedGenericDependentSigmaWitnessProbeRuntimeValueDynamic(
         pair, input.ignored)
       valueToInt(returned.value) == input.ignored)
@@ -1283,12 +1285,8 @@ proc generatedTokenIdentity (value : Token) : Token = value
     quit(1)
   var wrongDependentSigmaWitnessRejected = false
   try:
-    let vector = seqToVecValue[int](@[3, 4], 2,
-      dependentSigmaWitnessGlobals, "Vec",
-      proc(item: int, _: Globals): Value = intToValue(item),
-      runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
     discard generatedGenericDependentSigmaWitnessProbeRuntimeValueDynamic(
-      pairValue(natToValue(3, dependentSigmaWitnessGlobals), vector), 0)
+      (3, @[3, 4]), 0)
   except ValueError:
     wrongDependentSigmaWitnessRejected = true
   doAssert wrongDependentSigmaWitnessRejected
@@ -1300,12 +1298,7 @@ proc generatedTokenIdentity (value : Token) : Token = value
       var elements = newSeq[int](input.length)
       for i in 0 ..< input.length:
         elements[i] = input.ignored + i
-      let vector = seqToVecValue[int](elements, input.length,
-        dependentSigmaWitnessGlobals, "Vec",
-        proc(item: int, _: Globals): Value = intToValue(item),
-        runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
-      let pair = pairValue(natToValue(input.length,
-        dependentSigmaWitnessGlobals), vector)
+      let pair = (input.length, elements)
       let returned = generatedRawDependentSigmaGenericProbeRuntimeValueDynamic(
         pair, input.ignored)
       valueToInt(returned.value) == input.ignored)
@@ -1313,12 +1306,8 @@ proc generatedTokenIdentity (value : Token) : Token = value
     quit(1)
   var wrongRawDependentSigmaRejected = false
   try:
-    let vector = seqToVecValue[int](@[3, 4], 2,
-      dependentSigmaWitnessGlobals, "Vec",
-      proc(item: int, _: Globals): Value = intToValue(item),
-      runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
     discard generatedRawDependentSigmaGenericProbeRuntimeValueDynamic(
-      pairValue(natToValue(3, dependentSigmaWitnessGlobals), vector), 0)
+      (3, @[3, 4]), 0)
   except ValueError:
     wrongRawDependentSigmaRejected = true
   doAssert wrongRawDependentSigmaRejected
@@ -2850,6 +2839,47 @@ proc callbackRole : Callback -> Sample -> Sample =
           proc(value: Value, _: Globals): int = valueToInt(value)) == values)
   if not dependentGenericSigmaValueCases:
     quit(1)
+  let validatedDependentGenericSigmaCases = forAll(
+    "dependent Vec Sigma binders validate without a trust opt-in", r,
+    200,
+    proc(r: var Rng): tuple[length: int, seed: int] =
+      (r.genInt(0, 30), r.genInt(-1000, 1000)),
+    proc(input: tuple[length: int, seed: int]): bool =
+      var values = newSeq[seq[int]](input.length + 1)
+      for i in 0 ..< values.len:
+        values[i] = newSeq[int](input.length)
+        for j in 0 ..< values[i].len:
+          values[i][j] = input.seed + i + j
+      let pair = (input.length, values)
+      let typed = generatedValidatedDependentPairValueBinderDynamic(pair, 0)
+      let runtime =
+        generatedValidatedDependentPairValueBinderRuntimeValueDynamic(pair, 0)
+      typed == pair and
+        valueToNat(runtimePairFirst(runtime.value), runtime.globals) ==
+          input.length and
+        vecValueToSeq[seq[int]](runtimePairSecond(runtime.value),
+          input.length + 1, runtime.globals, "Vec",
+          proc(value: Value, globals: Globals): seq[int] =
+            vecValueToSeq[int](value, input.length, globals, "Vec",
+              proc(item: Value, _: Globals): int = valueToInt(item))) == values)
+  if not validatedDependentGenericSigmaCases:
+    quit(1)
+  var validatedDependentGenericSigmaMismatchRejected = false
+  try:
+    discard generatedValidatedDependentPairValueBinderDynamic(
+      (3, @[@[1, 2, 3], @[1, 2, 3], @[1, 2, 3]]), 0)
+  except ValueError as error:
+    validatedDependentGenericSigmaMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert validatedDependentGenericSigmaMismatchRejected
+  var validatedNestedDependentGenericSigmaMismatchRejected = false
+  try:
+    discard generatedValidatedDependentPairValueBinderDynamic(
+      (3, @[@[1, 2], @[1, 2, 3], @[1, 2, 3], @[1, 2, 3]]), 0)
+  except ValueError as error:
+    validatedNestedDependentGenericSigmaMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert validatedNestedDependentGenericSigmaMismatchRejected
   var dependentGenericSigmaMismatchRejected = false
   try:
     discard generatedGenericDependentPairValueBinderDynamic((3, @[1, 2]), 0)
@@ -3320,6 +3350,37 @@ proc callbackRole : Callback -> Sample -> Sample =
           rawRuntime.globals) == values)
   if not dependentRecordCases:
     quit(1)
+  let genericDependentRecordCases = forAll(
+    "trusted dependent record binders use dynamic runtime codecs", r, 200,
+    proc(r: var Rng): tuple[prefixLength, suffixLength, seed: int] =
+      (r.genInt(0, 4), r.genInt(0, 4), r.genInt(-1000, 1000)),
+    proc(input: tuple[prefixLength, suffixLength, seed: int]): bool =
+      let length = input.prefixLength + input.suffixLength
+      var values = newSeq[int](length)
+      for i in 0 ..< values.len:
+        values[i] = input.seed + i
+      let value = RuntimeSizedVec(prefixLength: input.prefixLength,
+        suffixLength: input.suffixLength, values: values)
+      let typed = generatedGenericSizedVecValueBinderDynamic(value, 0)
+      let runtime = generatedGenericSizedVecValueBinderRuntimeValueDynamic(
+        value, 0)
+      let runtimeLength = valueToNat(runtimePairFirst(runtime.value),
+        runtime.globals) + valueToNat(runtimePairFirst(
+          runtimePairSecond(runtime.value)), runtime.globals)
+      typed == value and runtimeLength == length and
+        decodeRuntimeIntVector(runtimePairFirst(
+          runtimePairSecond(runtimePairSecond(runtime.value))), runtimeLength,
+          runtime.globals) == values)
+  if not genericDependentRecordCases:
+    quit(1)
+  var genericDependentRecordMismatchRejected = false
+  try:
+    discard generatedGenericSizedVecValueBinderDynamic(
+      RuntimeSizedVec(prefixLength: 1, suffixLength: 2, values: @[1, 2]), 0)
+  except ValueError as error:
+    genericDependentRecordMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert genericDependentRecordMismatchRejected
   var dependentRecordMismatchRejected = false
   try:
     discard generatedSizedVecIdentity(RuntimeSizedVec(prefixLength: 1,
