@@ -1672,10 +1672,13 @@ proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
                                bindings: RuntimeBindings,
                                globals: Globals): Value =
   ## Binding-aware call with a named diagnostic when an unbound postulate
-  ## leaves the result stuck at a neutral reference.
+  ## leaves the result stuck at a neutral reference. A postulate that IS
+  ## bound — even deliberately to a neutral value, as the #329 differential
+  ## harness does — legitimately leaves a neutral-headed result, so the
+  ## diagnostic only fires when the result's head is absent from `bindings`.
   result = callDefValueWithBindings(d, args, bindings)
   let refId = runtimeReferenceId(result)
-  if refId >= 0:
+  if refId >= 0 and refId notin bindings:
     for name, entry in globals.pairs:
       if not entry.tm.isNil and entry.tm.kind == tR and
           not entry.tm.refIsDefn and entry.tm.refId == refId and

@@ -89,6 +89,33 @@ proc whnfEq(a, b: Value): bool =
   of wRef: a.whnfRefId == b.whnfRefId and spineEq(a, b)
   else: false
 
+proc whnfEqExt(a, b: Value, bnd: RuntimeBindings, depth: int = 3): bool =
+  ## Structural equality like `whnfEq`, but closures (`wLam`) are compared
+  ## by a bounded extensionality probe: apply both to the same fresh neutral
+  ## and compare the results. Needed for stuck-eliminator spines, which
+  ## carry the motive/step closures — semantically equal across the
+  ## compiled/interpreter boundary but representationally different (host
+  ## closure vs `ScoVal`), so plain structural comparison gives up on them.
+  if a.isNil or b.isNil: return a.isNil and b.isNil
+  if a.whnfKind != b.whnfKind: return false
+  case a.whnfKind
+  of wLam:
+    if depth <= 0: return false
+    let probe = neutralVar(7)
+    whnfEqExt(vAppWithBindings(a, probe, bnd),
+              vAppWithBindings(b, probe, bnd), bnd, depth - 1)
+  of wRef:
+    if a.whnfRefId != b.whnfRefId: return false
+    if a.whnfSpineLen != b.whnfSpineLen: return false
+    for i in 0 ..< a.whnfSpineLen:
+      if a.whnfSpineKind(i) != b.whnfSpineKind(i): return false
+      if a.whnfSpineKind(i) == eApp and
+          not whnfEqExt(a.whnfSpineArg(i), b.whnfSpineArg(i), bnd, depth):
+        return false
+    true
+  else:
+    whnfEq(a, b)
+
 const prog = """postulate Int : Type 0
 proc fortyTwo : Int = 42
 proc add42 (n : Int) : Int = addInt n fortyTwo
@@ -250,7 +277,8 @@ block:
   let got = eponymCompiled_stuckAdd(@[twoVal], testPostulateBindings())
   let want = callValueFuncDir("", prog, "stuckAdd", @[twoVal], testPostulateBindings())
   expect(got.whnfKind == wRef, "stuck eliminator stays neutral (compiled)")
-  expect(whnfEq(got, want), "stuck eliminator agrees")
+  expect(whnfEqExt(got, want, testPostulateBindings()),
+    "stuck eliminator agrees")
 
 # --- effectful postulate: effects happen exactly once per call on each side ---
 block:
