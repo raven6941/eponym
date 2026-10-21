@@ -596,6 +596,10 @@ implementations.
    closure as a callback argument to another generic Pi callback through typed
    and raw-result wrappers, and returns the remaining Pi as a Nim closure;
    compile-time coverage rejects mismatched nested closure signatures.
+   The generic Pi wrapper also infers the Nim callback type, allowing both
+   calling conventions while checking each use against the Pi signature;
+   compile checks reject mismatches and a 200-case property covers both
+   conventions.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

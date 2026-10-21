@@ -3259,9 +3259,15 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
       dynamicType = ident"bool"
     elif generic.genericValueArgs[i]:
       if not generic.genericValueTypes[i].isNil:
-        dynamicType = runtimeNimType(generic.genericValueTypes[i],
+        let codecType = runtimeNimType(generic.genericValueTypes[i],
           generic.codecMappings, records, allowDependentSigma)
-        hasValueCodec = not dynamicType.isNil
+        hasValueCodec = not codecType.isNil
+        if hasValueCodec:
+          dynamicType = if not runtimeEponymPiParts(
+              generic.genericValueTypes[i]).resultType.isNil:
+            ident"auto"
+          else:
+            codecType
       if dynamicType.isNil:
         dynamicType = bindSym"RuntimeValue"
     elif not generic.genericMappedTypes[i].isNil:

@@ -810,6 +810,11 @@ static:
     proc(inner: proc(value: string): string {.closure.}): string {.closure.} =
       inner("wrong"),
     proc(value: int): int {.closure.} = value + 1))
+  doAssert compiles(generatedGenericPiCallbackBinderDynamic(hostStepNim, 2))
+  doAssert compiles(generatedGenericPiCallbackBinderDynamic(
+    hostCdeclStepNim, 2))
+  doAssert not compiles(generatedGenericPiCallbackBinderDynamic(
+    proc(value: string): string = value, 2))
   doAssert compiles(generatedReturnNestedPiCallbackDynamic(
     proc(value, seed: int): int {.closure.} = value + seed,
     3))
@@ -2730,6 +2735,15 @@ proc callbackRole : Callback -> Sample -> Sample =
         valueToInt(callRuntimeValue(runtime.value,
           @[intToValue(input.seed)])) == input.value + input.seed)
   if not nestedPiResultCallbackCases:
+    quit(1)
+  let genericPiCallbackConventionCases = forAll(
+    "generic Pi wrappers infer Nim callback conventions", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      generatedGenericPiCallbackBinderDynamic(hostStepNim, value) == value + 7 and
+        generatedGenericPiCallbackBinderDynamic(hostCdeclStepNim, value) ==
+          value + 9)
+  if not genericPiCallbackConventionCases:
     quit(1)
   var computedCallbackInputMismatchRejected = false
   try:
