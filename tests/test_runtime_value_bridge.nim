@@ -15,6 +15,7 @@ proc idNat : Nat -> Nat = lam (n : Nat). n
 """
 
 proc hostStepNim(value: int): int = value + 7
+proc hostCdeclStepNim(value: int): int {.cdecl.} = value + 9
 proc hostTripleNim(value: int): int = value * 3
 proc hostString(value: string): string = value
 proc hostFailureNim(value: int): int =
@@ -429,6 +430,11 @@ eponymBlock:
   proc generatedReturnNestedPiCallback[
       callback: Pi(value: Int, Pi(seed: Int, Int))](value: Int):
       Pi(seed: Int, Int) = callback(value)
+  proc generatedApplyNimcallCallback(
+      callback: proc(value: Int): Int, value: Int): Int = callback(value)
+  proc generatedApplyCdeclCallback(
+      callback: proc(value: Int): Int {.cdecl.}, value: Int): Int =
+    callback(value)
   runtimeValue(generatedNestedVectorIdentity)
   runtimeValue(generatedGenericVectorValueBinder)
   runtimeValue(generatedGenericSigmaValueBinder)
@@ -441,6 +447,8 @@ eponymBlock:
   runtimeValue(generatedComputedDependentPiCallbackBinder)
   runtimeValue(generatedApplyNestedPiCallback)
   runtimeValue(generatedReturnNestedPiCallback)
+  runtimeValue(generatedApplyNimcallCallback)
+  runtimeValue(generatedApplyCdeclCallback)
   proc generatedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
@@ -799,6 +807,11 @@ static:
     proc(inner: proc(value: string): string {.closure.}): string {.closure.} =
       inner("wrong"),
     proc(value: int): int {.closure.} = value + 1))
+  doAssert compiles(generatedApplyNimcallCallback(
+    proc(value: int): int = value + 1, 2))
+  doAssert not compiles(generatedApplyNimcallCallback(
+    proc(value: string): string = value, 2))
+  doAssert compiles(generatedApplyCdeclCallback(hostCdeclStepNim, 2))
   doAssert compiles(generatedReturnNestedPiCallbackDynamic(
     proc(value, seed: int): int {.closure.} = value + seed,
     3))
@@ -2639,6 +2652,14 @@ proc callbackRole : Callback -> Sample -> Sample =
         valueToInt(callRuntimeValue(runtime.value,
           @[intToValue(input.seed)])) == input.value + input.seed)
   if not nestedPiResultCallbackCases:
+    quit(1)
+  let nimcallCallbackCases = forAll(
+    "plain Nim callbacks cross checked wrapper arguments", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      generatedApplyNimcallCallback(hostStepNim, value) == value + 7 and
+        generatedApplyCdeclCallback(hostCdeclStepNim, value) == value + 9)
+  if not nimcallCallbackCases:
     quit(1)
   var computedCallbackInputMismatchRejected = false
   try:

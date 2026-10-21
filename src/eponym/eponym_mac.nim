@@ -1932,6 +1932,30 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
           return mapping.nimType
   nil
 
+proc runtimeNimCallbackInputType(n: NimNode,
+    mappings: seq[HostRuntimeType], records: seq[HostRecord],
+    allowDependentSigma = false): NimNode =
+  ## A plain Nim proc can be wrapped as an Eponym callback argument because
+  ## the generated host adapter supplies the capturing closure. A callback
+  ## returned to Nim still needs the closure calling convention.
+  let procParts = runtimeProcParts(n)
+  if procParts.resultType.isNil or hasClosurePragma(n):
+    return runtimeNimType(n, mappings, records, allowDependentSigma)
+  if hasRawValuePragma(n): return nil
+  let resultType = runtimeNimType(procParts.resultType, mappings, records,
+                                  allowDependentSigma)
+  if resultType.isNil: return nil
+  result = copyNimTree(n)
+  result[0][0] = resultType
+  var argIndex = 0
+  for i in 1 ..< result[0].len:
+    let param = result[0][i]
+    let argType = runtimeNimType(procParts.argTypes[argIndex], mappings,
+      records, allowDependentSigma)
+    if argType.isNil: return nil
+    param[^2] = argType
+    argIndex += param.len - 2
+
 proc hasCodecBackedDynamicValueBinder(decl: NimNode,
     mappings: seq[HostRuntimeType], records: seq[HostRecord]): bool =
   if decl.kind != nnkProcDef or decl[2].kind == nnkEmpty: return false
@@ -2978,7 +3002,7 @@ proc unsupportedRuntimeWrapper(decl: NimNode, defName: string,
         reason = "unsupported Nim parameter declaration for Eponym procedure '" &
           defName & "'"
         break
-      if runtimeNimType(p[^2], mappings, records,
+      if runtimeNimCallbackInputType(p[^2], mappings, records,
                         allowDependentSigma).isNil:
         reason = "no runtime codec for Eponym parameter type '" & repr(p[^2]) & "'"
         break
@@ -3028,8 +3052,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   for i in 1 ..< params.len:
     let p = params[i]
     if p.kind != nnkIdentDefs: return nil
-    let argType = runtimeNimType(p[^2], codecMappings, records,
-                                 allowDependentSigma)
+    let argType = runtimeNimCallbackInputType(p[^2], codecMappings, records,
+                                              allowDependentSigma)
     if argType.isNil: return nil
     for j in 0 ..< p.len - 2:
       let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]

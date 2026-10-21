@@ -581,6 +581,9 @@ implementations.
    closure as a callback argument to another generic Pi callback through typed
    and raw-result wrappers, and returns the remaining Pi as a Nim closure;
    compile-time coverage rejects mismatched nested closure signatures.
+   A further 200-case property passes plain Nim `nimcall` and `cdecl` procs as
+   typed wrapper parameters; their signatures are checked and the generated
+   bridge wraps them for runtime dispatch.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

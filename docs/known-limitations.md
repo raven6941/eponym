@@ -111,9 +111,11 @@ the Nim implementation behaves as promised, or that an opaque host value
 satisfies a dependent index. Codecs, mappings, adapters, and their behavior
 are trusted at that boundary.
 
-Callback values can cross when their Nim proc type has supported codecs;
-returned callbacks must use `{.closure.}`. Eponym checks the callback type,
-not its Nim body or effects. Async values such as `Future[T]` may pass through
+Callback values can cross when their Nim proc type has supported codecs.
+Noncapturing `nimcall` and `cdecl` procedures can be passed as callback
+arguments; generated adapters wrap them for runtime dispatch. Returned Nim
+callbacks still need `{.closure.}` because they may capture state. Eponym
+checks the callback type, not its Nim body or effects. Async values such as `Future[T]` may pass through
 as opaque mapped values, but Eponym has no `await`, cancellation, or async
 effect system. Nim exceptions from adapters propagate to the caller.
 
