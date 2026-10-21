@@ -54,7 +54,10 @@ Use `runtimeValue(name)` for the lower-level `Value` interface, or register a
 `runtimeCodec`. Some dependent records and pairs need explicit opt-ins such as
 `runtimeRecordTrusted` or `runtimePairTrusted`; these check field
 representations but trust relationships the selected field codecs cannot
-check. `RuntimeVariant` preserves constructor identity and raw payload `Value`s,
+check. Generic binders over dependent records can use
+`runtimeRecordTrusted(Record)` to enable typed dynamic wrappers; registered
+field codecs still enforce the constraints they represent. `RuntimeVariant`
+preserves constructor identity and raw payload `Value`s,
 while checking family membership, constructor arity, and spine shape. Encoding
 validates each payload against the constructor's checked Pi domain, including
 dependent domains that use earlier fields. Decoded payloads remain raw values

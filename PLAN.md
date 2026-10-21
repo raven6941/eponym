@@ -392,6 +392,11 @@ implementations.
    codecs still check constraints they represent (for example, a Vec field
    against its preceding Nat length). A 200-case property covers typed and raw
    runtime wrappers and rejects mismatched sequence lengths.
+- [x] Support `runtimeRecordTrusted` on generic dependent record binders.
+   Typed and raw-result dynamic wrappers use the registered record codec, while
+   codec-enforced Vec lengths remain checked. A 200-case property rejects a
+   mismatched record length; a compile-fail fixture confirms the opt-in is
+   required.
 - [x] Add `runtimeList(List)` for the standard unindexed `List[A]` family.
    It maps recursively codec-supported elements to `seq[A]` and validates
    `nil`/`cons` constructor identities and application spines. A 200-case
