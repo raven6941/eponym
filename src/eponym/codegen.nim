@@ -12,6 +12,14 @@
 ## interpreter wrapper. The typed-wrapper calling convention is unchanged;
 ## only the wrapper body's evaluation call is rerouted.
 ##
+## Issue #330 adds a representation-specialized tier on top: definitions
+## whose signatures map to plain host representations (v1: Eponym types
+## mapped to Nim `int` via `runtimeType`) get an additional
+## `eponymCompiledRepr_<name>(p1: int, ...): int` proc whose body is direct
+## host code — primitive Int ops become Nim arithmetic, calls become direct
+## calls. The typed wrapper prefers the repr proc when the boundary is the
+## identity (all-int formals and result), skipping the Value conversions.
+##
 ## Supported fragment (anything else -> interpreter fallback):
 ## - all term forms except `tMeta` (rejected already by erasure)
 ## - `tR` to postulates / data constructors: neutral value or bindings lookup
@@ -82,6 +90,10 @@ type
       ## The emitter consults this to compile bodies against host
       ## representations (seq, Option, opaque Nim types) instead of Values;
       ## definitions whose types have no entry keep the Phase 1 Value backend.
+    reprProcs*: Table[int, tuple[name: string, arity: int]]
+      ## Issue #330 repr tier: def refId -> (emitted proc name, int arity)
+      ## for definitions compiled against host representations directly.
+      ## Pre-assigned before compiling a body so recursion resolves.
 
 proc cgName*(defName: string): string =
   ## The emitted proc name for a compiled definition.
@@ -109,7 +121,8 @@ proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
   result = CodegenCtx(refs: initTable[int, CgRef](), baseDir: baseDir,
     src: src, badElims: initTable[int, bool](),
     usedElims: initTable[int, bool](),
-    reps: initTable[int, HostRuntimeType]())
+    reps: initTable[int, HostRuntimeType](),
+    reprProcs: initTable[int, tuple[name: string, arity: int]]())
   var refIdToName = initTable[int, string]()
   for name, e in globals.pairs:
     if e.tm != nil and e.tm.kind == tR:
@@ -359,7 +372,9 @@ proc detectBadElims(ctx: var CodegenCtx) =
     for refId, r in ctx.refs.pairs:
       if r.kind != cgkElim or refId in ctx.badElims: continue
       var dryCtx = CodegenCtx(refs: ctx.refs, baseDir: "", src: "",
-        badElims: ctx.badElims, usedElims: initTable[int, bool]())
+        badElims: ctx.badElims, usedElims: initTable[int, bool](),
+        reps: ctx.reps,
+        reprProcs: initTable[int, tuple[name: string, arity: int]]())
       try:
         for _, cs in r.cases.pairs:
           if cs.ctorArity < 0:
@@ -494,21 +509,250 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
   procNode.add(inner)
   procNode
 
+# ---------------------------------------------------------------------------
+# Issue #330: representation-specialized tier.
+#
+# Definitions whose entire signature maps to plain host representations are
+# compiled to procs that operate on those representations directly — no
+# `Value` allocation, no interpreter dispatch, so Nim's optimizer sees real
+# code. The typed wrapper calls the repr proc with the host arguments as-is
+# (the boundary conversion becomes the identity); definitions outside the
+# fragment keep the Phase 1 Value backend.
+#
+# v1 closed fragment: Eponym types mapped to Nim `int` via plain
+# `runtimeType` (covers `Int` and its `tPrim` arithmetic). Later increments:
+# Nat-as-int with match-compiled eliminators, Vec/List/Option as `seq`.
+# ---------------------------------------------------------------------------
+
+proc cgReprName*(defName: string): string =
+  ## The emitted proc name for a representation-specialized definition.
+  "eponymCompiledRepr_" & defName
+
+type
+  ReprKind* = enum
+    repInt  # Eponym type mapped to Nim `int` via plain runtimeType
+
+proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
+  ## The representation kind for a type/family refId. Raises CgUnsupported
+  ## when the mapping is absent or outside the v1 fragment.
+  if refId notin ctx.reps:
+    raise newException(CgUnsupported,
+      "type has no runtime representation mapping")
+  let m = ctx.reps[refId]
+  if not m.isRuntimeVector and not m.isRuntimeList and
+      not m.isRuntimeOption and not m.isRuntimeVariant and
+      not m.isRuntimeCodec and
+      m.nimType.kind in {nnkIdent, nnkSym} and $m.nimType == "int":
+    return repInt
+  raise newException(CgUnsupported,
+    "runtime representation outside the v1 fragment")
+
+proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprKind] =
+  ## Representation kinds of the def's Pi-binder domains (outermost first),
+  ## followed by the result type. Raises CgUnsupported when anything is
+  ## outside the fragment. q0 binders are excluded: erasure keeps their
+  ## lambda but the call site passes unit, which has no host representation.
+  var t = d.tyTm
+  while t != nil and t.kind == tPi:
+    if t.qty == q0:
+      raise newException(CgUnsupported, "erased binder in repr signature")
+    if t.dom.isNil or t.dom.kind != tR:
+      raise newException(CgUnsupported, "non-atomic binder domain")
+    result.add(ctx.reprKindOf(t.dom.refId))
+    t = t.scope.bdy
+  if t.isNil or t.kind != tR:
+    raise newException(CgUnsupported, "non-atomic result type")
+  result.add(ctx.reprKindOf(t.refId))
+
+proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode  # forward
+
+proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
+  ## Compile a `tApp` chain in the repr tier. Primitive Int ops become direct
+  ## Nim arithmetic (the interpreter fires them as `x + y` etc. on machine
+  ## ints, so this is exactly sound); immediately-applied lambdas are
+  ## beta-reduced to let-bindings (the fragment's lambdas never escape —
+  ## see below); anything else is a direct call of a compiled head.
+  var argTerms: seq[Term] = @[]
+  var head = t
+  while head.kind == tApp:
+    argTerms.add(head.arg)
+    head = head.fn
+  var appArgs: seq[Term] = @[]
+  for i in countdown(argTerms.high, 0):
+    appArgs.add(argTerms[i])
+  if head.kind == tPrim:
+    # A repr-tier body only ever applies primops to ints (the signature
+    # check admits only int-typed binders), so direct arithmetic is sound.
+    if appArgs.len != 2:
+      raise newException(CgUnsupported,
+        "primitive op applied to " & $appArgs.len & " args, needs 2")
+    let a = cgRepr(ctx, appArgs[0], env)
+    let b = cgRepr(ctx, appArgs[1], env)
+    let op = case head.primOp
+      of opAdd: "+"
+      of opSub: "-"
+      of opMul: "*"
+    return newTree(nnkInfix, ident(op), a, b)
+  # Beta-reduce immediately-applied lambdas. A lambda in this fragment has
+  # an int type only when fully applied (a bare lambda has a Pi type, which
+  # the signature check rejects, and the only int-typed positions are
+  # applied ones), so running out of binders or arguments is a hard error
+  # that falls back to the Phase 1 backend. Arguments sit outside the
+  # lambdas' scope, so each compiles under the original environment; only
+  # the final body sees the bound parameters.
+  var curEnv = env
+  var argIdx = 0
+  var preStmts = newStmtList()
+  while head.kind == tLam:
+    if argIdx >= appArgs.len:
+      raise newException(CgUnsupported, "unapplied lambda in repr body")
+    if head.dom.isNil or head.dom.kind != tR:
+      raise newException(CgUnsupported, "non-atomic lambda domain")
+    discard ctx.reprKindOf(head.dom.refId)
+    let psym = genSym(nskLet, "cgReprBeta")
+    preStmts.add(newLetStmt(psym, cgRepr(ctx, appArgs[argIdx], env)))
+    curEnv = @[psym] & curEnv
+    head = head.scope.bdy
+    inc argIdx
+  if argIdx > 0 and argIdx < appArgs.len and head.kind != tR:
+    # The beta-reduced head is a first-order value, yet arguments remain:
+    # over-applied. (A tR head is a defn reference and stays callable.)
+    # Unreachable in well-typed bodies; falls back to the Phase 1 backend.
+    raise newException(CgUnsupported, "over-applied lambda in repr body")
+  let h = cgRepr(ctx, head, curEnv)
+  var final: NimNode
+  if argIdx < appArgs.len:
+    var call = newCall(h)
+    for i in argIdx ..< appArgs.len:
+      call.add(cgRepr(ctx, appArgs[i], curEnv))
+    final = call
+  else:
+    # All arguments were consumed by beta-reduced lambdas: the head is the
+    # value. (argIdx > 0 here — cgReprApp only runs on tApp chains.)
+    final = h
+  if preStmts.len == 0:
+    return final
+  # Left-to-right evaluation order, matching the interpreter's head-then-
+  # args application order: each argument is bound before the body runs.
+  preStmts.add(final)
+  var blk = newNimNode(nnkBlockStmt)
+  blk.add(newEmptyNode())
+  blk.add(preStmts)
+  blk
+
+proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
+  if t.isNil:
+    raise newException(CgUnsupported, "nil term")
+  case t.kind
+  of tV:
+    if t.idx < 0 or t.idx >= env.len:
+      raise newException(CgUnsupported,
+        "de Bruijn index " & $t.idx & " out of range")
+    env[t.idx]
+  of tR:
+    if t.refId notin ctx.refs:
+      raise newException(CgUnsupported,
+        "reference id " & $t.refId & " not in codegen scope")
+    let r = ctx.refs[t.refId]
+    if r.kind == cgkDefn and t.refId in ctx.reprProcs:
+      let rp = ctx.reprProcs[t.refId]
+      if rp.arity == 0:
+        newCall(ident(rp.name))
+      else:
+        # Applied at the enclosing tApp, which emits the direct call.
+        ident(rp.name)
+    else:
+      raise newException(CgUnsupported,
+        "reference '" & r.name & "' outside the representation fragment")
+  of tInt:
+    newLit(t.intVal)
+  of tLet:
+    let vsym = genSym(nskLet, "cgReprLet")
+    let vcode = cgRepr(ctx, t.letVal, env)
+    let bcode = cgRepr(ctx, t.letScope.bdy, @[vsym] & env)
+    var blk = newNimNode(nnkBlockStmt)
+    blk.add(newEmptyNode())
+    var stmts = newStmtList()
+    stmts.add(newLetStmt(vsym, vcode))
+    stmts.add(bcode)
+    blk.add(stmts)
+    blk
+  of tApp:
+    cgReprApp(ctx, t, env)
+  else:
+    raise newException(CgUnsupported,
+      "term kind outside the representation fragment")
+
+proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
+                        locFile: string, locLine: int): NimNode =
+  ## Compile one definition to
+  ## `proc eponymCompiledRepr_<name>(p1: int, ..., pn: int): int`.
+  ## Returns nil when the definition is outside the representation fragment
+  ## (caller keeps the Phase 1 backend). The erased term's leading lambdas
+  ## must match the signature's binder count exactly; a mismatch bails out
+  ## rather than risk a misaligned environment.
+  if d.tmTm.isNil or d.tyTm.isNil:
+    return nil
+  let sig =
+    try: ctx.reprSig(d)
+    except CgUnsupported:
+      return nil
+  let arity = sig.len - 1
+  let erased =
+    try: eraseQ0Arguments(d.tmTm)
+    except ValueError:
+      return nil
+  var body = erased
+  var params: seq[NimNode] = @[]
+  for i in 0 ..< arity:
+    if body.isNil or body.kind != tLam or body.qty == q0:
+      return nil
+    params.add(genSym(nskParam, "cgReprArg" & $i))
+    body = body.scope.bdy
+  var env: seq[NimNode] = @[]
+  for i in countdown(params.high, 0):
+    env.add(params[i])
+  let bodyCode =
+    try: cgRepr(ctx, body, env)
+    except CgUnsupported:
+      return nil
+  var formal = newNimNode(nnkFormalParams)
+  formal.add(ident"int")
+  for psym in params:
+    formal.add(newIdentDefs(psym, ident"int", newEmptyNode()))
+  var procNode = newNimNode(nnkProcDef)
+  procNode.add(newTree(nnkPostfix, ident"*", ident(cgReprName(d.name))))
+  procNode.add(newEmptyNode())
+  procNode.add(newEmptyNode())
+  procNode.add(formal)
+  procNode.add(newEmptyNode())
+  procNode.add(newEmptyNode())
+  # Source positions (issue #329 acceptance, inherited by #330): runtime
+  # errors raised while evaluating compiled code report the definition's
+  # source location.
+  procNode.setLineInfo(LineInfo(filename: locFile, line: locLine, column: 0))
+  procNode.add(newStmtList(bodyCode))
+  procNode
+
 proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
                         baseDir, src, locFile: string,
                         userLines: Table[string, int],
                         runtimeTypes: seq[HostRuntimeType] = @[]):
-    tuple[procs: seq[NimNode], compiled: Table[string, string]] =
+    tuple[procs: seq[NimNode], compiled: Table[string, string],
+          compiledRepr: Table[string, string]] =
   ## Compile every eligible block-local definition, in dependency order.
-  ## Returns the emitted procs and the def-name -> proc-name table for
-  ## wrapper rerouting. Emission order: eliminator forward declarations,
-  ## definition bodies (callees first), eliminator bodies.
+  ## Returns the emitted procs, the def-name -> Phase-1 proc-name table for
+  ## wrapper rerouting, and the def-name -> repr-tier proc-name table.
+  ## Emission order: eliminator forward declarations, Phase-1 definition
+  ## bodies (callees first), repr-tier bodies (callees first, same order),
+  ## eliminator bodies.
   ## `runtimeTypes` is the block's codec mapping (issue #330 representation
-  ## spec); the emitter will consult it to compile bodies against host
+  ## spec); the emitter consults it to compile bodies against host
   ## representations. Definitions outside any representation keep the
   ## Phase 1 Value backend.
   var ctx = buildCodegenCtx(globals, baseDir, src, runtimeTypes)
-  result = (procs: @[], compiled: initTable[string, string]())
+  result = (procs: @[], compiled: initTable[string, string](),
+            compiledRepr: initTable[string, string]())
   detectBadElims(ctx)
   var defRefIds = initTable[string, int]()
   for d in defs:
@@ -582,6 +826,32 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     else:
       defBodies.add(procNode)
       result.compiled[name] = cgName(name)
+  # Repr tier (issue #330): second pass over the same dependency order, so
+  # callees' repr procs exist before callers reference them. A callee that
+  # fails the fragment keeps no repr entry, so callers referencing it fall
+  # back to the Phase 1 backend — no cascade needed. Pre-assignment is per
+  # definition (not all-at-once) so a later failure can never strand an
+  # already-emitted caller referencing a missing proc.
+  var reprBodies: seq[NimNode] = @[]
+  for name in order:
+    var d: ElabDef
+    for cand in defs:
+      if cand.name == name: d = cand
+    let refId = defRefIds.getOrDefault(name, -1)
+    if refId < 0:
+      continue
+    let sig =
+      try: ctx.reprSig(d)
+      except CgUnsupported:
+        continue
+    ctx.reprProcs[refId] = (name: cgReprName(name), arity: sig.len - 1)
+    let procNode = compileDefProcRepr(d, ctx, locFile,
+      userLines.getOrDefault(name, 1))
+    if procNode.isNil:
+      ctx.reprProcs.del(refId)
+    else:
+      reprBodies.add(procNode)
+      result.compiledRepr[name] = cgReprName(name)
   # Emit eliminator procs for every used eliminator. The fixpoint handles
   # templates that reference further eliminators; detectBadElims already
   # guaranteed templates compile.
@@ -612,4 +882,4 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     fwd.add(newEmptyNode())
     fwd.add(newEmptyNode())  # forward declaration: empty body
     elimFwds.add(fwd)
-  result.procs = elimFwds & defBodies & elimBodies
+  result.procs = elimFwds & defBodies & reprBodies & elimBodies
