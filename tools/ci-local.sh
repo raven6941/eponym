@@ -28,7 +28,7 @@ echo "### Build: production modules"
 # and `installFiles` (the installed set; issue #183). These are the full
 # import closure of the public entry points (issue #189): every module a
 # user compile pulls in must also build standalone in CI.
-for f in abilities eponym_init erasure preterm parse_surf elab elab_prof unify usage_check eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout mutual_termination; do
+for f in abilities codegen eponym_init erasure preterm parse_surf elab elab_prof unify usage_check eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout mutual_termination; do
   echo "=== build $f ==="
   nim c --hints:off $P "src/eponym/$f.nim"
 done
@@ -111,6 +111,8 @@ echo "=== QTT usage-checker property tests (issue #163, fixed seed) ==="
 nim c -r --hints:off $P "tests/pbt_usage.nim"
 echo "=== core QTT erasure differential tests (issue #328) ==="
 nim c -r --hints:off $P "tests/test_erasure.nim"
+echo "=== Phase 1 codegen differential tests (issue #329) ==="
+nim c -r --hints:off $P "tests/test_codegen_phase1.nim"
 echo "=== staged-residual vs relational differential tests (issue #163, fixed seed; experimental paths) ==="
 nim c -r --hints:off $XP "tests/pbt_staged_agreement.nim"
 echo "=== unifier property tests (issue #163, fixed seed) ==="

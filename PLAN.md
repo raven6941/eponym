@@ -949,11 +949,16 @@ implementations.
   function binder/application slot, so erased arguments become inert unit
   witnesses; a 200-case `falsify` property compares results and confirms that
   effectful q0 arguments are skipped. Full local CI passed for this phase.
-- [ ] **Phase 1 (#329):** compile supported erased definitions to Nim AST that
-  constructs and operates on runtime `Value`s directly. Keep per-definition
-  fallback to the interpreter for unsupported forms, preserve the existing
-  typed-wrapper calling convention, and retain source locations for generated
-  runtime errors.
+- [x] **Phase 1 (#329):** compile supported erased definitions to Nim AST that
+  constructs and operates on runtime `Value`s directly. Per-definition
+  fallback to the interpreter for unsupported forms; the typed-wrapper
+  calling convention is unchanged; generated procs carry user source
+  positions. Pinned by a differential suite vs the interpreter
+  (`tests/test_codegen_phase1.nim`, in the CI matrix): first-order Int
+  defs, pairs, higher-order/partial application, Nat/Bool eliminators,
+  stuck eliminators over neutral scrutinees, effect counting (no
+  duplicated/dropped postulate effects), and source-mapped errors.
+  Full local CI passed for this phase.
 - [ ] Remove q0 binders and application slots from generated runtime calling
   conventions once the backend can represent erased functions without the
   interpreter's current ABI shape.

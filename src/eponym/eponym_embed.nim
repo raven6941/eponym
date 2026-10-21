@@ -1706,10 +1706,13 @@ proc callDefValueWithBindings*(d: ElabDef, args: openArray[Value],
                                bindings: RuntimeBindings,
                                globals: Globals): Value =
   ## Binding-aware call with a named diagnostic when an unbound postulate
-  ## leaves the result stuck at a neutral reference.
+  ## leaves the result stuck at a neutral reference. A postulate that IS
+  ## bound — even deliberately to a neutral value, as the #329 differential
+  ## harness does — legitimately leaves a neutral-headed result, so the
+  ## diagnostic only fires when the result's head is absent from `bindings`.
   result = callDefValueWithBindings(d, args, bindings)
   let refId = runtimeReferenceId(result)
-  if refId >= 0:
+  if refId >= 0 and refId notin bindings:
     for name, entry in globals.pairs:
       if not entry.tm.isNil and entry.tm.kind == tR and
           not entry.tm.refIsDefn and entry.tm.refId == refId and
@@ -1727,6 +1730,34 @@ proc callValueFunc*(src: string, name: string,
   ## Low-level runtime entry point over ETT values.
   callDefValueWithBindings(findDef(getDefs(src), name), args,
                            initRuntimeBindings(), getGlobals(src))
+
+proc defnValue*(baseDir, src: string, refId: int,
+                bindings: RuntimeBindings): Value =
+  ## Issue #329: interpreter-faithful value for a `tR` reference to a
+  ## definition with no compiled proc in this block (an imported def, a
+  ## synthetic def such as a record projection, or a block-local def outside
+  ## the compilable fragment). Mirrors `evalWhnf`'s `tR`/defn case, resolving
+  ## the definition by refId in the runtime globals: unlike the name-based
+  ## `findDef`, this also resolves synthetic definitions that never appear
+  ## in `allDefs` (e.g. `Pt.x`). Callers apply arguments themselves.
+  if refId in bindings:
+    let r = Term(kind: tR, refId: refId, refTyp: nil, refIsDefn: true,
+                 refVal: nil)
+    return Value(syn: r, whnf: bindings[refId].whnf)
+  let g = getGlobalsDir(baseDir, src)
+  for _, e in g.pairs:
+    if e.tm != nil and e.tm.kind == tR and e.tm.refId == refId:
+      let t = e.tm
+      if not t.refIsDefn:
+        return neutralRefValue(t, refId)
+      if t.refVal.isNil:
+        raise newException(ValueError,
+          "codegen: no cached value for definition refId " & $refId)
+      if bindings.len > 0 and t.refVal.whnf.kind != wRed:
+        return evalWithBindings(t.refVal.syn, @[], bindings)
+      return t.refVal
+  raise newException(ValueError,
+    "codegen: unknown definition refId " & $refId & " in " & src)
 
 proc callValueFuncDir*(baseDir, src: string, name: string,
                        args: openArray[Value]): Value =
