@@ -434,10 +434,13 @@ implementations.
    also use codec-supported argument and result types indexed by earlier outer
    parameters: a 200-case property passes an indexed `Vec` through a callback
    and checks that the length is enforced. This also covers erased Eponym
-   indices that the host codec needs to encode the value. Callback-local
-   dependent signatures remain unsupported. Other properties call an imported
-   checked identity and dispatch an imported postulate to a bound Nim
-   implementation; a negative runtime check rejects mismatched raw arity.
+   indices that the host codec needs to encode the value. A second 200-case
+   property supports callback-local dependencies: an imported callback takes
+   and returns `Vec[Int, length]`, and rejects wrong-length callback inputs and
+   outputs. Other dependent callback shapes still need supported Nim codecs.
+   Other properties call an imported checked identity and dispatch an
+   imported postulate to a bound Nim implementation; a negative runtime check
+   rejects mismatched raw arity.
    Directory-aware runtime state retains imported bodies, and a checked-term
    reference scan lets bindings used only by imported bodies pass unused-
    binding validation.
@@ -555,9 +558,9 @@ implementations.
    higher-order signatures. Unsupported
    cases must continue to fail with a precise compile-time diagnostic.
    Imported signatures outside the current Pi reconstruction grammar still
-   need a raw `Value` wrapper; callback-local dependent signatures and explicit
-   local `proc` declarations with unsupported signatures fail clearly when
-   called.
+   need a raw `Value` wrapper; callback-local dependent signatures outside
+   the supported Nim codec grammar and explicit local `proc` declarations
+   with unsupported signatures fail clearly when called.
 - [x] Reconstruct typed wrappers for local clause-style definitions from
    their checked Pi signatures. Two 200-case properties cover direct calls
    and typed and raw `RuntimeValue` access for a `Nat -> Nat` identity and a

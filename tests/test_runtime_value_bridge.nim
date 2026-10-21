@@ -28,6 +28,11 @@ proc checkDependentVectorCallback(length: int, values: seq[int]): int =
   if values.len != length:
     raise newException(ValueError, "callback Vec length mismatch")
   length
+proc identityDependentVectorCallback(length: int,
+    values: seq[int]): seq[int] =
+  if values.len != length:
+    raise newException(ValueError, "callback Vec length mismatch")
+  values
 proc runtimeTreePayloads(value: Value, globals: Globals): seq[int] =
   var current = value
   while true:
@@ -206,6 +211,11 @@ eponymBlock:
   import "fixtures/runtime_imported_indexed_callback.ep"
   runtimeVector(Vec)
   runtimeValue(importedApplyVectorCallback)
+
+eponymBlock:
+  import "fixtures/runtime_imported_dependent_callback.ep"
+  runtimeVector(Vec)
+  runtimeValue(importedDependentVectorCallback)
 
 eponymBlock:
   import "fixtures/runtime_imported_vec.ep"
@@ -1445,6 +1455,45 @@ proc generatedTokenIdentity (value : Token) : Token = value
     importedIndexedCallbackResultMismatchRejected =
       "runtime Vec length mismatch" in error.msg
   doAssert importedIndexedCallbackResultMismatchRejected
+
+  let importedCallbackLocalIndexCases = forAll(
+    "imported callback binders carry Vec indices through both codecs", r,
+    200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 12), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        values[i] = input.seed + i
+      let direct = importedDependentVectorCallback(
+        identityDependentVectorCallback, input.length, values)
+      let runtime = importedDependentVectorCallbackRuntimeValue(
+        identityDependentVectorCallback, input.length, values)
+      direct == values and
+        vecValueToSeq[int](runtime.value, input.length, runtime.globals,
+          "Vec", proc(item: Value, _: Globals): int = valueToInt(item)) ==
+            values)
+  if not importedCallbackLocalIndexCases:
+    quit(1)
+  var importedCallbackLocalInputMismatchRejected = false
+  try:
+    discard importedDependentVectorCallback(identityDependentVectorCallback,
+      3, @[1, 2])
+  except ValueError as error:
+    importedCallbackLocalInputMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert importedCallbackLocalInputMismatchRejected
+  let wrongDependentVectorCallback: proc(length: int,
+      values: seq[int]): seq[int] {.closure.} =
+    proc(length: int, values: seq[int]): seq[int] = @[length]
+  var importedCallbackLocalResultMismatchRejected = false
+  try:
+    discard importedDependentVectorCallback(wrongDependentVectorCallback,
+      3, @[1, 2, 3])
+  except ValueError as error:
+    importedCallbackLocalResultMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert importedCallbackLocalResultMismatchRejected
 
   let importedDependentVectorCases = forAll(
     "typed imported wrappers carry dependent Vec indices", r, 200,

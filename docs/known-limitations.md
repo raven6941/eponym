@@ -53,9 +53,11 @@ and spine shape, but leaves payloads as raw `Value`s for the caller to decode.
 Imported `.ep` definitions can get typed wrappers when their Pi signature is
 within the reconstruction subset, including `Univ` type parameters and
 callback arrows with closure types and codec-supported leaves. Callback
-arguments and results may use indices from earlier outer parameters, such as
-`Vec[Int, length]`; the host codec checks the vector length. Callback-local
-dependent signatures and other unsupported imported signatures use the raw
+arguments and results may depend on earlier outer parameters or earlier
+callback arguments when their types have supported codecs. For example,
+`(length: Nat, values: Vec[Int, length]) -> Vec[Int, length]` checks vector
+lengths on callback input and output. Other dependent callback shapes without
+supported Nim codecs and other unsupported imported signatures use the raw
 `Value` interface, which checks argument count while callers supply well-typed
 values. Imported checked bodies can call postulates bound in the same block.
 

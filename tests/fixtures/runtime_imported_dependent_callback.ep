@@ -1,0 +1,8 @@
+import "../../lib/vec.ep"
+
+postulate Int : Type 0
+proc importedDependentVectorCallback
+    (callback : Pi (length : Nat). Pi (values : Vec Int length).
+      Vec Int length)
+    (length : Nat) (values : Vec Int length) : Vec Int length =
+  callback length values
