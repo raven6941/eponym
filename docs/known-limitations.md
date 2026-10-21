@@ -41,13 +41,20 @@ postulate. String literals, for example, are not Eponym string values.
 accepted where `Int` is expected. Import `lib/nat_to_int.ep` and call
 `natToInt(n)` to convert it. The direction is total for values represented by
 the runtime's Nim `int`; larger Nat values cannot fit in primitive `Int`.
+`high(int)` is the runtime boundary and depends on the host architecture.
+The interpreter and Phase 1 use unary `Value` constructors and can form a
+larger Nat while memory permits, but `valueToNat` raises
+`ValueError("runtime Nat does not fit Nim int")` when decoding it. Phase 2
+stores Nat directly as `int`; its generated successor raises the same
+`ValueError` at the boundary, even with Nim overflow checks disabled. No tier
+silently wraps. The Phase 2 `natElim` fold is iterative but remains O(n), so
+values close to `high(int)` are representable but impractical to fold. The
+interpreter's constructor-based folds can also run slowly or exhaust the
+stack on large inputs.
 There is no `Int -> Nat` conversion helper yet; any such conversion must
 reject negative integers. Conversion stays explicit because postulates can
 hide host effects that their Eponym type does not prove absent, so implicit
-insertion could hide a call to user code. Nat folds evaluate recursively in
-the interpreter tier, which can limit performance and stack depth for large
-runtime values; the representation tier compiles `natElim` to an iterative
-fold, avoiding that limit.
+insertion could hide a call to user code.
 
 ```nim
 eponymBlock:

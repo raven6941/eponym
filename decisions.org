@@ -3552,3 +3552,25 @@
   =docs/known-limitations.md= for the public boundary description.
   Status: DECIDED (#375).
 
+* 2026-10-21 — Nat runtime representation boundary (#380)
+
+  Context: core Nat is mathematical. The interpreter and Phase 1 represent
+  constructor values as `zero`/`suc` Values, while Phase 2 lowers Nat to Nim
+  `int`. Phase 2 had compiled `suc n` as plain `n + 1`, so behavior could
+  depend on Nim's `overflowChecks` switch; disabling it could silently wrap.
+  Options considered: (a) rely on Nim's configured overflow behavior; (b)
+  enforce the Nat bound in generated code; (c) replace the Phase 2 Nat
+  representation with arbitrary precision. Decision: (b) for the current
+  backend. Generated Nat successor rejects negative operands and `high(int)`
+  with `ValueError`; the check is independent of Nim compiler flags. Value
+  tiers retain unary constructors and can form a value above `high(int)` while
+  memory permits, but conversion through `valueToNat` rejects it with the
+  same error. `high(int)` is host-architecture dependent. Phase 2 `natElim`
+  avoids stack growth but remains O(n), so large in-range inputs are not
+  practical folds.
+  Consequences: no runtime tier silently wraps Nat at the Nim boundary.
+  Property tests exercise `high(int)-2 .. high(int)` through the interpreter,
+  Phase 1, and Phase 2 with overflow checks disabled. See
+  `docs/trust-model.md` and `docs/known-limitations.md`.
+  Status: DECIDED (#380).
+

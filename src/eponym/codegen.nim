@@ -929,7 +929,7 @@ proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
         raise newException(CgUnsupported,
           "suc applied to " & $appArgs.len & " args, needs 1")
       let a = cgRepr(ctx, appArgs[0], env)
-      newTree(nnkInfix, ident"+", a, newLit(1))
+      newCall(bindSym"checkedNatSucc", a)
     else:
       raise newException(CgUnsupported, "Nat constructor '" & r.name &
         "' outside the representation fragment")

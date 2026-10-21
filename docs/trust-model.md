@@ -206,6 +206,17 @@ time.
   type and recursively encodes both fields. `bindPostulatePairTrusted` permits
   a dependent result when its fields have codecs; Nim does not prove that a
   host field matches its Eponym index, so the adapter author owns that guarantee.
+- **Runtime Nat range.** The interpreter and Phase 1 keep Nat as `zero`/`suc`
+  `Value`s, so they can construct a value above `high(int)` while memory
+  permits. Converting such a value to Nim with `valueToNat` raises
+  `ValueError: runtime Nat does not fit Nim int`. Phase 2 represents Nat as a
+  Nim `int`; its generated `suc` checks the bound explicitly and raises the
+  same error at `high(int)`, even when Nim overflow checks are disabled. Thus
+  no backend silently wraps, but a raw `Value` can hold a larger unary Nat
+  than a Nim `int` can carry. `high(int)` depends on the host architecture.
+  Phase 2 `natElim` is iterative but still takes time proportional to its
+  input; an in-range value near `high(int)` is representable, not practical to
+  fold.
 - **Postulate bindings are block-level axioms.** Declare `bindPostulate` in
   the same `eponymBlock` as the postulate and checked definitions that use it.
   The binding is not part of the Eponym type: the checker checks each call
@@ -237,6 +248,7 @@ time.
 | Strict positivity of `data` declarations (#33) | Anything your own metaprogramming computes |
 | Universe hierarchy `Type l` + directional cumulativity (#52) | |
 | Nat singleton types, one-directional subsumption `tNatSing(k) <: Nat` (#74) | |
+| Phase 2 Nat successor checks the `high(int)` boundary; all backends reject Nim conversion of larger values | Mathematical Nat values beyond Nim `int` are not available through the Nim `int` boundary |
 | Handler evidence revalidated LCF-style (#41) | |
 
 Eponym's guarantee: a term that elaborates *and* passes the kernel was
