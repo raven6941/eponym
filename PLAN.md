@@ -575,7 +575,9 @@ implementations.
    `runtimeType` mapping, through both typed and raw-result wrappers. Another
    property covers a callback whose Vec index is computed as
    `add(left, right)`, with negative checks for mismatched input and output
-   lengths.
+   lengths. A further 200-case property covers `SizedTree[length]` through a
+   custom `runtimeCodec` in a generic Pi callback, including rejection of
+   malformed input and output indices.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.

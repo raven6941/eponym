@@ -1353,6 +1353,30 @@ proc validateRuntimeValueAgainstType*(value, expectedType: Value,
     return
   validateRuntimeValueType(value, expectedType, globals)
 
+proc runtimePiDomainAfterArgs*(piType: Value,
+    priorArguments: openArray[Value]): Value =
+  ## Return the next argument domain after consuming preceding Pi arguments.
+  var current = piType
+  for argument in priorArguments:
+    if current.isNil or current.whnfKind != wPi:
+      raise newException(ValueError,
+        "runtime callback Pi witness has fewer arguments than supplied")
+    current = whnfScopeApply(current, argument)
+  if current.isNil or current.whnfKind != wPi:
+    raise newException(ValueError,
+      "runtime callback Pi witness has no remaining argument domain")
+  current.whnfDom
+
+proc runtimePiResultAfterArgs*(piType: Value,
+    arguments: openArray[Value]): Value =
+  ## Apply a runtime Pi witness to all callback arguments to get its result.
+  result = piType
+  for argument in arguments:
+    if result.isNil or result.whnfKind != wPi:
+      raise newException(ValueError,
+        "runtime callback Pi witness has fewer arguments than supplied")
+    result = whnfScopeApply(result, argument)
+
 proc prependErasedTypeArgs*(typeArgCount: int,
                             args: openArray[Value]): seq[Value] =
   ## Runtime computation does not inspect type-level generic binders. Supply
