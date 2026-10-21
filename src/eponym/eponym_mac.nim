@@ -1102,6 +1102,10 @@ proc blockToEponym*(body: NimNode, sourceDir = ""): string =
         # Structural runtime codec for a unary Option family.
         if st.len != 2 or st[1].kind != nnkIdent:
           error("runtimeOption expects (OptionFamily)", st)
+      elif head == "runtimeVariant":
+        # Raw structural codec for payload-bearing data families.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("runtimeVariant expects (DataFamily)", st)
       elif head == "runtimeValue":
         # Request a raw Eponym Value wrapper for a checked definition,
         # typically for a host interpreter of reified data.
@@ -1139,6 +1143,7 @@ type HostRuntimeType = object
   isRuntimeVector: bool
   isRuntimeList: bool
   isRuntimeOption: bool
+  isRuntimeVariant: bool
   isRuntimeCodec: bool
   encoder: NimNode
   decoder: NimNode
@@ -1205,21 +1210,24 @@ proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
         $st[0] in ["runtimeType", "runtimeVector", "runtimeList",
-                   "runtimeOption", "runtimeCodec"]:
+                   "runtimeOption", "runtimeVariant", "runtimeCodec"]:
       let isVector = $st[0] == "runtimeVector"
       let isList = $st[0] == "runtimeList"
       let isOption = $st[0] == "runtimeOption"
+      let isVariant = $st[0] == "runtimeVariant"
       let isCodec = $st[0] == "runtimeCodec"
-      if ((isVector or isList or isOption) and
+      if ((isVector or isList or isOption or isVariant) and
           (st.len != 2 or st[1].kind != nnkIdent)) or
           (isCodec and (st.len != 5 or st[1].kind != nnkIdent or
             st[3].kind notin {nnkIdent, nnkSym} or
             st[4].kind notin {nnkIdent, nnkSym})) or
-          (not isVector and not isList and not isOption and not isCodec and
+          (not isVector and not isList and not isOption and not isVariant and
+            not isCodec and
             (st.len != 3 or st[1].kind != nnkIdent)):
         error(if isVector: "runtimeVector expects (VecFamily)"
           elif isList: "runtimeList expects (ListFamily)"
           elif isOption: "runtimeOption expects (OptionFamily)"
+          elif isVariant: "runtimeVariant expects (DataFamily)"
           elif isCodec: "runtimeCodec expects (EponymType, NimType, encoder, decoder)"
           else: "runtimeType expects (EponymType, NimType)", st)
       let name = $st[1]
@@ -1228,9 +1236,11 @@ proc hostRuntimeTypes(body: NimNode): seq[HostRuntimeType] =
       seen.incl(name)
       result.add(HostRuntimeType(eponymName: name,
         nimType: if isVector or isList: ident"seq"
+          elif isVariant: bindSym"RuntimeVariant"
           elif isOption: ident"Option" else: st[2],
         isRuntimeVector: isVector, isRuntimeList: isList,
-        isRuntimeOption: isOption, isRuntimeCodec: isCodec,
+        isRuntimeOption: isOption, isRuntimeVariant: isVariant,
+        isRuntimeCodec: isCodec,
         encoder: if isCodec: st[3] else: nil,
         decoder: if isCodec: st[4] else: nil))
 
@@ -1687,6 +1697,8 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
     for mapping in mappings:
       if mapping.isRuntimeCodec and mapping.eponymName == $typeHead:
         return mapping.nimType
+      if mapping.isRuntimeVariant and mapping.eponymName == $typeHead:
+        return bindSym"RuntimeVariant"
   for mapping in mappings:
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(n, mapping.eponymName)
@@ -1875,6 +1887,15 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       if mapping.isRuntimeCodec and mapping.eponymName == $typeHead:
         let codec = copyNimTree(if toValue: mapping.encoder else: mapping.decoder)
         return newCall(codec, value, globals)
+      if mapping.isRuntimeVariant and mapping.eponymName == $typeHead:
+        let familyName = newLit(mapping.eponymName)
+        let constructors = newCall(bindSym"runtimeVariantConstructorNames",
+          globals, familyName)
+        if toValue:
+          return newCall(bindSym"runtimeVariantToValue", value, globals,
+            familyName, constructors)
+        return newCall(bindSym"valueToRuntimeVariant", value, globals,
+          familyName, constructors)
   for mapping in mappings:
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(eponymType, mapping.eponymName)
@@ -2990,6 +3011,11 @@ macro eponymBlock*(body: untyped): untyped =
         validateHostListCodec(checkedGlobals, mapping.eponymName)
       elif mapping.isRuntimeOption:
         validateHostOptionCodec(checkedGlobals, mapping.eponymName)
+      elif mapping.isRuntimeVariant:
+        let constructors = runtimeVariantConstructorNames(checkedGlobals,
+          mapping.eponymName)
+        validateRuntimeVariantConstructors(checkedGlobals,
+          mapping.eponymName, constructors)
       elif mapping.isRuntimeCodec:
         validateHostRuntimeCodecType(checkedGlobals, mapping.eponymName)
       else:

@@ -176,11 +176,21 @@ Applied or indexed binder domains still need runtime type-expression
 validation; use the raw `RuntimeValue` interface when that check is
 unavailable.
 
-Structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
+The low-level `RuntimeVariant` API provides a checked structural view for any
+declared data family when the caller supplies its constructor names. It
+preserves constructor identity and raw argument `Value`s, checking family
+membership, constructor arity, and spine shape. This handles payload-bearing
+and indexed constructors without a custom constructor switch. Use
+`runtimeVariant(Family)` to have generated wrappers select this representation
+automatically. Callers still decode payload fields themselves because the
+generic representation stores them as raw `Value`s.
+
+Typed structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
 `Sig` tuples, and named records. Records with dependent fields
 and dependent `Sig` results are available only through their explicit trusted
 opt-ins described above. Other payload-bearing data constructors have no
-built-in structural codec and require an explicit `runtimeCodec` mapping.
+built-in typed field codec and require an explicit `runtimeCodec` mapping or
+manual decoding through `RuntimeVariant`.
 Non-Nat value-indexed generic signatures without a supported runtime mapping
 and structural inspection of closures are unsupported.
 The session runtime demo includes a hand-written Nat LEB128 message codec, and
