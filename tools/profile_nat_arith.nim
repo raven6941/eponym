@@ -4,6 +4,8 @@
 ## Run from the repository root:
 ##   nim c -r -d:elabProfile --hints:off --path:src --path:src/eponym \
 ##     tools/profile_nat_arith.nim
+## Add `-d:profileNatArithTrustedPath=true` to measure the old trusted-only
+## natConv path. This flag affects profiling builds only.
 ## Add `-d:profileArithEvidenceCacheCandidates=false` to measure without the
 ## read-only candidate-key scan.
 ##
@@ -24,6 +26,9 @@ var driver = initModuleDriver()
 discard driver.elabFile("lib/nat_lemmas.ep")
 let elapsedNs = (getMonoTime() - started).inNanoseconds
 echo "nat_lemmas.ep wall time: ", elapsedNs.float / 1e9, " s"
+echo "nat arithmetic mode: ",
+     (if ProfileNatArithTrustedPath: "trusted natConv only" else: "checked evidence")
+echo "trusted discharges: ", driver.ms.extDischarges
 let evidencePairHitRate =
   if driver.ms.arithEvidencePairProbes > 0:
     100.0 * driver.ms.arithEvidencePairHits.float /
@@ -56,8 +61,14 @@ let report = reportPhases()
 doAssert "epdArithNormalize" in report
 doAssert "epdArithBuild" in report
 doAssert "epdEvidenceCheck" in report
-when ProfileArithEvidenceCacheCandidates:
+when ProfileArithEvidenceCacheCandidates and not ProfileNatArithTrustedPath:
   doAssert driver.ms.arithEvidenceGoalProbes > 0
   doAssert driver.ms.arithEvidencePairProbes > 0
   doAssert driver.ms.arithEvidenceNormalizedProbes > 0
+when ProfileNatArithTrustedPath:
+  doAssert driver.ms.extDischarges == 2
+else:
+  doAssert driver.ms.extDischarges == 0
+  doAssert driver.ms.arithEvidencePairProbes == 2
+  doAssert driver.ms.arithEvidencePairHits == 0
 echo report

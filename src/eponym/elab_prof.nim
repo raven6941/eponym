@@ -38,6 +38,9 @@ const ElabProfile* {.booldefine.} = false
 const ProfileArithEvidenceCacheCandidates* {.booldefine.} = true
   ## With profiling enabled, count repeated goal/proof shapes without reusing
   ## any cached result. Disable with `-d:profileArithEvidenceCacheCandidates=false`.
+const ProfileNatArithTrustedPath* {.booldefine.} = false
+  ## Profile the legacy trusted natConv path instead of evidence generation.
+  ## Only affects `-d:elabProfile` builds; never changes normal builds.
 
 {.push warning[UnusedImport]: off.}
 import std/monotimes  # MonoTime, getMonoTime

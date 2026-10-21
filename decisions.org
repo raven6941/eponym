@@ -3457,3 +3457,23 @@
   was 3.831 s. The 7 ms difference is within run-to-run noise, and there are
   no hits from which a cache could save work. Treat #241 as a negative result;
   reopen only with a workload that demonstrates repeated safe candidates.
+
+* 2026-10-21 — Arithmetic evidence-path cost (#242)
+
+  The profiler can build a trusted-only baseline with
+  =-d:profileNatArithTrustedPath=true=. The flag is gated by =-d:elabProfile=;
+  ordinary builds always use the evidence path. Across three runs on
+  =lib/nat_lemmas.ep=, checked evidence averaged 3.813 s and trusted-only
+  =natConv= averaged 63.4 ms (about 60x faster). Evidence mode performed two
+  bare-core proof checks and left =extDischarges= at zero. Trusted-only mode
+  recorded exactly two =extDischarges=, skips evidence construction and
+  validation, and relaxes the enclosing definition's kernel re-check.
+
+  In the evidence profile, per-goal arithmetic normalization averaged about
+  3.2 ms, evidence-chain construction about 0.2 ms, and the bare-core evidence
+  check about 1.91 s. The remaining wall-time difference includes synthesis
+  and evaluation of the helper lemmas and the definition re-check policy; the
+  profiler's detail spans are separate from the phase totals. This is the
+  measured price of keeping the arithmetic automation core-validated on this
+  small corpus, not a general performance ratio. No trust policy change is
+  proposed; this issue records the tradeoff for the #45 trust-extension seam.

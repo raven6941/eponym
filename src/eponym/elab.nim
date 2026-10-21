@@ -1392,22 +1392,29 @@ proc natArithHandler*(globals: Globals, s: var Supply): ConvHandler =
     addId = globals["add"].tm.refId
   if "Eq" in globals and globals["Eq"].tm.kind == tR:
     eqId = globals["Eq"].tm.refId
-  let lemmas = buildArithLemmas(globals, s)
+  var lemmas: ArithLemmas
+  when ElabProfile and ProfileNatArithTrustedPath:
+    # Benchmark-only switch for issue #242. Normal builds always retain the
+    # evidence path; the trusted baseline skips proof synthesis entirely.
+    lemmas = ArithLemmas(ok: false, failReason: "trusted-path profile")
+  else:
+    lemmas = buildArithLemmas(globals, s)
   result.coreValid = false
   result.decide =
     proc(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
          ctxLen: int, goalTy: Term): ConvResult {.closure.} =
       if addId < 0 or zeroId < 0 or sucId < 0:
         return ConvResult(verdict: cvDeclined)  # no Nat/add in scope: nothing to decide
-      if lemmas.ok and not goalTy.isNil and not isEqSpineGoal(a, b, eqId):
-        try:
-          let r = buildArithEvidence(lemmas, a, b)
-          if r.found:
-            return ConvResult(verdict: cvDischargedEv, evidence: r.evidence,
-                              normalizedShape: r.normalizedShape)
-          return ConvResult(verdict: cvDeclined)
-        except ExoticArithShape:
-          discard  # fall through to the trusted path below
+      when not (ElabProfile and ProfileNatArithTrustedPath):
+        if lemmas.ok and not goalTy.isNil and not isEqSpineGoal(a, b, eqId):
+          try:
+            let r = buildArithEvidence(lemmas, a, b)
+            if r.found:
+              return ConvResult(verdict: cvDischargedEv, evidence: r.evidence,
+                                normalizedShape: r.normalizedShape)
+            return ConvResult(verdict: cvDeclined)
+          except ExoticArithShape:
+            discard  # fall through to the trusted path below
       # Trusted fast path (Experiment 41): normalization decides, and the
       # core re-check is relaxed via extDischarges. Reached when lemma
       # synthesis failed, the goal type is unknown, for Eq-congruence
