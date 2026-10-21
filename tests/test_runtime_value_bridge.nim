@@ -398,6 +398,8 @@ eponymBlock:
   proc generatedVectorIdentity[A: Univ, n: Nat](
       values: Vec[A, n]): Vec[A, n] = values
   runtimeValue(generatedVectorIdentity)
+  proc generatedEmptyIntVector(): Vec[Int, 0] = nil
+  runtimeValue(generatedEmptyIntVector)
   proc generatedVectorSucIndex[n: Nat](
       values: Vec[Int, suc(n)]): Nat = n
   proc generatedVectorAddIndex[m, n: Nat](
@@ -511,6 +513,12 @@ eponymBlock:
   runtimeList(List)
   proc generatedIntListIdentity(values: List[Int]): List[Int] = values
   runtimeValue(generatedIntListIdentity)
+  proc generatedEmptyIntList(): List[Int] = (nil)
+  runtimeValue(generatedEmptyIntList)
+  proc generatedBoundEmptyIntList(): List[Int] =
+    let values: List[Int] = nil
+    values
+  runtimeValue(generatedBoundEmptyIntList)
   proc generatedListIdentity[A: Univ](values: List[A]): List[A] = values
   runtimeValue(generatedListIdentity)
   proc generatedGenericListValueBinder[values: List[Int]](
@@ -2439,6 +2447,7 @@ proc callbackRole : Callback -> Sample -> Sample =
       except ValueError:
         mismatchedElementTypeRejected = true
       generatedVectorIdentity[int, 4](values) == values and
+        generatedEmptyIntVector() == @[] and
         generatedVectorIdentity[ChannelHandle, 4](handles) == handles and
         mismatchedElementTypeRejected and
         vecValueToSeq[ChannelHandle](runtimeHandles.value, 4,
@@ -3089,6 +3098,8 @@ proc callbackRole : Callback -> Sample -> Sample =
       let rawRuntime = generatedListIdentityRuntimeValue[int]([runtime.value])
       let opaqueRuntime = generatedListIdentityRuntimeValue[ChannelHandle](handles)
       generatedIntListIdentity(values) == values and
+      generatedEmptyIntList() == @[] and
+      generatedBoundEmptyIntList() == @[] and
       generatedListIdentity[int](values) == values and
         generatedListIdentity[ChannelHandle](handles) == handles and
         decodeRuntimeIntList(intRuntime.value, intRuntime.globals) == values and

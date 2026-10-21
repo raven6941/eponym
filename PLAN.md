@@ -966,6 +966,11 @@ implementations.
   change and qualify claims when the implementation does not meet them.
 - [x] Update `docs/known-limitations.md`, the trust model, the tutorial, syntax
   reference, and this plan alongside the surface-syntax stage.
+- [x] Translate a direct Nim `nil` result or typed `List`/`Vec` local to the
+  Eponym empty constructor using its declared family and element type. A
+  property exercises direct and local empty runtime `List` values. Unsupported
+  expression errors now name the Nim AST shape and give a practical workaround;
+  a string-literal fixture pins it.
 - [x] Preserve a supported-claims table in the docs: “checked by Eponym”,
   “checked by Nim”, “trusted adapter”, and “not currently connected”.
 

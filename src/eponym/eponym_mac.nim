@@ -391,6 +391,8 @@ proc qtyPrefix(n: NimNode): string =
 
 proc nimExprToEponym(n: NimNode): string
 proc nimTypeToEponym(n: NimNode): string
+proc isNilLiteralExpr(n: NimNode): bool
+proc nilConstructorForType(typeNode: NimNode): string
 
 proc ifExprToEponym(n: NimNode): string =
   var branches: seq[(NimNode, NimNode)] = @[]
@@ -512,7 +514,7 @@ proc nimExprToEponym(n: NimNode): string =
     if n.len == 0: error("eponymBlock: empty proc body", n)
     # Collect lets and final expression
     var lets: seq[(string, string, string)] = @[]  # (name, type-or-"", value)
-    var finalExpr: NimNode = nil
+    var finalExpr = newEmptyNode()
     for stmt in n:
       if stmt.kind == nnkLetSection:
         for def in stmt:
@@ -525,7 +527,12 @@ proc nimExprToEponym(n: NimNode): string =
             let declaredType = nimTypeToEponym(def[1])
             tyAnn = " : " & declaredType
             isNatBinding = declaredType == "Nat"
-          let val = nimExprToEponym(def[2])
+          let val = if isNilLiteralExpr(def[2]):
+            if def[1].kind == nnkEmpty:
+              error("eponymBlock: `nil` in a let binding needs an explicit " &
+                "List[...] or Vec[...] type", def[2])
+            nilConstructorForType(def[1])
+            else: nimExprToEponym(def[2])
           let callInfoSource = if def[2].kind in {nnkIdent, nnkSym}:
             $def[2] else: ""
           if callInfoSource in legacyCallInfo and
@@ -540,10 +547,10 @@ proc nimExprToEponym(n: NimNode): string =
           lets.add((name, tyAnn, val))
       else:
         # Final expression (or single expression)
-        if finalExpr != nil:
+        if finalExpr.kind != nnkEmpty:
           error("eponymBlock: proc body must be lets followed by single expr", n)
         finalExpr = stmt
-    if finalExpr == nil:
+    if finalExpr.kind == nnkEmpty:
       error("eponymBlock: proc body must end with expression", n)
     var res = nimExprToEponym(finalExpr)
     # Wrap in let...in (innermost first, so reverse)
@@ -657,7 +664,10 @@ proc nimExprToEponym(n: NimNode): string =
     else:
       "(" & n.mapIt(nimExprToEponym(it)).join(", ") & ")"
   else:
-    error("eponymBlock: unsupported expression: " & $n.kind, n)
+    error("eponymBlock: unsupported Nim expression shape '" & $n.kind &
+      "'; express the operation in supported Eponym syntax, or move the Nim " &
+      "expression outside the block and expose it through a bound postulate",
+      n)
 
 proc piSigToEponym(n: NimNode): string
   ## Convert Pi(...)/Sig(...) (nnkCall or nnkObjConstr) to Eponym.
@@ -853,6 +863,22 @@ proc legacyCallInfoFromNimType(ty: NimNode): LegacyCallInfo =
       current = current.c2
     break
 
+proc isNilLiteralExpr(n: NimNode): bool =
+  if n.kind == nnkNilLit: return true
+  if n.kind in {nnkPar, nnkStmtList} and n.len == 1:
+    return isNilLiteralExpr(n[0])
+  false
+
+proc nilConstructorForType(typeNode: NimNode): string =
+  # The Eponym List/Vec constructors are polymorphic functions, so Nim's
+  # expected type must supply their element type argument.
+  if typeNode.kind != nnkBracketExpr or typeNode.len < 2 or
+      $typeNode[0] notin ["List", "Vec"]:
+    error("eponymBlock: `nil` expression needs a List[...] or Vec[...] " &
+      "type", typeNode)
+  let elementType = nimTypeToEponym(typeNode[1])
+  "nil (" & elementType & ")"
+
 proc procDefToEponym(n: NimNode): string =
   ## Convert nnkProcDef to "proc name (generic binders) (params) : ret = body".
   # n[0] = name, n[1] = empty (pragma?), n[2] = generic params,
@@ -897,7 +923,11 @@ proc procDefToEponym(n: NimNode): string =
         formal[j][0] else: formal[j]
       let name = $nameNode
       legacyCallInfo[name] = callableInfo
-  let body = nimExprToEponym(n[6])
+  var body: string
+  if isNilLiteralExpr(n[6]):
+    body = nilConstructorForType(params[0])
+  else:
+    body = nimExprToEponym(n[6])
   legacyCallInfo.clear()
   for (callName, callInfo) in priorCallableInfos:
     legacyCallInfo[callName] = callInfo

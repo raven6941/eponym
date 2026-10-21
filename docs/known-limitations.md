@@ -23,6 +23,14 @@ outside the block. Pure `if`/`elif`/`else` expressions are supported when
 `lib/bool.ep` is imported; only the selected branch runs. Supported operators
 and expression forms are listed in the syntax reference.
 
+The Nim AST translator supports selected expression shapes rather than all
+Nim expressions. A direct `nil` result or a typed local such as
+`let xs: List[Int] = nil` maps to the Eponym empty `List` or `Vec` constructor;
+other nested `nil` expressions are not translated yet. Other unsupported
+shapes now report their Nim AST kind and suggest expressing the operation in
+Eponym syntax or moving host code outside the block and binding it as a
+postulate. String literals, for example, are not Eponym string values.
+
 ## `Nat` and `Int` conversions are explicit
 
 `Nat` and primitive `Int` are distinct Eponym types. A `Nat` is not silently
