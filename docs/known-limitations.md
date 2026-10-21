@@ -126,6 +126,8 @@ callback taking `Nat` and `Vec[Int, length]` and returning
 `Vec[Int, length]` checks both vector lengths. Explicitly mapped opaque types
 can also serve as callback arguments or results. Computed indices such as
 `add(left, right)` are checked too when the expression has a runtime codec.
+Custom codecs for indexed families are checked against dependent callback
+indices on both input and output.
 
 ## Static checks do not manage Nim resources or optimize code
 

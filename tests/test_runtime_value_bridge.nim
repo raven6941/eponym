@@ -642,6 +642,12 @@ eponymBlock:
   proc generatedGenericSizedTreeBinder[length: Nat,
       tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
   runtimeValue(generatedGenericSizedTreeBinder)
+  proc generatedDependentCustomPiCallbackBinder[
+      callback: Pi(length: Nat, tree: SizedTree[length],
+                   SizedTree[length])](length: Nat,
+                                        tree: SizedTree[length]):
+      SizedTree[length] = callback(length, tree)
+  runtimeValue(generatedDependentCustomPiCallbackBinder)
   proc generatedValidatedCustomDependentSigmaBinder[
       pair: Sig(length: Nat, SizedTree[length])](ignored: Int):
       Sig(length: Nat, SizedTree[length]) = pair
@@ -777,6 +783,12 @@ static:
     proc(left: string, right: int, values: seq[int]): seq[int] {.closure.} =
       values,
     2, 3, @[1, 2, 3, 4, 5]))
+  doAssert compiles(generatedDependentCustomPiCallbackBinderDynamic(
+    proc(length: int, tree: seq[int]): seq[int] {.closure.} = tree,
+    3, @[1, 2, 3]))
+  doAssert not compiles(generatedDependentCustomPiCallbackBinderDynamic(
+    proc(length: string, tree: seq[int]): seq[int] {.closure.} = tree,
+    3, @[1, 2, 3]))
   doAssert compiles(generatedMappedGenericPiCallbackBinderDynamic(
     proc(value: ChannelHandle): ChannelHandle {.closure.} = value,
     ChannelHandle(id: 1)))
@@ -2536,6 +2548,42 @@ proc callbackRole : Callback -> Sample -> Sample =
           proc(value: Value, _: Globals): int = valueToInt(value)) == values)
   if not computedDependentPiCallbackCases:
     quit(1)
+  let customDependentPiCallbackCases = forAll(
+    "generic Pi callbacks use dependent runtimeCodec mappings", r, 200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 20), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var tree = newSeq[int](input.length)
+      for i in 0 ..< tree.len:
+        tree[i] = input.seed + i
+      let callback: proc(length: int, tree: seq[int]): seq[int] {.closure.} =
+        proc(length: int, tree: seq[int]): seq[int] = tree
+      let typed = generatedDependentCustomPiCallbackBinderDynamic(callback,
+        input.length, tree)
+      let runtime = generatedDependentCustomPiCallbackBinderRuntimeValueDynamic(
+        callback, input.length, tree)
+      typed == tree and
+        decodeRuntimeSizedTree(runtime.value, runtime.globals) == tree)
+  if not customDependentPiCallbackCases:
+    quit(1)
+  var customCallbackInputMismatchRejected = false
+  try:
+    let callback: proc(length: int, tree: seq[int]): seq[int] {.closure.} =
+      proc(length: int, tree: seq[int]): seq[int] = tree
+    discard generatedDependentCustomPiCallbackBinderDynamic(callback, 3,
+      @[1, 2])
+  except ValueError:
+    customCallbackInputMismatchRejected = true
+  doAssert customCallbackInputMismatchRejected
+  var customCallbackOutputMismatchRejected = false
+  try:
+    let callback: proc(length: int, tree: seq[int]): seq[int] {.closure.} =
+      proc(length: int, tree: seq[int]): seq[int] = tree & @[999]
+    discard generatedDependentCustomPiCallbackBinderDynamic(callback, 2,
+      @[1, 2])
+  except ValueError:
+    customCallbackOutputMismatchRejected = true
+  doAssert customCallbackOutputMismatchRejected
   var computedCallbackInputMismatchRejected = false
   try:
     let callback: proc(left, right: int, values: seq[int]): seq[int]

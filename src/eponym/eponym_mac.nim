@@ -1984,7 +1984,7 @@ proc runtimePiTypeValueExpr(n, globals: NimNode,
     let domain = runtimeTypeValueExpr(binders[index].domain, globals,
       localOverrides)
     if domain.isNil: return nil
-    let argument = ident"runtimePiArgument"
+    let argument = genSym(nskParam, "runtimePiArgument")
     var codomainOverrides = localOverrides
     codomainOverrides.add((binders[index].name, argument))
     let codomain = if index + 1 < binders.len:
@@ -2203,16 +2203,65 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       if encodedResult.isNil: return nil
       let callbackType = runtimeTypeValueExpr(eponymType, globals,
         indexOverrides)
-      var callbackValue = encodedResult
+      let callbackTypeSym = if callbackType.isNil: nil else:
+        genSym(nskLet, "runtimeCallbackType")
+      var callbackValue: NimNode = nil
       for i in countdown(argValueSyms.high, 0):
-        let callbackBody = newStmtList(callbackValue)
+        var callbackBody = newStmtList()
+        var needsArgumentGuard = false
+        if procParts.argTypes[i].kind in
+            {nnkCall, nnkObjConstr, nnkBracketExpr} and
+            procParts.argTypes[i].len > 0 and
+            procParts.argTypes[i][0].kind in {nnkIdent, nnkSym}:
+          for mapping in mappings:
+            if mapping.isRuntimeCodec and
+                mapping.eponymName == $procParts.argTypes[i][0]:
+              needsArgumentGuard = true
+              break
+        if needsArgumentGuard and not callbackTypeSym.isNil:
+          var priorArguments = newNimNode(nnkBracket)
+          for priorIndex in 0 ..< i:
+            priorArguments.add(argValueSyms[priorIndex])
+          let expectedArgumentType = newCall(
+            bindSym"runtimePiDomainAfterArgs", callbackTypeSym,
+            newTree(nnkPrefix, ident"@", priorArguments))
+          callbackBody.add(newCall(bindSym"validateRuntimeValueAgainstType",
+            argValueSyms[i], expectedArgumentType, globals))
+        if i == argValueSyms.high:
+          let encodedResultSym = genSym(nskLet, "runtimeCallbackResult")
+          callbackBody.add(newLetStmt(encodedResultSym, encodedResult))
+          var needsResultGuard = false
+          if procParts.resultType.kind in
+              {nnkCall, nnkObjConstr, nnkBracketExpr} and
+              procParts.resultType.len > 0 and
+              procParts.resultType[0].kind in {nnkIdent, nnkSym}:
+            for mapping in mappings:
+              if mapping.isRuntimeCodec and
+                  mapping.eponymName == $procParts.resultType[0]:
+                needsResultGuard = true
+                break
+          if needsResultGuard and not callbackTypeSym.isNil:
+            var allArguments = newNimNode(nnkBracket)
+            for argValueSym in argValueSyms:
+              allArguments.add(argValueSym)
+            let expectedResultType = newCall(
+              bindSym"runtimePiResultAfterArgs", callbackTypeSym,
+              newTree(nnkPrefix, ident"@", allArguments))
+            callbackBody.add(newCall(bindSym"validateRuntimeValueAgainstType",
+              encodedResultSym, expectedResultType, globals))
+          callbackBody.add(encodedResultSym)
+        else:
+          callbackBody.add(callbackValue)
         let hostCallback = newProc(params = @[bindSym"RuntimeValue",
           newIdentDefs(argValueSyms[i], bindSym"RuntimeValue", newEmptyNode())],
           body = callbackBody)
         callbackValue = if i == 0 and not callbackType.isNil:
-          newCall(bindSym"vHostFuncWithType", hostCallback, callbackType)
+          newCall(bindSym"vHostFuncWithType", hostCallback, callbackTypeSym)
         else:
           newCall(bindSym"vHostFunc", hostCallback)
+      if not callbackTypeSym.isNil:
+        return newTree(nnkBlockExpr, newEmptyNode(), newStmtList(
+          newLetStmt(callbackTypeSym, callbackType), callbackValue))
       return callbackValue
     var encodedArgs = newNimNode(nnkBracket)
     var formal: seq[NimNode] = @[resultNimType]
@@ -3045,7 +3094,7 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
       var codomainOverrides = localOverrides
       var argument: NimNode = nil
       if fields[index].binder.len > 0:
-        argument = ident"runtimeSigmaArgument"
+        argument = genSym(nskParam, "runtimeSigmaArgument")
         codomainOverrides.add((fields[index].binder, argument))
       let codomain = buildSigma(index + 1, codomainOverrides)
       if codomain.isNil: return nil
