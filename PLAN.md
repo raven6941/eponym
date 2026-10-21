@@ -489,6 +489,13 @@ implementations.
   structural representation for payload-bearing and indexed constructors.
   A 200-case property covers direct and generated wrapper round trips; typed
   recursive payload codecs remain future work.
+- [x] Validate `RuntimeVariant` payloads against the selected constructor's
+  checked Pi telescope when encoding. Earlier arguments are substituted into
+  later dependent domains, so an indexed payload such as `Vec[Int, length]`
+  must match its preceding Nat field. Reject primitive Int/Nat values used at
+  unrelated Eponym types. A 200-case property covers dependent vector payloads
+  and negative checks reject wrong field types and lengths. Raw variant
+  extraction still exposes fields as `Value`s for caller-directed decoding.
 - [x] Validate dynamic generic `Value` arguments against applied type
   expressions built from named types, earlier generic indices, applications,
   integer literals, and direct Bool-controlled conditional Nat indices. A

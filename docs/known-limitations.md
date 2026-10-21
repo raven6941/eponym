@@ -210,8 +210,11 @@ preserves constructor identity and raw argument `Value`s, checking family
 membership, constructor arity, and spine shape. This handles payload-bearing
 and indexed constructors without a custom constructor switch. Use
 `runtimeVariant(Family)` to have generated wrappers select this representation
-automatically. Callers still decode payload fields themselves because the
-generic representation stores them as raw `Value`s.
+automatically. `runtimeVariantToValue` checks each encoded payload against the
+constructor's checked Pi domain, substituting earlier arguments into later
+dependent domains. `valueToRuntimeVariant` returns raw payload `Value`s after
+checking family membership and spine shape; callers still decode and validate
+those fields themselves.
 
 Typed structural codecs are currently limited to `Vec`, `List`, `Option`, two-field
 `Sig` tuples, and named records. Records with dependent fields
