@@ -42,6 +42,28 @@ eponymBlock:
   proc sendCount(count: Nat): Int = natToInt(count)
 ```
 
+## Scalar host values are opaque
+
+Import `lib/float.ep` for the checked type `Float`, and `lib/text.ep` for
+`String` and `Char`. Map them with `runtimeType(Float, float64)`,
+`runtimeType(String, string)`, and `runtimeType(Char, char)`. Eponym checks
+that values flow through definitions and postulate signatures with those
+types. Values are constructed in Nim and cross through the runtime mapping;
+Eponym has no Float/String/Char literals, arithmetic, or built-in equality.
+Declare operations as postulates and bind them to Nim procedures. Eponym
+checks the declared signatures, while the host operations' behavior remains
+trusted. This matters especially for Float equality, whose behavior around
+NaN and signed zero must be chosen by the host API.
+
+```nim
+eponymBlock:
+  import "lib/float.ep"
+  runtimeType(Float, float64)
+  postulate(scaleFloat, Float -> Float)
+  bindPostulate(scaleFloat, scaleFloatNim, Float, Float)
+  proc checkedScale(value: Float): Float = scaleFloat(value)
+```
+
 ## Checked definitions need a runtime path
 
 Eponym checks definitions at compile time. A checked definition is callable

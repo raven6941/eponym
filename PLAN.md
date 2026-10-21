@@ -630,6 +630,12 @@ implementations.
    need a raw `Value` wrapper; callback-local dependent signatures outside
    the supported Nim codec grammar and explicit local `proc` declarations
    with unsupported signatures fail clearly when called.
+- [x] Provide importable opaque `Float`, `String`, and `Char` types, each
+   mapped through `runtimeType` to Nim `float64`, `string`, or `char`. A
+   200-case property for each scalar passes through a checked wrapper and a
+   bound Nim postulate. Eponym checks type flow and signatures; it does not
+   supply scalar literals, arithmetic, string operations, or equality, whose
+   behavior remains in trusted Nim adapters.
 - [x] Reconstruct typed wrappers for local clause-style definitions from
    their checked Pi signatures. Two 200-case properties cover direct calls
    and typed and raw `RuntimeValue` access for a `Nat -> Nat` identity and a

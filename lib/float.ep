@@ -1,0 +1,6 @@
+# Opaque floating-point type for checked interfaces.
+#
+# Eponym checks where Float values flow and which postulate signatures accept
+# them. Arithmetic and construction stay on the Nim side and must be bound by
+# the host program.
+postulate Float : Type 0
