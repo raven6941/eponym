@@ -36,6 +36,15 @@ macro differentialBlock(src: static string, srcFile: static string): untyped =
   result = newStmtList()
   for p in cgBlock.procs:
     result.add(p)
+    # Issue #329 acceptance: generated definition procs carry user source
+    # positions (eliminator procs and forward declarations keep the macro
+    # call-site info, which still names the user's file).
+    if p.kind == nnkProcDef and p[0].kind == nnkPostfix and
+        ($p[0][1]).startsWith("eponymCompiled_"):
+      let li = lineInfoObj(p)
+      if not li.filename.endsWith("test_codegen_phase1.nim"):
+        error("compiled proc " & $p[0][1] &
+          " missing user source position (got " & li.filename & ")")
   # Bind postulates to neutrals for the differential harness.
   var bindStmts = newStmtList()
   let bndSym = genSym(nskVar, "testBnd")

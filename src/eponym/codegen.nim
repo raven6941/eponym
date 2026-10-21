@@ -475,6 +475,7 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
   # evaluating compiled code report the definition's source location.
   # locLine is the definition's line in the user's file (not the
   # elaborator's string-relative loc).
+  procNode.setLineInfo(LineInfo(filename: locFile, line: locLine, column: 0))
   procNode.add(inner)
   procNode
 
