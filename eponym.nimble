@@ -14,10 +14,9 @@ srcDir        = "src/eponym"
 # Dependencies
 
 requires "nim >= 2.0.0"
-requires "falsify >= 0.1.0"  # property-based testing for tests/pbt_*.nim
-# NOTE: falsify is not in nimble's package index yet, so CI installs it
-# explicitly (tools/ci-local.sh, .github/workflows/ci.yml) via
-# `nimble install -y https://github.com/raven6941/falsify`.
+# Falsify is used only by the property-test suite. It is not an install
+# dependency; tools/ci-local.sh installs it directly from GitHub because it
+# is not in Nimble's package index yet.
 
 # The Eponym prelude (lib/*.ep) ships with the package. Relative imports
 # resolve beside the calling Nim file first and then fall back to this
