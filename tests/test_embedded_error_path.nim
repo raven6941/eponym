@@ -55,6 +55,10 @@ for path in ["tests/fixtures/embedded_err_unbound.nim",
   if not checkFixture(path):
     inc failed
 
+if not checkFixture("tests/fixtures/embedded_err_nat_literal_index.nim",
+    "does not match expected type"):
+  inc failed
+
 if not checkFixture("tests/fixtures/embedded_err_source_map.nim",
     "embedded_err_source_map.nim(8,"):
   inc failed

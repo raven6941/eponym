@@ -24,6 +24,7 @@ template rawValue* {.pragma.}
 type LegacyCallInfo = object
   explicitCount: int
   termCount: int
+  applicationParamTypes: seq[string]
   termParamNames: seq[string]
   termParamDefaults: seq[NimNode]
   firstExplicitNat: bool
@@ -220,10 +221,21 @@ proc nimIndexArity(kind: NimNode): int =
 
 proc registerLegacyInfo(name: string, explicitCount, termCount: int,
                         firstExplicitNat = false,
-                        requiresBrackets = false) =
+                        requiresBrackets = false,
+                        applicationParamTypes: seq[string] = @[]) =
   legacyCallInfo[name] = LegacyCallInfo(explicitCount: explicitCount,
     termCount: termCount, firstExplicitNat: firstExplicitNat,
-    requiresBrackets: requiresBrackets)
+    requiresBrackets: requiresBrackets,
+    applicationParamTypes: applicationParamTypes)
+
+proc surfaceApplicationParamTypes(
+    tele: seq[tuple[name: string, ty: PreTerm, impl: bool,
+                    erased: bool, qty: Qty]]): seq[string] =
+  ## Record the complete Eponym application telescope. Bracket application
+  ## supplies a prefix of it, so literal disambiguation needs the domain type
+  ## at each prefix position, including explicit data-index binders.
+  for binder in tele:
+    result.add($binder.ty)
 
 proc firstSurfaceExplicitIsNat(tele: seq[tuple[name: string, ty: PreTerm,
     impl: bool, erased: bool, qty: Qty]]): bool =
@@ -263,7 +275,8 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
       registerLegacyInfo(declaration.def.name, explicitCount,
         declaration.def.tele.len - explicitCount,
         firstSurfaceExplicitIsNat(declaration.def.tele),
-        surfaceRequiresBrackets(declaration.def.tele))
+        surfaceRequiresBrackets(declaration.def.tele),
+        surfaceApplicationParamTypes(declaration.def.tele))
       for binder in declaration.def.tele:
         if not binder.impl and binder.ty.kind notin {pkUniv, pkUnivN}:
           legacyCallInfo[declaration.def.name].termParamNames.add(binder.name)
@@ -281,20 +294,28 @@ proc registerSurfaceLegacyInfo(source: string, path: string,
         legacyTypeFamilies.incl(declaration.dname)
       for constructor in declaration.ctors:
         let extraImplicit = surfaceExplicitCount(constructor.tele)
+        var applicationParamTypes: seq[string] = @[]
+        for parameter in declaration.params:
+          applicationParamTypes.add($parameter.ty)
+        for binder in constructor.tele:
+          applicationParamTypes.add($binder.ty)
         registerLegacyInfo(constructor.name, familyParams + extraImplicit,
           constructor.tele.len - extraImplicit,
           firstSurfaceExplicitIsNat(constructor.tele),
-          familyParams > 0 or surfaceRequiresBrackets(constructor.tele))
+          familyParams > 0 or surfaceRequiresBrackets(constructor.tele),
+          applicationParamTypes)
         for binder in constructor.tele:
           if not binder.impl and binder.ty.kind notin {pkUniv, pkUnivN}:
             legacyCallInfo[constructor.name].termParamNames.add(binder.name)
             legacyCallInfo[constructor.name].termParamDefaults.add(nil)
         if constructor.name == "nil":
           registerLegacyInfo("vecnil", familyParams + extraImplicit,
-            constructor.tele.len - extraImplicit)
+            constructor.tele.len - extraImplicit,
+            applicationParamTypes = applicationParamTypes)
     of dkImport:
-      let importedPath = normalized.parentDir / declaration.ipath
-      if fileExists(importedPath):
+      let importedPath = resolveImportTarget(declaration.ipath,
+        normalized.parentDir)
+      if importedPath.len > 0:
         registerSurfaceLegacyInfo(readFile(importedPath), importedPath, seen)
     else:
       discard
@@ -316,9 +337,21 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
         statement[2].len > 0 and statement[2][0].kind == nnkIdentDefs and
         statement[2][0][^2].kind in {nnkIdent, nnkSym} and
         $statement[2][0][^2] == "Nat"
+      var applicationParamTypes: seq[string] = @[]
+      if statement[2].kind == nnkGenericParams:
+        for genericParam in statement[2]:
+          if genericParam.kind == nnkIdentDefs:
+            for _ in 0 ..< genericParam.len - 2:
+              applicationParamTypes.add(genericParam[^2].repr)
+      if statement[3].kind == nnkFormalParams:
+        for i in 1 ..< statement[3].len:
+          let param = statement[3][i]
+          if param.kind == nnkIdentDefs:
+            for _ in 0 ..< param.len - 2:
+              applicationParamTypes.add(param[^2].repr)
       registerLegacyInfo($statement[0], genericCount,
         nimFormalArgCount(statement[3]), firstGenericIsNat,
-        genericCount > 0)
+        genericCount > 0, applicationParamTypes)
       if $statement[0] in legacyCallInfo:
         legacyCallInfo[$statement[0]].termParamNames =
           nimFormalArgNames(statement[3])
@@ -342,6 +375,14 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
           kind = statement[2]
           if statement.len > 3: constructors = statement[3]
         let paramCount = if params.isNil: 0 else: params.len
+        var familyParamTypes: seq[string] = @[]
+        if not params.isNil:
+          for param in params:
+            if param.kind == nnkExprColonExpr and param.len == 2:
+              familyParamTypes.add(param[1].repr)
+            elif param.kind == nnkIdentDefs and param.len >= 3:
+              for _ in 0 ..< param.len - 2:
+                familyParamTypes.add(param[^2].repr)
         legacyTypeNames.incl($statement[1])
         if paramCount + nimIndexArity(kind) > 0:
           legacyTypeFamilies.incl($statement[1])
@@ -349,8 +390,21 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
           for constructor in constructors:
             if constructor.kind == nnkProcDef:
               let termCount = nimFormalArgCount(constructor[3])
+              var applicationParamTypes = familyParamTypes
+              if constructor[2].kind == nnkGenericParams:
+                for genericParam in constructor[2]:
+                  if genericParam.kind == nnkIdentDefs:
+                    for _ in 0 ..< genericParam.len - 2:
+                      applicationParamTypes.add(genericParam[^2].repr)
+              if constructor[3].kind == nnkFormalParams:
+                for i in 1 ..< constructor[3].len:
+                  let param = constructor[3][i]
+                  if param.kind == nnkIdentDefs:
+                    for _ in 0 ..< param.len - 2:
+                      applicationParamTypes.add(param[^2].repr)
               registerLegacyInfo($constructor[0], paramCount, termCount,
-                requiresBrackets = paramCount > 0)
+                requiresBrackets = paramCount > 0,
+                applicationParamTypes = applicationParamTypes)
               if $constructor[0] in legacyCallInfo:
                 legacyCallInfo[$constructor[0]].termParamNames =
                   nimFormalArgNames(constructor[3])
@@ -361,8 +415,8 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
     of nnkImportStmt:
       for imported in statement:
         if imported.kind != nnkStrLit: continue
-        let importedPath = normalizedPath(sourceDir / imported.strVal)
-        if fileExists(importedPath):
+        let importedPath = resolveImportTarget(imported.strVal, sourceDir)
+        if importedPath.len > 0:
           registerSurfaceLegacyInfo(readFile(importedPath), importedPath, seen)
     else:
       discard
@@ -621,7 +675,20 @@ proc nimExprToEponym(n: NimNode): string =
     var parts = @[nimExprToEponym(n[0])]
     for i in 1 ..< n.len:
       let arg = n[i]
-      let value = nimExprToEponym(arg)
+      var value: string
+      let headName = if n[0].kind in {nnkIdent, nnkSym}: $n[0] else: ""
+      if headName in legacyCallInfo and
+          i - 1 < legacyCallInfo[headName].applicationParamTypes.len and
+          legacyCallInfo[headName].applicationParamTypes[i - 1] == "Nat" and
+          arg.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
+                       nnkInt64Lit} and arg.intVal == 1:
+        # Eponym surface `1` is the unit type. At a bracket position whose
+        # declared binder is Nat, spell the literal one as its constructor
+        # form; ordinary expression positions keep `01` for expected-type
+        # overloading between Int and Nat.
+        value = "(suc zero)"
+      else:
+        value = nimExprToEponym(arg)
       if arg.kind in {nnkCall, nnkCommand, nnkObjConstr, nnkBracketExpr,
                       nnkInfix, nnkPrefix}:
         parts.add("(" & value & ")")
@@ -852,6 +919,7 @@ proc legacyCallInfoFromNimType(ty: NimNode): LegacyCallInfo =
     if declaration.kind != dkPostulate: continue
     var current = declaration.ty
     while not current.isNil and current.kind == pkPi:
+      result.applicationParamTypes.add($current.c1)
       let isType = current.c1.kind in {pkUniv, pkUnivN}
       if current.impl or isType:
         inc result.explicitCount

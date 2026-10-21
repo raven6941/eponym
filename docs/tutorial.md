@@ -200,17 +200,16 @@ eponymBlock:
   import "lib/vec.ep"
 
   # A 2-vector, with its length in the type.
-  proc twoNats(x: Nat, y: Nat): Vec[Nat, suc(suc(zero()))] =
-    cons[Nat, suc(zero())](x, cons[Nat, zero()](y, vecnil[Nat]()))
+  proc twoNats(x: Nat, y: Nat): Vec[Nat, 2] =
+    cons[Nat, 1](x, cons[Nat, 0](y, vecnil[Nat]()))
 
   # Generic Eponym binders and type applications use Nim's square brackets.
   proc myAppend[A: Univ, n: Nat](x: A, xs: Vec[A, n]): Vec[A, suc(n)] =
     cons[A, n](x, xs)
 
   # Explicitly supply the prelude's implicit binders when desired.
-  proc appendTwo(xs: Vec[Nat, suc(zero())],
-                 ys: Vec[Nat, suc(zero())]): Vec[Nat, add(suc(zero()), suc(zero()))] =
-    vappend[Nat, suc(zero()), suc(zero())](xs, ys)
+  proc appendTwo(xs: Vec[Nat, 1], ys: Vec[Nat, 1]): Vec[Nat, add(1, 1)] =
+    vappend[Nat, 1, 1](xs, ys)
 
   # Length of a vector, by induction on the vector.
   proc vlen(A: Univ, n: Nat, v: Vec[A, n]): Nat =
@@ -222,7 +221,11 @@ eponymBlock:
 A few notes on the syntax (the full story is in
 [the surface-syntax reference](surface-syntax-reference.md)):
 
-- `Nat` is `zero` / `suc(n)`; `suc(suc(zero()))` is the number 2.
+- `Nat` has constructors `zero` and `suc(n)`. In an `eponymBlock`, use
+  ordinary integer literals for Nat indices and explicit Nat arguments, such
+  as `Vec[Nat, 2]` and `cons[Nat, 1](...)`. The macro translates `1` to the
+  Nat successor form because bare `1` in Eponym syntax is reserved for the
+  unit type.
 - `cons[A, n](x, xs)` takes explicit type and length parameters in brackets,
   followed by ordinary vector terms in parentheses. Call-style explicit forms
   such as `cons(A, n, x, xs)` and `Vec(A, n)` are rejected; use brackets.
@@ -242,17 +245,12 @@ A few notes on the syntax (the full story is in
 Now ascribe a 2-element vector the type of 1-element vectors:
 
 ```nim
-  proc badVec(x: Nat, y: Nat): Vec[Nat, suc(zero())] =
-    cons[Nat, suc(zero())](x, cons[Nat, zero()](y, vecnil[Nat]()))
+  proc badVec(x: Nat, y: Nat): Vec[Nat, 1] =
+    cons[Nat, 1](x, cons[Nat, 0](y, vecnil[Nat]()))
 ```
 
-```
-vec_bad.nim(5, 3) Error: eponymBlock elaboration error: line 2, col 56:
-  inferred type (Vec Nat (suc (suc zero))) does not match expected type
-  (Vec Nat (suc zero)) (expected type written at line 2, col 1):
-  noConfusion: distinct constructors 'suc' and 'zero' of datatype 'Nat'
-  cannot be equal
-```
+The compiler rejects `badVec`: its body has length 2, but the signature
+requires length 1.
 
 The checker proved `2 ≠ 1` and refused the program. That is the whole
 point: the length invariant is enforced where the vector is built, so
