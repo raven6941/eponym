@@ -3458,6 +3458,7 @@
   no hits from which a cache could save work. Treat #241 as a negative result;
   reopen only with a workload that demonstrates repeated safe candidates.
 
+
 * 2026-10-21 — Arithmetic evidence-path cost (#242)
 
   The profiler can build a trusted-only baseline with
@@ -3477,3 +3478,53 @@
   measured price of keeping the arithmetic automation core-validated on this
   small corpus, not a general performance ratio. No trust policy change is
   proposed; this issue records the tradeoff for the #45 trust-extension seam.
+
+* 2026-10-21 — #67 verdict: no explicit multi-level IR DAG (from the #355 Paxos pipeline trace)
+
+  Context: #67 (Aaron, 2026-10-09) proposed making the elaborator
+  explicitly multi-layered — Surface → Desugared → Explicit → Checked →
+  Zonked core, as a DAG — for testability, debuggability, and
+  extensibility, at the cost of untangling =elab.nim= (implicit insertion
+  currently happens during checking). The 2026-10-21 design review made
+  #355 the checkpoint that settles the underlying IR question empirically:
+  trace the Paxos program (#101) through all seven pipeline stages and
+  record every representation and trust boundary. Full trace:
+  =docs/paxos-pipeline-trace.md=.
+  Options considered: (a) adopt the #67 DAG — name and separate the
+  elaboration layers as distinct IRs; (b) keep the single core =Term= plus
+  auxiliary tables as the one backend representation; (c) introduce a new
+  IR only at the backend boundary (Term → backend IR → Nim AST).
+  Decision: (b), with a recorded reversal condition. The trace shows every
+  backend consumer — the kernel auditor, erasure, the Phase 1 emitter, the
+  Phase 2 repr tier — consumes the *same* artifact (the zonked core =Term=)
+  plus one auxiliary table (=Globals=: name↔refId, eliminator metadata,
+  iota-rule registry) and the block's =runtimeType= codec mapping. No stage
+  needs a different term form than its predecessor produced: erasure is
+  =Term → Term=, codegen is =Term → Nim AST=. The #67 tangle is an
+  elaborator-implementation concern invisible to all consumers; naming the
+  layers would change no consumer's input and enable no new check. The
+  stage-boundary structure the backend actually needs already exists as
+  separate *data*, not as a term IR.
+  Reversal condition (falsifiable): if a future stage needs a term form the
+  core =Term= cannot carry, introduce it as a *local* internal IR at that
+  stage boundary — DAG-style, as #67 suggests — without re-layering
+  elaboration. Concrete triggers: (1) the gated #330 Vec/=seq= work, if
+  indexed match compilation needs an explicit case tree with motive
+  witnesses rather than direct =wRed=-table emission; (2) #331, if
+  DPS/linearity needs a CPS or ANF normal form =Term= cannot express.
+  Consequences: #67 stays open as the recorded design discussion but is
+  not scheduled; the #330 Vec/=seq= gate is lifted (the gate was the
+  checkpoint, and the checkpoint's IR answer is "no new IR needed"). The
+  backend-input hardening the trace *does* call for is #358's program
+  (fragment total, per-block compilation, live =syn= removal) — a contract
+  tightening on the existing =compileBlockProcs= inputs, not a new IR.
+  Follow-up #363 filed from the trace: codegen bakes refIds as integer
+  literals on deterministic-elaboration assumption; resolve or validate by
+  name at macro time. The trace also answers #355's other questions: the
+  production pipeline is =parse_surf → elab → kernel_check → usage_check →
+  erasure → codegen= (sheds/LSP as side tooling on hole state); nothing in
+  it touches =src/experimental/=, so relational/staged machinery stays
+  experimental under the 2026-10-21 burden-of-proof rule; the TCB inventory
+  is a section of the trace document.
+  Status: DECIDED (#355 deliverable; #67 verdict recorded).
+
