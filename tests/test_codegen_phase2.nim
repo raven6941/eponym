@@ -1,9 +1,10 @@
 ## Differential tests + benchmark for the Phase 2 representation backend
-## (Issue #330, v1 Int fragment).
+## (Issue #330: v1 Int fragment, v2 Nat/Bool-as-int with match-compiled
+## eliminators).
 ##
 ## A `differentialBlockRepr` macro elaborates a surface program at compile
-## time with an `Int -> int` runtime mapping and emits both the Phase-1
-## Value procs and the Phase-2 repr procs (`eponymCompiledRepr_<name>`).
+## time with `Int`/`Nat`/`Bool -> int` runtime mappings and emits both the
+## Phase-1 Value procs and the Phase-2 repr procs (`eponymCompiledRepr_<name>`).
 ## The test body checks each repr proc against the interpreter
 ## (`callValueFuncDir`) and against its Phase-1 compiled twin, then
 ## benchmarks interpreter vs Phase-1 vs Phase-2 on the same workload (per
@@ -22,21 +23,24 @@ proc expect(ok: bool, message: string) =
   echo "ok: ", message
 
 macro differentialBlockRepr(src: static string, srcFile: static string): untyped =
-  ## Elaborate `src` at compile time with an `Int -> int` runtimeType
-  ## mapping and emit Phase-1 + Phase-2 procs via the real compiler.
-  ## Also emits `reprCompiledNames()` (which defs got a repr proc) and
-  ## `testPostulateBindings()` (neutral bindings for the differential
-  ## harness, as in the Phase-1 suite).
+  ## Elaborate `src` at compile time with `Int`/`Nat`/`Bool -> int`
+  ## runtimeType mappings and emit Phase-1 + Phase-2 procs via the real
+  ## compiler. Also emits `reprCompiledNames()` (which defs got a repr
+  ## proc) and `testPostulateBindings()` (neutral bindings for the
+  ## differential harness, as in the Phase-1 suite).
   let checked = elabCheckDirStateAll(src, "")
   var userLines = initTable[string, int]()
   for d in checked.defs:
     userLines[d.name] = 1
-  let intMapping = HostRuntimeType(eponymName: "Int", nimType: ident"int",
-    isRuntimeVector: false, isRuntimeList: false, isRuntimeOption: false,
-    isRuntimeVariant: false, isRuntimeCodec: false,
-    isGenericTypeWitnessable: true, encoder: nil, decoder: nil)
+  proc intMappingFor(eponymName: string): HostRuntimeType =
+    HostRuntimeType(eponymName: eponymName, nimType: ident"int",
+      isRuntimeVector: false, isRuntimeList: false, isRuntimeOption: false,
+      isRuntimeVariant: false, isRuntimeCodec: false,
+      isGenericTypeWitnessable: true, encoder: nil, decoder: nil)
+  let mappings = @[intMappingFor("Int"), intMappingFor("Nat"),
+                   intMappingFor("Bool")]
   let cgBlock = compileBlockProcs(checked.defs, checked.globals, "", src,
-    srcFile, userLines, @[intMapping])
+    srcFile, userLines, mappings)
   result = newStmtList()
   for p in cgBlock.procs:
     result.add(p)
@@ -88,6 +92,31 @@ proc subThenMul (x : Int) (y : Int) : Int = mulInt (subInt x y) (subInt y x)
 postulate tick : Int -> Int
 proc tickTwice (x : Int) : Int = addInt (tick x) (tick x)
 proc higher (f : Int -> Int) (x : Int) : Int = f x
+
+data Nat : Type 0 where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Bool : Type 0 where
+| true : Bool
+| false : Bool
+proc natZero : Nat = zero
+proc natSeven : Nat = 7
+proc natAdd (m : Nat) (n : Nat) : Nat =
+  natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
+proc natMul (m : Nat) (n : Nat) : Nat =
+  natElim (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). natAdd m ih) n
+proc natDouble (n : Nat) : Nat =
+  natElim (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). suc (suc ih)) n
+proc isZero (n : Nat) : Bool =
+  natElim (lam (u : Nat). Bool) true (lam (p : Nat). lam (ih : Bool). false) n
+proc notb (b : Bool) : Bool =
+  boolElim (lam (u : Bool). Bool) false true b
+proc andb (a : Bool) (b : Bool) : Bool =
+  boolElim (lam (u : Bool). Bool) b false a
+proc stepFn (p : Nat) (ih : Nat) : Nat = suc ih
+proc stepFn2 (p : Nat) (ih : Nat) : Nat = natAdd p (suc ih)
+proc addViaFn (m : Nat) (n : Nat) : Nat =
+  natElim (lam (u : Nat). Nat) n stepFn2 m
 """
 
 differentialBlockRepr(prog, currentSourcePath())
@@ -138,11 +167,96 @@ for x in [0, 1, 5, 21]:
 for (x, y) in [(10, 3), (3, 10), (0, 0)]:
   checkRepr2("subThenMul", @[x, y], (x - y) * (y - x))
 
+# --- v2: Nat/Bool as int, with match-compiled eliminators ---
+# The interpreter's natElim/boolElim only fire on constructor-headed
+# scrutinees (a wNatLit scrutinee stays stuck), so Nat arguments are built
+# as suc-chains via natToValue and Bool arguments via boolToValue; results
+# are decoded with valueToNat/valueToBool.
+let natGlobals = getGlobals(prog)
+
+proc checkReprNat(name: string, args: seq[int], expected: int) =
+  ## Compare the repr proc against the literal expectation, the
+  ## interpreter, and the Phase-1 compiled proc (Nat results decoded).
+  let got = case name
+    of "natZero": eponymCompiledRepr_natZero()
+    of "natSeven": eponymCompiledRepr_natSeven()
+    of "natAdd": eponymCompiledRepr_natAdd(args[0], args[1])
+    of "natMul": eponymCompiledRepr_natMul(args[0], args[1])
+    of "natDouble": eponymCompiledRepr_natDouble(args[0])
+    of "stepFn2": eponymCompiledRepr_stepFn2(args[0], args[1])
+    else: raise newException(ValueError, "unknown repr def " & name)
+  expect(got == expected,
+    name & " repr computes " & $expected & " on " & $args)
+  let argVals = args.mapIt(natToValue(it, natGlobals))
+  let bnd = testPostulateBindings()
+  let want = callValueFuncDir("", prog, name, argVals, bnd)
+  expect(valueToNat(want, natGlobals) == expected,
+    name & " interpreter agrees")
+  let got1 = case name
+    of "natZero": eponymCompiled_natZero(@[], bnd)
+    of "natSeven": eponymCompiled_natSeven(@[], bnd)
+    of "natAdd": eponymCompiled_natAdd(argVals, bnd)
+    of "natMul": eponymCompiled_natMul(argVals, bnd)
+    of "natDouble": eponymCompiled_natDouble(argVals, bnd)
+    of "stepFn2": eponymCompiled_stepFn2(argVals, bnd)
+    else: raise newException(ValueError, "unknown phase-1 def " & name)
+  expect(valueToNat(got1, natGlobals) == expected,
+    name & " phase-1 agrees")
+
+proc checkReprBool(name: string, args: seq[int], expected: int) =
+  ## Bool-typed defs: args/expectations as ints (1 = true, 0 = false).
+  ## `isZero` takes a Nat argument; the rest take Bool arguments.
+  let got = case name
+    of "notb": eponymCompiledRepr_notb(args[0])
+    of "andb": eponymCompiledRepr_andb(args[0], args[1])
+    of "isZero": eponymCompiledRepr_isZero(args[0])
+    else: raise newException(ValueError, "unknown repr def " & name)
+  expect(got == expected,
+    name & " repr computes " & $expected & " on " & $args)
+  let argVals =
+    if name == "isZero": @[natToValue(args[0], natGlobals)]
+    else: args.mapIt(boolToValue(it != 0, natGlobals))
+  let bnd = testPostulateBindings()
+  let want = callValueFuncDir("", prog, name, argVals, bnd)
+  expect(valueToBool(want, natGlobals) == (expected != 0),
+    name & " interpreter agrees")
+  let got1 = case name
+    of "notb": eponymCompiled_notb(argVals, bnd)
+    of "andb": eponymCompiled_andb(argVals, bnd)
+    of "isZero": eponymCompiled_isZero(argVals, bnd)
+    else: raise newException(ValueError, "unknown phase-1 def " & name)
+  expect(valueToBool(got1, natGlobals) == (expected != 0),
+    name & " phase-1 agrees")
+
+checkReprNat("natZero", @[], 0)
+checkReprNat("natSeven", @[], 7)
+for (x, y) in [(3, 4), (0, 5), (10, 0)]:
+  checkReprNat("natAdd", @[x, y], x + y)
+for (x, y) in [(3, 4), (0, 7), (5, 5)]:
+  checkReprNat("natMul", @[x, y], x * y)
+for x in [0, 1, 21]:
+  checkReprNat("natDouble", @[x], 2 * x)
+for (x, y) in [(3, 4), (0, 0)]:
+  checkReprNat("stepFn2", @[x, y], x + y + 1)
+for x in [1, 0]:
+  checkReprBool("notb", @[x], 1 - x)
+for (x, y) in [(1, 1), (1, 0), (0, 1), (0, 0)]:
+  checkReprBool("andb", @[x, y], x * y)
+for x in [0, 1, 42]:
+  checkReprBool("isZero", @[x], if x == 0: 1 else: 0)
+for name in ["natZero", "natSeven", "natAdd", "natMul", "natDouble",
+    "isZero", "notb", "andb", "stepFn2"]:
+  expect(name in reprCompiledNames(), name & " has a repr proc")
+expect("stepFn" notin reprCompiledNames(),
+  "unused (q0) binder has no repr proc")
+
 # --- fragment boundaries: these get Phase-1 procs but no repr procs ---
 expect("tickTwice" notin reprCompiledNames(),
   "postulate-calling def has no repr proc")
 expect("higher" notin reprCompiledNames(),
   "higher-order def has no repr proc")
+expect("addViaFn" notin reprCompiledNames(),
+  "non-lambda natElim step case has no repr proc")
 for name in ["fortyTwo", "add", "mulAdd", "nestedLet", "double", "quad",
     "betaRed", "subThenMul"]:
   expect(name in reprCompiledNames(), name & " has a repr proc")
@@ -157,6 +271,17 @@ block:
   let want = callValueFuncDir("", prog, "tickTwice", @[vInt(10)], bnd)
   expect(got.whnfKind == wInt and got.whnfIntVal == 22, "tickTwice via phase-1")
   expect(got.whnfIntVal == want.whnfIntVal, "tickTwice phase-1 agrees")
+
+# addViaFn (non-lambda step case) falls back to Phase-1 but still computes.
+# Note: addViaFn is *not* addition — addViaFn m n recurses on m with
+# stepFn2 p ih = natAdd p (suc ih), so addViaFn 3 4 = 10.
+block:
+  let bnd = testPostulateBindings()
+  let args = @[natToValue(3, natGlobals), natToValue(4, natGlobals)]
+  let got = eponymCompiled_addViaFn(args, bnd)
+  let want = callValueFuncDir("", prog, "addViaFn", args, bnd)
+  expect(valueToNat(got, natGlobals) == 10, "addViaFn via phase-1")
+  expect(valueToNat(want, natGlobals) == 10, "addViaFn interpreter agrees")
 
 # --- benchmark: interpreter vs Phase-1 compiled vs Phase-2 repr ---
 # Per #19's framing, the comparison that matters is Phase 2 against
@@ -192,9 +317,53 @@ block:
     (tInterp / tPhase2).formatFloat(ffDecimal, 1), "x; phase-2 vs phase-1 ",
     (tPhase1 / tPhase2).formatFloat(ffDecimal, 1), "x"
 
+# --- benchmark: natElim fold (natDouble) ---
+# The suc-chain argument is built once: natElim only fires on
+# constructor-headed scrutinees, on all three sides. Result decoding
+# (valueToNat walks the chain) is included in every side's time.
+# n is small (100): the interpreter and the Phase-1 eliminator proc both
+# evaluate Nat folds recursively, so deep folds hit the debug build's
+# call-depth limit (a known runtime limitation, cf. test_nat_to_int).
+block:
+  const iters = 1000
+  const n = 100
+  let bnd = testPostulateBindings()
+  let argV = natToValue(n, natGlobals)
+  var t0 = cpuTime()
+  var accI = 0
+  for i in 0 ..< iters:
+    let v = callValueFuncDir("", prog, "natDouble", @[argV], bnd)
+    accI += valueToNat(v, natGlobals)
+  let tInterp = cpuTime() - t0
+  t0 = cpuTime()
+  var acc1 = 0
+  for i in 0 ..< iters:
+    let v = eponymCompiled_natDouble(@[argV], bnd)
+    acc1 += valueToNat(v, natGlobals)
+  let tPhase1 = cpuTime() - t0
+  t0 = cpuTime()
+  var acc2 = 0
+  for i in 0 ..< iters:
+    acc2 += eponymCompiledRepr_natDouble(n)
+  let tPhase2 = cpuTime() - t0
+  expect(accI == acc1 and acc1 == acc2, "natDouble accumulators agree")
+  echo "bench natDouble x", iters, " (n=", n, "): interpreter ",
+    tInterp.formatFloat(ffDecimal, 3), "s | phase-1 ",
+    tPhase1.formatFloat(ffDecimal, 3), "s | phase-2 ",
+    tPhase2.formatFloat(ffDecimal, 3), "s"
+  echo "bench natDouble speedup vs interpreter: phase-1 ",
+    (tInterp / tPhase1).formatFloat(ffDecimal, 1), "x, phase-2 ",
+    (tInterp / tPhase2).formatFloat(ffDecimal, 1), "x; phase-2 vs phase-1 ",
+    (tPhase1 / tPhase2).formatFloat(ffDecimal, 1), "x"
+
 echo "all Phase 2 codegen differential checks passed"
 
 # --- end-to-end: typed wrappers reroute through the repr procs ---
+# (Int fragment only: eponymBlock's runtimeType validation only accepts
+# plain mappings for postulated types and nullary-constructor variants,
+# so data-declared Nat/Bool with runtimeType(..., int) is rejected there
+# — see the daily log 2026-10-21. The Nat/Bool repr tier is covered by
+# differentialBlockRepr above, which drives compileBlockProcs directly.)
 eponymBlock:
   postulate(Int, Univ)
   runtimeType(Int, int)

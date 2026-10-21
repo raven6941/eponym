@@ -13,12 +13,15 @@
 ## only the wrapper body's evaluation call is rerouted.
 ##
 ## Issue #330 adds a representation-specialized tier on top: definitions
-## whose signatures map to plain host representations (v1: Eponym types
-## mapped to Nim `int` via `runtimeType`) get an additional
-## `eponymCompiledRepr_<name>(p1: int, ...): int` proc whose body is direct
-## host code — primitive Int ops become Nim arithmetic, calls become direct
-## calls. The typed wrapper prefers the repr proc when the boundary is the
-## identity (all-int formals and result), skipping the Value conversions.
+## whose signatures map to plain host representations (the int fragment:
+## Eponym types mapped to Nim `int` via `runtimeType` — `Int`, `Nat`, `Bool`)
+## get an additional `eponymCompiledRepr_<name>(p1: int, ...): int` proc
+## whose body is direct host code — primitive Int ops become Nim arithmetic,
+## Nat/Bool constructors become int literals and arithmetic, `natElim`
+## becomes an iterative fold and `boolElim` a conditional, calls become
+## direct calls. The typed wrapper prefers the repr proc when the boundary
+## is the identity (all-int formals and result), skipping the Value
+## conversions.
 ##
 ## Supported fragment (anything else -> interpreter fallback):
 ## - all term forms except `tMeta` (rejected already by erasure)
@@ -76,6 +79,11 @@ type
       cases*: Table[int, CgElimCase]  # ctor refId -> case
     of cgkDefn:
       compiledProc*: string  # "" = not compiled in this block
+    of cgkCtor:
+      famRefId*: int  # Issue #330: the data family's refId when the
+                      # constructor's result type is atomic; -1 otherwise.
+                      # Lets the repr tier recognize int-mapped families'
+                      # canonical constructors.
     else: discard
 
   CodegenCtx* = object
@@ -113,6 +121,14 @@ proc countPiBinders(ty: Term): int =
     inc result
     t = t.scope.bdy
 
+proc familyRefIdOf(ctorTy: Term): int =
+  ## The data family's refId from a constructor's type: walk the Pi
+  ## telescope to the result type; its refId when atomic, else -1.
+  var t = ctorTy
+  while t != nil and t.kind == tPi:
+    t = t.scope.bdy
+  if t != nil and t.kind == tR: t.refId else: -1
+
 proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
                      runtimeTypes: seq[HostRuntimeType] = @[]): CodegenCtx =
   ## Resolve every global reference to its codegen treatment. `runtimeTypes`
@@ -149,7 +165,10 @@ proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
       result.refs[refId] = CgRef(name: name, kind: cgkElim,
         nargs: rule.nargs, nParams: rule.nParams, cases: cases)
     elif e.isDataConstructor:
-      result.refs[refId] = CgRef(name: name, kind: cgkCtor)
+      var fam = -1
+      if name in globals and globals[name].ty != nil:
+        fam = familyRefIdOf(globals[name].ty)
+      result.refs[refId] = CgRef(name: name, kind: cgkCtor, famRefId: fam)
     elif e.tm.refIsDefn:
       result.refs[refId] = CgRef(name: name, kind: cgkDefn, compiledProc: "")
     else:
@@ -520,8 +539,11 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
 # fragment keep the Phase 1 Value backend.
 #
 # v1 closed fragment: Eponym types mapped to Nim `int` via plain
-# `runtimeType` (covers `Int` and its `tPrim` arithmetic). Later increments:
-# Nat-as-int with match-compiled eliminators, Vec/List/Option as `seq`.
+# `runtimeType` (covers `Int` and its `tPrim` arithmetic).
+# v2 adds `Nat` and `Bool` as `int`: `tNatLit` literals, the canonical
+# constructors (`zero`/`suc`, `true`/`false`) as int literals/arithmetic,
+# and match-compiled eliminators (`natElim` as an iterative fold,
+# `boolElim` as a conditional). Later increments: Vec/List/Option as `seq`.
 # ---------------------------------------------------------------------------
 
 proc cgReprName*(defName: string): string =
@@ -532,6 +554,15 @@ type
   ReprKind* = enum
     repInt  # Eponym type mapped to Nim `int` via plain runtimeType
 
+proc isPlainIntMapping*(m: HostRuntimeType): bool =
+  ## True when the mapping is a plain `runtimeType ... -> int` (not a
+  ## vector/list/option/variant/codec mapping): the host representation
+  ## is exactly Nim `int` with the identity boundary conversion.
+  not m.isRuntimeVector and not m.isRuntimeList and
+    not m.isRuntimeOption and not m.isRuntimeVariant and
+    not m.isRuntimeCodec and
+    m.nimType.kind in {nnkIdent, nnkSym} and $m.nimType == "int"
+
 proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
   ## The representation kind for a type/family refId. Raises CgUnsupported
   ## when the mapping is absent or outside the v1 fragment.
@@ -539,13 +570,10 @@ proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
     raise newException(CgUnsupported,
       "type has no runtime representation mapping")
   let m = ctx.reps[refId]
-  if not m.isRuntimeVector and not m.isRuntimeList and
-      not m.isRuntimeOption and not m.isRuntimeVariant and
-      not m.isRuntimeCodec and
-      m.nimType.kind in {nnkIdent, nnkSym} and $m.nimType == "int":
+  if m.isPlainIntMapping:
     return repInt
   raise newException(CgUnsupported,
-    "runtime representation outside the v1 fragment")
+    "runtime representation outside the int fragment")
 
 proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprKind] =
   ## Representation kinds of the def's Pi-binder domains (outermost first),
@@ -565,6 +593,10 @@ proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprKind] =
   result.add(ctx.reprKindOf(t.refId))
 
 proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode  # forward
+proc cgReprElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                env: seq[NimNode]): NimNode  # forward
+proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                env: seq[NimNode]): NimNode  # forward
 
 proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   ## Compile a `tApp` chain in the repr tier. Primitive Int ops become direct
@@ -593,6 +625,12 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       of opSub: "-"
       of opMul: "*"
     return newTree(nnkInfix, ident(op), a, b)
+  if head.kind == tR and head.refId in ctx.refs:
+    let rh = ctx.refs[head.refId]
+    if rh.kind == cgkElim:
+      return cgReprElim(ctx, rh, appArgs, env)
+    if rh.kind == cgkCtor:
+      return cgReprCtor(ctx, rh, appArgs, env)
   # Beta-reduce immediately-applied lambdas. A lambda in this fragment has
   # an int type only when fully applied (a bare lambda has a Pi type, which
   # the signature check rejects, and the only int-typed positions are
@@ -640,6 +678,175 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   blk.add(preStmts)
   blk
 
+proc checkElimCases(r: CgRef, elimName: string, arities: openArray[int]) =
+  ## Structural sanity for a match-compiled eliminator: the registered
+  ## cases must be exactly the expected constructor arities (as a
+  ## multiset), with no parameters (indexed families are a later
+  ## increment). Guards the name-based dispatch below against a
+  ## same-named eliminator with a different shape.
+  if r.nParams != 0:
+    raise newException(CgUnsupported, "eliminator '" & elimName &
+      "' has parameters (indexed family)")
+  if r.cases.len != arities.len:
+    raise newException(CgUnsupported, "eliminator '" & elimName &
+      "' has " & $r.cases.len & " cases, expected " & $arities.len)
+  var remaining = @arities
+  for _, cs in r.cases.pairs:
+    let i = remaining.find(cs.ctorArity)
+    if i < 0:
+      raise newException(CgUnsupported, "eliminator '" & elimName &
+        "' has unexpected case arity " & $cs.ctorArity)
+    remaining.del(i)
+
+proc cgReprNatElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                   env: seq[NimNode]): NimNode =
+  ## `natElim motive z s n` over the int representation, compiled to an
+  ## iterative fold:
+  ##   var acc = z; var k = 0; while k < n: acc = s(k, acc); inc k; acc
+  ## The step case must be a syntactic double lambda `lam (p). lam (ih).
+  ## body` with an int-representable predecessor domain; the body is
+  ## compiled with `p` and `ih` bound to the loop variables. This computes
+  ## exactly the interpreter's recursion `s k (fold k)` (each iteration
+  ## extends the fold by one successor step) but in constant stack space.
+  ## The motive (appArgs[0]) is a type family: it is not evaluated. The
+  ## interpreter evaluates it only to a closure value that reduction never
+  ## uses, so skipping it is observably identical for every terminating
+  ## motive; a diverging type-level motive is the author's problem, as
+  ## with all type-level computation in Eponym. Evaluation order of the
+  ## remaining args (z, then the scrutinee) matches the interpreter's
+  ## strict left-to-right application.
+  checkElimCases(r, "natElim", [0, 1])
+  let sArg = appArgs[2]
+  let nArg = appArgs[3]
+  if sArg.kind != tLam or sArg.scope.bdy.kind != tLam:
+    raise newException(CgUnsupported,
+      "natElim step case is not a syntactic double lambda")
+  let ihLam = sArg.scope.bdy
+  if sArg.dom.isNil or sArg.dom.kind != tR or
+      ctx.reprKindOf(sArg.dom.refId) != repInt:
+    raise newException(CgUnsupported,
+      "natElim predecessor domain outside the int fragment")
+  # The ih domain is `motive p` (not atomic); ih is bound at int and the
+  # body must denote an int computation — cgRepr enforces that, so the
+  # induction below stays within the fragment by construction.
+  let zCode = cgRepr(ctx, appArgs[1], env)
+  let nCode = cgRepr(ctx, nArg, env)
+  let zSym = genSym(nskLet, "cgNatZ")
+  let nSym = genSym(nskLet, "cgNatN")
+  let accSym = genSym(nskVar, "cgNatAcc")
+  let kSym = genSym(nskVar, "cgNatK")
+  # de Bruijn: V0 = ih (innermost), V1 = p; env is innermost-first.
+  let bodyCode = cgRepr(ctx, ihLam.scope.bdy, @[accSym, kSym] & env)
+  var stmts = newStmtList()
+  stmts.add(newLetStmt(zSym, zCode))
+  stmts.add(newLetStmt(nSym, nCode))
+  stmts.add(newVarStmt(accSym, zSym))
+  stmts.add(newVarStmt(kSym, newLit(0)))
+  var loopBody = newStmtList()
+  # `acc = body`: the right-hand side is evaluated before the assignment,
+  # so the step body may mention the accumulator (as `ih`) soundly.
+  loopBody.add(newTree(nnkAsgn, accSym, bodyCode))
+  loopBody.add(newCall(ident"inc", kSym))
+  stmts.add(newTree(nnkWhileStmt,
+    newTree(nnkInfix, ident"<", kSym, nSym), loopBody))
+  stmts.add(accSym)
+  var blk = newNimNode(nnkBlockStmt)
+  blk.add(newEmptyNode())
+  blk.add(stmts)
+  blk
+
+proc cgReprBoolElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                    env: seq[NimNode]): NimNode =
+  ## `boolElim motive t f b` over the int representation (`true` = 1,
+  ## `false` = 0): `if b != 0: t else: f`. Both branches are evaluated
+  ## before the test, matching the interpreter's strict argument
+  ## evaluation (a diverging branch diverges the eliminator on both
+  ## sides). The motive is skipped, as for `natElim`.
+  checkElimCases(r, "boolElim", [0, 0])
+  let tCode = cgRepr(ctx, appArgs[1], env)
+  let fCode = cgRepr(ctx, appArgs[2], env)
+  let bCode = cgRepr(ctx, appArgs[3], env)
+  let tSym = genSym(nskLet, "cgBoolT")
+  let fSym = genSym(nskLet, "cgBoolF")
+  let bSym = genSym(nskLet, "cgBoolB")
+  var stmts = newStmtList()
+  stmts.add(newLetStmt(tSym, tCode))
+  stmts.add(newLetStmt(fSym, fCode))
+  stmts.add(newLetStmt(bSym, bCode))
+  stmts.add(newTree(nnkIfStmt,
+    newTree(nnkElifBranch,
+      newTree(nnkInfix, ident"!=", bSym, newLit(0)), tSym),
+    newTree(nnkElse, fSym)))
+  var blk = newNimNode(nnkBlockStmt)
+  blk.add(newEmptyNode())
+  blk.add(stmts)
+  blk
+
+proc cgReprElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                env: seq[NimNode]): NimNode =
+  ## Match-compile an eliminator application in the repr tier. Only the
+  ## canonical eliminators of int-mapped families are supported; anything
+  ## else (including partial application) falls back to the Phase 1
+  ## backend via CgUnsupported.
+  if appArgs.len != r.nargs:
+    raise newException(CgUnsupported, "eliminator '" & r.name &
+      "' applied to " & $appArgs.len & " args, needs " & $r.nargs &
+      " (partial application falls back)")
+  case r.name
+  of "natElim": cgReprNatElim(ctx, r, appArgs, env)
+  of "boolElim": cgReprBoolElim(ctx, r, appArgs, env)
+  else:
+    raise newException(CgUnsupported, "eliminator '" & r.name &
+      "' outside the representation fragment")
+
+proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                env: seq[NimNode]): NimNode =
+  ## Compile a constructor application in the repr tier. Only the
+  ## canonical constructors of int-mapped `Nat`/`Bool` get literal
+  ## treatment (`zero` = 0, `suc x` = x + 1, `true` = 1, `false` = 0);
+  ## constructors of any other family, or non-canonical arities, are
+  ## outside the fragment.
+  if r.famRefId notin ctx.reps or
+      not ctx.reps[r.famRefId].isPlainIntMapping:
+    raise newException(CgUnsupported, "constructor '" & r.name &
+      "' of a type without an int representation")
+  let famName = ctx.reps[r.famRefId].eponymName
+  case famName
+  of "Nat":
+    case r.name
+    of "zero":
+      if appArgs.len != 0:
+        raise newException(CgUnsupported,
+          "zero applied to " & $appArgs.len & " args")
+      newLit(0)
+    of "suc":
+      if appArgs.len != 1:
+        raise newException(CgUnsupported,
+          "suc applied to " & $appArgs.len & " args, needs 1")
+      let a = cgRepr(ctx, appArgs[0], env)
+      newTree(nnkInfix, ident"+", a, newLit(1))
+    else:
+      raise newException(CgUnsupported, "Nat constructor '" & r.name &
+        "' outside the representation fragment")
+  of "Bool":
+    case r.name
+    of "true":
+      if appArgs.len != 0:
+        raise newException(CgUnsupported,
+          "true applied to " & $appArgs.len & " args")
+      newLit(1)
+    of "false":
+      if appArgs.len != 0:
+        raise newException(CgUnsupported,
+          "false applied to " & $appArgs.len & " args")
+      newLit(0)
+    else:
+      raise newException(CgUnsupported, "Bool constructor '" & r.name &
+        "' outside the representation fragment")
+  else:
+    raise newException(CgUnsupported, "constructor '" & r.name &
+      "' of '" & famName & "' outside the representation fragment")
+
 proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   if t.isNil:
     raise newException(CgUnsupported, "nil term")
@@ -661,11 +868,20 @@ proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       else:
         # Applied at the enclosing tApp, which emits the direct call.
         ident(rp.name)
+    elif r.kind == cgkCtor:
+      # Bare constructor reference: only nullary int-mapped constructors
+      # (`zero`, `true`, `false`) denote ints; anything else (e.g. a bare
+      # `suc`, a function value) is outside the fragment.
+      cgReprCtor(ctx, r, @[], env)
     else:
       raise newException(CgUnsupported,
         "reference '" & r.name & "' outside the representation fragment")
   of tInt:
     newLit(t.intVal)
+  of tNatLit:
+    # Issue #93: Nat literals are definitionally suc^n(zero); on the int
+    # representation they are just int literals.
+    newLit(t.natLitVal)
   of tLet:
     let vsym = genSym(nskLet, "cgReprLet")
     let vcode = cgRepr(ctx, t.letVal, env)
