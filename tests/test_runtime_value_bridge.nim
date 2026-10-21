@@ -48,6 +48,15 @@ type ChannelHandle = object
   id: int
   label: string
 
+type MutableCell = object
+  value: int
+
+proc hostMutateCell(cell: var MutableCell, delta: int): MutableCell =
+  cell.value += delta
+  cell
+
+proc hostReadCell(cell: MutableCell): int = cell.value
+
 type NimIntCallback = proc(value: int): int {.closure.}
 type RawRuntimeCallback = proc(value: Value): Value {.closure.}
 
@@ -697,6 +706,20 @@ eponymBlock:
 
 eponymBlock:
   postulate(Int, Univ)
+  postulate(Cell, Univ)
+  runtimeType(Cell, MutableCell)
+  postulate(mutateCell, Cell -> Int -> Cell)
+  bindPostulateMutable(mutateCell, hostMutateCell, Cell, Int, Cell)
+  postulate(readCell, Cell -> Int)
+  bindPostulateMutable(readCell, hostReadCell, Cell, Int)
+  proc generatedMutableCellUpdate(cell: Cell, delta: Int): Cell =
+    mutateCell(cell, delta)
+  proc generatedValueCellRead(cell: Cell): Int = readCell(cell)
+  runtimeValue(generatedMutableCellUpdate)
+  runtimeValue(generatedValueCellRead)
+
+eponymBlock:
+  postulate(Int, Univ)
   proc generatedApplyNimCallback(
       callback: proc(value: Int): Int {.closure.}, value: Int): Int =
     callback(value)
@@ -1152,6 +1175,22 @@ when isMainModule:
   doAssert boundRuntime.value.whnfIntVal == 42
   let baseDir = currentSourcePath().parentDir.parentDir
   var r = initRng(424242'u64)
+
+  let mutablePostulateCases = forAll(
+    "var and value Nim postulate adapters use checked value codecs",
+    r, 200,
+    proc(r: var Rng): tuple[initial, delta: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[initial, delta: int]): bool =
+      let original = MutableCell(value: input.initial)
+      let updated = generatedMutableCellUpdate(original, input.delta)
+      original.value == input.initial and
+        updated.value == input.initial + input.delta and
+        generatedValueCellRead(updated) == input.initial + input.delta,
+    proc(input: tuple[initial, delta: int]): seq[tuple[initial, delta: int]] =
+      input.shrinkPair(shrinkInt, shrinkInt))
+  if not mutablePostulateCases:
+    quit(1)
 
   let variantSrc = readFile(baseDir / "tests/fixtures/runtime_variant.ep")
   let variantGlobals = getGlobalsDir(baseDir, variantSrc)
