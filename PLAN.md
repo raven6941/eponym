@@ -520,6 +520,11 @@ implementations.
   unrelated Eponym types. A 200-case property covers dependent vector payloads
   and negative checks reject wrong field types and lengths. Raw variant
   extraction still exposes fields as `Value`s for caller-directed decoding.
+- [x] Make raw runtime type validation check constructor arguments recursively
+  against their checked Pi domains. This prevents untyped primitive Int/Nat
+  terms from being accepted inside an otherwise well-formed constructor
+  application. A 200-case property rejects malformed raw constructor values,
+  including when they enter a dynamic generic wrapper.
 - [x] Validate dynamic generic `Value` arguments against applied type
   expressions built from named types, earlier generic indices, applications,
   integer literals, and direct Bool-controlled conditional Nat indices. A
