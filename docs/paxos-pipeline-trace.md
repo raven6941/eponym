@@ -158,11 +158,12 @@ erasure is exactly what #331 (linearity/DPS) depends on**:
   only where dependent runtime types need it. Generated higher-order Value
   code also uses nullary q0 closures; the interpreter remains unary.
 
-Erasure is a runtime transformation, not a proof rule: the checked q0
-binder cannot inspect its argument in computational position, so the unit
-witness is observationally equivalent there. It is **optimization-only**
-(see the TCB inventory), with one load-bearing obligation: it must not
-change observable behavior of checked code.
+Erasure is a runtime transformation, not a proof rule. For pure q0 arguments,
+the checked binder cannot inspect the argument in computational position, so
+the unit witness preserves the result. Postulate effects are not tracked,
+however: generated code skips effects in q0 arguments while direct evaluation
+of unerased source may run them. This caveat is **optimization-only** (see the
+TCB inventory); any effect that must run belongs in a qω or q1 position.
 
 ## Stage 5 — The interop boundary
 

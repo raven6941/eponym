@@ -60,8 +60,12 @@ Conversion respects binder quantities (#66), and erased parameters are
 enforced at application sites. The initial core erasure pass (#328) replaces
 the computation passed to a checked q0 application with an inert unit value;
 it preserves the interpreter's current binder/application shape. This is a
-runtime transformation, not an additional proof rule. Generated typed and
-compiled wrappers omit q0 values from computational argument vectors; a
+runtime transformation, not an additional proof rule. It preserves results
+for pure q0 arguments, but postulate effects are not tracked: generated code
+skips effects in q0 arguments even though direct evaluation of the unerased
+source can run them. Put any operation that must execute in a qω or q1
+position. Generated typed and compiled wrappers omit q0 values from
+computational argument vectors; a
 separate witness vector may still carry them to validate dependent runtime
 types. Generated higher-order `Value` code uses nullary closures for q0
 lambdas, while the interpreter retains unary closures and inert unit
