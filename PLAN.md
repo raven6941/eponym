@@ -561,6 +561,13 @@ implementations.
    A 200-case property covers typed and raw-result wrappers for
    `Sig(length: Nat, Vec[Int, length])` and rejects an encoded vector with a
    mismatched length.
+- [x] Generate typed dynamic overloads for generic value binders whose domain
+   is an Eponym Pi type with recursively supported Nim codecs. Reconstruct a
+   Nim `{.closure.}` signature from the Pi binders, preserve the raw
+   `RuntimeValue` overload, and validate the host callback against its Pi
+   witness. 200-case unary and multi-argument properties cover typed and
+   raw-result wrappers; compile-time checks reject mismatched callback
+   signatures.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
@@ -572,8 +579,8 @@ implementations.
    without a supported runtime type witness; dependent Sigma binders whose
    fields lack codecs or whose encoded values cannot be checked against a
    generated witness; broader automatic codec coverage, additional dependent
-   forms, and other
-   higher-order signatures. Unsupported
+   forms, and higher-order signatures whose Pi domains or codomains lack
+   runtime codecs. Unsupported
    cases must continue to fail with a precise compile-time diagnostic.
    Imported signatures outside the current Pi reconstruction grammar still
    need a raw `Value` wrapper; callback-local dependent signatures outside

@@ -117,6 +117,11 @@ not its Nim body or effects. Async values such as `Future[T]` may pass through
 as opaque mapped values, but Eponym has no `await`, cancellation, or async
 effect system. Nim exceptions from adapters propagate to the caller.
 
+Dynamic generic binders whose Eponym type is a Pi function also get a typed
+Nim `{.closure.}` overload when all callback argument and result types have
+codecs. Nim checks the proc signature, and the bridge checks the value against
+the checked Pi type; the raw `RuntimeValue` overload remains available.
+
 ## Static checks do not manage Nim resources or optimize code
 
 Linear and erased quantities apply to variables inside checked Eponym terms.

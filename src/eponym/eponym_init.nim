@@ -148,6 +148,7 @@ type
       qty: Quantity  # Issue #66: binder quantity, compared by conversion
     of wLam:
       lscope: ScoVal
+      hostFunctionType*: Value  # checked boundary type for Nim callbacks
     of wPair:
       fstV, sndV: Value
     of wConst:
@@ -833,6 +834,18 @@ proc vHostFunc*(fn: proc(x: Value): Value {.closure.}): Value =
   let scope = Scope(adv: "host", bdy: vv(0))
   Value(syn: tmLam(tStar(), scope.adv, scope.bdy),
         whnf: Whnf(kind: wLam, lscope: ScoVal(syn: scope, fn: fn)))
+
+proc vHostFuncWithType*(fn: proc(x: Value): Value {.closure.},
+                        eponymType: Value): Value =
+  ## Runtime-only host callback with the Eponym Pi type checked by its
+  ## generated adapter. The annotation is used for runtime boundary
+  ## validation; the callback body remains trusted Nim code.
+  if eponymType.isNil:
+    raise newException(ValueError, "host callback needs an Eponym type witness")
+  let scope = Scope(adv: "host", bdy: vv(0))
+  Value(syn: tmLam(tStar(), scope.adv, scope.bdy),
+        whnf: Whnf(kind: wLam, lscope: ScoVal(syn: scope, fn: fn),
+                   hostFunctionType: eponymType))
 
 proc runtimeReferenceId*(value: Value): int =
   ## Return the neutral reference head if runtime evaluation is stuck on one.
