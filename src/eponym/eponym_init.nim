@@ -751,18 +751,26 @@ proc projWhnf(p: Value, wantFst: bool): Whnf =
          spine: p.whnf.spine & @[ElimV(kind: if wantFst: eFst else: eSnd)])
   else: raise newException(ValueError, "stuck projection")
 
-proc vFst(p: Value): Value =
+proc fstValue*(p: Value): Value =
+  ## First projection (Issue #329: codegen support for `tFst`).
   Value(syn: tmFst(p.syn), whnf: projWhnf(p, true))
-proc vSnd(p: Value): Value =
+proc sndValue*(p: Value): Value =
+  ## Second projection (Issue #329: codegen support for `tSnd`).
   Value(syn: tmSnd(p.syn), whnf: projWhnf(p, false))
 
-proc vAbsurdV(z: Value): Value =
+proc absurdValue*(z: Value): Value =
+  ## Absurd elimination (Issue #329: codegen support for `tAbsurd`).
   case z.whnf.kind
   of wRef:
     Value(syn: tmAbsurd(z.syn),
           whnf: Whnf(kind: wRef, refId: z.whnf.refId,
                      spine: z.whnf.spine & @[ElimV(kind: eAbsurd)]))
   else: raise newException(ValueError, "absurd of canonical empty (impossible)")
+
+proc vFst(p: Value): Value = fstValue(p)
+proc vSnd(p: Value): Value = sndValue(p)
+
+proc vAbsurdV(z: Value): Value = absurdValue(z)
 
 proc evalWhnf(t: Term, env: seq[Value],
               bindings: RuntimeBindings): Whnf =
@@ -868,6 +876,63 @@ proc pairValue*(first, second: Value): Value =
 proc unitValue*(): Value =
   ## Construct the terminal unit value used by generated record codecs.
   Value(syn: tTt(), whnf: Whnf(kind: wConst, c: cVoid))
+
+## --- codegen support (Issue #329: naive Value-level backend) -----------------
+## The compiled procs emitted by `codegen.nim` construct `Value`s directly
+## instead of walking `Term`s through the `evalWhnf` dispatch loop. These
+## helpers mirror the corresponding `evalWhnf` cases; every one keeps a
+## non-nil `syn` so runtime paths that fall back to syntax (e.g.
+## `inferRuntimeValueType`) keep working.
+
+proc constValue*(c: Const): Value =
+  ## A constant value (`tC` case).
+  Value(syn: tmC(c), whnf: Whnf(kind: wConst, c: c))
+
+proc natSingValue*(n: int): Value =
+  ## A singleton-Nat-type value (`tNatSing` case).
+  Value(syn: tmNatSing(n), whnf: Whnf(kind: wNatSing, natSingVal: n))
+
+proc postulateValue*(refId: int, bindings: RuntimeBindings): Value =
+  ## What `evalWhnf` produces for a postulate or data-constructor `tR`
+  ## node: the bound implementation's head when one is installed, otherwise
+  ## a neutral reference with an empty spine. The synthetic `syn` keeps the
+  ## real refId so global lookups by refId keep working.
+  let r = Term(kind: tR, refId: refId, refTyp: nil, refIsDefn: false,
+               refVal: nil)
+  if refId in bindings:
+    Value(syn: r, whnf: bindings[refId].whnf)
+  else:
+    Value(syn: r, whnf: Whnf(kind: wRef, refId: refId, spine: newSeq[ElimV]()))
+
+proc stuckElim*(elimId: int, args: seq[Value]): Value =
+  ## A stuck eliminator application: the neutral `wRef` the interpreter's
+  ## `fireRed` produces when a fully-applied eliminator's scrutinee is not
+  ## constructor-headed (or projects on the scrutinee).
+  var spine = newSeq[ElimV](args.len)
+  for i, a in args:
+    spine[i] = ElimV(kind: eApp, arg: a)
+  let r = Term(kind: tR, refId: elimId, refTyp: nil, refIsDefn: true,
+               refVal: nil)
+  Value(syn: r, whnf: Whnf(kind: wRef, refId: elimId, spine: spine))
+
+proc piValue*(dom: Value, adv: string, qty: Quantity,
+              body: proc(x: Value): Value {.closure.}): Value =
+  ## A Pi type as a value (`tPi` case): the scope body is already compiled
+  ## to a host closure, like `evalScope` but without the term walk.
+  let syn = if dom.syn.isNil: nil else: tmPi(dom.syn, adv, nil, qty = qty)
+  Value(syn: syn,
+        whnf: Whnf(kind: wPi, dom: dom,
+                   tscope: ScoVal(syn: Scope(adv: adv, bdy: nil), fn: body),
+                   qty: qty))
+
+proc siValue*(dom: Value, adv: string, qty: Quantity,
+              body: proc(x: Value): Value {.closure.}): Value =
+  ## A Sigma type as a value (`tSi` case).
+  let syn = if dom.syn.isNil: nil else: tmSi(dom.syn, adv, nil, qty = qty)
+  Value(syn: syn,
+        whnf: Whnf(kind: wSi, dom: dom,
+                   tscope: ScoVal(syn: Scope(adv: adv, bdy: nil), fn: body),
+                   qty: qty))
 
 type HostBox[T] = ref object of RootObj
   value: T

@@ -10,6 +10,7 @@ import std/tables
 import elab
 import eponym_embed  # runtime wrapper helpers and adapter-shape validation
 import eponym_init # opaque Value conversion helpers
+import codegen     # issue #329: naive Value-level backend
 import preterm
 import parse_surf
 import os  # issue #131: parentDir of the eponymBlock call site
@@ -3101,7 +3102,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          mappings: seq[HostRuntimeType],
                          checkedGlobals: Globals,
                          records: seq[HostRecord],
-                         allowDependentSigma = false): NimNode =
+                         allowDependentSigma = false,
+                         compiled: Table[string, string]): NimNode =
   ## Emit concrete Nim wrappers for first-order types, including generic type
   ## variables represented as opaque host boxes.
   if decl.kind != nnkProcDef:
@@ -3176,8 +3178,20 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   var callArgs = @[dirLit, srcLit, nameLit, valuesSeq]
   if not bindingSym.isNil: callArgs.add(bindingSym)
   let runtimeValue = genSym(nskLet, "runtimeValue")
-  wrapperBody.add(newLetStmt(runtimeValue,
-    newCall(bindSym"callValueFuncDir", callArgs)))
+  let compiledName = compiled.getOrDefault(defName, "")
+  if compiledName.len > 0:
+    # Issue #329: the definition has a native Value proc; evaluate through
+    # it instead of re-walking the definition's term per call. The typed
+    # calling convention (codecs, bindings) is unchanged.
+    let bindingsArg = if bindingSym.isNil:
+      newCall(bindSym"initRuntimeBindings")
+    else:
+      bindingSym
+    wrapperBody.add(newLetStmt(runtimeValue,
+      newCall(ident(compiledName), valuesSeq, bindingsArg)))
+  else:
+    wrapperBody.add(newLetStmt(runtimeValue,
+      newCall(bindSym"callValueFuncDir", callArgs)))
   let resultExpr = runtimeValueConversionExpr(params[0], resultType,
     runtimeValue, false, codecMappings, records, globalsSym,
     allowDependentSigma, wrapperIndexOverrides)
@@ -3520,7 +3534,8 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
                               mappings: seq[HostRuntimeType],
                               checkedGlobals: Globals,
                               records: seq[HostRecord],
-                              allowDependentSigma = false): NimNode =
+                              allowDependentSigma = false,
+                              compiled: Table[string, string]): NimNode =
   ## Emit a typed host-argument overload that returns the checked result as a
   ## Value. This keeps the definition's full Eponym signature while exposing
   ## only codecs explicitly described by runtimeType and the primitive codecs.
@@ -3591,8 +3606,14 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
     for binding in bindings:
       body.add(bindingCall(binding, bindingSym, globalsSym, codecMappings,
                            records, checkedGlobals))
-  let runtimeCall = newCall(bindSym"callDefValueWithBindings",
-    newCall(bindSym"findDef", defsSym, nameLit), valuesSeq, bindingSym)
+  let runtimeCall =
+    if compiled.getOrDefault(defName, "").len > 0:
+      # Issue #329: evaluate through the definition's native Value proc.
+      newCall(ident(compiled.getOrDefault(defName, "")), valuesSeq,
+        bindingSym)
+    else:
+      newCall(bindSym"callDefValueWithBindings",
+        newCall(bindSym"findDef", defsSym, nameLit), valuesSeq, bindingSym)
   body.add(newLetStmt(runtimeValueSym,
     runtimeCall))
   body.add(newTree(nnkTupleConstr, runtimeValueSym, globalsSym))
@@ -3892,8 +3913,31 @@ macro eponymBlock*(body: untyped): untyped =
     except ValueError as e:
       error("eponymBlock binding error: " & e.msg, body)
 
+  # Issue #329: compile eligible definitions to native Value procs, emitted
+  # before the wrappers (callees before callers). Wrappers for compiled
+  # definitions reroute their evaluation call to the compiled proc.
+  # cgUserLines maps each def to its line in the calling file, so runtime
+  # errors in compiled code report user source positions.
+  let cgLocFile = lineInfoObj(body).filename
+  var cgUserLines = initTable[string, int]()
+  for d in defs:
+    var userLine = lineInfoObj(body).line
+    for st in body:
+      if st.kind == nnkProcDef and $st[0] == d.name:
+        userLine = lineInfoObj(st).line
+        break
+      if st.kind == nnkCall and st.len > 1 and st[0].kind == nnkIdent and
+          $st[0] == "def" and st[1].kind == nnkIdent and $st[1] == d.name:
+        userLine = lineInfoObj(st).line
+        break
+    cgUserLines[d.name] = userLine
+  let cgBlock = compileBlockProcs(defs, checkedGlobals, baseDir, src,
+    cgLocFile, cgUserLines)
+
   result = newStmtList()
   let dirLit = newLit(baseDir)
+  for p in cgBlock.procs:
+    result.add(p)
   for d in defs:
     let srcLit = newLit(src)
     let nameLit = newLit(d.name)
@@ -4048,12 +4092,13 @@ macro eponymBlock*(body: untyped): untyped =
           let allowDependentSigma = d.name in trustedRuntimePairs
           let typedValueWrapper = typedRuntimeValueWrapper(procDecl,
             baseDir, src, d.name, bindings, runtimeTypes, checkedGlobals,
-            records, allowDependentSigma)
+            records, allowDependentSigma, cgBlock.compiled)
           if not typedValueWrapper.isNil:
             result.add(typedValueWrapper)
       let allowDependentSigma = d.name in trustedRuntimePairs
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
-        bindings, runtimeTypes, checkedGlobals, records, allowDependentSigma)
+        bindings, runtimeTypes, checkedGlobals, records, allowDependentSigma,
+        cgBlock.compiled)
       if not typedWrapper.isNil:
         result.add(typedWrapper)
       else:
@@ -4118,12 +4163,12 @@ macro eponymBlock*(body: untyped): untyped =
         if not importedDecl.isNil:
           let typedImportedWrapper = typedRuntimeWrapper(importedDecl,
             baseDir, src, requested, bindings, runtimeTypes, checkedGlobals,
-            records)
+            records, false, initTable[string, string]())
           if not typedImportedWrapper.isNil:
             result.add(typedImportedWrapper)
           let typedImportedValueWrapper = typedRuntimeValueWrapper(
             importedDecl, baseDir, src, requested, bindings, runtimeTypes,
-            checkedGlobals, records)
+            checkedGlobals, records, false, initTable[string, string]())
           if not typedImportedValueWrapper.isNil:
             result.add(typedImportedValueWrapper)
         result.add(rawRuntimeValueWrapper(baseDir, src, requested,
