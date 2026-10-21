@@ -54,6 +54,17 @@ shape. Runtime evaluation of type and index expressions supports a subset;
 arbitrary type-level Nim computation and every possible Eponym index
 expression are not supported by generated codecs.
 
+Host code can also build Pi and Sigma runtime type witnesses, including
+dependent ones, with `runtimeArrowType`, `runtimeDependentArrowType`,
+`runtimeSigmaType`, and `runtimeDependentSigmaType`. The low-level
+`validateRuntimeValueAgainstType` checks pair values against Sigma fields.
+These helpers support host-side checks; they do not generate wrappers for
+arbitrary dependent signatures.
+
+`RuntimeVariant` provides a checked structural view of data-family values:
+it checks constructor identity, family membership, arity, and spine shape,
+but leaves payloads as raw `Value`s for the caller to decode.
+
 ## Postulates connect checked code to host code
 
 A `postulate` gives Eponym a typed operation to reason about. `bindPostulate`

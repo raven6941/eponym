@@ -341,6 +341,11 @@ proc freshId*(s: var Supply): int =
   inc s.n
   s.n
 
+proc reserveFreshIdsThrough*(s: var Supply, id: int) =
+  ## Keep inference-local parameters distinct from references already assigned
+  ## while checking a module.
+  if id > s.n: s.n = id
+
 proc newDefRef*(s: var Supply, typ, val: Value): Term =
   ## A closed definition reference for the elaborator's global scope:
   ## earlier elaborated defs become R nodes later defs can mention.
@@ -902,9 +907,43 @@ proc vPrim*(op: PrimOp, ty: Term): Value =
 proc vPi(dom: Value, sc: ScoVal, qty = qOmega): Value =
   Value(syn: tmPi(dom.syn, sc.syn.adv, sc.syn.bdy, false, false, qty),
         whnf: Whnf(kind: wPi, dom: dom, tscope: sc, qty: qty))
+proc runtimeArrowType*(domain, codomain: Value): Value =
+  ## Construct a non-dependent function type for host-side runtime checks.
+  if domain.isNil or codomain.isNil:
+    raise newException(ValueError, "cannot build an incomplete Pi type")
+  let scope = Scope(adv: "_", bdy: codomain.syn)
+  vPi(domain, ScoVal(syn: scope,
+    fn: proc(_: Value): Value = codomain))
+proc runtimeDependentPiType*(domain, argument, codomain: Value,
+    codomainFn: proc(argument: Value): Value {.closure.}): Value =
+  ## Build a dependent Pi runtime type after probing its codomain with a fresh
+  ## parameter. The supplied function remains the authoritative scope.
+  if domain.isNil or argument.isNil or codomain.isNil or
+      codomainFn.isNil or argument.whnfKind != wRef:
+    raise newException(ValueError, "cannot build an incomplete dependent Pi")
+  let scope = abstractR(argument.whnfRefId, "_", codomain.syn)
+  vPi(domain, ScoVal(syn: scope, fn: codomainFn))
 proc vSi(dom: Value, sc: ScoVal, qty = qOmega): Value =
   Value(syn: tmSi(dom.syn, sc.syn.adv, sc.syn.bdy, false, false, qty),
         whnf: Whnf(kind: wSi, dom: dom, tscope: sc, qty: qty))
+proc runtimeSigmaType*(domain, codomain: Value): Value =
+  ## Construct a non-dependent Sigma type for runtime validation of host
+  ## values represented by pairs.
+  if domain.isNil or codomain.isNil:
+    raise newException(ValueError, "cannot build an incomplete Sigma type")
+  let scope = Scope(adv: "_", bdy: codomain.syn)
+  vSi(domain, ScoVal(syn: scope,
+    fn: proc(_: Value): Value = codomain))
+proc runtimeDependentSigmaType*(domain, argument, codomain: Value,
+    codomainFn: proc(argument: Value): Value {.closure.}): Value =
+  ## Build a dependent Sigma runtime type after probing its codomain with a
+  ## fresh parameter. The supplied function remains the authoritative scope.
+  if domain.isNil or argument.isNil or codomain.isNil or
+      codomainFn.isNil or argument.whnfKind != wRef:
+    raise newException(ValueError,
+      "cannot build an incomplete dependent Sigma")
+  let scope = abstractR(argument.whnfRefId, "_", codomain.syn)
+  vSi(domain, ScoVal(syn: scope, fn: codomainFn))
 
 proc vAbsurd(): Value =
   eval(tmPi(tStar(), "T", vv(0)), @[])   # Pi(T:? ). T, as in the paper
