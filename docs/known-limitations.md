@@ -85,6 +85,13 @@ shape. Runtime evaluation of type and index expressions supports a subset;
 arbitrary type-level Nim computation and every possible Eponym index
 expression are not supported by generated codecs.
 
+The core QTT erasure pass (`eraseQ0Arguments`) replaces a checked quantity-0
+application's argument with an inert unit witness, so the argument computation
+is not evaluated. The current interpreter and host-call ABI still retain the
+parameter/application slot; full ABI erasure and generated native code are
+future codegen work. Erasure requires a closed, zonked term whose function
+types can be recovered by the core inferencer.
+
 A `runtimeCodec` mapping for an unindexed Eponym type can also supply the
 runtime type witness and encoder/decoder for a generic type parameter. This
 lets generic wrappers and callbacks process mapped values inside containers,

@@ -903,6 +903,22 @@ implementations.
 - [ ] Revisit the first-use estimate after installation and editor setup are
   streamlined.
 
+#### H. Generate runtime code from checked definitions
+
+- [x] **Phase 0 (#328):** add a core pass that removes computation supplied
+  to quantity-0 applications. The current Value evaluator retains the
+  function binder/application slot, so erased arguments become inert unit
+  witnesses; a 200-case `falsify` property compares results and confirms that
+  effectful q0 arguments are skipped. Full local CI passed for this phase.
+- [ ] **Phase 1 (#329):** compile supported erased definitions to Nim AST that
+  constructs and operates on runtime `Value`s directly. Keep per-definition
+  fallback to the interpreter for unsupported forms, preserve the existing
+  typed-wrapper calling convention, and retain source locations for generated
+  runtime errors.
+- [ ] Remove q0 binders and application slots from generated runtime calling
+  conventions once the backend can represent erased functions without the
+  interpreter's current ABI shape.
+
 ### Cross-stage validation and project claims
 
 - [x] Add positive property coverage for each supported codec/callback shape,
@@ -927,8 +943,11 @@ implementations.
 The runtime ABI (B) precedes callable postulates (C); postulates precede the
 end-to-end protocol (D). The optimizer connection (E) can proceed after the
 runtime evaluator is general enough to interpret or compile a reified
-objective. QTT code generation (F) is independent of protocol bindings but
-depends on a runtime representation with explicit ownership/liveness.
+objective. QTT-guided destination passing (F) is independent of protocol
+bindings but depends on a runtime representation with explicit
+ownership/liveness. Runtime code generation (H) proceeds from the erasure
+boundary through a Value-level backend; it is separate from the optional
+destination-passing optimization in (F).
 Surface syntax and package onboarding (G) can proceed alongside A–C, but must
 not imply that unsupported host Nim is executable inside `eponymBlock`.
 
