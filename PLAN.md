@@ -230,6 +230,12 @@ quantity-aware conversion, application-site enforcement, quantity
 polymorphism, subject-side checking-mode tracking);
 **#80 — constructor disjointness** (`noConfusion`/`noCycle` as named
 disequality facts in unification; impossible clauses rejected early).
+**#240 — arithmetic evidence profiling** (`tools/profile_nat_arith.nim`):
+three runs of `lib/nat_lemmas.ep` took 3.87 s each. The evidence-path spans
+attribute 1.945 s (99.8% of those spans, about 50.2% of total elaboration) to
+the bare-core evidence check, 3.2 ms to `normEvArith`, and 0.2 ms to evidence
+construction. The next target is the cost of rechecking synthesized evidence;
+proof-normalization caching is not supported by these measurements.
 
 Then: #33 positivity, #34 error snapshots, #37 records, #38 elaboration
 adequacy tests, #28 session-type library demo (the motivating case),
