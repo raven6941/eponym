@@ -50,6 +50,12 @@ Use `runtimeValue(name)` for the lower-level `Value` interface, or register a
 representations but trust relationships the selected field codecs cannot
 check. `RuntimeVariant` checks constructor identity, family membership, arity,
 and spine shape, but leaves payloads as raw `Value`s for the caller to decode.
+Imported `.ep` definitions can get typed wrappers when their Pi signature is
+within the reconstruction subset, including `Univ` type parameters and
+non-dependent callback arrows with closure types and codec-supported leaves.
+Other imported signatures, including dependent callbacks, expose the raw
+`Value` interface; it checks argument count, while callers supply well-typed
+values. Imported checked bodies can call postulates bound in the same block.
 
 Generic type parameters can pass values through as opaque host values when
 their wrapper shape is supported; Eponym does not inspect the host
