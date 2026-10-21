@@ -996,6 +996,11 @@ implementations.
 - [ ] Remove q0 binders and application slots from generated runtime calling
   conventions once the backend can represent erased functions without the
   interpreter's current ABI shape.
+- [x] Validate every baked global refId/name pair against the macro-time
+  `Globals` table before code emission, including constructor IDs used by
+  eliminator dispatch. A regression simulates a changed refId and checks that
+  codegen rejects the mismatch instead of emitting a potentially miscompiled
+  proc (issue #363).
 
 ### Cross-stage validation and project claims
 
