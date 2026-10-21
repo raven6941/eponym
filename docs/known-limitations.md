@@ -171,12 +171,14 @@ transform them. The runtime bridge tests identity pass-through for a future
 argument and the existing future-result case.
 Nim closures can be passed into checked roles as opaque callback arguments,
 where a bound Nim postulate may invoke them; Eponym does not inspect their
-bodies. Nim proc types with supported leaf codecs also bridge to and from
-Eponym function values. A multi-argument Nim proc is represented as a curried
-chain of Eponym functions; arguments and results use the same recursive codecs
-as generated wrappers. A 200-case property covers multi-argument callbacks
-with primitive and mapped opaque values in both directions. Returned callback
-types must use Nim's `{.closure.}` calling convention. Callback effects and
+bodies. Noncapturing Nim proc values using the default `nimcall` convention can
+also enter Eponym as callback inputs. Nim proc types with supported leaf codecs
+bridge to and from Eponym function values. A multi-argument Nim proc is
+represented as a curried chain of Eponym functions; arguments and results use
+the same recursive codecs as generated wrappers. Properties cover multi-argument
+callbacks with primitive and mapped opaque values in both directions. An
+Eponym function returned to Nim must use Nim's `{.closure.}` calling convention,
+because the checked function can capture runtime state. Callback effects and
 behavior remain trusted host semantics.
 Dynamic generic wrappers accept unmapped named Eponym value binders as `Value`
 parameters and validate that each value inhabits its declared named type

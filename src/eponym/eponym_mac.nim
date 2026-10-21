@@ -1680,7 +1680,6 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
                     allowDependentSigma = false): NimNode =
   let procParts = runtimeProcParts(n)
   if not procParts.resultType.isNil:
-    if not hasClosurePragma(n): return nil
     if hasRawValuePragma(n): return rawValueCallbackType(n)
     let resultType = runtimeNimType(procParts.resultType, mappings, records,
                                     allowDependentSigma)
@@ -1925,6 +1924,10 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
       let applied = newCall(bindSym"callRuntimeValue", value,
         newTree(nnkPrefix, ident"@", callbackArgs))
       return newProc(params = formal, body = newStmtList(applied))
+    # A checked Eponym function may close over runtime state, so converting it
+    # back to a Nim function pointer would discard that environment. Nim's
+    # closure calling convention is required for this direction.
+    if not toValue and not hasClosurePragma(nimType): return nil
     let resultNimType = runtimeNimType(procParts.resultType, mappings, records,
                                        allowDependentSigma)
     if resultNimType.isNil: return nil
@@ -2611,6 +2614,10 @@ proc unsupportedRuntimeWrapper(decl: NimNode, defName: string,
     reason = "generic Eponym procedures do not yet have runtime wrappers"
   elif params.len == 0 or params[0].kind == nnkEmpty:
     reason = "Eponym procedure has no explicit runtime result type"
+  elif not runtimeProcParts(params[0]).resultType.isNil and
+      not hasClosurePragma(params[0]):
+    reason = "Nim function results require {.closure.} because checked " &
+      "Eponym functions may capture runtime state"
   elif runtimeNimType(params[0], mappings, records,
                       allowDependentSigma).isNil:
     reason = "no runtime codec for Eponym result type '" & repr(params[0]) & "'"
