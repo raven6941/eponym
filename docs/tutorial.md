@@ -167,6 +167,11 @@ eponymBlock:
 doAssert keepList[int](@[2, 3, 5]) == @[2, 3, 5]
 ```
 
+For a direct empty-list result, write `nil` in the Nim-shaped block. Its
+declared `List[...]` or `Vec[...]` type supplies the element type to the
+constructor, and the runtime codec maps it to an empty Nim sequence. A typed
+local works too: `let empty: List[Int] = nil`.
+
 Now break it. Change the body to `addInt(x, y)` and recompile:
 
 ```

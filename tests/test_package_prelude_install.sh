@@ -51,8 +51,10 @@ eponymBlock:
   postulate(Int, Univ)
   runtimeList(List)
   proc keepList(values: List[Int]): List[Int] = values
+  proc emptyList(): List[Int] = (nil)
 
 doAssert keepList(@[2, 3, 5]) == @[2, 3, 5]
+doAssert emptyList() == @[]
 EOF
 cat > "$eponymTmpDir/project/options.nim" <<'EOF'
 import std/options

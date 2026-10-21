@@ -511,6 +511,12 @@ eponymBlock:
   runtimeList(List)
   proc generatedIntListIdentity(values: List[Int]): List[Int] = values
   runtimeValue(generatedIntListIdentity)
+  proc generatedEmptyIntList(): List[Int] = (nil)
+  runtimeValue(generatedEmptyIntList)
+  proc generatedBoundEmptyIntList(): List[Int] =
+    let values: List[Int] = nil
+    values
+  runtimeValue(generatedBoundEmptyIntList)
   proc generatedListIdentity[A: Univ](values: List[A]): List[A] = values
   runtimeValue(generatedListIdentity)
   proc generatedGenericListValueBinder[values: List[Int]](
@@ -3089,6 +3095,8 @@ proc callbackRole : Callback -> Sample -> Sample =
       let rawRuntime = generatedListIdentityRuntimeValue[int]([runtime.value])
       let opaqueRuntime = generatedListIdentityRuntimeValue[ChannelHandle](handles)
       generatedIntListIdentity(values) == values and
+      generatedEmptyIntList() == @[] and
+      generatedBoundEmptyIntList() == @[] and
       generatedListIdentity[int](values) == values and
         generatedListIdentity[ChannelHandle](handles) == handles and
         decodeRuntimeIntList(intRuntime.value, intRuntime.globals) == values and

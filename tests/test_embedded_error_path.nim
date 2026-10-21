@@ -105,6 +105,8 @@ for (path, expected) in [
      "opaque quaternary adapter requires postulate 'hostFourPostulate'"),
     ("tests/fixtures/embedded_err_unsupported_operator.nim",
      "unsupported pure operator 'div'"),
+    ("tests/fixtures/embedded_err_unsupported_string_literal.nim",
+     "unsupported Nim expression shape 'nnkStrLit'"),
     ("tests/fixtures/embedded_err_if_missing_else.nim",
      "requires a condition and an else branch"),
     ("tests/fixtures/embedded_err_named_argument_unknown.nim",
