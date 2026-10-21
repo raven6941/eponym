@@ -193,6 +193,7 @@ Completed experiments (see `plan.org`, `decisions.org`):
 | 9 | Erasure (QTT-lite) | Superseded by #66: QTT is the core now, not a post-pass |
 | 10 | Conversion cache | Exact memoization; e-graph future |
 | 240/241 | Profile and cache arithmetic evidence | The Nat lemma corpus has two evidence checks and no repeated goal shapes or proof pairs; normalization/build costs are negligible beside bare-core checking, so a cache has no measured hit opportunity |
+| 242 | Price arithmetic evidence validation | Evidence path averages 3.81 s vs 63 ms for trusted-only `natConv` (~60x); the faster path incurs two trusted discharges and skips bare-core evidence validation |
 | 11 | Primitive Int | Machine int via wRed; literal overloading |
 | 12 | Propositional equality | `Eq`/`refl`/`J`; `plusReducesZ` proven |
 | 19/35 | Staged typeo benchmark + residual compiler | 1.90x vs compiled unstaged; 9/9 correct |
