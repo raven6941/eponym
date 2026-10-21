@@ -49,7 +49,7 @@
 ##   erasure is a closed-term pass and templates are open. This matches the
 ##   interpreter, which fires `fireRed` on the unerased template.
 
-import std/[tables, macros]
+import std/[tables, macros, algorithm]
 import eponym_init   # Term, Value, WhnfKind, smart constructors
 import preterm       # Quantity
 import elab          # ElabDef, Globals, GEntry
@@ -404,11 +404,95 @@ proc elimDispatchCase(procNode: NimNode): NimNode =
     result = elimDispatchCase(child)
     if not result.isNil: return
 
+proc countCallsNamed(node: NimNode, name: string): int =
+  if node.isNil: return 0
+  if node.kind in {nnkCall, nnkCommand, nnkCallStrLit} and node.len > 0 and
+      $node[0] == name:
+    inc result
+  for child in node:
+    result += countCallsNamed(child, name)
+
+proc containsIntLiteral(node: NimNode, value: int): bool =
+  if node.isNil: return false
+  if node.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
+      nnkInt64Lit} and node.intVal == value:
+    return true
+  for child in node:
+    if containsIntLiteral(child, value): return true
+
+proc collectSpineKindIndices(node: NimNode, indices: var seq[int]) =
+  if node.isNil: return
+  if node.kind == nnkCall and node.len == 3 and $node[0] == "whnfSpineKind" and
+      node[2].kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
+                       nnkInt64Lit}:
+    indices.add(node[2].intVal.int)
+  for child in node:
+    collectSpineKindIndices(child, indices)
+
+proc containsCallNamed(node: NimNode, name: string): bool =
+  countCallsNamed(node, name) > 0
+
+proc countIdentsNamed(node: NimNode, name: string): int =
+  if node.isNil: return 0
+  if node.kind in {nnkIdent, nnkSym} and $node == name:
+    inc result
+  for child in node:
+    result += countIdentsNamed(child, name)
+
+proc validateCtorBranchShape(r: CgRef, ctorId: int,
+                             cs: CgElimCase, branch: NimNode) =
+  ## The generated branch must reject malformed constructor spines as stuck
+  ## eliminators instead of indexing past the runtime spine.
+  var guard: NimNode
+  proc findGuard(node: NimNode) =
+    if node.isNil or not guard.isNil: return
+    if node.kind == nnkIfExpr and node.len >= 2 and
+        node[0].kind == nnkElifBranch:
+      let cond = node[0][0]
+      if containsCallNamed(cond, "whnfSpineLen"):
+        guard = node
+        return
+    for child in node:
+      findGuard(child)
+  findGuard(branch)
+  if guard.isNil:
+    raise newException(CgUnsupported,
+      "compiled eliminator '" & r.name & "' constructor refId " & $ctorId &
+      " has no spine-shape guard")
+  let cond = guard[0][0]
+  let total = r.nParams + cs.ctorArity
+  if not containsIntLiteral(cond, total):
+    raise newException(CgUnsupported,
+      "compiled eliminator '" & r.name & "' constructor refId " & $ctorId &
+      " does not check its expected spine length")
+  var indices: seq[int] = @[]
+  collectSpineKindIndices(cond, indices)
+  indices.sort()
+  if indices.len != cs.ctorArity:
+    raise newException(CgUnsupported,
+      "compiled eliminator '" & r.name & "' constructor refId " & $ctorId &
+      " does not check every constructor argument")
+  for i, actual in indices:
+    if actual != r.nParams + i:
+      raise newException(CgUnsupported,
+        "compiled eliminator '" & r.name & "' constructor refId " & $ctorId &
+        " checks the wrong constructor-spine position")
+  if countIdentsNamed(cond, "eApp") != cs.ctorArity:
+    raise newException(CgUnsupported,
+      "compiled eliminator '" & r.name & "' constructor refId " & $ctorId &
+      " does not require application eliminations for its constructor arguments")
+  if guard.len < 2 or guard[1].kind != nnkElse or
+      not containsCallNamed(guard[1], "stuckElim"):
+    raise newException(CgUnsupported,
+      "compiled eliminator '" & r.name & "' constructor refId " & $ctorId &
+      " does not preserve malformed spines as stuck eliminators")
+
 proc validateElimDispatchCoverage*(r: CgRef, procNode: NimNode) =
   ## Translation validation: the generated constructor-tag dispatch must
   ## have exactly one branch for every kernel-validated reduction rule, plus
-  ## a default branch for unknown constructors. This checks the emitted AST,
-  ## not only the source loop that currently constructs it.
+  ## a default branch for unknown constructors. Every branch must also guard
+  ## the expected spine shape and preserve malformed spines as stuck values.
+  ## This checks the emitted AST, not only the source loop that constructs it.
   if r.kind != cgkElim:
     raise newException(CgUnsupported,
       "dispatch validation requested for non-eliminator '" & r.name & "'")
@@ -416,9 +500,9 @@ proc validateElimDispatchCoverage*(r: CgRef, procNode: NimNode) =
   if dispatch.isNil:
     raise newException(CgUnsupported,
       "compiled eliminator '" & r.name & "' has no constructor dispatch")
-  var expected = initTable[int, bool]()
+  var expected = initTable[int, CgElimCase]()
   for ctorId in r.cases.keys:
-    expected[ctorId] = true
+    expected[ctorId] = r.cases[ctorId]
   var actual = initTable[int, bool]()
   var hasDefault = false
   for i in 1 ..< dispatch.len:
@@ -439,6 +523,7 @@ proc validateElimDispatchCoverage*(r: CgRef, procNode: NimNode) =
         raise newException(CgUnsupported,
           "compiled eliminator '" & r.name & "' dispatches constructor refId " &
           $ctorId & " more than once")
+      validateCtorBranchShape(r, ctorId, expected[ctorId], branch[1])
       actual[ctorId] = true
     of nnkElse:
       if hasDefault:

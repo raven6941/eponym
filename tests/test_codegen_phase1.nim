@@ -149,6 +149,22 @@ proc add3 (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) (suc (suc (suc zero))) (lam (p : Nat). lam (ih : Nat). suc ih) n
 proc isZero (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). p) n
+proc natElimPartial (C : Nat -> Type 0) (z : C zero)
+    (s : Pi (n : Nat). C n -> C (suc n)) : Pi (m : Nat). C m =
+  natElim C z s
+
+data Vec (A : Type 0) : Nat -> Type 0 where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+proc cloneVec {A : Type 0} {n : Nat} (xs : Vec A n) : Vec A n =
+  vecElim A (lam (i : Nat). lam (v : Vec A i). Vec A i)
+    (nil A)
+    (lam (i : Nat). lam (x : A). lam (xs2 : Vec A i).
+      lam (ih : Vec A i). cons A i x ih)
+    n xs
+proc nilIntVec : Vec Int zero = nil Int
+proc oneIntVec (x : Int) : Vec Int (suc zero) =
+  cons Int zero x (nil Int)
 
 postulate BoolD : Type 0
 postulate trueD : BoolD
@@ -198,6 +214,8 @@ macro checkElimTranslation(src: static string): untyped =
     userLines[d.name] = 1
   let generated = compileBlockProcs(checked.defs, checked.globals, "", src,
     currentSourcePath(), userLines)
+  if "natElimPartial" in generated.compiled:
+    error("partially applied natElim unexpectedly compiled instead of falling back")
   let ctx = buildCodegenCtx(checked.globals, "", src)
   let elimId = checked.globals["natElim"].tm.refId
   let elim = ctx.refs[elimId]
@@ -233,8 +251,31 @@ macro checkElimTranslation(src: static string): untyped =
     rejected = "does not cover registered constructor" in e.msg
   if not rejected:
     error("translation validation accepted a missing constructor branch")
+  corrupted = copyNimTree(emitted)
+  let badShapeDispatch = findCtorDispatch(corrupted)
+  let firstBranch = badShapeDispatch[1]
+  var shapeGuard: NimNode
+  proc findIfExpr(node: NimNode) =
+    if node.isNil or not shapeGuard.isNil: return
+    if node.kind == nnkIfExpr:
+      shapeGuard = node
+      return
+    for child in node:
+      findIfExpr(child)
+  findIfExpr(firstBranch)
+  if shapeGuard.isNil or shapeGuard[0].kind != nnkElifBranch:
+    error("generated constructor branch is missing its shape guard")
+  shapeGuard[0][0] = newLit(true)
+  rejected = false
+  try:
+    validateElimDispatchCoverage(elim, corrupted)
+  except CgUnsupported as e:
+    rejected = "does not check its expected spine length" in e.msg or
+      "has no spine-shape guard" in e.msg
+  if not rejected:
+    error("translation validation accepted a branch without a spine-shape guard")
   result = quote do:
-    echo "ok: macro-time translation validation rejects a missing constructor branch"
+    echo "ok: Phase 1 eliminator dispatch validates rule coverage and spine guards"
 
 checkElimTranslation(prog)
 
@@ -252,6 +293,7 @@ proc callByName(name: string, args: seq[Value]): Value =
   of "two": eponymCompiled_two(args, testPostulateBindings())
   of "add3": eponymCompiled_add3(args, testPostulateBindings())
   of "isZero": eponymCompiled_isZero(args, testPostulateBindings())
+  of "cloneVec": eponymCompiled_cloneVec(args, testPostulateBindings())
   of "notFn": eponymCompiled_notFn(args, testPostulateBindings())
   of "twiceTicked": eponymCompiled_twiceTicked(args, testPostulateBindings())
   of "stuckAdd": eponymCompiled_stuckAdd(args, testPostulateBindings())
@@ -331,6 +373,24 @@ block:
     cur = cur.whnfSpineArg(0)
   expect(depth == 5 and cur.whnfKind == wRef and cur.whnfSpineLen == 0,
     "add3 computes 5 as a suc-chain")
+
+# --- dependent Vec motive: every constructor branch agrees with the interpreter ---
+block:
+  let bnd = testPostulateBindings()
+  let globals = getGlobals(prog)
+  let intTy = postulateValue(globals["Int"].tm.refId, bnd)
+  let zero = postulateValue(globals["zero"].tm.refId, bnd)
+  let one = vAppWithBindings(
+    postulateValue(globals["suc"].tm.refId, bnd), zero, bnd)
+  let empty = callValueFuncDir("", prog, "nilIntVec", @[], bnd)
+  let singleton = callValueFuncDir("", prog, "oneIntVec", @[vInt(17)], bnd)
+  for (label, index, vector) in [("empty", zero, empty),
+                                 ("singleton", one, singleton)]:
+    let args = @[intTy, index, vector]
+    let got = eponymCompiled_cloneVec(args, testPostulateBindings())
+    let want = callValueFuncDir("", prog, "cloneVec", args,
+      testPostulateBindings())
+    expect(whnfEq(got, want), "dependent Vec clone agrees on " & label)
 
 # --- Bool eliminator ---
 block:

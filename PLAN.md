@@ -1032,8 +1032,12 @@ implementations.
 - [x] Validate the emitted Phase-1 eliminator case dispatch against the
   constructor IDs in the kernel-validated reduction-rule table. Macro-time
   translation validation rejects missing, duplicate, or unregistered
-  constructor labels and requires a default branch; a regression deletes a
-  generated `natElim` branch and confirms rejection (issue #378).
+  constructor labels and requires a default branch. It also validates each
+  branch's constructor arity/spine-kind guard and malformed-spine fallback.
+  Regressions delete a `natElim` branch and its shape guard; a dependent
+  `Vec` clone differentially covers empty and singleton vectors, while a
+  partially applied `natElim` is verified to remain on interpreter fallback
+  (issue #378).
 
 ### Cross-stage validation and project claims
 

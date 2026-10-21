@@ -3585,12 +3585,14 @@
   unknown constructors. The expected labels come from =CgRef.cases=, copied
   directly from the checked =wRed= table.
 
-  Consequences: generated dispatch coverage is checked at macro time, in
-  addition to differential runtime tests. The check does not independently
-  prove each branch's contractum translation; those remain covered by the
-  existing differential suite and interpreter fallback for unsupported
-  eliminators. Partial applications still use the established interpreter
-  fallback. A corrupted emitted branch table is rejected by regression.
+  Consequences: generated dispatch coverage, constructor spine arity and
+  argument-kind guards, and malformed-spine stuck fallback are checked at
+  macro time, in addition to differential runtime tests. The check does not
+  independently prove each branch's contractum translation; those remain
+  covered by differential evaluation. A dependent Vec clone covers both the
+  empty and recursive constructor cases. A partial =natElim= application is
+  confirmed to stay on the interpreter path. Corrupted constructor labels and
+  a removed spine guard are rejected by regression.
   Status: IMPLEMENTED (#378).
 
 * 2026-10-21 — Float/String/Char remain opaque in the v1 core (#373)
