@@ -294,9 +294,8 @@ proc classifyMatrix(c: Case): seq[string] =
   ## Coverage tags for the matrix generators: nesting depth and
   ## catch-all vs partitioned. Pinned via `cover` so generator drift
   ## can't silently stop exercising nested patterns.
-  ## Note: expandPat partitions by construction, so overlapping /
-  ## redundant rows are not generatable (a deliberate design limit,
-  ## not a coverage gap).
+  ## This positive generator partitions by construction. The negative suite
+  ## separately generates nested overlapping rows and pins overlap coverage.
   result = @[]
   case c.maxPatDepth
   of 0: result.add("flat")

@@ -23,6 +23,9 @@
 ##   duplicate an existing row. The duplicate is subsumed by the earlier
 ##   identical row, so elaboration must fail with an ElabError mentioning
 ##   "overlapping clauses".
+## - P_neg4 (nested overlap): generate a constructor pattern and a distinct,
+##   more specific pattern inside its Nat/ListN payload; elaboration must
+##   report the overlap before later coverage checking.
 ##
 ## Each property asserts the *error fragment*, not the full message, so the
 ## suite survives message rewording as long as the defect category is named.
@@ -50,6 +53,7 @@ const CasesPerProp = 100
 type NegCase = object
   src: string
   frag: string  # expected ElabError message fragment
+  shape: string
 
 proc `$`(c: NegCase): string = c.src
 
@@ -105,6 +109,33 @@ proc genDupCase(r: var Rng): NegCase =
     (if not dup.rhsTrue: "true" else: "false") & "\n"
   NegCase(src: src, frag: "overlapping clauses")
 
+proc genNestedOverlapCase(r: var Rng): NegCase =
+  ## Generate two different patterns where the second is a strict subset of
+  ## the first. Unlike a duplicated row or trailing catch-all, these cases
+  ## exercise overlap inside a constructor argument.
+  let shape = ["nat-suc", "list-head", "list-tail"][r.below(3)]
+  var broad, specific, ty: string
+  case shape
+  of "nat-suc":
+    ty = "Nat"
+    broad = "(suc _)"
+    specific = if r.genBool: "(suc zero)" else: "(suc (suc _))"
+  of "list-head":
+    ty = "ListN"
+    broad = "(lcons _ _)"
+    specific = if r.genBool: "(lcons zero _)" else: "(lcons (suc _) _)"
+  else:
+    ty = "ListN"
+    broad = "(lcons _ _)"
+    specific = if r.genBool: "(lcons _ lnil)" else: "(lcons _ (lcons _ _))"
+  var src = Prelude
+  src &= "def f : " & ty & " -> Bool\n"
+  src &= "| " & broad & " = true\n"
+  src &= "| " & specific & " = false\n"
+  NegCase(src: src, frag: "overlapping clauses", shape: shape)
+
+proc classifyOverlap(c: NegCase): seq[string] = @[c.shape]
+
 # --- property -----------------------------------------------------------------
 
 proc checkNeg(c: NegCase): bool =
@@ -131,6 +162,11 @@ let ok2 = forAll("clause-matrix negative: catch-all is redundant", r,
                  CasesPerProp, genCatchAllCase, checkNeg)
 let ok3 = forAll("clause-matrix negative: duplicated row overlaps", r,
                  CasesPerProp, genDupCase, checkNeg)
-if not (ok1 and ok2 and ok3):
+let ok4 = forAll("clause-matrix negative: nested patterns overlap", r,
+                 CasesPerProp, genNestedOverlapCase, checkNeg,
+                 classify = classifyOverlap,
+                 cover = @[("nat-suc", 10.0), ("list-head", 10.0),
+                           ("list-tail", 10.0)])
+if not (ok1 and ok2 and ok3 and ok4):
   quit(1)
 echo "all clause-matrix negative properties passed"

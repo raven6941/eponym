@@ -993,6 +993,11 @@ implementations.
   a string-literal fixture pins it.
 - [x] Preserve a supported-claims table in the docs: “checked by Eponym”,
   “checked by Nim”, “trusted adapter”, and “not currently connected”.
+- [x] Extend PBT generators to exercise unifier occurs checks through nested
+  terms and meta argument spines, randomly generated non-pattern meta spines,
+  and distinct nested clause patterns that overlap. Coverage thresholds pin
+  each shape; the properties check occurs-check rejection, deferred ambiguity,
+  and overlap diagnostics (#232).
 
 ### Dependencies and sequencing
 

@@ -14,12 +14,14 @@
 ##      (Flex-flex with distinct metas is order-sensitive by design — the
 ##      unifier commits to solving the head's meta — pinned by a targeted
 ##      characterization case, not a universal property.)
-##   P4 occurs check: ?m = t[?m] raises UnifyError; a constructor-headed
-##      t names noCycle (issue #80).
+##   P4 occurs check: randomized ?m = t[?m] cases raise UnifyError, including
+##      application, pair, projection, and another meta's argument spine; a
+##      constructor-headed t names noCycle (issue #80).
 ##   P5 non-pattern spines suspend (pre-unification, issue #56):
 ##      duplicate-var spines, non-var spines, and escaping variables
-##      defer instead of raising; flushDeferred reports leftovers as an
-##      ambiguity error showing the stuck constraint.
+##      plus a meta-containing spine defer instead of raising; randomized
+##      cases and focused regressions verify flushDeferred reports leftovers
+##      as an ambiguity error showing the stuck constraint.
 ##   P6 zonk idempotence: zonk(zonk(t)) == zonk(t), even mid-elaboration.
 ##   P7 eta: lam(x). r x =Type 0= r succeeds for neutral r; lam(x). x =/= r fails.
 ##   P8 noConfusion differential: on ground constructor terms, unify
@@ -82,6 +84,16 @@ proc structEq*(a, b: Term): bool =
 
 type
   MetaOcc* = tuple[id: int, spine: seq[Term]]  # one generated occurrence
+
+  OccursCase = object
+    ms: MetaStore
+    left, right: Term
+    shape: string
+
+  NonPatternCase = object
+    ms: MetaStore
+    left, right: Term
+    shape: string
 
 proc permSpine*(r: var Rng, id, k, e: int): seq[Term] =
   ## A random permutation of the k creation-context vars, shifted by e
@@ -244,8 +256,8 @@ proc propP2(c: SpineCase): bool =
 
 proc classifySpine(c: SpineCase): seq[string] =
   ## Spine-length buckets for the p2 generator (k = genInt(1, 3)).
-  ## Note: permSpine is pattern-by-construction, so non-pattern spines
-  ## are covered deterministically by P5, not here.
+  ## permSpine stays pattern-by-construction for the P2 roundtrip property;
+  ## the separate randomized P5 generator covers invalid spines.
   let (_, _, spine, _) = c
   case spine.len
   of 1: @["spine-1"]
@@ -279,15 +291,30 @@ proc propP3ground(r: var Rng): bool =
 
 # --- P4: occurs check ------------------------------------------------------------
 
-proc propP4(r: var Rng): bool =
+proc `$`(c: OccursCase): string = c.shape
+
+proc genOccursCase(r: var Rng): OccursCase =
+  ## Build a guaranteed cycle through varied term structure. In particular,
+  ## the `meta-spine` case puts the cyclic meta in another meta's argument
+  ## spine, which genFlex deliberately excludes from ordinary random terms.
   var ms = initMetaStore()
-  let m = freshMeta(ms, tmC(cStar), 0, 0, noLoc)
-  # t properly contains m (never bare m: that takes the flex-flex path).
-  let t =
-    if r.genBool: tmApp(m, tmC(cOne))
-    else: tmLam(tmC(cStar), "x", tmApp(m, vv(0)))
+  let cycle = freshMeta(ms, tmC(cStar), 0, 0, noLoc)
+  let nested = freshMeta(ms, tmC(cStar), 1, 0, noLoc)
+  let shapes = ["app-head", "app-argument", "pair-field", "projection",
+                "meta-spine"]
+  let shape = shapes[r.below(shapes.len)]
+  let cyclic = case shape
+    of "app-head": tmApp(cycle, tmC(cOne))
+    of "app-argument": tmApp(tmC(cOne), cycle)
+    of "pair-field": tmPair(tmC(cOne), cycle, "p", cycle)
+    of "projection": tmFst(cycle)
+    else: tmMeta(nested.metaId, @[cycle])
+  OccursCase(ms: ms, left: cycle, right: cyclic, shape: shape)
+
+proc propP4(c: OccursCase): bool =
+  var ms = c.ms
   try:
-    unify(ms, m, t, noLoc)
+    unify(ms, c.left, c.right, noLoc)
     return false
   except UnifyError as e:
     return "occurs check" in e.msg
@@ -345,6 +372,47 @@ proc propP5escape(): bool =
   except UnifyError:
     return false  # must suspend, not raise
   ms.deferred.len == 1 and flushedAsAmbiguity(ms)
+
+proc `$`(c: NonPatternCase): string = c.shape
+
+proc genNonPatternCase(r: var Rng): NonPatternCase =
+  ## Randomly select the invalid spine shape. These cases are constructed
+  ## around fresh metas so their only intended failure is delayed
+  ## higher-order unification, followed by declaration-final ambiguity.
+  var ms = initMetaStore()
+  let shape = ["duplicate-var", "non-var", "escaping-var",
+               "meta-containing-arg"][r.below(4)]
+  case shape
+  of "duplicate-var":
+    let m = freshMeta(ms, tmC(cStar), 2, 0, noLoc)
+    let bad = tmMeta(m.metaId, @[vv(0), vv(0)])
+    NonPatternCase(ms: ms, left: bad, right: tmC(cOne), shape: shape)
+  of "non-var":
+    let m = freshMeta(ms, tmC(cStar), 1, 0, noLoc)
+    let bad = tmMeta(m.metaId, @[tmC(cOne)])
+    NonPatternCase(ms: ms, left: bad, right: tmC(cOne), shape: shape)
+  of "escaping-var":
+    let m = freshMeta(ms, tmC(cStar), 1, 0, noLoc)
+    let escaping = vv(r.genInt(1, 8))
+    NonPatternCase(ms: ms, left: m, right: escaping, shape: shape)
+  else:
+    let m = freshMeta(ms, tmC(cStar), 1, 0, noLoc)
+    let inner = freshMeta(ms, tmC(cStar), 1, 0, noLoc)
+    let bad = tmMeta(m.metaId,
+      @[tmMeta(inner.metaId, @[vv(0)])])
+    NonPatternCase(ms: ms, left: bad, right: tmC(cOne), shape: shape)
+
+proc propP5(c: NonPatternCase): bool =
+  var ms = c.ms
+  try:
+    unify(ms, c.left, c.right, noLoc)
+  except UnifyError:
+    return false  # non-pattern goals suspend rather than fail immediately
+  ms.deferred.len == 1 and flushedAsAmbiguity(ms)
+
+proc classifyOccurs(c: OccursCase): seq[string] = @[c.shape]
+
+proc classifyNonPattern(c: NonPatternCase): seq[string] = @[c.shape]
 
 # --- P7: eta -----------------------------------------------------------------------
 
@@ -500,14 +568,22 @@ when isMainModule:
         forAll("p3g", r, Cases,
                proc(r: var Rng): int = 0,
                proc(x: int): bool = propP3ground(r)))
-  check("P4 occurs check",
-        forAll("p4", r, Cases,
-               proc(r: var Rng): int = 0,
-               proc(x: int): bool = propP4(r)))
+  check("P4 randomized occurs checks across term and meta-spine shapes",
+        forAll("p4", r, Cases, genOccursCase, propP4,
+               classify = classifyOccurs,
+               cover = @[("app-head", 8.0), ("app-argument", 8.0),
+                         ("pair-field", 8.0), ("projection", 8.0),
+                         ("meta-spine", 8.0)]))
   check("P4 occurs check names noCycle under constructors", propP4noCycle())
   check("P5 duplicate-var spine suspends (+flush ambiguity)", propP5dup())
   check("P5 non-var spine suspends (+flush ambiguity)", propP5nonVar())
   check("P5 escaping variable suspends (+flush ambiguity)", propP5escape())
+  check("P5 randomized non-pattern spine shapes suspend and flush as ambiguous",
+        forAll("p5", r, Cases, genNonPatternCase, propP5,
+               classify = classifyNonPattern,
+               cover = @[("duplicate-var", 10.0), ("non-var", 10.0),
+                         ("escaping-var", 10.0),
+                         ("meta-containing-arg", 10.0)]))
   check("P7 eta-positive: lam(x). r x =Type 0= r",
         forAll("p7p", r, Cases,
                proc(r: var Rng): int = 0,
