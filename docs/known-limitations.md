@@ -44,7 +44,10 @@ against generated witnesses. When the field codecs can reconstruct and check
 the generated Sigma witness, Eponym also generates a typed Nim tuple wrapper
 without `runtimePairTrusted`; it rejects a tuple whose Vec field disagrees
 with its Nat field. Other dependent tuple shapes still need the explicit trust
-opt-in and codecs that can check their fields.
+opt-in and codecs that can check their fields. Generic dependent Sigma binders
+can use `runtimePairTrusted(definition)` to enable typed dynamic wrappers; the
+opt-in trusts correspondence with the dependent index while available codecs
+still check their fields.
 
 Other types can still be checked by Eponym but may have no typed Nim wrapper.
 Use `runtimeValue(name)` for the lower-level `Value` interface, or register a

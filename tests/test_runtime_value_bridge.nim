@@ -440,6 +440,11 @@ eponymBlock:
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
   runtimePairTrusted(generatedDependentPairVecIdentity)
+  proc generatedGenericDependentPairValueBinder[
+      pair: Sig(length: Nat, Vec[Int, length])](ignored: Int):
+      Sig(length: Nat, Vec[Int, length]) = pair
+  runtimePairTrusted(generatedGenericDependentPairValueBinder)
+  runtimeValue(generatedGenericDependentPairValueBinder)
   proc generatedShadowedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(length: Nat, Vec[Int, length]))):
       Sig(length: Nat, Sig(length: Nat, Vec[Int, length])) = value
@@ -2754,6 +2759,34 @@ proc callbackRole : Callback -> Sample -> Sample =
           input.length)
   if not validatedDependentSigmaCases:
     quit(1)
+  let dependentGenericSigmaValueCases = forAll(
+    "trusted dependent Sigma generic binders check their Vec lengths", r,
+    200,
+    proc(r: var Rng): tuple[length: int, seed: int] =
+      (r.genInt(0, 30), r.genInt(-1000, 1000)),
+    proc(input: tuple[length: int, seed: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        values[i] = input.seed + i
+      let pair = (input.length, values)
+      let typed = generatedGenericDependentPairValueBinderDynamic(pair, 0)
+      let runtime =
+        generatedGenericDependentPairValueBinderRuntimeValueDynamic(pair, 0)
+      typed == pair and
+        valueToNat(runtimePairFirst(runtime.value), runtime.globals) ==
+          input.length and
+        vecValueToSeq[int](runtimePairSecond(runtime.value), input.length,
+          runtime.globals, "Vec",
+          proc(value: Value, _: Globals): int = valueToInt(value)) == values)
+  if not dependentGenericSigmaValueCases:
+    quit(1)
+  var dependentGenericSigmaMismatchRejected = false
+  try:
+    discard generatedGenericDependentPairValueBinderDynamic((3, @[1, 2]), 0)
+  except ValueError as error:
+    dependentGenericSigmaMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert dependentGenericSigmaMismatchRejected
   let conditionalGenericValueCases = forAll(
     "Bool conditional indices validate generic Vec and Sigma values", r, 200,
     proc(r: var Rng): tuple[condition: bool, yesLength, noLength, seed: int] =

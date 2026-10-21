@@ -65,6 +65,8 @@ for (path, expected) in [
      "no runtime codec for Eponym result type 'LocalToken'"),
     ("tests/fixtures/embedded_err_dependent_sigma_runtime.nim",
      "no runtime codec for Eponym result type 'Sig(n: Nat, Vec[Nat, n])'"),
+    ("tests/fixtures/embedded_err_generic_dependent_sigma_untrusted.nim",
+     "eponymBlock runtimeValue wrapper 'generatedDependentPairValue':"),
     ("tests/fixtures/embedded_err_dependent_record_runtime.nim",
      "no runtime codec for Eponym result type 'Point'"),
     ("tests/fixtures/embedded_err_bool_without_prelude.nim",
