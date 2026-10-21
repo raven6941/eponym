@@ -4,24 +4,48 @@ set -eu
 eponymRepoRoot=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 eponymTmpDir=$(mktemp -d "${TMPDIR:-/tmp}/eponym-package.XXXXXX")
 trap 'rm -rf "$eponymTmpDir"' EXIT
+cd "$eponymRepoRoot"
 
-mkdir -p "$eponymTmpDir/package" "$eponymTmpDir/project"
-awk '
-  /^installFiles[[:space:]]*=/ { inFiles = 1 }
-  inFiles {
-    remaining = $0
-    while (match(remaining, /"[^"]+\.nim"/)) {
-      print substr(remaining, RSTART + 1, RLENGTH - 2)
-      remaining = substr(remaining, RSTART + RLENGTH)
-    }
-    if ($0 ~ /\]/) exit
-  }
-' "$eponymRepoRoot/eponym.nimble" |
-while IFS= read -r moduleFile; do
-  cp "$eponymRepoRoot/src/eponym/$moduleFile" \
-    "$eponymTmpDir/package/$moduleFile"
+# Nimble consults its local package-index cache even for offline local
+# installs. An empty cache is enough here because Eponym has no external
+# install dependencies; this keeps the smoke test hermetic.
+mkdir -p "$eponymTmpDir/nimble"
+printf '[]\n' > "$eponymTmpDir/nimble/packages_official.json"
+
+# Confirm the installed package does not pull its property-testing library
+# into user projects. Falsify is test-only and installed explicitly by CI.
+packageRequirements=$(NIMBLE_DIR="$eponymTmpDir/nimble" nimble --offline dump |
+  sed -n 's/^requires: "\([^"]*\)"/\1/p')
+case "$packageRequirements" in
+  *"nim >= 2.0.0"*) ;;
+  *)
+    echo "Nim compiler requirement missing from package metadata: $packageRequirements" >&2
+    exit 1
+    ;;
+esac
+case ",$packageRequirements," in
+  *,falsify*)
+    echo "test-only dependency falsify leaked into package requirements: $packageRequirements" >&2
+    exit 1
+    ;;
+esac
+
+# Exercise a real Nimble install with an empty, isolated package directory.
+NIMBLE_DIR="$eponymTmpDir/nimble" nimble --offline install --accept
+
+eponymPackageDir=
+for candidate in "$eponymTmpDir"/nimble/pkgs2/eponym-*; do
+  if [ -d "$candidate" ]; then
+    eponymPackageDir=$candidate
+    break
+  fi
 done
-cp -R "$eponymRepoRoot/lib" "$eponymTmpDir/package/lib"
+if [ -z "$eponymPackageDir" ]; then
+  echo "nimble install did not create an Eponym package directory" >&2
+  exit 1
+fi
+
+mkdir -p "$eponymTmpDir/project"
 cp "$eponymRepoRoot/tests/test_prelude_resolution.nim" \
   "$eponymTmpDir/project/main.nim"
 
@@ -116,30 +140,30 @@ doAssert checkedDebugEcho(42) == 42
 EOF
 
 cd "$eponymTmpDir/project"
-nim c -r --path:"$eponymTmpDir/package" \
+nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/nimcache" \
   --out:"$eponymTmpDir/test_prelude_resolution" main.nim
-nim c -r --path:"$eponymTmpDir/package" \
+nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/hello-cache" \
   --out:"$eponymTmpDir/hello" hello.nim
-nim c --path:"$eponymTmpDir/package" \
+nim c --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/vecs-cache" \
   --out:"$eponymTmpDir/vecs" vecs.nim
-nim c -r --path:"$eponymTmpDir/package" \
+nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/dynamic-vec-cache" \
   --out:"$eponymTmpDir/dynamic_vec" dynamic_vec.nim
-nim c -r --path:"$eponymTmpDir/package" \
+nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/lists-cache" \
   --out:"$eponymTmpDir/lists" lists.nim
-nim c -r --path:"$eponymTmpDir/package" \
+nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/options-cache" \
   --out:"$eponymTmpDir/options" options.nim
-nim c -r --path:"$eponymTmpDir/package" \
+nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/nat-to-int-cache" \
   --out:"$eponymTmpDir/nat_to_int" nat_to_int.nim
-nim c -r --path:"$eponymTmpDir/package" \
+nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/debug-cache" \
   --out:"$eponymTmpDir/debug" debug.nim
-nim c -r --path:"$eponymTmpDir/package" \
+nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/scalars-cache" \
   --out:"$eponymTmpDir/scalars" scalars.nim

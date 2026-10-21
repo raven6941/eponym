@@ -947,8 +947,13 @@ implementations.
   can report the original imported-file location. `Loc` now carries its source
   path, the file loader attaches it during parsing, and `tests/test_imported_source_locations.nim`
   checks both elaboration and parse errors in an imported module.
-- [ ] Revisit the first-use time estimate after installation and editor setup
-   are streamlined.
+- [x] Revisit the first-use time estimate after installation and editor setup
+   are streamlined. The README and tutorial now make clear that the ~15-minute
+   path assumes Nim and Nimble are already installed. Eponym's Nimble metadata
+   no longer makes the test-only, unindexed Falsify package an install
+   dependency; CI installs Falsify separately. `tests/test_package_prelude_install.sh`
+   checks the published requirements and installs Eponym into an isolated
+   Nimble directory before compiling tutorial snippets from a separate project.
 
 **Exit criteria:**
 
@@ -956,11 +961,12 @@ implementations.
   `docs/tutorial.md` against a clean package-shaped install, and resolve `.ep`
   imports from a different working directory; `tests/test_package_prelude_install.sh`
   verifies these paths without hidden global state.
-- [x] Verify `nimble install` in an isolated `NIMBLE_DIR` using cached local
-  `falsify` and package-index data, then compile the tutorial snippets and run
-  the installed-prelude example from a separate clean Nim project.
-- [ ] Revisit the first-use estimate after installation and editor setup are
-  streamlined.
+- [x] Verify `nimble install` in an isolated `NIMBLE_DIR` with an empty package
+  index and no third-party install requirements, then compile tutorial
+  snippets and installed-prelude examples from a separate clean Nim project.
+- [x] Revisit the first-use estimate after installation and editor setup are
+   streamlined; the install dependency and tutorial timing assumptions are now
+   documented and checked as described above.
 
 #### H. Generate runtime code from checked definitions
 

@@ -4,9 +4,9 @@ Loosely, Epigram + Nim ~= Eponym.
 What if we took the influential system built by McBride and McKinna some 20 years ago, and implemented (some of) its ideas in Nim macros/metaprogramming?
 Eponym brings dependent types and quantitative type checking to Nim as an embedded DSL, so you can check the parts of a Nim program that benefit from stronger guarantees.
 
-**New here?** Start with the [tutorial](docs/tutorial.md) (install → your
-first checked dependent type, ~15 minutes), look up any language form in the
-[surface-syntax reference](docs/surface-syntax-reference.md), and read the
+**New here?** Start with the [tutorial](docs/tutorial.md) (from an installed
+Nim toolchain to your first checked dependent type, ~15 minutes), look up any
+language form in the [surface-syntax reference](docs/surface-syntax-reference.md), and read the
 [trust model](docs/trust-model.md) to see what the system checks — and what
 is your problem.
 
@@ -138,7 +138,8 @@ Eponym-checked definitions.
 
 Note: on first install nimble may prompt about a package-list download or
 about `src/eponym/lib` — answer yes / continue; the prelude is installed
-from the package root's `lib/` directory.
+from the package root's `lib/` directory. Eponym's property-test library is
+not needed to install or use Eponym; the CI script installs it separately.
 
 ## Building
 

@@ -1,6 +1,8 @@
 # Eponym tutorial
 
-From zero to a compile-time-checked dependent type in about 15 minutes.
+From an installed Nim toolchain to a compile-time-checked dependent type in
+about 15 minutes. Installing Nim itself is not included because the time
+depends on your operating system, download speed, and toolchain choice.
 
 Eponym is a dependently-typed language *embedded* in Nim: you write
 type-checked definitions inside an `eponymBlock`, and ordinary Nim code
