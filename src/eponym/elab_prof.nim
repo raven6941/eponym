@@ -28,6 +28,11 @@ type ElabPhase* = enum
   epEval    ## eponym_init.eval (kernel evaluation)
   epOther   ## driver-level remainder minus nested phases
 
+type ElabProfileDetail* = enum
+  epdArithNormalize ## proof-carrying Nat normalization in normEvArith
+  epdArithBuild     ## evidence-chain construction, excluding normalization
+  epdEvidenceCheck  ## bare-core check of handler-provided evidence
+
 const ElabProfile* {.booldefine.} = false
   ## Compile with `-d:elabProfile` to enable.
 
@@ -44,8 +49,15 @@ when ElabProfile:
     t0: MonoTime
     childNanos: int64
 
+  type DetailFrame = object
+    detail: ElabProfileDetail
+    t0: MonoTime
+    childNanos: int64
+
   var phaseNanos: array[ElabPhase, int64]
   var phaseStack: seq[PhaseFrame]
+  var detailNanos: array[ElabProfileDetail, int64]
+  var detailStack: seq[DetailFrame]
 
   proc pushPhase(ph: ElabPhase) =
     phaseStack.add(PhaseFrame(phase: ph, t0: getMonoTime()))
@@ -57,10 +69,22 @@ when ElabProfile:
     if phaseStack.len > 0:
       phaseStack[^1].childNanos += total
 
+  proc pushDetail(detail: ElabProfileDetail) =
+    detailStack.add(DetailFrame(detail: detail, t0: getMonoTime()))
+
+  proc popDetail() =
+    let frame = detailStack.pop()
+    let total = (getMonoTime() - frame.t0).inNanoseconds
+    detailNanos[frame.detail] += total - frame.childNanos
+    if detailStack.len > 0:
+      detailStack[^1].childNanos += total
+
   proc resetPhases*() =
     ## Zero all accumulators (call between benchmark rounds).
     for ph in ElabPhase: phaseNanos[ph] = 0
     phaseStack.setLen(0)
+    for detail in ElabProfileDetail: detailNanos[detail] = 0
+    detailStack.setLen(0)
 
   proc reportPhases*(): string =
     ## Multi-line breakdown: exclusive ms and % of tracked total per phase.
@@ -73,6 +97,15 @@ when ElabProfile:
       let pct = if total > 0: 100.0 * phaseNanos[ph].float / total.float
                 else: 0.0
       lines.add(&"  {$ph:<9} {ms:10.1f} ms  {pct:5.1f}%")
+    var detailTotal: int64 = 0
+    for detail in ElabProfileDetail: detailTotal += detailNanos[detail]
+    lines.add(&"evidence-path detail (exclusive spans, {detailTotal.float/1e6:.1f} ms; separate from phase total):")
+    for detail in ElabProfileDetail:
+      let ms = detailNanos[detail].float / 1e6
+      let pct = if detailTotal > 0:
+                  100.0 * detailNanos[detail].float / detailTotal.float
+                else: 0.0
+      lines.add(&"  {$detail:<20} {ms:10.1f} ms  {pct:5.1f}%")
     lines.join("\n")
 
 template profilePhase*(ph: ElabPhase, body: untyped): untyped =
@@ -85,6 +118,19 @@ template profilePhase*(ph: ElabPhase, body: untyped): untyped =
     block:
       pushPhase(ph)
       defer: popPhase()
+      body
+  else:
+    body
+
+template profileDetail*(detail: ElabProfileDetail, body: untyped): untyped =
+  ## Time a focused evidence-path span separately from the top-level phase
+  ## totals. Nested detail spans are exclusive with each other, so the
+  ## evidence report can compare normalization, construction, and checking
+  ## without double-counting nested work or changing existing phase totals.
+  when ElabProfile:
+    block:
+      pushDetail(detail)
+      defer: popDetail()
       body
   else:
     body

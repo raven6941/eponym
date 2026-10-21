@@ -613,7 +613,8 @@ proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
   let saved = ms.convHandlers
   ms.convHandlers = @[]
   try:
-    discard check(s, eval(closedGoal, @[]), closedEv)
+    profileDetail(epdEvidenceCheck):
+      discard check(s, eval(closedGoal, @[]), closedEv)
   except ValueError as e:
     raise elabErr(loc, "conversion handler evidence rejected by the core: " &
       sanitizeKernelMsg(e.msg))
@@ -1156,77 +1157,79 @@ proc mergeArith*(L: ArithLemmas, us1, us2: seq[ArithUnit]):
                   canonArith(L, cat), canonArith(L, srt), pcat, psrt))
 
 proc normEvArith*(L: ArithLemmas, t: Term): ArithNorm =
-  ## Proof-carrying Nat normalization: the polynomial (computed exactly as
-  ## normNat computes it), the canonical term, and a proof
-  ## `Eq Nat t canon`. Raises ExoticArithShape for zero/suc/add-headed
-  ## terms in shapes the prover does not cover (the caller then falls back
-  ## to the trusted discharge, preserving the old behavior).
-  let (head, args) = spineOf(t)
-  if head.kind == tR and head.refId == L.zeroT.refId:
-    if args.len != 0: raise newException(ExoticArithShape, "zero with args")
-    let c = canonArith(L, @[])
-    return ArithNorm(poly: NatPoly(cst: 0, coeff: initTable[string, int]()),
-                     units: @[], canon: c, proof: L.reflAtN(c))
-  if head.kind == tR and head.refId == L.sucT.refId:
-    if args.len != 1: raise newException(ExoticArithShape, "suc arity")
-    let r = normEvArith(L, args[0])
-    let units = r.units & oneUnit(L)
-    let c = canonArith(L, units)
-    let p1 = L.congAt(L.sucLamOf(), args[0], r.canon, r.proof)
-    let push = sucPushArith(L, r.units)
-    let proof = L.transAt(L.sucAt(args[0]), L.sucAt(r.canon), c, p1, push)
-    var poly = r.poly
-    poly.cst += 1
-    return ArithNorm(poly: poly, units: units, canon: c, proof: proof)
-  if head.kind == tR and head.refId == L.addT.refId:
-    if args.len > 2: raise newException(ExoticArithShape, "add arity")
-    if args.len == 2:
-      # args is innermost-first: args[1] is the first argument.
-      let x = args[1]; let y = args[0]
-      let r1 = normEvArith(L, x)
-      let r2 = normEvArith(L, y)
-      let c1 = r1.canon; let c2 = r2.canon
-      let s1 = L.congAt(L.addArgLam(y), x, c1, r1.proof)
-      let s2 = L.congAt(L.addHeadLam(c1), y, c2, r2.proof)
-      let q12 = L.transAt(L.addAt(x, y), L.addAt(c1, y), L.addAt(c1, c2),
-                          s1, s2)
-      let (mus, mpf) = mergeArith(L, r1.units, r2.units)
-      let c = canonArith(L, mus)
-      let proof = L.transAt(L.addAt(x, y), L.addAt(c1, c2), c, q12, mpf)
-      return ArithNorm(poly: polyAdd(r1.poly, r2.poly), units: mus,
-                       canon: c, proof: proof)
-    # else: partial application — an opaque atom, exactly like normNat.
-  # Opaque atom (variables and non-Nat subterms), keyed like normNat.
-  # The canonical form is `add t zero`, so the proof is not reflexivity:
-  # sym (addZeroR t) : Eq t (add t zero).
-  var co = initTable[string, int]()
-  let k = if t.kind == tV: "v" & $t.idx else: "t:" & $t
-  co[k] = 1
-  let u: ArithUnit = (key: k, tm: t, isOne: false)
-  let c = canonArith(L, @[u])
-  ArithNorm(poly: NatPoly(cst: 0, coeff: co), units: @[u],
-            canon: c, proof: L.symAt(c, t, appN(L.addZeroR, @[t])))
+  profileDetail(epdArithNormalize):
+    ## Proof-carrying Nat normalization: the polynomial (computed exactly as
+    ## normNat computes it), the canonical term, and a proof
+    ## `Eq Nat t canon`. Raises ExoticArithShape for zero/suc/add-headed
+    ## terms in shapes the prover does not cover (the caller then falls back
+    ## to the trusted discharge, preserving the old behavior).
+    let (head, args) = spineOf(t)
+    if head.kind == tR and head.refId == L.zeroT.refId:
+      if args.len != 0: raise newException(ExoticArithShape, "zero with args")
+      let c = canonArith(L, @[])
+      return ArithNorm(poly: NatPoly(cst: 0, coeff: initTable[string, int]()),
+                       units: @[], canon: c, proof: L.reflAtN(c))
+    if head.kind == tR and head.refId == L.sucT.refId:
+      if args.len != 1: raise newException(ExoticArithShape, "suc arity")
+      let r = normEvArith(L, args[0])
+      let units = r.units & oneUnit(L)
+      let c = canonArith(L, units)
+      let p1 = L.congAt(L.sucLamOf(), args[0], r.canon, r.proof)
+      let push = sucPushArith(L, r.units)
+      let proof = L.transAt(L.sucAt(args[0]), L.sucAt(r.canon), c, p1, push)
+      var poly = r.poly
+      poly.cst += 1
+      return ArithNorm(poly: poly, units: units, canon: c, proof: proof)
+    if head.kind == tR and head.refId == L.addT.refId:
+      if args.len > 2: raise newException(ExoticArithShape, "add arity")
+      if args.len == 2:
+        # args is innermost-first: args[1] is the first argument.
+        let x = args[1]; let y = args[0]
+        let r1 = normEvArith(L, x)
+        let r2 = normEvArith(L, y)
+        let c1 = r1.canon; let c2 = r2.canon
+        let s1 = L.congAt(L.addArgLam(y), x, c1, r1.proof)
+        let s2 = L.congAt(L.addHeadLam(c1), y, c2, r2.proof)
+        let q12 = L.transAt(L.addAt(x, y), L.addAt(c1, y), L.addAt(c1, c2),
+                            s1, s2)
+        let (mus, mpf) = mergeArith(L, r1.units, r2.units)
+        let c = canonArith(L, mus)
+        let proof = L.transAt(L.addAt(x, y), L.addAt(c1, c2), c, q12, mpf)
+        return ArithNorm(poly: polyAdd(r1.poly, r2.poly), units: mus,
+                         canon: c, proof: proof)
+      # else: partial application — an opaque atom, exactly like normNat.
+    # Opaque atom (variables and non-Nat subterms), keyed like normNat.
+    # The canonical form is `add t zero`, so the proof is not reflexivity:
+    # sym (addZeroR t) : Eq t (add t zero).
+    var co = initTable[string, int]()
+    let k = if t.kind == tV: "v" & $t.idx else: "t:" & $t
+    co[k] = 1
+    let u: ArithUnit = (key: k, tm: t, isOne: false)
+    let c = canonArith(L, @[u])
+    ArithNorm(poly: NatPoly(cst: 0, coeff: co), units: @[u],
+              canon: c, proof: L.symAt(c, t, appN(L.addZeroR, @[t])))
 
 proc buildArithEvidence*(L: ArithLemmas, a, b: Term):
     tuple[found: bool, evidence: Term] =
-  ## Prove `Eq Nat a b` for Nat-fragment sides with equal normal forms:
-  ## a ≡ canon(a) ≡ canon(b) ≡ b. The middle step is reflexivity — both
-  ## canonical terms are built deterministically from the same sorted
-  ## summand multiset, so they are structurally identical (checked via
-  ## the rendering; the bare core revalidates the whole chain anyway).
-  ## Raises ExoticArithShape when a side is outside the covered fragment.
-  let ra = normEvArith(L, a)
-  let rb = normEvArith(L, b)
-  if ra.poly.cst != rb.poly.cst or ra.poly.coeff != rb.poly.coeff:
-    return (false, nil)
-  let ca = ra.canon
-  let cb = rb.canon
-  if $ca != $cb:
-    raise newException(ExoticArithShape, "canonical forms differ")
-  let cab = L.reflAtN(ca)  # : Eq Nat ca cb, by structural identity
-  let ev = L.transAt(a, ca, b, ra.proof,
-                     L.transAt(ca, cb, b, cab, L.symAt(b, cb, rb.proof)))
-  (true, ev)
+  profileDetail(epdArithBuild):
+    ## Prove `Eq Nat a b` for Nat-fragment sides with equal normal forms:
+    ## a ≡ canon(a) ≡ canon(b) ≡ b. The middle step is reflexivity — both
+    ## canonical terms are built deterministically from the same sorted
+    ## summand multiset, so they are structurally identical (checked via
+    ## the rendering; the bare core revalidates the whole chain anyway).
+    ## Raises ExoticArithShape when a side is outside the covered fragment.
+    let ra = normEvArith(L, a)
+    let rb = normEvArith(L, b)
+    if ra.poly.cst != rb.poly.cst or ra.poly.coeff != rb.poly.coeff:
+      return (false, nil)
+    let ca = ra.canon
+    let cb = rb.canon
+    if $ca != $cb:
+      raise newException(ExoticArithShape, "canonical forms differ")
+    let cab = L.reflAtN(ca)  # : Eq Nat ca cb, by structural identity
+    let ev = L.transAt(a, ca, b, ra.proof,
+                       L.transAt(ca, cb, b, cab, L.symAt(b, cb, rb.proof)))
+    (true, ev)
 
 proc isEqSpineGoal(a, b: Term, eqId: int): bool =
   ## Shape check mirroring natConv's Eq-congruence case (type-vs-type
