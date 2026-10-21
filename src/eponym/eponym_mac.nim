@@ -1803,6 +1803,22 @@ proc runtimeSigmaComponentsForCodec(n: NimNode,
       mappings):
     return dependent
 
+proc runtimeRecordDependenciesCodecSupported(record: HostRecord,
+    mappings: seq[HostRuntimeType]): bool =
+  ## A dependent record may omit its trust opt-in only when each earlier field
+  ## used by a later field is Nat and every use is enforced by structural
+  ## codecs such as Vec length checks.
+  for i, field in record.fields:
+    for earlierIndex in 0 ..< i:
+      let earlier = record.fields[earlierIndex]
+      if not mentionsName(field.eponymType, earlier.name):
+        continue
+      if simpleRuntimeCodec(earlier.eponymType) != "nat" or
+          not runtimeIndexDependencyCodecSupports(field.eponymType,
+            earlier.name, mappings):
+        return false
+  true
+
 type RuntimeProcParts = object
   argTypes: seq[NimNode]
   argNames: seq[string]
@@ -1957,8 +1973,10 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
           if mapping.eponymName == $head:
             return mapping.nimType
         return nil
-      if (record.hasDependentField and not record.trustDependentFields) or
-          record.fields.len == 0:
+      let dependenciesCodecChecked =
+        runtimeRecordDependenciesCodecSupported(record, mappings)
+      if (record.hasDependentField and not record.trustDependentFields and
+          not dependenciesCodecChecked) or record.fields.len == 0:
         return nil
       let recordAllowsDependentFields = allowDependentSigma or
         record.trustDependentFields
@@ -2575,8 +2593,10 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
           return newCall(bindSym"enumToValue", value, globals, namesSeq)
         return newCall(newTree(nnkBracketExpr, bindSym"valueToEnum", nimType),
                        value, globals, namesSeq)
-      if (record.hasDependentField and not record.trustDependentFields) or
-          record.fields.len == 0:
+      let dependenciesCodecChecked =
+        runtimeRecordDependenciesCodecSupported(record, mappings)
+      if (record.hasDependentField and not record.trustDependentFields and
+          not dependenciesCodecChecked) or record.fields.len == 0:
         return nil
       let recordAllowsDependentFields = allowDependentSigma or
         record.trustDependentFields
