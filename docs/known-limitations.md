@@ -84,6 +84,17 @@ eponymBlock:
   proc checkedScale(value: Float): Float = scaleFloat(value)
 ```
 
+This is the intended v1 boundary, not a missing set of built-in operators.
+Eponym's core computes over portable language values; Nim `string` and `char`
+are host values (byte sequences and bytes), while floating-point results and
+comparisons depend on the host's representation and runtime behavior. Adding
+literals would also require choosing a portable encoding and runtime
+representation. Keep these operations in Nim and expose each one through a
+typed postulate. The Eponym signature is checked, and the Nim adapter
+signature is checked against its codec, but the adapter's behavior is
+trusted. Checked code can call a string comparison or Float operation without
+losing type checking, but cannot normalize or prove facts about its result.
+
 ## Checked definitions need a runtime path
 
 Eponym checks definitions at compile time. A checked definition is callable

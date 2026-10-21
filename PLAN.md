@@ -256,6 +256,10 @@ implementations.
 
 - Eponym checks Eponym declarations, dependent indices, and QTT usage at
   compile time.
+- [x] Record the v1 boundary for Float/String/Char operations: keep values
+  opaque in the core and use typed postulates plus checked Nim adapters;
+  document the representation and trust rationale in the syntax reference
+  and known limitations.
 - Ordinary Nim types and procedures cross the boundary through generated,
   statically typed adapters/codecs. User-defined objects, references,
   collections, closures, and async results should be supportable when an
