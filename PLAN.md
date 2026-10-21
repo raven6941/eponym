@@ -897,6 +897,14 @@ implementations.
 - [x] Emit Nim's integer literal `1` as unambiguous Eponym `01`, preserving
   expected-type selection between `Int` and `Nat`. A 200-case `x + 1` property
   and surface-conformance fixture cover the behavior.
+- [x] Use Nim integer literals for Nat indices and explicit Nat arguments in
+  `eponymBlock` examples. The tutorial now uses `Vec[Nat, 2]` and
+  `cons[Nat, 1](...)`; explicit bracket conversion consults the Eponym
+  application telescope so `Int` binder literals retain their meaning.
+  `tests/test_embedded_explicit_params.nim` covers imported constructors and
+  procedures, a local generic, a local indexed family, and an `Int` binder.
+  `tests/test_embedded_error_path.nim` requires a two-element vector declared
+  with length one to fail. The installed-package tutorial smoke test passes.
 - [x] Add an explicit `natToInt : Nat -> Int` in
    `lib/nat_to_int.ep`, importing the canonical `Nat` and primitive `Int`
    definitions. A 200-case generated-wrapper property passes the converted

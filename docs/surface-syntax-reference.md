@@ -511,6 +511,14 @@ The unit value is `<>` (Nim side: `unitv`).
 an Int-taking operation, import `lib/nat_to_int.ep` and write `natToInt(n)`.
 This conversion is explicit; the elaborator does not insert it for you.
 
+Inside `eponymBlock`, ordinary Nim integer literals can also be used for Nat
+indices and bracketed arguments whose Eponym binder is `Nat`: for example,
+`Vec[Nat, 2]`, `cons[Nat, 1](x, xs)`, and `vappend[Nat, 1, 1](xs, ys)`. The
+macro uses the checked declaration telescope to distinguish the Nat argument
+from an `Int` argument; an `Int` binder keeps Nim's literal-one spelling as
+primitive `Int`. Imported prelude signatures use the same source-relative and
+installed-package lookup as Eponym elaboration.
+
 **Singleton types (issue #74).** In type position, a literal *is* its
 singleton type: `(d : 2)` demands exactly `2`, Scala-3 literal-type style,
 so `divBy2 : Nat -> (d : 2) -> Nat` is writable, and `divBy2 4 3` is
