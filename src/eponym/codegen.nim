@@ -222,10 +222,13 @@ proc cg(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
         # interpreter's head-before-args evaluation order.
         newCall(ident(r.compiledProc), bracketOf(@[]), bnd)
       else:
-        # Slow path: interpret the definition (same as today's wrapper).
-        newCall(bindSym"callValueFuncDir",
-          newLit(ctx.baseDir), newLit(ctx.src), newLit(r.name),
-          bracketOf(@[]), bnd)
+        # Slow path: the definition's value from the runtime globals,
+        # mirroring evalWhnf's tR/defn case (resolved by refId, so synthetic
+        # definitions like record projections resolve too). Callers apply
+        # arguments themselves via the fold, preserving the interpreter's
+        # head-before-args evaluation order.
+        newCall(bindSym"defnValue",
+          newLit(ctx.baseDir), newLit(ctx.src), newLit(t.refId), bnd)
   of tC:
     case t.c
     of cVoid: newCall(bindSym"unitValue")

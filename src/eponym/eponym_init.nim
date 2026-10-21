@@ -904,6 +904,12 @@ proc postulateValue*(refId: int, bindings: RuntimeBindings): Value =
   else:
     Value(syn: r, whnf: Whnf(kind: wRef, refId: refId, spine: newSeq[ElimV]()))
 
+proc neutralRefValue*(syn: Term, refId: int): Value =
+  ## A neutral reference value headed by `refId` (issue #329: lets compiled
+  ## code resolve non-compiled definitions by refId without touching the
+  ## private `Whnf` variant fields from another module).
+  Value(syn: syn, whnf: Whnf(kind: wRef, refId: refId, spine: newSeq[ElimV]()))
+
 proc stuckElim*(elimId: int, args: seq[Value]): Value =
   ## A stuck eliminator application: the neutral `wRef` the interpreter's
   ## `fireRed` produces when a fully-applied eliminator's scrutinee is not
