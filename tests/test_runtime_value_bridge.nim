@@ -1365,6 +1365,44 @@ proc generatedTokenIdentity (value : Token) : Token = value
   except ValueError:
     wrongDependentRuntimeVariantPayloadRejected = true
   doAssert wrongDependentRuntimeVariantPayloadRejected
+  let malformedTree = callRuntimeValue(
+    eval(variantGlobals["treeNode"].tm, @[]),
+    @[intToValue(1), intToValue(2)])
+  var malformedTreeTypeRejected = false
+  try:
+    validateRuntimeValueAgainstType(malformedTree,
+      runtimeGlobalValue(variantGlobals, "RuntimeTree"), variantGlobals)
+  except ValueError:
+    malformedTreeTypeRejected = true
+  doAssert malformedTreeTypeRejected
+  var malformedGenericVariantRejected = false
+  try:
+    let malformedSizedTree = callRuntimeValue(
+      eval(variantGlobals["sizedTree"].tm, @[]),
+      @[natToValue(3, variantGlobals), intToValue(4)])
+    let rawVariant = valueToRuntimeVariant(malformedSizedTree,
+      variantGlobals, "SizedTree", ["sizedTree"])
+    discard genericIndexedTreeProjectionRuntimeValueDynamic(3, rawVariant, 0)
+  except ValueError:
+    malformedGenericVariantRejected = true
+  doAssert malformedGenericVariantRejected
+  let malformedConstructorCases = forAll(
+    "raw constructor checks reject primitive values in unrelated fields", r,
+    200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let malformed = callRuntimeValue(
+        eval(variantGlobals["treeNode"].tm, @[]),
+        @[intToValue(1), intToValue(value)])
+      try:
+        validateRuntimeValueAgainstType(malformed,
+          runtimeGlobalValue(variantGlobals, "RuntimeTree"), variantGlobals)
+        false
+      except ValueError:
+        true,
+    shrinkInt)
+  if not malformedConstructorCases:
+    quit(1)
   let appliedGenericTypeCases = forAll(
     "unmapped applied generic domains check their runtime indices", r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),
