@@ -27,6 +27,10 @@ shedsBlock:
   # Complete definition over primitive Int: callable from normal Nim code.
   proc double(x: Int): Int = addInt(x, x)
 
+  # Current bracket syntax for explicit Eponym generic parameters and calls.
+  proc checkedIdentity[A: Univ](value: A): A = value
+  proc checkedIdentityInt(value: Int): Int = checkedIdentity[Int](value)
+
   # Complete definition over Nat from the prelude: elaborates (proves the
   # import works alongside sheds) but gets no callable wrapper use here.
   proc addTwo(n: Nat): Nat = add(n, 2)
@@ -45,6 +49,7 @@ proc main() =
   let v = double(21)
   echo "  double(21) = ", v, " (checked def, called from normal Nim)"
   doAssert v == 42
+  doAssert checkedIdentityInt(17) == 17
 
   let me = absolutePath(currentSourcePath())
   let path = sidecarPath(me)

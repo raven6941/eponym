@@ -32,6 +32,22 @@ interferes with Auto Save.
 Refinement actions splice their result into source and save it so the macro can
 refresh goals and CodeLens.
 
+### Syntax support and releases
+
+This extension adds the shed editing UI for Nim files. It does not ship a
+separate Eponym grammar, snippets, or syntax diagnostics; Eponym parsing and
+checking remain in the Nim macro and language-server backend. The extension's
+Nim language configuration pairs square brackets, including the explicit
+parameter syntax used by current Eponym programs. Its headless smoke test
+checks that configuration and compiles a representative `shedsBlock` using
+bracketed generic declarations and calls before exercising its sidecar with
+the real Eponym language server.
+
+The current surface-syntax changes do not change the extension's UI or
+protocol, so they do not require an extension version bump or a separate
+Marketplace release. Bump and publish the extension when its own behavior or
+the server-extension protocol changes.
+
 ### If sidecar generation fails
 
 The compile output goes to the **Eponym** output channel and an error
