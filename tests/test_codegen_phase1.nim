@@ -170,6 +170,25 @@ proc boomCaller (x : Int) : Int = addInt (boom x) (boom x)
 
 differentialBlock(prog, currentSourcePath())
 
+# A generated integer refId must still resolve to the same global name in the
+# current elaboration. Simulate a stale baked table and ensure codegen fails
+# before emitting any proc that could silently dispatch to another definition.
+block:
+  let checked = elabCheckDirStateAll(prog, "")
+  let originalId = checked.globals["two"].tm.refId
+  var changedGlobals = checked.globals
+  var changed = changedGlobals["two"]
+  changed.tm.refId = originalId + 1_000_000
+  changedGlobals["two"] = changed
+  var bakedIds = initTable[int, string]()
+  bakedIds[originalId] = "two"
+  var rejected = false
+  try:
+    validateBakedRefIds(changedGlobals, bakedIds)
+  except CgUnsupported as e:
+    rejected = "expected global 'two'" in e.msg
+  expect(rejected, "stale baked refId is rejected by name")
+
 proc callByName(name: string, args: seq[Value]): Value =
   case name
   of "add42": eponymCompiled_add42(args, testPostulateBindings())

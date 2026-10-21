@@ -41,9 +41,9 @@
 ## - an eliminator scrutinee whose spine length is not exactly
 ##   `nParams + ctorArity` yields a stuck neutral instead of proceeding with
 ##   a short environment (the interpreter would raise `IndexDefect` there).
-## - refIds are baked in as integer literals. They are stable across
-##   elaborations of the same source (sequential `freshId`, deterministic
-##   elaborator); the differential tests pin this.
+## - refIds are baked in as integer literals. `compileBlockProcs` validates
+##   every emitted id against the current Globals table and refuses to emit
+##   code if it cannot resolve the id to its expected name.
 ## - reduction-rule contractum templates are compiled as written (unerased):
 ##   erasure is a closed-term pass and templates are open. This matches the
 ##   interpreter, which fires `fireRed` on the unerased template.
@@ -106,6 +106,25 @@ type
 proc cgName*(defName: string): string =
   ## The emitted proc name for a compiled definition.
   "eponymCompiled_" & defName
+
+proc collectRefIds(t: Term, acc: var Table[int, bool])
+
+proc validateBakedRefIds*(globals: Globals,
+                          bakedIds: Table[int, string]) =
+  ## Validate emitted integer literals (including constructor IDs used as
+  ## eliminator dispatch labels) against the global names in the codegen
+  ## context. `bakedIds` includes references and IDs embedded in
+  ## non-reference positions such as `case` labels.
+  var namesByRefId = initTable[int, string]()
+  for name, entry in globals.pairs:
+    if entry.tm != nil and entry.tm.kind == tR:
+      namesByRefId[entry.tm.refId] = name
+  for refId, expectedName in bakedIds.pairs:
+    let actualName = namesByRefId.getOrDefault(refId, "")
+    if actualName != expectedName:
+      raise newException(CgUnsupported,
+        "baked refId " & $refId & " expected global '" & expectedName &
+        "' but resolves to '" & actualName & "'")
 
 proc elimProcName*(elimName: string): string =
   ## The emitted proc name for a compiled eliminator.
@@ -967,6 +986,14 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   ## representations. Definitions outside any representation keep the
   ## Phase 1 Value backend.
   var ctx = buildCodegenCtx(globals, baseDir, src, runtimeTypes)
+  var bakedIds = initTable[int, string]()
+  for refId, cgRef in ctx.refs.pairs:
+    bakedIds[refId] = cgRef.name
+    if cgRef.kind == cgkElim:
+      for ctorId in cgRef.cases.keys:
+        let ctorName = ctx.refs.getOrDefault(ctorId).name
+        bakedIds[ctorId] = ctorName
+  validateBakedRefIds(globals, bakedIds)
   result = (procs: @[], compiled: initTable[string, string](),
             compiledRepr: initTable[string, string]())
   detectBadElims(ctx)
