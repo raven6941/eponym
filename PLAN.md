@@ -448,7 +448,10 @@ implementations.
    values in both directions. Each argument and result uses the existing
    recursive runtime codecs; 200-case properties cover primitive and explicitly
    mapped opaque arguments for callbacks passed into and returned from checked
-   functions. Returned Nim closures require `{.closure.}`.
+   functions. Noncapturing Nim callbacks using the default `nimcall` convention
+   are also accepted as inputs. Eponym callbacks returned to Nim still require
+   `{.closure.}` because they may capture runtime state. Properties cover both
+   callback input conventions; a compile-fail fixture checks the result rule.
 - [x] Let Nim infer a mapped generic host type from a non-callback value
   argument when a callback also mentions that type, including through a
   mapped `Vec[A, 2]` represented as `seq[A]`. The generated wrapper defers the
