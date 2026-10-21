@@ -583,8 +583,8 @@ implementations.
    mismatched length.
 - [x] Automatically allow dependent Sigma codecs when each dependent index
    occurrence lies in a structural codec that validates the corresponding
-   host value. Nested Vec constraints are checked; unsupported dependencies
-   continue to require the explicit trust opt-in.
+   host value. A 200-case nested-Vec property checks constraints at both levels;
+   unsupported dependencies continue to require the explicit trust opt-in.
 - [x] Support the explicit `runtimePairTrusted` opt-in for generic dependent
    Sigma binders when the available codecs cannot reconstruct the full witness.
    Typed and raw-result overloads still apply field codecs, and a 200-case
