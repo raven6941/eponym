@@ -64,6 +64,10 @@ type RuntimeSizedVec = object
   suffixLength: int
   values: seq[int]
 
+type RuntimeCheckedSizedVec = object
+  length: int
+  values: seq[seq[int]]
+
 type RuntimeDependentPairEnvelope = object
   base: int
   payload: tuple[count: int, values: seq[int]]
@@ -472,6 +476,13 @@ eponymBlock:
   proc generatedGenericSizedVecValueBinder[value: SizedVec](
       ignored: Int): SizedVec = value
   runtimeValue(generatedGenericSizedVecValueBinder)
+  record(CheckedSizedVec):
+    field(length, Nat)
+    field(values, Vec[Vec[Int, length], suc(length)])
+  runtimeType(CheckedSizedVec, RuntimeCheckedSizedVec)
+  proc generatedValidatedDependentRecordValue[value: CheckedSizedVec](
+      ignored: Int): CheckedSizedVec = value
+  runtimeValue(generatedValidatedDependentRecordValue)
 
 eponymBlock:
   postulate(Channel, Univ)
@@ -3373,6 +3384,51 @@ proc callbackRole : Callback -> Sample -> Sample =
           runtime.globals) == values)
   if not genericDependentRecordCases:
     quit(1)
+  let validatedDependentRecordCases = forAll(
+    "dependent record binders validate nested Vec indices without trust", r,
+    200,
+    proc(r: var Rng): tuple[length, seed: int] =
+      (r.genInt(0, 8), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed: int]): bool =
+      var values = newSeq[seq[int]](input.length + 1)
+      for i in 0 ..< values.len:
+        values[i] = newSeq[int](input.length)
+        for j in 0 ..< values[i].len:
+          values[i][j] = input.seed + i + j
+      let host = RuntimeCheckedSizedVec(length: input.length,
+        values: values)
+      let typed = generatedValidatedDependentRecordValueDynamic(host, 0)
+      let runtime = generatedValidatedDependentRecordValueRuntimeValueDynamic(
+        host, 0)
+      typed == host and
+        valueToNat(runtimePairFirst(runtime.value), runtime.globals) ==
+          input.length and
+        vecValueToSeq[seq[int]](runtimePairFirst(
+          runtimePairSecond(runtime.value)),
+          input.length + 1, runtime.globals, "Vec",
+          proc(value: Value, globals: Globals): seq[int] =
+            vecValueToSeq[int](value, input.length, globals, "Vec",
+              proc(item: Value, _: Globals): int = valueToInt(item))) == values)
+  if not validatedDependentRecordCases:
+    quit(1)
+  var validatedDependentRecordOuterMismatchRejected = false
+  try:
+    discard generatedValidatedDependentRecordValueDynamic(
+      RuntimeCheckedSizedVec(length: 3,
+        values: @[@[1, 2, 3], @[1, 2, 3], @[1, 2, 3]]), 0)
+  except ValueError as error:
+    validatedDependentRecordOuterMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert validatedDependentRecordOuterMismatchRejected
+  var validatedDependentRecordInnerMismatchRejected = false
+  try:
+    discard generatedValidatedDependentRecordValueDynamic(
+      RuntimeCheckedSizedVec(length: 3,
+        values: @[@[1, 2], @[1, 2, 3], @[1, 2, 3], @[1, 2, 3]]), 0)
+  except ValueError as error:
+    validatedDependentRecordInnerMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert validatedDependentRecordInnerMismatchRejected
   var genericDependentRecordMismatchRejected = false
   try:
     discard generatedGenericSizedVecValueBinderDynamic(

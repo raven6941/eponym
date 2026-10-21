@@ -57,7 +57,9 @@ Use `runtimeValue(name)` for the lower-level `Value` interface, or register a
 `runtimeCodec`. Some dependent records and pairs need explicit opt-ins such as
 `runtimeRecordTrusted` or `runtimePairTrusted`; these check field
 representations but trust relationships the selected field codecs cannot
-check. Generic binders over dependent records can use
+check. Generic binders over dependent records need no opt-in when earlier
+fields are `Nat` and every use in later fields is checked by a structural codec,
+such as a Vec length check. Other dependent record shapes can use
 `runtimeRecordTrusted(Record)` to enable typed dynamic wrappers; registered
 field codecs still enforce the constraints they represent. `RuntimeVariant`
 preserves constructor identity and raw payload `Value`s,
