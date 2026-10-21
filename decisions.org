@@ -3404,3 +3404,36 @@
   =Type 1=, etc. The 2026-10-15 #52 entry's "= ? = stays" clause no longer
   holds. The hierarchy design itself (explicit =Type l= + cumulativity)
   is unchanged.
+
+* 2026-10-21 — Direct elaborator is production; relational/staged route carries the burden of proof (design review; issue #355)
+
+  Context: an external design review of the project (2026-10-21) observed
+  that the direct elaborator has won provisionally without the project
+  quite admitting it. The evidence was already in the repo: the LSP's hole
+  operations run only on the direct elaborator; #189 moved the
+  staging/relational modules to =src/experimental/= behind a graduation
+  rule; #170's lattice prototype agreed 16/16 with the direct elaborator
+  and the direct elaborator still stayed (fastest rejector, ~7ms flat
+  algorithmic constant in the relational engine). Meanwhile #19/#26/#27/
+  #31 and related issues still frame relational/staged elaboration as a
+  co-equal track.
+  Decision: record the admission. The direct elaborator is the
+  production implementation. The relational/staged route graduates from
+  =src/experimental/= when it demonstrates a concrete advantage:
+  useful backward execution/synthesis, materially less duplicated
+  machinery, or specialization producing competitive forward code
+  (#19's compiled-without-staging vs staged-then-compiled framing).
+  Expressiveness alone — "elaboration can be written relationally" — is
+  not sufficient.
+  Consequences: relational/staging experiment issues state which of the
+  three advantages they target. The epistemic status of backlog items
+  (demonstrated / prototype / plausible / conjecture) is kept distinct:
+  an open issue is not evidence the architecture supports an idea, and
+  successful toy specialization is not generalized without measurement.
+  The same review's checkpoint exercise is filed as issue #355: trace
+  Paxos end to end (source, elaboration, refinement, erasure, interop,
+  codegen), recording every representation and trust boundary, producing
+  a verdict on #67 (explicit IR DAG) and a TCB inventory. #355 gates the
+  Vec/seq match-compilation work in #330; scalar Phase 2 work is not
+  blocked by it.
+  Status: DECIDED (checkpoint execution in #355).
