@@ -79,6 +79,7 @@ type
       cases*: Table[int, CgElimCase]  # ctor refId -> case
     of cgkDefn:
       compiledProc*: string  # "" = not compiled in this block
+      piQuantities*: seq[Quantity]
     of cgkCtor:
       famRefId*: int  # Issue #330: the data family's refId when the
                       # constructor's result type is atomic; -1 otherwise.
@@ -140,6 +141,13 @@ proc countPiBinders(ty: Term): int =
     inc result
     t = t.scope.bdy
 
+proc piQuantities(ty: Term): seq[Quantity] =
+  ## Quantities of a checked Pi telescope, outermost first.
+  var t = ty
+  while t != nil and t.kind == tPi:
+    result.add(t.qty)
+    t = t.scope.bdy
+
 proc familyRefIdOf(ctorTy: Term): int =
   ## The data family's refId from a constructor's type: walk the Pi
   ## telescope to the result type; its refId when atomic, else -1.
@@ -189,7 +197,8 @@ proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
         fam = familyRefIdOf(globals[name].ty)
       result.refs[refId] = CgRef(name: name, kind: cgkCtor, famRefId: fam)
     elif e.tm.refIsDefn:
-      result.refs[refId] = CgRef(name: name, kind: cgkDefn, compiledProc: "")
+      result.refs[refId] = CgRef(name: name, kind: cgkDefn,
+        compiledProc: "", piQuantities: piQuantities(e.ty))
     else:
       result.refs[refId] = CgRef(name: name, kind: cgkPostulate)
 
@@ -501,12 +510,13 @@ proc compileElimProc(ctx: var CodegenCtx, elimRefId: int): NimNode =
 proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
                      locFile: string, locLine: int): NimNode =
   ## Compile one definition to `proc eponymCompiled_<name>(args: seq[Value],
-  ## bindings: RuntimeBindings): Value`. Returns nil when the definition is
+  ## bindings: RuntimeBindings, q0Args: seq[Value]): Value`. Returns nil when the definition is
   ## outside the supported fragment (caller keeps the interpreter wrapper).
   ##
   ## The emitted proc computes the definition's value with direct code, then
-  ## applies `args` left to right — the same two phases as
-  ## `callDefValueWithBindings`, minus the term walk.
+  ## applies runtime Pi arguments from `args` and q0 witnesses from `q0Args`.
+  ## q0 values stay separate from the computational argument vector, while
+  ## remaining available to instantiate dependent runtime types.
   if d.tmTm.isNil:
     return nil
   let erased =
@@ -515,11 +525,15 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
       return nil
   let argsSym = ident"cgProcArgs"
   let bndSym = ident"cgProcBindings"
+  let q0ArgsSym = ident"cgProcQ0Args"
   var formal = newNimNode(nnkFormalParams)
   formal.add(bindSym"Value")
   formal.add(newIdentDefs(argsSym,
     newTree(nnkBracketExpr, ident"seq", bindSym"Value"), newEmptyNode()))
   formal.add(newIdentDefs(bndSym, bindSym"RuntimeBindings", newEmptyNode()))
+  formal.add(newIdentDefs(q0ArgsSym,
+    newTree(nnkBracketExpr, ident"seq", bindSym"Value"),
+    newTree(nnkPrefix, ident"@", newNimNode(nnkBracket))))
   var procNode = newNimNode(nnkProcDef)
   procNode.add(newTree(nnkPostfix, ident"*", ident(cgName(d.name))))
   procNode.add(newEmptyNode())
@@ -528,16 +542,56 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
   procNode.add(newEmptyNode())
   procNode.add(newEmptyNode())
   let accSym = genSym(nskVar, "cgAcc")
-  let aSym = genSym(nskForVar, "cgArg")
+  let argIdxSym = genSym(nskVar, "cgArgIdx")
+  let q0ArgIdxSym = genSym(nskVar, "cgQ0ArgIdx")
+  let canBindSym = genSym(nskVar, "cgCanBind")
   let bodyCode =
     try: cg(ctx, erased, @[], bndSym)
     except CgUnsupported:
       return nil
   var inner = newStmtList()
   inner.add(newVarStmt(accSym, bodyCode))
-  inner.add(newTree(nnkForStmt, aSym, argsSym,
+  inner.add(newVarStmt(argIdxSym, newLit(0)))
+  inner.add(newVarStmt(q0ArgIdxSym, newLit(0)))
+  inner.add(newVarStmt(canBindSym, newLit(true)))
+  for qty in piQuantities(d.tyTm):
+    var bindStmts = newStmtList()
+    if qty == q0:
+      let q0Witness = genSym(nskLet, "cgQ0Witness")
+      let hasQ0Witness = newTree(nnkInfix, ident"<", q0ArgIdxSym,
+        newCall(bindSym"len", q0ArgsSym))
+      bindStmts.add(newLetStmt(q0Witness,
+        newTree(nnkIfExpr,
+          newTree(nnkElifBranch, hasQ0Witness,
+            newTree(nnkBracketExpr, q0ArgsSym, q0ArgIdxSym)),
+          newTree(nnkElse, newCall(bindSym"unitValue")))))
+      bindStmts.add(newAssignment(accSym,
+        newCall(bindSym"vAppWithBindings", accSym,
+          q0Witness, bndSym)))
+      bindStmts.add(newCall(bindSym"inc", q0ArgIdxSym))
+    else:
+      bindStmts.add(newAssignment(accSym,
+        newCall(bindSym"vAppWithBindings", accSym,
+          newTree(nnkBracketExpr, argsSym, argIdxSym), bndSym)))
+      bindStmts.add(newCall(bindSym"inc", argIdxSym))
+    let cond = if qty == q0:
+      canBindSym
+    else:
+      newTree(nnkInfix, ident"and", canBindSym,
+        newTree(nnkInfix, ident"<", argIdxSym,
+          newCall(bindSym"len", argsSym)))
+    var branches = newNimNode(nnkIfStmt)
+    branches.add(newTree(nnkElifBranch, cond, bindStmts))
+    if qty != q0:
+      branches.add(newTree(nnkElse, newStmtList(
+        newAssignment(canBindSym, newLit(false)))))
+    inner.add(branches)
+  let restSym = genSym(nskForVar, "cgExtraArgIdx")
+  inner.add(newTree(nnkForStmt, restSym,
+    newTree(nnkInfix, ident"..<", argIdxSym, newCall(bindSym"len", argsSym)),
     newStmtList(newAssignment(accSym,
-      newCall(bindSym"vAppWithBindings", accSym, aSym, bndSym)))))
+      newCall(bindSym"vAppWithBindings", accSym,
+        newTree(nnkBracketExpr, argsSym, restSym), bndSym)))))
   inner.add(accSym)
   # Source positions (issue #329 acceptance): runtime errors raised while
   # evaluating compiled code report the definition's source location.
@@ -596,16 +650,15 @@ proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
 
 proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprKind] =
   ## Representation kinds of the def's Pi-binder domains (outermost first),
-  ## followed by the result type. Raises CgUnsupported when anything is
-  ## outside the fragment. q0 binders are excluded: erasure keeps their
-  ## lambda but the call site passes unit, which has no host representation.
+  ## followed by the result type. Quantity-0 binders are erased from the
+  ## host signature. Raises CgUnsupported when anything else is outside the
+  ## fragment.
   var t = d.tyTm
   while t != nil and t.kind == tPi:
-    if t.qty == q0:
-      raise newException(CgUnsupported, "erased binder in repr signature")
-    if t.dom.isNil or t.dom.kind != tR:
-      raise newException(CgUnsupported, "non-atomic binder domain")
-    result.add(ctx.reprKindOf(t.dom.refId))
+    if t.qty != q0:
+      if t.dom.isNil or t.dom.kind != tR:
+        raise newException(CgUnsupported, "non-atomic binder domain")
+      result.add(ctx.reprKindOf(t.dom.refId))
     t = t.scope.bdy
   if t.isNil or t.kind != tR:
     raise newException(CgUnsupported, "non-atomic result type")
@@ -650,6 +703,20 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       return cgReprElim(ctx, rh, appArgs, env)
     if rh.kind == cgkCtor:
       return cgReprCtor(ctx, rh, appArgs, env)
+    if rh.kind == cgkDefn and head.refId in ctx.reprProcs:
+      var args: seq[NimNode] = @[]
+      var argIdx = 0
+      for qty in rh.piQuantities:
+        if argIdx >= appArgs.len: break
+        if qty != q0:
+          args.add(cgRepr(ctx, appArgs[argIdx], env))
+        inc argIdx
+      if argIdx != appArgs.len:
+        raise newException(CgUnsupported,
+          "compiled repr call to '" & rh.name & "' has mismatched arity")
+      var call = newCall(ident(ctx.reprProcs[head.refId].name))
+      for arg in args: call.add(arg)
+      return call
   # Beta-reduce immediately-applied lambdas. A lambda in this fragment has
   # an int type only when fully applied (a bare lambda has a Pi type, which
   # the signature check rejects, and the only int-typed positions are
@@ -663,12 +730,15 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   while head.kind == tLam:
     if argIdx >= appArgs.len:
       raise newException(CgUnsupported, "unapplied lambda in repr body")
-    if head.dom.isNil or head.dom.kind != tR:
-      raise newException(CgUnsupported, "non-atomic lambda domain")
-    discard ctx.reprKindOf(head.dom.refId)
-    let psym = genSym(nskLet, "cgReprBeta")
-    preStmts.add(newLetStmt(psym, cgRepr(ctx, appArgs[argIdx], env)))
-    curEnv = @[psym] & curEnv
+    if head.qty == q0:
+      curEnv = @[newLit(0)] & curEnv
+    else:
+      if head.dom.isNil or head.dom.kind != tR:
+        raise newException(CgUnsupported, "non-atomic lambda domain")
+      discard ctx.reprKindOf(head.dom.refId)
+      let psym = genSym(nskLet, "cgReprBeta")
+      preStmts.add(newLetStmt(psym, cgRepr(ctx, appArgs[argIdx], env)))
+      curEnv = @[psym] & curEnv
     head = head.scope.bdy
     inc argIdx
   if argIdx > 0 and argIdx < appArgs.len and head.kind != tR:
@@ -923,30 +993,39 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
   ## Compile one definition to
   ## `proc eponymCompiledRepr_<name>(p1: int, ..., pn: int): int`.
   ## Returns nil when the definition is outside the representation fragment
-  ## (caller keeps the Phase 1 backend). The erased term's leading lambdas
-  ## must match the signature's binder count exactly; a mismatch bails out
-  ## rather than risk a misaligned environment.
+  ## (caller keeps the Phase 1 backend). q0 binders have environment
+  ## placeholders but no Nim formal parameters.
   if d.tmTm.isNil or d.tyTm.isNil:
     return nil
   let sig =
     try: ctx.reprSig(d)
     except CgUnsupported:
       return nil
-  let arity = sig.len - 1
   let erased =
     try: eraseQ0Arguments(d.tmTm)
     except ValueError:
       return nil
   var body = erased
   var params: seq[NimNode] = @[]
-  for i in 0 ..< arity:
-    if body.isNil or body.kind != tLam or body.qty == q0:
+  var envOuterToInner: seq[NimNode] = @[]
+  var ty = d.tyTm
+  while ty != nil and ty.kind == tPi:
+    if body.isNil or body.kind != tLam or body.qty != ty.qty:
       return nil
-    params.add(genSym(nskParam, "cgReprArg" & $i))
+    if ty.qty == q0:
+      envOuterToInner.add(newLit(0))
+    else:
+      if ty.dom.isNil or ty.dom.kind != tR:
+        return nil
+      params.add(genSym(nskParam, "cgReprArg" & $params.len))
+      envOuterToInner.add(params[^1])
     body = body.scope.bdy
+    ty = ty.scope.bdy
+  if body.isNil or body.kind == tLam:
+    return nil
   var env: seq[NimNode] = @[]
-  for i in countdown(params.high, 0):
-    env.add(params[i])
+  for i in countdown(envOuterToInner.high, 0):
+    env.add(envOuterToInner[i])
   let bodyCode =
     try: cgRepr(ctx, body, env)
     except CgUnsupported:

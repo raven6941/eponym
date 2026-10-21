@@ -117,6 +117,10 @@ proc stepFn (p : Nat) (ih : Nat) : Nat = suc ih
 proc stepFn2 (p : Nat) (ih : Nat) : Nat = natAdd p (suc ih)
 proc addViaFn (m : Nat) (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) n stepFn2 m
+proc q0Prefix (0 proof : Nat) (x : Int) : Int = x
+proc q0Call (x : Int) : Int = q0Prefix 0 x
+proc q0Middle (x : Int) (0 proof : Nat) (y : Int) : Int = addInt x y
+proc q0MiddleCall (x : Int) (y : Int) : Int = q0Middle x 0 y
 """
 
 differentialBlockRepr(prog, currentSourcePath())
@@ -247,8 +251,39 @@ for x in [0, 1, 42]:
 for name in ["natZero", "natSeven", "natAdd", "natMul", "natDouble",
     "isZero", "notb", "andb", "stepFn2"]:
   expect(name in reprCompiledNames(), name & " has a repr proc")
-expect("stepFn" notin reprCompiledNames(),
-  "unused (q0) binder has no repr proc")
+for name in ["stepFn", "q0Prefix", "q0Call", "q0Middle",
+    "q0MiddleCall"]:
+  expect(name in reprCompiledNames(), name & " erases q0 binder slots")
+for x in [0, 1, 19]:
+  expect(eponymCompiledRepr_stepFn(x) == x + 1,
+    "unused first Nat binder omitted from stepFn ABI")
+  expect(eponymCompiledRepr_q0Prefix(x) == x,
+    "explicit q0 prefix omitted from q0Prefix ABI")
+  expect(eponymCompiledRepr_q0Call(x) == x,
+    "q0 argument omitted from compiled local call")
+for (x, y) in [(-17, 4), (0, 0), (18, -9)]:
+  expect(eponymCompiledRepr_q0Middle(x, y) == x + y,
+    "interleaved q0 binder omitted from generated signature")
+  expect(eponymCompiledRepr_q0MiddleCall(x, y) == x + y,
+    "interleaved q0 argument omitted from compiled local call")
+
+block:
+  let bnd = testPostulateBindings()
+  let runtimeArg = vInt(23)
+  let compiled = eponymCompiled_q0Prefix(@[runtimeArg], bnd)
+  let interpreted = callValueFuncDir("", prog, "q0Prefix",
+    @[natToValue(17, natGlobals), runtimeArg], bnd)
+  expect(compiled.whnfKind == wInt and compiled.whnfIntVal == 23 and
+    interpreted.whnfKind == wInt and interpreted.whnfIntVal == 23,
+    "phase-1 Value ABI omits q0 prefix and preserves runtime arg order")
+  let middleArgs = @[vInt(8), vInt(-3)]
+  let middleCompiled = eponymCompiled_q0Middle(middleArgs, bnd)
+  let middleInterpreted = callValueFuncDir("", prog, "q0Middle",
+    @[vInt(8), natToValue(2, natGlobals), vInt(-3)], bnd)
+  expect(middleCompiled.whnfKind == wInt and
+    middleCompiled.whnfIntVal == 5 and middleInterpreted.whnfKind == wInt and
+    middleInterpreted.whnfIntVal == 5,
+    "phase-1 Value ABI omits an interleaved q0 binder")
 
 # --- fragment boundaries: these get Phase-1 procs but no repr procs ---
 expect("tickTwice" notin reprCompiledNames(),
@@ -364,11 +399,28 @@ echo "all Phase 2 codegen differential checks passed"
 # so data-declared Nat/Bool with runtimeType(..., int) is rejected there
 # — see the daily log 2026-10-21. The Nat/Bool repr tier is covered by
 # differentialBlockRepr above, which drives compileBlockProcs directly.)
+proc q0HostBump(value: int): int = value + 1
+proc q0HostCombine(x, y: int): int = x + y
+
 eponymBlock:
   postulate(Int, Univ)
+  postulate(Opaque, Univ)
   runtimeType(Int, int)
+  runtimeType(Opaque, int)
+  postulate(q0HostBumpPostulate, Opaque -> Opaque)
+  postulate(q0HostCombinePostulate, Opaque -> Opaque -> Opaque)
+  bindPostulate(q0HostBumpPostulate, q0HostBump, Opaque, Opaque)
+  bindPostulate(q0HostCombinePostulate, q0HostCombine,
+    Opaque, Opaque, Opaque)
   proc wAdd(x: Int, y: Int): Int = addInt(x, y)
   proc wMulAdd(x: Int, y: Int, z: Int): Int = addInt(mulInt(x, y), z)
+  proc wErased(proof {.erased.}: Int, x: Int): Int = x
+  proc wErasedMiddle(x: Int, proof {.erased.}: Int, y: Int): Int =
+    addInt(x, y)
+  proc wErasedValueBacked(proof {.erased.}: Opaque, x: Opaque): Opaque =
+    q0HostBumpPostulate(x)
+  proc wErasedMiddleValueBacked(x: Opaque, proof {.erased.}: Opaque,
+      y: Opaque): Opaque = q0HostCombinePostulate(x, y)
   proc wDouble(x: Int): Int = addInt(x, x)
   proc wQuad(x: Int): Int = wDouble(wDouble(x))
 
@@ -379,6 +431,27 @@ static:
 when isMainModule:
   expect(wAdd(3, 4) == 7, "e2e wrapper wAdd")
   expect(wMulAdd(2, 3, 4) == 10, "e2e wrapper wMulAdd")
+  var erasedWrapperResults = true
+  var interleavedWrapperResults = true
+  var erasedValueBackedResults = true
+  var interleavedValueBackedResults = true
+  for x in -100 .. 99:
+    erasedWrapperResults = erasedWrapperResults and
+      wErased(x * 17, x) == x
+    interleavedWrapperResults = interleavedWrapperResults and
+      wErasedMiddle(x, x * 17, x + 1) == 2 * x + 1
+    erasedValueBackedResults = erasedValueBackedResults and
+      wErasedValueBacked(x * 17, x) == x + 1
+    interleavedValueBackedResults = interleavedValueBackedResults and
+      wErasedMiddleValueBacked(x, x * 17, x + 1) == 2 * x + 1
+  expect(erasedWrapperResults,
+    "typed wrapper omits q0 arguments (200 values)")
+  expect(interleavedWrapperResults,
+    "typed wrapper omits interleaved q0 arguments (200 values)")
+  expect(erasedValueBackedResults,
+    "Phase-1 typed wrapper omits leading q0 argument (200 values)")
+  expect(interleavedValueBackedResults,
+    "Phase-1 typed wrapper omits interleaved q0 argument (200 values)")
   expect(wQuad(21) == 84, "e2e wrapper wQuad")
   for x in [-10, 0, 7]:
     for y in [-3, 0, 9]:
