@@ -189,6 +189,55 @@ block:
     rejected = "expected global 'two'" in e.msg
   expect(rejected, "stale baked refId is rejected by name")
 
+macro checkElimTranslation(src: static string): untyped =
+  ## Exercise translation validation during macro expansion, at the same
+  ## stage that generated procedures are finalized.
+  let checked = elabCheckDirStateAll(src, "")
+  var userLines = initTable[string, int]()
+  for d in checked.defs:
+    userLines[d.name] = 1
+  let generated = compileBlockProcs(checked.defs, checked.globals, "", src,
+    currentSourcePath(), userLines)
+  let ctx = buildCodegenCtx(checked.globals, "", src)
+  let elimId = checked.globals["natElim"].tm.refId
+  let elim = ctx.refs[elimId]
+  var emitted: NimNode
+  for p in generated.procs:
+    if p.kind == nnkProcDef and p[0].kind == nnkPostfix and
+        $p[0][1] == elimProcName("natElim") and p[6].kind != nnkEmpty:
+      emitted = p
+      break
+  if emitted.isNil:
+    error("natElim compiled body is missing")
+  validateElimDispatchCoverage(elim, emitted)
+
+  proc findCtorDispatch(node: NimNode): NimNode =
+    if node.isNil: return nil
+    if node.kind == nnkCaseStmt and node.len > 0 and
+        node[0].kind == nnkCall and node[0].len > 0 and
+        $node[0][0] == "whnfRefId":
+      return node
+    for child in node:
+      result = findCtorDispatch(child)
+      if not result.isNil: return
+
+  var corrupted = copyNimTree(emitted)
+  let dispatch = findCtorDispatch(corrupted)
+  if dispatch.isNil or dispatch.len <= 2:
+    error("natElim dispatch is missing constructor branches")
+  dispatch.del(1)  # Remove one registered constructor branch.
+  var rejected = false
+  try:
+    validateElimDispatchCoverage(elim, corrupted)
+  except CgUnsupported as e:
+    rejected = "does not cover registered constructor" in e.msg
+  if not rejected:
+    error("translation validation accepted a missing constructor branch")
+  result = quote do:
+    echo "ok: macro-time translation validation rejects a missing constructor branch"
+
+checkElimTranslation(prog)
+
 proc callByName(name: string, args: seq[Value]): Value =
   case name
   of "add42": eponymCompiled_add42(args, testPostulateBindings())

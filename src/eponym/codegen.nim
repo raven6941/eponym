@@ -30,8 +30,9 @@
 ## - `tR` to other definitions: slow path through `callValueFuncDir`
 ## - eliminators (`wRed`): only fully applied, via a generated
 ##   `eponymElim_<name>` proc holding the static case dispatch over the
-##   registered reduction rules; partially-applied or bare eliminator
-##   references fall back to the interpreter
+##   registered reduction rules; emitted constructor labels are validated
+##   against that table before code is returned; partially-applied or bare
+##   eliminator references fall back to the interpreter
 ## - `tPrim`: primitive Int ops via the existing `vPrim` accumulation
 ##
 ## Deliberate deviations from the interpreter (all unreachable in checked
@@ -392,6 +393,70 @@ proc collectRefIds(t: Term, acc: var Table[int, bool]) =
     collectRefIds(t.primTy, acc)
   else: discard
 
+proc elimDispatchCase(procNode: NimNode): NimNode =
+  ## Find the generated case over a scrutinee's constructor refId.
+  if procNode.isNil: return nil
+  if procNode.kind == nnkCaseStmt and procNode.len > 0 and
+      procNode[0].kind == nnkCall and procNode[0].len > 0 and
+      $procNode[0][0] == "whnfRefId":
+    return procNode
+  for child in procNode:
+    result = elimDispatchCase(child)
+    if not result.isNil: return
+
+proc validateElimDispatchCoverage*(r: CgRef, procNode: NimNode) =
+  ## Translation validation: the generated constructor-tag dispatch must
+  ## have exactly one branch for every kernel-validated reduction rule, plus
+  ## a default branch for unknown constructors. This checks the emitted AST,
+  ## not only the source loop that currently constructs it.
+  if r.kind != cgkElim:
+    raise newException(CgUnsupported,
+      "dispatch validation requested for non-eliminator '" & r.name & "'")
+  let dispatch = elimDispatchCase(procNode)
+  if dispatch.isNil:
+    raise newException(CgUnsupported,
+      "compiled eliminator '" & r.name & "' has no constructor dispatch")
+  var expected = initTable[int, bool]()
+  for ctorId in r.cases.keys:
+    expected[ctorId] = true
+  var actual = initTable[int, bool]()
+  var hasDefault = false
+  for i in 1 ..< dispatch.len:
+    let branch = dispatch[i]
+    case branch.kind
+    of nnkOfBranch:
+      if branch.len < 2 or branch[0].kind notin {
+          nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit}:
+        raise newException(CgUnsupported,
+          "compiled eliminator '" & r.name &
+          "' has a non-literal constructor dispatch label")
+      let ctorId = branch[0].intVal.int
+      if ctorId notin expected:
+        raise newException(CgUnsupported,
+          "compiled eliminator '" & r.name & "' dispatches unregistered " &
+          "constructor refId " & $ctorId)
+      if ctorId in actual:
+        raise newException(CgUnsupported,
+          "compiled eliminator '" & r.name & "' dispatches constructor refId " &
+          $ctorId & " more than once")
+      actual[ctorId] = true
+    of nnkElse:
+      if hasDefault:
+        raise newException(CgUnsupported,
+          "compiled eliminator '" & r.name & "' has duplicate default branches")
+      hasDefault = true
+    else:
+      raise newException(CgUnsupported,
+        "compiled eliminator '" & r.name & "' has an unexpected dispatch branch")
+  for ctorId in expected.keys:
+    if ctorId notin actual:
+      raise newException(CgUnsupported,
+        "compiled eliminator '" & r.name &
+        "' dispatch does not cover registered constructor refId " & $ctorId)
+  if not hasDefault:
+    raise newException(CgUnsupported,
+      "compiled eliminator '" & r.name & "' has no default dispatch branch")
+
 proc detectBadElims(ctx: var CodegenCtx) =
   ## Mark eliminators that cannot be compiled: those in reference cycles,
   ## with unknown constructor arities, or whose contractum templates fall
@@ -521,6 +586,7 @@ proc compileElimProc(ctx: var CodegenCtx, elimRefId: int): NimNode =
   outerCase.add(outerElse)
   lets.add(outerCase)
   procNode.add(lets)
+  validateElimDispatchCoverage(r, procNode)
   procNode
 
 proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,

@@ -1029,6 +1029,11 @@ implementations.
   eliminator dispatch. A regression simulates a changed refId and checks that
   codegen rejects the mismatch instead of emitting a potentially miscompiled
   proc (issue #363).
+- [x] Validate the emitted Phase-1 eliminator case dispatch against the
+  constructor IDs in the kernel-validated reduction-rule table. Macro-time
+  translation validation rejects missing, duplicate, or unregistered
+  constructor labels and requires a default branch; a regression deletes a
+  generated `natElim` branch and confirms rejection (issue #378).
 
 ### Cross-stage validation and project claims
 

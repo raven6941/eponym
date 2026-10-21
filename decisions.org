@@ -3574,6 +3574,25 @@
   `docs/trust-model.md` and `docs/known-limitations.md`.
   Status: DECIDED (#380).
 
+* 2026-10-21 — Validate generated eliminator dispatch (#378)
+
+  Context: Phase 1 emits a Nim =case= over constructor refIds from the
+  kernel-validated eliminator rule table. Differential tests compared runtime
+  behavior with the interpreter, but did not establish that every registered
+  rule had a generated branch. Decision: validate the emitted Nim AST before
+  returning code. Its constructor labels must contain each registered rule
+  exactly once, contain no other labels, and retain a default branch for
+  unknown constructors. The expected labels come from =CgRef.cases=, copied
+  directly from the checked =wRed= table.
+
+  Consequences: generated dispatch coverage is checked at macro time, in
+  addition to differential runtime tests. The check does not independently
+  prove each branch's contractum translation; those remain covered by the
+  existing differential suite and interpreter fallback for unsupported
+  eliminators. Partial applications still use the established interpreter
+  fallback. A corrupted emitted branch table is rejected by regression.
+  Status: IMPLEMENTED (#378).
+
 * 2026-10-21 — Float/String/Char remain opaque in the v1 core (#373)
 
   Context: =Float=, =String=, and =Char= already cross checked wrappers via
