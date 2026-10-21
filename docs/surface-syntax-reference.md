@@ -99,8 +99,11 @@ binder appears only in the checked signature. Nat binders `[n: Nat]` map to
 Nim `static[int]`; Bool binders `[b: Bool]` map to `static[bool]` and require
 `bool.ep`; Int binders `[i: Int]` also map to `static[int]` and cross as Eponym
 integer values. All three value binder kinds can appear in checked signatures
-and bodies. A binder over an explicitly mapped type can also use a Nim static
-generic value, encoded through the mapping's runtime codec. Other Eponym
+and bodies. `runtimeValue(definition)` also emits a typed `definitionDynamic`
+sibling for supported runtime-valued generic indices; it takes those indices
+as ordinary Nim arguments and checks indexed values against them. A binder
+over an explicitly mapped type can also use a Nim static generic value,
+encoded through the mapping's runtime codec. Other Eponym
 signatures need an explicit opaque mapping as shown below or one of the
 supported structural codecs. Multi-argument Nim proc types with supported leaf
 codecs can cross in either direction when annotated with `{.closure.}`. Calling

@@ -80,6 +80,11 @@ that the sequence length matches `n`. Nested vectors and vectors of mapped
 opaque values work when their element type has a codec. Dynamic generic value
 binders also support `Vec`, non-dependent `Sig`, `List`, and `Option` when the
 corresponding codecs are registered.
+For a Nat index known only at runtime, `runtimeValue(definition)` also emits a
+typed `definitionDynamic(index, value)` sibling when its codecs support the
+signature. It takes indices as Nim `int`, checks indexed values against them,
+and returns a typed Nim result. Use the raw `definitionRuntimeValueDynamic`
+overload when the value has no Nim codec; the tutorial shows a Vec example.
 Dependent Sigma binders can also be passed as raw `RuntimeValue`s and checked
 against generated witnesses. When the field codecs can reconstruct and check
 the generated Sigma witness, Eponym also generates a typed Nim tuple wrapper
