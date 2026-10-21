@@ -102,6 +102,7 @@ data Bool : Type 0 where
 | false : Bool
 proc natZero : Nat = zero
 proc natSeven : Nat = 7
+proc natSucc (n : Nat) : Nat = suc n
 proc natAdd (m : Nat) (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
 proc natMul (m : Nat) (n : Nat) : Nat =
@@ -184,6 +185,53 @@ for (x, y) in [(10, 3), (3, 10), (0, 0)]:
 # as suc-chains via natToValue and Bool arguments via boolToValue; results
 # are decoded with valueToNat/valueToBool.
 let natGlobals = getGlobals(prog)
+
+var negativeNatRejected = false
+try:
+  discard eponymCompiledRepr_natSucc(-1)
+except ValueError as error:
+  negativeNatRejected = error.msg == "runtime Nat cannot be negative"
+expect(negativeNatRejected,
+  "Phase 2 Nat successor rejects negative host integers")
+
+var natBoundaryRng = initRng(0x380'u64)
+let natBoundaryCases = forAll(
+  "interpreter, Phase 1, and Phase 2 agree at the host-int Nat boundary",
+  natBoundaryRng, 200,
+  proc(r: var Rng): int = high(int) - r.genInt(0, 2),
+  proc(n: int): bool =
+    let fits = n < high(int)
+    let expected = if fits: n + 1 else: 0
+    let input = natToValue(n)
+    let bindings = testPostulateBindings()
+    let interpreted = callValueFuncDir("", prog, "natSucc", @[input],
+      bindings)
+    let phase1 = eponymCompiled_natSucc(@[input], bindings)
+    var interpretedMatches = false
+    var phase1Matches = false
+    try:
+      let value = valueToNat(interpreted, natGlobals)
+      interpretedMatches = fits and value == expected
+    except ValueError as error:
+      interpretedMatches = not fits and
+        error.msg == "runtime Nat does not fit Nim int"
+    try:
+      let value = valueToNat(phase1, natGlobals)
+      phase1Matches = fits and value == expected
+    except ValueError as error:
+      phase1Matches = not fits and
+        error.msg == "runtime Nat does not fit Nim int"
+    var phase2Matches = false
+    try:
+      let value = eponymCompiledRepr_natSucc(n)
+      phase2Matches = fits and value == expected
+    except ValueError as error:
+      phase2Matches = not fits and
+        error.msg == "runtime Nat does not fit Nim int"
+    interpretedMatches and phase1Matches and phase2Matches,
+  shrinkInt)
+expect(natBoundaryCases,
+  "runtime Nat values above high(int) fail consistently without wraparound")
 
 proc checkReprNat(name: string, args: seq[int], expected: int) =
   ## Compare the repr proc against the literal expectation, the

@@ -1015,6 +1015,11 @@ implementations.
   terms. Property tests cover direct and imported definitions. Effects are
   still not tracked or checked for purity, so required operations must use a
   qω or q1 position.
+- [x] Specify and test the Nat runtime boundary across the interpreter,
+  Phase 1, and Phase 2. Phase 2 successor checks `high(int)` explicitly;
+  Value-to-Nim conversion rejects larger unary values. A 200-case property
+  exercises the boundary and confirms no backend silently wraps, including
+  builds with Nim overflow checks disabled.
 - [x] Validate every baked global refId/name pair against the macro-time
   `Globals` table before code emission, including constructor IDs used by
   eliminator dispatch. A regression simulates a changed refId and checks that

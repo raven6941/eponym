@@ -1557,6 +1557,16 @@ proc hostOpaqueQuinary*[A, B, C, D, E, F](
 
 proc natToValue*(n: int): Value = vNatLit(n)
 
+proc checkedNatSucc*(n: int): int =
+  ## Successor for the Phase 2 `Nat -> int` representation. Do not rely on
+  ## Nim's compiler overflow switch: a mathematical Nat above high(int) must
+  ## fail consistently even when a client builds with overflow checks off.
+  if n < 0:
+    raise newException(ValueError, "runtime Nat cannot be negative")
+  if n == high(int):
+    raise newException(ValueError, "runtime Nat does not fit Nim int")
+  n + 1
+
 proc canonicalNatConstructorIds(globals: Globals):
     tuple[zeroId, sucId: int, valid: bool] =
   if "Nat" notin globals or "zero" notin globals or "suc" notin globals:
