@@ -3574,3 +3574,29 @@
   `docs/trust-model.md` and `docs/known-limitations.md`.
   Status: DECIDED (#380).
 
+* 2026-10-21 — Float/String/Char remain opaque in the v1 core (#373)
+
+  Context: =Float=, =String=, and =Char= already cross checked wrappers via
+  explicit runtime codecs, but Eponym has no literals or primitive operations.
+  The issue asks whether to add core values and operations or make the host
+  boundary an explicit design choice. Options: (a) add literals and primitive
+  operations, choosing core equality and arithmetic semantics; (b) keep these
+  as opaque host values and put operations in typed postulates bound to Nim
+  adapters. Decision: (b) for v1. Eponym's core should not inherit Nim's
+  byte-sequence String/byte Char representation or host floating-point
+  behavior as its portable value semantics. In particular, Float operations
+  would need specified rounding, NaN, signed-zero, and comparison behavior;
+  choosing those semantics in the kernel is a language and backend commitment,
+  not just syntax support.
+
+  Consequences: checked code may call a typed operation and its Nim adapter
+  signature is checked against the runtime codec, but the adapter's behavior
+  remains trusted and its result cannot reduce during type checking. This is
+  explicit in the surface reference and known-limitations page. Revisit only
+  with a cross-platform value representation and semantics specification, plus
+  interpreter/codegen agreement tests; Float arithmetic must also pin NaN,
+  signed-zero, and rounding behavior. This is the issue's accepted
+  postulate-only design resolution, not a claim that the host operation is
+  verified.
+  Status: DECIDED (#373).
+

@@ -375,6 +375,15 @@ postulate(sendNat, Pi(x: Nat, ch {.linear.}: Chan(sendS(Nat, endS())), Chan(endS
 and its primops are kernel axioms; a `postulate`d primop that lies
 poisons every proof touching it (trust model).
 
+`Float`, `String`, and `Char` are opaque host types, not core literals. Put
+their operations in Nim and declare each operation as a postulate with a
+matching `bindPostulate` adapter. The Eponym signature and the adapter's Nim
+signature are checked, but the adapter's behavior is trusted; Eponym cannot
+reduce a string comparison or reason about a floating-point result. This is
+the v1 design boundary: it avoids making Nim's byte-string and floating-point
+semantics part of Eponym's portable core. See
+[known limitations](known-limitations.md#scalar-host-values-are-opaque).
+
 ### `record` — records (#37)
 
 ```nim
