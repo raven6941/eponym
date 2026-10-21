@@ -227,6 +227,7 @@ eponymBlock:
   import "../lib/bool.ep"
   runtimeVariant(RuntimeTree)
   runtimeVariant(SizedTree)
+  runtimeVariant(SizedVector)
   runtimeValue(treeIdentity)
   proc genericIndexedTreeProjection[length: Nat,
       tree: SizedTree[length]](ignored: Int): SizedTree[length] = tree
@@ -1305,14 +1306,9 @@ proc generatedTokenIdentity (value : Token) : Token = value
     r, 200,
     proc(r: var Rng): int = r.genInt(0, 100),
     proc(length: int): bool =
-      var tree = runtimeVariantToValue(RuntimeVariant(
-        constructor: "treeEmpty"), variantGlobals, "RuntimeTree",
-        runtimeTreeConstructors)
-      for i in 0 ..< length:
-        tree = runtimeVariantToValue(RuntimeVariant(
-          constructor: "treeNode",
-          arguments: @[intToValue(i), tree]), variantGlobals,
-          "RuntimeTree", runtimeTreeConstructors)
+      var values: seq[int] = @[]
+      for i in 0 ..< length: values.add(i)
+      let tree = encodeRuntimeTree(values, variantGlobals)
       let typedRoundTrip = runtimeVariantToValue(
         treeIdentity(valueToRuntimeVariant(tree, variantGlobals,
           "RuntimeTree", runtimeTreeConstructors)), variantGlobals,
@@ -1333,6 +1329,91 @@ proc generatedTokenIdentity (value : Token) : Token = value
       false,
     shrinkInt)
   if not rawVariantCases:
+    quit(1)
+  let dependentVariantCases = forAll(
+    "runtime variants validate dependent constructor payload types", r, 200,
+    proc(r: var Rng): tuple[length: int, values: seq[int]] =
+      let length = r.genInt(0, 20)
+      var values: seq[int] = @[]
+      for _ in 0 ..< length: values.add(r.genInt(-1000, 1000))
+      (length, values),
+    proc(input: tuple[length: int, values: seq[int]]): bool =
+      let vector = seqToVecValue[int](input.values, input.length,
+        variantGlobals, "Vec",
+        proc(item: int, _: Globals): Value = intToValue(item),
+        runtimeGlobalValue(variantGlobals, "Int"))
+      let wrapped = runtimeVariantToValue(RuntimeVariant(
+        constructor: "sizedVector",
+        arguments: @[natToValue(input.length, variantGlobals), vector]),
+        variantGlobals, "SizedVector", ["sizedVector"])
+      let decoded = valueToRuntimeVariant(wrapped, variantGlobals,
+        "SizedVector", ["sizedVector"])
+      valueToNat(decoded.arguments[0], variantGlobals) == input.length and
+        vecValueToSeq[int](decoded.arguments[1], input.length,
+          variantGlobals, "Vec",
+          proc(item: Value, _: Globals): int = valueToInt(item)) ==
+            input.values)
+  if not dependentVariantCases:
+    quit(1)
+  var wrongRuntimeVariantPayloadRejected = false
+  try:
+    discard runtimeVariantToValue(RuntimeVariant(
+      constructor: "treeNode",
+      arguments: @[intToValue(1), intToValue(2)]), variantGlobals,
+      "RuntimeTree", ["treeEmpty", "treeNode"])
+  except ValueError as error:
+    wrongRuntimeVariantPayloadRejected = "argument 1 has the wrong type" in
+      error.msg
+  doAssert wrongRuntimeVariantPayloadRejected
+  var wrongDependentRuntimeVariantPayloadRejected = false
+  try:
+    let wrongLength = seqToVecValue[int](@[10, 20], 2, variantGlobals,
+      "Vec", proc(item: int, _: Globals): Value = intToValue(item),
+      runtimeGlobalValue(variantGlobals, "Int"))
+    discard runtimeVariantToValue(RuntimeVariant(
+      constructor: "sizedVector",
+      arguments: @[natToValue(3, variantGlobals), wrongLength]),
+      variantGlobals, "SizedVector", ["sizedVector"])
+  except ValueError:
+    wrongDependentRuntimeVariantPayloadRejected = true
+  doAssert wrongDependentRuntimeVariantPayloadRejected
+  let malformedTree = callRuntimeValue(
+    eval(variantGlobals["treeNode"].tm, @[]),
+    @[intToValue(1), intToValue(2)])
+  var malformedTreeTypeRejected = false
+  try:
+    validateRuntimeValueAgainstType(malformedTree,
+      runtimeGlobalValue(variantGlobals, "RuntimeTree"), variantGlobals)
+  except ValueError:
+    malformedTreeTypeRejected = true
+  doAssert malformedTreeTypeRejected
+  var malformedGenericVariantRejected = false
+  try:
+    let malformedSizedTree = callRuntimeValue(
+      eval(variantGlobals["sizedTree"].tm, @[]),
+      @[natToValue(3, variantGlobals), intToValue(4)])
+    let rawVariant = valueToRuntimeVariant(malformedSizedTree,
+      variantGlobals, "SizedTree", ["sizedTree"])
+    discard genericIndexedTreeProjectionRuntimeValueDynamic(3, rawVariant, 0)
+  except ValueError:
+    malformedGenericVariantRejected = true
+  doAssert malformedGenericVariantRejected
+  let malformedConstructorCases = forAll(
+    "raw constructor checks reject primitive values in unrelated fields", r,
+    200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let malformed = callRuntimeValue(
+        eval(variantGlobals["treeNode"].tm, @[]),
+        @[intToValue(1), intToValue(value)])
+      try:
+        validateRuntimeValueAgainstType(malformed,
+          runtimeGlobalValue(variantGlobals, "RuntimeTree"), variantGlobals)
+        false
+      except ValueError:
+        true,
+    shrinkInt)
+  if not malformedConstructorCases:
     quit(1)
   let appliedGenericTypeCases = forAll(
     "unmapped applied generic domains check their runtime indices", r, 200,

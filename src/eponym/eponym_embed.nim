@@ -1037,10 +1037,17 @@ proc valueToEnum*[T: enum](value: Value, globals: Globals,
   raise newException(ValueError,
     "runtime value is not one of the mapped Eponym constructors")
 
+proc validateRuntimeValueType*(value, expectedType: Value,
+                               globals: Globals)
+proc validateRuntimeValueAgainstType*(value, expectedType: Value,
+                                      globals: Globals)
+
 type RuntimeVariant* = object
   ## Generic structural view of an Eponym data constructor application.
   ## Payloads stay as Values so callers can recursively decode only the fields
-  ## they understand.
+  ## they understand. Extraction checks constructor identity and spine shape;
+  ## callers crossing an untrusted raw-Value boundary should also validate the
+  ## value against its expected Eponym type.
   constructor*: string
   arguments*: seq[Value]
 
@@ -1049,6 +1056,59 @@ proc runtimeVariantArity(entry: GEntry): int =
   while not ty.isNil and ty.kind == tPi:
     inc result
     ty = ty.scope.bdy
+
+proc validateRuntimeVariantArguments(constructorName: string,
+    arguments: openArray[Value], globals: Globals) =
+  ## Check constructor payloads against each successive Pi domain. Applying
+  ## each prior argument first preserves dependencies between constructor
+  ## fields, such as an index field followed by a value indexed by it.
+  var currentType = eval(globals[constructorName].ty, @[])
+  for index, argument in arguments:
+    if currentType.isNil or currentType.whnfKind != wPi:
+      raise newException(ValueError,
+        "runtime variant constructor '" & constructorName &
+        "' has no domain for argument " & $index)
+    try:
+      validateRuntimeValueAgainstType(argument, currentType.whnfDom, globals)
+    except ValueError as error:
+      raise newException(ValueError,
+        "runtime variant constructor '" & constructorName &
+        "' argument " & $index & " has the wrong type: " & error.msg)
+    currentType = whnfScopeApply(currentType, argument)
+
+proc validateRuntimeConstructorValue(value, expectedType: Value,
+    globals: Globals): bool =
+  ## Runtime primitive terms do not carry their Eponym type in their syntax.
+  ## Validate constructor applications through their checked Pi domains so
+  ## those terms cannot be smuggled into an unrelated constructor field.
+  if value.isNil or value.whnfKind != wRef: return false
+  for name, entry in globals.pairs:
+    if not entry.isDataConstructor or entry.tm.isNil or
+        entry.tm.kind != tR or entry.tm.refId != value.whnfRefId:
+      continue
+    if value.whnfSpineLen != runtimeVariantArity(entry):
+      raise newException(ValueError,
+        "runtime constructor '" & name & "' has an invalid spine")
+    var currentType = eval(entry.ty, @[])
+    for index in 0 ..< value.whnfSpineLen:
+      if value.whnfSpineKind(index) != eApp:
+        raise newException(ValueError,
+          "runtime constructor '" & name &
+          "' spine contains a non-argument field")
+      let argument = value.whnfSpineArg(index)
+      if currentType.isNil or currentType.whnfKind != wPi:
+        raise newException(ValueError,
+          "runtime constructor '" & name &
+          "' has no domain for argument " & $index)
+      validateRuntimeValueAgainstType(argument, currentType.whnfDom, globals)
+      currentType = whnfScopeApply(currentType, argument)
+    var supply = Supply()
+    for _, globalEntry in globals.pairs:
+      if not globalEntry.tm.isNil and globalEntry.tm.kind == tR:
+        reserveFreshIdsThrough(supply, globalEntry.tm.refId)
+    areEqual(supply, vStar(), currentType, expectedType)
+    return true
+  false
 
 proc validateRuntimeVariantConstructors*(globals: Globals,
     familyName: string, constructors: openArray[string]) =
@@ -1103,6 +1163,8 @@ proc runtimeVariantToValue*(variant: RuntimeVariant, globals: Globals,
       "runtime variant constructor '" & variant.constructor &
       "' expects " & $expectedArity & " arguments, got " &
       $variant.arguments.len)
+  validateRuntimeVariantArguments(variant.constructor, variant.arguments,
+    globals)
   result = callRuntimeValue(eval(ctor.tm, @[]), variant.arguments)
   if result.whnfKind != wRef or result.whnfRefId != ctor.tm.refId or
       result.whnfSpineLen != expectedArity:
@@ -1131,9 +1193,6 @@ proc valueToRuntimeVariant*(value: Value, globals: Globals,
     return
   raise newException(ValueError,
     "runtime value is not a constructor of '" & familyName & "'")
-
-proc validateRuntimeValueType*(value, expectedType: Value,
-                               globals: Globals)
 
 proc validateRuntimeValueType*(value: Value, globals: Globals,
                                typeName: string) =
@@ -1329,19 +1388,34 @@ proc validateRuntimeValueAgainstType*(value, expectedType: Value,
   ## ordinary checked runtime type inference, including Pi-valued callbacks.
   if value.isNil or expectedType.isNil:
     raise newException(ValueError, "cannot validate an incomplete runtime Value")
+  var expectedInt = false
+  var expectedNat = false
   if expectedType.whnfKind == wRef and expectedType.whnfSpineLen == 0:
     if "Int" in globals:
       let intType = runtimeGlobalValue(globals, "Int")
       if intType.whnfKind == wRef and
           expectedType.whnfRefId == intType.whnfRefId:
-        if value.whnfKind == wInt: return
-        raise newException(ValueError, "runtime value type mismatch for Int")
+        expectedInt = true
     if "Nat" in globals:
       let natType = runtimeGlobalValue(globals, "Nat")
       if natType.whnfKind == wRef and
           expectedType.whnfRefId == natType.whnfRefId:
-        discard valueToNat(value, globals)
-        return
+        expectedNat = true
+  if value.whnfKind == wInt:
+    if expectedInt: return
+    raise newException(ValueError,
+      "runtime value type mismatch: Int does not match the expected Eponym type")
+  if value.whnfKind == wNatLit:
+    if expectedNat:
+      discard valueToNat(value, globals)
+      return
+    raise newException(ValueError,
+      "runtime value type mismatch: Nat does not match the expected Eponym type")
+  if expectedInt:
+    raise newException(ValueError, "runtime value type mismatch for Int")
+  if expectedNat:
+    discard valueToNat(value, globals)
+    return
   if expectedType.whnfKind == wSi:
     if value.whnfKind != wPair:
       raise newException(ValueError,
@@ -1351,6 +1425,7 @@ proc validateRuntimeValueAgainstType*(value, expectedType: Value,
     let codomain = whnfScopeApply(expectedType, first)
     validateRuntimeValueAgainstType(runtimePairSecond(value), codomain, globals)
     return
+  if validateRuntimeConstructorValue(value, expectedType, globals): return
   validateRuntimeValueType(value, expectedType, globals)
 
 proc runtimePiDomainAfterArgs*(piType: Value,
