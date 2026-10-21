@@ -1242,6 +1242,14 @@ proc inferRuntimeValueType(value: Value, globals: Globals,
         "cannot infer a Nat Value without the Nat declaration")
     return eval(globals["Nat"].tm, @[])
   of wRef:
+    let natConstructors = canonicalNatConstructorIds(globals)
+    if natConstructors.valid and
+        value.whnfRefId in [natConstructors.zeroId, natConstructors.sucId]:
+      # `infer` recursively checks every `suc` argument. Recognize canonical
+      # Nat constructor chains iteratively so large runtime indices do not
+      # exhaust the Nim call stack just to recover their type.
+      discard valueToNat(value, globals)
+      return eval(globals["Nat"].tm, @[])
     var term: Term = nil
     for _, entry in globals.pairs:
       if not entry.tm.isNil and entry.tm.kind == tR and
@@ -1273,6 +1281,21 @@ proc inferRuntimeValueType(value: Value, globals: Globals,
       raise newException(ValueError,
         "runtime Value has no syntax for type inference")
     infer(supply, value.syn)
+
+proc runtimeValueTypeOf*(value: Value, globals: Globals): Value =
+  ## Infer a runtime Value's Eponym type while keeping generated IDs clear of
+  ## the checked globals in its environment.
+  if value.isNil:
+    raise newException(ValueError,
+      "cannot infer the type of a nil runtime Value")
+  var supply = Supply()
+  for _, entry in globals.pairs:
+    if not entry.tm.isNil and entry.tm.kind == tR:
+      reserveFreshIdsThrough(supply, entry.tm.refId)
+  result = inferRuntimeValueType(value, globals, supply)
+  if result.isNil:
+    raise newException(ValueError,
+      "runtime Value has no inferable Eponym type witness")
 
 proc validateRuntimeValueType*(value, expectedType: Value,
                                globals: Globals) =

@@ -263,6 +263,38 @@ eponymBlock:
   runtimeValue(generatedGenericIdentity)
 
 eponymBlock:
+  postulate(Int, Univ)
+  postulate(Token, Univ)
+  proc generatedTokenIdentity(value: Token): Token = value
+  runtimeValue(generatedTokenIdentity)
+  proc generatedGenericPiWitnessProbe[
+      callback: Pi(value: Token, Token)](ignored: Int): Int = ignored
+  runtimeValue(generatedGenericPiWitnessProbe)
+
+eponymBlock:
+  postulate(Int, Univ)
+  postulate(Nat, Univ)
+  postulate(Token, Univ)
+  postulate(tokenValue, Token)
+  proc generatedSigmaWitnessSeed(): Int = 0
+  runtimeValue(generatedSigmaWitnessSeed)
+  proc generatedGenericNestedSigmaWitnessProbe[
+      pair: Sig(first: Token, Sig(count: Nat, Token))](ignored: Int): Int =
+    ignored
+  runtimeValue(generatedGenericNestedSigmaWitnessProbe)
+
+eponymBlock:
+  import "../lib/nat.ep"
+  import "../lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  proc generatedDependentSigmaWitnessSeed(): Int = 0
+  runtimeValue(generatedDependentSigmaWitnessSeed)
+  proc generatedGenericDependentSigmaWitnessProbe[
+      pair: Sig(length: Nat, Vec[Int, length])](ignored: Int): Int = ignored
+  runtimeValue(generatedGenericDependentSigmaWitnessProbe)
+
+eponymBlock:
   import "../lib/nat.ep"
   def(checkedNatIdentity, Nat -> Nat):
     clause([zero], zero)
@@ -388,6 +420,9 @@ eponymBlock:
   runtimeValue(generatedIntListIdentity)
   proc generatedListIdentity[A: Univ](values: List[A]): List[A] = values
   runtimeValue(generatedListIdentity)
+  proc generatedGenericListValueBinder[values: List[Int]](
+      ignored: Int): List[Int] = values
+  runtimeValue(generatedGenericListValueBinder)
 
 eponymBlock:
   import "../lib/option.ep"
@@ -399,6 +434,9 @@ eponymBlock:
       value: Option[Option[Int]]): Option[Option[Int]] = value
   proc generatedOptionIdentity[A: Univ](value: Option[A]): Option[A] = value
   runtimeValue(generatedOptionIdentity)
+  proc generatedGenericOptionValueBinder[value: Option[Int]](
+      ignored: Int): Option[Int] = value
+  runtimeValue(generatedGenericOptionValueBinder)
 
 eponymBlock:
   import "../lib/bool.ep"
@@ -980,6 +1018,112 @@ when isMainModule:
   let runtimeIdentity = eval(variantGlobals["treeIdentity"].tm, @[])
   let runtimeArrow = runtimeArrowType(runtimeTreeType, runtimeTreeType)
   validateRuntimeValueType(runtimeIdentity, runtimeArrow, variantGlobals)
+  let inferredFunctionType = runtimeValueTypeOf(runtimeIdentity,
+    variantGlobals)
+  validateRuntimeValueType(runtimeIdentity, inferredFunctionType,
+    variantGlobals)
+  let runtimeTypeInferenceCases = forAll(
+    "runtime type inference preserves primitive values and checked functions",
+    r, 200,
+    proc(r: var Rng): int = r.genInt(0, 1000),
+    proc(n: int): bool =
+      let natType = runtimeValueTypeOf(natToValue(n, variantGlobals),
+        variantGlobals)
+      let intType = runtimeValueTypeOf(intToValue(n), variantGlobals)
+      natType.whnfKind == wRef and
+        natType.whnfRefId == runtimeNatType.whnfRefId and
+        intType.whnfKind == wRef and
+        intType.whnfRefId == runtimeIntType.whnfRefId)
+  if not runtimeTypeInferenceCases:
+    quit(1)
+  let witnessSource = """
+postulate Int : Type 0
+postulate Token : Type 0
+proc generatedTokenIdentity (value : Token) : Token = value
+"""
+  let tokenIdentityValue = callValueFuncDir(baseDir, witnessSource,
+    "generatedTokenIdentity", [])
+  let genericPiExpressionCases = forAll(
+    "generated runtime type expressions reify named Pi binders", r, 200,
+    proc(r: var Rng): int = r.genInt(-1000, 1000),
+    proc(value: int): bool =
+      let returned = generatedGenericPiWitnessProbeRuntimeValueDynamic(
+        tokenIdentityValue, value)
+      valueToInt(returned.value) == value)
+  if not genericPiExpressionCases:
+    quit(1)
+  var wrongGenericPiExpressionRejected = false
+  try:
+    discard generatedGenericPiWitnessProbeRuntimeValueDynamic(
+      intToValue(1), 0)
+  except ValueError:
+    wrongGenericPiExpressionRejected = true
+  doAssert wrongGenericPiExpressionRejected
+  let sigmaWitnessGlobals = generatedSigmaWitnessSeedRuntimeValue().globals
+  let sigmaWitnessToken = runtimeGlobalValue(sigmaWitnessGlobals, "tokenValue")
+  let genericNestedSigmaExpressionCases = forAll(
+    "generated runtime type expressions reify nested Sigma binders", r, 200,
+    proc(r: var Rng): tuple[count, ignored: int] =
+      (r.genInt(0, 100), r.genInt(-1000, 1000)),
+    proc(input: tuple[count, ignored: int]): bool =
+      let pair = pairValue(sigmaWitnessToken,
+        pairValue(natToValue(input.count, sigmaWitnessGlobals),
+          sigmaWitnessToken))
+      let returned = generatedGenericNestedSigmaWitnessProbeRuntimeValueDynamic(
+        pair, input.ignored)
+      valueToInt(returned.value) == input.ignored)
+  if not genericNestedSigmaExpressionCases:
+    quit(1)
+  var wrongNestedSigmaValueRejected = false
+  try:
+    let malformed = pairValue(sigmaWitnessToken,
+      pairValue(intToValue(1), sigmaWitnessToken))
+    discard generatedGenericNestedSigmaWitnessProbeRuntimeValueDynamic(
+      malformed, 0)
+  except ValueError:
+    wrongNestedSigmaValueRejected = true
+  doAssert wrongNestedSigmaValueRejected
+  let dependentSigmaWitnessGlobals =
+    generatedDependentSigmaWitnessSeedRuntimeValue().globals
+  let genericDependentSigmaExpressionCases = forAll(
+    "generated type expressions validate dependent Sigma Vec fields", r,
+    200,
+    proc(r: var Rng): tuple[length, ignored: int] =
+      (r.genInt(0, 20), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, ignored: int]): bool =
+      var elements = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        elements[i] = input.ignored + i
+      let vector = seqToVecValue[int](elements, input.length,
+        dependentSigmaWitnessGlobals, "Vec",
+        proc(item: int, _: Globals): Value = intToValue(item),
+        runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
+      let pair = pairValue(natToValue(input.length,
+        dependentSigmaWitnessGlobals), vector)
+      let returned = generatedGenericDependentSigmaWitnessProbeRuntimeValueDynamic(
+        pair, input.ignored)
+      valueToInt(returned.value) == input.ignored)
+  if not genericDependentSigmaExpressionCases:
+    quit(1)
+  var wrongDependentSigmaWitnessRejected = false
+  try:
+    let vector = seqToVecValue[int](@[3, 4], 2,
+      dependentSigmaWitnessGlobals, "Vec",
+      proc(item: int, _: Globals): Value = intToValue(item),
+      runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
+    discard generatedGenericDependentSigmaWitnessProbeRuntimeValueDynamic(
+      pairValue(natToValue(3, dependentSigmaWitnessGlobals), vector), 0)
+  except ValueError:
+    wrongDependentSigmaWitnessRejected = true
+  doAssert wrongDependentSigmaWitnessRejected
+  var malformedNatTypeInferenceRejected = false
+  try:
+    let malformedNat = callRuntimeValue(
+      eval(variantGlobals["suc"].tm, @[]), [intToValue(1)])
+    discard runtimeValueTypeOf(malformedNat, variantGlobals)
+  except ValueError:
+    malformedNatTypeInferenceRejected = true
+  doAssert malformedNatTypeInferenceRejected
   let runtimeDependentArrow = runtimeDependentArrowType(runtimeTreeType,
     variantGlobals, proc(_: Value): Value = runtimeTreeType)
   validateRuntimeValueType(runtimeIdentity, runtimeDependentArrow,
@@ -2207,6 +2351,22 @@ proc callbackRole : Callback -> Sample -> Sample =
   if not listCodecCases:
     quit(1)
   doAssert generatedListIdentity[int](@[]) == @[]
+  let dynamicGenericListCases = forAll(
+    "generic List values use the registered dynamic codec", r, 200,
+    proc(r: var Rng): tuple[length, seed, ignored: int] =
+      (r.genInt(0, 12), r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed, ignored: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        values[i] = input.seed + i
+      let typed = generatedGenericListValueBinderDynamic(values,
+        input.ignored)
+      let runtime = generatedGenericListValueBinderRuntimeValueDynamic(values,
+        input.ignored)
+      typed == values and decodeRuntimeIntList(runtime.value,
+        runtime.globals) == values)
+  if not dynamicGenericListCases:
+    quit(1)
 
   let optionCodecCases = forAll(
     "Option values cross as checked none/some constructors", r, 200,
@@ -2239,6 +2399,21 @@ proc callbackRole : Callback -> Sample -> Sample =
         decoded == value and rawDecoded == value and primitiveDecoded == value,
     )
   if not optionCodecCases:
+    quit(1)
+  let dynamicGenericOptionCases = forAll(
+    "generic Option values use the registered dynamic codec", r, 200,
+    proc(r: var Rng): tuple[present: bool, seed, ignored: int] =
+      (r.genBool(), r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[present: bool, seed, ignored: int]): bool =
+      let value = if input.present: some(input.seed) else: none(int)
+      let typed = generatedGenericOptionValueBinderDynamic(value,
+        input.ignored)
+      let runtime = generatedGenericOptionValueBinderRuntimeValueDynamic(value,
+        input.ignored)
+      let decoded = valueToOption[int](runtime.value, runtime.globals,
+        "Option", proc(item: Value, _: Globals): int = valueToInt(item))
+      typed == value and decoded == value)
+  if not dynamicGenericOptionCases:
     quit(1)
   let optionGlobals = generatedPrimitiveOptionIdentityRuntimeValue(
     none(int)).globals

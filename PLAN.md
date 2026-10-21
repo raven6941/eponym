@@ -474,6 +474,10 @@ implementations.
    are composed, and indexed Vec fields are length-checked. A 200-case
    property exercises typed and `RuntimeValue` dynamic wrappers and rejects a
    Sigma containing a Vec of the wrong length.
+- [x] Generate typed dynamic wrappers for generic value binders whose domain
+   is `List[A]` or `Option[A]` when the matching runtime codec is registered.
+   Recursive element codecs are reused; 200-case properties cover typed and
+   `RuntimeValue` dynamic wrappers for `List[Int]` and `Option[Int]`.
 - [x] Accept unmapped named Eponym values as `Value` arguments in dynamic
   generic wrappers. Validate that each value inhabits its declared named type
   before checked evaluation. A 200-case property passes an unmapped data
@@ -510,6 +514,18 @@ implementations.
    fields. A 200-case property checks non-dependent and dependent pairs, rejects
    mismatched fields and indices, and validates checked functions against both
    non-dependent and dependent Pi witnesses.
+- [x] Expose `runtimeValueTypeOf(value, globals)` to infer an Eponym type
+   witness for a runtime `Value`. Reserve fresh IDs past checked globals and
+   property-test primitive values; validate a checked function against its
+   inferred witness.
+- [x] Property-test generated type-expression witnesses for named Pi binders
+   in raw dynamic generic validation. A 200-case property accepts a checked
+   `Token -> Token` identity and rejects a value with the wrong function type.
+- [x] Add property coverage for generated runtime type-expression witnesses
+   over nested and dependent Sigma domains, especially when their codomains
+   refer to earlier generic values. Two 200-case properties validate nested
+   pairs and `Sig(length: Nat, Vec[Int, length])`; malformed Nat fields and
+   mismatched vector indices are rejected.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
