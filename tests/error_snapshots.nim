@@ -96,8 +96,12 @@ proc hasLocation(msg: string): bool =
 
 proc normalize(msg: string): string =
   ## Machine-dependent bits are normalized so snapshots are portable:
-  ## the repo-root absolute path becomes `<root>`.
-  msg.replace(getCurrentDir(), "<root>").strip()
+  ## file paths are asserted by the imported-source regression instead.
+  let normalized = msg.replace(getCurrentDir(), "<root>").strip()
+  if normalized.startsWith("<root>"):
+    let marker = normalized.find(":line ")
+    if marker >= 0: return normalized[marker + 1 .. ^1]
+  normalized
 
 proc snapPath(file: string): string =
   snapDir / file.splitFile().name & ".txt"

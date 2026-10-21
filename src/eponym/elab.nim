@@ -62,8 +62,9 @@ type
     loc*: Loc
 
 proc elabErr(loc: Loc, msg: string): ref ElabError =
-  let e = newException(ElabError,
-    "line " & $loc.line & ", col " & $loc.col & ": " & msg)
+  let prefix = if loc.source.len > 0: loc.source & ":" else: ""
+  let e = newException(ElabError, prefix & "line " & $loc.line &
+    ", col " & $loc.col & ": " & msg)
   e.loc = loc
   e
 
@@ -4777,9 +4778,11 @@ proc elabFile*(drv: var ModuleDriver, path: string,
   if drv.modHash.getOrDefault(cpath, 0) == h:
     return @[]  # unchanged since this driver elaborated it: skip
   let decls =
-    try: parseProgram(src)
+    try: parseProgram(src, cpath)
     except ParseError as e:
-      raise elabErr(e.loc, "in imported file '" & cpath & "': " & e.msg)
+      var loc = e.loc
+      loc.source = cpath
+      raise elabErr(loc, e.msg)
   drv.loading.add(cpath)
   try:
     result = drv.elabDeclsDir(decls, parentDir(cpath), cpath)

@@ -923,8 +923,10 @@ implementations.
   with an explicit `bindPostulateValue` runtime adapter. A 200-case property
   verifies the checked call returns each value and invokes the trace adapter
   exactly once. The adapter is trusted Nim IO and is not run during checking.
-- [ ] Preserve source positions through imported `.ep` modules so diagnostics
-  can report the original imported-file location.
+- [x] Preserve source positions through imported `.ep` modules so diagnostics
+  can report the original imported-file location. `Loc` now carries its source
+  path, the file loader attaches it during parsing, and `tests/test_imported_source_locations.nim`
+  checks both elaboration and parse errors in an imported module.
 - [ ] Revisit the first-use time estimate after installation and editor setup
    are streamlined.
 

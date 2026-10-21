@@ -119,11 +119,11 @@ const keywords = [
 proc isIdentStart(c: char): bool = c.isAlphaAscii or c == '_'
 proc isIdentChar(c: char): bool = c.isAlphaNumeric or c in {'_', '\''}
 
-proc lex(src: string): seq[Token] =
+proc lex(src: string, source = ""): seq[Token] =
   var i = 0
   var line = 1
   var col = 1
-  proc curLoc(): Loc = Loc(line: line, col: col)
+  proc curLoc(): Loc = Loc(line: line, col: col, source: source)
   while i < src.len:
     let c = src[i]
     if c == '\n':
@@ -619,10 +619,10 @@ proc parseDecl(p: var Parser): SurfDecl =
   of tkCommand: p.parseCommand()
   else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'record', 'mutual', 'import', 'interface' or 'command'")
 
-proc parseProgram*(src: string): seq[SurfDecl] =
+proc parseProgram*(src: string, source = ""): seq[SurfDecl] =
   profilePhase(epParse):
       ## Parse a whole program; raises ParseError with source location.
-      var p = Parser(toks: lex(src), pos: 0)
+      var p = Parser(toks: lex(src, source), pos: 0)
       while p.peek().kind != tkEof:
         result.add p.parseDecl()
 
