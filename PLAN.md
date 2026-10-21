@@ -576,6 +576,10 @@ implementations.
    A 200-case property covers typed and raw-result wrappers for
    `Sig(length: Nat, Vec[Int, length])` and rejects an encoded vector with a
    mismatched length.
+- [x] Support the explicit `runtimePairTrusted` opt-in for generic dependent
+   Sigma binders when the available codecs cannot reconstruct the full witness.
+   Typed and raw-result overloads still apply field codecs, and a 200-case
+   property rejects a Vec field whose length disagrees with the Nat field.
 - [x] Generate typed dynamic overloads for generic value binders whose domain
    is an Eponym Pi type with recursively supported Nim codecs. Reconstruct a
    Nim `{.closure.}` signature from the Pi binders, preserve the raw
