@@ -2305,7 +2305,8 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
 proc genericRuntimeInfo(decl: NimNode,
                         mappings: seq[HostRuntimeType],
                         allowGenericValues = false,
-                        allowUnmappedValues = false): tuple[
+                        allowUnmappedValues = false,
+                        allowDependentSigma = false): tuple[
     genericParams: NimNode, typeNames: seq[string],
     genericNames: seq[NimNode], genericNatArgs: seq[bool],
     genericBoolArgs: seq[bool], genericIntArgs: seq[bool],
@@ -2330,7 +2331,7 @@ proc genericRuntimeInfo(decl: NimNode,
     var mappedBinder: HostRuntimeType
     var hasMappedBinder = false
     var hasStructuralValueCodec =
-      not runtimeSigmaComponents(param[^2]).first.isNil
+      not runtimeSigmaComponents(param[^2], allowDependentSigma).first.isNil
     for mapping in mappings:
       if mapping.eponymName == binderType:
         mappedBinder = mapping
@@ -2944,7 +2945,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
   ## Emit a sibling wrapper where supported value-indexed generics are
   ## ordinary runtime parameters instead of Nim `static` parameters.
   let generic = genericRuntimeInfo(decl, mappings, allowGenericValues = true,
-                                   allowUnmappedValues = true)
+    allowUnmappedValues = true, allowDependentSigma = allowDependentSigma)
   if generic.error.len > 0 or generic.genericNames.len == 0 or
       generic.typeNames.len > 0:
     return nil

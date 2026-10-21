@@ -293,6 +293,9 @@ eponymBlock:
   proc generatedGenericDependentSigmaWitnessProbe[
       pair: Sig(length: Nat, Vec[Int, length])](ignored: Int): Int = ignored
   runtimeValue(generatedGenericDependentSigmaWitnessProbe)
+  proc generatedRawDependentSigmaGenericProbe[
+      pair: Sig(length: Nat, Vec[Int, length])](ignored: Int): Int = ignored
+  runtimeValue(generatedRawDependentSigmaGenericProbe)
 
 eponymBlock:
   import "../lib/nat.ep"
@@ -379,9 +382,14 @@ eponymBlock:
   proc generatedGenericSigmaValueBinder[
       pair: Sig(marker: Int, Vec[Int, 2])](ignored: Int):
       Sig(marker: Int, Vec[Int, 2]) = pair
+  proc generatedGenericDependentSigmaValueBinder[
+      pair: Sig(length: Nat, Vec[Int, length])](ignored: Int):
+      Sig(length: Nat, Vec[Int, length]) = pair
   runtimeValue(generatedNestedVectorIdentity)
   runtimeValue(generatedGenericVectorValueBinder)
   runtimeValue(generatedGenericSigmaValueBinder)
+  runtimePairTrusted(generatedGenericDependentSigmaValueBinder)
+  runtimeValue(generatedGenericDependentSigmaValueBinder)
   proc generatedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
@@ -1116,6 +1124,36 @@ proc generatedTokenIdentity (value : Token) : Token = value
   except ValueError:
     wrongDependentSigmaWitnessRejected = true
   doAssert wrongDependentSigmaWitnessRejected
+  let rawDependentSigmaCases = forAll(
+    "raw generic dependent Sigma values validate their Vec index", r, 200,
+    proc(r: var Rng): tuple[length, ignored: int] =
+      (r.genInt(0, 20), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, ignored: int]): bool =
+      var elements = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        elements[i] = input.ignored + i
+      let vector = seqToVecValue[int](elements, input.length,
+        dependentSigmaWitnessGlobals, "Vec",
+        proc(item: int, _: Globals): Value = intToValue(item),
+        runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
+      let pair = pairValue(natToValue(input.length,
+        dependentSigmaWitnessGlobals), vector)
+      let returned = generatedRawDependentSigmaGenericProbeRuntimeValueDynamic(
+        pair, input.ignored)
+      valueToInt(returned.value) == input.ignored)
+  if not rawDependentSigmaCases:
+    quit(1)
+  var wrongRawDependentSigmaRejected = false
+  try:
+    let vector = seqToVecValue[int](@[3, 4], 2,
+      dependentSigmaWitnessGlobals, "Vec",
+      proc(item: int, _: Globals): Value = intToValue(item),
+      runtimeGlobalValue(dependentSigmaWitnessGlobals, "Int"))
+    discard generatedRawDependentSigmaGenericProbeRuntimeValueDynamic(
+      pairValue(natToValue(3, dependentSigmaWitnessGlobals), vector), 0)
+  except ValueError:
+    wrongRawDependentSigmaRejected = true
+  doAssert wrongRawDependentSigmaRejected
   var malformedNatTypeInferenceRejected = false
   try:
     let malformedNat = callRuntimeValue(
@@ -2164,6 +2202,28 @@ proc callbackRole : Callback -> Sample -> Sample =
             pair[1])
   if not dynamicGenericValueSigmaCases:
     quit(1)
+  let dynamicGenericDependentSigmaCases = forAll(
+    "dependent Sigma generic binders retain their Vec index", r, 200,
+    proc(r: var Rng): tuple[length, seed, ignored: int] =
+      (r.genInt(0, 20), r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[length, seed, ignored: int]): bool =
+      var values = newSeq[int](input.length)
+      for i in 0 ..< input.length:
+        values[i] = input.seed + i
+      let pair = (input.length, values)
+      let typed = generatedGenericDependentSigmaValueBinderDynamic(pair,
+        input.ignored)
+      let runtime =
+        generatedGenericDependentSigmaValueBinderRuntimeValueDynamic(pair,
+          input.ignored)
+      valueToNat(runtimePairFirst(runtime.value), runtime.globals) ==
+        input.length and
+        vecValueToSeq[int](runtimePairSecond(runtime.value), input.length,
+          runtime.globals, "Vec",
+          proc(value: Value, _: Globals): int = valueToInt(value)) == values and
+        typed == pair)
+  if not dynamicGenericDependentSigmaCases:
+    quit(1)
   let conditionalGenericValueCases = forAll(
     "Bool conditional indices validate generic Vec and Sigma values", r, 200,
     proc(r: var Rng): tuple[condition: bool, yesLength, noLength, seed: int] =
@@ -2287,6 +2347,13 @@ proc callbackRole : Callback -> Sample -> Sample =
     dynamicGenericValueSigmaMismatchRejected =
       "runtime Vec length mismatch" in error.msg
   doAssert dynamicGenericValueSigmaMismatchRejected
+  var dynamicGenericDependentSigmaMismatchRejected = false
+  try:
+    discard generatedGenericDependentSigmaValueBinderDynamic((3, @[1, 2]), 0)
+  except ValueError as error:
+    dynamicGenericDependentSigmaMismatchRejected =
+      "runtime Vec length mismatch" in error.msg
+  doAssert dynamicGenericDependentSigmaMismatchRejected
   var dynamicGenericValueVectorMismatchRejected = false
   try:
     discard generatedGenericVectorValueBinderDynamic(3, @[1, 2], 0)
