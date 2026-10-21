@@ -1,4 +1,5 @@
 import "../../lib/nat.ep"
+import "../../lib/vec.ep"
 
 postulate Int : Type 0
 data RuntimeTree : Type 0 where
@@ -8,5 +9,7 @@ proc treeIdentity : RuntimeTree -> RuntimeTree =
   lam (tree : RuntimeTree). tree
 data SizedTree (length : Nat) : Type 0 where
 | sizedTree (tree : RuntimeTree) : SizedTree length
+data SizedVector (length : Nat) : Type 0 where
+| sizedVector (values : Vec Int length) : SizedVector length
 data OtherTree : Type 0 where
 | otherTree : OtherTree
