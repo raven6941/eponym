@@ -577,7 +577,10 @@ implementations.
    `add(left, right)`, with negative checks for mismatched input and output
    lengths. A further 200-case property covers `SizedTree[length]` through a
    custom `runtimeCodec` in a generic Pi callback, including rejection of
-   malformed input and output indices.
+   malformed input and output indices. A 200-case property passes a Nim
+   closure as a callback argument to another generic Pi callback through typed
+   and raw-result wrappers; compile-time coverage rejects a mismatched nested
+   closure signature.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
