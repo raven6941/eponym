@@ -1,6 +1,7 @@
 ## Differential and effect-count checks for the core QTT erasure pass (#328).
 
 import std/tables
+import falsify
 import eponym_init
 import erasure
 import preterm
@@ -9,6 +10,20 @@ proc expect(ok: bool, message: string) =
   if not ok:
     quit("FAIL: " & message, 1)
   echo "ok: ", message
+
+const Seed = 328'u64
+const Cases = 200
+
+type ErasureCase = object
+  effects: int
+
+proc genErasureCase(r: var Rng): ErasureCase =
+  ErasureCase(effects: r.genInt(0, 50))
+
+proc shrinkErasureCase(c: ErasureCase): seq[ErasureCase] =
+  result = @[ErasureCase(effects: 0)]
+  if c.effects != 0:
+    result.add(ErasureCase(effects: c.effects div 2))
 
 var supply = Supply()
 let unitType = eval(tmC(cOne), @[])
@@ -65,9 +80,9 @@ expect(nestedErased.kind == tApp and nestedErased.fn.kind == tLam and
        nestedErased.fn.scope.bdy.arg.kind == tC,
        "erasure finds q0 applications under ordinary binders")
 
-for count in 0 .. 50:
+proc erasurePreservesResultAndSkipsEffects(input: ErasureCase): bool =
   var expensiveArg = tmC(cVoid)
-  for i in 0 ..< count:
+  for i in 0 ..< input.effects:
     expensiveArg = tmLet(tmApp(effectRef, tmC(cVoid)), tmC(cOne),
                          "ignored" & $i, expensiveArg)
   let candidate = tmApp(erasedFn, expensiveArg)
@@ -86,12 +101,14 @@ for count in 0 .. 50:
       inc erasedCallCount
       unitValue)
   let erasedValue = evalWithBindings(candidateErased, @[], erasedRunBindings)
-  if sourceCalls != count or erasedCallCount != 0 or
-      sourceValue.whnf.kind != erasedValue.whnf.kind or
-      sourceValue.whnf.c != erasedValue.whnf.c:
-    quit("FAIL: differential erasure property for " & $count &
-         " erased computations", 1)
+  sourceCalls == input.effects and erasedCallCount == 0 and
+    sourceValue.whnf.kind == wConst and sourceValue.whnf.c == cVoid and
+    erasedValue.whnf.kind == wConst and erasedValue.whnf.c == cVoid
 
-expect(true, "51 differential cases preserve values and skip erased work")
+var rng = initRng(Seed)
+let propertyPassed = forAll("q0-erasure-differential", rng, Cases,
+  genErasureCase, erasurePreservesResultAndSkipsEffects, shrinkErasureCase)
+expect(propertyPassed,
+  "200 generated cases preserve results and skip erased work")
 
 echo "all core erasure checks passed"
