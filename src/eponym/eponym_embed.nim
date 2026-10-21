@@ -1301,7 +1301,7 @@ proc runtimeValueTerm(value: Value, globals: Globals): Term =
           result = tmApp(result, argument)
         return
     return value.syn
-  of wLam:
+  of wLam, wLam0:
     if not value.whnf.hostFunctionType.isNil:
       return Term(kind: tR, refId: -1,
         refTyp: value.whnf.hostFunctionType, refIsDefn: false, refVal: nil)
@@ -1360,7 +1360,7 @@ proc inferRuntimeValueType(value: Value, globals: Globals,
           "runtime Value argument has no syntax for type inference")
       term = tmApp(term, argument)
     return infer(supply, term)
-  of wLam:
+  of wLam, wLam0:
     if not value.whnf.hostFunctionType.isNil:
       return value.whnf.hostFunctionType
     if value.syn.isNil:

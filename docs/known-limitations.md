@@ -141,14 +141,21 @@ expression are not supported by generated codecs.
 
 The core QTT erasure pass (`eraseQ0Arguments`) replaces a checked quantity-0
 application's argument with an inert unit witness, so the argument computation
-is not evaluated. Generated typed wrappers and compiled-proc computational
+is not evaluated. This can skip effects hidden in a bound postulate: the
+current type system does not track effectful Nim calls, so an operation that
+must run cannot be placed in a q0 argument. The direct evaluator of the
+unerased source still runs that argument. Generated typed wrappers and
+compiled-proc computational
 argument vectors omit quantity-0 values. A separate witness vector may carry a
 q0 value only to instantiate a dependent runtime type, such as a Vec length;
 the compiled body never receives it as a computational argument. The scalar
-representation backend also omits q0 formals and local-call arguments. The
-generic `Value` closure model still represents a q0 lambda as a unary closure
-and internally applies its witness. Erasure requires a closed, zonked term
-whose function types can be recovered by the core inferencer.
+representation backend also omits q0 formals and local-call arguments.
+Generated higher-order `Value` code represents q0 lambdas as nullary
+closures; the interpreter keeps its unary representation. Differential tests
+pass a generated q0 closure through a higher-order postulate and confirm a
+generated q0 application skips its argument while running the closure body
+once. Erasure requires a closed,
+zonked term whose function types can be recovered by the core inferencer.
 
 For `eponymBlock`s without Eponym module imports, elaboration and parse errors
 include the source filename, line, and column of the nearest Nim definition

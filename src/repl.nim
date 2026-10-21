@@ -50,7 +50,7 @@ proc prettyWhnfVal(v: Value, lvl: int, varNames: var seq[string],
       of eSnd: s = "(" & s & ".2)"
       of eAbsurd: s = "(absurd " & s & ")"
     s
-  of wPi, wSi, wLam:
+  of wPi, wSi, wLam, wLam0:
     var adv = whnfScopeAdv(v)
     if adv == "" or adv == "_": adv = "x" & $lvl
     var nm = adv
@@ -66,8 +66,10 @@ proc prettyWhnfVal(v: Value, lvl: int, varNames: var seq[string],
       of wPi: "Pi "
       of wSi: "Si "
       else: ""
-    if whnfKind(v) == wLam:
-      "lam " & nm & ". " & body
+    if whnfKind(v) == wLam or whnfKind(v) == wLam0:
+      let qtyPrefix = if whnfKind(v) == wLam0: "(0 " else: ""
+      "lam " & qtyPrefix & nm & (if qtyPrefix.len > 0: ")" else: "") &
+        ". " & body
     else:
       let dom = "(" & nm & " : " &
         prettyWhnfVal(whnfDom(v), lvl, varNames, refNames) & ") "
