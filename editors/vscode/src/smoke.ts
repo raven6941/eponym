@@ -37,6 +37,16 @@ function check(cond: boolean, msg: string) {
 }
 
 async function main() {
+  // This extension uses VS Code's existing Nim language support; its own
+  // language configuration only adds delimiter matching/auto-closing.
+  const languageConfiguration = JSON.parse(fs.readFileSync(
+    path.resolve(__dirname, "..", "language-configuration.json"), "utf8"));
+  check(languageConfiguration.brackets.some((pair: string[]) =>
+      pair[0] === "[" && pair[1] === "]") &&
+    languageConfiguration.autoClosingPairs.some((pair: string[]) =>
+      pair[0] === "[" && pair[1] === "]"),
+    "Nim square brackets remain paired for explicit Eponym parameters");
+
   const lsp = process.env.LSP ?? path.resolve(__dirname, "..", "..", "..", "src", "eponym", "lsp");
   // Resolve: DEMO may be relative to the caller's cwd (as CI passes it),
   // while generateSidecar compiles with cwd=repoRoot.

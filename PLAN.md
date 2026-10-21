@@ -870,6 +870,12 @@ implementations.
 - [x] Lower Nim `Int` expressions using `let`, unary minus, and `+`, `-`, `*`
   to the existing checked Eponym primitives. A 200-case property test compares
   generated wrappers with Nim arithmetic over values that avoid overflow.
+- [x] Audit the VS Code extension against bracketed Eponym syntax. It delegates
+  parsing/checking to the Nim macro and Eponym LSP, contributes no Eponym
+  grammar or snippets, and already pairs square brackets. The headless smoke
+  test compiles a bracketed-generic `shedsBlock` and exercises its sidecar
+  through the real LSP; no extension version bump is needed because its UI and
+  protocol did not change.
 - [x] Lower single and chained `if/elif/else` expressions through the checked
   `ifThenElse` definition in `lib/bool.ep`. Branches are unit thunks, so only
   the chosen branch runs, matching Nim conditional evaluation even when a
