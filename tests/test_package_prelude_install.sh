@@ -41,6 +41,7 @@ extractTutorialSnippet() {
 
 extractTutorialSnippet hello "$eponymTmpDir/project/hello.nim"
 extractTutorialSnippet vecs "$eponymTmpDir/project/vecs.nim"
+extractTutorialSnippet dynamic-vec "$eponymTmpDir/project/dynamic_vec.nim"
 cat > "$eponymTmpDir/project/lists.nim" <<'EOF'
 import eponym_mac
 import eponym_embed
@@ -122,6 +123,9 @@ nim c -r --path:"$eponymTmpDir/package" \
 nim c --path:"$eponymTmpDir/package" \
   --nimcache:"$eponymTmpDir/vecs-cache" \
   --out:"$eponymTmpDir/vecs" vecs.nim
+nim c -r --path:"$eponymTmpDir/package" \
+  --nimcache:"$eponymTmpDir/dynamic-vec-cache" \
+  --out:"$eponymTmpDir/dynamic_vec" dynamic_vec.nim
 nim c -r --path:"$eponymTmpDir/package" \
   --nimcache:"$eponymTmpDir/lists-cache" \
   --out:"$eponymTmpDir/lists" lists.nim

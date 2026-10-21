@@ -636,6 +636,12 @@ implementations.
    bound Nim postulate. Eponym checks type flow and signatures; it does not
    supply scalar literals, arithmetic, string operations, or equality, whose
    behavior remains in trusted Nim adapters.
+- [x] Document the typed API for runtime-valued Nat indices (`#335`):
+   `runtimeValue(definition)` exposes `definitionDynamic(index, value)` when
+   the signature has codecs, while the ordinary generic wrapper retains its
+   `static[int]` index. The installed-package tutorial smoke test passes a
+   runtime length and verifies that a mismatched Vec length is rejected; the
+   runtime bridge property suite already covers 200 valid and negative cases.
 - [x] Reconstruct typed wrappers for local clause-style definitions from
    their checked Pi signatures. Two 200-case properties cover direct calls
    and typed and raw `RuntimeValue` access for a `Nat -> Nat` identity and a

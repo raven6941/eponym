@@ -124,6 +124,37 @@ passed through a generic type parameter; nested vectors map to nested Nim
 sequences. Nat length expressions support indices, `zero`, `suc`, `add`, and
 `mul`.
 
+When the length is known only at runtime, use the generated `Dynamic` sibling
+instead of the `static[int]` generic wrapper. It takes the length as a Nim
+`int`, keeps the vector argument as `seq[int]`, and checks their agreement
+before running the checked definition:
+
+<!-- tutorial-smoke: dynamic-vec -->
+```nim
+import eponym_mac
+import eponym_embed
+
+eponymBlock:
+  import "lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeVector(Vec)
+  proc keepDynamicVector[n: Nat](values: Vec[Int, n]): Vec[Int, n] = values
+  runtimeValue(keepDynamicVector)
+
+let length = 3
+doAssert keepDynamicVectorDynamic(length, @[2, 3, 5]) == @[2, 3, 5]
+var rejectedWrongLength = false
+try:
+  discard keepDynamicVectorDynamic(length, @[2, 3])
+except ValueError:
+  rejectedWrongLength = true
+doAssert rejectedWrongLength
+```
+
+A sequence whose length differs from `length` raises `ValueError` at the
+runtime boundary. The raw `RuntimeValue` dynamic overload remains available
+when an input type has no Nim codec.
+
 For an unindexed collection, `runtimeList(List)` maps the standard `List[A]`
 family to `seq[A]` and applies the element codec recursively:
 
