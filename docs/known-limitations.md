@@ -111,6 +111,13 @@ parameter/application slot; full ABI erasure and generated native code are
 future codegen work. Erasure requires a closed, zonked term whose function
 types can be recovered by the core inferencer.
 
+For `eponymBlock`s without Eponym module imports, elaboration and parse errors
+include the source filename, line, and column of the nearest Nim definition
+body expression. Blocks that import `.ep` files still report generated
+Eponym-source positions; tracking positions through imported files remains
+open. The `eponym"..."` form reports positions within its Eponym string, not
+Nim source expressions.
+
 A `runtimeCodec` mapping for an unindexed Eponym type can also supply the
 runtime type witness and encoder/decoder for a generic type parameter. This
 lets generic wrappers and callbacks process mapped values inside containers,

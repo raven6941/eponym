@@ -932,12 +932,30 @@ proc defCallToEponym(st: NimNode): string =
     for p in c[1]: pats.add(patToEponym(p))
     result.add("| " & pats.join(" ") & " = " & nimExprToEponym(c[2]) & "\n")
 
-proc blockToEponym*(body: NimNode, sourceDir = ""): string =
+type DiagnosticSourceLoc = tuple[filename: string, line, column: int]
+
+proc diagnosticSourceLoc(n: NimNode): DiagnosticSourceLoc =
+  ## The string form puts each checked definition on one line. Prefer the
+  ## source location of its final body expression so elaboration errors point
+  ## to the user expression rather than the generated string line.
+  if n.kind == nnkProcDef and n.len > 6:
+    var body = n[6]
+    while body.kind == nnkStmtList and body.len > 0:
+      body = body[^1]
+    if not body.isNil:
+      let info = body.lineInfoObj
+      return (info.filename, info.line, info.column)
+  let info = n.lineInfoObj
+  (info.filename, info.line, info.column)
+
+proc blockToEponymInternal(body: NimNode, sourceDir: string,
+    sourceLineMap: var seq[DiagnosticSourceLoc], captureSourceMap: bool): string =
   ## Convert a block of Nim AST to Eponym source program.
   let baseDir = if sourceDir.len > 0: sourceDir else: callerDir(body)
   registerNimLegacyInfo(body, baseDir)
   result = ""
   for st in body:
+    let statementStart = result.len
     case st.kind
     of nnkProcDef:
       result.add(procDefToEponym(st))
@@ -1128,6 +1146,27 @@ proc blockToEponym*(body: NimNode, sourceDir = ""): string =
         error("eponymBlock: unsupported call: " & head, st)
     else:
       error("eponymBlock: unsupported statement: " & $st.kind, st)
+    if captureSourceMap:
+      let emittedLines = result[statementStart ..< result.len].count('\n')
+      let sourceLoc = diagnosticSourceLoc(st)
+      for _ in 0 ..< emittedLines:
+        sourceLineMap.add(sourceLoc)
+
+proc sourceMappedDiagnostic(message: string, loc: Loc,
+    sourceLineMap: seq[DiagnosticSourceLoc]): string =
+  if loc.line <= 0 or loc.line > sourceLineMap.len:
+    return message
+  let sourceLoc = sourceLineMap[loc.line - 1]
+  if sourceLoc.filename.len == 0 or sourceLoc.line <= 0:
+    return message
+  let details = message.split(": ", 1)
+  let explanation = if details.len > 1: details[1] else: message
+  sourceLoc.filename & "(" & $sourceLoc.line & ", " &
+    $sourceLoc.column & "): " & explanation
+
+proc blockToEponym*(body: NimNode, sourceDir = ""): string =
+  var ignoredSourceLineMap: seq[DiagnosticSourceLoc]
+  blockToEponymInternal(body, sourceDir, ignoredSourceLineMap, false)
 
 type HostPostulateBinding = object
   postulateName: string
@@ -3687,7 +3726,16 @@ macro eponymBlock*(body: untyped): untyped =
   ## explicitly mapped opaque postulated types. Unsupported legacy shapes
   ## retain the varargs[int] compatibility wrapper.
   let baseDir = callerDir(body)
-  let src = blockToEponym(body, baseDir)
+  var sourceLineMap: seq[DiagnosticSourceLoc]
+  var hasEponymImport = false
+  for st in body:
+    if st.kind == nnkImportStmt:
+      hasEponymImport = true
+      break
+  let src = if hasEponymImport:
+    blockToEponym(body, baseDir)
+  else:
+    blockToEponymInternal(body, baseDir, sourceLineMap, true)
   var runtimeValueNames = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
@@ -3706,9 +3754,13 @@ macro eponymBlock*(body: untyped): untyped =
     allDefs = checked.allDefs
     checkedGlobals = checked.globals
   except ElabError as e:
-    error("eponymBlock elaboration error: " & e.msg, body)
+    let detail = if hasEponymImport: e.msg else:
+      sourceMappedDiagnostic(e.msg, e.loc, sourceLineMap)
+    error("eponymBlock elaboration error: " & detail, body)
   except ParseError as e:
-    error("eponymBlock parse error: " & e.msg, body)
+    let detail = if hasEponymImport: e.msg else:
+      sourceMappedDiagnostic(e.msg, e.loc, sourceLineMap)
+    error("eponymBlock parse error: " & detail, body)
 
   for requested in runtimeValueNames:
     var found = false

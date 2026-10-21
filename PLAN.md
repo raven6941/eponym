@@ -897,6 +897,12 @@ implementations.
   behavior. `tests/test_package_prelude_install.sh` mirrors the flat installed
   module layout from `installFiles`; an isolated Nimble install compiled the
   tutorial and ran the installed-prelude runtime example.
+- [x] Map parse and elaboration diagnostics for local `eponymBlock`s back to
+  the nearest Nim definition-body expression. A compile-fail fixture verifies
+  the reported file and line. Blocks importing `.ep` modules still use
+  generated Eponym coordinates; imported-file source tracking remains open.
+- [ ] Add a checked-code debug-print form with explicit runtime behavior so
+  Nim programmers can inspect values while a checked definition runs.
 - [ ] Revisit the first-use time estimate after installation and editor setup
    are streamlined.
 
