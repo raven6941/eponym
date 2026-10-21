@@ -51,14 +51,18 @@ show a few useful patterns:
   [shed walkthrough](examples/embedded/sheds_walkthrough.nim).
 
 Most examples show compile-time checking of Eponym models. The runtime bridge
-generates fixed-arity wrappers for first-order `Int`, `Nat`, and explicitly
-mapped opaque postulated types. The new session runtime demo connects checked
-roles to Nim adapters, and `paxos_session.nim` runs its checked proposer and
-acceptor through bound TCP adapters. The borrowing and optimization examples
-still have separate hand-written drivers. The
-The [known limitations](docs/known-limitations.md) page summarizes what
-Eponym checks, which definitions have generated runtime wrappers, and which
-parts of the Nim boundary remain trusted or disconnected.
+generates typed Nim wrappers across the codec coverage documented on the
+[known limitations](docs/known-limitations.md) page: primitive `Int`, `Nat`,
+and `Bool`, explicitly mapped opaque postulated types, non-dependent `Sig`
+pairs, named records, the standard `Vec`, `List`, and `Option` types, and —
+with codecs registered — nested and indexed structures, dynamic values, and
+callbacks. The new session runtime demo connects checked roles to Nim
+adapters, and `paxos_session.nim` runs its checked proposer and acceptor
+through bound TCP adapters. The borrowing and optimization examples still
+have separate hand-written drivers. The
+[known limitations](docs/known-limitations.md) page summarizes what Eponym
+checks, which definitions have generated runtime wrappers, and which parts
+of the Nim boundary remain trusted or disconnected.
 
 ## Why embedded
 
