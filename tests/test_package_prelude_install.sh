@@ -81,6 +81,24 @@ eponymBlock:
 
 doAssert convertNatThenCallHost(5) == 12
 EOF
+cat > "$eponymTmpDir/project/scalars.nim" <<'EOF'
+import eponym_mac
+import eponym_embed
+
+eponymBlock:
+  import "lib/float.ep"
+  import "lib/text.ep"
+  runtimeType(Float, float64)
+  runtimeType(String, string)
+  runtimeType(Char, char)
+  proc keepFloat(value: Float): Float = value
+  proc keepString(value: String): String = value
+  proc keepChar(value: Char): Char = value
+
+doAssert keepFloat(1.25) == 1.25
+doAssert keepString("hello") == "hello"
+doAssert keepChar('x') == 'x'
+EOF
 cat > "$eponymTmpDir/project/debug.nim" <<'EOF'
 import eponym_mac
 import eponym_embed
@@ -116,3 +134,6 @@ nim c -r --path:"$eponymTmpDir/package" \
 nim c -r --path:"$eponymTmpDir/package" \
   --nimcache:"$eponymTmpDir/debug-cache" \
   --out:"$eponymTmpDir/debug" debug.nim
+nim c -r --path:"$eponymTmpDir/package" \
+  --nimcache:"$eponymTmpDir/scalars-cache" \
+  --out:"$eponymTmpDir/scalars" scalars.nim

@@ -27,6 +27,11 @@ chain. `tests/run_examples.nim` elaborates every file with
 
 ## Modules
 
+- **float.ep** — opaque `Float` type for checked signatures and runtime
+  mappings. It has no Eponym literals or built-in arithmetic; bind operations
+  to Nim explicitly.
+- **text.ep** — opaque `String` and `Char` types for checked signatures and
+  runtime mappings. Construction and text/character operations come from Nim.
 - **nat.ep** — `Nat` (`data` with `zero`/`suc`), `add`, `mul`.
   `add` recurses on its first argument (Idris's `plus` — `add zero n` ≡ `n`
   definitionally, which `append`'s motive relies on); `mul` is defined via

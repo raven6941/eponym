@@ -68,6 +68,12 @@ wrapper boundary using the supported runtime types. See the
 boundary; a planned experiment may add a small *pure* expression subset
 whose forms translate to checked Eponym terms rather than running as Nim.
 
+For opaque scalar values, import `lib/float.ep` (`Float`) or `lib/text.ep`
+(`String` and `Char`) and register `runtimeType` mappings to Nim's
+`float64`, `string`, and `char`. The checker validates these types in
+signatures and value flow. It does not provide literal syntax or built-in
+operations for them; construction and operations come from Nim adapters.
+
 ### `bindPostulate` — trusted runtime adapter
 
 ```nim
