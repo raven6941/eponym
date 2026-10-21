@@ -58,7 +58,7 @@ type
     ##   equal only to itself; the one-directional widening tNatSing(n)
     ##   <: Nat lives in the elaborator's conversion (defaultConv), not in
     ##   the kernel's symmetric conversion.
-  WhnfKind* = enum wRef, wPi, wSi, wLam, wPair, wConst, wRed, wInt, wPrim,
+  WhnfKind* = enum wRef, wPi, wSi, wLam, wLam0, wPair, wConst, wRed, wInt, wPrim,
                      wNatLit, wNatSing, wType, wHost
   ## wType: a level-annotated universe value `Type l` (Issue #52).
   ## wInt: a primitive integer value (Experiment 11).
@@ -138,6 +138,7 @@ type
     syn: Scope
     fn: proc(x: Value): Value
   Whnf* = ref object
+    hostFunctionType*: Value  # checked boundary type for Nim callbacks
     case kind*: WhnfKind
     of wRef:
       refId: int
@@ -148,7 +149,9 @@ type
       qty: Quantity  # Issue #66: binder quantity, compared by conversion
     of wLam:
       lscope: ScoVal
-      hostFunctionType*: Value  # checked boundary type for Nim callbacks
+    of wLam0:
+      nullaryFn*: proc(): Value {.closure.}
+      lamAdv*: string
     of wPair:
       fstV, sndV: Value
     of wConst:
@@ -375,6 +378,7 @@ proc whnfScopeAdv*(v: Value): string =
   case v.whnf.kind
   of wPi, wSi: v.whnf.tscope.syn.adv
   of wLam: v.whnf.lscope.syn.adv
+  of wLam0: v.whnf.lamAdv
   else: raise newException(ValueError, "whnfScopeAdv of non-binder")
 
 proc whnfScopeApply*(v: Value, x: Value): Value =
@@ -382,6 +386,7 @@ proc whnfScopeApply*(v: Value, x: Value): Value =
   case v.whnf.kind
   of wPi, wSi: v.whnf.tscope.fn(x)
   of wLam: v.whnf.lscope.fn(x)
+  of wLam0: v.whnf.nullaryFn()
   else: raise newException(ValueError, "whnfScopeApply of non-binder")
 
 proc whnfFst*(v: Value): Value =
@@ -702,6 +707,7 @@ proc applyWhnfWithBindings(f, a: Value,
   ## the computational half of $$ for application
   case f.whnf.kind
   of wLam: f.whnf.lscope.fn(a).whnf       # beta, by host application
+  of wLam0: f.whnf.nullaryFn().whnf       # q0 codegen closure, no arg slot
   of wRed:                                # Experiment 4: registered eliminator
     let args2 = f.whnf.args & @[a]
     if args2.len == f.whnf.rule.nargs:
@@ -842,6 +848,13 @@ proc vHostFunc*(fn: proc(x: Value): Value {.closure.}): Value =
   let scope = Scope(adv: "host", bdy: vv(0))
   Value(syn: tmLam(tStar(), scope.adv, scope.bdy),
         whnf: Whnf(kind: wLam, lscope: ScoVal(syn: scope, fn: fn)))
+
+proc vHostFunc0*(fn: proc(): Value {.closure.}, adv: string): Value =
+  ## Runtime-only nullary closure emitted for generated quantity-0 lambdas.
+  ## The syntax retains a q0 lambda marker so applying the returned Value
+  ## still records the erased witness in its `syn` application.
+  Value(syn: tmLam(tStar(), adv, tmC(cVoid), qty = q0),
+        whnf: Whnf(kind: wLam0, nullaryFn: fn, lamAdv: adv))
 
 proc vHostFuncWithType*(fn: proc(x: Value): Value {.closure.},
                         eponymType: Value): Value =
@@ -1225,13 +1238,15 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
         b.whnf.kind == wType and b.whnf.lvl == 0: return
     if b.whnf.kind == wConst and b.whnf.c == cStar and
         a.whnf.kind == wType and a.whnf.lvl == 0: return
-    if a.whnf.kind == wLam and b.whnf.kind == wRef:
+    let aIsLam = a.whnf.kind in {wLam, wLam0}
+    let bIsLam = b.whnf.kind in {wLam, wLam0}
+    if aIsLam and (bIsLam or b.whnf.kind == wRef):
       let x = freshPara(s, nil)
-      structuralEq(s, a.whnf.lscope.fn(x), vApp(b, x), qtySubsumption)
+      structuralEq(s, vApp(a, x), vApp(b, x), qtySubsumption)
       return
-    if a.whnf.kind == wRef and b.whnf.kind == wLam:
+    if bIsLam and a.whnf.kind == wRef:
       let x = freshPara(s, nil)
-      structuralEq(s, vApp(a, x), b.whnf.lscope.fn(x), qtySubsumption)
+      structuralEq(s, vApp(a, x), vApp(b, x), qtySubsumption)
       return
     raise newException(ValueError, "mismatch: " & $a.syn & " vs " & $b.syn)
   case a.whnf.kind
@@ -1260,6 +1275,8 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
   of wLam:
     let x = freshPara(s, nil)
     structuralEq(s, a.whnf.lscope.fn(x), b.whnf.lscope.fn(x), qtySubsumption)
+  of wLam0:
+    structuralEq(s, a.whnf.nullaryFn(), b.whnf.nullaryFn(), qtySubsumption)
   of wPair:
     structuralEq(s, a.whnf.fstV, b.whnf.fstV, qtySubsumption)
     structuralEq(s, a.whnf.sndV, b.whnf.sndV, qtySubsumption)

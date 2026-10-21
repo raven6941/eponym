@@ -233,6 +233,11 @@ proc cgLambda(psym, bodyCode: NimNode): NimNode =
   quote do:
     proc (`psym`: Value): Value = `bodyCode`
 
+proc cgNullaryLambda(bodyCode: NimNode): NimNode =
+  ## `proc (): Value = bodyCode` for generated q0 closures.
+  quote do:
+    proc (): Value = `bodyCode`
+
 proc cgAppChain(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
                 bnd: NimNode): NimNode =
   ## Compile `tApp` chains. Everything folds through `vAppWithBindings`
@@ -326,9 +331,20 @@ proc cg(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
     newCall(maker, domCode, newLit(t.scope.adv), qtyLit(t.qty),
       cgLambda(psym, bodyCode))
   of tLam:
-    let psym = genSym(nskParam, "cgLamArg")
-    let bodyCode = cg(ctx, t.scope.bdy, @[psym] & env, bnd)
-    newCall(bindSym"vHostFunc", cgLambda(psym, bodyCode))
+    if t.qty == q0:
+      # q0 binders carry type-level/witness information but no runtime value.
+      # Keep a placeholder in the compiler's de Bruijn environment so outer
+      # variables retain their indices, while emitting an actually nullary
+      # host closure. Erasure guarantees that no computational occurrence of
+      # this binder survives into `bodyCode`.
+      let bodyCode = cg(ctx, t.scope.bdy,
+        @[newCall(bindSym"unitValue")] & env, bnd)
+      newCall(bindSym"vHostFunc0", cgNullaryLambda(bodyCode),
+        newLit(t.scope.adv))
+    else:
+      let psym = genSym(nskParam, "cgLamArg")
+      let bodyCode = cg(ctx, t.scope.bdy, @[psym] & env, bnd)
+      newCall(bindSym"vHostFunc", cgLambda(psym, bodyCode))
   of tPair:
     newCall(bindSym"pairValue",
       cg(ctx, t.pFst, env, bnd), cg(ctx, t.pSnd, env, bnd))

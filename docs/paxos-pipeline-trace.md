@@ -152,10 +152,11 @@ erasure is exactly what #331 (linearity/DPS) depends on**:
 
 - binder **quantities are preserved on the `Term`** (`mkBinder` carries
   `t.qty` through), including the `q1` linearity of `ch`;
-- the **binder/application shape is preserved** (runtime arity unchanged —
-  "the interpreter's current binder/application shape"), so the host ABI
-  still carries q0 parameters; a later backend lowers that shape to an ABI
-  with q0 binders removed entirely (not done yet — `docs/trust-model.md`).
+- the **checked term keeps its binder/application shape** so the interpreter
+  can evaluate the original term. Generated typed and compiled wrappers omit
+  q0 values from computational arguments, retaining a separate witness vector
+  only where dependent runtime types need it. Generated higher-order Value
+  code also uses nullary q0 closures; the interpreter remains unary.
 
 Erasure is a runtime transformation, not a proof rule: the checked q0
 binder cannot inspect its argument in computational position, so the unit
@@ -405,8 +406,9 @@ at the kernel:
 code, trusted for nothing else:
 
 - `src/eponym/erasure.nim`: q0 arguments are uninspectable in checked code,
-  so the unit substitution is observationally equivalent; still a runtime
-  transformation, and the q0-removal-from-ABI work is ahead (#331).
+  so the unit substitution is observationally equivalent; it is a runtime
+  transformation. Generated wrapper ABIs omit q0 computation arguments;
+  dependent witnesses remain separate from those arguments.
 - `src/eponym/codegen.nim` (Phase 1 + Phase 2): "compiled ≡ interpreted" is
   a tested claim with documented deviations and interpreter fallback, not
   a trusted axiom.

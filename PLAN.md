@@ -1002,11 +1002,12 @@ implementations.
   backend. A differential test covers inferred and explicit q0 binders,
   leading and interleaved q0 positions, and the typed wrapper checks 200
   generated values for both layouts.
-- [ ] Give the generic `Value` closure representation a no-argument form for
-  q0 lambdas so generated higher-order Value code can omit the internal unit
-  closure/application slot too. The current Value backend still uses a unary
-  closure internally, with an inert unit witness; the interpreter semantics
-  and observable results remain unchanged.
+- [x] Give generated q0 lambdas a nullary `Value` closure representation.
+  Generated higher-order code keeps a placeholder only in its compile-time
+  de Bruijn environment; it emits no host parameter or closure application
+  slot. The interpreter remains unary. A differential test passes a generated
+  q0 closure through a higher-order postulate and verifies a q0 argument's
+  effects are skipped while the closure body runs exactly once.
 - [x] Validate every baked global refId/name pair against the macro-time
   `Globals` table before code emission, including constructor IDs used by
   eliminator dispatch. A regression simulates a changed refId and checks that

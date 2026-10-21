@@ -121,6 +121,12 @@ proc q0Prefix (0 proof : Nat) (x : Int) : Int = x
 proc q0Call (x : Int) : Int = q0Prefix 0 x
 proc q0Middle (x : Int) (0 proof : Nat) (y : Int) : Int = addInt x y
 proc q0MiddleCall (x : Int) (y : Int) : Int = q0Middle x 0 y
+postulate inspectQ0 : Pi (f : Pi (0 proof : Nat). Int). Int
+proc q0Capture (x : Int) : Int =
+  inspectQ0 (lam (0 proof : Nat). x)
+postulate tickNat : Nat -> Nat
+proc q0EffectCall (n : Nat) : Nat =
+  (lam (0 proof : Nat). tickNat 7) (tickNat n)
 """
 
 differentialBlockRepr(prog, currentSourcePath())
@@ -284,6 +290,52 @@ block:
     middleCompiled.whnfIntVal == 5 and middleInterpreted.whnfKind == wInt and
     middleInterpreted.whnfIntVal == 5,
     "phase-1 Value ABI omits an interleaved q0 binder")
+
+block:
+  let inspectId = getGlobals(prog)["inspectQ0"].tm.refId
+  var generatedKind = wConst
+  var generatedBindings = testPostulateBindings()
+  generatedBindings[inspectId] = vHostFunc(proc(f: Value): Value =
+    generatedKind = f.whnfKind
+    vAppWithBindings(f, natToValue(9, natGlobals), generatedBindings))
+  let generated = eponymCompiled_q0Capture(@[vInt(42)], generatedBindings)
+
+  var interpretedKind = wConst
+  var interpretedBindings = testPostulateBindings()
+  interpretedBindings[inspectId] = vHostFunc(proc(f: Value): Value =
+    interpretedKind = f.whnfKind
+    vAppWithBindings(f, natToValue(9, natGlobals), interpretedBindings))
+  let interpreted = callValueFuncDir("", prog, "q0Capture", @[vInt(42)],
+    interpretedBindings)
+  expect(generatedKind == wLam0 and interpretedKind == wLam and
+    generated.whnfKind == wInt and generated.whnfIntVal == 42 and
+    interpreted.whnfKind == wInt and interpreted.whnfIntVal == 42,
+    "generated higher-order q0 closures are nullary, capture outer values, and agree with the unary interpreter")
+
+block:
+  let rtGlobals = getGlobals(prog)
+  let tickId = rtGlobals["tickNat"].tm.refId
+  var generatedCalls = 0
+  var generatedBindings = testPostulateBindings()
+  generatedBindings[tickId] = vHostFunc(proc(x: Value): Value =
+    inc generatedCalls
+    x)
+  let generated = eponymCompiled_q0EffectCall(
+    @[natToValue(3, natGlobals)], generatedBindings)
+  var interpretedCalls = 0
+  var interpretedBindings = testPostulateBindings()
+  interpretedBindings[tickId] = vHostFunc(proc(x: Value): Value =
+    inc interpretedCalls
+    x)
+  let interpreted = callValueFuncDir("", prog, "q0EffectCall",
+    @[natToValue(3, natGlobals)], interpretedBindings)
+  expect(valueToNat(generated, natGlobals) == 7 and
+    valueToNat(interpreted, natGlobals) == 7,
+    "generated q0 closure body returns the interpreter result")
+  expect(generatedCalls == 1 and interpretedCalls == 2,
+    "generated q0 closure runs its body once (" & $generatedCalls &
+      "); interpreter evaluates the source q0 argument too (" &
+      $interpretedCalls & ")")
 
 # --- fragment boundaries: these get Phase-1 procs but no repr procs ---
 expect("tickTwice" notin reprCompiledNames(),
