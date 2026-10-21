@@ -867,6 +867,15 @@ implementations.
 - [x] Emit Nim's integer literal `1` as unambiguous Eponym `01`, preserving
   expected-type selection between `Int` and `Nat`. A 200-case `x + 1` property
   and surface-conformance fixture cover the behavior.
+- [x] Add an explicit `natToInt : Nat -> Int` in
+   `lib/nat_to_int.ep`, importing the canonical `Nat` and primitive `Int`
+   definitions. A 200-case generated-wrapper property passes the converted
+   value through a bound Int postulate and checks that negative host values
+   are rejected as `Nat`. The runtime conversion is limited by Nim `int`
+   range and the interpreter's recursive evaluation depth.
+   Keep conversion explicit: a postulate may hide host effects that its
+   Eponym type does not prove absent. A compile-fail fixture pins the
+   no-implicit-coercion policy.
 - [x] Use square brackets for explicit Eponym binders (`A`, indices such as
    `n`), parentheses for term arguments, and braces for implicit binders.
    Generic declarations, bracketed type applications, and bracketed term

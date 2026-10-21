@@ -222,6 +222,18 @@ The checker proved `2 ≠ 1` and refused the program. That is the whole
 point: the length invariant is enforced where the vector is built, so
 every consumer of `Vec[A, n]` can rely on it without re-checking.
 
+`Nat` and primitive `Int` are separate types. When a checked natural number
+must go to an Int-taking host operation, import the explicit conversion:
+
+```nim
+eponymBlock:
+  import "lib/nat_to_int.ep"
+  proc countForHost(n: Nat): Int = natToInt(n)
+```
+
+The conversion is explicit so a call from `Nat` to `Int` is visible in the
+checked source.
+
 ## 4. Why bother: a protocol, stated once as a type
 
 Dependent types earn their keep when the type states something a

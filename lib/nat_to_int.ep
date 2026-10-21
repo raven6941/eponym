@@ -1,0 +1,16 @@
+# Explicit conversion from the inductive Nat type to primitive Int.
+#
+# Import this module when a checked Nat value must cross an Int boundary.
+# Runtime Int/Nat wrappers use Nim's machine-sized `int`; callers must keep
+# values in that range. The current runtime evaluator also evaluates Nat folds
+# recursively, so very large values may hit its depth/performance limits.
+
+import "nat.ep"
+
+postulate Int : Type 0
+
+proc natToInt (n : Nat) : Int =
+  natElim (lam (u : Nat). Int)
+          0
+          (lam (p : Nat). lam (ih : Int). addInt ih 01)
+          n

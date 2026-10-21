@@ -31,6 +31,10 @@ chain. `tests/run_examples.nim` elaborates every file with
   `add` recurses on its first argument (Idris's `plus` — `add zero n` ≡ `n`
   definitionally, which `append`'s motive relies on); `mul` is defined via
   `add`.
+- **nat_to_int.ep** — explicit `natToInt : Nat -> Int`. Importing it also
+  declares the primitive `Int` type and imports `nat.ep`. Use the conversion
+  when a checked natural number must be passed to an Int-taking operation;
+  Eponym does not insert this conversion implicitly.
 - **eq.ep** — propositional equality: `Eq` (indexed family), `refl`,
   `cong`, `sym`, `trans`.
 - **bool.ep** — `Bool`, `not`/`and`/`or`; lemma `notNot`.

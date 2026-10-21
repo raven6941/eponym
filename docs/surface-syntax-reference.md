@@ -483,6 +483,10 @@ lexes as the unit type — write `01` for the literal one (the renderer
 emits `01` for `pkInt(1)` so render→parse stays faithful, issue #158).
 The unit value is `<>` (Nim side: `unitv`).
 
+`Nat` and primitive `Int` remain distinct types. To pass a natural number to
+an Int-taking operation, import `lib/nat_to_int.ep` and write `natToInt(n)`.
+This conversion is explicit; the elaborator does not insert it for you.
+
 **Singleton types (issue #74).** In type position, a literal *is* its
 singleton type: `(d : 2)` demands exactly `2`, Scala-3 literal-type style,
 so `divBy2 : Nat -> (d : 2) -> Nat` is writable, and `divBy2 4 3` is
