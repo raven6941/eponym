@@ -543,6 +543,95 @@ proc closeOverCtx*(t: Term, ctx: Ctx, params: seq[Term]): Term =
     result = subst(result, i, params[i])
     dec i
 
+proc addEvidenceTermKey(dst: var string, t: Term,
+                        localRefs: Table[int, int]): bool
+proc addEvidenceText(dst: var string, value: string) =
+  ## Length-prefix every text field so concatenated term keys are unambiguous.
+  dst.add($value.len)
+  dst.add(':')
+  dst.add(value)
+  dst.add(';')
+
+proc addEvidenceTermKey(dst: var string, t: Term,
+                        localRefs: Table[int, int]): bool =
+  ## A collision-free structural key for the #241 cache-opportunity profile.
+  ## Local rigid refs are named by their context slot; other refs retain the
+  ## globally unique supply ID. Include checking-relevant binder metadata,
+  ## unlike Term's user-facing `$` rendering.
+  if t.isNil:
+    dst.add("nil;")
+    return true
+  dst.add('t')
+  dst.add($ord(t.kind))
+  dst.add(';')
+  template child(term: Term): untyped =
+    if not addEvidenceTermKey(dst, term, localRefs): return false
+  template txt(value: string) = addEvidenceText(dst, value)
+  template num(value: untyped) = txt($value)
+  case t.kind
+  of tR:
+    if t.refId in localRefs:
+      dst.add("local;")
+      num(localRefs[t.refId])
+    else:
+      dst.add(if t.refIsDefn: "global-def;" else: "global-param;")
+      num(t.refId)
+  of tV: num(t.idx)
+  of tC: num(ord(t.c))
+  of tType: num(t.lvl)
+  of tInt: num(t.intVal)
+  of tNatLit: num(t.natLitVal)
+  of tNatSing: num(t.natSingVal)
+  of tPrim:
+    num(ord(t.primOp))
+    child(t.primTy)
+  of tPi, tSi, tLam:
+    num(t.impl)
+    num(t.erased)
+    num(ord(t.qty))
+    txt(if t.peg.isNil: "<nil-ability>" else: $t.peg)
+    txt(t.scope.adv)
+    child(t.dom)
+    child(t.scope.bdy)
+  of tMeta:
+    # validateEvidence rejects unsolved metas before building this key.
+    # Keep the guard here so a future caller cannot cache an open term.
+    return false
+  of tPair:
+    child(t.pFst)
+    child(t.pSnd)
+    txt(t.pScope.adv)
+    child(t.pScope.bdy)
+  of tApp:
+    child(t.fn)
+    child(t.arg)
+  of tFst, tSnd, tAbsurd: child(t.sub)
+  of tLet:
+    child(t.letVal)
+    child(t.letTy)
+    txt(t.letScope.adv)
+    child(t.letScope.bdy)
+  true
+
+proc evidenceCheckCandidateKey(params: seq[Term], goal: Term,
+                               evidence: Term = nil): string =
+  ## Candidate keys include rigid parameter types. Pair keys also include the
+  ## exact evidence term: a goal-only hit cannot skip checking a different
+  ## proof while preserving the proof term returned by the handler.
+  var localRefs = initTable[int, int]()
+  for i, p in params:
+    if p.isNil or p.kind != tR or p.refTyp.isNil or p.refTyp.syn.isNil:
+      return ""
+    localRefs[p.refId] = i
+  result = "evidence-check-v1;"
+  addEvidenceText(result, $params.len)
+  for p in params:
+    if not addEvidenceTermKey(result, p.refTyp.syn, localRefs):
+      return ""
+  if not addEvidenceTermKey(result, goal, localRefs): return ""
+  if not evidence.isNil and
+      not addEvidenceTermKey(result, evidence, localRefs): return ""
+
 proc univLevelOfTy(s: var Supply, ms: var MetaStore, t: Term, ctx: Ctx): int =
   ## Issue #52: the universe level classifying the elaborated type-term `t`
   ## (a term whose type is definitionally a universe). Closes `t` over the
@@ -582,7 +671,8 @@ proc ensureIsUniverse(ms: var MetaStore, s: var Supply, tyTy: Term, loc: Loc,
   raise elabErr(loc, what & " is not a type")
 
 proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
-                      ev: Term, loc: Loc, ctx: Ctx, globals: Globals): Term =
+                      ev: Term, loc: Loc, ctx: Ctx, globals: Globals,
+                      normalizedShape: Term = nil): Term =
   ## Issue #45: validate a handler's evidence with the bare core.
   ## The handler claims `ev : Eq goalTy a b`. Handlers are popped for the
   ## validation (bare-core conversion only), the goal and evidence are
@@ -610,6 +700,36 @@ proc validateEvidence(ms: var MetaStore, s: var Supply, a, b, goalTy,
   let params = closeParams(s, ctx)
   let closedGoal = closeOverCtx(goal, ctx, params)
   let closedEv = closeOverCtx(ev1, ctx, params)
+  when ElabProfile and ProfileArithEvidenceCacheCandidates:
+    let normalizedGoal =
+      if normalizedShape.isNil: nil
+      else: tmApp(tmApp(tmApp(eqTm, goalTy), normalizedShape), normalizedShape)
+    let closedNormalizedGoal =
+      if normalizedGoal.isNil: nil
+      else: closeOverCtx(normalizedGoal, ctx, params)
+    let normalizedKey =
+      if closedNormalizedGoal.isNil: ""
+      else: evidenceCheckCandidateKey(params, closedNormalizedGoal)
+    if normalizedKey.len > 0:
+      inc ms.arithEvidenceNormalizedProbes
+      if normalizedKey in ms.arithEvidenceNormalizedKeys:
+        inc ms.arithEvidenceNormalizedHits
+      else:
+        ms.arithEvidenceNormalizedKeys.incl(normalizedKey)
+    let goalShapeKey = evidenceCheckCandidateKey(params, closedGoal)
+    if goalShapeKey.len > 0:
+      inc ms.arithEvidenceGoalProbes
+      if goalShapeKey in ms.arithEvidenceGoalKeys:
+        inc ms.arithEvidenceGoalHits
+      else:
+        ms.arithEvidenceGoalKeys.incl(goalShapeKey)
+    let pairKey = evidenceCheckCandidateKey(params, closedGoal, closedEv)
+    if pairKey.len > 0:
+      inc ms.arithEvidencePairProbes
+      if pairKey in ms.arithEvidencePairKeys:
+        inc ms.arithEvidencePairHits
+      else:
+        ms.arithEvidencePairKeys.incl(pairKey)
   let saved = ms.convHandlers
   ms.convHandlers = @[]
   try:
@@ -714,7 +834,8 @@ proc convElab(ms: var MetaStore, s: var Supply, a, b: Term, loc: Loc,
           # returned for splicing (tacRefl uses it as the tactic's proof term).
           traceEvt(tcConv, "conv.handler",
                    "convHandlers[" & $i & "] discharged-with-evidence")
-          return validateEvidence(ms, s, a1, b1, goalTy, r.evidence, loc, ctx, globals)
+          return validateEvidence(ms, s, a1, b1, goalTy, r.evidence, loc, ctx,
+                                  globals, r.normalizedShape)
         of cvDeclined:
           discard
         dec i
@@ -1210,7 +1331,7 @@ proc normEvArith*(L: ArithLemmas, t: Term): ArithNorm =
               canon: c, proof: L.symAt(c, t, appN(L.addZeroR, @[t])))
 
 proc buildArithEvidence*(L: ArithLemmas, a, b: Term):
-    tuple[found: bool, evidence: Term] =
+    tuple[found: bool, evidence: Term, normalizedShape: Term] =
   profileDetail(epdArithBuild):
     ## Prove `Eq Nat a b` for Nat-fragment sides with equal normal forms:
     ## a ≡ canon(a) ≡ canon(b) ≡ b. The middle step is reflexivity — both
@@ -1221,7 +1342,7 @@ proc buildArithEvidence*(L: ArithLemmas, a, b: Term):
     let ra = normEvArith(L, a)
     let rb = normEvArith(L, b)
     if ra.poly.cst != rb.poly.cst or ra.poly.coeff != rb.poly.coeff:
-      return (false, nil)
+      return (false, nil, nil)
     let ca = ra.canon
     let cb = rb.canon
     if $ca != $cb:
@@ -1229,7 +1350,7 @@ proc buildArithEvidence*(L: ArithLemmas, a, b: Term):
     let cab = L.reflAtN(ca)  # : Eq Nat ca cb, by structural identity
     let ev = L.transAt(a, ca, b, ra.proof,
                        L.transAt(ca, cb, b, cab, L.symAt(b, cb, rb.proof)))
-    (true, ev)
+    (true, ev, ca)
 
 proc isEqSpineGoal(a, b: Term, eqId: int): bool =
   ## Shape check mirroring natConv's Eq-congruence case (type-vs-type
@@ -1282,7 +1403,8 @@ proc natArithHandler*(globals: Globals, s: var Supply): ConvHandler =
         try:
           let r = buildArithEvidence(lemmas, a, b)
           if r.found:
-            return ConvResult(verdict: cvDischargedEv, evidence: r.evidence)
+            return ConvResult(verdict: cvDischargedEv, evidence: r.evidence,
+                              normalizedShape: r.normalizedShape)
           return ConvResult(verdict: cvDeclined)
         except ExoticArithShape:
           discard  # fall through to the trusted path below
@@ -4534,6 +4656,12 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
     elabPostulateDecl(d.name, d.ty, d.dloc, globals, supply, ms, true)
   of dkRed:
     elabRedDecl(d.lhs, d.rhs, d.rloc, globals, supply, ms)
+    when ElabProfile and ProfileArithEvidenceCacheCandidates:
+      # Red declarations extend an eliminator's reduction behavior in place;
+      # only compare candidate keys within the same reduction environment.
+      ms.arithEvidenceGoalKeys.clear()
+      ms.arithEvidencePairKeys.clear()
+      ms.arithEvidenceNormalizedKeys.clear()
   of dkData:
     elabDataDecl(d, globals, supply, ms, dataInfos)
   of dkRecord:

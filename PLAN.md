@@ -192,6 +192,7 @@ Completed experiments (see `plan.org`, `decisions.org`):
 | 17 | ETT staging rules (Phase 2 validation) | Sym[SVal] with staging-time beta-reduction; twice/const/pairSwap staged == unstaged; 15.8x hoisting speedup, 0.67x on pure dispatch (negative) |
 | 9 | Erasure (QTT-lite) | Superseded by #66: QTT is the core now, not a post-pass |
 | 10 | Conversion cache | Exact memoization; e-graph future |
+| 240/241 | Profile and cache arithmetic evidence | The Nat lemma corpus has two evidence checks and no repeated goal shapes or proof pairs; normalization/build costs are negligible beside bare-core checking, so a cache has no measured hit opportunity |
 | 11 | Primitive Int | Machine int via wRed; literal overloading |
 | 12 | Propositional equality | `Eq`/`refl`/`J`; `plusReducesZ` proven |
 | 19/35 | Staged typeo benchmark + residual compiler | 1.90x vs compiled unstaged; 9/9 correct |
