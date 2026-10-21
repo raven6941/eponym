@@ -127,7 +127,8 @@ Nim `{.closure.}` overload when all callback argument and result types have
 codecs. Nim checks the proc signature, and the bridge checks the value against
 the checked Pi type; the raw `RuntimeValue` overload remains available.
 Supported Pi types can nest, so a callback may itself receive a callback or
-return one.
+return one. Dynamic Pi wrappers can also accept noncapturing `nimcall` or
+`cdecl` procedures; Nim checks their concrete signatures at the call site.
 Dependent callback indices also flow through argument and result codecs: a
 callback taking `Nat` and `Vec[Int, length]` and returning
 `Vec[Int, length]` checks both vector lengths. Explicitly mapped opaque types
