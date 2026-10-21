@@ -521,16 +521,18 @@ implementations.
    mismatched fields and indices, and validates checked functions against both
    non-dependent and dependent Pi witnesses.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
-   definitions and extend support to remaining dependent structures,
-   unmapped value-indexed generics, and unsupported higher-order definitions.
+   definitions and extend support to remaining dependent structures, dynamic
+   generic binders whose domains lack usable codecs, and unsupported
+   higher-order definitions.
    Current support includes checked Nim wrappers for supported generic
    definitions, `runtimeValue` access to checked results, callback values with
    recursive codecs, standard `Vec`, `List`, and `Option` codecs, custom
-   `runtimeCodec` mappings, and explicit trusted opt-ins for dependent records
-   and pairs. Remaining gaps include generic value binders outside indexed
-   `Vec`, dependent Sigma generic binders, broader automatic codec coverage,
-   additional dependent forms, and other higher-order signatures. Unsupported
-   cases must continue to fail with a precise compile-time diagnostic.
+   `runtimeCodec` mappings, dynamic generic value binders for standard
+   `List`/`Option` and custom codecs, and explicit trusted opt-ins for dependent
+   records and pairs. Remaining gaps include dependent Sigma generic binders,
+   broader automatic codec coverage, additional dependent forms, and other
+   higher-order signatures. Unsupported cases must continue to fail with a
+   precise compile-time diagnostic.
    Definitions without a matching explicit Nim `proc` declaration still
    need a typed wrapper when their checked signature is reconstructable;
    explicit `proc` declarations with unsupported signatures fail clearly
@@ -540,6 +542,10 @@ implementations.
    `Option` values, encode through the registered structural codecs, and expose
    `RuntimeValue` result helpers. Separate 200-case properties cover both
    shapes.
+- [x] Let a dynamic generic value binder use a custom `runtimeCodec` mapping.
+   The generated wrapper accepts the mapped Nim type and applies the codec to
+   the runtime generic value. A 200-case property covers typed and raw
+   `RuntimeValue` access for a payload-bearing data family.
 - [x] Reconstruct typed wrappers for local clause-style definitions from
    their checked Pi signatures. Two 200-case properties cover direct calls
    and typed and raw `RuntimeValue` access for a `Nat -> Nat` identity and a

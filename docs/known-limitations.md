@@ -57,7 +57,9 @@ wrapper takes the corresponding Nim `seq` and checks its length while encoding.
 Dynamic value binders over standard `List` and `Option` values also use their
 registered structural codecs, represented as Nim `seq` and `Option` values.
 Properties cover both these typed wrappers and their raw `RuntimeValue` result
-helpers.
+helpers. A generic value binder can also use a custom `runtimeCodec` mapping;
+its dynamic wrapper accepts the mapped Nim value and encodes it with the
+registered codec. The codec implementation remains trusted.
 Generic binders over non-dependent Sigma values are also supported when each
 field has a runtime codec; nested Vec fields retain their length checks.
 Dependent Sigma generic binders, other structural values without a registered

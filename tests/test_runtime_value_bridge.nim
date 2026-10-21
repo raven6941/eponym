@@ -508,6 +508,9 @@ eponymBlock:
   bindPostulate(treeReverse, reverseRuntimeTree, Tree)
   proc generatedTreeIdentity(value: Tree): Tree = value
   runtimeValue(generatedTreeIdentity)
+  proc generatedGenericTreeValueBinder[tree: Tree](
+      ignored: Int): Tree = tree
+  runtimeValue(generatedGenericTreeValueBinder)
   proc generatedBoundTreeReverse(value: Tree): Tree = treeReverse(value)
 
 eponymBlock:
@@ -2311,6 +2314,22 @@ proc callbackRole : Callback -> Sample -> Sample =
         decodeRuntimeTree(rawRuntime.value, rawRuntime.globals) == values,
     )
   if not customCodecCases:
+    quit(1)
+  let genericCustomCodecCases = forAll(
+    "generic value binders cross dynamic wrappers through runtimeCodec",
+    r, 200,
+    proc(r: var Rng): seq[int] =
+      result = newSeq[int](r.genInt(0, 8))
+      for i in 0 ..< result.len:
+        result[i] = r.genInt(-1000, 1000)
+    ,
+    proc(values: seq[int]): bool =
+      let typed = generatedGenericTreeValueBinderDynamic(values, 0)
+      let runtime = generatedGenericTreeValueBinderRuntimeValueDynamic(
+        values, 0)
+      typed == values and decodeRuntimeTree(runtime.value,
+        runtime.globals) == values)
+  if not genericCustomCodecCases:
     quit(1)
 
   let nestedVectorCases = forAll(
