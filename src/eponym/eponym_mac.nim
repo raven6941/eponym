@@ -3157,6 +3157,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
         allowDependentSigma, genericIndexOverrides)
     if encodedGeneric.isNil: return nil
     var validateEncodedMappedVariant = false
+    var validateEncodedIndexedCodec = false
     if not generic.genericValueArgs[i] and
         not generic.genericMappedTypes[i].isNil:
       let mappedHead = runtimeTypeHead(generic.genericValueTypeExprs[i])
@@ -3165,9 +3166,15 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
           if mapping.isRuntimeVariant and
               mapping.eponymName == $mappedHead:
             validateEncodedMappedVariant = true
+          if mapping.isRuntimeCodec and
+              mapping.eponymName == $mappedHead and
+              generic.genericValueTypeExprs[i].kind in
+                {nnkCall, nnkObjConstr, nnkBracketExpr}:
+            validateEncodedIndexedCodec = true
     let validateUnmappedValue = generic.genericValueArgs[i] and
       not genericValueHasCodec[i]
-    if validateUnmappedValue or validateEncodedMappedVariant:
+    if validateUnmappedValue or validateEncodedMappedVariant or
+        validateEncodedIndexedCodec:
       let expectedType = runtimeTypeValueExpr(
         generic.genericValueTypeExprs[i], globalsSym, typeIndexOverrides)
       if expectedType.isNil: return nil

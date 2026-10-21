@@ -75,6 +75,11 @@ such as `Vec[Tree, n]` represented as `seq[seq[int]]`. Automatic witness
 inference requires one unambiguous mapping for the Nim type; a raw host value
 without a generated codec still has no Eponym type witness.
 
+Custom codecs for indexed families can also validate a dynamic generic value
+against its full Eponym type, including its index. For example, a
+`SizedTree[length]` codec rejects a value whose encoded tree length differs
+from `length`.
+
 Host code can build Pi and Sigma runtime type witnesses with
 `runtimeArrowType`, `runtimeDependentArrowType`, `runtimeSigmaType`, and
 `runtimeDependentSigmaType`; `validateRuntimeValueAgainstType` checks values
