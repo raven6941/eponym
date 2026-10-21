@@ -1287,18 +1287,6 @@ type HostPostulateBinding = object
   rawValue: bool
   mutableArgs: bool
 
-type HostRuntimeType = object
-  eponymName: string
-  nimType: NimNode
-  isRuntimeVector: bool
-  isRuntimeList: bool
-  isRuntimeOption: bool
-  isRuntimeVariant: bool
-  isRuntimeCodec: bool
-  isGenericTypeWitnessable: bool
-  encoder: NimNode
-  decoder: NimNode
-
 proc isSyntheticGenericRuntimeType(mapping: HostRuntimeType): bool =
   mapping.nimType.kind in {nnkIdent, nnkSym} and
     $mapping.nimType == mapping.eponymName
@@ -4102,7 +4090,7 @@ macro eponymBlock*(body: untyped): untyped =
         break
     cgUserLines[d.name] = userLine
   let cgBlock = compileBlockProcs(defs, checkedGlobals, baseDir, src,
-    cgLocFile, cgUserLines)
+    cgLocFile, cgUserLines, runtimeTypes)
 
   result = newStmtList()
   let dirLit = newLit(baseDir)

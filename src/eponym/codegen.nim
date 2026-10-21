@@ -76,6 +76,12 @@ type
     src*: string
     badElims*: Table[int, bool]   # elim refIds unusable (cycles, bad templates)
     usedElims*: Table[int, bool]  # elim refIds referenced by compiled code
+    reps*: Table[int, HostRuntimeType]
+      ## Issue #330 representation spec: type/family refId -> host runtime
+      ## mapping from the block's runtimeType/runtimeVector/... declarations.
+      ## The emitter consults this to compile bodies against host
+      ## representations (seq, Option, opaque Nim types) instead of Values;
+      ## definitions whose types have no entry keep the Phase 1 Value backend.
 
 proc cgName*(defName: string): string =
   ## The emitted proc name for a compiled definition.
@@ -95,15 +101,24 @@ proc countPiBinders(ty: Term): int =
     inc result
     t = t.scope.bdy
 
-proc buildCodegenCtx*(globals: Globals, baseDir, src: string): CodegenCtx =
-  ## Resolve every global reference to its codegen treatment.
+proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
+                     runtimeTypes: seq[HostRuntimeType] = @[]): CodegenCtx =
+  ## Resolve every global reference to its codegen treatment. `runtimeTypes`
+  ## is the block's codec mapping (issue #330 representation spec); each
+  ## named Eponym type/family resolves to its refId for emitter lookup.
   result = CodegenCtx(refs: initTable[int, CgRef](), baseDir: baseDir,
     src: src, badElims: initTable[int, bool](),
-    usedElims: initTable[int, bool]())
+    usedElims: initTable[int, bool](),
+    reps: initTable[int, HostRuntimeType]())
   var refIdToName = initTable[int, string]()
   for name, e in globals.pairs:
     if e.tm != nil and e.tm.kind == tR:
       refIdToName[e.tm.refId] = name
+  for mapping in runtimeTypes:
+    if mapping.eponymName in globals:
+      let e = globals[mapping.eponymName]
+      if e.tm != nil and e.tm.kind == tR:
+        result.reps[e.tm.refId] = mapping
   for name, e in globals.pairs:
     if e.tm == nil or e.tm.kind != tR:
       continue
@@ -481,13 +496,18 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
 
 proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
                         baseDir, src, locFile: string,
-                        userLines: Table[string, int]):
+                        userLines: Table[string, int],
+                        runtimeTypes: seq[HostRuntimeType] = @[]):
     tuple[procs: seq[NimNode], compiled: Table[string, string]] =
   ## Compile every eligible block-local definition, in dependency order.
   ## Returns the emitted procs and the def-name -> proc-name table for
   ## wrapper rerouting. Emission order: eliminator forward declarations,
   ## definition bodies (callees first), eliminator bodies.
-  var ctx = buildCodegenCtx(globals, baseDir, src)
+  ## `runtimeTypes` is the block's codec mapping (issue #330 representation
+  ## spec); the emitter will consult it to compile bodies against host
+  ## representations. Definitions outside any representation keep the
+  ## Phase 1 Value backend.
+  var ctx = buildCodegenCtx(globals, baseDir, src, runtimeTypes)
   result = (procs: @[], compiled: initTable[string, string]())
   detectBadElims(ctx)
   var defRefIds = initTable[string, int]()

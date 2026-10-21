@@ -18,6 +18,7 @@ import tables
 import sequtils
 import strutils
 import options
+import macros  # NimNode fields of HostRuntimeType
 import elab
 import eponym_init
 import preterm  # Quantity constants for validating supported adapter shapes
@@ -28,6 +29,25 @@ type
   RuntimeValue* = Value
   RuntimeGlobals* = Globals
   RuntimeValueResult* = tuple[value: RuntimeValue, globals: RuntimeGlobals]
+
+type
+  HostRuntimeType* = object
+    ## One `runtimeType`/`runtimeVector`/`runtimeList`/`runtimeOption`/
+    ## `runtimeVariant`/`runtimeCodec` declaration from an `eponymBlock` body:
+    ## the host representation the typed wrappers convert to at the boundary.
+    ## Issue #330 uses this as the backend's representation spec: the codegen
+    ## emitter consults it to compile bodies against host representations
+    ## directly instead of `Value`s.
+    eponymName*: string
+    nimType*: NimNode
+    isRuntimeVector*: bool
+    isRuntimeList*: bool
+    isRuntimeOption*: bool
+    isRuntimeVariant*: bool
+    isRuntimeCodec*: bool
+    isGenericTypeWitnessable*: bool
+    encoder*: NimNode
+    decoder*: NimNode
 
 proc hostIntUnary*(implementation: proc(x: int): int): Value
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
