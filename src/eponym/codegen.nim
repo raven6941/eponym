@@ -485,7 +485,7 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   ## definition bodies (callees first), eliminator bodies.
   var ctx = buildCodegenCtx(globals, baseDir, src)
   result = (procs: @[], compiled: initTable[string, string]())
-  #detectBadElims(ctx)
+  detectBadElims(ctx)
   var defRefIds = initTable[string, int]()
   for d in defs:
     if d.name in globals and globals[d.name].tm != nil and
