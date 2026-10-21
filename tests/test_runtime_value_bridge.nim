@@ -426,6 +426,9 @@ eponymBlock:
   proc generatedApplyNestedPiCallback[
       callback: Pi(inner: Pi(value: Int, Int), Int)](
         inner: Pi(value: Int, Int)): Int = callback(inner)
+  proc generatedReturnNestedPiCallback[
+      callback: Pi(value: Int, Pi(seed: Int, Int))](value: Int):
+      Pi(seed: Int, Int) = callback(value)
   runtimeValue(generatedNestedVectorIdentity)
   runtimeValue(generatedGenericVectorValueBinder)
   runtimeValue(generatedGenericSigmaValueBinder)
@@ -437,6 +440,7 @@ eponymBlock:
   runtimeValue(generatedDependentPiCallbackBinder)
   runtimeValue(generatedComputedDependentPiCallbackBinder)
   runtimeValue(generatedApplyNestedPiCallback)
+  runtimeValue(generatedReturnNestedPiCallback)
   proc generatedDependentPairVecIdentity(
       value: Sig(length: Nat, Sig(marker: Int, Vec[Int, length]))):
       Sig(length: Nat, Sig(marker: Int, Vec[Int, length])) = value
@@ -795,6 +799,12 @@ static:
     proc(inner: proc(value: string): string {.closure.}): string {.closure.} =
       inner("wrong"),
     proc(value: int): int {.closure.} = value + 1))
+  doAssert compiles(generatedReturnNestedPiCallbackDynamic(
+    proc(value, seed: int): int {.closure.} = value + seed,
+    3))
+  doAssert not compiles(generatedReturnNestedPiCallbackDynamic(
+    proc(value: string, seed: int): string {.closure.} = value & $seed,
+    3))
   doAssert compiles(generatedDependentCustomPiCallbackBinderDynamic(
     proc(length: int, tree: seq[int]): seq[int] {.closure.} = tree,
     3, @[1, 2, 3]))
@@ -2613,6 +2623,22 @@ proc callbackRole : Callback -> Sample -> Sample =
         callback, inner)
       typed == expected and valueToInt(runtime.value) == expected)
   if not nestedPiCallbackCases:
+    quit(1)
+  let nestedPiResultCallbackCases = forAll(
+    "higher-order generic Pi callbacks return nested closures", r, 200,
+    proc(r: var Rng): tuple[value, seed: int] =
+      (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+    proc(input: tuple[value, seed: int]): bool =
+      let callback: proc(value, seed: int): int {.closure.} =
+        proc(value, seed: int): int = value + seed
+      let typed = generatedReturnNestedPiCallbackDynamic(callback,
+        input.value)
+      let runtime = generatedReturnNestedPiCallbackRuntimeValueDynamic(
+        callback, input.value)
+      typed(input.seed) == input.value + input.seed and
+        valueToInt(callRuntimeValue(runtime.value,
+          @[intToValue(input.seed)])) == input.value + input.seed)
+  if not nestedPiResultCallbackCases:
     quit(1)
   var computedCallbackInputMismatchRejected = false
   try:

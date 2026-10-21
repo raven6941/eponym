@@ -579,8 +579,8 @@ implementations.
    custom `runtimeCodec` in a generic Pi callback, including rejection of
    malformed input and output indices. A 200-case property passes a Nim
    closure as a callback argument to another generic Pi callback through typed
-   and raw-result wrappers; compile-time coverage rejects a mismatched nested
-   closure signature.
+   and raw-result wrappers, and returns the remaining Pi as a Nim closure;
+   compile-time coverage rejects mismatched nested closure signatures.
 - [ ] Add explicit runtime type/codec descriptions for exported Eponym
    definitions and extend support to remaining dependent structures,
    unmapped value-indexed generics, and unsupported higher-order definitions.
