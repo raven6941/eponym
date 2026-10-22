@@ -109,6 +109,8 @@ for (path, expected) in [
      "opaque quaternary adapter requires postulate 'hostFourPostulate'"),
     ("tests/fixtures/embedded_err_require_compiled_unsupported.nim",
      "eponymBlock requireCompiled: definition 'identity' has no representation-compiled body"),
+    ("tests/fixtures/embedded_err_require_compiled_erased_vec_index.nim",
+     "eponymBlock requireCompiled: definition 'keepVector' has no representation-compiled body: Phase 2 unavailable: Vec length index mentions an erased binder"),
     ("tests/fixtures/embedded_err_require_compiled_dynamic.nim",
      "eponymBlock requireCompiled does not emit runtimeValue wrappers"),
     ("tests/fixtures/embedded_err_unsupported_operator.nim",
