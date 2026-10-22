@@ -3311,6 +3311,26 @@ proc runtimePiValueSlots(globals: Globals, defName: string,
   if i != wrapperNames.len:
     result.aligned = false
 
+proc nimTypeMatchesRepr(n: NimNode, want: string): bool =
+  ## Does the surface Nim type AST denote the repr-tier type name
+  ## (`int`, `seq[int]`, or `Option[int]`)? Structural match: the wrapper
+  ## identity-boundary check (issue #330 v3) compares the declared
+  ## formals/result against the repr signature threaded through
+  ## `compileBlockProcs`, so a `seq[int]` wrapper never calls an `int`
+  ## repr proc.
+  case want
+  of "int":
+    n.kind in {nnkIdent, nnkSym} and $n == "int"
+  of "seq[int]":
+    n.kind == nnkBracketExpr and n.len == 2 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "seq" and
+      n[1].kind in {nnkIdent, nnkSym} and $n[1] == "int"
+  of "Option[int]":
+    n.kind == nnkBracketExpr and n.len == 2 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Option" and
+      n[1].kind in {nnkIdent, nnkSym} and $n[1] == "int"
+  else: false
+
 proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          bindings: seq[HostPostulateBinding],
                          mappings: seq[HostRuntimeType],
@@ -3319,7 +3339,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          allowDependentSigma = false,
                          compiled: Table[string, string],
                          compiledRepr: Table[string, string] =
-                           initTable[string, string]()): NimNode =
+                           initTable[string, string](),
+                         compiledReprTypes: Table[string, seq[string]] =
+                           initTable[string, seq[string]]()): NimNode =
   ## Emit concrete Nim wrappers for first-order types, including generic type
   ## variables represented as opaque host boxes.
   if decl.kind != nnkProcDef:
@@ -3418,19 +3440,32 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     compiledName = ""
   # Issue #330: when the definition has a representation-specialized proc
   # and the wrapper boundary is the identity (every formal and the result
-  # are already the host representation — v1: `int`), call it directly with
-  # the host arguments. No Value is allocated and no codec runs; the
-  # conversion the interpreter path performs (intToValue/valueToInt) is the
-  # identity on this fragment, and the repr body computes the same function
-  # (primops fire as Nim arithmetic on both sides).
-  var useRepr = compiledReprName.len > 0 and
-    slotAlignmentMatches and
-    resultType.kind in {nnkIdent, nnkSym} and $resultType == "int"
+  # are already the host representation — v1: `int`; v3: `int`,
+  # `seq[int]`, `Option[int]`), call it directly with the host arguments.
+  # No Value is allocated and no codec runs. The declared formals/result
+  # are compared against the repr signature threaded through
+  # `compileBlockProcs` (`compiledReprTypes`), not just shape-checked, so
+  # a wrapper whose surface types disagree with the compiled repr proc
+  # keeps the Value path instead of mis-calling it.
+  var useRepr = compiledReprName.len > 0 and slotAlignmentMatches
   if useRepr:
-    for at in argNimTypes:
-      if at.kind notin {nnkIdent, nnkSym} or $at != "int":
+    # Compare against the runtime slots only: the repr signature erases
+    # q0 binders, while the surface formals still declare them.
+    let wantTypes = compiledReprTypes.getOrDefault(defName, @[])
+    var runtimeTypes: seq[NimNode] = @[]
+    for i, at in argNimTypes:
+      let slot = generic.genericNames.len + i
+      if slot < piRuntimeSlots.len and piRuntimeSlots[slot]:
+        runtimeTypes.add(at)
+    if wantTypes.len != runtimeTypes.len + 1:
+      useRepr = false
+    else:
+      for i, at in runtimeTypes:
+        if not nimTypeMatchesRepr(at, wantTypes[i]):
+          useRepr = false
+          break
+      if useRepr and not nimTypeMatchesRepr(resultType, wantTypes[^1]):
         useRepr = false
-        break
   if useRepr:
     if piRuntimeSlots.len != generic.genericNames.len + argSyms.len:
       useRepr = false
@@ -4425,7 +4460,7 @@ macro eponymBlock*(body: untyped): untyped =
       let allowDependentSigma = d.name in trustedRuntimePairs
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
         bindings, runtimeTypes, checkedGlobals, records, allowDependentSigma,
-        cgBlock.compiled, cgBlock.compiledRepr)
+        cgBlock.compiled, cgBlock.compiledRepr, cgBlock.reprTypes)
       if not typedWrapper.isNil:
         result.add(typedWrapper)
       else:
