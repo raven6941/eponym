@@ -46,11 +46,16 @@ recursive calls in `red` rules at declaration time (see Termination below).
 **Quantity discipline** (issues #64, #66; `usage_check.nim`). QTT quantities
 are enforced, not advisory:
 
-- `q1` (linear) binders must be used exactly once;
+- `q1` (linear) binders are intended to be used exactly once, but the
+  current checker counts syntactic occurrences and is not path-sensitive;
 - `q0` (erased) binders must not be used;
 - `qω` (unrestricted) binders are unchecked.
 
-Enforcement happens in two places: in-judgment checks at each lambda while
+For `q1`, this means a variable used once in only one arm of a conditional can
+be dropped when the other arm runs, while using it once in each arm is counted
+as two uses. This is a known correctness gap; linearity is not yet guaranteed
+across conditional control flow. Enforcement happens in two places:
+in-judgment checks at each lambda while
 the body is being checked (with correct depth tracking, so a type-level
 mention of a linear variable does not consume it — types are checked in the
 all-0 context), plus a post-elaboration whole-term pass as a backstop.
