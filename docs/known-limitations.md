@@ -384,8 +384,21 @@ representation choice follows the quantity: erasure (#328) and the
 representation tier (#330) omit quantity-0 formals and use plain host
 representations wherever the block's `runtimeType` mapping permits them.
 What quantitative checking does *not* yet do is turn linear (quantity-1)
-values into in-place mutation or destination-passing Nim code — that is
-Phase 3 (#331), still guarantees-only.
+values into in-place mutation — that half of Phase 3 (#331) is still
+guarantees-only. Destination-passing itself has landed in a
+quantity-independent form: `vecElim`/`listElim` folds whose cons case
+rebuilds (`cons xHead ih` with the accumulator as the tail and a head
+that mentions neither the accumulator nor the materialized tail) compile
+to a single preallocated destination instead of per-step allocation (one
+`newSeq`, O(n) writes). The conditional-cons (filter) shape — a
+`boolElim` cons case with a cons-rebuild true branch, the accumulator as
+the false branch, and a condition mentioning only the head (and, for
+`vecElim`, the index) — compiles to the same destination with a write
+pointer: the condition is tested per iteration and only kept heads are
+written (capacity `xs.len + acc0.len`, truncated afterwards). In-place
+reuse of linear buffers — mutating the
+accumulator or the caller's input buffer rather than copying — is the
+remaining quantity-gated step.
 
 Checked definitions compile to native Nim procs per definition:
 in-fragment definitions run compiled `eponymCompiled_<name>` procs (Phase 1

@@ -3715,3 +3715,67 @@
   runtime remain open work; do not describe ordinary wrappers as interpreter-
   free. Status: DECIDED; initial implementation in this branch (#358).
 
+* 2026-10-22 — Phase 3 codegen: destination-passing folds (#331)
+
+  Context: #331 revives the parked #248 DPS prototype as a backend
+  strategy: where QTT quantities prove single-use, the backend should
+  select destination-passing style over fresh allocation, move semantics
+  over deep copy. Phase 2 v3 had landed =repSeq= (=Vec=/=List= as
+  =seq[int]=), =repOption=, and right-to-left folds for =vecElim=/=listElim=
+  that allocated per cons step (=@[x] & acc= — O(n) allocations, O(n^2)
+  copies).
+  Decision: recognize two fold shapes in =cgReprVecElim=/=cgReprListElim=
+  and compile them to destination-passing blocks:
+  (1) cons-rebuild — cons-case body =cons A [i] xHead ih= (=Vec=) /
+  =cons A xHead ih= (=List=), tail exactly the accumulator =ih= (de Bruijn
+  0), head not mentioning =ih=/=tl= (scope-aware =termUsesInnerBinder=) →
+  =cgDpsFoldBlock=: one =newSeq[int](xs.len + acc0.len)=, acc0 tail copied
+  in, per-iteration =dst[k] = head=;
+  (2) conditional-cons (filter) — cons-case body
+  =boolElim motive (cons A [n] xHead ih) ih cond=, false branch exactly
+  =ih=, =cond= mentioning neither =ih= nor the tail →
+  =cgDpsFilterBlock=: capacity =xs.len + acc0.len=, write pointer =w=,
+  left-to-right iteration, =if cond: dst[w] = head; inc w=, acc0 tail at
+  offset =w=. Non-matching shapes keep the old allocating fold as
+  fallback. The #19 framing holds: Phase 3 is measured against Phase 2
+  compiled output, never against the interpreter.
+  Key finding: the transform is quantity-independent — the destination is
+  freshly allocated and acc0 is only read, never mutated, so it is sound
+  for any =ih= quantity and is NOT gated on q1. The design assumption
+  ("quantity-1 accumulator case") was wrong; the mechanism is better than
+  assumed. Quantity elaboration notes: explicit =(1 ih := ...)= on an
+  eliminator case binder is rejected (no quantity subsumption at the case
+  lambda — "does not match the expected quantity qOmega"); proc-telescope
+  =(1 xs : Vec Int n)= elaborates and composes with DPS emission;
+  unannotated single-use binders infer quantity from uses (#66/#84) but the
+  transform does not consult it.
+  #67 reversal trigger (2) does NOT fire: no CPS/ANF IR was needed. The
+  destination is threaded through emitted Nim AST statements
+  (=let=/=var=/=for= blocks) which codegen already builds; the shape check
+  is a syntactic predicate on =Term=. The "IR" for DPS is the Nim AST
+  itself. =docs/known-limitations.md= records the new tier facts.
+  Benchmarks (same machine, #19 framing, Phase 3 vs Phase 2 old emission
+  via dev-time =git stash=: n=200, 20k iters): =vmapDps= 8.170s → 0.044s
+  (~186x); =vappendDps= 1.406s → 0.009s per 2k iters (~156x). Filter
+  (=lfilterNonZero=, n=50, 20k iters, vs Phase 1 compiled): 187.850s →
+  0.102s (~1848x; Phase-1 side dominated by per-step =Value= allocation).
+  Differential tests: =tests/test_codegen_phase3_dps_vec.nim=,
+  =tests/test_codegen_phase3_dps_list.nim= (repr vs interpreter vs Phase-1
+  twin agree; non-rebuild and false-branch-not-=ih= fallbacks pinned).
+  Negative results: a =vecElim= filter producing =List= cannot be
+  differentially tested in one Eponym block (flat constructor namespace
+  rejects the second =nil=/=cons= pair; repr tier, host codecs, and test
+  harness all resolve ctors by global name). Shape-based ctor recognition
+  was prototyped and REVERTED — it would have dragged in the interop codec
+  surface for a test-layout reason; the =vecElim= filter path (4-binder
+  env mapping) is covered by code review, the shared =cgDpsFilterBlock= by
+  the list tests.
+  Deferred: genuinely q1-gated in-place refinements — input-buffer reuse
+  for map-like folds, move-semantics for the acc0 tail copy. They need the
+  wrapper-boundary aliasing discipline first: checked linearity governs
+  Eponym variables, not Nim =ref=s — a Nim caller can alias a =seq= passed
+  for a q1 parameter, so in-place reuse of host-supplied buffers is
+  unsound without a representation-level uniqueness invariant. This is the
+  issue's own honest-scope note; =requireCompiled()= (#392) does not
+  supply the invariant. Status: IMPLEMENTED (#331); q1-gated refinement
+  recorded as future work, not a Phase 3 acceptance item.
