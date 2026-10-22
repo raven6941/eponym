@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "commit": "5fc84f83350cb77640234f6202b29881686b6ae0",
+  "toolchain": "Nim Compiler Version 2.2.12 [MacOSX: arm64]",
+  "platform": "macOS-14.5-arm64-arm-64bit",
+  "corpus": {
+    "dependent-indices": {
+      "samplesSeconds": [
+        2.587398958,
+        2.4860468750000004,
+        2.5378655829999994
+      ],
+      "medianSeconds": 2.5378655829999994
+    },
+    "paxos-session": {
+      "samplesSeconds": [
+        1.5381037919999994,
+        1.5360980830000006,
+        1.5526334590000008
+      ],
+      "medianSeconds": 1.5381037919999994
+    },
+    "nat-lemmas": {
+      "samplesSeconds": [
+        34.370341334,
+        34.483521584
+      ],
+      "medianSeconds": 34.426931459
+    }
+  }
+}

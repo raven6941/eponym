@@ -162,6 +162,28 @@ shape. Runtime evaluation of type and index expressions supports a subset;
 arbitrary type-level Nim computation and every possible Eponym index
 expression are not supported by generated codecs.
 
+### Compile-time performance
+
+Eponym checks embedded definitions during Nim compilation, so elaborator and
+kernel changes affect build time. The CI benchmark compares `dependent_indices`,
+the checked Paxos example, and `lib/nat_lemmas.ep` against the pull request's
+target commit on the same Nim 2.2.12 runner. It reports median wall time per
+corpus and flags growth above both 30% and 0.5 seconds. Smaller changes remain
+visible in the report without failing CI. The lemma corpus uses a larger Nim
+VM loop limit because it exceeds Nim's default; the benchmark includes that
+limit in its recorded corpus definition. A first macOS 14.5 arm64 reference is
+checked in at `bench/compile_time_reference.json`; CI comparisons use the PR
+target on the same runner instead of comparing its absolute times with this
+machine-specific snapshot.
+
+These are regression guardrails, not promises of a fixed compile time across
+machines. Existing profiles show evaluation dominates numeral-heavy checking,
+while evidence-heavy arithmetic spends most of its time in the bare-core
+evidence check. Preserve the kernel re-check: investigate phase costs and
+optimize them without weakening the trusted boundary. If a feature warrants a
+material compile-time increase, include the measured tradeoff and rationale in
+its PR; change the budget only with that evidence.
+
 The core QTT erasure pass (`eraseQ0Arguments`) replaces a checked quantity-0
 application's argument with an inert unit witness, so the argument computation
 is not evaluated. Public generated and interpreted runtime entrypoints both
