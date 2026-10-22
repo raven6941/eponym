@@ -12,6 +12,51 @@ import eponym_init
 import preterm # Quantity
 import usage_check
 
+proc reserveTermRefIds(supply: var Supply, term: Term,
+                       seenRefs: var Table[int, bool]) =
+  ## Keep inference-local neutral parameters above every global/reference ID
+  ## carried by the checked syntax. Otherwise opening a binder can give a
+  ## local neutral the same identity as a constructor in an eliminator rule;
+  ## `fireRed` can then mistake the neutral for that constructor.
+  if term.isNil: return
+  case term.kind
+  of tR:
+    reserveFreshIdsThrough(supply, term.refId)
+    if term.refId in seenRefs: return
+    seenRefs[term.refId] = true
+    if not term.refTyp.isNil:
+      reserveTermRefIds(supply, term.refTyp.syn, seenRefs)
+    if not term.refVal.isNil:
+      reserveTermRefIds(supply, term.refVal.syn, seenRefs)
+      if term.refVal.whnfKind == wRed:
+        let info = redRuleInfo(term)
+        for ctorId, ruleTerm in info.cases:
+          reserveFreshIdsThrough(supply, ctorId)
+          reserveTermRefIds(supply, ruleTerm, seenRefs)
+  of tPi, tSi, tLam:
+    reserveTermRefIds(supply, term.dom, seenRefs)
+    reserveTermRefIds(supply, term.scope.bdy, seenRefs)
+  of tPair:
+    reserveTermRefIds(supply, term.pFst, seenRefs)
+    reserveTermRefIds(supply, term.pSnd, seenRefs)
+    reserveTermRefIds(supply, term.pScope.bdy, seenRefs)
+  of tApp:
+    reserveTermRefIds(supply, term.fn, seenRefs)
+    reserveTermRefIds(supply, term.arg, seenRefs)
+  of tFst, tSnd, tAbsurd:
+    reserveTermRefIds(supply, term.sub, seenRefs)
+  of tLet:
+    reserveTermRefIds(supply, term.letVal, seenRefs)
+    reserveTermRefIds(supply, term.letTy, seenRefs)
+    reserveTermRefIds(supply, term.letScope.bdy, seenRefs)
+  of tMeta:
+    for arg in term.metaSpine:
+      reserveTermRefIds(supply, arg, seenRefs)
+  of tPrim:
+    reserveTermRefIds(supply, term.primTy, seenRefs)
+  of tV, tC, tInt, tNatLit, tNatSing, tType:
+    discard
+
 proc eraseQ0Arguments*(tm: Term): Term =
   ## Erase checked, closed core terms. This operation is intended after
   ## elaboration/zonking and quantity checking. It preserves runtime binder
@@ -23,6 +68,8 @@ proc eraseQ0Arguments*(tm: Term): Term =
   ## sufficiently typed for that recovery.
   checkUsage(tm)
   var supply = Supply()
+  var seenRefs = initTable[int, bool]()
+  reserveTermRefIds(supply, tm, seenRefs)
   let bindings = initTable[int, Value]()
 
   proc walk(t: Term, env: seq[Value]): Term =

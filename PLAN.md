@@ -987,6 +987,10 @@ implementations.
   function binder/application slot, so erased arguments become inert unit
   witnesses; a 200-case `falsify` property compares results and confirms that
   effectful q0 arguments are skipped. Full local CI passed for this phase.
+- [x] Reserve erasure's fresh neutral IDs above references reachable through
+  checked terms and cached eliminator rules. A regression reproduces the
+  constructor-ID collision as an out-of-bounds reduction without the fix.
+  (#387)
 - [x] **Phase 1 (#329):** compile supported erased definitions to Nim AST that
   constructs and operates on runtime `Value`s directly. Per-definition
   fallback to the interpreter for unsupported forms; the typed-wrapper

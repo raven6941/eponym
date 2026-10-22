@@ -1,10 +1,11 @@
 ## Differential and effect-count checks for the core QTT erasure pass (#328).
 
-import std/tables
+import std/[tables, os]
 import falsify
 import eponym_init
 import erasure
 import preterm
+import elab
 
 proc expect(ok: bool, message: string) =
   if not ok:
@@ -79,6 +80,45 @@ expect(nestedErased.kind == tApp and nestedErased.fn.kind == tLam and
        nestedErased.fn.scope.bdy.kind == tApp and
        nestedErased.fn.scope.bdy.arg.kind == tC,
        "erasure finds q0 applications under ordinary binders")
+
+let repoRoot = parentDir(parentDir(currentSourcePath()))
+let vecProgram = "import \"lib/vec.ep\"\n"
+let vecChecked = elabCheckDirStateAll(vecProgram, repoRoot)
+var foundVappend = false
+for definition in vecChecked.allDefs:
+  if definition.name == "vappend":
+    foundVappend = true
+    discard eraseQ0Arguments(definition.tmTm)
+expect(foundVappend, "length-indexed vector append erases without refId collisions")
+
+# Constructor identities in an eliminator's cached rule table do not appear as
+# ordinary tR nodes. Make the first fresh inference parameter collide with one
+# of those identities: without reserving rule keys, evaluating this dependent
+# codomain mistakes the parameter for the constructor and opens an invalid
+# reduction template.
+var collisionIds = Supply()
+let collisionUnitType = eval(tmC(cOne), @[])
+# Reserve IDs 1 and 2 as unrelated globals, then give the eliminator and
+# postulate IDs 3 and 4. Constructor IDs 2 and 6 are present only in the
+# eliminator's cached rules; 6 also collides with the second neutral opened by
+# a ref-only reservation walk (which starts fresh IDs at 5).
+discard newPostulateRef(collisionIds, collisionUnitType) # ID 1
+discard newPostulateRef(collisionIds, collisionUnitType) # ID 2
+let collisionElim = newRedRef(collisionIds,
+  runtimeArrowType(collisionUnitType, collisionUnitType), 1)
+attachRedCase(collisionElim, 2, vv(0))
+attachRedCase(collisionElim, 6, vv(0))
+let collisionBody = tmLet(
+  tmApp(collisionElim, vv(0)), tmC(cStar), "reduce-unused",
+  tmPi(tmC(cOne), "y", tmC(cOne)))
+let collisionFnType = eval(tmPi(tmC(cOne), "x", collisionBody), @[])
+let collisionFn = newPostulateRef(collisionIds, collisionFnType)
+let collisionCall = tmLam(tmC(cOne), "outer",
+  tmLam(tmC(cOne), "input",
+    tmApp(tmApp(collisionFn, vv(0)), tmC(cVoid))))
+discard eraseQ0Arguments(collisionCall)
+expect(true,
+  "erasure reserves constructor IDs embedded in cached eliminator rules")
 
 proc erasurePreservesResultAndSkipsEffects(input: ErasureCase): bool =
   var expensiveArg = tmC(cVoid)
