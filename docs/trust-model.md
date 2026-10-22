@@ -236,6 +236,36 @@ time.
   with your own bugs — the guarantees in this document cover what the
   elaborator and kernel check, not what your metaprogramming computes.
 
+## The Nim boundary and trusted opt-ins
+
+Every postulate adapter is trusted for behavior even when its Nim signature
+matches the checked Eponym type. `bindPostulatePairTrusted` adds trust in the
+dependent relationship between a pair's fields and its index. The separate
+`runtimePairTrusted` and `runtimeRecordTrusted` opt-ins permit typed wrappers
+when the available field codecs cannot reconstruct and validate that
+relationship; codecs still check the field shapes and any indices they do
+represent. Keep these opt-ins separate because they authorize different
+operations at different boundaries.
+
+An explicit opaque `runtimeType` mapping trusts the correspondence between
+the Eponym type and the chosen Nim representation, including aliasing and
+lifetime behavior. A custom `runtimeCodec` additionally trusts its encoder and
+decoder. Neither opt-in proves properties of the host value itself.
+
+`bindPostulateMutable` is retained with decoded-local/result-out semantics:
+the adapter receives decoded local variables, and its encoded result returns
+to Eponym. It does not receive the caller's Nim variable as a `var` alias, and
+the runtime does not deep-copy reference-like mapped values. Mutating through
+a reference stored inside a decoded value can still affect shared host state,
+so alias and effect behavior remains trusted. The opt-in name refers to the
+mutable Nim adapter parameters.
+
+For a build-time inventory of these boundaries in each `eponymBlock`, compile
+with `-d:eponymTrustReport`. The report is diagnostic text and is not a stable
+machine-readable interface. QTT linearity still checks uses of Eponym values
+inside the block; it cannot detect two Nim references that alias the same
+host resource.
+
 ## Summary of the trust boundary
 
 | Checked for you | Your responsibility |

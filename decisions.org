@@ -3640,3 +3640,28 @@
   quiet. Regression tests pin representative Phase 1, Phase 2, and interpreter
   selections. Status: IMPLEMENTED (#370).
 
+* 2026-10-22 — Keep the host trust opt-ins distinct (#374)
+
+  Context: the boundary exposes several opt-ins with different proof gaps:
+  =bindPostulatePairTrusted= trusts a dependent pair relation produced by a
+  Nim adapter; =runtimePairTrusted= and =runtimeRecordTrusted= permit typed
+  wrappers when codecs cannot reconstruct a dependent witness; =runtimeType=
+  and =runtimeCodec= provide host representations and conversions; and
+  =bindPostulateMutable= gives a Nim adapter mutable decoded locals. Collapsing
+  them into one trusted switch would hide which boundary is being crossed.
+  Decision: keep the opt-ins separate and explicit. Every postulate adapter's
+  behavior remains trusted even when its Nim signature is checked. Keep
+  =bindPostulateMutable= for this API version: its Nim =var= applies to a
+  decoded local, and the Eponym result is the encoded returned value. It does
+  not transfer the wrapper caller's variable or guarantee mutation isolation;
+  the runtime does not deep-copy reference-like values, which may expose
+  shared mutations.
+
+  Consequences: add an opt-in per-block trust inventory with
+  =-d:eponymTrustReport=, documenting each reported boundary and its remaining
+  host obligation. Tutorial guidance now says that QTT single-use checks do
+  not detect aliases among Nim references. This report is diagnostic text,
+  not a stable API. Revisit naming only with a deliberate compatibility
+  migration before 1.0, not through a second permanent spelling.
+  Status: DECIDED (#374).
+

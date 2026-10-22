@@ -17,6 +17,7 @@ import os  # issue #131: parentDir of the eponymBlock call site
 import strutils
 import sequtils
 import sets
+import std/algorithm
 import std/options
 
 template rawValue* {.pragma.}
@@ -1684,6 +1685,56 @@ proc bindingIsReferenced(body: NimNode, postulateName: string,
   for definition in allDefs:
     if checkedDefReferences(definition, refId): return true
   false
+
+proc trustBoundaryReportLines(bindings: seq[HostPostulateBinding],
+    mappings: seq[HostRuntimeType], trustedPairs, trustedRecords: HashSet[string]):
+    seq[string] =
+  ## Human-readable inventory of explicit block-level host trust boundaries.
+  for binding in bindings:
+    var form = "bindPostulate"
+    var promise = "the Nim adapter behavior is trusted; " &
+      "its signature is checked"
+    if binding.rawValue:
+      form = "bindPostulateValue"
+      promise = "the raw RuntimeValue adapter behavior and " &
+        "interpretation are trusted"
+    elif binding.pairResult:
+      form = if binding.trustedPairIndex:
+        "bindPostulatePairTrusted" else: "bindPostulatePair"
+      if binding.trustedPairIndex:
+        promise = "the host result's dependent Sigma index relationship is trusted"
+      else:
+        promise = "the generated non-dependent pair codec checks field " &
+          "types; adapter behavior is trusted"
+    elif binding.mutableArgs:
+      form = "bindPostulateMutable"
+      promise = "the adapter mutates decoded local var arguments and returns " &
+        "their encoded result; host effects and aliases are trusted"
+    result.add(form & "(" & binding.postulateName & ", " &
+      binding.implementation.repr & "): " & promise)
+
+  for mapping in mappings:
+    if mapping.isRuntimeCodec:
+      result.add("runtimeCodec(" & mapping.eponymName & ", " &
+        mapping.nimType.repr & "): custom encoder/decoder behavior " &
+        "is trusted")
+    elif not mapping.isRuntimeVector and not mapping.isRuntimeList and
+        not mapping.isRuntimeOption and not mapping.isRuntimeVariant:
+      result.add("runtimeType(" & mapping.eponymName & ", " &
+        mapping.nimType.repr & "): Nim/Eponym type correspondence is " &
+        "trusted; host identity, aliasing, and lifetime rules remain with " &
+        "the caller")
+
+  var pairNames = toSeq(trustedPairs.items)
+  pairNames.sort()
+  for name in pairNames:
+    result.add("runtimePairTrusted(" & name & "): typed wrappers trust " &
+      "dependent Sigma index relationships not reconstructed by codecs")
+  var recordNames = toSeq(trustedRecords.items)
+  recordNames.sort()
+  for name in recordNames:
+    result.add("runtimeRecordTrusted(" & name & "): typed wrappers trust " &
+      "dependent record relationships not checked by field codecs")
 
 proc isCheckedNatType(globals: Globals, typeName: string): bool =
   ## Classify Nat by the checked declaration's identity, not by its spelling.
@@ -4162,6 +4213,19 @@ macro eponymBlock*(body: untyped): untyped =
           "opaque A -> B -> C -> D -> E -> F")
     except ValueError as e:
       error("eponymBlock binding error: " & e.msg, body)
+
+  when defined(eponymTrustReport):
+    let trustLines = trustBoundaryReportLines(bindings, runtimeTypes,
+      trustedRuntimePairs, trustedRuntimeRecords)
+    echo "[eponym trust] block at " & lineInfoObj(body).filename & ":" &
+      $lineInfoObj(body).line
+    if trustLines.len == 0:
+      echo "[eponym trust]   no explicit host runtime opt-ins"
+    else:
+      for trustLine in trustLines:
+        echo "[eponym trust]   " & trustLine
+    echo "[eponym trust]   QTT single-use applies inside checked Eponym terms; " &
+      "Nim aliases around mapped references are outside that check"
 
   # Issue #329: compile eligible definitions to native Value procs, emitted
   # before the wrappers (callees before callers). Wrappers for compiled

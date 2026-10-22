@@ -55,7 +55,14 @@ type ChannelHandle = object
 type MutableCell = object
   value: int
 
+type MutableCellRef = ref object
+  value: int
+
 proc hostMutateCell(cell: var MutableCell, delta: int): MutableCell =
+  cell.value += delta
+  cell
+
+proc hostMutateCellRef(cell: var MutableCellRef, delta: int): MutableCellRef =
   cell.value += delta
   cell
 
@@ -727,6 +734,16 @@ eponymBlock:
 
 eponymBlock:
   postulate(Int, Univ)
+  postulate(CellRef, Univ)
+  runtimeType(CellRef, MutableCellRef)
+  postulate(mutateCellRef, CellRef -> Int -> CellRef)
+  bindPostulateMutable(mutateCellRef, hostMutateCellRef,
+    CellRef, Int, CellRef)
+  proc generatedMutableCellRefUpdate(cell: CellRef, delta: Int): CellRef =
+    mutateCellRef(cell, delta)
+
+eponymBlock:
+  postulate(Int, Univ)
   proc generatedApplyNimCallback(
       callback: proc(value: Int): Int {.closure.}, value: Int): Int =
     callback(value)
@@ -1195,16 +1212,24 @@ when isMainModule:
     quit(1)
 
   let mutablePostulateCases = forAll(
-    "var and value Nim postulate adapters use checked value codecs",
+    "mutable adapters use decoded locals and reference mappings preserve aliases",
     r, 200,
     proc(r: var Rng): tuple[initial, delta: int] =
       (r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
     proc(input: tuple[initial, delta: int]): bool =
       let original = MutableCell(value: input.initial)
       let updated = generatedMutableCellUpdate(original, input.delta)
+      # The wrapper takes a value, but the mapped ref object shares its
+      # referent with `alias`; Nim var mutation can reach that shared object.
+      let shared = MutableCellRef(value: input.initial)
+      let alias = shared
+      let updatedShared = generatedMutableCellRefUpdate(shared, input.delta)
       original.value == input.initial and
         updated.value == input.initial + input.delta and
-        generatedValueCellRead(updated) == input.initial + input.delta,
+        generatedValueCellRead(updated) == input.initial + input.delta and
+        shared.value == input.initial + input.delta and
+        alias.value == input.initial + input.delta and
+        updatedShared.value == input.initial + input.delta,
     proc(input: tuple[initial, delta: int]): seq[tuple[initial, delta: int]] =
       input.shrinkPair(shrinkInt, shrinkInt))
   if not mutablePostulateCases:

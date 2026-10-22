@@ -76,6 +76,8 @@ nim c -r --hints:off $P "tests/test_embedded_chained_if.nim"
 nim c -r --hints:off $P "tests/test_embedded_if_effects.nim"
 echo "=== runtime Value bridge properties ==="
 nim c -r --hints:off $P "tests/test_runtime_value_bridge.nim"
+echo "=== per-block trust boundary report (#374) ==="
+sh tests/test_trust_report.sh
 echo "=== certified objective runtime properties ==="
 nim c -r --hints:off $P "tests/test_convex_opt_runtime.nim"
 nim c -r --hints:off $P "tests/test_convex_opt_vec_runtime.nim"

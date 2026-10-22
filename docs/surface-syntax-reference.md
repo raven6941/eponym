@@ -56,7 +56,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `addInt(x, y)`, `suc(n)`, `f x`, `lam(x, T, body)` | Eponym applications and lambda forms, translated by the macro |
 | `import "nat.ep"` | Eponym module import; relative to the source file first, then the installed package prelude. Absolute paths select an explicit file. |
 | `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported shapes are listed in [known limitations](known-limitations.md) |
-| `bindPostulateMutable(operation, nimProc, ArgumentTypes..., ResultType)` | Trusted adapter for Nim `var` parameters with copy-in/result-out semantics |
+| `bindPostulateMutable(operation, nimProc, ArgumentTypes..., ResultType)` | Trusted adapter that passes decoded locals to Nim `var` parameters and encodes the result; shared-reference mutation may still be visible |
 | `runtimeCodec(Tree, NimType, encode, decode)` | Register typed Nim encoders/decoders for a named Eponym type or family; the codec implementation is trusted |
 | `runtimeValue(checkedDefinition)` | Expose checked values and globals; imported definitions without a local Nim signature use the raw `Value` ABI |
 | `debugEcho[A](value)` | Opt-in runtime trace from `lib/debug.ep`; bind `debugEcho` with `debugEchoRuntimeValue` or a custom raw adapter |
@@ -68,6 +68,12 @@ wrapper boundary using the supported runtime types. See the
 [tutorial](tutorial.md) for a complete example. This is the current
 boundary; a planned experiment may add a small *pure* expression subset
 whose forms translate to checked Eponym terms rather than running as Nim.
+
+Build with `-d:eponymTrustReport` to print a compile-time inventory of the
+block's explicit runtime trust boundaries. It lists postulate adapters,
+custom or opaque runtime mappings, and dependent-pair/record trust opt-ins,
+with the guarantee each leaves to Nim. This is a human-readable build
+diagnostic, not a machine-readable API.
 
 For opaque scalar values, import `lib/float.ep` (`Float`) or `lib/text.ep`
 (`String` and `Char`) and register `runtimeType` mappings to Nim's
@@ -124,7 +130,9 @@ Use `bindPostulateMutable` when an existing adapter needs `var` parameters.
 It decodes arguments to mutable locals, invokes the Nim procedure,
 and encodes its return value. The declared Eponym postulate still describes
 the input and returned values; it does not describe mutation of the caller's
-Nim variable or transfer ownership. See [known limitations](known-limitations.md#postulates-connect-checked-code-to-host-code)
+Nim variable or transfer ownership. A shallow/reference-like mapped value can
+still share mutable storage with other Nim aliases, so mutation isolation is
+not promised. See [known limitations](known-limitations.md#postulates-connect-checked-code-to-host-code)
 for an example and the trust boundary.
 
 Opaque Nim values can cross a checked role when the Eponym type is a named
