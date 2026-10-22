@@ -251,3 +251,5 @@ structural recursion (#42), and arbitrary type-level host programs.
 - `plan.org` — experiment plan and research tracks.
 - `decisions.org` — design decision log.
 - `research.org` — the driving question.
+- [`.github/ISSUE_TRIAGE.md`](.github/ISSUE_TRIAGE.md) — issue labels, evidence
+  status, and claiming conventions.
