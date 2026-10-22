@@ -95,12 +95,21 @@ eponymBlock:
   as Nim, and the elaborator typechecks it at compile time.
 - Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).
 - Two-layer shape: the checked definitions are the proof layer; the
-  surrounding Nim is the running layer. Generated runtime calls support
-  primitive `Int`/`Nat`, `Bool` (when `bool.ep` is imported), non-dependent
-  `Sig` values as Nim tuples, non-dependent
-  named records as mapped Nim objects, and explicitly mapped opaque postulated
-  types; dependent structures and other unsupported definitions are checked
-  at compile time but do not yet have typed Nim wrappers.
+  surrounding Nim is the running layer. Checked definitions compile to
+  native Nim procs, per definition: the Value backend (boxed runtime
+  values) covers everything in the compiled fragment, including
+  dependent and indexed definitions such as the Paxos session roles;
+  the representation backend emits direct host code where a
+  representation mapping applies (`Int`/`Nat`/`Bool` as `int`,
+  `Vec`/`List` as `seq[int]`, `Option` as `Option[int]`, with
+  destination-passing folds for sequence eliminators). Definitions
+  outside the fragment keep an interpreter fallback.
+  `-d:eponymCodegenReport` names each definition's backend and why it
+  did not reach a higher one, and `requireCompiled()` makes a block
+  fail at macro time unless every local definition and call compiles
+  without the interpreter or the `Value` layer. The
+  [known limitations](docs/known-limitations.md) page carries the
+  current backend coverage and the trust boundary.
 - The headline demos in `examples/embedded/` are built this way:
   `paxos_session.nim` (Paxos as dependent session types with
   unforgeable promise tickets), `convex_opt_vec.nim` (DCP-checked
