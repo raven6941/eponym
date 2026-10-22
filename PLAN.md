@@ -1080,6 +1080,18 @@ implementations.
   each shape; the properties check occurs-check rejection, deferred ambiguity,
   and overlap diagnostics (#232).
 
+### Compile-time cost tracking (#376)
+
+- [x] Benchmark `dependent_indices`, the checked Paxos example, and the
+  lemma-heavy `lib/nat_lemmas.ep` corpus through Nim's compile-time boundary.
+  Compare the pull request with its target commit on the same Nim runner.
+- [x] Report median drift per corpus and fail CI only when growth exceeds both
+  30% and 0.5 seconds. Save baseline and candidate measurements as workflow
+  artifacts; test the regression detector with a synthetic 45% increase.
+- [x] Keep the kernel re-check in the trusted path. Use existing phase
+  profiles to guide optimization; do not treat a compile-time budget as
+  permission to weaken checking.
+
 ### Dependencies and sequencing
 
 The runtime ABI (B) precedes callable postulates (C); postulates precede the

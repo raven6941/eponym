@@ -3665,3 +3665,33 @@
   migration before 1.0, not through a second permanent spelling.
   Status: DECIDED (#374).
 
+* 2026-10-22 — Compile-time budget is a same-runner regression guard (#376)
+
+  Context: Nim programmers pay Eponym's elaboration and kernel checking at
+  compile time. The project had phase profilers and isolated timings, but no
+  fixed user-facing corpus or regression gate. Absolute thresholds would be
+  noisy across local machines and GitHub runners. Decision: on pull requests,
+  measure a fixed corpus on both the target commit and the candidate using the
+  same Nim 2.2.12 GitHub runner. Compare per-corpus medians; fail only when a
+  corpus regresses by more than 30% and at least 0.5 seconds. Preserve a
+  machine-specific reference snapshot in =bench/compile_time_reference.json=;
+  CI also uploads each actual target/candidate measurement pair.
+
+  Corpus: the embedded =dependent_indices= example, the real checked Paxos
+  session, and =lib/nat_lemmas.ep= imported through =eponymBlock=. The lemma
+  corpus exceeds Nim's default compile-time VM iteration cap, so its benchmark
+  explicitly raises that cap to 100 million iterations; this setting is
+  recorded and does not alter Eponym's semantics. On macOS 14.5 arm64 at
+  =5fc84f8=, medians were 2.538 s, 1.538 s, and 34.427 s respectively. These
+  numbers are a reference for the recorded machine, not a cross-machine
+  promise. A synthetic 45% increase is rejected by the budget detector.
+
+  Budget posture: existing profiles show evaluation dominates the
+  numeral-heavy corpus, while a realistic .ep corpus spreads cost across eval,
+  zonk, kernel checking, inference, and conversion. The checked arithmetic
+  evidence workload spends about half its wall time in bare-core evidence
+  checking. First identify the affected corpus and phase, then optimize that
+  phase and retain differential/audit coverage. Do not reduce the kernel's
+  checking scope to meet a timing target; preserving the LCF boundary takes
+  precedence over the budget. Status: IMPLEMENTED (#376).
+
