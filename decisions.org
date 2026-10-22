@@ -3241,8 +3241,13 @@
   path; enabling q1 inference would amplify this gap. This also exposes a
   pre-existing q1 checking limitation, so it needs its own correctness work
   before inference can proceed. The planned fix is a path-sensitive usage
-  analysis across conditional/eliminator alternatives, with positive and
-  negative regressions and property coverage. Separately, q1-to-qOmega
+  analysis across conditional/eliminator alternatives. A local exception in
+  countVarUses is not sufficient: Nim `if` currently lowers to an ordinary
+  ifThenElse call with lazy lambda arguments, and treating arbitrary callback
+  applications as alternatives could accept code that invokes both. Preserve
+  branch structure through lowering and use one per-path analysis for both
+  the in-judgment check and post-pass. Add positive and negative regressions
+  and property coverage. Separately, q1-to-qOmega
   subsumption cannot be generalized from the q0 rule without proving its
   behavior under contravariant Pi domains and matching the independent kernel.
   Status: OPEN (branch =exp84-qty-infer=).
