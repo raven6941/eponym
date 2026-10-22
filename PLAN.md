@@ -284,25 +284,25 @@ implementations.
    sequential composition and quantity acceptance, compares generated nested
    choice/sequential trees with an independent concrete-path enumerator, and
    checks balanced versus inconsistent branch joins.
-- [ ] Make linear usage checking path-sensitive across conditionals and
-   eliminators. Preserve branch alternatives when lowering lazy Nim `if`
-   expressions; today they become ordinary `ifThenElse` applications with
-   thunk arguments, so the occurrence counter loses the control-flow boundary.
-   The current counter can accept a q1 value used in only one arm (then drop it
-   on the other path), and rejects a value used once in each arm. Make the
-   in-judgment check, post-elaboration backstop, and codegen erasure pass share
-   the same per-path analysis. Branch information must survive in a checked
-   representation consumed by all three; a source-only profile or an
-   unchecked annotation on an ordinary application is insufficient. The
-   evaluator and independent kernel must establish the conditional's branch
-   semantics, so a shadowed or user-defined `ifThenElse` cannot make the
-   checker assume laziness it does not have. First cover the Nim `if` lowering;
-   account for general eliminators separately if their case branches are not
-   represented by that same checked form. Add positive and negative
-   compile-time regressions for values used once in each branch and values
-   used on only one branch, plus property coverage over generated
-   branch-usage shapes. Do not infer q1 until every runtime path is accounted
-   for.
+- [x] Make usage checking path-sensitive for Nim `if` expressions. The core
+   usage analysis unfolds checked definitions to complete, nullary binary
+   data eliminators whose case rules return branch closures, then combines the
+   scrutinee profile sequentially with the choice of case profiles. Only
+   eliminators generated from complete `data` declarations are marked
+   exhaustive; unknown, incomplete, payload-bearing, or non-branch-returning
+   eliminators retain conservative sequential counting. In-judgment checks,
+   the post-elaboration backstop, and codegen erasure use the same analyzer.
+   The evaluator selects via the registered rules, and `kernel_audit` checks
+   those rules independently. `tests/test_embedded_if_effects.nim` verifies a
+   q1 value used once in either branch runs the selected adapter once;
+   `embedded_err_q1_if_one_branch.nim` rejects a path that drops it. The
+   generated control-flow profile property and the kernel audit pass.
+- [ ] Extend path-sensitive usage to data eliminators with constructor
+   payloads or more than two cases, and to case templates that compute with
+   branch values rather than returning a closure directly. These forms
+   currently keep conservative sequential counting. Add generated
+   compile-time regressions for each newly supported eliminator shape. Do not
+   infer q1 until every runtime path is accounted for.
 - [ ] Decide quantity subsumption for q1 under Pi domains before enabling q1
    inference. The rule must respect contravariance and pass both elaborator and
    independent kernel checks; the existing inferred-q0-to-qOmega exception

@@ -6,6 +6,7 @@ import eponym_init
 import erasure
 import preterm
 import elab
+import parse_surf
 
 proc expect(ok: bool, message: string) =
   if not ok:
@@ -90,6 +91,22 @@ for definition in vecChecked.allDefs:
     foundVappend = true
     discard eraseQ0Arguments(definition.tmTm)
 expect(foundVappend, "length-indexed vector append erases without refId collisions")
+
+var branchDrv = initModuleDriver()
+discard branchDrv.elabFile(repoRoot / "lib/bool.ep")
+let branchDefs = branchDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+proc branchLinear (flag : Bool) (1 value : Int) : Int =
+  ifThenElse flag (lam (u : 1). value) (lam (u : 1). value) <>
+"""), repoRoot, "<q1-branch-erasure>")
+var branchLinearDef: ElabDef
+for defn in branchDefs:
+  if defn.name == "branchLinear": branchLinearDef = defn
+expect(not branchLinearDef.tmTm.isNil,
+  "branch-linear definition elaborates")
+discard eraseQ0Arguments(branchLinearDef.tmTm)
+expect(true,
+  "q1 branch profiles are rechecked consistently by codegen erasure")
 
 # Constructor identities in an eliminator's cached rule table do not appear as
 # ordinary tR nodes. Make the first fresh inference parameter collide with one
