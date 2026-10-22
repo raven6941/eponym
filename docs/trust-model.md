@@ -46,15 +46,15 @@ recursive calls in `red` rules at declaration time (see Termination below).
 **Quantity discipline** (issues #64, #66; `usage_check.nim`). QTT quantities
 are enforced, not advisory:
 
-- `q1` (linear) binders used in Nim `if` expressions and supported binary
+- `q1` (linear) binders used in Nim `if` expressions and supported finite
   data eliminators are checked per runtime path. The checker recovers the
   alternatives from complete generated rules for non-recursive cases with
   constructor payloads;
 - `q0` (erased) binders must not be used;
 - `qω` (unrestricted) binders are unchecked.
 
-Recursive and multi-case eliminators, and case templates that compute with
-branch values, still use conservative syntactic counting. This can reject
+Recursive eliminators and case templates that compute with branch values
+still use conservative syntactic counting. This can reject
 valid branch-dependent use; do not assume every Eponym case split has
 path-sensitive QTT checking yet. Enforcement happens in two places:
 in-judgment checks at each lambda while the body is being checked (with

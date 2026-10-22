@@ -285,7 +285,7 @@ implementations.
    choice/sequential trees with an independent concrete-path enumerator, and
    checks balanced versus inconsistent branch joins.
 - [x] Make usage checking path-sensitive for Nim `if` expressions and
-   parameterized binary eliminators with non-recursive constructor payloads.
+   parameterized finite eliminators with non-recursive constructor payloads.
    The analysis unfolds checked definitions, derives alternatives from
    complete data-generated reduction rules, and accepts a case template only
    when it applies that case's method to exactly the constructor fields.
@@ -293,16 +293,16 @@ implementations.
    counting. In-judgment checks, the post-elaboration backstop, and codegen
    erasure use the same analyzer; `kernel_audit` independently checks the
    registered rules. A 200-case Option property covers payload-free and
-   payload-bearing paths and confirms exactly one effectful branch runs;
-   compile-fail fixtures reject dropping or duplicating a q1 value in either
-   Nim `if` or Option cases. The usage profile properties and kernel audit
-   pass.
-- [ ] Extend path-sensitive usage to recursive or more-than-binary data
-   eliminators and to case templates that compute with branch values rather
-   than returning a branch closure. These forms currently keep conservative
-   sequential counting. Add generated compile-time regressions for each newly
-   supported eliminator shape. Do not infer q1 until every runtime path is
-   accounted for.
+   payload-bearing paths and confirms exactly one effectful branch runs; a
+   three-case data eliminator checks finite case sets beyond binary. Compile-
+   fail fixtures reject dropping or duplicating q1 values in Nim `if` and
+   Option cases. Usage profile properties, codegen erasure, and the kernel
+   audit pass.
+- [ ] Extend path-sensitive usage to recursive data eliminators and case
+   templates that compute with branch values rather than returning a branch
+   closure. These forms currently keep conservative sequential counting. Add
+   generated compile-time regressions for each newly supported eliminator
+   shape. Do not infer q1 until every runtime path is accounted for.
 - [ ] Decide quantity subsumption for q1 under Pi domains before enabling q1
    inference. The rule must respect contravariance and pass both elaborator and
    independent kernel checks; the existing inferred-q0-to-qOmega exception
