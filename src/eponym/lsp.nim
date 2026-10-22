@@ -35,7 +35,7 @@ import eponym_init  # `$` for Term (issue #58)
 import parse_surf
 import unify  # HoleInfo, zonk (issue #58)
 import sheds_mac  # shedGoalAndCtx for residual refinement holes
-import sheds  # ShedInfo, ShedStatus, sidecarPath, readShedSidecarEx (issue #134)
+import sheds  # ShedInfo, semanticShedState, renderShedHover, sidecar IO
 import shed_layout  # Box, layoutShed, boxToJson (issue #135)
 
 type
@@ -190,22 +190,7 @@ proc hoverAt*(src: string, line, col: int): string =
     let (_, ms, _, _) = elabCheckHoles(src)
     let i = findHoleAt(ms, line, col)
     if i >= 0:
-      let h = ms.holes[i]
-      # Issue #139: name-resolving pretty-printer. Binder names come from
-      # the hole context (innermost-first, matching Ctx); global names come
-      # from ms.refNames, populated by the elaborator at global
-      # registration. Unknown refIds keep the `R<n>` fallback.
-      var ctx: Ctx = @[]
-      for (n, t) in h.holeCtx:
-        ctx.add(CtxEntry(name: n, ty: zonk(ms, t), qty: qOmega))
-      let goal = prettyTerm(zonk(ms, h.holeGoal), ctx, ms.refNames, ms.recordFields)
-      var lines: seq[string] = @["```", "goal : " & goal, "```"]
-      if h.holeCtx.len > 0:
-        lines.add("**context**")
-        for (n, t) in h.holeCtx:  # innermost-first
-          lines.add("- `" & n & " : " &
-            prettyTerm(zonk(ms, t), ctx, ms.refNames, ms.recordFields) & "`")
-      return lines.join("\n")
+      return renderShedHover(ms, semanticShedState(ms, ms.holes[i]))
   except ParseError, ElabError:
     discard
   ""
@@ -247,8 +232,8 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
       return (false, "no hole at the requested position", 0,0,0,0, "")
     let h = ms.holes[hi]
     var varTy: Term = nil
-    for (nm, ty) in h.holeCtx:
-      if nm == varName: varTy = ty
+    for b in h.holeCtx:
+      if b.name == varName: varTy = b.ty
     if varTy.isNil:
       return (false, "'" & varName & "' is not in scope at the hole", 0,0,0,0, "")
     let dataName = typeHeadDataName(ms, varTy)
@@ -289,7 +274,7 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
               "' as the first explicit argument (clause form eliminates " &
               "on the first explicit Pi domain)", 0,0,0,0, "")
     var used: seq[string] = @[]
-    for (nm, _) in h.holeCtx: used.add(nm)
+    for b in h.holeCtx: used.add(b.name)
     var newLines: seq[string] = @[
       "def " & procDef.name & " : " & $desugarTy(procDef)]
     for c in ctors:
@@ -501,12 +486,12 @@ proc codeActionsAt*(src, uri: string, line, col: int, variable, term: string,
       let (_, ms, _, _) = elabCheckHoles(src)
       let hi = findHoleAt(ms, line, col)
       if hi >= 0:
-        for (nm, ty) in ms.holes[hi].holeCtx:
-          if typeHeadDataName(ms, ty) != "":
-            let cs = caseSplitAt(src, line, col, nm)
+        for b in ms.holes[hi].holeCtx:
+          if typeHeadDataName(ms, b.ty) != "":
+            let cs = caseSplitAt(src, line, col, b.name)
             if cs.ok:
               actions.add(%*{
-                "title": "case-split " & nm,
+                "title": "case-split " & b.name,
                 "kind": "refactor",
                 "edit": editJson(uri, cs.startLine, cs.startChar, cs.endLine,
                                  cs.endChar, cs.newText)
@@ -813,8 +798,8 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
             "", 0, 0, @[])
   let h = ms.holes[holeIdx]
   var varTy: Term = nil
-  for (nm, ty) in h.holeCtx:
-    if nm == variable: varTy = ty
+  for b in h.holeCtx:
+    if b.name == variable: varTy = b.ty
   if varTy.isNil:
     return (false, "'" & variable & "' is not in scope at the hole",
             "", 0, 0, @[])

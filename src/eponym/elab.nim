@@ -1959,10 +1959,11 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
               termMetaId: holeTm.metaId, tyMetaId: tyM.metaId, ctxLen: ctx.len,
               ctxNames: ctx.mapIt(it.name))
         # Issue #58: record the hole for LSP hover — goal type + binder context.
-        var hctx: seq[tuple[name: string, ty: Term]] = @[]
-        for e in ctx: hctx.add((e.name, e.ty))
+        var hctx: seq[HoleContextBinder] = @[]
+        for e in ctx:
+          hctx.add(HoleContextBinder(name: e.name, ty: e.ty, qty: e.qty))
         ms.holes.add(HoleInfo(holeLoc: pre.loc, holeName: pre.holeName,
-                              holeGoal: tyM, holeCtx: hctx,
+                              holeTerm: holeTm, holeGoal: tyM, holeCtx: hctx,
                               holeAb: ab))  # Issue #177
         (holeTm, tyM)
       of pkDiscard:

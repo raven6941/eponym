@@ -13,6 +13,7 @@ import elab
 import sheds
 import sheds_mac  # issue #191: shedGoalAndCtx
 import eponym_init  # issue #191: Term/tR for the R<n>-fallback test
+import preterm  # q0/q1 quantity constructors (issue #377)
 import lsp  # issue #134: shed diagnostics via handleMessage
 
 var failures = 0
@@ -38,6 +39,32 @@ block:
   check(ms.holes[0].holeLoc.line == 4, "holes+import: hole on line 4")
   check(defs.len == 2, "holes+import: both proc defs returned " &
     "(postulates register in globals, no ElabDef)")
+
+# --- Issue #377: semantic hole state, not rendered text ----------------
+block:
+  let semanticSrc = """postulate Int : Type 0
+proc semanticHole (n : Int) : Pi (1 x : Int). Int = ?
+"""
+  let (_, ms, _, errMsg) = elabCheckHoles(semanticSrc)
+  check(errMsg == "" and ms.holes.len == 1,
+    "semantic shed: elaborates one typed hole, got: " & errMsg)
+  if ms.holes.len == 1:
+    let state = semanticShedState(ms, ms.holes[0])
+    check(state.hole != nil and state.hole.kind == tMeta and
+          state.goal.kind == tPi,
+      "semantic shed: retains typed meta and zonked Pi goal terms")
+    check(state.context.len == 1 and state.context[0].name == "n" and
+          state.context[0].qty.isVar and
+          state.context[0].qty.vname.len > 0,
+      "semantic shed: context binder retains its unresolved quantity variable")
+    check(state.goalPi.len == 1 and state.goalPi[0].name == "x" and
+          state.goalPi[0].qty == q1 and state.residualGoal.kind == tR,
+      "semantic shed: Pi spine is structured and preserves quantity")
+    let hover = renderShedHover(ms, state)
+    check(hover.contains("goal : Pi(Int, x. Int)") and
+          hover.contains("n : Int"),
+      "semantic shed: LSP hover is rendered from structured state, got: " &
+        hover)
 
 # --- elabCheckHolesDir: stops at the first non-hole failure -------------
 # The hole before the failure stays queryable (the #58 prefix property).
