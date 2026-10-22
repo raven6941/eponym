@@ -125,6 +125,8 @@ echo "=== Phase 2 Option codegen differential tests + benchmark (issue #330 v3) 
 nim c -r --hints:off $P "tests/test_codegen_phase2_option.nim"
 echo "=== Phase 2 Vec end-to-end wrapper test (issue #330 v3) ==="
 nim c -r --hints:off $P "tests/test_codegen_phase2_vec_e2e.nim"
+echo "=== interpreter-free static wrapper artifact audit (issue #358) ==="
+nim c -r --hints:off $P "tests/test_require_compiled.nim"
 echo "=== staged-residual vs relational differential tests (issue #163, fixed seed; experimental paths) ==="
 nim c -r --hints:off $XP "tests/pbt_staged_agreement.nim"
 echo "=== unifier property tests (issue #163, fixed seed) ==="

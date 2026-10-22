@@ -188,12 +188,13 @@ time.
   evidence; machine `Int` and its primops (`tPrim`) are kernel axioms — the
   kernel trusts that the Nim host's binary `Int` operations are what they
   claim to be. If the host lies, every proof that touches `Int` lies too.
-- **Runtime re-elaboration.** The first wrapper call re-runs the elaborator
-  (cached by source and base directory; `eponym_embed.nim`) to obtain terms
-  with runtime closures. Subsequent calls use the cache. Compile-time
-  elaboration is the checking. A definition whose runtime re-elaboration
-  fails was still checked at compile time; the runtime path cannot introduce
-  an unchecked term.
+- **Runtime re-elaboration.** Ordinary wrappers may re-run the elaborator on
+  first runtime use (cached by source and base directory;
+  `eponym_embed.nim`) to obtain terms with runtime closures. Subsequent calls
+  use the cache. `requireCompiled()` wrappers use direct representation code
+  and do not take this path. Compile-time elaboration is the checking. A
+  definition whose ordinary runtime re-elaboration fails was still checked at
+  compile time; the runtime path cannot introduce an unchecked term.
 - **Runtime value codecs.** First-order generated wrappers convert primitive
   `Int`/`Nat`, opaque mapped values, non-dependent `Sig(A, B)` values
   represented as two-element Nim tuples, and non-dependent named records

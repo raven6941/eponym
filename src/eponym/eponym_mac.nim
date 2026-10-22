@@ -1250,6 +1250,12 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
         # codecs still enforce any structural constraints they represent.
         if st.len != 2 or st[1].kind != nnkIdent:
           error("runtimeRecordTrusted expects (RecordType)", st)
+      elif head == "requireCompiled":
+        # Opt in to compile-time failure if any checked definition falls back
+        # to interpretation or calls a definition outside this block's
+        # compiled fragment. The marker is consumed by eponymBlock.
+        if st.len != 1:
+          error("requireCompiled expects no arguments", st)
       else:
         error("eponymBlock: unsupported call: " & head, st)
     else:
@@ -3341,7 +3347,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          compiledRepr: Table[string, string] =
                            initTable[string, string](),
                          compiledReprTypes: Table[string, seq[string]] =
-                           initTable[string, seq[string]]()): NimNode =
+                           initTable[string, seq[string]](),
+                         requireCompiled = false): NimNode =
   ## Emit concrete Nim wrappers for first-order types, including generic type
   ## variables represented as opaque host boxes.
   if decl.kind != nnkProcDef:
@@ -3437,6 +3444,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     # The legacy interpreter path re-elaborates omitted implicits. Keep it
     # when the macro-time source telescope cannot be aligned exactly with
     # the checked Pi telescope used by generated code.
+    if requireCompiled:
+      error("eponymBlock requireCompiled: Nim wrapper arguments for '" &
+        defName & "' do not align with its checked Pi telescope", decl)
     compiledName = ""
   # Issue #330: when the definition has a representation-specialized proc
   # and the wrapper boundary is the identity (every formal and the result
@@ -3466,6 +3476,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
           break
       if useRepr and not nimTypeMatchesRepr(resultType, wantTypes[^1]):
         useRepr = false
+  if requireCompiled and not useRepr:
+    error("eponymBlock requireCompiled: Nim wrapper representation for '" &
+      defName & "' does not match its compiled representation", decl)
   if useRepr:
     if piRuntimeSlots.len != generic.genericNames.len + argSyms.len:
       useRepr = false
@@ -4004,6 +4017,42 @@ proc rawRuntimeValueWrapper(baseDir, src, defName: string,
   result.add(newEmptyNode())
   result.add(body)
 
+proc reachableDefinitionClosure(localDefs, allDefs: seq[ElabDef],
+                                globals: Globals): seq[ElabDef] =
+  ## Include imported checked definitions referenced transitively by this
+  ## block. Used by requireCompiled so direct representation calls can cross
+  ## `.ep` module boundaries without runtime elaboration or interpreter calls.
+  var defsByRefId = initTable[int, ElabDef]()
+  for d in allDefs:
+    if d.name in globals and not globals[d.name].tm.isNil and
+        globals[d.name].tm.kind == tR and globals[d.name].tm.refIsDefn:
+      defsByRefId[globals[d.name].tm.refId] = d
+  var included = initTable[int, bool]()
+  var pending: seq[int] = @[]
+  for d in localDefs:
+    if d.name in globals and not globals[d.name].tm.isNil and
+        globals[d.name].tm.kind == tR and globals[d.name].tm.refIsDefn:
+      let refId = globals[d.name].tm.refId
+      if not included.getOrDefault(refId, false):
+        included[refId] = true
+        pending.add(refId)
+  var cursor = 0
+  while cursor < pending.len:
+    let refId = pending[cursor]
+    inc cursor
+    if refId notin defsByRefId: continue
+    let d = defsByRefId[refId]
+    for dependencyId in collectReferencedRefIds(d.tmTm):
+      if dependencyId in defsByRefId and
+          not included.getOrDefault(dependencyId, false):
+        included[dependencyId] = true
+        pending.add(dependencyId)
+  for d in allDefs:
+    if d.name in globals and not globals[d.name].tm.isNil and
+        globals[d.name].tm.kind == tR and
+        included.getOrDefault(globals[d.name].tm.refId, false):
+      result.add(d)
+
 macro eponymBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
@@ -4023,12 +4072,19 @@ macro eponymBlock*(body: untyped): untyped =
   ## parenthesized automatically.
   ## `byTac(name)` (Issue #151): tactic term (`by refl`, smoke test 14).
   ## `x {.qvar(q).}` (Issue #151): quantity-variable binder `(q x : T)`.
+  ## `requireCompiled()` restricts a block to representation-compiled
+  ## definitions with direct typed wrappers; unsupported paths fail here.
   ## Nim-safe name mappings: `vecnil` -> `nil`, `unitv` -> `<>`,
   ## `unitTy` -> `1` (unit type), `emptyTy` -> `O` (empty type).
   ## Generates callable fixed-arity wrappers for primitive Int/Nat and
   ## explicitly mapped opaque postulated types. Unsupported legacy shapes
   ## retain the varargs[int] compatibility wrapper.
   let baseDir = callerDir(body)
+  var requireCompiled = false
+  for st in body:
+    if st.kind == nnkCall and st.len == 1 and st[0].kind == nnkIdent and
+        $st[0] == "requireCompiled":
+      requireCompiled = true
   var sourceLineMap: seq[DiagnosticSourceLoc]
   var hasEponymImport = false
   for st in body:
@@ -4047,6 +4103,9 @@ macro eponymBlock*(body: untyped): untyped =
       if name in runtimeValueNames:
         error("duplicate runtimeValue request for '" & name & "'", st)
       runtimeValueNames.incl(name)
+  if requireCompiled and runtimeValueNames.len > 0:
+    error("eponymBlock requireCompiled does not emit runtimeValue wrappers",
+      body)
   # Issue #131: imports resolve relative to the calling Nim file's dir.
   var defs: seq[ElabDef]
   var allDefs: seq[ElabDef]
@@ -4280,8 +4339,22 @@ macro eponymBlock*(body: untyped): untyped =
         userLine = lineInfoObj(st).line
         break
     cgUserLines[d.name] = userLine
-  let cgBlock = compileBlockProcs(defs, checkedGlobals, baseDir, src,
+  let codegenDefs = if requireCompiled:
+    reachableDefinitionClosure(defs, allDefs, checkedGlobals)
+    else: defs
+  let cgBlock = compileBlockProcs(codegenDefs, checkedGlobals, baseDir, src,
     cgLocFile, cgUserLines, runtimeTypes)
+
+  if requireCompiled:
+    for d in codegenDefs:
+      let codegen = cgBlock.report.getOrDefault(d.name)
+      if d.name notin cgBlock.compiledRepr:
+        error("eponymBlock requireCompiled: definition '" & d.name &
+          "' has no representation-compiled body: " & codegen.reason, body)
+      if codegen.slowPaths.len > 0:
+        error("eponymBlock requireCompiled: definition '" & d.name &
+          "' calls definitions outside the compiled block: " &
+          codegen.slowPaths.join(", "), body)
 
   when defined(eponymCodegenReport):
     for d in defs:
@@ -4299,7 +4372,10 @@ macro eponymBlock*(body: untyped): untyped =
   result = newStmtList()
   let dirLit = newLit(baseDir)
   for p in cgBlock.procs:
-    result.add(p)
+    if not requireCompiled or
+        (p.kind == nnkProcDef and p[0].kind == nnkPostfix and
+         ($p[0][1]).startsWith("eponymCompiledRepr_")):
+      result.add(p)
   for d in defs:
     let srcLit = newLit(src)
     let nameLit = newLit(d.name)
@@ -4313,6 +4389,9 @@ macro eponymBlock*(body: untyped): untyped =
       # runtime ABI. Reconstruct a simple fixed-arity signature from the
       # checked Pi type and feed it through the same codec generator.
       procDecl = importedRuntimeProcDecl(d, checkedGlobals)
+    if requireCompiled and procDecl.isNil:
+      error("eponymBlock requireCompiled: cannot generate a typed Nim wrapper " &
+        "for '" & d.name & "'", body)
     if not procDecl.isNil:
       if d.name in runtimeValueNames:
         let params = procDecl[3]
@@ -4460,19 +4539,23 @@ macro eponymBlock*(body: untyped): untyped =
       let allowDependentSigma = d.name in trustedRuntimePairs
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
         bindings, runtimeTypes, checkedGlobals, records, allowDependentSigma,
-        cgBlock.compiled, cgBlock.compiledRepr, cgBlock.reprTypes)
+        cgBlock.compiled, cgBlock.compiledRepr, cgBlock.reprTypes,
+        requireCompiled)
       if not typedWrapper.isNil:
         result.add(typedWrapper)
       else:
+        if requireCompiled:
+          error("eponymBlock requireCompiled: no typed runtime wrapper for '" &
+            d.name & "'", procDecl)
         result.add(unsupportedRuntimeWrapper(procDecl, d.name, runtimeTypes,
           records, allowDependentSigma))
       let dynamicWrapper = dynamicGenericRuntimeWrapper(procDecl, baseDir,
         src, d.name, bindings, runtimeTypes, checkedGlobals, records,
         allowDependentSigma)
-      if not dynamicWrapper.isNil:
+      if not dynamicWrapper.isNil and not requireCompiled:
         result.add(dynamicWrapper)
       let addTypedDynamicGenericValueOverloads =
-        not allowDependentSigma and
+        not requireCompiled and not allowDependentSigma and
         hasCodecBackedDynamicValueBinder(procDecl, runtimeTypes, records)
       if addTypedDynamicGenericValueOverloads:
         let typedDynamicGenericValueWrapper = dynamicGenericRuntimeWrapper(
