@@ -248,10 +248,14 @@ terms. Refinement edits generated source and re-elaborates it. Draft text is
 user-owned scratch and is not checked by Eponym. A persisted semantic editing
 session would need a versioned structural term codec and is not implemented.
 
-Case-splitting in a Nim shed supports non-indexed datatype families and
-replays their parameters in the generated eliminator. For example,
-`List[Nat]` and `List[A]` work. Indexed families such as `Vec[A, n]` still
-need a motive generalized over the family indices and remain unsupported.
+Case-splitting in a Nim shed supports parameterized and indexed datatype
+families. It constructs a motive generalized over every index and carries
+exact occurrences of actual index expressions from the goal into that motive.
+For example, splitting `xs: Vec[Nat, suc(n)]` can generalize a target of type
+`Vec[Nat, suc(n)]` to `Vec[Nat, i]` while preserving separate uses of `n` in
+the outer context. The completed eliminator is re-elaborated before the splice
+is returned. Parameters, index types, and targets must be renderable in the
+supported Nim shed syntax.
 
 Checked definitions can emit a runtime debug trace by importing
 `lib/debug.ep` and binding its generic `debugEcho` postulate to

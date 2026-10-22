@@ -3064,8 +3064,20 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
             "' did not elaborate to a global reference")
         ctorIds.add((ctm.refId, ctor.name))
       let (indexTele, _) = flattenPiPre(d.indexTy)
+      # Retain the index telescope's domains for tooling. At each position a
+      # domain is scoped over all earlier family binders, matching the Pi
+      # telescope in globals[d.dname].ty.
+      var indexDomains: seq[Term] = @[]
+      var familyTy = globals[d.dname].ty
+      for _ in 0 ..< d.params.len:
+        if familyTy == nil or familyTy.kind != tPi: break
+        familyTy = familyTy.scope.bdy
+      for _ in 0 ..< indexTele.len:
+        if familyTy == nil or familyTy.kind != tPi: break
+        indexDomains.add(familyTy.dom)
+        familyTy = familyTy.scope.bdy
       ms.registerDataCtors(globals[d.dname].tm.refId, d.dname, ctorIds,
-                           d.params.len, indexTele.len)
+                           d.params.len, indexTele.len, indexDomains)
       # Issue #115: register Nat's constructor refIds on the supply so the
       # core's conversion can equate wNatLit(k) with suc-chains
       # (definitionally equal per Issue #93). Carried on the supply (not a

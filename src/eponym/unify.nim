@@ -206,11 +206,14 @@ type
     dataCtors*: Table[int, seq[int]] # datatype refId -> constructor refIds
     ctorNames*: Table[int, string]   # constructor refId -> surface name
     dataNames*: Table[int, string]   # datatype refId -> surface name
-    # Arity metadata is also consumed by shed case-splitting: parameters can
-    # be replayed in an eliminator application, while indexed families need
-    # an index-generalized motive and remain a separate case.
+    # Arity metadata is consumed by shed case-splitting to replay parameters
+    # and construct index-generalized eliminator motives.
     dataParamCounts*: Table[int, int]
     dataIndexCounts*: Table[int, int]
+    # Index binder domains from the datatype telescope, in the context of
+    # earlier parameters and indices. The LSP uses these to build typed
+    # index-generalized motives for shed case-splitting.
+    dataIndexDomains*: Table[int, seq[Term]]
 
 proc initCtorTable*(): CtorTable =
   CtorTable(ctorData: initTable[int, int](),
@@ -218,14 +221,17 @@ proc initCtorTable*(): CtorTable =
             ctorNames: initTable[int, string](),
             dataNames: initTable[int, string](),
             dataParamCounts: initTable[int, int](),
-            dataIndexCounts: initTable[int, int]())
+            dataIndexCounts: initTable[int, int](),
+            dataIndexDomains: initTable[int, seq[Term]]())
 
 proc registerDataCtors*(ms: var MetaStore, dataRefId: int, dataName: string,
                         ctors: seq[(int, string)], paramCount = 0,
-                        indexCount = 0) =  ## Issue #80: record one `data` declaration's constructor set.
+                        indexCount = 0,
+                        indexDomains: seq[Term] = @[]) =  ## Issue #80: record one `data` declaration's constructor set.
   ms.ctorTable.dataNames[dataRefId] = dataName
   ms.ctorTable.dataParamCounts[dataRefId] = paramCount
   ms.ctorTable.dataIndexCounts[dataRefId] = indexCount
+  ms.ctorTable.dataIndexDomains[dataRefId] = indexDomains
   var ids: seq[int] = @[]
   for (cid, cname) in ctors:
     ms.ctorTable.ctorData[cid] = dataRefId

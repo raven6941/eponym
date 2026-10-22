@@ -94,12 +94,15 @@ a zero branch and a successor branch. Open each branch and solve its goal
 with Refine or Give; recursive cases may include an induction hypothesis
 such as `ih0`.
 
-Case-split supports non-indexed datatypes, including parameterized families
-such as `List[Nat]` and a generic `List[A]`. The extension reuses the
-parameters from the variable's type in the generated eliminator and motive.
-Indexed families such as `Vec[Nat, n]` still need an index-generalized motive
-and are not supported yet. If the variable is not in scope or its type is
-outside the supported shape, the extension reports why it rejected the split.
+Case-split supports parameterized and indexed datatypes, including
+`List[Nat]`, generic `List[A]`, and `Vec[Nat, n]`. It reuses the parameters,
+generalizes the motive over the family indices, and carries direct index
+variable dependencies into branch goals. A dependent target using a compound
+index expression is generalized when the target contains that exact
+expression; other uses of context variables remain intact. Eponym rechecks the
+generated eliminator before returning the splice. If a type expression is
+outside the supported Nim shed syntax, the extension reports why it rejected
+the split.
 
 ## After an action
 
