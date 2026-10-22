@@ -30,7 +30,7 @@ jobs:
         run: |
           mkdir -p _site
           cp site.css _site/site.css
-          find . -type f -name '*.md' -not -path './.git/*' -not -path '*/node_modules/*' -print0 \
+          find . -type f -name '*.md' -not -path './.git/*' -not -path '*/node_modules/*' -not -path './.agents/*' -print0 \
             | while IFS= read -r -d '' source; do
                 case "$source" in
                   ./README.md) source="README.md" ;;
