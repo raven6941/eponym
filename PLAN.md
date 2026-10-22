@@ -1023,6 +1023,15 @@ implementations.
   terms. Property tests cover direct and imported definitions. Effects are
   still not tracked or checked for purity, so required operations must use a
   qω or q1 position.
+- [x] Add an opt-in `requireCompiled()` block marker for the Phase 2
+  representation backend (`int`, `seq[int]`, and `Option[int]`). It rejects
+  definitions or wrappers outside that
+  backend, emits only representation procs, and has a compiled-artifact audit
+  proving the accepted static wrapper does not link `evalWhnf`. This is a
+  deliberately small static subset. Imported definitions are compiled through
+  their transitive closure when representable; other representations,
+  ordinary-wrapper bootstrap, and `Value.syn` cleanup remain follow-up work
+  (#358). Dynamic `runtimeValue` entrypoints remain interpreter-backed.
 - [x] Specify and test the Nat runtime boundary across the interpreter,
   Phase 1, and Phase 2. Phase 2 successor checks `high(int)` explicitly;
   Value-to-Nim conversion rejects larger unary values. A 200-case property

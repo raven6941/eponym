@@ -466,4 +466,19 @@ block:
     mapped = "test_codegen_phase1" in getStackTrace(e)
   expect(mapped, "runtime error stack trace maps to the test file")
 
+# Generated Value application must never escape through the interpreter for a
+# partially applied eliminator. Such a shape needs a generated eliminator
+# dispatch proc, or compilation should have rejected it.
+block:
+  var supply = Supply()
+  let partialEliminator = newRedRef(supply, vType(0), 2).refVal
+  var rejected = false
+  try:
+    discard vCompiledAppWithBindings(partialEliminator, vInt(1),
+      initRuntimeBindings())
+  except ValueError as e:
+    rejected = "compiled Value application reached a partial eliminator" in
+      e.msg
+  expect(rejected, "compiled Value application rejects partial eliminators")
+
 echo "all Phase 1 codegen differential checks passed"

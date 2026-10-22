@@ -3695,3 +3695,23 @@
   checking scope to meet a timing target; preserving the LCF boundary takes
   precedence over the budget. Status: IMPLEMENTED (#376).
 
+* 2026-10-21 — Scope the interpreter-free guarantee to explicit static blocks (#358)
+
+  Context: ordinary typed wrappers may re-elaborate their Eponym source on
+  first runtime use, while dynamic =runtimeValue= entrypoints intentionally
+  interpret. A broad claim about all embedded programs would therefore be
+  false. Decision: =requireCompiled()= opts into a static path whose reachable
+  local and imported definitions must compile through the representation
+  backend and whose Nim wrappers call that code directly. Unsupported
+  definitions fail at macro expansion. Dynamic entrypoints remain a separate,
+  interpreter-backed tooling API. Runtime re-elaboration is outside this
+  guarantee; accepted strict wrappers do not invoke it.
+
+  Consequences: the current supported static representation is intentionally
+  small (=int=, =seq[int]=, and =Option[int]= representations). The
+  compiled-artifact audit confirms that
+  accepted local and transitive imported scalar wrappers link no interpreter
+  entry points. Broader representations and cleanup of the general Value
+  runtime remain open work; do not describe ordinary wrappers as interpreter-
+  free. Status: DECIDED; initial implementation in this branch (#358).
+

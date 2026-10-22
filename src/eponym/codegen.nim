@@ -254,7 +254,7 @@ proc cgNullaryLambda(bodyCode: NimNode): NimNode =
 
 proc cgAppChain(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
                 bnd: NimNode): NimNode =
-  ## Compile `tApp` chains. Everything folds through `vAppWithBindings`
+  ## Compile `tApp` chains. Everything folds through `vCompiledAppWithBindings`
   ## (preserving the interpreter's evaluation order exactly) except
   ## fully-applied eliminators, which become calls to the eliminator's
   ## generated proc (itself a static case dispatch).
@@ -285,7 +285,7 @@ proc cgAppChain(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
   # applying as we go — exactly the interpreter's order.
   var acc = cg(ctx, head, env, bnd)
   for a in appArgs:
-    acc = newCall(bindSym"vAppWithBindings", acc, cg(ctx, a, env, bnd), bnd)
+    acc = newCall(bindSym"vCompiledAppWithBindings", acc, cg(ctx, a, env, bnd), bnd)
   acc
 
 proc cg(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
@@ -405,6 +405,13 @@ proc collectRefIds(t: Term, acc: var Table[int, bool]) =
   of tPrim:
     collectRefIds(t.primTy, acc)
   else: discard
+
+proc collectReferencedRefIds*(t: Term): seq[int] =
+  ## Return the reference IDs used by a checked term, including under binders.
+  var ids = initTable[int, bool]()
+  collectRefIds(t, ids)
+  for id in ids.keys:
+    result.add(id)
 
 proc elimDispatchCase(procNode: NimNode): NimNode =
   ## Find the generated case over a scrutinee's constructor refId.
@@ -751,12 +758,12 @@ proc compileDefProcWithReason*(d: ElabDef, ctx: var CodegenCtx,
             newTree(nnkBracketExpr, q0ArgsSym, q0ArgIdxSym)),
           newTree(nnkElse, newCall(bindSym"unitValue")))))
       bindStmts.add(newAssignment(accSym,
-        newCall(bindSym"vAppWithBindings", accSym,
+        newCall(bindSym"vCompiledAppWithBindings", accSym,
           q0Witness, bndSym)))
       bindStmts.add(newCall(bindSym"inc", q0ArgIdxSym))
     else:
       bindStmts.add(newAssignment(accSym,
-        newCall(bindSym"vAppWithBindings", accSym,
+        newCall(bindSym"vCompiledAppWithBindings", accSym,
           newTree(nnkBracketExpr, argsSym, argIdxSym), bndSym)))
       bindStmts.add(newCall(bindSym"inc", argIdxSym))
     let cond = if qty == q0:
@@ -775,7 +782,7 @@ proc compileDefProcWithReason*(d: ElabDef, ctx: var CodegenCtx,
   inner.add(newTree(nnkForStmt, restSym,
     newTree(nnkInfix, ident"..<", argIdxSym, newCall(bindSym"len", argsSym)),
     newStmtList(newAssignment(accSym,
-      newCall(bindSym"vAppWithBindings", accSym,
+      newCall(bindSym"vCompiledAppWithBindings", accSym,
         newTree(nnkBracketExpr, argsSym, restSym), bndSym)))))
   inner.add(accSym)
   # Source positions (issue #329 acceptance): runtime errors raised while

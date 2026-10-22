@@ -753,6 +753,51 @@ proc vAppWithBindings*(f, a: Value, bindings: RuntimeBindings): Value =
   Value(syn: tmApp(f.syn, a.syn),
         whnf: applyWhnfWithBindings(f, a, bindings))
 
+proc vCompiledAppWithBindings*(f, a: Value,
+                               bindings: RuntimeBindings): Value =
+  ## Application helper for generated Value code. Unlike
+  ## `vAppWithBindings`, this never enters `fireRed` or `evalWithBindings`:
+  ## generated eliminators have their own compiled dispatch proc, so a
+  ## partially applied eliminator is a codegen error, not an interpreter
+  ## escape hatch.
+  discard bindings
+  if f.isNil or a.isNil:
+    raise newException(ValueError,
+      "compiled Value application received a nil operand")
+  let appSyn = tmApp(f.syn, a.syn)
+  let appWhnf = case f.whnf.kind
+    of wLam:
+      f.whnf.lscope.fn(a).whnf
+    of wLam0:
+      f.whnf.nullaryFn().whnf
+    of wRef:
+      Whnf(kind: wRef, refId: f.whnf.refId,
+        spine: f.whnf.spine & @[ElimV(kind: eApp, arg: a)])
+    of wPrim:
+      let args = f.whnf.pargs & @[a]
+      if args.len == 2:
+        if args[0].whnf.kind == wInt and args[1].whnf.kind == wInt:
+          let x = args[0].whnf.intVal
+          let y = args[1].whnf.intVal
+          let value = case f.whnf.op
+            of opAdd: x + y
+            of opSub: x - y
+            of opMul: x * y
+          Whnf(kind: wInt, intVal: value)
+        else:
+          Whnf(kind: wPrim, op: f.whnf.op, pargs: args)
+      elif args.len < 2:
+        Whnf(kind: wPrim, op: f.whnf.op, pargs: args)
+      else:
+        raise newException(ValueError,
+          "primitive op applied to too many arguments")
+    of wRed:
+      raise newException(ValueError,
+        "compiled Value application reached a partial eliminator")
+    else:
+      raise newException(ValueError, "stuck compiled Value application")
+  Value(syn: appSyn, whnf: appWhnf)
+
 proc projWhnf(p: Value, wantFst: bool): Whnf =
   case p.whnf.kind
   of wPair: (if wantFst: p.whnf.fstV else: p.whnf.sndV).whnf

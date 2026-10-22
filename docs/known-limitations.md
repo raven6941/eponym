@@ -162,6 +162,37 @@ shape. Runtime evaluation of type and index expressions supports a subset;
 arbitrary type-level Nim computation and every possible Eponym index
 expression are not supported by generated codecs.
 
+### Interpreter-free generated wrappers
+
+By default, a runtime wrapper can interpret a checked definition when it has
+no compiled body or calls a checked definition outside its block. Add
+`requireCompiled()` to opt into the representation backend: macro expansion
+fails unless every local definition and call is compiled to direct Nim
+representation code and its typed wrapper is direct too. Today it supports
+`int`, `seq[int]` (`Vec`/`List`), and `Option[int]` representations from the
+Phase 2 backend:
+
+```nim
+eponymBlock:
+  requireCompiled()
+  import "lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeType(Int, int)
+  runtimeType(Nat, int)
+  runtimeVector(Vec)
+  proc doubleVector(n: Nat, values: Vec[Int, n]): Vec[Int, n] = ...
+```
+
+The strict wrapper uses no `Value` runtime and rejects dynamic `runtimeValue`
+entrypoints. A regression inspects the compiled artifact and confirms it has
+no `evalWhnf` symbol. This guarantee applies only to blocks accepted by
+`requireCompiled()`. Runtime startup for ordinary wrappers can still elaborate
+globals; generated `Value`s retain approximate syntax trees. Imported `.ep`
+definitions are included through their transitive call closure when the
+representation backend can compile them; unsupported imported code is rejected.
+For an indexed `Vec`, an index that exists only in an erased binder cannot be
+checked by the representation backend and causes a compile-time error.
+
 ### Compile-time performance
 
 Eponym checks embedded definitions during Nim compilation, so elaborator and
