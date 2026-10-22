@@ -27,7 +27,7 @@
 import falsify
 import eponym_init  # Term, vv, tmLam/tmPi/tmApp/..., weaken, Const
 import preterm       # Quantity, qadd, qmul
-import usage_check   # countVarUses, checkUsage, UsageError
+import usage_check   # usage profiles, countVarUses, checkUsage, UsageError
 import sequtils
 
 const Seed = 424242'u64
@@ -142,6 +142,51 @@ proc refCountVarUses(t: Term): int =
   refOccurrences(t, 0, occs)
   occs.countIt(it[0] == it[1])
 
+# --- path-usage profile algebra ---------------------------------------------
+
+type ProfileCase = object
+  left, right: UsageProfile
+
+proc genProfile(r: var Rng): UsageProfile =
+  for count in UsageCount:
+    if r.below(2) == 1: result.incl count
+  if result == {}: result = {ucZero}
+
+proc genProfileOnly(r: var Rng): UsageProfile = genProfile(r)
+
+proc genProfileCase(r: var Rng): ProfileCase =
+  ProfileCase(left: genProfile(r), right: genProfile(r))
+
+proc refUsageThen(left, right: UsageProfile): UsageProfile =
+  ## Independent cross product over concrete left/right path counts.
+  for leftCount in left:
+    for rightCount in right:
+      let total = min(2, ord(leftCount) + ord(rightCount))
+      result.incl UsageCount(total)
+
+proc shrinkProfileCase(c: ProfileCase): seq[ProfileCase] =
+  @[ProfileCase(left: {ucZero}, right: {ucZero})]
+
+proc validProfile(qty: Quantity, profile: UsageProfile): bool =
+  for count in profile:
+    case qty
+    of q0:
+      if count != ucZero: return false
+    of q1:
+      if count != ucOnce: return false
+    of qOmega: discard
+  profile.len > 0 or qty == qOmega
+
+proc checkUsageChoices(): bool =
+  let usedInBoth = usageChoice([{ucOnce}, {ucOnce}])
+  let droppedOnOnePath = usageChoice([{ucOnce}, {ucZero}])
+  let duplicatedInOnePath = usageChoice([{ucOnce}, {ucMany}])
+  usedInBoth == {ucOnce} and satisfiesQuantity(usedInBoth, q1) and
+    droppedOnOnePath == {ucZero, ucOnce} and
+    not satisfiesQuantity(droppedOnOnePath, q1) and
+    duplicatedInOnePath == {ucOnce, ucMany} and
+    not satisfiesQuantity(duplicatedInOnePath, q1)
+
 # --- shrinking --------------------------------------------------------------
 
 proc shrinkTerm(t: Term): seq[Term] =
@@ -240,6 +285,26 @@ when isMainModule:
     proc(r: var Rng): Term = genTerm(r, 4, 2),
     proc(t: Term): bool = countVarUses(weaken(t)) == 0,
     shrinkTerm) and allOk
+
+  allOk = forAll("usage-profile-sequential-composition", r, Cases,
+    genProfileCase,
+    proc(c: ProfileCase): bool =
+      usageThen(c.left, c.right) == refUsageThen(c.left, c.right),
+    shrinkProfileCase) and allOk
+
+  allOk = forAll("usage-profile-choice-and-quantity", r, Cases,
+    genProfileOnly,
+    proc(profile: UsageProfile): bool =
+      usageChoice([profile, profile]) == profile and
+      satisfiesQuantity(profile, q0) == validProfile(q0, profile) and
+      satisfiesQuantity(profile, q1) == validProfile(q1, profile),
+    proc(profile: UsageProfile): seq[UsageProfile] = @[{ucZero}]) and allOk
+
+  if checkUsageChoices():
+    echo "ok [usage-profile-branch-join]: balanced and inconsistent branches"
+  else:
+    echo "FAIL [usage-profile-branch-join]"
+    allOk = false
 
   allOk = forAll("checkUsage-agreement-flat", r, Cases,
     proc(r: var Rng): QtyCase = genQtyCase(r, nested = false),

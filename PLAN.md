@@ -277,6 +277,12 @@ implementations.
 
 ### QTT branch-sensitive usage
 
+- [x] Add a usage profile over zero, one, and many uses. Sequential
+   composition saturates at many; alternative composition retains the set of
+   possible path counts. Use the same profile predicate for the in-judgment
+   check and post-elaboration backstop. `tests/pbt_usage.nim` property-tests
+   sequential composition and quantity acceptance, and checks balanced versus
+   inconsistent branch joins.
 - [ ] Make linear usage checking path-sensitive across conditionals and
    eliminators. Preserve branch alternatives when lowering lazy Nim `if`
    expressions; today they become ordinary `ifThenElse` applications with

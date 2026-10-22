@@ -1513,22 +1513,29 @@ proc enforceQtyCount(q: Quantity, body: Term, loc: Loc, name: string,
   if q == qOmega: return
   let zb = zonk(ms, body)
   if hasUnresolvedMetas(zb): return
-  let n = countVarUses(zb)
+  let profile = varUsageProfile(zb)
+  let n = usageCountSummary(profile)
   case q
   of q0:
-    if n > 0:
-      raise elabErr(loc, "erased variable '" & name & "' used " & $n &
+    if not satisfiesQuantity(profile, q0):
+      raise elabErr(loc, "erased variable '" & name & "' used " &
+        usageProfileDescription(profile) &
         " time(s) in term position: erased (quantity-0) variables may only " &
         "be used in types")
   of q1:
-    if n == 0:
+    if profile == {ucZero}:
       raise elabErr(loc, "linear variable '" & name &
         "' not used (expected exactly once): a linear binder must be used " &
         "exactly once in the body")
-    elif n > 1:
+    elif profile == {ucMany}:
       raise elabErr(loc, "linear variable '" & name & "' used " & $n &
         " times (expected exactly once): use the variable exactly once in " &
         "the body")
+    elif not satisfiesQuantity(profile, q1):
+      raise elabErr(loc, "linear variable '" & name & "' used " &
+        usageProfileDescription(profile) &
+        " time(s) (expected exactly once): use the variable exactly once " &
+        "on every runtime path in the body")
   of qOmega: discard
 
 proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
@@ -1560,7 +1567,8 @@ proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
     # of the declaration, when metas are solved or reported. The variable
     # then keeps its default (qOmega, see zonkQty).
     if hasUnresolvedMetas(zb): return
-    let n = countVarUses(zb)
+    let profile = varUsageProfile(zb)
+    let n = usageCountSummary(profile)
     # Issue #84 (conservative inference): a `#q`-prefixed variable is an
     # *inferred default* (unannotated binder, see parse_surf.parseBinder),
     # not a user-written `(q x : A)`. Inferred defaults solve 0 -> q0
