@@ -4184,6 +4184,19 @@ macro eponymBlock*(body: untyped): untyped =
   let cgBlock = compileBlockProcs(defs, checkedGlobals, baseDir, src,
     cgLocFile, cgUserLines, runtimeTypes)
 
+  when defined(eponymCodegenReport):
+    for d in defs:
+      let entry = cgBlock.report.getOrDefault(d.name)
+      let tierName = case entry.tier
+        of cgtInterpreter: "interpreter fallback"
+        of cgtValue: "Phase 1 Value backend"
+        of cgtRepr: "Phase 2 representation backend"
+      echo "[eponym codegen] " & d.name & ": " & tierName &
+        " — " & entry.reason
+      if entry.slowPaths.len > 0:
+        echo "[eponym codegen]   runtime slow paths: " &
+          entry.slowPaths.join(", ")
+
   result = newStmtList()
   let dirLit = newLit(baseDir)
   for p in cgBlock.procs:

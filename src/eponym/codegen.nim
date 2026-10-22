@@ -61,6 +61,14 @@ type
     ## Raised when a term is outside the compilable fragment. Caught at the
     ## definition boundary; the definition keeps its interpreter wrapper.
 
+  CodegenTier* = enum
+    cgtInterpreter, cgtValue, cgtRepr
+
+  CodegenReportEntry* = object
+    tier*: CodegenTier
+    reason*: string
+    slowPaths*: seq[string]
+
   CgRefKind* = enum
     cgkPostulate  # postulate, type former, or anything neutral
     cgkCtor       # data constructor (neutral spine growth)
@@ -674,8 +682,9 @@ proc compileElimProc(ctx: var CodegenCtx, elimRefId: int): NimNode =
   validateElimDispatchCoverage(r, procNode)
   procNode
 
-proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
-                     locFile: string, locLine: int): NimNode =
+proc compileDefProcWithReason*(d: ElabDef, ctx: var CodegenCtx,
+                     locFile: string, locLine: int,
+                     failureReason: var string): NimNode =
   ## Compile one definition to `proc eponymCompiled_<name>(args: seq[Value],
   ## bindings: RuntimeBindings, q0Args: seq[Value]): Value`. Returns nil when the definition is
   ## outside the supported fragment (caller keeps the interpreter wrapper).
@@ -684,11 +693,14 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
   ## applies runtime Pi arguments from `args` and q0 witnesses from `q0Args`.
   ## q0 values stay separate from the computational argument vector, while
   ## remaining available to instantiate dependent runtime types.
+  ## As `compileDefProc`, and report why the definition did not compile.
   if d.tmTm.isNil:
+    failureReason = "definition has no checked body"
     return nil
   let erased =
     try: eraseQ0Arguments(d.tmTm)
-    except ValueError:
+    except ValueError as e:
+      failureReason = "quantity erasure failed: " & e.msg
       return nil
   let argsSym = ident"cgProcArgs"
   let bndSym = ident"cgProcBindings"
@@ -714,7 +726,8 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
   let canBindSym = genSym(nskVar, "cgCanBind")
   let bodyCode =
     try: cg(ctx, erased, @[], bndSym)
-    except CgUnsupported:
+    except CgUnsupported as e:
+      failureReason = e.msg
       return nil
   var inner = newStmtList()
   inner.add(newVarStmt(accSym, bodyCode))
@@ -767,6 +780,12 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
   procNode.setLineInfo(LineInfo(filename: locFile, line: locLine, column: 0))
   procNode.add(inner)
   procNode
+
+proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
+                     locFile: string, locLine: int): NimNode =
+  ## Compatibility entrypoint for callers that do not need fallback details.
+  var ignoredReason = ""
+  compileDefProcWithReason(d, ctx, locFile, locLine, ignoredReason)
 
 # ---------------------------------------------------------------------------
 # Issue #330: representation-specialized tier.
@@ -1156,21 +1175,25 @@ proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       "term kind outside the representation fragment")
 
 proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
-                        locFile: string, locLine: int): NimNode =
+                        locFile: string, locLine: int,
+                        failureReason: var string): NimNode =
   ## Compile one definition to
   ## `proc eponymCompiledRepr_<name>(p1: int, ..., pn: int): int`.
   ## Returns nil when the definition is outside the representation fragment
   ## (caller keeps the Phase 1 backend). q0 binders have environment
   ## placeholders but no Nim formal parameters.
   if d.tmTm.isNil or d.tyTm.isNil:
+    failureReason = "definition has no checked body or type"
     return nil
-  let sig =
-    try: ctx.reprSig(d)
-    except CgUnsupported:
-      return nil
+  try:
+    discard ctx.reprSig(d)
+  except CgUnsupported as e:
+    failureReason = e.msg
+    return nil
   let erased =
     try: eraseQ0Arguments(d.tmTm)
-    except ValueError:
+    except ValueError as e:
+      failureReason = "quantity erasure failed: " & e.msg
       return nil
   var body = erased
   var params: seq[NimNode] = @[]
@@ -1178,24 +1201,28 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
   var ty = d.tyTm
   while ty != nil and ty.kind == tPi:
     if body.isNil or body.kind != tLam or body.qty != ty.qty:
+      failureReason = "checked lambda structure does not match its Pi type"
       return nil
     if ty.qty == q0:
       envOuterToInner.add(newLit(0))
     else:
       if ty.dom.isNil or ty.dom.kind != tR:
+        failureReason = "Phase 2 requires atomic mapped representation domains"
         return nil
       params.add(genSym(nskParam, "cgReprArg" & $params.len))
       envOuterToInner.add(params[^1])
     body = body.scope.bdy
     ty = ty.scope.bdy
   if body.isNil or body.kind == tLam:
+    failureReason = "definition body retains a lambda after its Pi binders"
     return nil
   var env: seq[NimNode] = @[]
   for i in countdown(envOuterToInner.high, 0):
     env.add(envOuterToInner[i])
   let bodyCode =
     try: cgRepr(ctx, body, env)
-    except CgUnsupported:
+    except CgUnsupported as e:
+      failureReason = e.msg
       return nil
   var formal = newNimNode(nnkFormalParams)
   formal.add(ident"int")
@@ -1220,7 +1247,8 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
                         userLines: Table[string, int],
                         runtimeTypes: seq[HostRuntimeType] = @[]):
     tuple[procs: seq[NimNode], compiled: Table[string, string],
-          compiledRepr: Table[string, string]] =
+          compiledRepr: Table[string, string],
+          report: Table[string, CodegenReportEntry]] =
   ## Compile every eligible block-local definition, in dependency order.
   ## Returns the emitted procs, the def-name -> Phase-1 proc-name table for
   ## wrapper rerouting, and the def-name -> repr-tier proc-name table.
@@ -1241,7 +1269,8 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
         bakedIds[ctorId] = ctorName
   validateBakedRefIds(globals, bakedIds)
   result = (procs: @[], compiled: initTable[string, string](),
-            compiledRepr: initTable[string, string]())
+            compiledRepr: initTable[string, string](),
+            report: initTable[string, CodegenReportEntry]())
   detectBadElims(ctx)
   var defRefIds = initTable[string, int]()
   for d in defs:
@@ -1250,12 +1279,15 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       defRefIds[d.name] = globals[d.name].tm.refId
   # Erase first: erasure failures are not compilable.
   var erasedTerms = initTable[string, Term]()
+  var phase1Failures = initTable[string, string]()
   for d in defs:
-    if d.tmTm.isNil: continue
+    if d.tmTm.isNil:
+      phase1Failures[d.name] = "definition has no checked body"
+      continue
     try:
       erasedTerms[d.name] = eraseQ0Arguments(d.tmTm)
-    except ValueError:
-      discard
+    except ValueError as e:
+      phase1Failures[d.name] = "quantity erasure failed: " & e.msg
   # Dependency graph over block-local defs (self-edges excluded).
   var deps = initTable[string, Table[int, bool]]()
   for d in defs:
@@ -1296,6 +1328,12 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   # Compile in dependency order. A callee that fails keeps compiledProc ""
   # so callers use the slow path for it — no cascade needed.
   var defBodies: seq[NimNode] = @[]
+  for d in defs:
+    if d.name notin erasedTerms and d.name notin phase1Failures:
+      phase1Failures[d.name] = "definition could not be erased for Phase 1"
+  for d in defs:
+    if d.name in erasedTerms and not emitted.getOrDefault(d.name, false):
+      phase1Failures[d.name] = "recursive dependency cycle prevents Phase 1 compilation"
   for name in order:
     var d: ElabDef
     for cand in defs:
@@ -1305,9 +1343,11 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       var r = ctx.refs[refId]
       r.compiledProc = cgName(name)  # pre-assign: self-recursion
       ctx.refs[refId] = r
-    let procNode = compileDefProc(d, ctx, locFile,
-      userLines.getOrDefault(name, 1))
+    var failureReason = ""
+    let procNode = compileDefProcWithReason(d, ctx, locFile,
+      userLines.getOrDefault(name, 1), failureReason)
     if procNode.isNil:
+      phase1Failures[name] = failureReason
       if refId in ctx.refs:
         var r = ctx.refs[refId]
         r.compiledProc = ""
@@ -1322,6 +1362,7 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   # definition (not all-at-once) so a later failure can never strand an
   # already-emitted caller referencing a missing proc.
   var reprBodies: seq[NimNode] = @[]
+  var reprFailures = initTable[string, string]()
   for name in order:
     var d: ElabDef
     for cand in defs:
@@ -1329,18 +1370,48 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     let refId = defRefIds.getOrDefault(name, -1)
     if refId < 0:
       continue
-    let sig =
-      try: ctx.reprSig(d)
-      except CgUnsupported:
-        continue
+    var sig: seq[ReprKind]
+    try:
+      sig = ctx.reprSig(d)
+    except CgUnsupported as e:
+      reprFailures[name] = e.msg
+      continue
     ctx.reprProcs[refId] = (name: cgReprName(name), arity: sig.len - 1)
+    var failureReason = ""
     let procNode = compileDefProcRepr(d, ctx, locFile,
-      userLines.getOrDefault(name, 1))
+      userLines.getOrDefault(name, 1), failureReason)
     if procNode.isNil:
+      reprFailures[name] = failureReason
       ctx.reprProcs.del(refId)
     else:
       reprBodies.add(procNode)
       result.compiledRepr[name] = cgReprName(name)
+  # Summarize the best emitted tier and why the next tier was unavailable.
+  for d in defs:
+    var entry = CodegenReportEntry(tier: cgtInterpreter,
+      reason: "Phase 1 unavailable: " &
+        phase1Failures.getOrDefault(d.name, "definition was not compiled"),
+      slowPaths: @[])
+    if d.name in result.compiled:
+      entry.tier = cgtValue
+      entry.reason = "Phase 2 unavailable: " &
+        reprFailures.getOrDefault(d.name, "definition was not considered")
+    if d.name in result.compiledRepr:
+      entry.tier = cgtRepr
+      entry.reason = "Phase 2 representation code emitted"
+    if d.name in erasedTerms:
+      var ids = initTable[int, bool]()
+      collectRefIds(erasedTerms[d.name], ids)
+      var seenSlowPaths = initTable[string, bool]()
+      for refId in ids.keys:
+        if refId in ctx.refs and ctx.refs[refId].kind == cgkDefn and
+            ctx.refs[refId].compiledProc.len == 0:
+          let slowName = ctx.refs[refId].name
+          if not seenSlowPaths.getOrDefault(slowName, false):
+            entry.slowPaths.add(slowName)
+            seenSlowPaths[slowName] = true
+      entry.slowPaths.sort()
+    result.report[d.name] = entry
   # Emit eliminator procs for every used eliminator. The fixpoint handles
   # templates that reference further eliminators; detectBadElims already
   # guaranteed templates compile.

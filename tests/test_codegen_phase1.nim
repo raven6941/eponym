@@ -33,6 +33,19 @@ macro differentialBlock(src: static string, srcFile: static string): untyped =
     userLines[d.name] = 1
   let cgBlock = compileBlockProcs(checked.defs, checked.globals, "", src,
     srcFile, userLines)
+  if cgBlock.report["add42"].tier != cgtValue or
+      not cgBlock.report["add42"].reason.contains("Phase 2 unavailable"):
+    error("codegen report should identify add42 as Phase 1 Value code")
+  if cgBlock.report["natElimPartial"].tier != cgtInterpreter or
+      not cgBlock.report["natElimPartial"].reason.contains("Phase 1 unavailable"):
+    error("codegen report should explain natElimPartial interpreter fallback")
+  var isolatedDefs: seq[ElabDef] = @[]
+  for d in checked.defs:
+    if d.name == "add42": isolatedDefs.add(d)
+  let isolated = compileBlockProcs(isolatedDefs, checked.globals, "", src,
+    srcFile, userLines)
+  if "fortyTwo" notin isolated.report["add42"].slowPaths:
+    error("codegen report should expose a cross-block runtime slow path")
   result = newStmtList()
   for p in cgBlock.procs:
     result.add(p)

@@ -42,6 +42,10 @@ macro differentialBlockRepr(src: static string, srcFile: static string): untyped
                    intMappingFor("Bool")]
   let cgBlock = compileBlockProcs(checked.defs, checked.globals, "", src,
     srcFile, userLines, mappings)
+  if cgBlock.report["fortyTwo"].tier != cgtRepr or
+      cgBlock.report["higher"].tier != cgtValue or
+      not cgBlock.report["higher"].reason.contains("non-atomic binder domain"):
+    error("codegen report should distinguish Phase 2 and Phase 1 fallback")
   result = newStmtList()
   for p in cgBlock.procs:
     result.add(p)
