@@ -289,10 +289,19 @@ implementations.
    thunk arguments, so the occurrence counter loses the control-flow boundary.
    The current counter can accept a q1 value used in only one arm (then drop it
    on the other path), and rejects a value used once in each arm. Make the
-   in-judgment check and post-elaboration backstop share the same per-path
-   analysis. Add positive and negative compile-time regressions for both cases
-   and property coverage over generated branch-usage shapes. Do not infer q1
-   until every runtime path is accounted for.
+   in-judgment check, post-elaboration backstop, and codegen erasure pass share
+   the same per-path analysis. Branch information must survive in a checked
+   representation consumed by all three; a source-only profile or an
+   unchecked annotation on an ordinary application is insufficient. The
+   evaluator and independent kernel must establish the conditional's branch
+   semantics, so a shadowed or user-defined `ifThenElse` cannot make the
+   checker assume laziness it does not have. First cover the Nim `if` lowering;
+   account for general eliminators separately if their case branches are not
+   represented by that same checked form. Add positive and negative
+   compile-time regressions for values used once in each branch and values
+   used on only one branch, plus property coverage over generated
+   branch-usage shapes. Do not infer q1 until every runtime path is accounted
+   for.
 - [ ] Decide quantity subsumption for q1 under Pi domains before enabling q1
    inference. The rule must respect contravariance and pass both elaborator and
    independent kernel checks; the existing inferred-q0-to-qOmega exception
