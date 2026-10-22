@@ -2510,6 +2510,7 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
   let tm =
     if isElim: newRedRef(supply, tyV, nargs)
     else: newPostulateRef(supply, tyV)
+  if name == "Int": markQttGroundType(tm)
   globals[name] = GEntry(tm: tm, ty: tyT, isElim: isElim, elimNargs: nargs,
                          peg: ab)
   ms.refNames[tm.refId] = name  # Issue #139: name-resolving pretty-printer
@@ -3060,17 +3061,34 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
       for rd in genRedDecls(d, elimName, methodNames, loc):
         elabRedDecl(rd.lhs, rd.rhs, rd.rloc, globals, supply, ms)
       var completeCtorIds: seq[int] = @[]
-      var recursiveCtorIds: seq[int] = @[]
       for ctor in d.ctors:
         let ctorId = globals[ctor.name].tm.refId
         completeCtorIds.add(ctorId)
-        for field in ctor.tele:
-          if mentionsFam(field.ty, d.dname):
-            recursiveCtorIds.add(ctorId)
-            break
       try:
-        markRedCasesComplete(globals[elimName].tm, completeCtorIds,
-                             recursiveCtorIds)
+        markRedCasesComplete(globals[elimName].tm, completeCtorIds)
+        let (indexTele, _) = flattenPiPre(d.indexTy)
+        var qttGroundFamily = d.params.len == 0 and indexTele.len == 0
+        for ctor in d.ctors:
+          let ctorId = globals[ctor.name].tm.refId
+          var recursivePositions: seq[int] = @[]
+          var recursiveSupported = indexTele.len == 0
+          for fieldIndex, field in ctor.tele:
+            if mentionsFam(field.ty, d.dname):
+              recursivePositions.add(fieldIndex)
+              let (hoTele, _) = splitCtorArg(field.ty, d.dname, ctor.name,
+                field.name, d.params.len, ctor.cloc)
+              if hoTele.len != 0:
+                recursiveSupported = false
+            elif field.ty.kind == pkVar and field.ty.name in globals and
+                globals[field.ty.name].tm.qttGroundType:
+              discard
+            else:
+              qttGroundFamily = false
+          if not recursiveSupported: qttGroundFamily = false
+          setRedCaseRecursiveFields(globals[elimName].tm, ctorId,
+                                    recursivePositions, recursiveSupported)
+        if qttGroundFamily:
+          markQttGroundType(globals[d.dname].tm)
       except ValueError as e:
         raise elabErr(loc, sanitizeKernelMsg(e.msg))
       # record for coverage checking (issue #32)

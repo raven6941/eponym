@@ -59,6 +59,87 @@ type UsageChoiceExpansion = object
   condition: Term
   strictArgs: seq[Term]
   branches: seq[Term]
+  recursiveCounts: seq[int]
+  unsupportedChoice: bool
+
+proc flattenApps(t: Term): tuple[head: Term, args: seq[Term]]
+
+proc termContainsRef(t: Term, refId: int): bool =
+  if t.isNil: return false
+  case t.kind
+  of tR: t.refId == refId
+  of tLam, tPi, tSi: termContainsRef(t.dom, refId) or
+                     termContainsRef(t.scope.bdy, refId)
+  of tApp: termContainsRef(t.fn, refId) or termContainsRef(t.arg, refId)
+  of tPair: termContainsRef(t.pFst, refId) or termContainsRef(t.pSnd, refId) or
+            termContainsRef(t.pScope.bdy, refId)
+  of tFst, tSnd, tAbsurd: termContainsRef(t.sub, refId)
+  of tLet: termContainsRef(t.letVal, refId) or
+           termContainsRef(t.letTy, refId) or
+           termContainsRef(t.letScope.bdy, refId)
+  of tPrim: termContainsRef(t.primTy, refId)
+  of tV, tC, tType, tMeta, tInt, tNatLit, tNatSing: false
+
+proc isQttGroundType(t: Term): bool =
+  if t.isNil: return false
+  if t.kind == tR:
+    if t.qttGroundType: return true
+    if t.refIsDefn and not t.refVal.isNil and not t.refVal.syn.isNil:
+      return isQttGroundType(t.refVal.syn)
+  false
+
+proc containsVarAt(t: Term, target: int, depth: int): bool =
+  case t.kind
+  of tV: t.idx == target + depth
+  of tLam, tPi, tSi: containsVarAt(t.scope.bdy, target, depth + 1)
+  of tApp: containsVarAt(t.fn, target, depth) or
+           containsVarAt(t.arg, target, depth)
+  of tPair: containsVarAt(t.pFst, target, depth) or
+             containsVarAt(t.pSnd, target, depth) or
+             containsVarAt(t.pScope.bdy, target, depth + 1)
+  of tFst, tSnd, tAbsurd: containsVarAt(t.sub, target, depth)
+  of tLet: containsVarAt(t.letVal, target, depth) or
+           containsVarAt(t.letScope.bdy, target, depth + 1)
+  of tPrim, tR, tC, tType, tMeta, tInt, tNatLit, tNatSing: false
+
+proc isGeneratedRecursiveCall(t, elimHead: Term, rule: tuple[
+    nargs, nParams: int, cases: Table[int, Term]], ctorArity: int,
+    recursiveField: Term): bool =
+  ## Recognize the first-order recursive hypothesis emitted for a direct
+  ## recursive field of an unindexed data family. Its eliminator arguments
+  ## are the same method/motive/parameter variables as the enclosing rule,
+  ## followed by the recursive field itself.
+  let (callHead, callArgs) = flattenApps(t)
+  if callHead.isNil or callHead.kind != tR or
+      callHead.refId != elimHead.refId or callArgs.len != rule.nargs:
+    return false
+  for i in 0 ..< rule.nargs - 1:
+    let expected = ctorArity + rule.nargs - 2 - i
+    if callArgs[i].kind != tV or callArgs[i].idx != expected:
+      return false
+  callArgs[^1].kind == tV and callArgs[^1].idx == recursiveField.idx
+
+proc recursiveUsageChoice(branches: seq[UsageProfile],
+                          recursiveCounts: seq[int]): UsageProfile =
+  ## Compute the possible usage counts over all finite values of a
+  ## first-order recursive datatype. Base constructors seed the profile;
+  ## each recursive constructor adds its local use count to one profile for
+  ## every recursive child. The saturated profile lattice has only three
+  ## counts, so this monotone closure reaches a fixed point quickly.
+  for i, count in recursiveCounts:
+    if count == 0:
+      result = usageChoice([result, branches[i]])
+  if result == {}: return # no finite base constructor: caller falls back
+  while true:
+    var next = result
+    for i, count in recursiveCounts:
+      if count == 0: continue
+      var children: UsageProfile = {ucZero}
+      for _ in 0 ..< count:
+        children = usageThen(children, result)
+      next = usageChoice([next, usageThen(branches[i], children)])
+    if next == result: return
+    result = next
 
 proc flattenApps(t: Term): tuple[head: Term, args: seq[Term]] =
   var revArgs: seq[Term] = @[]
@@ -74,9 +155,9 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
   ## Expose a checked, exhaustive finite eliminator applied to branch
   ## closures. This sees through transparent definitions (notably
   ## `ifThenElse`) and beta reduction, then uses the registered reduction
-  ## rules to recover the alternatives. It only specializes complete
-  ## eliminators with non-recursive constructors whose cases apply one of
-  ## the method arguments to exactly its constructor fields. Other
+  ## rules to recover the alternatives. It specializes complete generated
+  ## eliminators whose case templates apply a method to exactly their
+  ## constructor fields and verified direct recursive hypotheses. Other
   ## eliminators remain conservatively counted as ordinary applications.
   var (head, args) = flattenApps(t)
   # `ifThenElse` unfolds through four lambda binders before reaching Bool's
@@ -89,6 +170,9 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
     if head.kind == tR and head.refIsDefn and not head.refVal.isNil and
         head.refVal.whnf.kind != wRed:
       if head.refVal.syn.isNil or head.refVal.syn == head: return
+      if termContainsRef(head.refVal.syn, head.refId):
+        result.unsupportedChoice = true
+        return
       let expanded = flattenApps(head.refVal.syn)
       head = expanded.head
       args = expanded.args & args
@@ -108,34 +192,90 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
     let rule = redRuleInfo(head)
     if rule.nargs < 2 or args.len < rule.nargs or
         rule.cases.len == 0 or not redRuleIsComplete(head):
+      result.unsupportedChoice = true
       return
     let arities = redRuleCaseArities(head)
+    var hasRecursiveCases = false
+    for ctorId in rule.cases.keys:
+      if redRuleCaseRecursiveFields(head, ctorId).len > 0:
+        hasRecursiveCases = true
+        if not redRuleCaseRecursiveSupported(head, ctorId):
+          result.unsupportedChoice = true
+          return
+    if hasRecursiveCases:
+      let motiveIndex = rule.nParams
+      if motiveIndex >= rule.nargs - 1 or args[motiveIndex].kind != tLam or
+          not isQttGroundType(args[motiveIndex].scope.bdy):
+        result.unsupportedChoice = true
+        return
     var selectedArgs: seq[int] = @[]
     var branchArgIndexes: seq[int] = @[]
+    var recursiveCounts: seq[int] = @[]
+    var allMethodArgs: seq[int] = @[]
     for ctorId, branchTemplate in rule.cases:
       let arity = arities.getOrDefault(ctorId, -1)
-      if arity < 0 or redRuleCaseIsRecursive(head, ctorId) or
+      let recursiveFields = redRuleCaseRecursiveFields(head, ctorId)
+      if arity < 0 or
+          (recursiveFields.len > 0 and
+           not redRuleCaseRecursiveSupported(head, ctorId)) or
           branchTemplate.isNil:
+        result.unsupportedChoice = true
         return
       let (methodHead, fieldArgs) = flattenApps(branchTemplate)
-      if methodHead.kind != tV or fieldArgs.len != arity:
+      if methodHead.kind != tV or
+          fieldArgs.len != arity + recursiveFields.len:
+        result.unsupportedChoice = true
         return
-      # Generated case templates apply the corresponding method to the
-      # constructor's fields in declaration order. Requiring those exact
-      # bound variables excludes recursive hypotheses and arbitrary
-      # computations from the specialization.
-      for i, fieldArg in fieldArgs:
-        if fieldArg.kind != tV or fieldArg.idx != arity - 1 - i:
+      # Generated case templates apply the corresponding method to each
+      # constructor field in declaration order, inserting its recursive
+      # hypothesis immediately after a recursive field. Exact variable and
+      # recursive-call checks exclude arbitrary computations here.
+      var argIndex = 0
+      for fieldIndex in 0 ..< arity:
+        let fieldArg = fieldArgs[argIndex]
+        if fieldArg.kind != tV or fieldArg.idx != arity - 1 - fieldIndex:
+          result.unsupportedChoice = true
           return
+        inc argIndex
+        if fieldIndex in recursiveFields:
+          if not isGeneratedRecursiveCall(fieldArgs[argIndex], head, rule,
+                                          arity, fieldArg):
+            result.unsupportedChoice = true
+            return
+          inc argIndex
+      if argIndex != fieldArgs.len:
+        result.unsupportedChoice = true
+        return
       let methodSlot = methodHead.idx - arity
       let elimArgIndex = rule.nargs - 2 - methodSlot
-      if elimArgIndex < 0 or elimArgIndex >= rule.nargs - 1 or
-          args[elimArgIndex].kind != tLam:
+      if elimArgIndex < 0 or elimArgIndex >= rule.nargs - 1:
+        result.unsupportedChoice = true
         return
-      if elimArgIndex notin selectedArgs:
+      if elimArgIndex in allMethodArgs:
+        result.unsupportedChoice = true
+        return
+      allMethodArgs.add(elimArgIndex)
+      if args[elimArgIndex].kind == tLam:
         selectedArgs.add(elimArgIndex)
-      branchArgIndexes.add(elimArgIndex)
-    if selectedArgs.len != rule.cases.len: return
+        branchArgIndexes.add(elimArgIndex)
+      elif arity == 0 and recursiveFields.len == 0:
+        # A nullary case's ground result is strict: it is evaluated before
+        # the data eliminator selects a case. Keep it in strictArgs and use
+        # a zero profile for that case's alternative slot.
+        branchArgIndexes.add(-1)
+      else:
+        result.unsupportedChoice = true
+        return
+      recursiveCounts.add(recursiveFields.len)
+    if allMethodArgs.len != rule.cases.len:
+      result.unsupportedChoice = true
+      return
+    var hasBaseCase = false
+    for count in recursiveCounts:
+      if count == 0: hasBaseCase = true
+    if not hasBaseCase:
+      result.unsupportedChoice = true
+      return
 
     result.found = true
     result.condition = args[rule.nargs - 1]
@@ -143,10 +283,21 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
       if i notin selectedArgs:
         result.strictArgs.add(args[i])
     for elimArgIndex in branchArgIndexes:
+      if elimArgIndex < 0:
+        result.branches.add(nil)
+        continue
       var branch = args[elimArgIndex]
       for i in rule.nargs ..< args.len:
         branch = tmApp(branch, args[i])
       result.branches.add(branch)
+    result.recursiveCounts = recursiveCounts
+    if hasRecursiveCases:
+      for ctorId, caseTm in rule.cases:
+        if redRuleCaseRecursiveFields(head, ctorId).len > 0 and
+            not termContainsRef(caseTm, head.refId):
+          result.unsupportedChoice = true
+          result.found = false
+          return
     return
 
 # --- in-judgment quantity enforcement (Issue #66) ---------------------------
@@ -176,18 +327,22 @@ proc varUsageProfile*(tm: Term): UsageProfile =
     of tApp:
       let choice = expandBranchEliminator(t)
       if choice.found:
-        var safeToSplit = true
+        var strictProfile: UsageProfile = {ucZero}
         for arg in choice.strictArgs:
-          if go(arg, depth) != {ucZero}:
-            safeToSplit = false
-            break
-        if safeToSplit:
-          var branchProfiles: seq[UsageProfile] = @[]
-          for branch in choice.branches:
-            branchProfiles.add(go(branch, depth))
-          usageThen(go(choice.condition, depth), usageChoice(branchProfiles))
-        else:
+          strictProfile = usageThen(strictProfile, go(arg, depth))
+        var branchProfiles: seq[UsageProfile] = @[]
+        for branch in choice.branches:
+          branchProfiles.add(if branch.isNil: {ucZero} else: go(branch, depth))
+        let caseProfile = recursiveUsageChoice(branchProfiles,
+          choice.recursiveCounts)
+        if caseProfile == {}:
           usageThen(go(t.fn, depth), go(t.arg, depth))
+        else:
+          usageThen(usageThen(strictProfile, go(choice.condition, depth)),
+                   caseProfile)
+      elif choice.unsupportedChoice:
+        if containsVarAt(t, 0, depth): {ucZero, ucOnce, ucMany}
+        else: {ucZero}
       else:
         usageThen(go(t.fn, depth), go(t.arg, depth))
     of tPair:

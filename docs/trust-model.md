@@ -47,16 +47,17 @@ recursive calls in `red` rules at declaration time (see Termination below).
 are enforced, not advisory:
 
 - `q1` (linear) binders used in Nim `if` expressions and supported finite
-  data eliminators are checked per runtime path. The checker recovers the
-  alternatives from complete generated rules for non-recursive cases with
-  constructor payloads;
+  data eliminators are checked per runtime path. For unindexed first-order
+  recursive data with ground result motives, usage counts are closed over all
+  finite recursive shapes. The checker recovers alternatives from complete
+  generated rules and validates direct recursive hypotheses;
 - `q0` (erased) binders must not be used;
 - `qω` (unrestricted) binders are unchecked.
 
-Recursive eliminators and case templates that compute with branch values
-still use conservative syntactic counting. This can reject
-valid branch-dependent use; do not assume every Eponym case split has
-path-sensitive QTT checking yet. Enforcement happens in two places:
+Indexed recursive families, higher-order recursive fields, closure-valued
+result motives, and user-written case templates still use conservative
+counting. This can reject valid branch-dependent use; do not assume every
+Eponym case split has path-sensitive QTT checking yet. Enforcement happens in two places:
 in-judgment checks at each lambda while the body is being checked (with
 correct depth tracking, so a type-level mention of a linear variable does not
 consume it — types are checked in the all-0 context), plus a post-elaboration
