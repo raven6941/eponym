@@ -3059,10 +3059,17 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
       for rd in genRedDecls(d, elimName, methodNames, loc):
         elabRedDecl(rd.lhs, rd.rhs, rd.rloc, globals, supply, ms)
       var completeCtorIds: seq[int] = @[]
+      var recursiveCtorIds: seq[int] = @[]
       for ctor in d.ctors:
-        completeCtorIds.add(globals[ctor.name].tm.refId)
+        let ctorId = globals[ctor.name].tm.refId
+        completeCtorIds.add(ctorId)
+        for field in ctor.tele:
+          if mentionsFam(field.ty, d.dname):
+            recursiveCtorIds.add(ctorId)
+            break
       try:
-        markRedCasesComplete(globals[elimName].tm, completeCtorIds)
+        markRedCasesComplete(globals[elimName].tm, completeCtorIds,
+                             recursiveCtorIds)
       except ValueError as e:
         raise elabErr(loc, sanitizeKernelMsg(e.msg))
       # record for coverage checking (issue #32)

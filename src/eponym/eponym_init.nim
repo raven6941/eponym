@@ -79,6 +79,7 @@ type
     nargs*: int
     cases*: Table[int, Term]
     caseArities*: Table[int, int]
+    caseRecursive*: Table[int, bool]
     completeCases*: Table[int, bool]
     nParams*: int  # leading scrutinee spine args that are (already-bound)
                   # params, not fresh ctor vars (Experiment 5: data)
@@ -463,6 +464,7 @@ proc newRedRef*(s: var Supply, typ: Value, nargs: int): Term =
     whnf: Whnf(kind: wRed, elimId: id,
                rule: RedRule(nargs: nargs, cases: initTable[int, Term](),
                  caseArities: initTable[int, int](),
+                 caseRecursive: initTable[int, bool](),
                  completeCases: initTable[int, bool]()),
                args: newSeq[Value]()))
   r
@@ -485,7 +487,8 @@ proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term, nParams = 0,
   elif w.rule.nParams != nParams:
     raise newException(ValueError, "inconsistent param count in reduction rules")
 
-proc markRedCasesComplete*(elim: Term, ctorIds: openArray[int]) =
+proc markRedCasesComplete*(elim: Term, ctorIds: openArray[int],
+                           recursiveCtorIds: openArray[int] = []) =
   ## Mark an eliminator generated from a complete `data` declaration after
   ## its rules have been registered. Incomplete user-written eliminators are
   ## never treated as exhaustive alternatives by QTT usage analysis.
@@ -498,12 +501,19 @@ proc markRedCasesComplete*(elim: Term, ctorIds: openArray[int]) =
     if id notin w.rule.cases or w.rule.caseArities.getOrDefault(id, -1) < 0:
       raise newException(ValueError, "data eliminator has an unknown constructor case")
     w.rule.completeCases[id] = true
+    w.rule.caseRecursive[id] = id in recursiveCtorIds
 
 proc redRuleCaseArities*(elim: Term): Table[int, int] =
   let w = elim.refVal.whnf
   if w.kind != wRed:
     raise newException(ValueError, "not an eliminator reference")
   w.rule.caseArities
+
+proc redRuleCaseIsRecursive*(elim: Term, ctorId: int): bool =
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  w.rule.caseRecursive.getOrDefault(ctorId, true)
 
 proc redRuleIsComplete*(elim: Term): bool =
   let w = elim.refVal.whnf

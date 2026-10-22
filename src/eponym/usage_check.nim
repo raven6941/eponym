@@ -74,10 +74,10 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
   ## Expose a checked, exhaustive binary eliminator applied to branch
   ## closures. This sees through transparent definitions (notably
   ## `ifThenElse`) and beta reduction, then uses the registered reduction
-  ## rules to recover the alternatives. It only specializes complete data
-  ## eliminators with nullary constructors whose cases each return one of
-  ## the lambda arguments directly. Other eliminators remain conservatively
-  ## counted as ordinary applications.
+  ## rules to recover the alternatives. It only specializes complete binary
+  ## eliminators with non-recursive constructors whose cases apply one of
+  ## the method arguments to exactly its constructor fields. Other
+  ## eliminators remain conservatively counted as ordinary applications.
   var (head, args) = flattenApps(t)
   # `ifThenElse` unfolds through four lambda binders before reaching Bool's
   # eliminator. Keep a small bound so recursive user definitions are not
@@ -106,21 +106,35 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
       return
 
     let rule = redRuleInfo(head)
-    if rule.nParams != 0 or rule.nargs < 2 or args.len < rule.nargs or
+    if rule.nargs < 2 or args.len < rule.nargs or
         rule.cases.len != 2 or not redRuleIsComplete(head):
       return
     let arities = redRuleCaseArities(head)
     var selectedArgs: seq[int] = @[]
+    var branchArgIndexes: seq[int] = @[]
     for ctorId, branchTemplate in rule.cases:
-      if arities.getOrDefault(ctorId, -1) != 0 or
-          branchTemplate.isNil or branchTemplate.kind != tV:
+      let arity = arities.getOrDefault(ctorId, -1)
+      if arity < 0 or redRuleCaseIsRecursive(head, ctorId) or
+          branchTemplate.isNil:
         return
-      let elimArgIndex = rule.nargs - 2 - branchTemplate.idx
+      let (methodHead, fieldArgs) = flattenApps(branchTemplate)
+      if methodHead.kind != tV or fieldArgs.len != arity:
+        return
+      # Generated case templates apply the corresponding method to the
+      # constructor's fields in declaration order. Requiring those exact
+      # bound variables excludes recursive hypotheses and arbitrary
+      # computations from the specialization.
+      for i, fieldArg in fieldArgs:
+        if fieldArg.kind != tV or fieldArg.idx != arity - 1 - i:
+          return
+      let methodSlot = methodHead.idx - arity
+      let elimArgIndex = rule.nargs - 2 - methodSlot
       if elimArgIndex < 0 or elimArgIndex >= rule.nargs - 1 or
           args[elimArgIndex].kind != tLam:
         return
       if elimArgIndex notin selectedArgs:
         selectedArgs.add(elimArgIndex)
+      branchArgIndexes.add(elimArgIndex)
     if selectedArgs.len != 2: return
 
     result.found = true
@@ -128,8 +142,7 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
     for i in 0 ..< rule.nargs - 1:
       if i notin selectedArgs:
         result.strictArgs.add(args[i])
-    for _, branchTemplate in rule.cases:
-      let elimArgIndex = rule.nargs - 2 - branchTemplate.idx
+    for elimArgIndex in branchArgIndexes:
       var branch = args[elimArgIndex]
       for i in rule.nargs ..< args.len:
         branch = tmApp(branch, args[i])
