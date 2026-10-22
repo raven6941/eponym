@@ -208,6 +208,76 @@ proc typeHeadDataName(ms: MetaStore, ty: Term): string =
     return ms.ctorTable.dataNames[t.refId]
   ""
 
+proc applicationSpine(term: Term): tuple[head: Term, args: seq[Term]] =
+  result.head = term
+  while result.head != nil and result.head.kind == tApp:
+    result.args.add(result.head.arg)
+    result.head = result.head.fn
+  result.args.reverse()
+
+proc nimTypeExpr(term: Term, ctx: seq[HoleContextBinder],
+                 ms: MetaStore, rendered: var string): bool =
+  ## Render the surface-compatible type-level fragment needed to replay
+  ## datatype parameters in a generated Nim shed expression. Data families use
+  ## bracket applications; constructors nested inside an index use normal
+  ## calls after their family parameters.
+  if term == nil: return false
+  case term.kind
+  of tR:
+    if term.refId notin ms.refNames: return false
+    rendered = ms.refNames[term.refId]
+    true
+  of tV:
+    if term.idx < 0 or term.idx >= ctx.len or ctx[term.idx].name == "_":
+      return false
+    rendered = ctx[term.idx].name
+    true
+  of tInt:
+    rendered = $term.intVal
+    true
+  of tNatLit:
+    rendered = $term.natLitVal
+    true
+  of tApp:
+    let spine = applicationSpine(term)
+    if spine.head == nil or spine.head.kind != tR or
+        spine.head.refId notin ms.refNames:
+      return false
+    var headName = ms.refNames[spine.head.refId]
+    var nParams = -1
+    var familyApplication = false
+    if spine.head.refId in ms.ctorTable.dataNames:
+      nParams = ms.ctorTable.dataParamCounts.getOrDefault(
+        spine.head.refId, -1)
+      familyApplication = true
+    elif spine.head.refId in ms.ctorTable.ctorData:
+      let family = ms.ctorTable.ctorData[spine.head.refId]
+      nParams = ms.ctorTable.dataParamCounts.getOrDefault(family, -1)
+    else:
+      return false
+    if nParams < 0 or spine.args.len < nParams: return false
+    var argTexts: seq[string] = @[]
+    for arg in spine.args:
+      var argText = ""
+      if not nimTypeExpr(zonk(ms, arg), ctx, ms, argText): return false
+      argTexts.add(argText)
+    if familyApplication:
+      rendered = headName & "[" & argTexts.join(", ") & "]"
+    else:
+      var paramTexts: seq[string] = @[]
+      var valueTexts: seq[string] = @[]
+      if nParams > 0: paramTexts = argTexts[0 ..< nParams]
+      if argTexts.len > nParams:
+        valueTexts = argTexts[nParams .. ^1]
+      if nParams > 0:
+        headName &= "[" & paramTexts.join(", ") & "]"
+      if valueTexts.len > 0:
+        headName &= "(" & valueTexts.join(", ") & ")"
+      rendered = headName
+    true
+  else:
+    false
+
 proc freshen(base: string, used: seq[string]): string =
   result = base
   var k = 1
@@ -803,18 +873,45 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
   if varTy.isNil:
     return (false, "'" & variable & "' is not in scope at the hole",
             "", 0, 0, @[])
-  # The variable's type must be a plain datatype (tR, no params/indices).
-  var ty = zonk(ms, varTy)
-  if ty == nil or ty.kind != tR:
+  # Resolve the datatype head and recover its parameter application. We can
+  # replay parameters in the eliminator, but indexed families need a motive
+  # generalized over their index telescope and remain unsupported here.
+  let ty = zonk(ms, varTy)
+  let spine = applicationSpine(ty)
+  if spine.head == nil or spine.head.kind != tR:
     return (false, "'" & variable &
-            "' does not have a simple datatype type " &
-            "(parameterized/indexed datatypes not yet supported)",
-            "", 0, 0, @[])
-  let dataRef = ty.refId
+            "' does not have a datatype type", "", 0, 0, @[])
+  let dataRef = spine.head.refId
   if dataRef notin ms.ctorTable.dataNames:
     return (false, "'" & variable & "' does not have a datatype type",
             "", 0, 0, @[])
   let dataName = ms.ctorTable.dataNames[dataRef]
+  let paramCount = ms.ctorTable.dataParamCounts.getOrDefault(dataRef, 0)
+  let indexCount = ms.ctorTable.dataIndexCounts.getOrDefault(dataRef, 0)
+  if indexCount != 0:
+    return (false, "case-split on indexed datatype '" & dataName &
+            "' is not yet supported", "", 0, 0, @[])
+  if spine.args.len != paramCount:
+    return (false, "cannot recover the parameter application for datatype '" &
+            dataName & "'", "", 0, 0, @[])
+  var paramEp: seq[string] = @[]
+  var paramNim: seq[string] = @[]
+  var holeCtx: Ctx = @[]
+  for b in h.holeCtx:
+    holeCtx.add(CtxEntry(name: b.name, ty: b.ty, qty: b.qty))
+  for arg in spine.args:
+    let normalized = zonk(ms, arg)
+    paramEp.add(prettyTerm(normalized, holeCtx, ms.refNames,
+                           ms.recordFields))
+    var argNim = ""
+    if not nimTypeExpr(normalized, h.holeCtx, ms, argNim):
+      return (false, "cannot render a parameter of datatype '" & dataName &
+              "' in Nim shed syntax", "", 0, 0, @[])
+    paramNim.add(argNim)
+  var familyEp = dataName
+  if paramEp.len > 0: familyEp &= " " & paramEp.join(" ")
+  var familyNim = dataName
+  if paramNim.len > 0: familyNim &= "[" & paramNim.join(", ") & "]"
   let elimName = elimNameFor(dataName)
   # Constructor names for the sub-sheds.
   var ctorNames: seq[string] = @[]
@@ -842,9 +939,10 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
   if goalStr == "":
     return (false, "shed '" & shedName & "': no goal recorded",
             "", 0, 0, @[])
-  let motiveEp = "(lam (u : " & dataName & "). " & goalStr & ")"
-  let motiveNim = "lam(u, " & dataName & ", " & goalStr & ")"
-  var epArgs: seq[string] = @[motiveEp]
+  let motiveEp = "(lam (u : " & familyEp & "). " & goalStr & ")"
+  let motiveNim = "lam(u, " & familyNim & ", " & goalStr & ")"
+  var epArgs: seq[string] = paramEp
+  epArgs.add(motiveEp)
   var nimArgs: seq[string] = @[motiveNim]
   for ss in subSheds:
     epArgs.add("?")
@@ -852,7 +950,11 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
   epArgs.add(variable)
   nimArgs.add(variable)
   let epTerm = elimName & " " & epArgs.join(" ")
-  let nimTerm = elimName & "(" & nimArgs.join(", ") & ")"
+  let nimHead = if paramNim.len > 0:
+      elimName & "[" & paramNim.join(", ") & "]"
+    else:
+      elimName
+  let nimTerm = nimHead & "(" & nimArgs.join(", ") & ")"
   # Validate: fill the hole in a copy of the source and re-elaborate.
   # (Catches unparseable motives/goals before touching the nim file.)
   let f = fillHoleAt(oldSrc, sheds0[si].holeLine - 1, sheds0[si].holeCol - 1,

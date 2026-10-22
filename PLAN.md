@@ -909,6 +909,11 @@ implementations.
   binders with QTT metadata. Migrate LSP hover to consume that model. Keep the
   sidecar's rendered text as a presentation projection; a future cross-process
   semantic format needs a versioned structural term codec.
+- [x] Let Nim shed case-splitting replay parameters for non-indexed datatype
+  families. A `List[Nat]` round-trip checks the generated eliminator/motive,
+  recompiles the Nim splice, and verifies constructor-branch goals; a generic
+  `List[A]` case covers local type parameters. Indexed families still require
+  an index-generalized motive and remain unsupported with a targeted error.
 - [x] Lower single and chained `if/elif/else` expressions through the checked
   `ifThenElse` definition in `lib/bool.ep`. Branches are unit thunks, so only
   the chosen branch runs, matching Nim conditional evaluation even when a
