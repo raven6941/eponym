@@ -21,6 +21,9 @@ eponymBlock:
     if false: countBranchPostulate(10)
     elif true: countBranchPostulate(30)
     else: countBranchPostulate(20)
+  proc chooseLinear(flag: Bool, value {.linear.}: Int): Int =
+    if flag: countBranchPostulate(value)
+    else: countBranchPostulate(value)
   proc addOne(value: Int): Int = value + 1
 
 var rng = initRng(0x1F1F)
@@ -41,6 +44,13 @@ let intCases = forAll(
   "embedded Int addition accepts literal one", rng, 200,
   proc(r: var Rng): int = r.genInt(-1_000_000, 1_000_000),
   proc(value: int): bool = addOne(value) == value + 1)
-if not cases or not intCases:
+let linearBranchCases = forAll(
+  "linear value used once in either conditional branch", rng, 200,
+  proc(r: var Rng): tuple[flag: bool, value: int] =
+    (r.genBool(), r.genInt(-1000, 1000)),
+  proc(input: tuple[flag: bool, value: int]): bool =
+    branchCalls = 0
+    chooseLinear(input.flag, input.value) == input.value and branchCalls == 1)
+if not cases or not intCases or not linearBranchCases:
   quit(1)
 echo "test_embedded_if_effects: conditional and Int literal properties passed"

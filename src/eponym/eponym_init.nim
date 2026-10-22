@@ -78,6 +78,8 @@ type
   RedRule* = object
     nargs*: int
     cases*: Table[int, Term]
+    caseArities*: Table[int, int]
+    completeCases*: Table[int, bool]
     nParams*: int  # leading scrutinee spine args that are (already-bound)
                   # params, not fresh ctor vars (Experiment 5: data)
   ElimVKind* = enum eApp, eFst, eSnd, eAbsurd
@@ -459,11 +461,14 @@ proc newRedRef*(s: var Supply, typ: Value, nargs: int): Term =
   let r = mkR(id, typ, true, nil)
   r.refVal = Value(syn: r,
     whnf: Whnf(kind: wRed, elimId: id,
-               rule: RedRule(nargs: nargs, cases: initTable[int, Term]()),
+               rule: RedRule(nargs: nargs, cases: initTable[int, Term](),
+                 caseArities: initTable[int, int](),
+                 completeCases: initTable[int, bool]()),
                args: newSeq[Value]()))
   r
 
-proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term, nParams = 0) =
+proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term, nParams = 0,
+                    ctorArity = -1) =
   ## Experiment 4: register one constructor case on an eliminator.
   ## Raises on duplicates (overlapping rules would break confluence).
   ## nParams (Experiment 5): leading scrutinee spine args that are
@@ -474,10 +479,39 @@ proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term, nParams = 0) =
   if ctorId in w.rule.cases:
     raise newException(ValueError, "duplicate reduction rule for constructor")
   w.rule.cases[ctorId] = tmpl
+  w.rule.caseArities[ctorId] = ctorArity
   if w.rule.nParams == 0:
     w.rule.nParams = nParams
   elif w.rule.nParams != nParams:
     raise newException(ValueError, "inconsistent param count in reduction rules")
+
+proc markRedCasesComplete*(elim: Term, ctorIds: openArray[int]) =
+  ## Mark an eliminator generated from a complete `data` declaration after
+  ## its rules have been registered. Incomplete user-written eliminators are
+  ## never treated as exhaustive alternatives by QTT usage analysis.
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  if ctorIds.len != w.rule.cases.len:
+    raise newException(ValueError, "data eliminator is missing constructor cases")
+  for id in ctorIds:
+    if id notin w.rule.cases or w.rule.caseArities.getOrDefault(id, -1) < 0:
+      raise newException(ValueError, "data eliminator has an unknown constructor case")
+    w.rule.completeCases[id] = true
+
+proc redRuleCaseArities*(elim: Term): Table[int, int] =
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  w.rule.caseArities
+
+proc redRuleIsComplete*(elim: Term): bool =
+  let w = elim.refVal.whnf
+  if w.kind != wRed or w.rule.completeCases.len != w.rule.cases.len:
+    return false
+  for id in w.rule.cases.keys:
+    if id notin w.rule.completeCases: return false
+  true
 
 proc redNargs*(elim: Term): int =
   ## number of arguments (incl. scrutinee) the eliminator takes

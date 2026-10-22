@@ -11,7 +11,7 @@
 import eponym_init
 import preterm  # for Quantity
 import elab_prof  # Issue #55: phase timers
-import strutils
+import strutils, tables
 
 type
   UsageError* = object of CatchableError
@@ -54,6 +54,88 @@ proc usageProfileDescription*(profile: UsageProfile): string =
       counts.add(if count == ucMany: "2+" else: $ord(count))
     counts.join(" or ")
 
+type UsageChoiceExpansion = object
+  found: bool
+  condition: Term
+  strictArgs: seq[Term]
+  branches: seq[Term]
+
+proc flattenApps(t: Term): tuple[head: Term, args: seq[Term]] =
+  var revArgs: seq[Term] = @[]
+  result.head = t
+  while not result.head.isNil and result.head.kind == tApp:
+    revArgs.add(result.head.arg)
+    result.head = result.head.fn
+  if revArgs.len > 0:
+    for i in countdown(revArgs.high, 0):
+      result.args.add(revArgs[i])
+
+proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
+  ## Expose a checked, exhaustive binary eliminator applied to branch
+  ## closures. This sees through transparent definitions (notably
+  ## `ifThenElse`) and beta reduction, then uses the registered reduction
+  ## rules to recover the alternatives. It only specializes complete data
+  ## eliminators with nullary constructors whose cases each return one of
+  ## the lambda arguments directly. Other eliminators remain conservatively
+  ## counted as ordinary applications.
+  var (head, args) = flattenApps(t)
+  # `ifThenElse` unfolds through four lambda binders before reaching Bool's
+  # eliminator. Keep a small bound so recursive user definitions are not
+  # normalized repeatedly while this analysis walks applications.
+  var fuel = 12
+  while fuel > 0:
+    dec fuel
+    if head.isNil: return
+    if head.kind == tR and head.refIsDefn and not head.refVal.isNil and
+        head.refVal.whnf.kind != wRed:
+      if head.refVal.syn.isNil or head.refVal.syn == head: return
+      let expanded = flattenApps(head.refVal.syn)
+      head = expanded.head
+      args = expanded.args & args
+      continue
+    if head.kind == tLam and args.len > 0:
+      let body = subst(head.scope.bdy, 0, args[0])
+      let expanded = flattenApps(body)
+      head = expanded.head
+      var remaining: seq[Term] = @[]
+      if args.len > 1: remaining = args[1 .. ^1]
+      args = expanded.args & remaining
+      continue
+    if head.kind != tR or head.refVal.isNil or
+        head.refVal.whnf.kind != wRed:
+      return
+
+    let rule = redRuleInfo(head)
+    if rule.nParams != 0 or rule.nargs < 2 or args.len < rule.nargs or
+        rule.cases.len != 2 or not redRuleIsComplete(head):
+      return
+    let arities = redRuleCaseArities(head)
+    var selectedArgs: seq[int] = @[]
+    for ctorId, branchTemplate in rule.cases:
+      if arities.getOrDefault(ctorId, -1) != 0 or
+          branchTemplate.isNil or branchTemplate.kind != tV:
+        return
+      let elimArgIndex = rule.nargs - 2 - branchTemplate.idx
+      if elimArgIndex < 0 or elimArgIndex >= rule.nargs - 1 or
+          args[elimArgIndex].kind != tLam:
+        return
+      if elimArgIndex notin selectedArgs:
+        selectedArgs.add(elimArgIndex)
+    if selectedArgs.len != 2: return
+
+    result.found = true
+    result.condition = args[rule.nargs - 1]
+    for i in 0 ..< rule.nargs - 1:
+      if i notin selectedArgs:
+        result.strictArgs.add(args[i])
+    for _, branchTemplate in rule.cases:
+      let elimArgIndex = rule.nargs - 2 - branchTemplate.idx
+      var branch = args[elimArgIndex]
+      for i in rule.nargs ..< args.len:
+        branch = tmApp(branch, args[i])
+      result.branches.add(branch)
+    return
+
 # --- in-judgment quantity enforcement (Issue #66) ---------------------------
 #
 # The post-pass above runs after a whole declaration elaborates. For
@@ -79,7 +161,22 @@ proc varUsageProfile*(tm: Term): UsageProfile =
       # dom is a type annotation: not a term position, skip it
       go(t.scope.bdy, depth + 1)
     of tApp:
-      usageThen(go(t.fn, depth), go(t.arg, depth))
+      let choice = expandBranchEliminator(t)
+      if choice.found:
+        var safeToSplit = true
+        for arg in choice.strictArgs:
+          if go(arg, depth) != {ucZero}:
+            safeToSplit = false
+            break
+        if safeToSplit:
+          var branchProfiles: seq[UsageProfile] = @[]
+          for branch in choice.branches:
+            branchProfiles.add(go(branch, depth))
+          usageThen(go(choice.condition, depth), usageChoice(branchProfiles))
+        else:
+          usageThen(go(t.fn, depth), go(t.arg, depth))
+      else:
+        usageThen(go(t.fn, depth), go(t.arg, depth))
     of tPair:
       usageThen(usageThen(go(t.pFst, depth), go(t.pSnd, depth)),
         go(t.pScope.bdy, depth + 1))

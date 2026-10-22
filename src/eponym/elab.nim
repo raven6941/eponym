@@ -2698,7 +2698,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
       " in the contractum of a red rule" &
       unsolvedMetaHint())
   try:
-    attachRedCase(g.tm, cg.tm.refId, rhsTm, nParams)
+    attachRedCase(g.tm, cg.tm.refId, rhsTm, nParams, ctorVars.len)
   except ValueError as e:
     raise elabErr(loc, sanitizeKernelMsg(e.msg))
 
@@ -3058,6 +3058,13 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
       # reduction rules
       for rd in genRedDecls(d, elimName, methodNames, loc):
         elabRedDecl(rd.lhs, rd.rhs, rd.rloc, globals, supply, ms)
+      var completeCtorIds: seq[int] = @[]
+      for ctor in d.ctors:
+        completeCtorIds.add(globals[ctor.name].tm.refId)
+      try:
+        markRedCasesComplete(globals[elimName].tm, completeCtorIds)
+      except ValueError as e:
+        raise elabErr(loc, sanitizeKernelMsg(e.msg))
       # record for coverage checking (issue #32)
       dataInfos[d.dname] = d
       # Issue #80: register the constructor disjointness facts (noConfusion /
