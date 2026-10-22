@@ -8,15 +8,15 @@
 // and returns null so the caller returns early.
 
 import * as vscode from "vscode";
-import * as path from "path";
 import * as fs from "fs";
+import { defaultLspServerPath } from "./sidecar";
 
 export function serverPath(): string {
   const cfg = vscode.workspace.getConfiguration("eponym").get<string>("lspServerPath", "");
   if (cfg) return cfg;
   const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!ws) throw new Error("Eponym: no workspace folder open");
-  return path.join(ws, "src", "eponym", "lsp");
+  return defaultLspServerPath(ws);
 }
 
 /** The repo-root build command for the LSP server (matches tools/ci-local.sh). */

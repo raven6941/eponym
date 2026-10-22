@@ -14,6 +14,7 @@ import { renderInlineShed } from "./inlineRender";
 import {
   hasShedBlocks,
   eponymRepoRoot,
+  defaultLspServerPath,
   sidecarCompileArgs,
   generateSidecar,
   shedBlocks,
@@ -69,6 +70,15 @@ async function main() {
     "eponymRepoRoot finds the repo root from the demo dir: " + maybeRoot);
   if (maybeRoot === null) throw new Error("repo root not found; cannot continue");
   const root: string = maybeRoot;
+  check(defaultLspServerPath(path.join(root, "editors", "vscode")) ===
+    path.join(root, "src", "eponym", "lsp"),
+    "default LSP path finds the repo root from the extension workspace");
+  check(defaultLspServerPath(path.join(root, "examples", "embedded")) ===
+    path.join(root, "src", "eponym", "lsp"),
+    "default LSP path finds the repo root from a nested example workspace");
+  check(defaultLspServerPath(path.join(os.tmpdir(), "eponym-other-project")) ===
+    path.join(os.tmpdir(), "eponym-other-project", "src", "eponym", "lsp"),
+    "default LSP path falls back to a non-repo workspace root");
   check(eponymRepoRoot(path.parse(root).root) === null,
     "eponymRepoRoot returns null above the filesystem root's repo check");
   const cargs = sidecarCompileArgs(root, demo);

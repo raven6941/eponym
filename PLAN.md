@@ -900,6 +900,10 @@ implementations.
   test compiles a bracketed-generic `shedsBlock` and exercises its sidecar
   through the real LSP; no extension version bump is needed because its UI and
   protocol did not change.
+- [x] Resolve the compiled LSP binary from the nearest repository root when
+  the extension is opened from a nested workspace; retain the documented
+  workspace-root fallback outside the checkout and cover both paths in smoke
+  tests.
 - [x] Give shed holes an in-process semantic model: retain the typed hole
   metavariable, zonked goal terms, structured binder contexts and Pi-spine
   binders with QTT metadata. Migrate LSP hover to consume that model. Keep the

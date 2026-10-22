@@ -31,6 +31,16 @@ export function eponymRepoRoot(startDir: string): string | null {
   }
 }
 
+/**
+ * Resolve the LSP binary from a workspace nested inside the Eponym repository.
+ * For an ordinary project workspace outside the repository, retain the
+ * documented `<workspace>/src/eponym/lsp` fallback.
+ */
+export function defaultLspServerPath(workspaceDir: string): string {
+  const root = eponymRepoRoot(workspaceDir) ?? path.resolve(workspaceDir);
+  return path.join(root, "src", "eponym", "lsp");
+}
+
 export function sidecarCompileArgs(repoRoot: string, nimFile: string): string[] {
   const args = ["c", "--hints:off"];
   for (const p of NIM_PATH_FLAGS) args.push("--path:" + path.join(repoRoot, p));
