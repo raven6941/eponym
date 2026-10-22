@@ -26,6 +26,7 @@
 
 import json
 import algorithm
+import sequtils
 import strutils
 import tables
 import os  # fileExists (issue #134: shed sidecar)
@@ -215,6 +216,8 @@ proc applicationSpine(term: Term): tuple[head: Term, args: seq[Term]] =
     result.head = result.head.fn
   result.args.reverse()
 
+proc freshen(base: string, used: seq[string]): string
+
 proc nimTypeExpr(term: Term, ctx: seq[HoleContextBinder],
                  ms: MetaStore, rendered: var string): bool =
   ## Render the surface-compatible type-level fragment needed to replay
@@ -240,43 +243,131 @@ proc nimTypeExpr(term: Term, ctx: seq[HoleContextBinder],
     true
   of tApp:
     let spine = applicationSpine(term)
-    if spine.head == nil or spine.head.kind != tR or
-        spine.head.refId notin ms.refNames:
-      return false
-    var headName = ms.refNames[spine.head.refId]
-    var nParams = -1
-    var familyApplication = false
-    if spine.head.refId in ms.ctorTable.dataNames:
-      nParams = ms.ctorTable.dataParamCounts.getOrDefault(
-        spine.head.refId, -1)
-      familyApplication = true
-    elif spine.head.refId in ms.ctorTable.ctorData:
-      let family = ms.ctorTable.ctorData[spine.head.refId]
-      nParams = ms.ctorTable.dataParamCounts.getOrDefault(family, -1)
-    else:
-      return false
-    if nParams < 0 or spine.args.len < nParams: return false
     var argTexts: seq[string] = @[]
     for arg in spine.args:
       var argText = ""
       if not nimTypeExpr(zonk(ms, arg), ctx, ms, argText): return false
       argTexts.add(argText)
-    if familyApplication:
+    if spine.head == nil or spine.head.kind != tR or
+        spine.head.refId notin ms.refNames:
+      return false
+    var headName = ms.refNames[spine.head.refId]
+    if spine.head.refId in ms.ctorTable.dataNames:
       rendered = headName & "[" & argTexts.join(", ") & "]"
-    else:
+    elif spine.head.refId in ms.ctorTable.ctorData:
+      let family = ms.ctorTable.ctorData[spine.head.refId]
+      let nParams = ms.ctorTable.dataParamCounts.getOrDefault(family, -1)
+      if nParams < 0 or argTexts.len < nParams: return false
       var paramTexts: seq[string] = @[]
       var valueTexts: seq[string] = @[]
       if nParams > 0: paramTexts = argTexts[0 ..< nParams]
-      if argTexts.len > nParams:
-        valueTexts = argTexts[nParams .. ^1]
-      if nParams > 0:
-        headName &= "[" & paramTexts.join(", ") & "]"
-      if valueTexts.len > 0:
-        headName &= "(" & valueTexts.join(", ") & ")"
+      if argTexts.len > nParams: valueTexts = argTexts[nParams .. ^1]
+      if nParams > 0: headName &= "[" & paramTexts.join(", ") & "]"
+      if valueTexts.len > 0: headName &= "(" & valueTexts.join(", ") & ")"
       rendered = headName
+    else:
+      # Ordinary type constructors and type-level functions use Nim's
+      # parenthesized call syntax; datatype families above use brackets.
+      rendered = headName & "(" & argTexts.join(", ") & ")"
+    true
+  of tPi:
+    var dom = ""
+    if not nimTypeExpr(zonk(ms, term.dom), ctx, ms, dom): return false
+    let binderName = if term.scope.adv == "" or term.scope.adv == "_":
+        freshen("x", ctx.mapIt(it.name))
+      else: term.scope.adv
+    var bodyCtx = @[HoleContextBinder(name: binderName, ty: term.dom,
+                                      qty: qOmega)]
+    bodyCtx.add(ctx)
+    var body = ""
+    if not nimTypeExpr(zonk(ms, term.scope.bdy), bodyCtx, ms, body):
+      return false
+    rendered = "Pi(" & binderName & ", " & dom & ", " & body & ")"
+    true
+  of tSi:
+    var dom = ""
+    if not nimTypeExpr(zonk(ms, term.dom), ctx, ms, dom): return false
+    let binderName = if term.scope.adv == "" or term.scope.adv == "_":
+        freshen("x", ctx.mapIt(it.name))
+      else: term.scope.adv
+    var bodyCtx = @[HoleContextBinder(name: binderName, ty: term.dom,
+                                      qty: qOmega)]
+    bodyCtx.add(ctx)
+    var body = ""
+    if not nimTypeExpr(zonk(ms, term.scope.bdy), bodyCtx, ms, body):
+      return false
+    rendered = "Sig(" & binderName & ", " & dom & ", " & body & ")"
     true
   else:
     false
+
+proc replaceCtxVar(term: Term, target, replacement: int,
+                   depth = 0): Term =
+  ## Rename one free de Bruijn variable without changing the surrounding
+  ## context. `target` and `replacement` are indices in the current context.
+  if term == nil: return nil
+  case term.kind
+  of tV:
+    if term.idx == target + depth: vv(replacement + depth) else: term
+  of tR, tC, tType, tInt, tPrim, tNatLit, tNatSing:
+    term
+  of tPi, tSi, tLam:
+    let dom = replaceCtxVar(term.dom, target, replacement, depth)
+    let bdy = replaceCtxVar(term.scope.bdy, target, replacement, depth + 1)
+    case term.kind
+    of tPi: tmPi(dom, term.scope.adv, bdy, term.impl, term.erased,
+                 term.qty, term.peg)
+    of tSi: tmSi(dom, term.scope.adv, bdy, term.impl, term.erased, term.qty)
+    of tLam: tmLam(dom, term.scope.adv, bdy, term.impl, term.erased,
+                   term.qty, term.peg)
+    else: term
+  of tPair:
+    tmPair(replaceCtxVar(term.pFst, target, replacement, depth),
+      replaceCtxVar(term.pSnd, target, replacement, depth), term.pScope.adv,
+      replaceCtxVar(term.pScope.bdy, target, replacement, depth + 1))
+  of tApp:
+    tmApp(replaceCtxVar(term.fn, target, replacement, depth),
+          replaceCtxVar(term.arg, target, replacement, depth))
+  of tFst: tmFst(replaceCtxVar(term.sub, target, replacement, depth))
+  of tSnd: tmSnd(replaceCtxVar(term.sub, target, replacement, depth))
+  of tAbsurd: tmAbsurd(replaceCtxVar(term.sub, target, replacement, depth))
+  of tLet:
+    tmLet(replaceCtxVar(term.letVal, target, replacement, depth),
+      replaceCtxVar(term.letTy, target, replacement, depth),
+      term.letScope.adv,
+      replaceCtxVar(term.letScope.bdy, target, replacement, depth + 1))
+  of tMeta:
+    var spine: seq[Term] = @[]
+    for arg in term.metaSpine:
+      spine.add(replaceCtxVar(arg, target, replacement, depth))
+    tmMeta(term.metaId, spine)
+
+proc ctxRefs(term: Term, refs: var seq[int], depth = 0) =
+  ## Collect free de Bruijn indices relative to the context at the root.
+  if term == nil: return
+  case term.kind
+  of tV:
+    if term.idx >= depth:
+      let i = term.idx - depth
+      if i notin refs: refs.add(i)
+  of tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: discard
+  of tPi, tSi, tLam:
+    ctxRefs(term.dom, refs, depth)
+    ctxRefs(term.scope.bdy, refs, depth + 1)
+  of tPair:
+    ctxRefs(term.pFst, refs, depth)
+    ctxRefs(term.pSnd, refs, depth)
+    ctxRefs(term.pScope.bdy, refs, depth + 1)
+  of tApp:
+    ctxRefs(term.fn, refs, depth)
+    ctxRefs(term.arg, refs, depth)
+  of tFst, tSnd, tAbsurd: ctxRefs(term.sub, refs, depth)
+  of tLet:
+    ctxRefs(term.letVal, refs, depth)
+    ctxRefs(term.letTy, refs, depth)
+    ctxRefs(term.letScope.bdy, refs, depth + 1)
+  of tMeta:
+    for arg in term.metaSpine: ctxRefs(arg, refs, depth)
 
 proc freshen(base: string, used: seq[string]): string =
   result = base
@@ -873,9 +964,9 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
   if varTy.isNil:
     return (false, "'" & variable & "' is not in scope at the hole",
             "", 0, 0, @[])
-  # Resolve the datatype head and recover its parameter application. We can
-  # replay parameters in the eliminator, but indexed families need a motive
-  # generalized over their index telescope and remain unsupported here.
+  # Resolve the datatype head and recover its parameter and index
+  # applications. The eliminator motive quantifies over every index, then
+  # over a value at those generalized indices.
   let ty = zonk(ms, varTy)
   let spine = applicationSpine(ty)
   if spine.head == nil or spine.head.kind != tR:
@@ -888,19 +979,22 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
   let dataName = ms.ctorTable.dataNames[dataRef]
   let paramCount = ms.ctorTable.dataParamCounts.getOrDefault(dataRef, 0)
   let indexCount = ms.ctorTable.dataIndexCounts.getOrDefault(dataRef, 0)
-  if indexCount != 0:
-    return (false, "case-split on indexed datatype '" & dataName &
-            "' is not yet supported", "", 0, 0, @[])
-  if spine.args.len != paramCount:
-    return (false, "cannot recover the parameter application for datatype '" &
+  if spine.args.len != paramCount + indexCount:
+    return (false, "cannot recover the parameter and index application for " &
+            "datatype '" & dataName & "'", "", 0, 0, @[])
+  let rawIndexDomains = ms.ctorTable.dataIndexDomains.getOrDefault(dataRef)
+  if rawIndexDomains.len != indexCount:
+    return (false, "cannot recover the index telescope for datatype '" &
             dataName & "'", "", 0, 0, @[])
   var paramEp: seq[string] = @[]
   var paramNim: seq[string] = @[]
   var holeCtx: Ctx = @[]
   for b in h.holeCtx:
     holeCtx.add(CtxEntry(name: b.name, ty: b.ty, qty: b.qty))
-  for arg in spine.args:
-    let normalized = zonk(ms, arg)
+  var paramTerms: seq[Term] = @[]
+  for i in 0 ..< paramCount:
+    let normalized = zonk(ms, spine.args[i])
+    paramTerms.add(normalized)
     paramEp.add(prettyTerm(normalized, holeCtx, ms.refNames,
                            ms.recordFields))
     var argNim = ""
@@ -908,10 +1002,58 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
       return (false, "cannot render a parameter of datatype '" & dataName &
               "' in Nim shed syntax", "", 0, 0, @[])
     paramNim.add(argNim)
+  var usedIndexNames: seq[string] = @[]
+  for b in h.holeCtx: usedIndexNames.add(b.name)
+  usedIndexNames.add("u")
+  var indexNames: seq[string] = @[]
+  var indexDomains: seq[Term] = @[]
+  var indexDomainEp: seq[string] = @[]
+  var indexDomainNim: seq[string] = @[]
+  var indexEp: seq[string] = @[]
+  var indexNim: seq[string] = @[]
+  var indexCtx: seq[HoleContextBinder] = @[]
+  for j in 0 ..< indexCount:
+    let iname = freshen("i" & $j, usedIndexNames)
+    usedIndexNames.add(iname)
+    indexNames.add(iname)
+    var domain = rawIndexDomains[j]
+    # The stored family telescope is scoped over earlier indices and
+    # parameters. Substitute parameters from innermost to outermost.
+    for p in countdown(paramTerms.high, 0):
+      var actualParam = paramTerms[p]
+      for _ in 0 ..< j: actualParam = weaken(actualParam)
+      domain = subst(domain, j, actualParam)
+    domain = zonk(ms, domain)
+    indexDomains.add(domain)
+    var domainCtx = indexCtx
+    domainCtx.add(h.holeCtx)
+    var domainCoreCtx: Ctx = @[]
+    for b in domainCtx:
+      domainCoreCtx.add(CtxEntry(name: b.name, ty: b.ty, qty: b.qty))
+    indexDomainEp.add(prettyTerm(domain, domainCoreCtx, ms.refNames,
+                                 ms.recordFields))
+    var domainNim = ""
+    if not nimTypeExpr(domain, domainCtx, ms, domainNim):
+      return (false, "cannot render an index type of datatype '" & dataName &
+              "' in Nim shed syntax", "", 0, 0, @[])
+    indexDomainNim.add(domainNim)
+    let actual = zonk(ms, spine.args[paramCount + j])
+    var actualNim = ""
+    if not nimTypeExpr(actual, h.holeCtx, ms, actualNim):
+      return (false, "cannot render an index of datatype '" & dataName &
+              "' in Nim shed syntax", "", 0, 0, @[])
+    indexNim.add(actualNim)
+    indexEp.add(prettyTerm(actual, holeCtx, ms.refNames, ms.recordFields))
+    indexCtx.insert(HoleContextBinder(name: iname, ty: domain, qty: qOmega), 0)
   var familyEp = dataName
-  if paramEp.len > 0: familyEp &= " " & paramEp.join(" ")
+  var familyEpArgs = paramEp
+  familyEpArgs.add(indexNames)
+  if familyEpArgs.len > 0: familyEp &= " " & familyEpArgs.join(" ")
   var familyNim = dataName
-  if paramNim.len > 0: familyNim &= "[" & paramNim.join(", ") & "]"
+  var familyNimArgs = paramNim
+  familyNimArgs.add(indexNames)
+  if familyNimArgs.len > 0:
+    familyNim &= "[" & familyNimArgs.join(", ") & "]"
   let elimName = elimNameFor(dataName)
   # Constructor names for the sub-sheds.
   var ctorNames: seq[string] = @[]
@@ -939,14 +1081,63 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
   if goalStr == "":
     return (false, "shed '" & shedName & "': no goal recorded",
             "", 0, 0, @[])
-  let motiveEp = "(lam (u : " & familyEp & "). " & goalStr & ")"
-  let motiveNim = "lam(u, " & familyNim & ", " & goalStr & ")"
+  # Generalize direct index variables in the target along with the family.
+  # A compound index expression is fine when the target is independent of its
+  # free variables. If the target depends on one, reject instead of guessing
+  # an inverse substitution.
+  var generalizedGoal = zonk(ms, h.holeGoal)
+  var goalContextRefs: seq[int] = @[]
+  ctxRefs(generalizedGoal, goalContextRefs)
+  var generalizedContextRefs: seq[int] = @[]
+  let motiveBinders = indexCount + 1 # all indices, then the value binder
+  for _ in 0 ..< motiveBinders: generalizedGoal = weaken(generalizedGoal)
+  for j in 0 ..< indexCount:
+    let actual = zonk(ms, spine.args[paramCount + j])
+    var indexRefs: seq[int] = @[]
+    ctxRefs(actual, indexRefs)
+    if actual.kind == tV:
+      if actual.idx notin generalizedContextRefs:
+        generalizedGoal = replaceCtxVar(generalizedGoal,
+          actual.idx + motiveBinders, indexCount - j)
+        generalizedContextRefs.add(actual.idx)
+    else:
+      for refIdx in indexRefs:
+        if refIdx in goalContextRefs and refIdx notin generalizedContextRefs:
+          return (false, "cannot safely generalize the target over compound " &
+                  "indices of datatype '" & dataName & "'", "", 0, 0, @[])
+  var goalTextCtx: Ctx = @[]
+  var goalNimCtx: seq[HoleContextBinder] = @[]
+  goalTextCtx.add(CtxEntry(name: "u", ty: nil, qty: qOmega))
+  goalNimCtx.add(HoleContextBinder(name: "u", ty: nil, qty: qOmega))
+  for j in countdown(indexCount - 1, 0):
+    goalTextCtx.add(CtxEntry(name: indexNames[j], ty: indexDomains[j],
+                             qty: qOmega))
+    goalNimCtx.add(HoleContextBinder(name: indexNames[j],
+      ty: indexDomains[j], qty: qOmega))
+  goalTextCtx.add(holeCtx)
+  goalNimCtx.add(h.holeCtx)
+  let motiveGoalEp = if indexCount == 0: goalStr else:
+    prettyTerm(generalizedGoal, goalTextCtx, ms.refNames, ms.recordFields)
+  var motiveGoalNim = goalStr
+  if indexCount > 0 and
+      not nimTypeExpr(generalizedGoal, goalNimCtx, ms, motiveGoalNim):
+    return (false, "cannot render the generalized target of datatype '" &
+            dataName & "' in Nim shed syntax", "", 0, 0, @[])
+  var motiveEp = "(lam (u : " & familyEp & "). " & motiveGoalEp & ")"
+  var motiveNim = "lam(u, " & familyNim & ", " & motiveGoalNim & ")"
+  for j in countdown(indexCount - 1, 0):
+    motiveEp = "(lam (" & indexNames[j] & " : " & indexDomainEp[j] &
+               "). " & motiveEp & ")"
+    motiveNim = "lam(" & indexNames[j] & ", " & indexDomainNim[j] &
+                ", " & motiveNim & ")"
   var epArgs: seq[string] = paramEp
   epArgs.add(motiveEp)
   var nimArgs: seq[string] = @[motiveNim]
   for ss in subSheds:
     epArgs.add("?")
     nimArgs.add("![" & ss & "]")
+  epArgs.add(indexEp)
+  nimArgs.add(indexNim)
   epArgs.add(variable)
   nimArgs.add(variable)
   let epTerm = elimName & " " & epArgs.join(" ")

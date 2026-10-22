@@ -201,7 +201,8 @@ check(compiled.ok, "case-split fixture compiles with an initial shed")
 
 let cases = caseSplitShed(caseFile, "isZeroBody", "n")
 check(cases.ok and cases.subSheds.len == 2,
-  "case-split returns one named shed per Nat constructor")
+  "case-split returns one named shed per Nat constructor: " &
+    (if cases.ok: cases.term else: cases.why))
 if cases.ok:
   let caseV1 = spliceShed(caseV0, cases.nimLine, cases.nimCol, cases.term)
   writeFile(caseFile, caseV1)
@@ -302,8 +303,8 @@ if genericListCases.ok:
   if not compiled.ok: echo compiled.output
   check(compiled.ok, "generic parameterized case-split splice recompiles")
 
-# Indexed families need an index-generalized motive; keep that unsupported
-# shape explicit and diagnostic until the server can construct one safely.
+# Indexed families need an index-generalized motive. Verify both a constant
+# target and a target which depends directly on the index variable.
 let vecFile = scratch / "indexed_case_split.nim"
 let vecImport = (RepoRoot / "lib" / "vec.ep").replace("\\", "/")
 let vecV0 = "import sheds_mac\n\nshedsBlock:\n" &
@@ -314,8 +315,96 @@ compiled = compileFixture(vecFile, scratch)
 if not compiled.ok: echo compiled.output
 check(compiled.ok, "indexed Vec fixture compiles with an initial shed")
 let vecCases = caseSplitShed(vecFile, "vecBody", "xs")
-check(not vecCases.ok and "indexed datatype 'Vec'" in vecCases.why,
-  "indexed case-split stays rejected with a targeted explanation")
+check(vecCases.ok and vecCases.term.startsWith(
+        "vecElim[Nat](lam(i0, Nat, lam(u, Vec[Nat, i0], Nat)),"),
+  "indexed case-split generalizes the Vec index in its motive: " &
+    (if vecCases.ok: vecCases.term else: vecCases.why))
+if vecCases.ok:
+  let vecV1 = spliceShed(vecV0, vecCases.nimLine, vecCases.nimCol,
+                         vecCases.term)
+  writeFile(vecFile, vecV1)
+  compiled = compileFixture(vecFile, scratch)
+  if not compiled.ok: echo compiled.output
+  check(compiled.ok, "indexed case-split splice recompiles with typed branches")
+  let vecSheds = readShedSidecar(sidecarPath(vecFile))
+  check(vecSheds.len == 2 and
+        vecSheds.allIt(it.status == ssYellow and it.goal.len > 0),
+    "indexed case children retain open goals after recompilation")
+
+let dependentVecFile = scratch / "dependent_index_case_split.nim"
+let dependentVecV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & vecImport & "\"\n" &
+  "  proc identityVector(n: Nat, xs: Vec[Nat, n]): Vec[Nat, n] = " &
+  "![identityVectorBody]\n"
+writeFile(dependentVecFile, dependentVecV0)
+compiled = compileFixture(dependentVecFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "dependent indexed Vec fixture compiles with a shed")
+let dependentVecCases = caseSplitShed(
+  dependentVecFile, "identityVectorBody", "xs")
+check(dependentVecCases.ok and "Vec[Nat, i0]" in dependentVecCases.term,
+  "case-split substitutes the generalized index into a dependent target: " &
+    (if dependentVecCases.ok: dependentVecCases.term else: dependentVecCases.why))
+if dependentVecCases.ok:
+  let dependentVecV1 = spliceShed(dependentVecV0,
+    dependentVecCases.nimLine, dependentVecCases.nimCol,
+    dependentVecCases.term)
+  writeFile(dependentVecFile, dependentVecV1)
+  compiled = compileFixture(dependentVecFile, scratch)
+  if not compiled.ok: echo compiled.output
+  check(compiled.ok,
+    "dependent indexed case-split source recompiles with generalized goals")
+
+# The index domain may depend on a datatype parameter. Recovering the domain
+# from the registered telescope must substitute the actual local type binder.
+let taggedEp = scratch / "tagged.ep"
+let natEpImport = (RepoRoot / "lib" / "nat.ep").replace("\\", "/")
+writeFile(taggedEp, "import \"" & natEpImport & "\"\n" & """data Tagged (A : Type 0) : Nat -> A -> Type 0 where
+| tag (n : Nat) (x : A) : Tagged A n x
+""")
+let taggedFile = scratch / "parameter_index_case_split.nim"
+let taggedEpImport = taggedEp.replace("\\", "/")
+let taggedV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & taggedEpImport & "\"\n" &
+  "  proc inspectTagged[A: Univ](n: Nat, a: A, " &
+  "value: Tagged[A, n, a]): A = " &
+  "![taggedBody]\n"
+writeFile(taggedFile, taggedV0)
+compiled = compileFixture(taggedFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "parameter-dependent index fixture compiles with a shed")
+let taggedCases = caseSplitShed(taggedFile, "taggedBody", "value")
+check(taggedCases.ok and "lam(i0, Nat, lam(i1, A," in taggedCases.term and
+      "Tagged[A, i0, i1]" in taggedCases.term and
+      ", n, a, value)" in taggedCases.term,
+  "case-split handles multiple indices and a parameter-dependent index domain: " &
+    (if taggedCases.ok: taggedCases.term else: taggedCases.why))
+if taggedCases.ok:
+  let taggedV1 = spliceShed(taggedV0, taggedCases.nimLine,
+                            taggedCases.nimCol, taggedCases.term)
+  writeFile(taggedFile, taggedV1)
+  compiled = compileFixture(taggedFile, scratch)
+  if not compiled.ok: echo compiled.output
+  check(compiled.ok,
+    "parameter-dependent indexed case-split splice recompiles")
+
+# A target depending on a compound index expression cannot be inverted
+# safely by textual case-split construction. Preserve the explicit failure.
+let compoundVecFile = scratch / "compound_index_case_split.nim"
+let compoundVecV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & vecImport & "\"\n" &
+  "  proc identitySuccessor(n: Nat, xs: Vec[Nat, suc(n)]): " &
+  "Vec[Nat, suc(n)] = ![compoundIndexBody]\n"
+writeFile(compoundVecFile, compoundVecV0)
+compiled = compileFixture(compoundVecFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "compound indexed Vec fixture compiles with a shed")
+let compoundVecCases = caseSplitShed(
+  compoundVecFile, "compoundIndexBody", "xs")
+check(not compoundVecCases.ok and
+      "cannot safely generalize the target over compound indices" in
+        compoundVecCases.why,
+  "dependent compound index targets fail with a precise diagnostic")
 
 removeDir(scratch)
 echo "--- shed refine round-trip contract passed ---"
