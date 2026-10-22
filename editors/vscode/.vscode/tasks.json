@@ -2,6 +2,16 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Build Eponym Sheds extension",
+      "type": "npm",
+      "script": "build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$tsc"]
+    },
+    {
       "label": "Build and package Eponym Sheds VSIX",
       "type": "shell",
       "command": "npm run build && npx @vscode/vsce package",
