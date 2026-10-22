@@ -154,6 +154,94 @@ except ElabError as e:
 expect(triDuplicateRejected,
   "three-case q1 analysis rejects a duplicate on one branch")
 
+var recursiveDrv = initModuleDriver()
+let recursiveDefs = recursiveDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+data Chain : Type 0 where
+| chainEnd (item : Int) : Chain
+| chainNext (item : Int) (tail : Chain) : Chain
+proc linearAtChainEnd (xs : Chain) (1 value : Int) : Int =
+  chainElim (lam (u : Chain). Int)
+    (lam (item : Int). value)
+    (lam (item : Int). lam (tail : Chain).
+      lam (ih : Int). ih)
+    xs
+"""), repoRoot, "<recursive-q1-branch>")
+var linearAtEndDef: ElabDef
+for defn in recursiveDefs:
+  if defn.name == "linearAtChainEnd": linearAtEndDef = defn
+expect(not linearAtEndDef.tmTm.isNil,
+  "q1 usage accepts one use at the base of every recursive chain")
+discard eraseQ0Arguments(linearAtEndDef.tmTm)
+
+var recursiveDuplicateRejected = false
+var badRecursiveDrv = initModuleDriver()
+try:
+  discard badRecursiveDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+postulate duplicateInt : Int -> Int -> Int
+data Chain : Type 0 where
+| chainEnd (item : Int) : Chain
+| chainNext (item : Int) (tail : Chain) : Chain
+proc duplicateAlongChain (xs : Chain) (1 value : Int) : Int =
+  chainElim (lam (u : Chain). Int)
+    (lam (item : Int). value)
+    (lam (item : Int). lam (tail : Chain).
+      lam (ih : Int). duplicateInt value ih)
+    xs
+"""), repoRoot, "<recursive-q1-duplicate>")
+except ElabError as e:
+  recursiveDuplicateRejected =
+    "linear variable 'value' used 1 or 2+ time(s)" in e.msg
+expect(recursiveDuplicateRejected,
+  "recursive q1 analysis rejects use at both the base and recursive case")
+
+var closureMotiveRejected = false
+var closureMotiveDrv = initModuleDriver()
+try:
+  discard closureMotiveDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+data Chain : Type 0 where
+| chainEnd (item : Int) : Chain
+| chainNext (item : Int) (tail : Chain) : Chain
+proc capturesLinearValue(xs : Chain) (1 value : Int) : Pi(unit : 1). Int =
+  chainElim (lam (u : Chain). Pi(unit : 1). Int)
+    (lam (item : Int). lam (unit : 1). value)
+    (lam (item : Int). lam (tail : Chain).
+      lam (ih : Pi(unit : 1). Int). ih)
+    xs
+    <>
+"""), repoRoot, "<recursive-q1-closure-motive>")
+except ElabError as e:
+  closureMotiveRejected =
+    "linear variable 'value' used 0 or 1 or 2+ time(s)" in e.msg
+expect(closureMotiveRejected,
+  "recursive path analysis stays conservative for closure-valued motives")
+
+var multiRecursiveRejected = false
+var binaryTreeDrv = initModuleDriver()
+try:
+  discard binaryTreeDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+postulate duplicateInt : Int -> Int -> Int
+data Tree : Type 0 where
+| leaf (item : Int) : Tree
+| fork (left : Tree) (right : Tree) : Tree
+proc linearAtLeaf (tree : Tree) (1 value : Int) : Int =
+  treeElim (lam (u : Tree). Int)
+    (lam (item : Int). value)
+    (lam (left : Tree).
+      lam (ihLeft : Int).
+        lam (right : Tree).
+          lam (ihRight : Int). duplicateInt value ihLeft)
+    tree
+"""), repoRoot, "<binary-tree-q1-duplicate>")
+except ElabError as e:
+  multiRecursiveRejected =
+    "linear variable 'value' used 1 or 2+ time(s)" in e.msg
+expect(multiRecursiveRejected,
+  "recursive q1 analysis accounts for each recursive child")
+
 # Constructor identities in an eliminator's cached rule table do not appear as
 # ordinary tR nodes. Make the first fresh inference parameter collide with one
 # of those identities: without reserving rule keys, evaluating this dependent

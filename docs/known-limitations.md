@@ -333,14 +333,14 @@ They do not inspect aliases or ownership in surrounding Nim code. For
 example, Eponym can check that a modeled channel is consumed once, but it
 cannot tell whether two Nim references alias the same socket.
 
-Conditional usage is path-sensitive for Nim `if` expressions and complete
-data eliminators with non-recursive constructor payloads. A linear value
-used once in each case satisfies `{.linear.}`, while a case that drops or
-duplicates it is rejected. The analysis recognizes generated case
-rules only when each applies its branch method to exactly the constructor
-fields; unsupported eliminator shapes still use conservative syntactic
-counting and can reject valid branch-dependent usage. In particular,
-recursive eliminators are not path-sensitive yet. Unannotated
+Conditional usage is path-sensitive for Nim `if` expressions and generated
+data eliminators. For unindexed, first-order recursive data with a ground
+result motive, usage profiles cover all finite recursive shapes. Each
+generated case rule is checked against its constructor fields and recursive
+calls before the analysis treats its cases as alternatives. Indexed recursive
+families, higher-order recursive fields, closure-valued result motives, and
+user-written eliminators still use conservative counting and can reject valid
+branch-dependent usage. Unannotated
 binders still do not infer quantity 1; quantity variance for q1 function
 types remains undecided.
 

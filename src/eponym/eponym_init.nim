@@ -79,7 +79,8 @@ type
     nargs*: int
     cases*: Table[int, Term]
     caseArities*: Table[int, int]
-    caseRecursive*: Table[int, bool]
+    caseRecursiveFields*: Table[int, seq[int]]
+    caseRecursiveSupported*: Table[int, bool]
     completeCases*: Table[int, bool]
     nParams*: int  # leading scrutinee spine args that are (already-bound)
                   # params, not fresh ctor vars (Experiment 5: data)
@@ -94,6 +95,7 @@ type
       refTyp*: Value
       refIsDefn*: bool
       refVal*: Value
+      qttGroundType*: bool
     of tV:
       idx*: int
     of tPi, tSi, tLam:
@@ -187,6 +189,11 @@ type
 
 proc mkR(id: int, typ: Value, isDefn: bool, dval: Value): Term =
   Term(kind: tR, refId: id, refTyp: typ, refIsDefn: isDefn, refVal: dval)
+
+proc markQttGroundType*(t: Term) =
+  ## Mark an Eponym type whose values cannot contain Eponym closures.
+  ## Recursive usage summaries may only return this first-order subset.
+  if t.kind == tR: t.qttGroundType = true
 
 proc vv*(i: int): Term = Term(kind: tV, idx: i)
 
@@ -464,7 +471,8 @@ proc newRedRef*(s: var Supply, typ: Value, nargs: int): Term =
     whnf: Whnf(kind: wRed, elimId: id,
                rule: RedRule(nargs: nargs, cases: initTable[int, Term](),
                  caseArities: initTable[int, int](),
-                 caseRecursive: initTable[int, bool](),
+                 caseRecursiveFields: initTable[int, seq[int]](),
+                 caseRecursiveSupported: initTable[int, bool](),
                  completeCases: initTable[int, bool]()),
                args: newSeq[Value]()))
   r
@@ -487,8 +495,7 @@ proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term, nParams = 0,
   elif w.rule.nParams != nParams:
     raise newException(ValueError, "inconsistent param count in reduction rules")
 
-proc markRedCasesComplete*(elim: Term, ctorIds: openArray[int],
-                           recursiveCtorIds: openArray[int] = []) =
+proc markRedCasesComplete*(elim: Term, ctorIds: openArray[int]) =
   ## Mark an eliminator generated from a complete `data` declaration after
   ## its rules have been registered. Incomplete user-written eliminators are
   ## never treated as exhaustive alternatives by QTT usage analysis.
@@ -501,7 +508,8 @@ proc markRedCasesComplete*(elim: Term, ctorIds: openArray[int],
     if id notin w.rule.cases or w.rule.caseArities.getOrDefault(id, -1) < 0:
       raise newException(ValueError, "data eliminator has an unknown constructor case")
     w.rule.completeCases[id] = true
-    w.rule.caseRecursive[id] = id in recursiveCtorIds
+    w.rule.caseRecursiveFields[id] = @[]
+    w.rule.caseRecursiveSupported[id] = true
 
 proc redRuleCaseArities*(elim: Term): Table[int, int] =
   let w = elim.refVal.whnf
@@ -509,11 +517,28 @@ proc redRuleCaseArities*(elim: Term): Table[int, int] =
     raise newException(ValueError, "not an eliminator reference")
   w.rule.caseArities
 
-proc redRuleCaseIsRecursive*(elim: Term, ctorId: int): bool =
+proc setRedCaseRecursiveFields*(elim: Term, ctorId: int,
+                                fieldPositions: openArray[int],
+                                supported: bool) =
   let w = elim.refVal.whnf
   if w.kind != wRed:
     raise newException(ValueError, "not an eliminator reference")
-  w.rule.caseRecursive.getOrDefault(ctorId, true)
+  if ctorId notin w.rule.cases or ctorId notin w.rule.completeCases:
+    raise newException(ValueError, "unknown complete constructor case")
+  w.rule.caseRecursiveFields[ctorId] = @fieldPositions
+  w.rule.caseRecursiveSupported[ctorId] = supported
+
+proc redRuleCaseRecursiveFields*(elim: Term, ctorId: int): seq[int] =
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  w.rule.caseRecursiveFields.getOrDefault(ctorId, @[])
+
+proc redRuleCaseRecursiveSupported*(elim: Term, ctorId: int): bool =
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  w.rule.caseRecursiveSupported.getOrDefault(ctorId, false)
 
 proc redRuleIsComplete*(elim: Term): bool =
   let w = elim.refVal.whnf

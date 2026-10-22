@@ -12,8 +12,10 @@ proc countBranch(value: int): int =
 eponymBlock:
   import "../lib/bool.ep"
   import "../lib/option.ep"
+  import "../lib/list.ep"
   postulate(Int, Univ)
   runtimeOption(Option)
+  runtimeList(List)
   postulate(countBranchPostulate, Int -> Int)
   bindPostulate(countBranchPostulate, countBranch)
   proc chooseTrue(): Int =
@@ -33,6 +35,13 @@ eponymBlock:
       lam(unit, unitTy, countBranchPostulate(value)),
       lam(payload, Int, lam(unit, unitTy, countBranchPostulate(value))),
       optionValue))(unitv)
+  proc chooseChainLinear(values: List[Int], value {.linear.}: Int): Int =
+    listElim[Int, lam(u, List[Int], Int)](
+      countBranchPostulate(value),
+      lam(item, Int,
+        lam(tail, List[Int],
+          lam(ih, Int, ih))),
+      values)
   proc addOne(value: Int): Int = value + 1
 
 var rng = initRng(0x1F1F)
@@ -69,13 +78,29 @@ let payloadBranchCases = forAll(
     let optionValue = if input.present: some(input.payload) else: none(int)
     chooseOptionalLinear(optionValue, input.value) == input.value and
       branchCalls == 1)
+let strictNilCaseCases = forAll(
+  "strict nil-case result evaluates once for every generated List length", rng, 200,
+  proc(r: var Rng): int = r.genInt(0, 20),
+  proc(length: int): bool =
+    branchCalls = 0
+    let value = length + 17
+    let values = newSeq[int](length)
+    chooseChainLinear(values, value) == value and branchCalls == 1,
+  shrinkInt)
 branchCalls = 0
 let noneCaseWorks = chooseOptionalLinear(none(int), 17) == 17 and
   branchCalls == 1
 branchCalls = 0
 let someCaseWorks = chooseOptionalLinear(some(9), 23) == 23 and
   branchCalls == 1
+branchCalls = 0
+let emptyChainWorks = chooseChainLinear(newSeq[int](0), 31) == 31 and
+  branchCalls == 1
+branchCalls = 0
+let recursiveChainWorks = chooseChainLinear(@[2, 3, 5, 7], 37) == 37 and
+  branchCalls == 1
 if not cases or not intCases or not linearBranchCases or not payloadBranchCases or
-    not noneCaseWorks or not someCaseWorks:
+    not strictNilCaseCases or not noneCaseWorks or not someCaseWorks or
+    not emptyChainWorks or not recursiveChainWorks:
   quit(1)
 echo "test_embedded_if_effects: conditional and Int literal properties passed"
