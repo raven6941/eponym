@@ -18,8 +18,11 @@ Package with vsce (`npm i -g @vscode/vsce && vsce package`) and install the
 `.vsix` in VSCode. To run the current source in an Extension Development Host,
 open `editors/vscode` as the workspace and press **F5**. The launch profile
 builds the extension, opens the repository and `sheds_walkthrough.nim`, and
-starts the extension against that workspace. Nim must be available on `PATH`;
-the compiled LSP server defaults to `<workspace>/src/eponym/lsp`.
+starts the extension against that workspace. The server path defaults to the
+nearest Eponym repository root, so the extension subdirectory uses the
+repository's `src/eponym/lsp` binary. Nim must be available on `PATH` for
+sidecar generation. Outside an Eponym checkout, the server path defaults to
+`<workspace>/src/eponym/lsp`.
 
 ## Use
 
@@ -63,7 +66,8 @@ the repo root containing `src/eponym/lsp.nim`).
 ### Settings
 
 - `eponym.lspServerPath` — path to the compiled `lsp` server binary
-  (defaults to `<workspace>/src/eponym/lsp`; build it with
+  (defaults to the nearest Eponym repo root, or `<workspace>/src/eponym/lsp`
+  outside the checkout; build it from the repo root with
   `nim c --hints:off --path:src --path:src/eponym src/eponym/lsp.nim`).
 - `eponym.nimPath` — Nim binary used for automatic sidecar generation
   (defaults to `nim` on PATH).

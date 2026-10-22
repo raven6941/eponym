@@ -99,7 +99,7 @@
         "eponym.lspServerPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the compiled `lsp` server binary (src/eponym/lsp). Defaults to <workspace>/src/eponym/lsp."
+          "description": "Path to the compiled `lsp` server binary (src/eponym/lsp). Defaults to the nearest Eponym repository root, or <workspace>/src/eponym/lsp outside the repository."
         },
         "eponym.nimPath": {
           "type": "string",
