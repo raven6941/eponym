@@ -9,9 +9,9 @@
 ## Phase 1's compiled output; the Phase 3 vs Phase 2 delta is algorithmic
 ## — one allocation and O(n) writes vs O(n) allocations and O(n^2)
 ## copies — and was measured once during development, see #331). Benchmarks:
-`vmapDps` 2076.6x, `vappendDps` 18831.1x (n=50; Phase-1 side dominated by
-Value-level `natAdd` per cons step — the index the repr tier skips as
-type-level), `lmapDps` 1689.2x vs Phase 1.
+## `vmapDps` 2076.6x, `vappendDps` 18831.1x (n=50; Phase-1 side dominated by
+## Value-level `natAdd` per cons step — the index the repr tier skips as
+## type-level), `lmapDps` 1689.2x vs Phase 1.
 
 import std/[sequtils, times]
 import codegen_phase2_differential

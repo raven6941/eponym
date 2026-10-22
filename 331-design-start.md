@@ -120,7 +120,58 @@ allocating → O(n) single-allocation.
 - q1-gated in-place refinements: input-buffer reuse for map-like folds,
   move-semantics for the acc0 tail copy. Needs the wrapper-boundary
   copy/aliasing discipline first (Nim-side aliasing vs Eponym q1).
-- Conditional-cons folds (filter-like): result length unknown statically;
-  `newSeqOfCap(xs.len)` upper-bound destination — sound for any quantity.
+- ~~Conditional-cons folds (filter-like)~~ DONE this run (see Run 3 below).
 - `docs/known-limitations.md` sync per the standing rule (tier/coverage
-  facts changed: cons-rebuild folds now compile to DPS).
+  facts changed: cons-rebuild folds now compile to DPS) — DONE this run
+  (filter shape documented alongside the rebuild shape).
+
+## Run 3 (2026-10-22 ~04:00 UTC): conditional-cons (filter) DPS
+
+**Shape** (`dpsFilterShape`): cons-case body is
+`boolElim motive (cons A [n] xHead ih) ih cond` — true branch passes
+`dpsRebuildHead`, false branch is exactly the accumulator (`tV` 0), and
+`cond` mentions neither `ih` nor the materialized tail
+(`termUsesInnerBinder(cond, 2)` false; may mention head `x` and, for
+`vecElim`, index `i`). Anything else (false branch not `ih`, cond
+mentioning `tl`) keeps the allocating fold.
+
+**Emission** (`cgDpsFilterBlock`): destination capacity `xs.len +
+acc0.len`, write pointer `w`, left-to-right iteration (`0 ..< m` — the
+write pointer needs source order; the order difference vs the
+interpreter's inside-out fold is unobservable since the fragment is pure
+and total), per-iteration `if cond: dst[w] = head; inc w`, then the
+acc0 tail copied at offset `w`, `setLen(w + acc0.len)`. One allocation,
+O(n) writes. Sound for any `ih` quantity (destination fresh, acc0 only
+read) — not gated on linearity, like the rebuild.
+
+**Negative results worth recording.**
+- A `vecElim` filter (result `List`) cannot be differentially tested in
+  one Eponym block: the elaborator's flat constructor namespace rejects
+  the second `nil`/`cons` pair ("duplicate declaration 'nil'"), and the
+  repr tier (`cgReprCtor`), the host codecs (`validateHostVectorCodec`,
+  `seqToVecValue` et al.), and the test harness all resolve `nil`/`cons`
+  by global name. Generalizing the compiler to shape-based ctor
+  recognition was prototyped and then REVERTED: it would have dragged in
+  the interop codec surface for a test-layout reason. The vec filter
+  path (`iSym` in cond, 4-binder env mapping) is therefore covered by
+  code review only; the shared `cgDpsFilterBlock` is covered by the list
+  tests. If Eponym ever namespaces constructors, add a `vecElim`→`List`
+  filter differential test.
+- Also fixed while here: the vec phase-3 test's header comment had lost
+  its `##` prefixes in the d8256ce commit (the file never compiled after
+  that edit); restored.
+
+**Tests** (`tests/test_codegen_phase3_dps_list.nim`): `lfilterNonZero`
+(`List Nat`, cond `notb (isZero x)`) differential vs interpreter +
+Phase-1 twin on 7 cases incl. all-zero/empty; `lfilterReset` (false
+branch `nil Nat`, not `ih`) verifies the shape check rejects and the
+allocating fallback agrees on values (result = prefix before the last
+zero); `isZero`/`notb` get repr procs; benchmark block for the filter
+(Phase 3 vs Phase 1 per #19).
+
+**Measured** (this run, same machine as the Run 2 numbers):
+`lfilterNonZero` 20k iters n=50, no zeros (all kept, write path):
+phase-1 187.850s vs phase-3 0.102s (**1848.4x**). The phase-1 side is
+dominated by per-step `Value` allocation + the `boolElim` strict
+evaluation; phase-3 is one allocation + O(n) writes with the condition
+inlined per iteration.
