@@ -3621,3 +3621,22 @@
   verified.
   Status: DECIDED (#373).
 
+* 2026-10-21 — Make backend selection observable (#370)
+
+  Context: Checked definitions may run through the Phase 2 representation
+  backend, the Phase 1 =Value= backend, or the interpreter fallback. Per-
+  definition fallback is intentional, but users otherwise have to inspect
+  generated Nim to learn which tier was emitted or why a definition fell
+  back. Cross-block and imported calls can also remain runtime slow paths.
+  Decision: expose an opt-in compile-time report via
+  =-d:eponymCodegenReport=.
+
+  Consequences: each block-local definition reports its highest emitted tier,
+  the reason the next tier was unavailable, and referenced definitions with
+  no compiled local target. This is an emission report; typed wrapper
+  selection can impose an additional representation boundary, and the report
+  does not promise that every call executes the emitted tier. Reasons are
+  diagnostics, not a stable machine-readable API. The default build remains
+  quiet. Regression tests pin representative Phase 1, Phase 2, and interpreter
+  selections. Status: IMPLEMENTED (#370).
+

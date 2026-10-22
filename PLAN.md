@@ -1038,6 +1038,10 @@ implementations.
   `Vec` clone differentially covers empty and singleton vectors, while a
   partially applied `natElim` is verified to remain on interpreter fallback
   (issue #378).
+- [x] Add an opt-in compile-time codegen report (`-d:eponymCodegenReport`)
+  that reports each block-local definition's highest emitted backend tier,
+  the reason higher-tier compilation stopped, and runtime slow-path calls
+  into definitions without a compiled local target (issue #370).
 
 ### Cross-stage validation and project claims
 

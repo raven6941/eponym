@@ -319,6 +319,13 @@ fragments keep the interpreter as a per-definition fallback. See the
 code remains the place to choose data structures and performance strategies
 the compiler does not yet exploit.
 
+To inspect backend selection during a Nim build, pass
+`-d:eponymCodegenReport`. The compile-time report names each block-local
+definition's highest emitted tier, why it did not reach a higher tier, and
+definition calls that still use a runtime slow path (including definitions
+from other blocks or imported `.ep` files). This reports code emitted for
+the definition; typed wrapper eligibility can impose an additional boundary.
+
 ## Some demos still have host-side parts
 
 The session and Paxos examples call checked roles through bound Nim adapters.
