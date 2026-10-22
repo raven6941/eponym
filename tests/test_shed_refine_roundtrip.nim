@@ -388,8 +388,8 @@ if taggedCases.ok:
   check(compiled.ok,
     "parameter-dependent indexed case-split splice recompiles")
 
-# A target depending on a compound index expression cannot be inverted
-# safely by textual case-split construction. Preserve the explicit failure.
+# Exact compound index occurrences can be abstracted safely; the resulting
+# motive is still validated by re-elaboration before a splice is returned.
 let compoundVecFile = scratch / "compound_index_case_split.nim"
 let compoundVecV0 = "import sheds_mac\n\nshedsBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
@@ -401,10 +401,37 @@ if not compiled.ok: echo compiled.output
 check(compiled.ok, "compound indexed Vec fixture compiles with a shed")
 let compoundVecCases = caseSplitShed(
   compoundVecFile, "compoundIndexBody", "xs")
-check(not compoundVecCases.ok and
-      "cannot safely generalize the target over compound indices" in
-        compoundVecCases.why,
-  "dependent compound index targets fail with a precise diagnostic")
+check(compoundVecCases.ok and
+      "Vec[Nat, i0]" in compoundVecCases.term and
+      compoundVecCases.term.endsWith(", suc(n), xs)"),
+  "case-split abstracts an exact compound index occurrence: " &
+    (if compoundVecCases.ok: compoundVecCases.term else: compoundVecCases.why))
+if compoundVecCases.ok:
+  let compoundVecV1 = spliceShed(compoundVecV0, compoundVecCases.nimLine,
+                                 compoundVecCases.nimCol, compoundVecCases.term)
+  writeFile(compoundVecFile, compoundVecV1)
+  compiled = compileFixture(compoundVecFile, scratch)
+  if not compiled.ok: echo compiled.output
+  check(compiled.ok, "compound indexed case-split source recompiles")
+
+# If the target depends on `n` independently of the actual index `suc(n)`, it
+# remains tied to the outer context instead of being accidentally rewritten.
+let unrelatedIndexFile = scratch / "unrelated_compound_index_case_split.nim"
+let unrelatedIndexV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & vecImport & "\"\n" &
+  "  proc preserveContext(n: Nat, xs: Vec[Nat, suc(n)]): " &
+  "Vec[Nat, n] = ![unrelatedIndexBody]\n"
+writeFile(unrelatedIndexFile, unrelatedIndexV0)
+compiled = compileFixture(unrelatedIndexFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "independent compound-index target fixture compiles")
+let unrelatedIndexCases = caseSplitShed(
+  unrelatedIndexFile, "unrelatedIndexBody", "xs")
+check(unrelatedIndexCases.ok and "Vec[Nat, n]" in unrelatedIndexCases.term and
+      "Vec[Nat, i0]" in unrelatedIndexCases.term,
+  "case-split preserves unrelated context dependencies in the motive: " &
+    (if unrelatedIndexCases.ok: unrelatedIndexCases.term
+     else: unrelatedIndexCases.why))
 
 removeDir(scratch)
 echo "--- shed refine round-trip contract passed ---"

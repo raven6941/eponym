@@ -913,8 +913,8 @@ implementations.
   index-generalized eliminator motive for indexed datatype families. Round-trip
   tests cover `List[Nat]`, generic `List[A]`, index-independent and
   index-dependent `Vec` goals, and a family whose index domain depends on a
-  type parameter. Targets depending on compound index expressions are still
-  rejected when the server cannot safely generalize them.
+  type parameter. Exact occurrences of compound index expressions are
+  abstracted as a unit, with the generated eliminator validated by re-elaboration.
 - [x] Lower single and chained `if/elif/else` expressions through the checked
   `ifThenElse` definition in `lib/bool.ep`. Branches are unit thunks, so only
   the chosen branch runs, matching Nim conditional evaluation even when a

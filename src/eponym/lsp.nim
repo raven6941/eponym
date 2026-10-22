@@ -303,73 +303,117 @@ proc nimTypeExpr(term: Term, ctx: seq[HoleContextBinder],
   else:
     false
 
-proc replaceCtxVar(term: Term, target, replacement: int,
-                   depth = 0): Term =
-  ## Rename one free de Bruijn variable without changing the surrounding
-  ## context. `target` and `replacement` are indices in the current context.
-  if term == nil: return nil
-  case term.kind
-  of tV:
-    if term.idx == target + depth: vv(replacement + depth) else: term
-  of tR, tC, tType, tInt, tPrim, tNatLit, tNatSing:
-    term
+proc sameTerm(a, b: Term): bool =
+  ## Structural equality for occurrence abstraction. This intentionally does
+  ## not use definitional equality: the elaborator validates the final motive.
+  if a == nil or b == nil: return a == b
+  if a.kind != b.kind: return false
+  case a.kind
+  of tR: a.refId == b.refId
+  of tV: a.idx == b.idx
   of tPi, tSi, tLam:
-    let dom = replaceCtxVar(term.dom, target, replacement, depth)
-    let bdy = replaceCtxVar(term.scope.bdy, target, replacement, depth + 1)
-    case term.kind
-    of tPi: tmPi(dom, term.scope.adv, bdy, term.impl, term.erased,
-                 term.qty, term.peg)
-    of tSi: tmSi(dom, term.scope.adv, bdy, term.impl, term.erased, term.qty)
-    of tLam: tmLam(dom, term.scope.adv, bdy, term.impl, term.erased,
-                   term.qty, term.peg)
-    else: term
+    a.impl == b.impl and a.erased == b.erased and a.qty == b.qty and
+      sameTerm(a.dom, b.dom) and sameTerm(a.scope.bdy, b.scope.bdy)
   of tPair:
-    tmPair(replaceCtxVar(term.pFst, target, replacement, depth),
-      replaceCtxVar(term.pSnd, target, replacement, depth), term.pScope.adv,
-      replaceCtxVar(term.pScope.bdy, target, replacement, depth + 1))
-  of tApp:
-    tmApp(replaceCtxVar(term.fn, target, replacement, depth),
-          replaceCtxVar(term.arg, target, replacement, depth))
-  of tFst: tmFst(replaceCtxVar(term.sub, target, replacement, depth))
-  of tSnd: tmSnd(replaceCtxVar(term.sub, target, replacement, depth))
-  of tAbsurd: tmAbsurd(replaceCtxVar(term.sub, target, replacement, depth))
+    sameTerm(a.pFst, b.pFst) and sameTerm(a.pSnd, b.pSnd) and
+      sameTerm(a.pScope.bdy, b.pScope.bdy)
+  of tApp: sameTerm(a.fn, b.fn) and sameTerm(a.arg, b.arg)
+  of tFst, tSnd, tAbsurd: sameTerm(a.sub, b.sub)
+  of tC: a.c == b.c
   of tLet:
-    tmLet(replaceCtxVar(term.letVal, target, replacement, depth),
-      replaceCtxVar(term.letTy, target, replacement, depth),
-      term.letScope.adv,
-      replaceCtxVar(term.letScope.bdy, target, replacement, depth + 1))
+    sameTerm(a.letVal, b.letVal) and sameTerm(a.letTy, b.letTy) and
+      sameTerm(a.letScope.bdy, b.letScope.bdy)
+  of tMeta:
+    if a.metaId != b.metaId or a.metaSpine.len != b.metaSpine.len:
+      return false
+    for i in 0 ..< a.metaSpine.len:
+      if not sameTerm(a.metaSpine[i], b.metaSpine[i]): return false
+    true
+  of tInt: a.intVal == b.intVal
+  of tPrim: a.primOp == b.primOp and sameTerm(a.primTy, b.primTy)
+  of tNatLit: a.natLitVal == b.natLitVal
+  of tNatSing: a.natSingVal == b.natSingVal
+  of tType: a.lvl == b.lvl
+
+proc termSize(term: Term): int =
+  if term == nil: return 0
+  result = 1
+  case term.kind
+  of tPi, tSi, tLam:
+    result += termSize(term.dom) + termSize(term.scope.bdy)
+  of tPair:
+    result += termSize(term.pFst) + termSize(term.pSnd) +
+      termSize(term.pScope.bdy)
+  of tApp: result += termSize(term.fn) + termSize(term.arg)
+  of tFst, tSnd, tAbsurd: result += termSize(term.sub)
+  of tLet:
+    result += termSize(term.letVal) + termSize(term.letTy) +
+      termSize(term.letScope.bdy)
+  of tMeta:
+    for arg in term.metaSpine: result += termSize(arg)
+  of tPrim: result += termSize(term.primTy)
+  of tR, tV, tC, tInt, tNatLit, tNatSing, tType: discard
+
+proc replaceOccurrences(term, pattern: Term, replacement: int,
+                        depth = 0): tuple[term: Term, count: int] =
+  ## Replace exact occurrences of a root-context pattern by the motive index
+  ## variable, respecting binders in the target.
+  if term == nil: return (nil, 0)
+  var shiftedPattern = pattern
+  for _ in 0 ..< depth: shiftedPattern = weaken(shiftedPattern)
+  if sameTerm(term, shiftedPattern):
+    return (vv(replacement + depth), 1)
+  template recur(child: Term, childDepth: int): untyped =
+    replaceOccurrences(child, pattern, replacement, childDepth)
+  case term.kind
+  of tR, tV, tC, tInt, tNatLit, tNatSing, tType: (term, 0)
+  of tPrim:
+    let ty = recur(term.primTy, depth)
+    (tmPrim(term.primOp, ty.term), ty.count)
+  of tPi, tSi, tLam:
+    let dom = recur(term.dom, depth)
+    let bdy = recur(term.scope.bdy, depth + 1)
+    let rebuilt = case term.kind
+      of tPi: tmPi(dom.term, term.scope.adv, bdy.term, term.impl,
+                   term.erased, term.qty, term.peg)
+      of tSi: tmSi(dom.term, term.scope.adv, bdy.term, term.impl,
+                   term.erased, term.qty)
+      of tLam: tmLam(dom.term, term.scope.adv, bdy.term, term.impl,
+                     term.erased, term.qty, term.peg)
+      else: term
+    (rebuilt, dom.count + bdy.count)
+  of tPair:
+    let fst = recur(term.pFst, depth)
+    let snd = recur(term.pSnd, depth)
+    let bdy = recur(term.pScope.bdy, depth + 1)
+    (tmPair(fst.term, snd.term, term.pScope.adv, bdy.term),
+     fst.count + snd.count + bdy.count)
+  of tApp:
+    let fn = recur(term.fn, depth)
+    let arg = recur(term.arg, depth)
+    (tmApp(fn.term, arg.term), fn.count + arg.count)
+  of tFst, tSnd, tAbsurd:
+    let sub = recur(term.sub, depth)
+    let rebuilt = case term.kind
+      of tFst: tmFst(sub.term)
+      of tSnd: tmSnd(sub.term)
+      of tAbsurd: tmAbsurd(sub.term)
+      else: term
+    (rebuilt, sub.count)
+  of tLet:
+    let value = recur(term.letVal, depth)
+    let ty = recur(term.letTy, depth)
+    let bdy = recur(term.letScope.bdy, depth + 1)
+    (tmLet(value.term, ty.term, term.letScope.adv, bdy.term),
+     value.count + ty.count + bdy.count)
   of tMeta:
     var spine: seq[Term] = @[]
+    var count = 0
     for arg in term.metaSpine:
-      spine.add(replaceCtxVar(arg, target, replacement, depth))
-    tmMeta(term.metaId, spine)
-
-proc ctxRefs(term: Term, refs: var seq[int], depth = 0) =
-  ## Collect free de Bruijn indices relative to the context at the root.
-  if term == nil: return
-  case term.kind
-  of tV:
-    if term.idx >= depth:
-      let i = term.idx - depth
-      if i notin refs: refs.add(i)
-  of tR, tC, tType, tInt, tPrim, tNatLit, tNatSing: discard
-  of tPi, tSi, tLam:
-    ctxRefs(term.dom, refs, depth)
-    ctxRefs(term.scope.bdy, refs, depth + 1)
-  of tPair:
-    ctxRefs(term.pFst, refs, depth)
-    ctxRefs(term.pSnd, refs, depth)
-    ctxRefs(term.pScope.bdy, refs, depth + 1)
-  of tApp:
-    ctxRefs(term.fn, refs, depth)
-    ctxRefs(term.arg, refs, depth)
-  of tFst, tSnd, tAbsurd: ctxRefs(term.sub, refs, depth)
-  of tLet:
-    ctxRefs(term.letVal, refs, depth)
-    ctxRefs(term.letTy, refs, depth)
-    ctxRefs(term.letScope.bdy, refs, depth + 1)
-  of tMeta:
-    for arg in term.metaSpine: ctxRefs(arg, refs, depth)
+      let next = recur(arg, depth)
+      spine.add(next.term)
+      count += next.count
+    (tmMeta(term.metaId, spine), count)
 
 proc freshen(base: string, used: seq[string]): string =
   result = base
@@ -1083,30 +1127,24 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
   if goalStr == "":
     return (false, "shed '" & shedName & "': no goal recorded",
             "", 0, 0, @[])
-  # Generalize direct index variables in the target along with the family.
-  # A compound index expression is fine when the target is independent of its
-  # free variables. If the target depends on one, reject instead of guessing
-  # an inverse substitution.
+  # Abstract exact occurrences of the actual indices in the target. Process
+  # larger index expressions first so an index such as `suc n` is abstracted
+  # as a unit before a separate index `n` is considered. Eponym validates the
+  # completed motive against the original goal before returning the splice.
   var generalizedGoal = zonk(ms, h.holeGoal)
-  var goalContextRefs: seq[int] = @[]
-  ctxRefs(generalizedGoal, goalContextRefs)
-  var generalizedContextRefs: seq[int] = @[]
   let motiveBinders = indexCount + 1 # all indices, then the value binder
   for _ in 0 ..< motiveBinders: generalizedGoal = weaken(generalizedGoal)
+  var indexPatterns: seq[tuple[term: Term, index: int]] = @[]
   for j in 0 ..< indexCount:
-    let actual = zonk(ms, spine.args[paramCount + j])
-    var indexRefs: seq[int] = @[]
-    ctxRefs(actual, indexRefs)
-    if actual.kind == tV:
-      if actual.idx notin generalizedContextRefs:
-        generalizedGoal = replaceCtxVar(generalizedGoal,
-          actual.idx + motiveBinders, indexCount - j)
-        generalizedContextRefs.add(actual.idx)
-    else:
-      for refIdx in indexRefs:
-        if refIdx in goalContextRefs and refIdx notin generalizedContextRefs:
-          return (false, "cannot safely generalize the target over compound " &
-                  "indices of datatype '" & dataName & "'", "", 0, 0, @[])
+    var pattern = zonk(ms, spine.args[paramCount + j])
+    for _ in 0 ..< motiveBinders: pattern = weaken(pattern)
+    indexPatterns.add((pattern, j))
+  indexPatterns.sort(proc(a, b: tuple[term: Term, index: int]): int =
+    cmp(termSize(b.term), termSize(a.term)))
+  for (pattern, index) in indexPatterns:
+    let replaced = replaceOccurrences(generalizedGoal, pattern,
+                                      indexCount - index)
+    generalizedGoal = replaced.term
   var goalTextCtx: Ctx = @[]
   var goalNimCtx: seq[HoleContextBinder] = @[]
   goalTextCtx.add(CtxEntry(name: "u", ty: nil, qty: qOmega))

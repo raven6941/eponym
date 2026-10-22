@@ -98,9 +98,11 @@ Case-split supports parameterized and indexed datatypes, including
 `List[Nat]`, generic `List[A]`, and `Vec[Nat, n]`. It reuses the parameters,
 generalizes the motive over the family indices, and carries direct index
 variable dependencies into branch goals. A dependent target using a compound
-index expression may be rejected when the server cannot generalize it safely.
-If a type expression is outside the supported Nim shed syntax, the extension
-reports why it rejected the split.
+index expression is generalized when the target contains that exact
+expression; other uses of context variables remain intact. Eponym rechecks the
+generated eliminator before returning the splice. If a type expression is
+outside the supported Nim shed syntax, the extension reports why it rejected
+the split.
 
 ## After an action
 
