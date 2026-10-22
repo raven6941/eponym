@@ -1,6 +1,6 @@
 ## Differential and effect-count checks for the core QTT erasure pass (#328).
 
-import std/[tables, os]
+import std/[tables, os, strutils]
 import falsify
 import eponym_init
 import erasure
@@ -107,6 +107,52 @@ expect(not branchLinearDef.tmTm.isNil,
 discard eraseQ0Arguments(branchLinearDef.tmTm)
 expect(true,
   "q1 branch profiles are rechecked consistently by codegen erasure")
+
+var multiBranchDrv = initModuleDriver()
+let multiBranchDefs = multiBranchDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+data Tri : Type 0 where
+| first : Tri
+| second : Tri
+| third : Tri
+proc triLinear (tag : Tri) (1 value : Int) : Int =
+  triElim (lam (u : Tri). Pi(unit : 1). Int)
+          (lam (unit : 1). value)
+          (lam (unit : 1). value)
+          (lam (unit : 1). value)
+          tag
+          <>
+"""), repoRoot, "<three-way-q1-branch>")
+var triLinearDef: ElabDef
+for defn in multiBranchDefs:
+  if defn.name == "triLinear": triLinearDef = defn
+expect(not triLinearDef.tmTm.isNil,
+  "q1 usage accepts balanced alternatives in a three-case eliminator")
+discard eraseQ0Arguments(triLinearDef.tmTm)
+expect(true, "three-case q1 branch profiles pass codegen erasure")
+
+var triDuplicateRejected = false
+var badTriDrv = initModuleDriver()
+try:
+  discard badTriDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+postulate duplicateInt : Int -> Int -> Int
+data Tri : Type 0 where
+| first : Tri
+| second : Tri
+| third : Tri
+proc triDuplicate (tag : Tri) (1 value : Int) : Int =
+  triElim (lam (u : Tri). Pi(unit : 1). Int)
+          (lam (unit : 1). value)
+          (lam (unit : 1). value)
+          (lam (unit : 1). duplicateInt value value)
+          tag
+          <>
+"""), repoRoot, "<three-way-q1-duplicate>")
+except ElabError as e:
+  triDuplicateRejected = "linear variable 'value' used 1 or 2+ time(s)" in e.msg
+expect(triDuplicateRejected,
+  "three-case q1 analysis rejects a duplicate on one branch")
 
 # Constructor identities in an eliminator's cached rule table do not appear as
 # ordinary tR nodes. Make the first fresh inference parameter collide with one

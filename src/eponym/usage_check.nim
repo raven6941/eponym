@@ -71,10 +71,10 @@ proc flattenApps(t: Term): tuple[head: Term, args: seq[Term]] =
       result.args.add(revArgs[i])
 
 proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
-  ## Expose a checked, exhaustive binary eliminator applied to branch
+  ## Expose a checked, exhaustive finite eliminator applied to branch
   ## closures. This sees through transparent definitions (notably
   ## `ifThenElse`) and beta reduction, then uses the registered reduction
-  ## rules to recover the alternatives. It only specializes complete binary
+  ## rules to recover the alternatives. It only specializes complete
   ## eliminators with non-recursive constructors whose cases apply one of
   ## the method arguments to exactly its constructor fields. Other
   ## eliminators remain conservatively counted as ordinary applications.
@@ -107,7 +107,7 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
 
     let rule = redRuleInfo(head)
     if rule.nargs < 2 or args.len < rule.nargs or
-        rule.cases.len != 2 or not redRuleIsComplete(head):
+        rule.cases.len == 0 or not redRuleIsComplete(head):
       return
     let arities = redRuleCaseArities(head)
     var selectedArgs: seq[int] = @[]
@@ -135,7 +135,7 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
       if elimArgIndex notin selectedArgs:
         selectedArgs.add(elimArgIndex)
       branchArgIndexes.add(elimArgIndex)
-    if selectedArgs.len != 2: return
+    if selectedArgs.len != rule.cases.len: return
 
     result.found = true
     result.condition = args[rule.nargs - 1]

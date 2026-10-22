@@ -416,13 +416,13 @@ example, Eponym can check that a modeled channel is consumed once, but it
 cannot tell whether two Nim references alias the same socket.
 
 Conditional usage is path-sensitive for Nim `if` expressions and complete
-binary data eliminators with non-recursive constructor payloads. A linear
-value used once in either arm satisfies `{.linear.}`, while a branch that
-drops or duplicates it is rejected. The analysis recognizes generated case
+data eliminators with non-recursive constructor payloads. A linear value
+used once in each case satisfies `{.linear.}`, while a case that drops or
+duplicates it is rejected. The analysis recognizes generated case
 rules only when each applies its branch method to exactly the constructor
 fields; unsupported eliminator shapes still use conservative syntactic
 counting and can reject valid branch-dependent usage. In particular,
-recursive and multi-case eliminators are not path-sensitive yet. Unannotated
+recursive eliminators are not path-sensitive yet. Unannotated
 binders still do not infer quantity 1; quantity variance for q1 function
 types remains undecided.
 
