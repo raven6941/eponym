@@ -12,6 +12,7 @@ agent working in this repo makes the same decisions the same way.
 | `pr-merge-discipline` | Issue claims, worktrees, squash PRs, the CI matrix and merge gate, review conduct. |
 | `benchmarking-discipline` | Fair baselines, first-measurement skepticism, profiling surprising results. |
 | `capability-completeness` | "Done" = described + documented + demonstrated; the docs-codegen sync rule. |
+| `mistake-retrospectives` | When work (yours or another agent's) turns out to have been a mistake — mis-scoped, a hidden limiting decision, a false claim — deciding whether it is a repeatable pattern and turning it into a skill change via PR. |
 
 To use them, point your agent harness at this directory (or copy /
 symlink the skill folders into wherever your harness discovers skills,
