@@ -187,6 +187,67 @@ proc checkUsageChoices(): bool =
     duplicatedInOnePath == {ucOnce, ucMany} and
     not satisfiesQuantity(duplicatedInOnePath, q1)
 
+type
+  UsageShapeKind = enum uskUse, uskSequential, uskChoice
+  UsageShape = ref object
+    case kind: UsageShapeKind
+    of uskUse:
+      count: int
+    of uskSequential, uskChoice:
+      left, right: UsageShape
+
+proc `$`(shape: UsageShape): string =
+  case shape.kind
+  of uskUse: "use(" & $shape.count & ")"
+  of uskSequential:
+    "seq(" & $shape.left & "," & $shape.right & ")"
+  of uskChoice:
+    "choice(" & $shape.left & "," & $shape.right & ")"
+
+proc genUsageShape(r: var Rng, depth: int): UsageShape =
+  if depth <= 0 or r.below(4) == 0:
+    return UsageShape(kind: uskUse, count: int(r.below(4)))
+  case r.below(2)
+  of 0:
+    UsageShape(kind: uskSequential,
+      left: genUsageShape(r, depth - 1),
+      right: genUsageShape(r, depth - 1))
+  else:
+    UsageShape(kind: uskChoice,
+      left: genUsageShape(r, depth - 1),
+      right: genUsageShape(r, depth - 1))
+
+proc profileFromShape(shape: UsageShape): UsageProfile =
+  case shape.kind
+  of uskUse:
+    {UsageCount(min(shape.count, 2))}
+  of uskSequential:
+    usageThen(profileFromShape(shape.left), profileFromShape(shape.right))
+  of uskChoice:
+    usageChoice([profileFromShape(shape.left), profileFromShape(shape.right)])
+
+proc refPathCounts(shape: UsageShape): seq[int] =
+  ## Independent reference: retain each concrete path count until the final
+  ## saturation, rather than composing UsageProfile sets at each node.
+  case shape.kind
+  of uskUse:
+    result = @[shape.count]
+  of uskSequential:
+    let left = refPathCounts(shape.left)
+    let right = refPathCounts(shape.right)
+    for a in left:
+      for b in right:
+        result.add(min(2, a + b))
+  of uskChoice:
+    result = refPathCounts(shape.left) & refPathCounts(shape.right)
+
+proc refProfileFromShape(shape: UsageShape): UsageProfile =
+  for count in refPathCounts(shape):
+    result.incl UsageCount(min(count, 2))
+
+proc shrinkUsageShape(shape: UsageShape): seq[UsageShape] =
+  @[UsageShape(kind: uskUse, count: 0)]
+
 # --- shrinking --------------------------------------------------------------
 
 proc shrinkTerm(t: Term): seq[Term] =
@@ -299,6 +360,12 @@ when isMainModule:
       satisfiesQuantity(profile, q0) == validProfile(q0, profile) and
       satisfiesQuantity(profile, q1) == validProfile(q1, profile),
     proc(profile: UsageProfile): seq[UsageProfile] = @[{ucZero}]) and allOk
+
+  allOk = forAll("usage-profile-generated-control-flow", r, Cases,
+    proc(r: var Rng): UsageShape = genUsageShape(r, 4),
+    proc(shape: UsageShape): bool =
+      profileFromShape(shape) == refProfileFromShape(shape),
+    shrinkUsageShape) and allOk
 
   if checkUsageChoices():
     echo "ok [usage-profile-branch-join]: balanced and inconsistent branches"
