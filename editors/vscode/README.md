@@ -15,7 +15,11 @@ npm run build        # tsc -> out/
 ## Install
 
 Package with vsce (`npm i -g @vscode/vsce && vsce package`) and install the
-`.vsix` in VSCode, or run the Extension Development Host from this folder.
+`.vsix` in VSCode. To run the current source in an Extension Development Host,
+open `editors/vscode` as the workspace and press **F5**. The launch profile
+builds the extension, opens the repository and `sheds_walkthrough.nim`, and
+starts the extension against that workspace. Nim must be available on `PATH`;
+the compiled LSP server defaults to `<workspace>/src/eponym/lsp`.
 
 ## Use
 
@@ -76,6 +80,12 @@ cd editors/vscode && npm install && npm run build
 # extension's own generateSidecar path to produce the sidecar (issue #153),
 # so the fresh-checkout case is covered without a manual nim invocation.
 LSP=../../src/eponym/lsp DEMO=../../examples/embedded/sheds_demo.nim npm run smoke
+```
+
+The inline expand/collapse state machine also has a headless test:
+
+```sh
+npm run test:headless
 ```
 
 ## Layout

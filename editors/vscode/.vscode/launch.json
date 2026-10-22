@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Eponym Sheds on the walkthrough",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/../..",
+        "${workspaceFolder}/../../examples/embedded/sheds_walkthrough.nim"
+      ],
+      "outFiles": ["${workspaceFolder}/out/**/*.js"],
+      "preLaunchTask": "Build Eponym Sheds extension",
+      "internalConsoleOptions": "openOnSessionStart"
+    }
+  ]
+}
