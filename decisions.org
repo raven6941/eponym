@@ -3230,6 +3230,21 @@
   conversion, and harmless under the system's shallow linearity, but
   not a fully principled subtyping relation; revisit if the conversion
   relation is ever generalized.
+  Issue #371 review: keep inferred q1 disabled until usage analysis is
+  path-sensitive and q1 quantity subsumption has a variance-correct rule.
+  The current countVarUses counter aggregates occurrences syntactically,
+  but embedded Nim `if` lowers to lazy branch thunks. A reproduced checked
+  definition with a q1 parameter used only in the true arm compiles, then
+  returns from the false arm without invoking the consuming postulate. A
+  q1 value used once in each arm is instead counted twice. Thus an occurrence
+  count of one does not establish exactly-once consumption on every runtime
+  path; enabling q1 inference would amplify this gap. This also exposes a
+  pre-existing q1 checking limitation, so it needs its own correctness work
+  before inference can proceed. The planned fix is a path-sensitive usage
+  analysis across conditional/eliminator alternatives, with positive and
+  negative regressions and property coverage. Separately, q1-to-qOmega
+  subsumption cannot be generalized from the q0 rule without proving its
+  behavior under contravariant Pi domains and matching the independent kernel.
   Status: OPEN (branch =exp84-qty-infer=).
 
 * 2026-10-15 — Elaborator conversion gains covariant singleton widening (issue #223)

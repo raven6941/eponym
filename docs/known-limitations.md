@@ -333,6 +333,15 @@ They do not inspect aliases or ownership in surrounding Nim code. For
 example, Eponym can check that a modeled channel is consumed once, but it
 cannot tell whether two Nim references alias the same socket.
 
+There is also a control-flow limitation inside Eponym: the current usage
+checker counts syntactic occurrences, not uses on every runtime path. A
+linear value mentioned once in one arm of an `if` can be dropped when the
+other arm is selected; mentioning it once in both arms is currently counted
+as two uses. So `{.linear.}` does not yet guarantee exactly-once use across
+conditional branches. Avoid branch-dependent consumption until
+path-sensitive usage checking is implemented. For the same reason, inferred
+binders do not infer quantity 1.
+
 Quantitative checking already drives code generation where the
 representation choice follows the quantity: erasure (#328) and the
 representation tier (#330) omit quantity-0 formals and use plain host

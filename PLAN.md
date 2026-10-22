@@ -275,6 +275,19 @@ implementations.
   automatically a borrow checker for ordinary Nim references or a promise
   of mutation-based code generation.
 
+### QTT branch-sensitive usage
+
+- [ ] Make linear usage checking path-sensitive across conditionals and
+   eliminators. The current occurrence counter can accept a q1 value used in
+   only one conditional arm (then drop it on the other path), and rejects a
+   value used once in each arm. Add positive and negative compile-time
+   regressions for both cases and property coverage over generated branch
+   usage shapes. Do not infer q1 until every runtime path is accounted for.
+- [ ] Decide quantity subsumption for q1 under Pi domains before enabling q1
+   inference. The rule must respect contravariance and pass both elaborator and
+   independent kernel checks; the existing inferred-q0-to-qOmega exception
+   does not establish a general quantity subtyping rule.
+
 ### Ordered implementation stages
 
 #### A. Specify and freeze the host boundary
