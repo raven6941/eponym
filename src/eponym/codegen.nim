@@ -159,10 +159,15 @@ proc piQuantities(ty: Term): seq[Quantity] =
 
 proc familyRefIdOf(ctorTy: Term): int =
   ## The data family's refId from a constructor's type: walk the Pi
-  ## telescope to the result type; its refId when atomic, else -1.
+  ## telescope to the result type, then through the family application
+  ## spine to its head; the head refId when atomic, else -1. (Issue
+  ## #330 v3: `nil : Pi (A : Type 0). Vec A zero` and
+  ## `none : Pi (A : Type 0). Option A` have application-headed results.)
   var t = ctorTy
   while t != nil and t.kind == tPi:
     t = t.scope.bdy
+  while t != nil and t.kind == tApp:
+    t = t.fn
   if t != nil and t.kind == tR: t.refId else: -1
 
 proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
@@ -802,7 +807,12 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
 # v2 adds `Nat` and `Bool` as `int`: `tNatLit` literals, the canonical
 # constructors (`zero`/`suc`, `true`/`false`) as int literals/arithmetic,
 # and match-compiled eliminators (`natElim` as an iterative fold,
-# `boolElim` as a conditional). Later increments: Vec/List/Option as `seq`.
+# `boolElim` as a conditional).
+# v3 adds `Vec`/`List` as `seq[int]` and `Option` as `Option[int]`:
+# the canonical constructors (`nil`/`cons`, `none`/`some`) build host
+# collections, and match-compiled eliminators (`vecElim`/`listElim` as
+# folds, `optionElim` as a conditional) consume them. Element types must
+# themselves be in the int fragment; anything else falls back to Phase 1.
 # ---------------------------------------------------------------------------
 
 proc cgReprName*(defName: string): string =
@@ -812,6 +822,15 @@ proc cgReprName*(defName: string): string =
 type
   ReprKind* = enum
     repInt  # Eponym type mapped to Nim `int` via plain runtimeType
+    repSeq  # `Vec`/`List` family mapped to Nim `seq[int]`
+    repOption  # `Option` family mapped to Nim `Option[int]`
+
+  ReprType* = object
+    ## The host representation of one signature position (a non-q0
+    ## binder domain or the result type).
+    kind*: ReprKind
+    isVector*: bool  # for repSeq: from runtimeVector (length-indexed)
+    index*: Term  # for repSeq+isVector: the length index term
 
 proc isPlainIntMapping*(m: HostRuntimeType): bool =
   ## True when the mapping is a plain `runtimeType ... -> int` (not a
@@ -824,31 +843,107 @@ proc isPlainIntMapping*(m: HostRuntimeType): bool =
 
 proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
   ## The representation kind for a type/family refId. Raises CgUnsupported
-  ## when the mapping is absent or outside the v1 fragment.
+  ## when the mapping is absent or outside the fragment.
   if refId notin ctx.reps:
     raise newException(CgUnsupported,
       "type has no runtime representation mapping")
   let m = ctx.reps[refId]
   if m.isPlainIntMapping:
     return repInt
+  if m.isRuntimeVector or m.isRuntimeList:
+    return repSeq
+  if m.isRuntimeOption:
+    return repOption
   raise newException(CgUnsupported,
-    "runtime representation outside the int fragment")
+    "runtime representation outside the fragment")
 
-proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprKind] =
-  ## Representation kinds of the def's Pi-binder domains (outermost first),
-  ## followed by the result type. Quantity-0 binders are erased from the
-  ## host signature. Raises CgUnsupported when anything else is outside the
-  ## fragment.
+proc checkIntElem(ctx: CodegenCtx, t: Term) =
+  ## v3 scope: collection element types must be in the int fragment.
+  if t.isNil or t.kind != tR or ctx.reprKindOf(t.refId) != repInt:
+    raise newException(CgUnsupported,
+      "collection element type outside the int fragment")
+
+proc reprTypeOf(ctx: CodegenCtx, t: Term): ReprType =
+  ## The host representation of a binder domain or result type: an atomic
+  ## `tR` in the int fragment, or a fully-applied `Vec`/`List`/`Option`
+  ## family over int elements. Raises CgUnsupported otherwise. The check
+  ## is structural only: length-index terms are validated when compiled
+  ## (entry check), never here.
+  if t.isNil:
+    raise newException(CgUnsupported, "nil type")
+  if t.kind == tR:
+    let k = ctx.reprKindOf(t.refId)
+    if k != repInt:
+      raise newException(CgUnsupported,
+        "unapplied family outside the representation fragment")
+    return ReprType(kind: repInt)
+  if t.kind == tApp:
+    var argTerms: seq[Term] = @[]
+    var head = t
+    while head.kind == tApp:
+      argTerms.add(head.arg)
+      head = head.fn
+    var appArgs: seq[Term] = @[]
+    for i in countdown(argTerms.high, 0):
+      appArgs.add(argTerms[i])
+    if head.kind != tR or head.refId notin ctx.reps:
+      raise newException(CgUnsupported, "non-family type application")
+    let m = ctx.reps[head.refId]
+    if m.isRuntimeVector:
+      # `Vec A n`: the family parameter then the length index. The
+      # validators (validateHostVectorCodec) enforce this shape on
+      # declared families, so an arity mismatch is a hard fallback.
+      if appArgs.len != 2:
+        raise newException(CgUnsupported,
+          "Vec application has " & $appArgs.len & " args, needs 2")
+      ctx.checkIntElem(appArgs[0])
+      return ReprType(kind: repSeq, isVector: true, index: appArgs[1])
+    if m.isRuntimeList:
+      if appArgs.len != 1:
+        raise newException(CgUnsupported,
+          "List application has " & $appArgs.len & " args, needs 1")
+      ctx.checkIntElem(appArgs[0])
+      return ReprType(kind: repSeq, isVector: false)
+    if m.isRuntimeOption:
+      if appArgs.len != 1:
+        raise newException(CgUnsupported,
+          "Option application has " & $appArgs.len & " args, needs 1")
+      ctx.checkIntElem(appArgs[0])
+      return ReprType(kind: repOption)
+    raise newException(CgUnsupported,
+      "family outside the representation fragment")
+  raise newException(CgUnsupported, "type outside the representation fragment")
+
+proc nimReprType*(rt: ReprType): NimNode =
+  ## The Nim type AST for one representation-typed signature position.
+  case rt.kind
+  of repInt: ident"int"
+  of repSeq: newTree(nnkBracketExpr, ident"seq", ident"int")
+  of repOption: newTree(nnkBracketExpr, ident"Option", ident"int")
+
+proc reprTypeName*(rt: ReprType): string =
+  ## The Nim type name for the wrapper identity-boundary check
+  ## (issue #330 v3): `int`, `seq[int]`, or `Option[int]`.
+  case rt.kind
+  of repInt: "int"
+  of repSeq: "seq[int]"
+  of repOption: "Option[int]"
+
+proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprType] =
+  ## Representation types of the def's Pi-binder domains (outermost
+  ## first), followed by the result type. Quantity-0 binders are erased
+  ## from the host signature. Raises CgUnsupported when anything else is
+  ## outside the fragment.
   var t = d.tyTm
   while t != nil and t.kind == tPi:
     if t.qty != q0:
-      if t.dom.isNil or t.dom.kind != tR:
+      # Issue #386: a binder domain outside the representation fragment
+      # keeps the established "non-atomic binder domain" diagnostic.
+      try: result.add(ctx.reprTypeOf(t.dom))
+      except CgUnsupported:
         raise newException(CgUnsupported, "non-atomic binder domain")
-      result.add(ctx.reprKindOf(t.dom.refId))
     t = t.scope.bdy
-  if t.isNil or t.kind != tR:
-    raise newException(CgUnsupported, "non-atomic result type")
-  result.add(ctx.reprKindOf(t.refId))
+  result.add(ctx.reprTypeOf(t))
 
 proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode  # forward
 proc cgReprElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
@@ -919,9 +1014,15 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
     if head.qty == q0:
       curEnv = @[newLit(0)] & curEnv
     else:
-      if head.dom.isNil or head.dom.kind != tR:
-        raise newException(CgUnsupported, "non-atomic lambda domain")
-      discard ctx.reprKindOf(head.dom.refId)
+      if head.dom.isNil:
+        raise newException(CgUnsupported, "nil lambda domain")
+      # The binder must denote a representation in the fragment; the
+      # let-bound symbol's Nim type is inferred from the argument.
+      # (Issue #386: the fallback report keeps the established
+      # diagnostic for a non-representable binder domain.)
+      try: discard ctx.reprTypeOf(head.dom)
+      except CgUnsupported:
+        raise newException(CgUnsupported, "non-atomic binder domain")
       let psym = genSym(nskLet, "cgReprBeta")
       preStmts.add(newLetStmt(psym, cgRepr(ctx, appArgs[argIdx], env)))
       curEnv = @[psym] & curEnv
@@ -953,15 +1054,17 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   blk.add(preStmts)
   blk
 
-proc checkElimCases(r: CgRef, elimName: string, arities: openArray[int]) =
+proc checkElimCases(r: CgRef, elimName: string, arities: openArray[int],
+                    nParams = 0) =
   ## Structural sanity for a match-compiled eliminator: the registered
   ## cases must be exactly the expected constructor arities (as a
-  ## multiset), with no parameters (indexed families are a later
-  ## increment). Guards the name-based dispatch below against a
-  ## same-named eliminator with a different shape.
-  if r.nParams != 0:
+  ## multiset), with the expected number of family parameters (index
+  ## parameters excluded from the arities, as the Phase-1 backend does).
+  ## Guards the name-based dispatch below against a same-named eliminator
+  ## with a different shape.
+  if r.nParams != nParams:
     raise newException(CgUnsupported, "eliminator '" & elimName &
-      "' has parameters (indexed family)")
+      "' has " & $r.nParams & " parameters, expected " & $nParams)
   if r.cases.len != arities.len:
     raise newException(CgUnsupported, "eliminator '" & elimName &
       "' has " & $r.cases.len & " cases, expected " & $arities.len)
@@ -972,6 +1075,211 @@ proc checkElimCases(r: CgRef, elimName: string, arities: openArray[int]) =
       raise newException(CgUnsupported, "eliminator '" & elimName &
         "' has unexpected case arity " & $cs.ctorArity)
     remaining.del(i)
+
+proc checkSeqElemArg(ctx: CodegenCtx, appArgs: seq[Term], elimName: string) =
+  ## v3: the eliminator's family-parameter argument must be an int-mapped
+  ## element type. It is never evaluated (a type argument), but the check
+  ## pins the compiled loop to `seq[int]`/`Option[int]`.
+  if appArgs.len == 0 or appArgs[0].isNil or appArgs[0].kind != tR or
+      ctx.reprKindOf(appArgs[0].refId) != repInt:
+    raise newException(CgUnsupported, "eliminator '" & elimName &
+      "' element type outside the int fragment")
+
+proc motiveCodomain(motive: Term): Term =
+  ## Peel the motive's lambdas to its codomain type. A non-lambda motive
+  ## falls back to the Phase-1 backend (the codomain kind cannot be
+  ## established structurally).
+  result = motive
+  while not result.isNil and result.kind == tLam:
+    result = result.scope.bdy
+
+proc checkMotiveKind(ctx: CodegenCtx, r: CgRef, appArgs: seq[Term],
+                     motiveIdx: int) =
+  ## The eliminator's result must denote a representation in the fragment:
+  ## establish it structurally from the motive's codomain, mirroring
+  ## reprSig's result-type check on definitions.
+  let cod = motiveCodomain(appArgs[motiveIdx])
+  if cod.isNil:
+    raise newException(CgUnsupported, "eliminator '" & r.name &
+      "' has no motive codomain")
+  discard ctx.reprTypeOf(cod)
+
+proc cgReprListElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                    env: seq[NimNode]): NimNode =
+  ## `listElim A motive nilC consC xs` over the `seq[int]` representation,
+  ## compiled to a right-to-left fold:
+  ##   var acc = nilC
+  ##   for k in countdown(xs.len-1, 0):
+  ##     acc = consC(xs[k], xs[k+1..^1], acc)
+  ##   acc
+  ## Right-to-left: `listElim` is a right fold
+  ## (`consC x0 tl0 (consC x1 tl1 ...)`), so a left-to-right loop would
+  ## build the list backwards; this also matches the interpreter's
+  ## inside-out evaluation order (deepest consC application first).
+  ## The cons case must be a syntactic triple lambda
+  ## `lam (x). lam (tl). lam (ih). body` with an int-representable element
+  ## domain; the body is compiled with `x`, `tl`, `ih` bound to the head,
+  ## the materialized tail, and the accumulator. The motive (appArgs[1])
+  ## is a type family: skipped, as for `natElim`. The tail slice is O(n)
+  ## per step; the #19-framed benchmark against Phase 1 says whether the
+  ## unused-binder optimization is needed.
+  checkElimCases(r, "listElim", [0, 2], nParams = 1)
+  ctx.checkSeqElemArg(appArgs, "listElim")
+  ctx.checkMotiveKind(r, appArgs, 1)
+  let consLam = appArgs[3]
+  if consLam.kind != tLam or consLam.scope.bdy.kind != tLam or
+      consLam.scope.bdy.scope.bdy.kind != tLam:
+    raise newException(CgUnsupported,
+      "listElim cons case is not a syntactic triple lambda")
+  let tlLam = consLam.scope.bdy
+  let ihLam = tlLam.scope.bdy
+  if consLam.dom.isNil or consLam.dom.kind != tR or
+      ctx.reprKindOf(consLam.dom.refId) != repInt:
+    raise newException(CgUnsupported,
+      "listElim element domain outside the int fragment")
+  let nilCode = cgRepr(ctx, appArgs[2], env)
+  let xsCode = cgRepr(ctx, appArgs[4], env)
+  let xsSym = genSym(nskLet, "cgListXs")
+  let accSym = genSym(nskVar, "cgListAcc")
+  let kSym = genSym(nskForVar, "cgListK")
+  let xSym = genSym(nskLet, "cgListX")
+  let tlSym = genSym(nskLet, "cgListTl")
+  # de Bruijn: V0 = ih (innermost), V1 = tl, V2 = x; env innermost-first.
+  let bodyCode = cgRepr(ctx, ihLam.scope.bdy,
+    @[accSym, tlSym, xSym] & env)
+  var stmts = newStmtList()
+  stmts.add(newLetStmt(xsSym, xsCode))
+  stmts.add(newVarStmt(accSym, nilCode))
+  var loopBody = newStmtList()
+  loopBody.add(newLetStmt(xSym,
+    newTree(nnkBracketExpr, xsSym, kSym)))
+  loopBody.add(newLetStmt(tlSym,
+    newTree(nnkBracketExpr, xsSym,
+      newTree(nnkInfix, ident"..^", newTree(nnkInfix, ident"+", kSym,
+        newLit(1)), newLit(1)))))
+  loopBody.add(newTree(nnkAsgn, accSym, bodyCode))
+  stmts.add(newTree(nnkForStmt, kSym,
+    newCall(ident"countdown",
+      newTree(nnkInfix, ident"-", newCall(bindSym"len", xsSym), newLit(1)),
+      newLit(0)),
+    loopBody))
+  stmts.add(accSym)
+  var blk = newNimNode(nnkBlockStmt)
+  blk.add(newEmptyNode())
+  blk.add(stmts)
+  blk
+
+proc cgReprVecElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                   env: seq[NimNode]): NimNode =
+  ## `vecElim A motive nilC consC n xs` over the `seq[int]`
+  ## representation, compiled to a right-to-left fold:
+  ##   var acc = nilC
+  ##   for k in countdown(xs.len-1, 0):
+  ##     acc = consC(xs.len-1-k, xs[k], xs[k+1..^1], acc)
+  ##   acc
+  ## The cons case must be a syntactic quadruple lambda
+  ## `lam (i). lam (x). lam (xs2). lam (ih). body` with int-representable
+  ## index and element domains; the `i` binder (tail length) is computed
+  ## as `xs.len-1-k`, not passed. Right-to-left matches the interpreter's
+  ## inside-out evaluation order (deepest consC application first). The
+  ## motive (appArgs[1]) is skipped, as for `natElim`; the length index
+  ## (appArgs[4]) is not evaluated (an index: type-level, author's
+  ## problem if divergent, as with motives).
+  checkElimCases(r, "vecElim", [0, 3], nParams = 1)
+  ctx.checkSeqElemArg(appArgs, "vecElim")
+  ctx.checkMotiveKind(r, appArgs, 1)
+  let consLam = appArgs[3]
+  if consLam.kind != tLam or consLam.scope.bdy.kind != tLam or
+      consLam.scope.bdy.scope.bdy.kind != tLam or
+      consLam.scope.bdy.scope.bdy.scope.bdy.kind != tLam:
+    raise newException(CgUnsupported,
+      "vecElim cons case is not a syntactic quadruple lambda")
+  let xLam = consLam.scope.bdy
+  let xsLam = xLam.scope.bdy
+  let ihLam = xsLam.scope.bdy
+  for (lam, what) in [(consLam, "index"), (xLam, "element")]:
+    if lam.dom.isNil or lam.dom.kind != tR or
+        ctx.reprKindOf(lam.dom.refId) != repInt:
+      raise newException(CgUnsupported,
+        "vecElim " & what & " domain outside the int fragment")
+  let nilCode = cgRepr(ctx, appArgs[2], env)
+  let xsCode = cgRepr(ctx, appArgs[5], env)
+  let xsSym = genSym(nskLet, "cgVecXs")
+  let accSym = genSym(nskVar, "cgVecAcc")
+  let kSym = genSym(nskForVar, "cgVecK")
+  let iSym = genSym(nskLet, "cgVecI")
+  let xSym = genSym(nskLet, "cgVecX")
+  let tlSym = genSym(nskLet, "cgVecTl")
+  # de Bruijn: V0 = ih, V1 = xs2, V2 = x, V3 = i; env innermost-first.
+  let bodyCode = cgRepr(ctx, ihLam.scope.bdy,
+    @[accSym, tlSym, xSym, iSym] & env)
+  var stmts = newStmtList()
+  stmts.add(newLetStmt(xsSym, xsCode))
+  stmts.add(newVarStmt(accSym, nilCode))
+  var loopBody = newStmtList()
+  loopBody.add(newLetStmt(iSym,
+    newTree(nnkInfix, ident"-",
+      newTree(nnkInfix, ident"-", newCall(bindSym"len", xsSym), kSym),
+      newLit(1))))
+  loopBody.add(newLetStmt(xSym,
+    newTree(nnkBracketExpr, xsSym, kSym)))
+  loopBody.add(newLetStmt(tlSym,
+    newTree(nnkBracketExpr, xsSym,
+      newTree(nnkInfix, ident"..^", newTree(nnkInfix, ident"+", kSym,
+        newLit(1)), newLit(1)))))
+  loopBody.add(newTree(nnkAsgn, accSym, bodyCode))
+  stmts.add(newTree(nnkForStmt, kSym,
+    newCall(ident"countdown",
+      newTree(nnkInfix, ident"-", newCall(bindSym"len", xsSym), newLit(1)),
+      newLit(0)),
+    loopBody))
+  stmts.add(accSym)
+  var blk = newNimNode(nnkBlockStmt)
+  blk.add(newEmptyNode())
+  blk.add(stmts)
+  blk
+
+proc cgReprOptionElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                      env: seq[NimNode]): NimNode =
+  ## `optionElim A motive noneC someC o` over the `Option[int]`
+  ## representation: `if o.isSome: someC(o.get) else: noneC`. The some
+  ## case must be a syntactic single lambda `lam (v). body` with an
+  ## int-representable domain. `noneC` is evaluated before the test,
+  ## matching the interpreter's strict argument evaluation (a diverging
+  ## none-branch diverges the eliminator on both sides); the motive is
+  ## skipped, as for `boolElim`.
+  checkElimCases(r, "optionElim", [0, 1], nParams = 1)
+  ctx.checkSeqElemArg(appArgs, "optionElim")
+  ctx.checkMotiveKind(r, appArgs, 1)
+  let someLam = appArgs[3]
+  if someLam.kind != tLam:
+    raise newException(CgUnsupported,
+      "optionElim some case is not a syntactic lambda")
+  if someLam.dom.isNil or someLam.dom.kind != tR or
+      ctx.reprKindOf(someLam.dom.refId) != repInt:
+    raise newException(CgUnsupported,
+      "optionElim value domain outside the int fragment")
+  let noneCode = cgRepr(ctx, appArgs[2], env)
+  let oCode = cgRepr(ctx, appArgs[4], env)
+  let noneSym = genSym(nskLet, "cgOptNone")
+  let oSym = genSym(nskLet, "cgOptO")
+  let vSym = genSym(nskLet, "cgOptV")
+  let someCode = cgRepr(ctx, someLam.scope.bdy, @[vSym] & env)
+  var stmts = newStmtList()
+  stmts.add(newLetStmt(noneSym, noneCode))
+  stmts.add(newLetStmt(oSym, oCode))
+  var thenBranch = newStmtList()
+  thenBranch.add(newLetStmt(vSym,
+    newTree(nnkDotExpr, oSym, ident"get")))
+  thenBranch.add(someCode)
+  stmts.add(newTree(nnkIfStmt,
+    newTree(nnkElifBranch,
+      newTree(nnkDotExpr, oSym, ident"isSome"), thenBranch),
+    newTree(nnkElse, noneSym)))
+  var blk = newNimNode(nnkBlockStmt)
+  blk.add(newEmptyNode())
+  blk.add(stmts)
+  blk
 
 proc cgReprNatElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
                    env: seq[NimNode]): NimNode =
@@ -1070,57 +1378,120 @@ proc cgReprElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   case r.name
   of "natElim": cgReprNatElim(ctx, r, appArgs, env)
   of "boolElim": cgReprBoolElim(ctx, r, appArgs, env)
+  of "vecElim": cgReprVecElim(ctx, r, appArgs, env)
+  of "listElim": cgReprListElim(ctx, r, appArgs, env)
+  of "optionElim": cgReprOptionElim(ctx, r, appArgs, env)
   else:
     raise newException(CgUnsupported, "eliminator '" & r.name &
       "' outside the representation fragment")
 
 proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
                 env: seq[NimNode]): NimNode =
-  ## Compile a constructor application in the repr tier. Only the
-  ## canonical constructors of int-mapped `Nat`/`Bool` get literal
-  ## treatment (`zero` = 0, `suc x` = x + 1, `true` = 1, `false` = 0);
-  ## constructors of any other family, or non-canonical arities, are
+  ## Compile a constructor application in the repr tier.
+  ##
+  ## Int-mapped families (`Nat`/`Bool`): the canonical constructors get
+  ## literal treatment (`zero` = 0, `suc x` = x + 1, `true` = 1,
+  ## `false` = 0).
+  ##
+  ## `Vec`/`List` families: `nil` (applied to the family parameter) is
+  ## the empty `seq[int]`; `cons` prepends (`@[x] & xs`). The family
+  ## parameter and — for `Vec` — the length index are not evaluated: the
+  ## former is a type argument, the latter an index (type-level;
+  ## divergent indices are the author's problem, as with motives).
+  ##
+  ## `Option`: `none` is `none(int)`; `some v` is `some(v)`.
+  ##
+  ## Constructors of any other family, or non-canonical arities, are
   ## outside the fragment.
-  if r.famRefId notin ctx.reps or
-      not ctx.reps[r.famRefId].isPlainIntMapping:
+  if r.famRefId notin ctx.reps:
     raise newException(CgUnsupported, "constructor '" & r.name &
-      "' of a type without an int representation")
-  let famName = ctx.reps[r.famRefId].eponymName
-  case famName
-  of "Nat":
+      "' of a type without a runtime representation mapping")
+  let m = ctx.reps[r.famRefId]
+  if m.isPlainIntMapping:
+    let famName = m.eponymName
+    case famName
+    of "Nat":
+      case r.name
+      of "zero":
+        if appArgs.len != 0:
+          raise newException(CgUnsupported,
+            "zero applied to " & $appArgs.len & " args")
+        newLit(0)
+      of "suc":
+        if appArgs.len != 1:
+          raise newException(CgUnsupported,
+            "suc applied to " & $appArgs.len & " args, needs 1")
+        let a = cgRepr(ctx, appArgs[0], env)
+        # Issue #380: Nat is a bounded host int; the successor checks for
+        # overflow instead of wrapping silently.
+        newCall(bindSym"checkedNatSucc", a)
+      else:
+        raise newException(CgUnsupported, "Nat constructor '" & r.name &
+          "' outside the representation fragment")
+    of "Bool":
+      case r.name
+      of "true":
+        if appArgs.len != 0:
+          raise newException(CgUnsupported,
+            "true applied to " & $appArgs.len & " args")
+        newLit(1)
+      of "false":
+        if appArgs.len != 0:
+          raise newException(CgUnsupported,
+            "false applied to " & $appArgs.len & " args")
+        newLit(0)
+      else:
+        raise newException(CgUnsupported, "Bool constructor '" & r.name &
+          "' outside the representation fragment")
+    else:
+      raise newException(CgUnsupported, "constructor '" & r.name &
+        "' of '" & famName & "' outside the representation fragment")
+  elif m.isRuntimeVector or m.isRuntimeList:
+    # `Vec` and `List` share the `nil`/`cons` names; the mapping (not the
+    # family name) disambiguates the constructor arities.
     case r.name
-    of "zero":
-      if appArgs.len != 0:
-        raise newException(CgUnsupported,
-          "zero applied to " & $appArgs.len & " args")
-      newLit(0)
-    of "suc":
+    of "nil":
       if appArgs.len != 1:
         raise newException(CgUnsupported,
-          "suc applied to " & $appArgs.len & " args, needs 1")
-      let a = cgRepr(ctx, appArgs[0], env)
-      newCall(bindSym"checkedNatSucc", a)
+          "nil applied to " & $appArgs.len & " args, needs 1")
+      newTree(nnkCall,
+        newTree(nnkBracketExpr, ident"newSeq", ident"int"))
+    of "cons":
+      let (xArg, xsArg) =
+        if m.isRuntimeVector:
+          if appArgs.len != 4:
+            raise newException(CgUnsupported,
+              "Vec cons applied to " & $appArgs.len & " args, needs 4")
+          (appArgs[2], appArgs[3])
+        else:
+          if appArgs.len != 3:
+            raise newException(CgUnsupported,
+              "List cons applied to " & $appArgs.len & " args, needs 3")
+          (appArgs[1], appArgs[2])
+      let xCode = cgRepr(ctx, xArg, env)
+      let xsCode = cgRepr(ctx, xsArg, env)
+      newTree(nnkInfix, ident"&", bracketOf(@[xCode]), xsCode)
     else:
-      raise newException(CgUnsupported, "Nat constructor '" & r.name &
-        "' outside the representation fragment")
-  of "Bool":
+      raise newException(CgUnsupported, "constructor '" & r.name &
+        "' of '" & m.eponymName & "' outside the representation fragment")
+  elif m.isRuntimeOption:
     case r.name
-    of "true":
-      if appArgs.len != 0:
+    of "none":
+      if appArgs.len != 1:
         raise newException(CgUnsupported,
-          "true applied to " & $appArgs.len & " args")
-      newLit(1)
-    of "false":
-      if appArgs.len != 0:
+          "none applied to " & $appArgs.len & " args, needs 1")
+      newCall(ident"none", ident"int")
+    of "some":
+      if appArgs.len != 2:
         raise newException(CgUnsupported,
-          "false applied to " & $appArgs.len & " args")
-      newLit(0)
+          "some applied to " & $appArgs.len & " args, needs 2")
+      newCall(ident"some", cgRepr(ctx, appArgs[1], env))
     else:
-      raise newException(CgUnsupported, "Bool constructor '" & r.name &
-        "' outside the representation fragment")
+      raise newException(CgUnsupported, "constructor '" & r.name &
+        "' of '" & m.eponymName & "' outside the representation fragment")
   else:
     raise newException(CgUnsupported, "constructor '" & r.name &
-      "' of '" & famName & "' outside the representation fragment")
+      "' of '" & m.eponymName & "' outside the representation fragment")
 
 proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   if t.isNil:
@@ -1174,22 +1545,55 @@ proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
     raise newException(CgUnsupported,
       "term kind outside the representation fragment")
 
+proc collectTVarIndices(t: Term, acc: var Table[int, bool]) =
+  ## Collect every `tV` de Bruijn index occurring in `t` (through binders;
+  ## indices are relative to `t`'s own scope).
+  if t.isNil: return
+  case t.kind
+  of tV:
+    acc[t.idx] = true
+  of tPi, tSi, tLam:
+    collectTVarIndices(t.dom, acc)
+    collectTVarIndices(t.scope.bdy, acc)
+  of tPair:
+    collectTVarIndices(t.pFst, acc)
+    collectTVarIndices(t.pSnd, acc)
+  of tApp:
+    collectTVarIndices(t.fn, acc)
+    collectTVarIndices(t.arg, acc)
+  of tFst, tSnd, tAbsurd:
+    collectTVarIndices(t.sub, acc)
+  of tLet:
+    collectTVarIndices(t.letVal, acc)
+    collectTVarIndices(t.letTy, acc)
+    collectTVarIndices(t.letScope.bdy, acc)
+  of tPrim:
+    collectTVarIndices(t.primTy, acc)
+  else: discard
+
 proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
                         locFile: string, locLine: int,
                         failureReason: var string): NimNode =
   ## Compile one definition to
-  ## `proc eponymCompiledRepr_<name>(p1: int, ..., pn: int): int`.
+  ## `proc eponymCompiledRepr_<name>(p1: int, ..., pn: seq[int]): ...`.
   ## Returns nil when the definition is outside the representation fragment
   ## (caller keeps the Phase 1 backend). q0 binders have environment
   ## placeholders but no Nim formal parameters.
+  ##
+  ## Each `Vec A n` parameter gets an entry length check: the interpreter
+  ## codec (`seqToVecValue`) raises `ValueError` on `len != n`, and the
+  ## repr proc preserves the loud failure (`if xs.len != n: raise`).
+  ## A length index mentioning a q0-erased binder has no runtime
+  ## denotation: the definition falls back to Phase 1 instead of checking
+  ## against a placeholder.
   if d.tmTm.isNil or d.tyTm.isNil:
     failureReason = "definition has no checked body or type"
     return nil
-  try:
-    discard ctx.reprSig(d)
-  except CgUnsupported as e:
-    failureReason = e.msg
-    return nil
+  let sig =
+    try: ctx.reprSig(d)
+    except CgUnsupported as e:
+      failureReason = e.msg
+      return nil
   let erased =
     try: eraseQ0Arguments(d.tmTm)
     except ValueError as e:
@@ -1197,7 +1601,15 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
       return nil
   var body = erased
   var params: seq[NimNode] = @[]
+  var paramTypes: seq[NimNode] = @[]
   var envOuterToInner: seq[NimNode] = @[]
+  var qtyOuterToInner: seq[Quantity] = @[]
+  # (paramSym, indexTerm, preceding binder quantities innermost-first,
+  # preceding binder env innermost-first) for Vec entry checks.
+  var vecChecks: seq[tuple[psym: NimNode, index: Term,
+                           preQtys: seq[Quantity],
+                           preEnv: seq[NimNode]]] = @[]
+  var sigIdx = 0
   var ty = d.tyTm
   while ty != nil and ty.kind == tPi:
     if body.isNil or body.kind != tLam or body.qty != ty.qty:
@@ -1205,29 +1617,77 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
       return nil
     if ty.qty == q0:
       envOuterToInner.add(newLit(0))
+      qtyOuterToInner.add(q0)
     else:
-      if ty.dom.isNil or ty.dom.kind != tR:
+      if sigIdx >= sig.len - 1:
         failureReason = "Phase 2 requires atomic mapped representation domains"
         return nil
-      params.add(genSym(nskParam, "cgReprArg" & $params.len))
-      envOuterToInner.add(params[^1])
+      let rt = sig[sigIdx]
+      inc sigIdx
+      let psym = genSym(nskParam, "cgReprArg" & $params.len)
+      params.add(psym)
+      paramTypes.add(nimReprType(rt))
+      if rt.kind == repSeq and rt.isVector:
+        var preQtys: seq[Quantity] = @[]
+        var preEnv: seq[NimNode] = @[]
+        for i in countdown(qtyOuterToInner.high, 0):
+          preQtys.add(qtyOuterToInner[i])
+          preEnv.add(envOuterToInner[i])
+        vecChecks.add((psym, rt.index, preQtys, preEnv))
+      envOuterToInner.add(psym)
+      qtyOuterToInner.add(ty.qty)
     body = body.scope.bdy
     ty = ty.scope.bdy
+  if sigIdx != sig.len - 1:
+    return nil
   if body.isNil or body.kind == tLam:
     failureReason = "definition body retains a lambda after its Pi binders"
     return nil
   var env: seq[NimNode] = @[]
   for i in countdown(envOuterToInner.high, 0):
     env.add(envOuterToInner[i])
+  var prologue = newStmtList()
+  for vc in vecChecks:
+    var idxVars = initTable[int, bool]()
+    collectTVarIndices(vc.index, idxVars)
+    for j in idxVars.keys:
+      if j < 0 or j >= vc.preQtys.len:
+        failureReason = "Vec length index outside the representation fragment"
+        return nil
+      if vc.preQtys[j] == q0:
+        # The length index mentions an erased binder: no runtime
+        # denotation to check against. Fall back to Phase 1 rather than
+        # compare against the q0 placeholder.
+        failureReason = "Vec length index mentions an erased binder"
+        return nil
+    let nCode =
+      try: cgRepr(ctx, vc.index, vc.preEnv)
+      except CgUnsupported:
+        failureReason = "Vec length index outside the representation fragment"
+        return nil
+    let nSym = genSym(nskLet, "cgVecLen")
+    prologue.add(newLetStmt(nSym, nCode))
+    let msg = newTree(nnkInfix, ident"&",
+      newTree(nnkInfix, ident"&",
+        newLit("repr Vec length mismatch: expected "),
+        newCall(ident"$", nSym)),
+      newTree(nnkInfix, ident"&",
+        newLit(", got "),
+        newCall(ident"$", newCall(bindSym"len", vc.psym))))
+    prologue.add(newTree(nnkIfStmt,
+      newTree(nnkElifBranch,
+        newTree(nnkInfix, ident"!=", newCall(bindSym"len", vc.psym), nSym),
+        newStmtList(newTree(nnkRaiseStmt,
+          newCall(ident"newException", ident"ValueError", msg))))))
   let bodyCode =
     try: cgRepr(ctx, body, env)
     except CgUnsupported as e:
       failureReason = e.msg
       return nil
   var formal = newNimNode(nnkFormalParams)
-  formal.add(ident"int")
-  for psym in params:
-    formal.add(newIdentDefs(psym, ident"int", newEmptyNode()))
+  formal.add(nimReprType(sig[^1]))
+  for i, psym in params:
+    formal.add(newIdentDefs(psym, paramTypes[i], newEmptyNode()))
   var procNode = newNimNode(nnkProcDef)
   procNode.add(newTree(nnkPostfix, ident"*", ident(cgReprName(d.name))))
   procNode.add(newEmptyNode())
@@ -1239,7 +1699,11 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
   # errors raised while evaluating compiled code report the definition's
   # source location.
   procNode.setLineInfo(LineInfo(filename: locFile, line: locLine, column: 0))
-  procNode.add(newStmtList(bodyCode))
+  var bodyStmts = newStmtList()
+  for s in prologue:
+    bodyStmts.add(s)
+  bodyStmts.add(bodyCode)
+  procNode.add(bodyStmts)
   procNode
 
 proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
@@ -1248,10 +1712,15 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
                         runtimeTypes: seq[HostRuntimeType] = @[]):
     tuple[procs: seq[NimNode], compiled: Table[string, string],
           compiledRepr: Table[string, string],
+          reprTypes: Table[string, seq[string]],
           report: Table[string, CodegenReportEntry]] =
   ## Compile every eligible block-local definition, in dependency order.
   ## Returns the emitted procs, the def-name -> Phase-1 proc-name table for
-  ## wrapper rerouting, and the def-name -> repr-tier proc-name table.
+  ## wrapper rerouting, the def-name -> repr-tier proc-name table, the
+  ## def-name -> repr-tier Nim type names (params then result, e.g.
+  ## `@["int", "seq[int]", "seq[int]"]`) for the wrapper identity-boundary
+  ## check (issue #330 v3), and the per-definition codegen report
+  ## (emitted tier + why the next tier was unavailable, issue #386).
   ## Emission order: eliminator forward declarations, Phase-1 definition
   ## bodies (callees first), repr-tier bodies (callees first, same order),
   ## eliminator bodies.
@@ -1270,6 +1739,7 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   validateBakedRefIds(globals, bakedIds)
   result = (procs: @[], compiled: initTable[string, string](),
             compiledRepr: initTable[string, string](),
+            reprTypes: initTable[string, seq[string]](),
             report: initTable[string, CodegenReportEntry]())
   detectBadElims(ctx)
   var defRefIds = initTable[string, int]()
@@ -1370,7 +1840,7 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     let refId = defRefIds.getOrDefault(name, -1)
     if refId < 0:
       continue
-    var sig: seq[ReprKind]
+    var sig: seq[ReprType]
     try:
       sig = ctx.reprSig(d)
     except CgUnsupported as e:
@@ -1386,6 +1856,10 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     else:
       reprBodies.add(procNode)
       result.compiledRepr[name] = cgReprName(name)
+      var typeNames: seq[string] = @[]
+      for rt in sig:
+        typeNames.add(reprTypeName(rt))
+      result.reprTypes[name] = typeNames
   # Summarize the best emitted tier and why the next tier was unavailable.
   for d in defs:
     var entry = CodegenReportEntry(tier: cgtInterpreter,

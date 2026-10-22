@@ -345,7 +345,15 @@ Checked definitions compile to native Nim procs per definition:
 in-fragment definitions run compiled `eponymCompiled_<name>` procs (Phase 1
 `Value` backend) or, when their signature maps to plain host types,
 `eponymCompiledRepr_<name>` procs (Phase 2 representation tier, emitting
-direct host code such as Nim arithmetic). Definitions outside the compiled
+direct host code such as Nim arithmetic). The repr tier currently covers the
+scalar fragment (`Int`/`Nat`/`Bool`) plus `Vec`/`List` over int-fragment
+elements (as `seq[int]`) and `Option` (as `Option[int]`). Eliminators compile to
+sequence folds or `isSome` branches; each `Vec A n` parameter gets an entry
+length check that raises `ValueError` on mismatch, preserving the interpreter
+codec's loud failure. Nested collections, non-`int` elements, and indices
+mentioning quantity-0-erased binders fall back to the Phase 1 `Value` backend,
+as do definitions whose declared wrapper types disagree with the compiled repr
+signature. Definitions outside the compiled
 fragments keep the interpreter as a per-definition fallback. See the
 [pipeline trace](paxos-pipeline-trace.md) for the stage layout. Ordinary Nim
 code remains the place to choose data structures and performance strategies
