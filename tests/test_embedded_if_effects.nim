@@ -2,6 +2,7 @@
 
 import falsify
 import eponym_mac
+import std/options
 var branchCalls = 0
 
 proc countBranch(value: int): int =
@@ -10,7 +11,9 @@ proc countBranch(value: int): int =
 
 eponymBlock:
   import "../lib/bool.ep"
+  import "../lib/option.ep"
   postulate(Int, Univ)
+  runtimeOption(Option)
   postulate(countBranchPostulate, Int -> Int)
   bindPostulate(countBranchPostulate, countBranch)
   proc chooseTrue(): Int =
@@ -24,6 +27,12 @@ eponymBlock:
   proc chooseLinear(flag: Bool, value {.linear.}: Int): Int =
     if flag: countBranchPostulate(value)
     else: countBranchPostulate(value)
+  proc chooseOptionalLinear(optionValue: Option[Int],
+                            value {.linear.}: Int): Int =
+    (optionElim[Int, lam(u, Option[Int], Pi(unit: unitTy, Int))](
+      lam(unit, unitTy, countBranchPostulate(value)),
+      lam(payload, Int, lam(unit, unitTy, countBranchPostulate(value))),
+      optionValue))(unitv)
   proc addOne(value: Int): Int = value + 1
 
 var rng = initRng(0x1F1F)
@@ -51,6 +60,22 @@ let linearBranchCases = forAll(
   proc(input: tuple[flag: bool, value: int]): bool =
     branchCalls = 0
     chooseLinear(input.flag, input.value) == input.value and branchCalls == 1)
-if not cases or not intCases or not linearBranchCases:
+let payloadBranchCases = forAll(
+  "linear use is checked across payload-bearing Option cases", rng, 200,
+  proc(r: var Rng): tuple[present: bool, payload: int, value: int] =
+    (r.genBool(), r.genInt(-1000, 1000), r.genInt(-1000, 1000)),
+  proc(input: tuple[present: bool, payload: int, value: int]): bool =
+    branchCalls = 0
+    let optionValue = if input.present: some(input.payload) else: none(int)
+    chooseOptionalLinear(optionValue, input.value) == input.value and
+      branchCalls == 1)
+branchCalls = 0
+let noneCaseWorks = chooseOptionalLinear(none(int), 17) == 17 and
+  branchCalls == 1
+branchCalls = 0
+let someCaseWorks = chooseOptionalLinear(some(9), 23) == 23 and
+  branchCalls == 1
+if not cases or not intCases or not linearBranchCases or not payloadBranchCases or
+    not noneCaseWorks or not someCaseWorks:
   quit(1)
 echo "test_embedded_if_effects: conditional and Int literal properties passed"

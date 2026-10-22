@@ -415,14 +415,16 @@ They do not inspect aliases or ownership in surrounding Nim code. For
 example, Eponym can check that a modeled channel is consumed once, but it
 cannot tell whether two Nim references alias the same socket.
 
-Conditional usage is path-sensitive for Nim `if` expressions: a linear value
-used once in either arm satisfies `{.linear.}`, while a branch that drops or
-duplicates it is rejected. The analysis derives alternatives from complete,
-nullary binary data eliminators whose checked case rules return the branch
-closures. Other eliminator shapes, including constructors with payloads, still
-use conservative syntactic counting and can reject valid branch-dependent
-usage. Unannotated binders still do not infer quantity 1; quantity variance
-for q1 function types remains undecided.
+Conditional usage is path-sensitive for Nim `if` expressions and complete
+binary data eliminators with non-recursive constructor payloads. A linear
+value used once in either arm satisfies `{.linear.}`, while a branch that
+drops or duplicates it is rejected. The analysis recognizes generated case
+rules only when each applies its branch method to exactly the constructor
+fields; unsupported eliminator shapes still use conservative syntactic
+counting and can reject valid branch-dependent usage. In particular,
+recursive and multi-case eliminators are not path-sensitive yet. Unannotated
+binders still do not infer quantity 1; quantity variance for q1 function
+types remains undecided.
 
 Quantitative checking already drives code generation where the
 representation choice follows the quantity: erasure (#328) and the

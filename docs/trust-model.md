@@ -46,21 +46,22 @@ recursive calls in `red` rules at declaration time (see Termination below).
 **Quantity discipline** (issues #64, #66; `usage_check.nim`). QTT quantities
 are enforced, not advisory:
 
-- `q1` (linear) binders used in Nim `if` expressions are checked per runtime
-  path. The checker recovers the alternatives from complete, nullary binary
-  data eliminators and their registered case rules;
+- `q1` (linear) binders used in Nim `if` expressions and supported binary
+  data eliminators are checked per runtime path. The checker recovers the
+  alternatives from complete generated rules for non-recursive cases with
+  constructor payloads;
 - `q0` (erased) binders must not be used;
 - `qω` (unrestricted) binders are unchecked.
 
-Other eliminator shapes, such as payload-bearing or multi-case eliminators,
-still use conservative syntactic counting. This can reject valid
-branch-dependent use; do not assume every Eponym case split has path-sensitive
-QTT checking yet. Enforcement happens in two places: in-judgment checks at
-each lambda while the body is being checked (with correct depth tracking, so
-a type-level mention of a linear variable does not consume it — types are
-checked in the all-0 context), plus a post-elaboration whole-term pass as a
-backstop. Both use the same per-path profile for supported conditional
-shapes, and codegen erasure checks it again.
+Recursive and multi-case eliminators, and case templates that compute with
+branch values, still use conservative syntactic counting. This can reject
+valid branch-dependent use; do not assume every Eponym case split has
+path-sensitive QTT checking yet. Enforcement happens in two places:
+in-judgment checks at each lambda while the body is being checked (with
+correct depth tracking, so a type-level mention of a linear variable does not
+consume it — types are checked in the all-0 context), plus a post-elaboration
+whole-term pass as a backstop. Both use the same per-path profile for
+supported conditional shapes, and codegen erasure checks it again.
 Known wart: the post-pass attributes domain (type-annotation) occurrences to
 the innermost binder — an off-by-one the in-judgment check does not have.
 Conversion respects binder quantities (#66), and erased parameters are
