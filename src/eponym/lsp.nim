@@ -273,9 +273,10 @@ proc nimTypeExpr(term: Term, ctx: seq[HoleContextBinder],
   of tPi:
     var dom = ""
     if not nimTypeExpr(zonk(ms, term.dom), ctx, ms, dom): return false
-    let binderName = if term.scope.adv == "" or term.scope.adv == "_":
-        freshen("x", ctx.mapIt(it.name))
+    let requestedName = if term.scope.adv == "" or term.scope.adv == "_":
+        "x"
       else: term.scope.adv
+    let binderName = freshen(requestedName, ctx.mapIt(it.name))
     var bodyCtx = @[HoleContextBinder(name: binderName, ty: term.dom,
                                       qty: qOmega)]
     bodyCtx.add(ctx)
@@ -287,9 +288,10 @@ proc nimTypeExpr(term: Term, ctx: seq[HoleContextBinder],
   of tSi:
     var dom = ""
     if not nimTypeExpr(zonk(ms, term.dom), ctx, ms, dom): return false
-    let binderName = if term.scope.adv == "" or term.scope.adv == "_":
-        freshen("x", ctx.mapIt(it.name))
+    let requestedName = if term.scope.adv == "" or term.scope.adv == "_":
+        "x"
       else: term.scope.adv
+    let binderName = freshen(requestedName, ctx.mapIt(it.name))
     var bodyCtx = @[HoleContextBinder(name: binderName, ty: term.dom,
                                       qty: qOmega)]
     bodyCtx.add(ctx)
