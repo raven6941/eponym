@@ -1111,6 +1111,136 @@ proc checkMotiveKind(ctx: CodegenCtx, r: CgRef, appArgs: seq[Term],
       "' has no motive codomain")
   discard ctx.reprTypeOf(cod)
 
+proc termUsesInnerBinder(t: Term, nInner: int, depth: int = 0): bool =
+  ## Scope-aware variable check for the #331 destination-passing fold:
+  ## true iff `t` mentions a variable bound by one of the `nInner`
+  ## innermost binders of `t`'s own scope (de Bruijn index, adjusted for
+  ## binders traversed inside `t`, in `0 ..< nInner`).
+  if t.isNil: return false
+  case t.kind
+  of tV:
+    let rel = t.idx - depth
+    return rel >= 0 and rel < nInner
+  of tPi, tSi, tLam:
+    return termUsesInnerBinder(t.dom, nInner, depth) or
+           termUsesInnerBinder(t.scope.bdy, nInner, depth + 1)
+  of tPair:
+    return termUsesInnerBinder(t.pFst, nInner, depth) or
+           termUsesInnerBinder(t.pSnd, nInner, depth) or
+           termUsesInnerBinder(t.pScope.bdy, nInner, depth + 1)
+  of tApp:
+    return termUsesInnerBinder(t.fn, nInner, depth) or
+           termUsesInnerBinder(t.arg, nInner, depth)
+  of tFst, tSnd, tAbsurd:
+    return termUsesInnerBinder(t.sub, nInner, depth)
+  of tLet:
+    return termUsesInnerBinder(t.letVal, nInner, depth) or
+           termUsesInnerBinder(t.letTy, nInner, depth) or
+           termUsesInnerBinder(t.letScope.bdy, nInner, depth + 1)
+  of tMeta:
+    for s in t.metaSpine:
+      if termUsesInnerBinder(s, nInner, depth): return true
+    return false
+  of tPrim:
+    return termUsesInnerBinder(t.primTy, nInner, depth)
+  else:
+    return false
+
+proc dpsRebuildHead(ctx: CodegenCtx, body: Term, isVec: bool): Term =
+  ## #331: recognize the cons-rebuild shape `cons A idx xHead ih` (Vec)
+  ## or `cons A xHead ih` (List), where the tail is exactly the fold
+  ## accumulator (`ih`, de Bruijn 0 in the cons-case scope) and the head
+  ## mentions neither the accumulator nor the materialized tail (`tl`,
+  ## de Bruijn 1). Returns the head term, or nil when the shape does not
+  ## apply (the caller keeps the allocating fold).
+  ##
+  ## Soundness note: the destination-passing emission is valid for any
+  ## `ih` quantity — the destination is freshly allocated and the initial
+  ## accumulator is only read, never mutated — so, unlike the in-place
+  ## refinements (#331 follow-up), this step is not gated on linearity.
+  var fn = body
+  var revArgs: seq[Term] = @[]
+  while fn.kind == tApp:
+    revArgs.add(fn.arg)
+    fn = fn.fn
+  if fn.kind != tR or fn.refId notin ctx.refs:
+    return nil
+  let rh = ctx.refs[fn.refId]
+  if rh.kind != cgkCtor or rh.name != "cons" or
+      rh.famRefId notin ctx.reps:
+    return nil
+  let m = ctx.reps[rh.famRefId]
+  if isVec and not m.isRuntimeVector: return nil
+  if not isVec and not m.isRuntimeList: return nil
+  var appArgs: seq[Term] = @[]
+  for i in countdown(revArgs.high, 0):
+    appArgs.add(revArgs[i])
+  let (xHead, tail) =
+    if isVec:
+      if appArgs.len != 4: return nil
+      (appArgs[2], appArgs[3])
+    else:
+      if appArgs.len != 3: return nil
+      (appArgs[1], appArgs[2])
+  if tail.isNil or tail.kind != tV or tail.idx != 0:
+    return nil
+  if termUsesInnerBinder(xHead, 2):
+    return nil
+  xHead
+
+proc cgDpsFoldBlock(xsCode, nilCode, headCode: NimNode,
+                    kSym, xSym, iSym: NimNode): NimNode =
+  ## #331 destination-passing fold over `xsCode` (a `seq[int]` expression):
+  ## allocate one destination of `xs.len + acc0.len`, copy the initial
+  ## accumulator into its tail, then fill positions `k` — right-to-left in
+  ## time, left-to-right in space — with `headCode`. `headCode` may mention
+  ## `xSym` (bound per iteration to `xs[k]`) and, for Vec, `iSym` (bound to
+  ## `len-1-k`); `iSym` is nil for List. One allocation and O(n) element
+  ## writes replace the per-step `@[x] & acc` allocation of the plain fold.
+  let xsSym = genSym(nskLet, "cgDpsXs")
+  let acc0Sym = genSym(nskLet, "cgDpsAcc0")
+  let mSym = genSym(nskLet, "cgDpsM")
+  let dstSym = genSym(nskVar, "cgDpsDst")
+  let jSym = genSym(nskForVar, "cgDpsJ")
+  var stmts = newStmtList()
+  stmts.add(newLetStmt(xsSym, xsCode))
+  stmts.add(newLetStmt(acc0Sym, nilCode))
+  stmts.add(newLetStmt(mSym, newCall(bindSym"len", xsSym)))
+  stmts.add(newVarStmt(dstSym,
+    newTree(nnkCall,
+      newTree(nnkBracketExpr, ident"newSeq", ident"int"),
+      newTree(nnkInfix, ident"+", mSym,
+        newCall(bindSym"len", acc0Sym)))))
+  var copyBody = newStmtList()
+  copyBody.add(newTree(nnkAsgn,
+    newTree(nnkBracketExpr, dstSym,
+      newTree(nnkInfix, ident"+", mSym, jSym)),
+    newTree(nnkBracketExpr, acc0Sym, jSym)))
+  stmts.add(newTree(nnkForStmt, jSym,
+    newTree(nnkInfix, ident"..<",
+      newLit(0), newCall(bindSym"len", acc0Sym)),
+    copyBody))
+  var loopBody = newStmtList()
+  if not iSym.isNil:
+    loopBody.add(newLetStmt(iSym,
+      newTree(nnkInfix, ident"-",
+        newTree(nnkInfix, ident"-", mSym, kSym),
+        newLit(1))))
+  loopBody.add(newLetStmt(xSym,
+    newTree(nnkBracketExpr, xsSym, kSym)))
+  loopBody.add(newTree(nnkAsgn,
+    newTree(nnkBracketExpr, dstSym, kSym), headCode))
+  stmts.add(newTree(nnkForStmt, kSym,
+    newCall(ident"countdown",
+      newTree(nnkInfix, ident"-", mSym, newLit(1)),
+      newLit(0)),
+    loopBody))
+  stmts.add(dstSym)
+  var blk = newNimNode(nnkBlockStmt)
+  blk.add(newEmptyNode())
+  blk.add(stmts)
+  blk
+
 proc cgReprListElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
                     env: seq[NimNode]): NimNode =
   ## `listElim A motive nilC consC xs` over the `seq[int]` representation,
@@ -1130,6 +1260,14 @@ proc cgReprListElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   ## is a type family: skipped, as for `natElim`. The tail slice is O(n)
   ## per step; the #19-framed benchmark against Phase 1 says whether the
   ## unused-binder optimization is needed.
+  ##
+  ## #331 destination-passing: when the cons-case body is the cons-rebuild
+  ## shape `cons A xHead ih` with the accumulator as the tail and the head
+  ## not mentioning `ih`/`tl` (see `dpsRebuildHead`), the fold compiles to
+  ## a single preallocated destination — one `newSeq`, O(n) writes —
+  ## instead of per-step `@[x] & acc` allocation. The destination is fresh
+  ## and the initial accumulator is only read, so the transform is sound
+  ## for any `ih` quantity (not gated on linearity).
   checkElimCases(r, "listElim", [0, 2], nParams = 1)
   ctx.checkSeqElemArg(appArgs, "listElim")
   ctx.checkMotiveKind(r, appArgs, 1)
@@ -1151,30 +1289,38 @@ proc cgReprListElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   let kSym = genSym(nskForVar, "cgListK")
   let xSym = genSym(nskLet, "cgListX")
   let tlSym = genSym(nskLet, "cgListTl")
-  # de Bruijn: V0 = ih (innermost), V1 = tl, V2 = x; env innermost-first.
-  let bodyCode = cgRepr(ctx, ihLam.scope.bdy,
-    @[accSym, tlSym, xSym] & env)
-  var stmts = newStmtList()
-  stmts.add(newLetStmt(xsSym, xsCode))
-  stmts.add(newVarStmt(accSym, nilCode))
-  var loopBody = newStmtList()
-  loopBody.add(newLetStmt(xSym,
-    newTree(nnkBracketExpr, xsSym, kSym)))
-  loopBody.add(newLetStmt(tlSym,
-    newTree(nnkBracketExpr, xsSym,
-      newTree(nnkInfix, ident"..^", newTree(nnkInfix, ident"+", kSym,
-        newLit(1)), newLit(1)))))
-  loopBody.add(newTree(nnkAsgn, accSym, bodyCode))
-  stmts.add(newTree(nnkForStmt, kSym,
-    newCall(ident"countdown",
-      newTree(nnkInfix, ident"-", newCall(bindSym"len", xsSym), newLit(1)),
-      newLit(0)),
-    loopBody))
-  stmts.add(accSym)
-  var blk = newNimNode(nnkBlockStmt)
-  blk.add(newEmptyNode())
-  blk.add(stmts)
-  blk
+  let dpsHead = dpsRebuildHead(ctx, ihLam.scope.bdy, isVec = false)
+  if dpsHead.isNil:
+    # de Bruijn: V0 = ih (innermost), V1 = tl, V2 = x; env innermost-first.
+    let bodyCode = cgRepr(ctx, ihLam.scope.bdy,
+      @[accSym, tlSym, xSym] & env)
+    var stmts = newStmtList()
+    stmts.add(newLetStmt(xsSym, xsCode))
+    stmts.add(newVarStmt(accSym, nilCode))
+    var loopBody = newStmtList()
+    loopBody.add(newLetStmt(xSym,
+      newTree(nnkBracketExpr, xsSym, kSym)))
+    loopBody.add(newLetStmt(tlSym,
+      newTree(nnkBracketExpr, xsSym,
+        newTree(nnkInfix, ident"..^", newTree(nnkInfix, ident"+", kSym,
+          newLit(1)), newLit(1)))))
+    loopBody.add(newTree(nnkAsgn, accSym, bodyCode))
+    stmts.add(newTree(nnkForStmt, kSym,
+      newCall(ident"countdown",
+        newTree(nnkInfix, ident"-", newCall(bindSym"len", xsSym), newLit(1)),
+        newLit(0)),
+      loopBody))
+    stmts.add(accSym)
+    var blk = newNimNode(nnkBlockStmt)
+    blk.add(newEmptyNode())
+    blk.add(stmts)
+    blk
+  else:
+    # #331 destination-passing fold: de Bruijn V0 = ih, V1 = tl are absent
+    # by the shape check (the empty nodes are never referenced), V2 = x.
+    let headCode = cgRepr(ctx, dpsHead,
+      @[newEmptyNode(), newEmptyNode(), xSym] & env)
+    cgDpsFoldBlock(xsCode, nilCode, headCode, kSym, xSym, nil)
 
 proc cgReprVecElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
                    env: seq[NimNode]): NimNode =
@@ -1192,6 +1338,14 @@ proc cgReprVecElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   ## motive (appArgs[1]) is skipped, as for `natElim`; the length index
   ## (appArgs[4]) is not evaluated (an index: type-level, author's
   ## problem if divergent, as with motives).
+  ##
+  ## #331 destination-passing: when the cons-case body is the cons-rebuild
+  ## shape `cons A idx xHead ih` with the accumulator as the tail and the
+  ## head not mentioning `ih`/`xs2` (see `dpsRebuildHead`), the fold
+  ## compiles to a single preallocated destination — one `newSeq`, O(n)
+  ## writes — instead of per-step `@[x] & acc` allocation. The destination
+  ## is fresh and the initial accumulator is only read, so the transform
+  ## is sound for any `ih` quantity (not gated on linearity).
   checkElimCases(r, "vecElim", [0, 3], nParams = 1)
   ctx.checkSeqElemArg(appArgs, "vecElim")
   ctx.checkMotiveKind(r, appArgs, 1)
@@ -1217,34 +1371,43 @@ proc cgReprVecElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   let iSym = genSym(nskLet, "cgVecI")
   let xSym = genSym(nskLet, "cgVecX")
   let tlSym = genSym(nskLet, "cgVecTl")
-  # de Bruijn: V0 = ih, V1 = xs2, V2 = x, V3 = i; env innermost-first.
-  let bodyCode = cgRepr(ctx, ihLam.scope.bdy,
-    @[accSym, tlSym, xSym, iSym] & env)
-  var stmts = newStmtList()
-  stmts.add(newLetStmt(xsSym, xsCode))
-  stmts.add(newVarStmt(accSym, nilCode))
-  var loopBody = newStmtList()
-  loopBody.add(newLetStmt(iSym,
-    newTree(nnkInfix, ident"-",
-      newTree(nnkInfix, ident"-", newCall(bindSym"len", xsSym), kSym),
-      newLit(1))))
-  loopBody.add(newLetStmt(xSym,
-    newTree(nnkBracketExpr, xsSym, kSym)))
-  loopBody.add(newLetStmt(tlSym,
-    newTree(nnkBracketExpr, xsSym,
-      newTree(nnkInfix, ident"..^", newTree(nnkInfix, ident"+", kSym,
-        newLit(1)), newLit(1)))))
-  loopBody.add(newTree(nnkAsgn, accSym, bodyCode))
-  stmts.add(newTree(nnkForStmt, kSym,
-    newCall(ident"countdown",
-      newTree(nnkInfix, ident"-", newCall(bindSym"len", xsSym), newLit(1)),
-      newLit(0)),
-    loopBody))
-  stmts.add(accSym)
-  var blk = newNimNode(nnkBlockStmt)
-  blk.add(newEmptyNode())
-  blk.add(stmts)
-  blk
+  let dpsHead = dpsRebuildHead(ctx, ihLam.scope.bdy, isVec = true)
+  if dpsHead.isNil:
+    # de Bruijn: V0 = ih, V1 = xs2, V2 = x, V3 = i; env innermost-first.
+    let bodyCode = cgRepr(ctx, ihLam.scope.bdy,
+      @[accSym, tlSym, xSym, iSym] & env)
+    var stmts = newStmtList()
+    stmts.add(newLetStmt(xsSym, xsCode))
+    stmts.add(newVarStmt(accSym, nilCode))
+    var loopBody = newStmtList()
+    loopBody.add(newLetStmt(iSym,
+      newTree(nnkInfix, ident"-",
+        newTree(nnkInfix, ident"-", newCall(bindSym"len", xsSym), kSym),
+        newLit(1))))
+    loopBody.add(newLetStmt(xSym,
+      newTree(nnkBracketExpr, xsSym, kSym)))
+    loopBody.add(newLetStmt(tlSym,
+      newTree(nnkBracketExpr, xsSym,
+        newTree(nnkInfix, ident"..^", newTree(nnkInfix, ident"+", kSym,
+          newLit(1)), newLit(1)))))
+    loopBody.add(newTree(nnkAsgn, accSym, bodyCode))
+    stmts.add(newTree(nnkForStmt, kSym,
+      newCall(ident"countdown",
+        newTree(nnkInfix, ident"-", newCall(bindSym"len", xsSym), newLit(1)),
+        newLit(0)),
+      loopBody))
+    stmts.add(accSym)
+    var blk = newNimNode(nnkBlockStmt)
+    blk.add(newEmptyNode())
+    blk.add(stmts)
+    blk
+  else:
+    # #331 destination-passing fold: de Bruijn V0 = ih, V1 = xs2 are
+    # absent by the shape check (the empty nodes are never referenced),
+    # V2 = x, V3 = i.
+    let headCode = cgRepr(ctx, dpsHead,
+      @[newEmptyNode(), newEmptyNode(), xSym, iSym] & env)
+    cgDpsFoldBlock(xsCode, nilCode, headCode, kSym, xSym, iSym)
 
 proc cgReprOptionElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
                       env: seq[NimNode]): NimNode =
