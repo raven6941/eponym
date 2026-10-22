@@ -11,9 +11,48 @@
 import eponym_init
 import preterm  # for Quantity
 import elab_prof  # Issue #55: phase timers
+import strutils
 
 type
   UsageError* = object of CatchableError
+  UsageCount* = enum
+    ucZero, ucOnce, ucMany
+  UsageProfile* = set[UsageCount]
+
+proc usageThen*(left, right: UsageProfile): UsageProfile =
+  ## Sequential composition: every left path is followed by every right path.
+  ## Counts saturate at many because QTT distinguishes only 0, 1, and >1.
+  for a in left:
+    for b in right:
+      result.incl UsageCount(min(2, ord(a) + ord(b)))
+
+proc usageChoice*(branches: openArray[UsageProfile]): UsageProfile =
+  ## Alternative composition: a runtime path takes one branch.
+  for branch in branches:
+    result = result + branch
+
+proc satisfiesQuantity*(profile: UsageProfile, qty: Quantity): bool =
+  case qty
+  of q0: profile == {ucZero}
+  of q1: profile == {ucOnce}
+  of qOmega: true
+
+proc usageCountSummary*(profile: UsageProfile): int =
+  ## Conservative legacy summary used by diagnostics and quantity inference.
+  ## A non-singleton profile is summarized as many; it must not infer q1.
+  if profile == {ucZero}: 0
+  elif profile == {ucOnce}: 1
+  else: 2
+
+proc usageProfileDescription*(profile: UsageProfile): string =
+  if profile == {ucZero}: "0"
+  elif profile == {ucOnce}: "1"
+  elif profile == {ucMany}: "2 or more"
+  else:
+    var counts: seq[string] = @[]
+    for count in profile:
+      counts.add(if count == ucMany: "2+" else: $ord(count))
+    counts.join(" or ")
 
 # --- in-judgment quantity enforcement (Issue #66) ---------------------------
 #
@@ -29,15 +68,39 @@ type
 # the innermost binder. The in-judgment check uses correct depth tracking;
 # the post-pass stays as a backstop.)
 
+proc varUsageProfile*(tm: Term): UsageProfile =
+  ## Possible saturated free-use counts for de Bruijn index 0 in term
+  ## positions. `tm` is the body of a lambda; index 0 denotes that binder.
+  proc go(t: Term, depth: int): UsageProfile =
+    case t.kind
+    of tV:
+      if t.idx == depth: {ucOnce} else: {ucZero}
+    of tLam, tPi, tSi:
+      # dom is a type annotation: not a term position, skip it
+      go(t.scope.bdy, depth + 1)
+    of tApp:
+      usageThen(go(t.fn, depth), go(t.arg, depth))
+    of tPair:
+      usageThen(usageThen(go(t.pFst, depth), go(t.pSnd, depth)),
+        go(t.pScope.bdy, depth + 1))
+    of tFst, tSnd, tAbsurd:
+      go(t.sub, depth)
+    of tLet:
+      # letTy is a type annotation: skip; val and body are term positions
+      usageThen(go(t.letVal, depth), go(t.letScope.bdy, depth + 1))
+    of tPrim:
+      {ucZero}  # primTy is a type annotation; primOp carries no terms
+    of tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
+      {ucZero}
+  if tm.isNil: {ucZero} else: go(tm, 0)
+
 proc countVarUses*(tm: Term): int =
-  ## Count free occurrences of de Bruijn index 0 in term positions.
-  ## `tm` is the body of a lambda; index 0 denotes the bound variable.
+  ## Exact syntactic count retained for existing callers and diagnostics.
   proc go(t: Term, depth: int): int =
     case t.kind
     of tV:
       if t.idx == depth: 1 else: 0
     of tLam, tPi, tSi:
-      # dom is a type annotation: not a term position, skip it
       go(t.scope.bdy, depth + 1)
     of tApp:
       go(t.fn, depth) + go(t.arg, depth)
@@ -46,13 +109,12 @@ proc countVarUses*(tm: Term): int =
     of tFst, tSnd, tAbsurd:
       go(t.sub, depth)
     of tLet:
-      # letTy is a type annotation: skip; val and body are term positions
       go(t.letVal, depth) + go(t.letScope.bdy, depth + 1)
     of tPrim:
-      0  # primTy is a type annotation; primOp carries no terms
+      0
     of tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
       0
-  go(tm, 0)
+  if tm.isNil: 0 else: go(tm, 0)
 
 proc hasUnresolvedMetas*(tm: Term): bool =
   ## True if `tm` mentions a tMeta anywhere (caller should have zonked first;
@@ -133,21 +195,27 @@ proc checkUsage*(tm: Term): void =
       ## the all-0 context.
       proc verifyBinder(t: Term) =
         if t.qty == qOmega: return
+        let profile = varUsageProfile(t.scope.bdy)
         let n = countVarUses(t.scope.bdy)
         case t.qty
         of q1:
-          if n == 0:
+          if profile == {ucZero}:
             raise newException(UsageError,
               "linear variable '" & t.scope.adv &
               "' not used (expected exactly once): a linear binder must be " &
               "used exactly once in the body")
-          elif n > 1:
+          elif profile == {ucMany}:
             raise newException(UsageError,
               "linear variable '" & t.scope.adv & "' used " & $n &
               " times (expected exactly once): use the variable exactly " &
               "once in the body")
+          elif not satisfiesQuantity(profile, q1):
+            raise newException(UsageError,
+              "linear variable '" & t.scope.adv & "' used " &
+              usageProfileDescription(profile) &
+              " time(s) (expected exactly once on every runtime path)")
         of q0:
-          if n > 0:
+          if not satisfiesQuantity(profile, q0):
             raise newException(UsageError,
               "erased variable '" & t.scope.adv &
               "' used in term position: erased (quantity-0) variables may " &
