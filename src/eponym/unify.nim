@@ -206,16 +206,26 @@ type
     dataCtors*: Table[int, seq[int]] # datatype refId -> constructor refIds
     ctorNames*: Table[int, string]   # constructor refId -> surface name
     dataNames*: Table[int, string]   # datatype refId -> surface name
+    # Arity metadata is also consumed by shed case-splitting: parameters can
+    # be replayed in an eliminator application, while indexed families need
+    # an index-generalized motive and remain a separate case.
+    dataParamCounts*: Table[int, int]
+    dataIndexCounts*: Table[int, int]
 
 proc initCtorTable*(): CtorTable =
   CtorTable(ctorData: initTable[int, int](),
             dataCtors: initTable[int, seq[int]](),
             ctorNames: initTable[int, string](),
-            dataNames: initTable[int, string]())
+            dataNames: initTable[int, string](),
+            dataParamCounts: initTable[int, int](),
+            dataIndexCounts: initTable[int, int]())
 
 proc registerDataCtors*(ms: var MetaStore, dataRefId: int, dataName: string,
-                        ctors: seq[(int, string)]) =  ## Issue #80: record one `data` declaration's constructor set.
+                        ctors: seq[(int, string)], paramCount = 0,
+                        indexCount = 0) =  ## Issue #80: record one `data` declaration's constructor set.
   ms.ctorTable.dataNames[dataRefId] = dataName
+  ms.ctorTable.dataParamCounts[dataRefId] = paramCount
+  ms.ctorTable.dataIndexCounts[dataRefId] = indexCount
   var ids: seq[int] = @[]
   for (cid, cname) in ctors:
     ms.ctorTable.ctorData[cid] = dataRefId

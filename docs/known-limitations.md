@@ -248,6 +248,11 @@ terms. Refinement edits generated source and re-elaborates it. Draft text is
 user-owned scratch and is not checked by Eponym. A persisted semantic editing
 session would need a versioned structural term codec and is not implemented.
 
+Case-splitting in a Nim shed supports non-indexed datatype families and
+replays their parameters in the generated eliminator. For example,
+`List[Nat]` and `List[A]` work. Indexed families such as `Vec[A, n]` still
+need a motive generalized over the family indices and remain unsupported.
+
 Checked definitions can emit a runtime debug trace by importing
 `lib/debug.ep` and binding its generic `debugEcho` postulate to
 `debugEchoRuntimeValue` (or a custom `bindPostulateValue` adapter). It returns

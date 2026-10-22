@@ -94,9 +94,12 @@ a zero branch and a successor branch. Open each branch and solve its goal
 with Refine or Give; recursive cases may include an induction hypothesis
 such as `ih0`.
 
-Case-split currently supports simple, non-parameterized, non-indexed
-datatypes. If the variable is not in scope or its type is outside that
-supported shape, the extension reports why it rejected the split.
+Case-split supports non-indexed datatypes, including parameterized families
+such as `List[Nat]` and a generic `List[A]`. The extension reuses the
+parameters from the variable's type in the generated eliminator and motive.
+Indexed families such as `Vec[Nat, n]` still need an index-generalized motive
+and are not supported yet. If the variable is not in scope or its type is
+outside the supported shape, the extension reports why it rejected the split.
 
 ## After an action
 

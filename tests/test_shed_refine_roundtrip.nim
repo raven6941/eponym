@@ -240,5 +240,82 @@ if cases.ok:
     check(suc.ok and suc.status == "white" and suc.yellowCount == 0,
       "successor case can be independently completed with its IH in scope")
 
+# Parameterized, non-indexed datatypes can replay their type parameters in
+# the eliminator and motive. This exercises the real Nim splice and macro
+# recompilation, not only the LSP's generated text.
+let listFile = scratch / "list_case_split.nim"
+let listImport = (RepoRoot / "lib" / "list.ep").replace("\\", "/")
+let listV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & listImport & "\"\n" &
+  "  proc listLength(xs: List[Nat]): Nat = ![listLengthBody]\n"
+writeFile(listFile, listV0)
+compiled = compileFixture(listFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "parameterized List fixture compiles with an initial shed")
+
+let listCases = caseSplitShed(listFile, "listLengthBody", "xs")
+check(listCases.ok and listCases.subSheds.len == 2,
+  "case-split accepts a parameterized, non-indexed List")
+check(listCases.term ==
+      "listElim[Nat](lam(u, List[Nat], Nat), " &
+      "![listLengthBody_nil], ![listLengthBody_cons], xs)",
+  "case-split replays List's parameter in both eliminator and motive")
+if listCases.ok:
+  let listV1 = spliceShed(listV0, listCases.nimLine, listCases.nimCol,
+                          listCases.term)
+  writeFile(listFile, listV1)
+  compiled = compileFixture(listFile, scratch)
+  if not compiled.ok: echo compiled.output
+  check(compiled.ok, "parameterized case-split splice recompiles")
+  let listSheds = readShedSidecar(sidecarPath(listFile))
+  check(listSheds.len == 2 and
+        listSheds.allIt(it.status == ssYellow) and
+        listSheds.anyIt(it.name == listCases.subSheds[0] and it.goal == "Nat"),
+    "parameterized cases retain their typed goals")
+  check(listSheds.anyIt(it.name == listCases.subSheds[1] and
+                        it.goalPi.anyIt(it.startsWith("x : Nat"))) and
+        listSheds.anyIt(it.name == listCases.subSheds[1] and
+                        it.goalPi.anyIt(it.startsWith("ih0 : (L"))),
+    "cons case exposes the element and typed induction hypothesis")
+
+# A parameter supplied by a generic Eponym binder must retain its local name
+# when the generated type argument is spliced back into Nim syntax.
+let genericListFile = scratch / "generic_list_case_split.nim"
+let genericListV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & listImport & "\"\n" &
+  "  proc inspectList[A: Univ](xs: List[A]): Nat = ![inspectListBody]\n"
+writeFile(genericListFile, genericListV0)
+compiled = compileFixture(genericListFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "generic List fixture compiles with an initial shed")
+let genericListCases = caseSplitShed(
+  genericListFile, "inspectListBody", "xs")
+check(genericListCases.ok and genericListCases.term.startsWith(
+        "listElim[A](lam(u, List[A], Nat),"),
+  "case-split retains a generic local datatype parameter")
+if genericListCases.ok:
+  let genericListV1 = spliceShed(
+    genericListV0, genericListCases.nimLine, genericListCases.nimCol,
+    genericListCases.term)
+  writeFile(genericListFile, genericListV1)
+  compiled = compileFixture(genericListFile, scratch)
+  if not compiled.ok: echo compiled.output
+  check(compiled.ok, "generic parameterized case-split splice recompiles")
+
+# Indexed families need an index-generalized motive; keep that unsupported
+# shape explicit and diagnostic until the server can construct one safely.
+let vecFile = scratch / "indexed_case_split.nim"
+let vecImport = (RepoRoot / "lib" / "vec.ep").replace("\\", "/")
+let vecV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & vecImport & "\"\n" &
+  "  proc vectorLength(n: Nat, xs: Vec[Nat, n]): Nat = ![vecBody]\n"
+writeFile(vecFile, vecV0)
+compiled = compileFixture(vecFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "indexed Vec fixture compiles with an initial shed")
+let vecCases = caseSplitShed(vecFile, "vecBody", "xs")
+check(not vecCases.ok and "indexed datatype 'Vec'" in vecCases.why,
+  "indexed case-split stays rejected with a targeted explanation")
+
 removeDir(scratch)
 echo "--- shed refine round-trip contract passed ---"

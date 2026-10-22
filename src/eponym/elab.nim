@@ -3063,7 +3063,9 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
           raise elabErr(ctor.cloc, "internal: constructor '" & ctor.name &
             "' did not elaborate to a global reference")
         ctorIds.add((ctm.refId, ctor.name))
-      ms.registerDataCtors(globals[d.dname].tm.refId, d.dname, ctorIds)
+      let (indexTele, _) = flattenPiPre(d.indexTy)
+      ms.registerDataCtors(globals[d.dname].tm.refId, d.dname, ctorIds,
+                           d.params.len, indexTele.len)
       # Issue #115: register Nat's constructor refIds on the supply so the
       # core's conversion can equate wNatLit(k) with suc-chains
       # (definitionally equal per Issue #93). Carried on the supply (not a
