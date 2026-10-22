@@ -900,6 +900,11 @@ implementations.
   test compiles a bracketed-generic `shedsBlock` and exercises its sidecar
   through the real LSP; no extension version bump is needed because its UI and
   protocol did not change.
+- [x] Give shed holes an in-process semantic model: retain the typed hole
+  metavariable, zonked goal terms, structured binder contexts and Pi-spine
+  binders with QTT metadata. Migrate LSP hover to consume that model. Keep the
+  sidecar's rendered text as a presentation projection; a future cross-process
+  semantic format needs a versioned structural term codec.
 - [x] Lower single and chained `if/elif/else` expressions through the checked
   `ifThenElse` definition in `lib/bool.ep`. Branches are unit thunks, so only
   the chosen branch runs, matching Nim conditional evaluation even when a

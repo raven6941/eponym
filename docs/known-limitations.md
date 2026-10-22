@@ -238,6 +238,16 @@ body expression. Errors in imported `.ep` files report that file's path, line,
 and column. The `eponym"..."` form reports positions within its Eponym string,
 not Nim source expressions.
 
+## Sheds expose semantic state in-process
+
+The LSP can inspect a hole as a typed metavariable with a zonked goal,
+structured binder context, and Pi binders. Hover uses this state. The
+`.sheds.json` sidecar still stores rendered goal and context strings for the
+cross-process presentation path; those strings are not parsed back into
+terms. Refinement edits generated source and re-elaborates it. Draft text is
+user-owned scratch and is not checked by Eponym. A persisted semantic editing
+session would need a versioned structural term codec and is not implemented.
+
 Checked definitions can emit a runtime debug trace by importing
 `lib/debug.ep` and binding its generic `debugEcho` postulate to
 `debugEchoRuntimeValue` (or a custom `bindPostulateValue` adapter). It returns

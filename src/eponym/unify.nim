@@ -86,14 +86,22 @@ type
     metaLoc*: Loc     # where the meta was created (for error messages)
     solution*: Term   # nil = unsolved; lives in the creation context
 
-  # Issue #58 (LSP holes): a surface `?` hole recorded at creation time,
-  # with the goal type (a type metavariable, zonked at query time) and the
-  # binder context (names + types, innermost-first) for hover display.
+  HoleContextBinder* = object
+    ## One binder in a surface hole's local context. Contexts are
+    ## innermost-first, matching de Bruijn indices in Term values.
+    name*: string
+    ty*: Term
+    qty*: Qty
+
+  # Issue #58 (LSP holes): a surface `?` hole recorded at creation time.
+  # Keep the hole as a typed metavariable and retain the structured binder
+  # context; editor-facing strings are projections made by the sheds layer.
   HoleInfo* = object
     holeLoc*: Loc
     holeName*: string
+    holeTerm*: Term
     holeGoal*: Term
-    holeCtx*: seq[tuple[name: string, ty: Term]]
+    holeCtx*: seq[HoleContextBinder]
     holeAb*: Ability  # Issue #177: the ambient ability at the hole
 
   NamedHoleEntry* = object

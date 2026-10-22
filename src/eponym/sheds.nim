@@ -47,6 +47,93 @@ import strutils
 import sequtils
 import elab  # elabCheckHolesDir (issue #134: refreshShedStatuses)
 import parse_surf  # ParseError (issue #134: refreshShedStatuses)
+import eponym_init  # Term, Quantity (issue #377: semantic shed state)
+import unify  # MetaStore, HoleInfo, zonk (issue #377)
+import preterm  # Qty / toQty
+
+type
+  ShedSemanticBinder* = object
+    ## A binder in the in-process semantic snapshot. `ty` is zonked in the
+    ## hole's context; `qty` preserves the elaborator's quantity annotation.
+    name*: string
+    ty*: Term
+    qty*: Qty
+
+  ShedPiBinder* = object
+    ## One binder in the Pi spine of a hole goal, with its domain as a Term
+    ## rather than the old rendered "name : type" string.
+    name*: string
+    domain*: Term
+    qty*: Quantity
+    implicit*: bool
+    erased*: bool
+
+  ShedSemanticState* = object
+    ## Transient, elaborator-backed view of a shed hole. The `hole` term is
+    ## the typed metavariable and its spine; goal/context terms are zonked
+    ## against the supplied MetaStore. Do not persist these Term refs without
+    ## also serializing a stable term algebra and metavariable environment.
+    hole*: Term  # original typed metavariable reference and its context spine
+    goal*: Term
+    context*: seq[ShedSemanticBinder]  # innermost-first
+    goalPi*: seq[ShedPiBinder]         # outermost-first
+    residualGoal*: Term
+
+proc semanticShedState*(ms: MetaStore, h: HoleInfo): ShedSemanticState =
+  ## Build the editor's semantic view from a live elaboration result. This is
+  ## the source for LSP behavior; strings in ShedInfo/sidecars are projections
+  ## for display and backward-compatible cross-process transport.
+  result.hole = h.holeTerm
+  result.goal = zonk(ms, h.holeGoal)
+  for b in h.holeCtx:
+    result.context.add(ShedSemanticBinder(name: b.name,
+      ty: zonk(ms, b.ty), qty: b.qty))
+
+  var g = result.goal
+  while g.kind == tPi:
+    let nm = g.scope.adv
+    let dom = zonk(ms, g.dom)
+    result.goalPi.add(ShedPiBinder(name: nm, domain: dom, qty: g.qty,
+      implicit: g.impl, erased: g.erased))
+    g = zonk(ms, g.scope.bdy)
+  result.residualGoal = g
+
+proc semanticContext*(state: ShedSemanticState): Ctx =
+  ## Adapt the structured context for the existing name-aware term printer.
+  for b in state.context:
+    result.add(CtxEntry(name: b.name, ty: b.ty, qty: b.qty))
+
+proc renderShedGoalCtx*(ms: MetaStore, state: ShedSemanticState):
+    tuple[goal: string, ctx: seq[string], goalPi: seq[string]] =
+  ## Legacy text projection used by the sidecar and current 2D layout.
+  let ctx = semanticContext(state)
+  result.goal = prettyTerm(state.goal, ctx, ms.refNames, ms.recordFields)
+  for b in state.context:
+    result.ctx.add(b.name & " : " & prettyTerm(b.ty, ctx,
+      ms.refNames, ms.recordFields))
+  var pc = ctx
+  for b in state.goalPi:
+    result.goalPi.add(b.name & " : " & prettyTerm(b.domain, pc,
+      ms.refNames, ms.recordFields))
+    pc = @[CtxEntry(name: b.name, ty: b.domain, qty: toQty(b.qty))] & pc
+  if state.goalPi.len > 0:
+    result.goalPi.add(prettyTerm(state.residualGoal, pc,
+      ms.refNames, ms.recordFields))
+
+proc renderShedHover*(ms: MetaStore, state: ShedSemanticState): string =
+  ## LSP hover projection. Keeping this over the semantic state prevents a
+  ## second, subtly different interpretation of hole contexts and goals.
+  let ctx = semanticContext(state)
+  var lines: seq[string] = @[
+    "```",
+    "goal : " & prettyTerm(state.goal, ctx, ms.refNames, ms.recordFields),
+    "```"]
+  if state.context.len > 0:
+    lines.add("**context**")
+    for b in state.context:
+      lines.add("- `" & b.name & " : " &
+        prettyTerm(b.ty, ctx, ms.refNames, ms.recordFields) & "`")
+  lines.join("\n")
 
 type
   ShedStatus* = enum
@@ -71,12 +158,11 @@ type
                        # macro time, so the LSP server can run the #58
                        # refine action for real `.nim` documents
                        # ("" = sidecar predates #137: recompile)
-    goal*: string      # zonked, pretty-printed goal type at the hole
-    ctx*: seq[string]  # zonked, pretty-printed binder context ("name : type")
+    goal*: string      # display projection; semantic state owns Term
+    ctx*: seq[string]  # display projection ("name : type")
     goalPi*: seq[string]  # issue #192: Pi spine of the goal, outermost first:
-                          # binder strings ("f : A"), then the residual goal
-                          # as the last element (empty = goal is not a Pi, the
-                          # layout renders one flat hole box as before)
+                          # binder strings and residual goal, projected from
+                          # ShedSemanticState for the sidecar/layout
     status*: ShedStatus  # issue #134: white/yellow/brown elaboration status
 
 proc isShedNode*(n: NimNode): bool =

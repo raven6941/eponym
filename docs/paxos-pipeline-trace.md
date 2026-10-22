@@ -109,29 +109,33 @@ value-indexed ticket types and the linear channel threading.
 Modules: `src/eponym/sheds.nim`, `src/eponym/sheds_mac.nim`,
 `src/eponym/shed_layout.nim`, `src/eponym/lsp.nim`.
 
-This is the expected weak leg, and the trace confirms it. A shed does **not**
-manipulate `Term`s. `ShedInfo` (`sheds.nim`) carries:
+This remains the least structured leg, but issue #377 adds an in-process
+semantic snapshot for inspection. `HoleInfo` retains a typed metavariable,
+goal term, and named binder context; `semanticShedState` zonks the goal and
+context types and represents the goal's Pi spine as binders. LSP hover
+consumes that state.
+The sidecar itself is still a presentation record. `ShedInfo` (`sheds.nim`)
+carries:
 
 - `name`, and `draft` — the `repr` of the draft Nim node, user-owned scratch
   text that **never reaches the elaborator**;
 - source positions (`nimLine`/`nimCol`, `holeLine`/`holeCol`) and `holeIdx`,
   an index into `MetaStore.holes` after hole-tolerant elaboration
   (`elabCheckHolesDir`, the #58 hole infrastructure);
-- `goal` and `ctx` as **zonked, pretty-printed strings** (`"name : type"`),
-  plus `goalPi` (the Pi spine as binder strings);
+- `goal` and `ctx` as **pretty-printed strings** (`"name : type"`), plus
+  `goalPi` (the Pi spine as binder strings), projected from the semantic state;
 - `genSrc` — the block's generated Eponym source, so the LSP can run real
   `#58` refine actions on `.nim` documents;
 - `status` — the white/yellow/brown Epigram colour, serialized to the
   sidecar JSON (`<nimfile>.sheds.json`) that the LSP turns into diagnostics.
 
-So the shed layer sees holes as *indices into the elaborator's meta store*
-plus *rendered text* of goals and contexts. There is no `Term` round-trip:
-the editor cannot re-parse the pretty-printed goal back into a term, and
-refinement actions go through the elaborator's hole-filling machinery, not
-through shed-side term surgery. The representation a shed "manipulates" is a
-sidecar record; the typechecker remains forbidden to tread inside the shed
-in exactly the Epigram sense — and the tooling respects that boundary by not
-holding the term at all.
+The editor's in-process hover path now sees structured terms. The sidecar
+still carries rendered projections because it crosses the compiler/LSP
+process boundary; those strings are not parsed back into terms. Refinement
+actions continue to edit generated source and re-elaborate through the
+existing hole-filling machinery. The draft remains user-owned Nim AST text
+and is never checked by Eponym. See `docs/shed-semantic-model.md` for the
+snapshot lifetime and future serialization boundary.
 
 ## Stage 4 — Erasure (#328)
 
