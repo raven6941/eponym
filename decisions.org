@@ -3779,3 +3779,82 @@
   issue's own honest-scope note; =requireCompiled()= (#392) does not
   supply the invariant. Status: IMPLEMENTED (#331); q1-gated refinement
   recorded as future work, not a Phase 3 acceptance item.
+
+* 2026-10-22 — Eponym as a runtime scripting layer is not a supported use case (Aaron)
+
+  Decision: Eponym definitions are supported only as compiled into a
+  Nim program through statically typed wrappers. Loading or elaborating
+  new Eponym code after the host program is compiled (a scripting /
+  plugin embedding mode) is NOT a supported use case, and no design
+  obligation follows from it.
+
+  Rationale: in the embedded use the project is built for, every type
+  an Eponym path is applied to is discovered on a compile path — the
+  elaborator holds the checked =Term= of every definition at macro
+  time. Runtime *values* of statically known types, and runtime
+  *choice* among statically known types, are both fully covered by
+  compile-time codec generation. The only programs that need types
+  first discovered at runtime are hosts for other programs; that use
+  has no current instance in the repo and was keeping the dynamic
+  surface (=runtimeValue= as a user API, runtime re-elaboration on
+  first wrapper call) classified as a supported peer of the static
+  surface.
+
+  Consequences:
+  - The dynamic surface is reclassified as internal tooling. What it
+    legitimately serves — compile-time evaluation inside the
+    elaborator/kernel, the LSP/sheds editor process, and the
+    interpreter/Value backend as the differential-test oracle — is
+    development machinery, not a shipped program's runtime, and is
+    unaffected.
+  - "No boxing overhead on normal pathways" becomes the definition of
+    the static surface rather than an opt-in per-block property.
+    =requireCompiled()= (#358) stands as the early enforcement of it.
+  - Hole-containing definitions are never run at the Nim level:
+    compilation of a user program requires holes in
+    entry-point-reachable definitions to be filled (an unresolved
+    metavariable is a macro-time error on the static path, not a
+    silent tier-down). Shed/hole evaluation during development happens
+    inside the editor process.
+  - #401 and #402 are amended to match: their scopes no longer treat
+    the dynamic surface as a supported peer.
+
+* 2026-10-22 — Codecs for runtime-index-dependent types are codec factories (Aaron)
+
+  Question: a type whose index is established only at runtime (a
+  matrix dimension, a vector length supplied by earlier data) seems to
+  have no single codec and no single host type. Answer adopted:
+  derivation generates a *codec factory* — a Nim proc of shape
+  =Π (idx : I) -> Codec (T idx)= — produced at compile time from the
+  checked type =Term= with the index held symbolic.
+
+  Mechanism: derivation recurses over the type =Term= once (finite,
+  fixed at compile time), never over index values; the regularity of
+  the family is the type-level structure the elaborator already
+  computed. Components whose types do not mention the index share one
+  static codec; components that mention it get codecs built by the
+  factory, closing over the runtime index values. A static codec is
+  the zero-index special case, so derivation has one uniform output
+  shape. The dependent-Sigma case is the same mechanism: the second
+  component's codec is the factory applied to the first component's
+  runtime value. The generated wrapper for =Vec[Int, n]= already
+  threads a runtime =n= into its length check; the factory makes that
+  parameterization a first-class, composable value.
+
+  Host representation stays uniform across indices (a matrix is an
+  object carrying its dimensions and a flat =seq=); the factory codec
+  enforces the dependent invariant (=data.len == m * n=) at the
+  boundary. A value-dependent *host* type (e.g. =array[m, array[n,
+  int]]= as the chosen representation) remains impossible — that is a
+  Nim type-system boundary — and derivation must reject that
+  representation choice with a named reason rather than tier down.
+
+  Limits: the index type must itself have a runtime representation to
+  be a factory argument (=Nat=/=Int=/=Bool=/tag types qualify).
+  Indices with no runtime existence (=Session= indices in Paxos) are
+  the complementary case handled by #401's index-erased family
+  mapping, not by factories. Index arguments produced by type-level
+  computation (=T (f n)=) require =f= compiled on the index
+  representation. Factory construction costs once per distinct index
+  tuple (closure allocation); factories may be memoized on the index
+  value. This direction is folded into #402 as its output shape.
