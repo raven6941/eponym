@@ -1,6 +1,6 @@
 ---
 name: mistake-retrospectives
-description: Use when a piece of work — yours or another agent's — turns out to have been a mistake: poorly scoped, a limiting decision hidden instead of surfaced, a claim that proves false, a verdict without its reasons. Covers deciding whether the mistake is an instance of a repeatable pattern, and turning the pattern into a skill change via PR so future agents avoid it.
+description: "Use when a piece of work — yours or another agent's — turns out to have been a mistake: poorly scoped, a limiting decision hidden instead of surfaced, a claim that proves false, a verdict without its reasons. Covers deciding whether the mistake is an instance of a repeatable pattern, and turning the pattern into a skill change via PR so future agents avoid it."
 ---
 
 # Mistake retrospectives: turn errors into skill changes
