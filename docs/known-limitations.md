@@ -260,16 +260,26 @@ eponymBlock:
 ```
 
 The host procedure may take its buffer as `var seq[byte]` and return the
-updated sequence. This adapter uses copy-in/result-out value semantics:
-mutation of a decoded local only reaches checked code through the returned
-value. It does not transfer ownership or mutate the Nim variable passed to the
-generated checked wrapper. If you need caller-visible mutation, keep that
-operation in ordinary Nim code and model the checked result explicitly. Nim's
+updated sequence. The adapter passes a decoded local as `var` and converts the
+returned value back to Eponym; it does not pass the wrapper caller's Nim
+variable itself by reference or transfer ownership. However, an opaque
+mapping can be shallow or contain references, so mutation through shared
+storage may still be visible to other Nim aliases. Eponym promises neither
+isolation nor caller-variable mutation here. If you need caller-visible
+mutation, keep that operation in ordinary Nim code and model the checked
+result explicitly. Nim's
 [`lent T`](https://nim-lang.org/docs/destructors.html#lent-type) is a borrowed
 return type, not a parameter type; use an ordinary value parameter for a
 read-only adapter. The adapter is trusted to preserve
 the declared type and any indexed relationships, just like other bound
 postulates.
+
+Compile with `-d:eponymTrustReport` to print a per-`eponymBlock` inventory of
+postulate adapters, opaque/custom runtime mappings, and dependent-pair or
+record opt-ins, with the guarantee each leaves to the host. The report is
+diagnostic text for code review, not a machine-readable API. The checked
+`{.linear.}` annotation still applies only inside Eponym: the checker cannot
+see two Nim references aliasing the same resource.
 
 Nim proc values with supported codecs can cross as callback arguments;
 noncapturing callbacks with the default `nimcall` convention are supported.

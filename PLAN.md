@@ -1042,6 +1042,10 @@ implementations.
   that reports each block-local definition's highest emitted backend tier,
   the reason higher-tier compilation stopped, and runtime slow-path calls
   into definitions without a compiled local target (issue #370).
+- [x] Review the host trust opt-ins as a family and add an opt-in per-block
+  trust report (`-d:eponymTrustReport`). Keep dependent pair/result opt-ins,
+  opaque mappings, custom codecs, and mutable adapters distinct, and explain
+  that QTT single-use does not detect Nim reference aliases (issue #374).
 
 ### Cross-stage validation and project claims
 

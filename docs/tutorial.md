@@ -347,6 +347,10 @@ Notes:
   must be used exactly once in the body`; use it twice and you get
   `linear variable 'ch' used 2 times (expected exactly once): use the
   variable exactly once in the body`.
+- This linearity check applies to Eponym values inside the checked block.
+  It cannot see whether two Nim references point to the same socket, buffer,
+  or other host object. Keep aliases and ownership rules in the Nim adapter
+  layer; `{.linear.}` does not make a Nim object exclusive.
 - Quantity inference (issue #84): you only need to *write* an annotation
   when you want quantity 1. An unannotated binder gets its quantity
   inferred from usage — zero relevant uses becomes erased (`0`), any use
