@@ -349,6 +349,13 @@ Goal-directed Intro is available for leading Pi binders; it introduces one
 binder per action. Persisted semantic action history, undo, and replay are
 tracked separately and are not implemented.
 
+Goal-directed Apply searches local hypotheses and checks their applications
+against the goal. The VS Code picker is filterable; named global definitions
+are not searched. Arguments fixed by the expected result are filled in, while
+remaining arguments become typed sheds. Candidate discovery is bounded to
+the hypotheses currently in scope and the unification the elaborator can
+establish.
+
 Goal-directed Construct is available for datatype goals in a Nim shed. It
 tries each constructor by elaborating an application with typed field holes
 against the goal, then offers the constructors that check. Any unresolved

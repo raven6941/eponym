@@ -194,6 +194,28 @@ export class LspClient {
     });
   }
 
+  /** Search local hypotheses for goal-directed applications (#427). */
+  refineFromContextShed(
+    docUri: string,
+    shedName: string,
+    candidate?: string
+  ): Promise<{
+    shedName: string;
+    candidates: string[];
+    term: string;
+    nimLine: number;
+    nimCol: number;
+    status: "white" | "yellow" | "brown";
+    yellowCount: number;
+    message?: string;
+  }> {
+    return this.request("eponym/refineFromContextShed", {
+      textDocument: { uri: docUri },
+      shedName,
+      ...(candidate ? { candidate } : {}),
+    });
+  }
+
   shutdown() {
     this.notify("exit", {});
     this.proc.kill();

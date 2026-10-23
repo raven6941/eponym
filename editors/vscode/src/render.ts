@@ -76,6 +76,7 @@ export function pageHtml(layoutJson: string, shedName: string, shedNames: string
   <input id="term" placeholder="refine term (e.g. zero())" size="40"/>
   <button onclick="intro()">intro</button>
   <button onclick="construct()">construct</button>
+  <button onclick="apply()">apply</button>
   <button onclick="refine()">refine</button>
   <button onclick="give()">give</button>
   <button onclick="casesplit()">case-split</button>
@@ -114,6 +115,7 @@ function give(){ const t=document.getElementById('term').value; vscode.postMessa
 function casesplit(){ const v=document.getElementById('term').value; vscode.postMessage({cmd:'case-split', variable:v, hole:selectedHole}); }
 function intro(){ vscode.postMessage({cmd:'intro', hole:selectedHole}); }
 function construct(){ vscode.postMessage({cmd:'construct', hole:selectedHole}); }
+function apply(){ vscode.postMessage({cmd:'apply', hole:selectedHole}); }
 function switchShed(name){ vscode.postMessage({cmd:'switch-shed', shedName:name}); }
 window.addEventListener('message', e=>{
   const m=e.data;

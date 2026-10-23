@@ -1120,6 +1120,119 @@ proc refineConstructorsShed*(nimFile, shedName: string,
   (true, "", candidates, refined.term, refined.nimLine, refined.nimCol,
    refined.status, refined.yellowCount)
 
+proc refineFromContextShed*(nimFile, shedName: string,
+                            selected = ""):
+    tuple[ok: bool, why: string, candidates: seq[string], term: string,
+          nimLine, nimCol: int, status: string, yellowCount: int] =
+  ## Goal-directed Apply (#427). Each local hypothesis is tried as a head,
+  ## with one typed hole per Pi binder. Normal elaboration determines which
+  ## holes can be solved from the expected goal and validates the residual
+  ## dependent argument goals. Candidate enumeration is read-only; applying
+  ## one uses refineShed's checked round-trip.
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
+  let (sheds, _) = readShedSidecarEx(sc)
+  var si = -1
+  for i, shed in sheds:
+    if shed.name == shedName: si = i; break
+  if si < 0:
+    return (false, "unknown shed '" & shedName & "'", @[], "", 0, 0, "", 0)
+  if sheds[si].genSrc == "":
+    return (false, "shed '" & shedName & "': no generated source recorded; recompile",
+            @[], "", 0, 0, "", 0)
+  if sheds[si].status != ssYellow:
+    return (false, "shed '" & shedName & "' is not open (status " &
+            shedStatusToStr(sheds[si].status) & ")", @[], "", 0, 0, "", 0)
+
+  let oldSrc = sheds[si].genSrc
+  let baseDir = parentDir(nimFile)
+  var ms: MetaStore
+  var target: HoleInfo
+  var found = false
+  try:
+    let checked = elabCheckHolesDir(oldSrc, baseDir)
+    ms = checked.ms
+    for h in ms.holes:
+      if h.holeLoc.line == sheds[si].holeLine and
+         (sheds[si].holeCol <= 0 or h.holeLoc.col == sheds[si].holeCol):
+        target = h
+        found = true
+        break
+  except ParseError as e:
+    return (false, "recorded source no longer parses: " & e.msg,
+            @[], "", 0, 0, "", 0)
+  if not found:
+    return (false, "shed hole is no longer open (sidecar stale? recompile)",
+            @[], "", 0, 0, "", 0)
+
+  let p = sourceOffset(oldSrc, sheds[si].holeLine, sheds[si].holeCol)
+  if p < 0:
+    return (false, "shed hole position is outside its generated source",
+            @[], "", 0, 0, "", 0)
+  let (line, col) = sourcePosition(oldSrc, p)
+  var candidates: seq[string] = @[]
+  var selectedTerm = ""
+  var context: Ctx = @[]
+  for b in target.holeCtx:
+    context.add(CtxEntry(name: b.name, ty: b.ty, qty: b.qty))
+  for b in target.holeCtx:
+    if b.name.len == 0 or b.name == "_": continue
+    var arity = 0
+    var ty = zonk(ms, b.ty)
+    while ty != nil and ty.kind == tPi:
+      inc arity
+      ty = zonk(ms, ty.scope.bdy)
+    let candidate = b.name & repeat(" ?", arity)
+    let probe = fillHoleAt(oldSrc, line - 1, col - 1,
+                           "(" & candidate & ")", baseDir)
+    if probe.ok:
+      # Expected-type unification can solve some argument holes. Reify those
+      # solutions in the picker term (e.g. `f ?` becomes `f a` when the goal
+      # forces the dependent argument to the in-scope value `a`).
+      var rendered = candidate
+      try:
+        let checked = elabCheckHolesDir(probe.newSrc, baseDir)
+        if checked.errMsg == "":
+          var placeholderPositions: seq[int] = @[]
+          for i, ch in candidate:
+            if ch == '?': placeholderPositions.add(i)
+          var replacements = initTable[int, string]()
+          let candidateStart = p + 1 # skip the probe's opening parenthesis
+          for h in checked.ms.holes:
+            let holeOffset = sourceOffset(probe.newSrc,
+              h.holeLoc.line, h.holeLoc.col)
+            let relative = holeOffset - candidateStart
+            if relative notin placeholderPositions: continue
+            let solved = zonk(checked.ms, h.holeTerm)
+            if solved.kind != tMeta:
+              replacements[relative] = prettyTerm(solved, context,
+                checked.ms.refNames, checked.ms.recordFields)
+          for pos in countdown(candidate.high, 0):
+            if pos in replacements:
+              let value = replacements[pos]
+              rendered = rendered[0 ..< pos] & value & rendered[pos + 1 .. ^1]
+      except ParseError:
+        discard
+      candidates.add(rendered)
+      if rendered == selected: selectedTerm = rendered
+
+  if selected.len == 0:
+    if candidates.len == 0:
+      return (true, "no local hypothesis is currently known to fit this goal",
+              @[], "", 0, 0, "", 0)
+    return (true, "", candidates, "", 0, 0, "", 0)
+  if selected notin candidates:
+    return (false, "candidate '" & selected &
+            "' is not feasible for this goal; available: " & candidates.join(", "),
+            candidates, "", 0, 0, "", 0)
+  let refined = refineShed(nimFile, shedName, selectedTerm)
+  if not refined.ok:
+    return (false, refined.why, candidates, "", 0, 0, "", 0)
+  (true, "", candidates, refined.term, refined.nimLine, refined.nimCol,
+   refined.status, refined.yellowCount)
+
 proc caseSplitShed*(nimFile, shedName, variable: string):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           subSheds: seq[string]] =
@@ -1513,6 +1626,27 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
       return %*{"jsonrpc": "2.0", "id": id,
                 "error": {"code": -32602, "message": r.why}}
     var payload = %*{"shedName": shedName, "constructors": r.constructors,
+                     "term": r.term, "nimLine": r.nimLine, "nimCol": r.nimCol,
+                     "status": r.status, "yellowCount": r.yellowCount}
+    if r.why != "": payload["message"] = %r.why
+    return %*{"jsonrpc": "2.0", "id": id, "result": payload}
+  of "eponym/refineFromContextShed":
+    let id = msg["id"]
+    if "textDocument" notin msg["params"] or "shedName" notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "eponym/refineFromContextShed needs " &
+                            "textDocument.uri and shedName"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let shedName = msg["params"]["shedName"].getStr()
+    let selected = if "candidate" in msg["params"]:
+                     msg["params"]["candidate"].getStr()
+                   else: ""
+    let r = refineFromContextShed(uriToPath(uri), shedName, selected)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    var payload = %*{"shedName": shedName, "candidates": r.candidates,
                      "term": r.term, "nimLine": r.nimLine, "nimCol": r.nimCol,
                      "status": r.status, "yellowCount": r.yellowCount}
     if r.why != "": payload["message"] = %r.why

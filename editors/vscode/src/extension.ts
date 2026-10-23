@@ -412,6 +412,47 @@ export function activate(ctx: vscode.ExtensionContext) {
               text: `constructed ${constructor.label}: ${res.status} (${res.yellowCount} yellow left)`,
             });
             await refresh();
+          } else if (m.cmd === "apply") {
+            const options = await client.refineFromContextShed(
+              docUri, entry.shedName
+            );
+            if (options.candidates.length === 0) {
+              panel.webview.postMessage({
+                cmd: "actionmsg",
+                text: options.message ?? "No local hypothesis is known to fit this goal",
+              });
+              return;
+            }
+            const candidate = await vscode.window.showQuickPick(
+              options.candidates.map((label) => ({ label })),
+              { placeHolder: `Apply from context to ${entry.shedName}` }
+            );
+            if (!candidate) return;
+            const res = await client.refineFromContextShed(
+              docUri, entry.shedName, candidate.label
+            );
+            const line = res.nimLine - 1;
+            const startCh = res.nimCol - 1;
+            const startOffset = editor.document.offsetAt(
+              new vscode.Position(line, startCh)
+            );
+            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
+            if (!node || editor.document.positionAt(node.end).line !== line) {
+              throw new Error(`apply: could not find shed marker for '${entry.shedName}'`);
+            }
+            const endCh = editor.document.positionAt(node.end).character;
+            await editor.edit((b) =>
+              b.replace(new vscode.Range(line, startCh, line, endCh), res.term)
+            );
+            await editor.document.save();
+            layoutCache.delete(docUri);
+            if (!(await ensureSidecar(editor.document, true))) return;
+            lensProvider.refreshDoc(editor.document);
+            panel.webview.postMessage({
+              cmd: "actionmsg",
+              text: `applied ${candidate.label}: ${res.status} (${res.yellowCount} yellow left)`,
+            });
+            await refresh();
           } else if (m.cmd === "refine" || m.cmd === "give") {
             // Issue #137: the server owns the whole refine round-trip --
             // it fills the hole in the macro-recorded generated source,
