@@ -39,9 +39,55 @@ import sheds_mac  # shedGoalAndCtx for residual refinement holes
 import sheds  # ShedInfo, semanticShedState, renderShedHover, sidecar IO
 import shed_layout  # Box, layoutShed, boxToJson (issue #135)
 
+const MaxShedHistoryTransitions = 64
+
 type
+  ShedActionKind* = enum
+    sakRefine, sakGive, sakCaseSplit
+
+  ShedHistoryMove* = enum
+    shmNone, shmCommit, shmUndo, shmRedo
+
+  ShedGoalSnapshot* = object
+    shedName*: string
+    goal*: string
+    context*: seq[string]
+    status*: string
+
+  ShedActionTransition* = object
+    ## A validated, editor-independent edit together with the source snapshots
+    ## that let clients safely project, undo, and replay it.
+    id*: int
+    kind*: ShedActionKind
+    shedName*: string
+    term*: string
+    variable*: string
+    requireComplete*: bool
+    beforeDocument*: string
+    afterDocument*: string
+    beforeGenSrc*: string
+    afterGenSrc*: string
+    beforeGoal*: string
+    beforeContext*: seq[string]
+    spliceTerm*: string
+    nimLine*: int
+    nimCol*: int
+    status*: string
+    yellowCount*: int
+    subSheds*: seq[string]
+    afterGoals*: seq[ShedGoalSnapshot]
+
+  ShedActionHistory* = object
+    uri*: string
+    transitions*: seq[ShedActionTransition]
+    cursor*: int
+    pendingMove*: ShedHistoryMove
+    pendingId*: int
+
   LspServer* = object
     documents*: Table[string, string]  # uri -> text
+    shedHistories*: seq[ShedActionHistory]
+    nextShedTransitionId*: int
 
 proc readMessage(): JsonNode =
   ## Read one LSP message from stdin (Content-Length framed).
@@ -1471,7 +1517,8 @@ proc refineEqualityShed*(nimFile, shedName: string,
   (true, "", candidates, selectedClientTerm, refined.nimLine, refined.nimCol,
    refined.status, refined.yellowCount)
 
-proc caseSplitShed*(nimFile, shedName, variable: string):
+proc caseSplitShedDetailed(nimFile, shedName, variable: string,
+                           generatedSource: var string):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           subSheds: seq[string]] =
   ## Issue #209: shed-aware case-split (term-level via eliminators).
@@ -1719,7 +1766,347 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
                      epTerm, baseDir)
   if not f.ok:
     return (false, "case-split rejected: " & f.why, "", 0, 0, @[])
+  generatedSource = f.newSrc
   (true, "", nimTerm, sheds0[si].nimLine, sheds0[si].nimCol, subSheds)
+
+proc caseSplitShed*(nimFile, shedName, variable: string):
+    tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
+          subSheds: seq[string]] =
+  ## Public compatibility wrapper; semantic action history also needs the
+  ## generated source that was checked while building this Nim splice.
+  var generatedSource = ""
+  caseSplitShedDetailed(nimFile, shedName, variable, generatedSource)
+
+proc shedHistoryIndex(server: LspServer, uri: string): int =
+  for i, history in server.shedHistories:
+    if history.uri == uri: return i
+  -1
+
+proc ensureShedHistory(server: var LspServer, uri: string): int =
+  result = shedHistoryIndex(server, uri)
+  if result < 0:
+    server.shedHistories.add(ShedActionHistory(uri: uri, cursor: 0))
+    result = server.shedHistories.high
+
+proc actionKindName(kind: ShedActionKind): string =
+  case kind
+  of sakRefine: "refine"
+  of sakGive: "give"
+  of sakCaseSplit: "caseSplit"
+
+proc actionKindFromName(name: string, kind: var ShedActionKind): bool =
+  case name
+  of "refine": kind = sakRefine
+  of "give": kind = sakGive
+  of "caseSplit": kind = sakCaseSplit
+  else: return false
+  true
+
+proc historyHasSource(nimFile, generatedSource: string): bool =
+  if generatedSource == "" or not fileExists(sidecarPath(nimFile)): return false
+  for shed in readShedSidecar(sidecarPath(nimFile)):
+    if shed.genSrc == generatedSource: return true
+
+proc transitionJson(transition: ShedActionTransition): JsonNode =
+  var args = newJObject()
+  case transition.kind
+  of sakRefine, sakGive:
+    args["term"] = %transition.term
+  of sakCaseSplit:
+    args["variable"] = %transition.variable
+  %*{
+    "id": transition.id,
+    "action": {"kind": actionKindName(transition.kind),
+                "target": transition.shedName, "arguments": args},
+    "before": {"goal": transition.beforeGoal,
+               "context": transition.beforeContext},
+    "edit": {"term": transition.spliceTerm,
+             "nimLine": transition.nimLine, "nimCol": transition.nimCol},
+    "after": {"goals": transition.afterGoals},
+    "validation": {"accepted": true, "status": transition.status,
+                   "yellowCount": transition.yellowCount},
+    "subSheds": transition.subSheds
+  }
+
+proc prepareShedAction*(server: var LspServer, uri, shedName,
+                        actionName, term, variable: string,
+                        requireComplete: bool):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  ## Run a proof edit through the common, checker-backed transition API.
+  ## The client owns source projection and must commit only after applying the
+  ## returned edit and compiling the resulting Nim document.
+  if uri notin server.documents:
+    return (false, "unknown document; open it before applying a shed action", nil)
+  var kind: ShedActionKind
+  if not actionKindFromName(actionName, kind):
+    return (false, "unknown shed action '" & actionName & "'", nil)
+  if kind in {sakRefine, sakGive} and term.len == 0:
+    return (false, "refine/give action requires a term", nil)
+  if kind == sakCaseSplit and variable.len == 0:
+    return (false, "caseSplit action requires a variable", nil)
+  let nimFile = uriToPath(uri)
+  if not fileExists(nimFile):
+    return (false, "document file does not exist: " & nimFile, nil)
+  let beforeDocument = server.documents[uri]
+  if readFile(nimFile) != beforeDocument:
+    return (false, "document changed on disk; synchronize or save before acting", nil)
+  let historyIdx = ensureShedHistory(server, uri)
+  if server.shedHistories[historyIdx].pendingMove != shmNone:
+    return (false, "a shed transition is awaiting client commit", nil)
+
+  let beforeSheds = readShedSidecar(sidecarPath(nimFile))
+  var targetBefore: ShedInfo
+  var foundTarget = false
+  for shed in beforeSheds:
+    if shed.name == shedName:
+      targetBefore = shed
+      foundTarget = true
+      break
+  if not foundTarget:
+    return (false, "unknown shed '" & shedName & "'", nil)
+  if targetBefore.genSrc == "":
+    return (false, "shed '" & shedName & "' has no checked source; recompile", nil)
+
+  var spliceTerm = ""
+  var nimLine = 0
+  var nimCol = 0
+  var status = ""
+  var yellowCount = 0
+  var subSheds: seq[string] = @[]
+  var afterGenSrc = ""
+  case kind
+  of sakRefine, sakGive:
+    let r = refineShed(nimFile, shedName, term,
+                       requireComplete or kind == sakGive)
+    if not r.ok: return (false, r.why, nil)
+    spliceTerm = r.term
+    nimLine = r.nimLine
+    nimCol = r.nimCol
+    status = r.status
+    yellowCount = r.yellowCount
+  of sakCaseSplit:
+    let r = caseSplitShedDetailed(nimFile, shedName, variable, afterGenSrc)
+    if not r.ok: return (false, r.why, nil)
+    spliceTerm = r.term
+    nimLine = r.nimLine
+    nimCol = r.nimCol
+    subSheds = r.subSheds
+    status = "yellow"
+    yellowCount = r.subSheds.len
+
+  let afterSheds = readShedSidecar(sidecarPath(nimFile))
+  if afterGenSrc == "":
+    for shed in afterSheds:
+      if shed.genSrc != targetBefore.genSrc:
+        afterGenSrc = shed.genSrc
+        break
+  if afterGenSrc == "":
+    # A valid edit may leave the generated Eponym text unchanged (for
+    # example, refining with a new named hole); use the target's new entry.
+    for shed in afterSheds:
+      if shed.name == shedName or shed.name.startsWith(shedName & "_"):
+        afterGenSrc = shed.genSrc
+        break
+  if afterGenSrc == "":
+    return (false, "the checked edit did not produce refreshed shed metadata", nil)
+  var afterGoals: seq[ShedGoalSnapshot] = @[]
+  for shed in afterSheds:
+    if shed.genSrc == afterGenSrc:
+      afterGoals.add(ShedGoalSnapshot(shedName: shed.name,
+        goal: shed.goal, context: shed.ctx,
+        status: shedStatusToStr(shed.status)))
+  if kind == sakCaseSplit and afterGoals.len == 0:
+    try:
+      let checked = elabCheckHolesDir(afterGenSrc, parentDir(nimFile))
+      for i, hole in checked.ms.holes:
+        let (goal, context, _) = shedGoalAndCtx(checked.ms, hole)
+        let name = if i < subSheds.len: subSheds[i]
+                   else: shedName & "_goal" & $i
+        afterGoals.add(ShedGoalSnapshot(shedName: name, goal: goal,
+          context: context, status: "yellow"))
+    except ParseError as e:
+      return (false, "case-split transition could not be summarized: " & e.msg, nil)
+
+  var transition = ShedActionTransition(
+    id: server.nextShedTransitionId + 1,
+    kind: kind, shedName: shedName, term: term, variable: variable,
+    requireComplete: requireComplete or kind == sakGive,
+    beforeDocument: beforeDocument, beforeGenSrc: targetBefore.genSrc,
+    afterGenSrc: afterGenSrc, beforeGoal: targetBefore.goal,
+    beforeContext: targetBefore.ctx,
+    spliceTerm: spliceTerm, nimLine: nimLine, nimCol: nimCol,
+    status: status, yellowCount: yellowCount, subSheds: subSheds,
+    afterGoals: afterGoals)
+  server.nextShedTransitionId = transition.id
+  let history = addr server.shedHistories[historyIdx]
+  if history.cursor < history.transitions.len:
+    history.transitions.setLen(history.cursor)
+  if history.transitions.len >= MaxShedHistoryTransitions:
+    history.transitions.delete(0)
+    dec history.cursor
+  history.transitions.add(transition)
+  history.pendingMove = shmCommit
+  history.pendingId = transition.id
+  result = (true, "", transitionJson(transition))
+
+proc commitShedAction*(server: var LspServer, uri: string, transitionId: int):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  let historyIdx = shedHistoryIndex(server, uri)
+  if historyIdx < 0:
+    return (false, "no action history for this document", nil)
+  let history = addr server.shedHistories[historyIdx]
+  if history.pendingMove != shmCommit or history.pendingId != transitionId:
+    return (false, "unknown or stale transition id", nil)
+  if history.transitions.len == 0 or history.cursor >= history.transitions.len:
+    return (false, "pending transition is missing from history", nil)
+  let transitionIdx = history.transitions.high
+  var transition = history.transitions[transitionIdx]
+  if uri notin server.documents or not fileExists(uriToPath(uri)):
+    return (false, "document is not open or its file is missing", nil)
+  let currentDocument = server.documents[uri]
+  if readFile(uriToPath(uri)) != currentDocument:
+    return (false, "saved document does not match the synchronized editor text", nil)
+  if not historyHasSource(uriToPath(uri), transition.afterGenSrc):
+    return (false, "compiled document does not match the transition result", nil)
+  transition.afterDocument = currentDocument
+  transition.afterGoals.setLen(0)
+  for shed in readShedSidecar(sidecarPath(uriToPath(uri))):
+    if shed.genSrc == transition.afterGenSrc:
+      transition.afterGoals.add(ShedGoalSnapshot(shedName: shed.name,
+        goal: shed.goal, context: shed.ctx,
+        status: shedStatusToStr(shed.status)))
+  history.transitions[transitionIdx] = transition
+  history.cursor = history.transitions.len
+  history.pendingMove = shmNone
+  history.pendingId = 0
+  (true, "", transitionJson(transition))
+
+proc shedHistoryJson(history: ShedActionHistory): JsonNode =
+  result = newJArray()
+  for i, transition in history.transitions:
+    var entry = transitionJson(transition)
+    entry["applied"] = %(i < history.cursor)
+    result.add(entry)
+
+proc inspectShedActionHistory*(server: LspServer, uri: string): JsonNode =
+  let historyIdx = shedHistoryIndex(server, uri)
+  if historyIdx < 0:
+    return %*{"cursor": 0, "canUndo": false, "canRedo": false,
+               "transitions": []}
+  let history = server.shedHistories[historyIdx]
+  var canUndo = false
+  var canRedo = false
+  if uri in server.documents and fileExists(uriToPath(uri)) and
+     readFile(uriToPath(uri)) == server.documents[uri] and
+     history.pendingMove == shmNone:
+    if history.cursor > 0:
+      let previous = history.transitions[history.cursor - 1]
+      canUndo = server.documents[uri] == previous.afterDocument and
+        historyHasSource(uriToPath(uri), previous.afterGenSrc)
+    if history.cursor < history.transitions.len:
+      let next = history.transitions[history.cursor]
+      canRedo = server.documents[uri] == next.beforeDocument and
+        historyHasSource(uriToPath(uri), next.beforeGenSrc)
+  %*{"cursor": server.shedHistories[historyIdx].cursor,
+     "canUndo": canUndo, "canRedo": canRedo,
+     "transitions": shedHistoryJson(server.shedHistories[historyIdx])}
+
+proc prepareUndoShedAction*(server: var LspServer, uri: string):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  let historyIdx = shedHistoryIndex(server, uri)
+  if historyIdx < 0 or server.shedHistories[historyIdx].cursor == 0:
+    return (false, "there is no committed shed action to undo", nil)
+  let history = addr server.shedHistories[historyIdx]
+  if history.pendingMove != shmNone:
+    return (false, "a shed transition is awaiting client commit", nil)
+  let transitionIdx = history.cursor - 1
+  let transition = history.transitions[transitionIdx]
+  if uri notin server.documents or not fileExists(uriToPath(uri)):
+    return (false, "document is not open or its file is missing", nil)
+  if server.documents[uri] != transition.afterDocument or
+     readFile(uriToPath(uri)) != server.documents[uri]:
+    return (false, "cannot undo: document changed since this transition", nil)
+  if not historyHasSource(uriToPath(uri), transition.afterGenSrc):
+    return (false, "cannot undo: compiled proof state is stale", nil)
+  history.pendingMove = shmUndo
+  history.pendingId = transition.id
+  (true, "", %*{"transitionId": transition.id,
+                 "transition": transitionJson(transition)})
+
+proc performRedoShedAction*(server: var LspServer, uri: string):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  let historyIdx = shedHistoryIndex(server, uri)
+  if historyIdx < 0:
+    return (false, "there is no committed shed action to redo", nil)
+  let history = addr server.shedHistories[historyIdx]
+  if history.cursor >= history.transitions.len:
+    return (false, "there is no committed shed action to redo", nil)
+  if history.pendingMove != shmNone:
+    return (false, "a shed transition is awaiting client commit", nil)
+  let transitionIdx = history.cursor
+  let transition = history.transitions[transitionIdx]
+  if uri notin server.documents or not fileExists(uriToPath(uri)) or
+     server.documents[uri] != transition.beforeDocument or
+     readFile(uriToPath(uri)) != server.documents[uri]:
+    return (false, "cannot redo: document changed since this transition was undone", nil)
+  if not historyHasSource(uriToPath(uri), transition.beforeGenSrc):
+    return (false, "cannot redo: compiled proof state is stale", nil)
+  let actionName = actionKindName(transition.kind)
+  let replayed = prepareShedAction(server, uri, transition.shedName,
+    actionName, transition.term, transition.variable,
+    transition.requireComplete)
+  if not replayed.ok:
+    return replayed
+  let newIdx = shedHistoryIndex(server, uri)
+  let pendingHistory = addr server.shedHistories[newIdx]
+  let replayTransitionIdx = pendingHistory.transitions.high
+  var replayTransition = pendingHistory.transitions[replayTransitionIdx]
+  if replayTransition.afterGenSrc != transition.afterGenSrc or
+     replayTransition.spliceTerm != transition.spliceTerm:
+    pendingHistory.transitions.delete(replayTransitionIdx)
+    pendingHistory.transitions.insert(transition, pendingHistory.cursor)
+    pendingHistory.pendingMove = shmNone
+    pendingHistory.pendingId = 0
+    return (false, "redo no longer produces the recorded checked transition", nil)
+  pendingHistory.transitions.delete(replayTransitionIdx)
+  pendingHistory.transitions.insert(transition, pendingHistory.cursor)
+  pendingHistory.pendingMove = shmRedo
+  pendingHistory.pendingId = transition.id
+  replayTransition.id = transition.id
+  result = (true, "", transitionJson(replayTransition))
+
+proc commitShedHistoryMove*(server: var LspServer, uri: string,
+                            transitionId: int, direction: string):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  let historyIdx = shedHistoryIndex(server, uri)
+  if historyIdx < 0:
+    return (false, "no action history for this document", nil)
+  let history = addr server.shedHistories[historyIdx]
+  let expectedMove = if direction == "undo": shmUndo elif direction == "redo": shmRedo
+                     else: shmNone
+  if expectedMove == shmNone or history.pendingMove != expectedMove or
+     history.pendingId != transitionId:
+    return (false, "unknown or stale history move", nil)
+  let transitionIdx = if expectedMove == shmUndo: history.cursor - 1
+                      else: history.cursor
+  if transitionIdx < 0 or transitionIdx >= history.transitions.len:
+    return (false, "history cursor is stale", nil)
+  let transition = history.transitions[transitionIdx]
+  let expectedDocument = if expectedMove == shmUndo: transition.beforeDocument
+                         else: transition.afterDocument
+  let expectedSource = if expectedMove == shmUndo: transition.beforeGenSrc
+                       else: transition.afterGenSrc
+  if uri notin server.documents or not fileExists(uriToPath(uri)) or
+     server.documents[uri] != expectedDocument or
+     readFile(uriToPath(uri)) != server.documents[uri]:
+    return (false, "history move did not produce its expected source state", nil)
+  if not historyHasSource(uriToPath(uri), expectedSource):
+    return (false, "history move did not recompile to its expected proof state", nil)
+  if expectedMove == shmUndo: dec history.cursor
+  else: inc history.cursor
+  history.pendingMove = shmNone
+  history.pendingId = 0
+  (true, "", inspectShedActionHistory(server, uri))
 
 proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
   ## Handle one incoming message; returns the outgoing message, or nil
@@ -1806,6 +2193,90 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
     var arr = newJArray()
     for nm in shedNames(uri): arr.add(%nm)
     return %*{"jsonrpc": "2.0", "id": id, "result": arr}
+  of "eponym/performShedAction":
+    let id = msg["id"]
+    let params = msg["params"]
+    if "textDocument" notin params or "action" notin params or
+       "kind" notin params["action"] or "target" notin params["action"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "performShedAction needs textDocument.uri and action.kind/target"}}
+    let uri = params["textDocument"]["uri"].getStr()
+    let action = params["action"]
+    let arguments = if "arguments" in action: action["arguments"] else: newJObject()
+    let term = if "term" in arguments: arguments["term"].getStr() else: ""
+    let variable = if "variable" in arguments:
+                     arguments["variable"].getStr()
+                   else: ""
+    let requireComplete = "requireComplete" in arguments and
+      arguments["requireComplete"].getBool()
+    let r = prepareShedAction(server, uri, action["target"].getStr(),
+      action["kind"].getStr(), term, variable, requireComplete)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": r.result}
+  of "eponym/commitShedAction":
+    let id = msg["id"]
+    let params = msg["params"]
+    if "textDocument" notin params or "transitionId" notin params:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "commitShedAction needs textDocument.uri and transitionId"}}
+    let r = commitShedAction(server,
+      params["textDocument"]["uri"].getStr(), params["transitionId"].getInt())
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": r.result}
+  of "eponym/shedActionHistory":
+    let id = msg["id"]
+    if "textDocument" notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "shedActionHistory needs textDocument.uri"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    return %*{"jsonrpc": "2.0", "id": id,
+              "result": inspectShedActionHistory(server, uri)}
+  of "eponym/undoShedAction":
+    let id = msg["id"]
+    if "textDocument"notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "undoShedAction needs textDocument.uri"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let r = prepareUndoShedAction(server, uri)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": r.result}
+  of "eponym/redoShedAction":
+    let id = msg["id"]
+    if "textDocument"notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "redoShedAction needs textDocument.uri"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let r = performRedoShedAction(server, uri)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": r.result}
+  of "eponym/commitShedHistoryMove":
+    let id = msg["id"]
+    let params = msg["params"]
+    if "textDocument"notin params or "transitionId"notin params or
+       "direction" notin params:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "commitShedHistoryMove needs textDocument.uri, transitionId and direction"}}
+    let r = commitShedHistoryMove(server,
+      params["textDocument"]["uri"].getStr(), params["transitionId"].getInt(),
+      params["direction"].getStr())
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": r.result}
   of "eponym/refineShed":
     let id = msg["id"]
     if "textDocument" notin msg["params"] or "shedName" notin msg["params"] or

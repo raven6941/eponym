@@ -1179,7 +1179,7 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 - [x] [#426 — Constructor refinement with index-aware feasibility](https://github.com/raven6941/eponym/issues/426): shed constructor picker filters candidates by elaborating typed constructor applications against the goal, then creates checked field sheds through the normal refinement round-trip.
 - [x] [#427 — Context-directed Apply/refine](https://github.com/raven6941/eponym/issues/427): a checker-validated, filterable local-hypothesis picker infers arguments from dependent result types and leaves typed sheds for unresolved arguments.
 - [x] [#428 — Goal-directed equality rewrite and transport](https://github.com/raven6941/eponym/issues/428): the VS Code picker offers checked direction/occurrence-specific Eq eliminator transports, preserving a named residual goal.
-- [ ] [#429 — Semantic proof-state edit actions with undo and replay](https://github.com/raven6941/eponym/issues/429)
+- [x] [#429 — Semantic proof-state edit actions with undo and replay](https://github.com/raven6941/eponym/issues/429): Refine, Give, and Case-split share a validated transition API; VS Code can inspect history and undo/replay it with stale-source checks.
 - [ ] [#430 — Discover available semantic actions for a proof state](https://github.com/raven6941/eponym/issues/430)
 
 ## Building

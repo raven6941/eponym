@@ -346,8 +346,15 @@ terms. Refinement edits generated source and re-elaborates it. Draft text is
 user-owned scratch and is not checked by Eponym. A persisted semantic editing
 session would need a versioned structural term codec and is not implemented.
 Goal-directed Intro is available for leading Pi binders; it introduces one
-binder per action. Persisted semantic action history, undo, and replay are
-tracked separately and are not implemented.
+binder per action.
+
+The semantic action history currently records Refine, Give, and Case-split in
+an open LSP session. Undo restores the prior editor source projection and
+recompiles it; Redo reruns the stored action through the checker. History is
+session-local and clears when the document closes or the extension restarts.
+Other edits invalidate the recorded state and disable undo/redo rather than
+overwriting changed source. Intro, Apply, Construct, and Rewrite are not yet
+part of the shared action history interface.
 
 Goal-directed Apply searches local hypotheses and checks their applications
 against the goal. The VS Code picker is filterable; named global definitions

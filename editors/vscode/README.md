@@ -45,6 +45,9 @@ rendered as virtual CodeLens rows, so it never enters the document or
 interferes with Auto Save.
 Refinement actions splice their result into source and save it so the macro can
 refresh goals and CodeLens.
+Refine, Give, and Case-split actions can be undone and replayed from the inline
+view's session-local history; the extension recompiles the proof after each
+move and disables history actions when the source has changed independently.
 
 ### Syntax support and releases
 

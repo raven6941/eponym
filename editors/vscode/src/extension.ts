@@ -69,7 +69,14 @@ interface ShedPanel {
   refresh: () => Promise<void>;
 }
 
+interface ActionSourceSnapshot {
+  beforeText: string;
+  afterText: string;
+}
+
 const openPanels = new Map<string, ShedPanel>(); // docUri -> panel
+const documentClients = new Map<string, LspClient>();
+const actionSourceSnapshots = new Map<string, Map<number, ActionSourceSnapshot>>();
 const sidecarJobs = new Map<string, Promise<boolean>>();
 let lensProvider: ShedCodeLensProvider;
 let out: vscode.OutputChannel;
@@ -85,6 +92,49 @@ function sidecarMtime(nimFile: string): number {
     return fs.statSync(sidecarPathFor(nimFile)).mtimeMs;
   } catch {
     return -1;
+  }
+}
+
+async function applySourceSnapshot(
+  editor: vscode.TextEditor, expected: string, replacement: string
+): Promise<boolean> {
+  const current = editor.document.getText();
+  if (current !== expected) return false;
+  let prefix = 0;
+  while (prefix < current.length && prefix < replacement.length &&
+         current[prefix] === replacement[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < current.length - prefix &&
+         suffix < replacement.length - prefix &&
+         current[current.length - 1 - suffix] ===
+           replacement[replacement.length - 1 - suffix]) suffix++;
+  const start = editor.document.positionAt(prefix);
+  const end = editor.document.positionAt(current.length - suffix);
+  const newText = replacement.slice(prefix, replacement.length - suffix);
+  return editor.edit((builder) =>
+    builder.replace(new vscode.Range(start, end), newText)
+  );
+}
+
+function rememberActionSource(
+  docUri: string, transitionId: number, beforeText: string, afterText: string
+): void {
+  let snapshots = actionSourceSnapshots.get(docUri);
+  if (!snapshots) {
+    snapshots = new Map<number, ActionSourceSnapshot>();
+    actionSourceSnapshots.set(docUri, snapshots);
+  }
+  snapshots.set(transitionId, { beforeText, afterText });
+}
+
+function syncActionSourceHistory(
+  docUri: string, transitions: Array<{ id: number }>
+): void {
+  const snapshots = actionSourceSnapshots.get(docUri);
+  if (!snapshots) return;
+  const liveIds = new Set(transitions.map((transition) => transition.id));
+  for (const id of snapshots.keys()) {
+    if (!liveIds.has(id)) snapshots.delete(id);
   }
 }
 
@@ -296,12 +346,11 @@ export function activate(ctx: vscode.ExtensionContext) {
 
       // The binary check shows an actionable error itself; the try/catch
       // below covers spawn/initialize failures of an existing binary.
-      const sp = ensureServerBinary();
-      if (!sp) return;
       let client: LspClient;
       try {
-        client = new LspClient(sp);
-        await client.initialize(editor.document.uri.fsPath.replace(/\/[^/]+$/, ""));
+        const existing = await inlineClient(editor.document);
+        if (!existing) return;
+        client = existing;
       } catch (e) {
         vscode.window.showErrorMessage("Eponym: could not start LSP server: " + String(e));
         return;
@@ -309,7 +358,6 @@ export function activate(ctx: vscode.ExtensionContext) {
       // Issue #208: the server's textDocument/codeAction path ("case-split"
       // in the webview) requires an open document; shedLayout/refineShed
       // work from disk and never needed this.
-      client.didOpen(docUri, editor.document.getText());
       const panel = vscode.window.createWebviewPanel(
         "eponymShed",
         `Shed: ${shedName}`,
@@ -334,6 +382,13 @@ export function activate(ctx: vscode.ExtensionContext) {
               ? cached.layouts.get(entry.shedName)!
               : JSON.stringify(await client.shedLayout(docUri, entry.shedName));
           panel.webview.html = pageHtml(layoutJson, entry.shedName, entry.shedNames);
+          const history = await client.shedActionHistory(docUri);
+          syncActionSourceHistory(docUri, history.transitions);
+          panel.webview.postMessage({
+            cmd: "historyState",
+            canUndo: history.canUndo,
+            canRedo: history.canRedo,
+          });
         } catch (e) {
           panel.webview.postMessage({ cmd: "actionmsg", text: "layout error: " + String(e) });
         }
@@ -341,7 +396,14 @@ export function activate(ctx: vscode.ExtensionContext) {
       entry.refresh = refresh;
       panel.webview.onDidReceiveMessage(async (m: any) => {
         try {
-          if (m.cmd === "switch-shed" && typeof m.shedName === "string") {
+          if (m.cmd === "ready") {
+            const history = await client.shedActionHistory(docUri);
+            panel.webview.postMessage({
+              cmd: "historyState",
+              canUndo: history.canUndo,
+              canRedo: history.canRedo,
+            });
+          } else if (m.cmd === "switch-shed" && typeof m.shedName === "string") {
             // Issue #190: in-view shed switching — no close/reopen.
             entry.shedName = m.shedName;
             if (!entry.shedNames.includes(m.shedName)) entry.shedNames.push(m.shedName);
@@ -495,34 +557,36 @@ export function activate(ctx: vscode.ExtensionContext) {
             });
             await refresh();
           } else if (m.cmd === "refine" || m.cmd === "give") {
-            // Issue #137: the server owns the whole refine round-trip --
-            // it fills the hole in the macro-recorded generated source,
-            // refreshes statuses, and rewrites the sidecar. The client
-            // splices the returned term over the single-line shed marker
-            // at (nimLine, nimCol) so the .nim source advances.
-            const res = await client.refineShed(
-              docUri, entry.shedName, m.term ?? "", m.cmd === "give"
-            );
-            const line = res.nimLine - 1;
-            const startCh = res.nimCol - 1;
+            const sourceBefore = editor.document.getText();
+            const action = m.cmd === "give"
+              ? { kind: "give" as const, target: entry.shedName,
+                  arguments: { term: m.term ?? "" } }
+              : { kind: "refine" as const, target: entry.shedName,
+                  arguments: { term: m.term ?? "" } };
+            const res = await client.performShedAction(docUri, action);
+            const line = res.edit.nimLine - 1;
+            const startCh = res.edit.nimCol - 1;
             const startOffset = editor.document.offsetAt(
               new vscode.Position(line, startCh)
             );
             const node = shedNodeStartingAt(editor.document.getText(), startOffset);
             if (!node) throw new Error("Eponym: no shed marker at " +
-              `${res.nimLine}:${res.nimCol}`);
+              `${res.edit.nimLine}:${res.edit.nimCol}`);
             const end = editor.document.positionAt(node.end);
             if (end.line !== line) throw new Error("Eponym: shed marker spans multiple lines");
             await editor.edit((b) =>
-              b.replace(new vscode.Range(line, startCh, line, end.character), res.term)
+              b.replace(new vscode.Range(line, startCh, line, end.character), res.edit.term)
             );
             await editor.document.save();
             layoutCache.delete(docUri);
             if (!(await ensureSidecar(editor.document, true))) return;
+            const committed = await client.commitShedAction(docUri, res.id);
+            rememberActionSource(docUri, res.id, sourceBefore, editor.document.getText());
             lensProvider.refreshDoc(editor.document);
             panel.webview.postMessage({
               cmd: "actionmsg",
-              text: `refined ${res.shedName}: ${res.status} (${res.yellowCount} yellow left)`,
+              text: `${m.cmd} ${entry.shedName}: ${committed.validation.status} ` +
+                `(${committed.validation.yellowCount} yellow left)`,
             });
             await refresh();
           } else if (m.cmd === "case-split") {
@@ -538,15 +602,15 @@ export function activate(ctx: vscode.ExtensionContext) {
               });
               return;
             }
-            const res = await client.caseSplitShed(
-              docUri,
-              entry.shedName,
-              variable
-            );
+            const sourceBefore = editor.document.getText();
+            const res = await client.performShedAction(docUri, {
+              kind: "caseSplit", target: entry.shedName,
+              arguments: { variable },
+            });
             // Splice the eliminator term over the shed marker
             // (same single-line span logic as refine).
-            const line = res.nimLine - 1;
-            const startCh = res.nimCol - 1;
+            const line = res.edit.nimLine - 1;
+            const startCh = res.edit.nimCol - 1;
             const startOffset = editor.document.offsetAt(
               new vscode.Position(line, startCh)
             );
@@ -560,7 +624,7 @@ export function activate(ctx: vscode.ExtensionContext) {
             await editor.edit((b) =>
               b.replace(
                 new vscode.Range(line, startCh, line, endCh),
-                res.term
+                res.edit.term
               )
             );
             // Persist the source splice, then always compile it so the
@@ -570,6 +634,8 @@ export function activate(ctx: vscode.ExtensionContext) {
             await editor.document.save();
             layoutCache.delete(docUri);
             if (await ensureSidecar(editor.document, true)) {
+              await client.commitShedAction(docUri, res.id);
+              rememberActionSource(docUri, res.id, sourceBefore, editor.document.getText());
               lensProvider.refreshDoc(editor.document);
               entry.shedName = res.subSheds[0];
               await refresh();
@@ -578,13 +644,97 @@ export function activate(ctx: vscode.ExtensionContext) {
               cmd: "actionmsg",
               text: `case-split ${variable}: ${res.subSheds.length} new sheds (${res.subSheds.join(", ")})`,
             });
+          } else if (m.cmd === "undo") {
+            const history = await client.shedActionHistory(docUri);
+            syncActionSourceHistory(docUri, history.transitions);
+            const last = history.transitions[history.cursor - 1];
+            const snapshot = last
+              ? actionSourceSnapshots.get(docUri)?.get(last.id)
+              : undefined;
+            if (!last || !snapshot) {
+              throw new Error("no source projection is available for the last checked action");
+            }
+            const res = await client.undoShedAction(docUri);
+            if (res.transitionId !== last.id) {
+              throw new Error("undo history changed while the action was being prepared");
+            }
+            const applied = await applySourceSnapshot(
+              editor, snapshot.afterText, snapshot.beforeText
+            );
+            if (!applied) throw new Error("undo refused because the editor source changed");
+            await editor.document.save();
+            layoutCache.delete(docUri);
+            if (!(await ensureSidecar(editor.document, true))) return;
+            await client.commitShedHistoryMove(docUri, res.transitionId, "undo");
+            entry.shedName = res.transition.action.target;
+            if (!entry.shedNames.includes(entry.shedName)) entry.shedNames.push(entry.shedName);
+            lensProvider.refreshDoc(editor.document);
+            panel.webview.postMessage({ cmd: "actionmsg", text: "undid the last checked shed action" });
+            await refresh();
+          } else if (m.cmd === "redo") {
+            const history = await client.shedActionHistory(docUri);
+            syncActionSourceHistory(docUri, history.transitions);
+            const next = history.transitions[history.cursor];
+            const snapshot = next
+              ? actionSourceSnapshots.get(docUri)?.get(next.id)
+              : undefined;
+            if (!next || !snapshot) {
+              throw new Error("no source projection is available for the next checked action");
+            }
+            const res = await client.redoShedAction(docUri);
+            if (res.id !== next.id || editor.document.getText() !== snapshot.beforeText) {
+              throw new Error("redo history no longer matches the current source");
+            }
+            const line = res.edit.nimLine - 1;
+            const startCh = res.edit.nimCol - 1;
+            const startOffset = editor.document.offsetAt(new vscode.Position(line, startCh));
+            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
+            if (!node || editor.document.positionAt(node.end).line !== line) {
+              throw new Error("redo could not locate the original shed marker");
+            }
+            const endCh = editor.document.positionAt(node.end).character;
+            await editor.edit((b) =>
+              b.replace(new vscode.Range(line, startCh, line, endCh), res.edit.term)
+            );
+            await editor.document.save();
+            layoutCache.delete(docUri);
+            if (!(await ensureSidecar(editor.document, true))) return;
+            await client.commitShedHistoryMove(docUri, res.id, "redo");
+            rememberActionSource(docUri, res.id, snapshot.beforeText, editor.document.getText());
+            const nextGoal = res.after.goals.find((goal) => goal.status === "yellow");
+            if (nextGoal) entry.shedName = nextGoal.shedName;
+            lensProvider.refreshDoc(editor.document);
+            panel.webview.postMessage({ cmd: "actionmsg", text: "replayed the checked shed action" });
+            await refresh();
+          } else if (m.cmd === "history") {
+            const history = await client.shedActionHistory(docUri);
+            syncActionSourceHistory(docUri, history.transitions);
+            if (history.transitions.length === 0) {
+              panel.webview.postMessage({ cmd: "actionmsg", text: "no checked actions in this session" });
+              return;
+            }
+            const selected = await vscode.window.showQuickPick(
+              history.transitions.map((transition, index) => ({
+                label: `${transition.applied ? "applied" : "undone"} ${index + 1}. ` +
+                  `${transition.action.kind} ${transition.action.target}`,
+                description: JSON.stringify(transition.action.arguments),
+                detail: transition.before.goal,
+              })),
+              { placeHolder: history.cursor > 0 && !history.canUndo
+                ? `Checked actions (${history.cursor} applied; stale in the current source)`
+                : `Checked actions (${history.cursor} applied)` }
+            );
+            if (selected) {
+              vscode.window.showInformationMessage(
+                `${selected.label}\nGoal before action: ${selected.detail}`
+              );
+            }
           }
         } catch (e) {
           panel.webview.postMessage({ cmd: "actionmsg", text: "action failed: " + String(e) });
         }
       });
       panel.onDidDispose(() => {
-        client.shutdown();
         openPanels.delete(docUri);
       });
       openPanels.set(docUri, entry);
@@ -624,13 +774,52 @@ export function activate(ctx: vscode.ExtensionContext) {
   // Lazily create an LSP client for inline-shed actions. Returns null
   // (after showing an actionable error) when the server binary is missing.
   async function inlineClient(doc: vscode.TextDocument): Promise<LspClient | null> {
+    const docUri = doc.uri.toString();
+    const existing = documentClients.get(docUri);
+    if (existing) {
+      existing.didChange(docUri, doc.getText());
+      return existing;
+    }
     const sp = ensureServerBinary();
     if (!sp) return null;
     const c = new LspClient(sp);
     await c.initialize(path.dirname(doc.uri.fsPath));
-    c.didOpen(doc.uri.toString(), doc.getText());
+    c.didOpen(docUri, doc.getText());
+    documentClients.set(docUri, c);
     return c;
   }
+  ctx.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      const docUri = event.document.uri.toString();
+      const client = documentClients.get(docUri);
+      client?.didChange(docUri, event.document.getText());
+      const panel = openPanels.get(docUri);
+      if (client && panel) {
+        void client.shedActionHistory(docUri).then((history) => {
+          if (openPanels.get(docUri) !== panel) return;
+          panel.panel.webview.postMessage({
+            cmd: "historyState",
+            canUndo: history.canUndo,
+            canRedo: history.canRedo,
+          });
+        }).catch(() => {
+          // Keep the current button state if the LSP is shutting down.
+        });
+      }
+    })
+  );
+  ctx.subscriptions.push(
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      const docUri = doc.uri.toString();
+      documentClients.get(docUri)?.shutdown();
+      documentClients.delete(docUri);
+      openPanels.get(docUri)?.panel.dispose();
+    })
+  );
+  ctx.subscriptions.push({ dispose: () => {
+    for (const client of documentClients.values()) client.shutdown();
+    documentClients.clear();
+  }});
   function inlineShowButtons(): boolean {
     return vscode.workspace
       .getConfiguration("eponym")
@@ -719,8 +908,6 @@ export function activate(ctx: vscode.ExtensionContext) {
         );
       } catch (e) {
         vscode.window.showErrorMessage(`Intro failed: ${String(e)}`);
-      } finally {
-        client.shutdown();
       }
     })
   );
@@ -744,10 +931,15 @@ export function activate(ctx: vscode.ExtensionContext) {
       const client = await inlineClient(editor.document);
       if (!client) return; // binary missing; actionable error already shown
       try {
-        const res = await client.refineShed(cur.docUri, cur.shedName, term);
+        const sourceBefore = editor.document.getText();
+        const res = await client.performShedAction(cur.docUri, {
+          kind: "refine", target: cur.shedName, arguments: { term },
+        });
         // Complete the round-trip: splice the returned term over the shed
         // node, collapse its virtual view, then save so the sidecar regenerates.
-        const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
+        const ok = await spliceTermOverShed(
+          editor, res.edit.nimLine, res.edit.nimCol, res.edit.term
+        );
         if (!ok) {
           vscode.window.showWarningMessage(
             `Refined ${cur.shedName} server-side, but could not locate its shed marker to splice.`
@@ -758,14 +950,15 @@ export function activate(ctx: vscode.ExtensionContext) {
         await editor.document.save();
         layoutCache.delete(editor.document.uri.toString());
         if (!(await ensureSidecar(editor.document, true))) return;
+        await client.commitShedAction(cur.docUri, res.id);
+        rememberActionSource(cur.docUri, res.id, sourceBefore, editor.document.getText());
         lensProvider.refreshDoc(editor.document);
         vscode.window.showInformationMessage(
-          `Refined ${cur.shedName}: ${res.status} (${res.yellowCount} yellow left)`
+          `Refined ${cur.shedName}: ${res.validation.status} ` +
+            `(${res.validation.yellowCount} yellow left)`
         );
       } catch (e) {
         vscode.window.showErrorMessage(`Refine failed: ${String(e)}`);
-      } finally {
-        client.shutdown();
       }
     })
   );
@@ -789,10 +982,15 @@ export function activate(ctx: vscode.ExtensionContext) {
       const client = await inlineClient(editor.document);
       if (!client) return; // binary missing; actionable error already shown
       try {
-        const res = await client.caseSplitShed(cur.docUri, cur.shedName, variable);
+        const sourceBefore = editor.document.getText();
+        const res = await client.performShedAction(cur.docUri, {
+          kind: "caseSplit", target: cur.shedName, arguments: { variable },
+        });
         // Splice the eliminator term (carrying the new sub-shed nodes)
         // over the shed node, then save so the recompile discovers them.
-        const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
+        const ok = await spliceTermOverShed(
+          editor, res.edit.nimLine, res.edit.nimCol, res.edit.term
+        );
         if (!ok) {
           vscode.window.showWarningMessage(
             `Case-split ${cur.shedName} server-side, but could not locate its shed marker to splice.`
@@ -803,14 +1001,14 @@ export function activate(ctx: vscode.ExtensionContext) {
         await editor.document.save();
         layoutCache.delete(editor.document.uri.toString());
         if (!(await ensureSidecar(editor.document, true))) return;
+        await client.commitShedAction(cur.docUri, res.id);
+        rememberActionSource(cur.docUri, res.id, sourceBefore, editor.document.getText());
         lensProvider.refreshDoc(editor.document);
         vscode.window.showInformationMessage(
           `Case-split ${variable}: ${res.subSheds.length} new sheds (${res.subSheds.join(", ")})`
         );
       } catch (e) {
         vscode.window.showErrorMessage(`Case-split failed: ${String(e)}`);
-      } finally {
-        client.shutdown();
       }
     })
   );
@@ -834,8 +1032,13 @@ export function activate(ctx: vscode.ExtensionContext) {
       const client = await inlineClient(editor.document);
       if (!client) return; // binary missing; actionable error already shown
       try {
-        const res = await client.refineShed(cur.docUri, cur.shedName, term, true);
-        const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
+        const sourceBefore = editor.document.getText();
+        const res = await client.performShedAction(cur.docUri, {
+          kind: "give", target: cur.shedName, arguments: { term },
+        });
+        const ok = await spliceTermOverShed(
+          editor, res.edit.nimLine, res.edit.nimCol, res.edit.term
+        );
         if (!ok) {
           vscode.window.showWarningMessage(
             `Gave ${cur.shedName} server-side, but could not locate its shed marker to splice.`
@@ -846,12 +1049,14 @@ export function activate(ctx: vscode.ExtensionContext) {
         await editor.document.save();
         layoutCache.delete(editor.document.uri.toString());
         if (!(await ensureSidecar(editor.document, true))) return;
+        await client.commitShedAction(cur.docUri, res.id);
+        rememberActionSource(cur.docUri, res.id, sourceBefore, editor.document.getText());
         lensProvider.refreshDoc(editor.document);
-        vscode.window.showInformationMessage(`Gave ${cur.shedName}: ${res.status}`);
+        vscode.window.showInformationMessage(
+          `Gave ${cur.shedName}: ${res.validation.status}`
+        );
       } catch (e) {
         vscode.window.showErrorMessage(`Give failed: ${String(e)}`);
-      } finally {
-        client.shutdown();
       }
     })
   );

@@ -199,6 +199,7 @@ run_step nim c -r $NC --hints:off $P "tests/test_sheds.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_shed_layout.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_shed_loop.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_shed_refine_method.nim"
+run_step nim c -r $NC --hints:off $P "tests/test_shed_action_history.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_shed_sidecar_reset.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_shed_refine_roundtrip.nim"
 # Mutual termination graph tests (issue #42)
