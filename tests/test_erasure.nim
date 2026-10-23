@@ -92,6 +92,46 @@ for definition in vecChecked.allDefs:
     discard eraseQ0Arguments(definition.tmTm)
 expect(foundVappend, "length-indexed vector append erases without refId collisions")
 
+var indexedUsageDrv = initModuleDriver()
+discard indexedUsageDrv.elabFile(repoRoot / "lib/vec.ep")
+let indexedUsageDefs = indexedUsageDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+proc linearVecElim (n : Nat) (xs : Vec Int n) : Vec Int n =
+  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Vec Int i)
+    (nil Int)
+    (lam (i : Nat). lam (x : Int). lam (tail : Vec Int i).
+      lam (ih : Vec Int i). cons Int i x ih)
+    n xs
+"""), repoRoot, "<indexed-q1-elimination>")
+var linearVecElimDef: ElabDef
+for defn in indexedUsageDefs:
+  if defn.name == "linearVecElim": linearVecElimDef = defn
+expect(not linearVecElimDef.tmTm.isNil and
+       linearVecElimDef.tyTm.kind == tPi and
+       linearVecElimDef.tyTm.scope.bdy.kind == tPi and
+       linearVecElimDef.tyTm.scope.bdy.qty == q1,
+  "indexed recursive eliminator infers q1 for its once-consumed scrutinee")
+
+var indexedBranchCaptureRejected = false
+var indexedCaptureDrv = initModuleDriver()
+discard indexedCaptureDrv.elabFile(repoRoot / "lib/vec.ep")
+try:
+  discard indexedCaptureDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+proc indexedBranchCapture (n : Nat) (xs : Vec Int n)
+    (1 value : Int) : Int =
+  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Int)
+    value
+    (lam (i : Nat). lam (x : Int). lam (tail : Vec Int i).
+      lam (ih : Int). ih)
+    n xs
+"""), repoRoot, "<indexed-q1-branch-capture>")
+except ElabError as e:
+  indexedBranchCaptureRejected =
+    "linear variable 'value' used 0 or 1 or 2+ time(s)" in e.msg
+expect(indexedBranchCaptureRejected,
+  "indexed recursive branch captures stay conservative for q1 checking")
+
 var branchDrv = initModuleDriver()
 discard branchDrv.elabFile(repoRoot / "lib/bool.ep")
 let branchDefs = branchDrv.elabDeclsDir(parseProgram("""

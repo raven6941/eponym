@@ -217,6 +217,17 @@ proc flattenApps(t: Term): tuple[head: Term, args: seq[Term]] =
     for i in countdown(revArgs.high, 0):
       result.args.add(revArgs[i])
 
+proc keepConservativeElimUse(choice: var UsageChoiceExpansion,
+                             args: seq[Term], conditionIndex: int) =
+  ## Even when recursive branch behavior is outside our summary, a complete
+  ## registered eliminator consumes its scrutinee exactly once. Preserve that
+  ## fact and remember the other arguments so any captured use remains
+  ## conservative.
+  choice.unsupportedChoice = true
+  choice.condition = args[conditionIndex]
+  for i, arg in args:
+    if i != conditionIndex: choice.strictArgs.add(arg)
+
 proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
   ## Expose a checked, exhaustive finite eliminator applied to branch
   ## closures. This sees through transparent definitions (notably
@@ -266,13 +277,12 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
       if redRuleCaseRecursiveFields(head, ctorId).len > 0:
         hasRecursiveCases = true
         if not redRuleCaseRecursiveSupported(head, ctorId):
-          result.unsupportedChoice = true
+          result.keepConservativeElimUse(args, rule.nargs - 1)
           return
     if hasRecursiveCases:
       let motiveIndex = rule.nParams
-      if motiveIndex >= rule.nargs - 1 or args[motiveIndex].kind != tLam or
-          not isQttGroundType(args[motiveIndex].scope.bdy):
-        result.unsupportedChoice = true
+      if motiveIndex >= rule.nargs - 1 or args[motiveIndex].kind != tLam:
+        result.keepConservativeElimUse(args, rule.nargs - 1)
         return
     var selectedArgs: seq[int] = @[]
     var branchArgIndexes: seq[int] = @[]
@@ -336,6 +346,19 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
     if allMethodArgs.len != rule.cases.len:
       result.unsupportedChoice = true
       return
+
+    if hasRecursiveCases:
+      let motiveIndex = rule.nParams
+      if not isQttGroundType(args[motiveIndex].scope.bdy):
+        # Keep the parts of an indexed recursive elimination whose usage is
+        # still exact. The scrutinee is consumed once on every path; method
+        # closures may run zero, one, or many times over a recursive value, so
+        # captured uses in them remain conservative. This matters for a
+        # linear Vec value: rejecting its one scrutinee use merely because the
+        # dependent motive is outside the recursive summary would regress
+        # valid explicitly-linear programs.
+        result.keepConservativeElimUse(args, rule.nargs - 1)
+        return
     var hasBaseCase = false
     for count in recursiveCounts:
       if count == 0: hasBaseCase = true
@@ -414,7 +437,16 @@ proc varUsageProfile*(tm: Term): UsageProfile =
         usageChoice([go(t.fn.scope.bdy, depth + 1),
                      go(t.arg.scope.bdy, depth + 1)])
       elif choice.unsupportedChoice:
-        if containsVarAt(t, 0, depth): {ucZero, ucOnce, ucMany}
+        if not choice.condition.isNil:
+          var profile = go(choice.condition, depth)
+          var capturedByUnknownCase = false
+          for arg in choice.strictArgs:
+            if containsVarAt(arg, 0, depth):
+              capturedByUnknownCase = true
+          if capturedByUnknownCase:
+            profile = usageThen(profile, {ucZero, ucOnce, ucMany})
+          profile
+        elif containsVarAt(t, 0, depth): {ucZero, ucOnce, ucMany}
         else: {ucZero}
       else:
         let useKinds = argumentUseKinds(t)
