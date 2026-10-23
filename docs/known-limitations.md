@@ -70,6 +70,26 @@ the existing host `int` representation after the negativity check. In a
 `runtimeType(Nat, int)` to select those representations. Large conversions
 through the Value path therefore take linear time and space.
 
+For typed runtime wrappers, `runtimeType(Int, int)`,
+`runtimeType(Nat, int)`, and `runtimeType(Bool, bool)` select the Nim boundary
+types while preserving each built-in Eponym value encoding. For example,
+`Nat` arguments are converted to Eponym Nat values before checked code runs,
+and returned Nat values are decoded back to Nim `int`:
+
+```nim
+eponymBlock:
+  import "lib/nat.ep"
+  runtimeType(Nat, int)
+  proc doubleNat(n: Nat): Nat = add(n, n)
+
+doAssert doubleNat(21) == 42
+```
+
+This differs from mapping a user-defined Eponym type to a Nim type, which
+passes an opaque host value through the checked program. Use `runtimeCodec`
+when checked code needs to inspect the structure of a user-defined mapped
+value.
+
 ## Scalar host values are opaque
 
 Import `lib/float.ep` for the checked type `Float`, and `lib/text.ep` for
