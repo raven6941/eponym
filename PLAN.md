@@ -1175,7 +1175,7 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 
 ### Interactive editing experience for the first release
 
-- [ ] [#425 — Goal-directed Intro for dependent function goals](https://github.com/raven6941/eponym/issues/425) — LSP operation, VS Code action, and dependent/implicit/quantity round-trip coverage implemented; full CI remains.
+- [x] [#425 — Goal-directed Intro for dependent function goals](https://github.com/raven6941/eponym/issues/425) — The LSP operation, VS Code action, and dependent/implicit/quantity round-trip coverage are implemented and merged in [PR #431](https://github.com/raven6941/eponym/pull/431); all CI shards and the compile-time comparison passed.
 - [x] [#426 — Constructor refinement with index-aware feasibility](https://github.com/raven6941/eponym/issues/426): shed constructor picker filters candidates by elaborating typed constructor applications against the goal, then creates checked field sheds through the normal refinement round-trip.
 - [x] [#427 — Context-directed Apply/refine](https://github.com/raven6941/eponym/issues/427): a checker-validated, filterable local-hypothesis picker infers arguments from dependent result types and leaves typed sheds for unresolved arguments.
 - [x] [#428 — Goal-directed equality rewrite and transport](https://github.com/raven6941/eponym/issues/428): the VS Code picker offers checked direction/occurrence-specific Eq eliminator transports, preserving a named residual goal.
