@@ -43,12 +43,27 @@ macro differentialBlockRepr(src: static string, srcFile: static string): untyped
   let cgBlock = compileBlockProcs(checked.defs, checked.globals, "", src,
     srcFile, userLines, mappings)
   if cgBlock.report["fortyTwo"].tier != cgtRepr or
-      cgBlock.report["higher"].tier != cgtValue or
-      not cgBlock.report["higher"].reason.contains("non-atomic binder domain") or
+      cgBlock.report["higher"].tier != cgtRepr or
       cgBlock.report["addN3"].tier != cgtRepr or
-      cgBlock.report["chooseOr"].tier != cgtRepr:
-    error("codegen report should distinguish Phase 2 and Phase 1 fallback, " &
-      "and put let-bound partial eliminators at the repr tier (issue #407)")
+      cgBlock.report["chooseOr"].tier != cgtRepr or
+      cgBlock.report["applyFn"].tier != cgtRepr or
+      cgBlock.report["crossDef"].tier != cgtRepr or
+      cgBlock.report["applyIntFn"].tier != cgtRepr or
+      cgBlock.report["useDouble"].tier != cgtRepr or
+      cgBlock.report["const2"].tier != cgtRepr or
+      cgBlock.report["add2"].tier != cgtRepr or
+      cgBlock.report["applyCurried"].tier != cgtRepr or
+      cgBlock.report["useAdd2"].tier != cgtRepr or
+      cgBlock.report["useCurried"].tier != cgtValue or
+      not cgBlock.report["useCurried"].reason.contains("needs eta-expansion") or
+      cgBlock.report["q0dom"].tier != cgtValue or
+      not cgBlock.report["q0dom"].reason.contains("quantity-0 function domain"):
+    error("codegen report should put function-typed definitions at the " &
+      "repr tier (issue #407 slice 3: higher, applyFn, crossDef, " &
+      "applyIntFn, useDouble, add2, applyCurried, useAdd2), keep the " &
+      "arity-mismatched const2 call and the q0-function-domain def at " &
+      "Phase 1 with their named diagnostics, and " &
+      "put let-bound partial eliminators at the repr tier")
   result = newStmtList()
   for p in cgBlock.procs:
     result.add(p)
@@ -108,6 +123,35 @@ data Bool : Type 0 where
 | true : Bool
 | false : Bool
 proc natZero : Nat = zero
+
+# --- issue #407 slice 3: closures cross definition boundaries ---
+# A partially-applied eliminator is let-bound, passed to another compiled
+# definition as an ordinary `{.closure.}` proc value, and applied there.
+proc applyFn (f : Nat -> Nat) (n : Nat) : Nat = f n
+proc crossDef (n : Nat) : Nat =
+  let add3 = natElim (lam (u : Nat). Nat) (suc (suc (suc zero))) (lam (p : Nat). lam (ih : Nat). suc ih) in
+  applyFn add3 n
+# A compiled definition as a function value: the uncurried proc converts
+# to the flattened closure type implicitly.
+proc applyIntFn (f : Int -> Int) (x : Int) : Int = f x
+proc useDouble (x : Int) : Int = applyIntFn double x
+# Multi-argument definitions through a curried formal: the flattened
+# representation is the uncurried closure type, so a definition whose
+# host arity matches converts implicitly ...
+proc add2 (x : Int) (y : Int) : Int = addInt x y
+proc applyCurried (f : Int -> Int -> Int) (x : Int) : Int = f x x
+proc useAdd2 (x : Int) : Int = applyCurried add2 x
+# ... but quantity inference can erase a definition's arity: `const2`
+# never uses `y`, so it compiles to a 1-argument proc, which does NOT fit
+# the 2-argument closure type. The call-site guard turns that into an
+# honest Phase-1 fallback instead of a hard Nim type error.
+proc const2 (x : Int) (y : Int) : Int = x
+proc useCurried (x : Int) : Int = applyCurried const2 x
+# Honestly unsupported: a quantity-0 function domain has no host
+# representation, so this stays on the Phase-1 backend. (`f` is used, so
+# its quantity stays ω and the q0 domain reaches the signature check.)
+proc q0dom (f : Pi (0 p : Nat). Int) (x : Int) : Int = f 0
+
 proc natSeven : Nat = 7
 proc natSucc (n : Nat) : Nat = suc n
 proc natAdd (m : Nat) (n : Nat) : Nat =
@@ -327,6 +371,59 @@ for (a, b) in [(1, 1), (1, 0), (0, 1), (0, 0)]:
   let got1Choose = eponymCompiled_chooseOr(chooseArgs, chooseBnd)
   expect(valueToNat(got1Choose, natGlobals) == expectedChoose,
     "chooseOr phase-1 agrees")
+
+# --- issue #407 slice 3: closures cross definition boundaries ---
+# A let-bound partially-applied eliminator is passed to another compiled
+# definition and applied there; the repr result agrees with the
+# interpreter and the Phase-1 backend on every path. (Nat results come
+# back as suc-chains from the interpreter/Phase-1, decoded with
+# valueToNat; Int results are host ints.)
+proc checkReprCrossNat(name: string, n: int, expected: int) =
+  let got = case name
+    of "crossDef": eponymCompiledRepr_crossDef(n)
+    else: raise newException(ValueError, "unknown repr def " & name)
+  expect(got == expected, name & " repr computes " & $expected)
+  let bnd = testPostulateBindings()
+  let want = callValueFuncDir("", prog, name,
+    @[natToValue(n, natGlobals)], bnd)
+  expect(valueToNat(want, natGlobals) == expected,
+    name & " interpreter agrees")
+  let got1 = case name
+    of "crossDef": eponymCompiled_crossDef(@[natToValue(n, natGlobals)], bnd)
+    else: raise newException(ValueError, "unknown phase-1 def " & name)
+  expect(valueToNat(got1, natGlobals) == expected,
+    name & " phase-1 agrees")
+
+proc checkReprCrossInt(name: string, n: int, expected: int) =
+  let got = case name
+    of "useDouble": eponymCompiledRepr_useDouble(n)
+    of "useAdd2": eponymCompiledRepr_useAdd2(n)
+    else: raise newException(ValueError, "unknown repr def " & name)
+  expect(got == expected, name & " repr computes " & $expected)
+  let bnd = testPostulateBindings()
+  let want = callValueFuncDir("", prog, name, @[vInt(n)], bnd)
+  expect(want.whnfKind == wInt and want.whnfIntVal == expected,
+    name & " interpreter agrees")
+  let got1 = case name
+    of "useDouble": eponymCompiled_useDouble(@[vInt(n)], bnd)
+    of "useAdd2": eponymCompiled_useAdd2(@[vInt(n)], bnd)
+    else: raise newException(ValueError, "unknown phase-1 def " & name)
+  expect(got1.whnfKind == wInt and got1.whnfIntVal == expected,
+    name & " phase-1 agrees")
+
+for n in [0, 1, 7, 21]:
+  checkReprCrossNat("crossDef", n, n + 3)
+for x in [-3, 0, 21]:
+  checkReprCrossInt("useDouble", x, 2 * x)
+  checkReprCrossInt("useAdd2", x, 2 * x)
+
+# A host closure passed directly to a repr-tier higher-order definition.
+block:
+  let inc3: proc (m: int): int {.closure.} = proc (m: int): int = m + 3
+  expect(eponymCompiledRepr_applyFn(inc3, 7) == 10,
+    "applyFn applies a host closure directly")
+  expect(eponymCompiledRepr_higher(inc3, 7) == 10,
+    "higher applies a host closure directly")
 for (x, y) in [(3, 4), (0, 0)]:
   checkReprNat("stepFn2", @[x, y], x + y + 1)
 for x in [1, 0]:
@@ -424,8 +521,12 @@ expect(q0EffectCases,
 # --- fragment boundaries: these get Phase-1 procs but no repr procs ---
 expect("tickTwice" notin reprCompiledNames(),
   "postulate-calling def has no repr proc")
-expect("higher" notin reprCompiledNames(),
-  "higher-order def has no repr proc")
+expect("q0dom" notin reprCompiledNames(),
+  "q0-function-domain def has no repr proc (issue #407 slice 3)")
+expect("useCurried" notin reprCompiledNames(),
+  "arity-mismatched function-value call has no repr proc (issue #407 slice 3)")
+expect("higher" in reprCompiledNames(),
+  "higher-order def has a repr proc (issue #407 slice 3)")
 expect("addViaFn" notin reprCompiledNames(),
   "non-lambda natElim step case has no repr proc")
 for name in ["fortyTwo", "add", "mulAdd", "nestedLet", "double", "quad",

@@ -58,6 +58,53 @@ import erasure       # eraseQ0Arguments
 import eponym_embed  # callValueFuncDir, initRuntimeBindings (bindSym targets)
 
 type
+  ReprKind* = enum
+    repInt  # Eponym type mapped to Nim `int` via plain runtimeType
+    repSeq  # `Vec`/`List` family mapped to Nim `seq[int]`
+    repOption  # `Option` family mapped to Nim `Option[int]`
+    repOpaque  # Issue #401: any other concrete `runtimeType` mapping is an
+      # identity representation over its declared host type. Covers atomic
+      # postulated types (`Promise` -> `PaxosPromise`) and applied families
+      # declared at the family level (`Chan s` -> `PaxosChannel` for every
+      # session index `s`): family indices are dropped from the host
+      # signature, exactly as `Vec A n` maps to one `seq[int]`. Declaring
+      # one host type for a whole family asserts the host layout is
+      # index-independent; the checker cannot verify host layout, so this
+      # is trusted (see docs/trust-model.md).
+    repSigma  # Issue #401: a dependent `Sig` over representation
+      # components maps to the host tuple of the components. The second
+      # component's representation is selected with its index-dependence
+      # on the first component erased: sound precisely when the component
+      # mappings are index-independent (e.g. an opaque family), and
+      # honestly rejected when a live index (a `Vec` length) would mention
+      # the bound value.
+    repFunc  # Issue #407 slice 3: a function type maps to a `{.closure.}`
+      # Nim proc type over the representation types, flattened across
+      # curried binders (`Pi x:A. Pi y:B. C` is `proc (x: reprA, y: reprB):
+      # reprC {.closure.}`, matching both the multi-parameter closures
+      # `cgReprElimClosure` emits and the uncurried compiled defs, which
+      # Nim converts implicitly). Lets closure values (partially-applied
+      # eliminators) cross definition boundaries as ordinary proc values.
+      # Dependency of the codomain on the bound value is erased exactly as
+      # for `repSigma`: honestly rejected in live index positions.
+
+  ReprType* = object
+    ## The host representation of one signature position (a non-q0
+    ## binder domain or the result type).
+    kind*: ReprKind
+    isVector*: bool  # for repSeq: from runtimeVector (length-indexed)
+    index*: Term  # for repSeq+isVector: the length index term
+    hostType*: NimNode  # for repOpaque: the declared Nim type AST
+    sigmaFields*: seq[ReprType]  # for repSigma: the component reprs
+    funcDom*: ref ReprType  # for repFunc: the domain representation
+    funcCod*: ref ReprType  # for repFunc: the codomain representation
+
+proc boxRepr*(rt: ReprType): ref ReprType =
+  ## Box a representation type for a `repFunc` field.
+  new(result)
+  result[] = rt
+
+type
   CgUnsupported* = object of CatchableError
     ## Raised when a term is outside the compilable fragment. Caught at the
     ## definition boundary; the definition keeps its interpreter wrapper.
@@ -109,7 +156,8 @@ type
       ## The emitter consults this to compile bodies against host
       ## representations (seq, Option, opaque Nim types) instead of Values;
       ## definitions whose types have no entry keep the Phase 1 Value backend.
-    reprProcs*: Table[int, tuple[name: string, arity: int]]
+    reprProcs*: Table[int, tuple[name: string, arity: int,
+                                 sig: seq[ReprType]]]
       ## Issue #330 repr tier: def refId -> (emitted proc name, int arity)
       ## for definitions compiled against host representations directly.
       ## Pre-assigned before compiling a body so recursion resolves.
@@ -187,7 +235,7 @@ proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
     src: src, badElims: initTable[int, bool](),
     usedElims: initTable[int, bool](),
     reps: initTable[int, HostRuntimeType](),
-    reprProcs: initTable[int, tuple[name: string, arity: int]](),
+    reprProcs: initTable[int, tuple[name: string, arity: int, sig: seq[ReprType]]](),
     reprPostulateQtys: initTable[int, seq[Quantity]]())
   var refIdToName = initTable[int, string]()
   for name, e in globals.pairs:
@@ -691,7 +739,7 @@ proc detectBadElims(ctx: var CodegenCtx) =
       var dryCtx = CodegenCtx(refs: ctx.refs, baseDir: "", src: "",
         badElims: ctx.badElims, usedElims: initTable[int, bool](),
         reps: ctx.reps,
-        reprProcs: initTable[int, tuple[name: string, arity: int]]())
+        reprProcs: initTable[int, tuple[name: string, arity: int, sig: seq[ReprType]]]())
       try:
         for _, cs in r.cases.pairs:
           if cs.ctorArity < 0:
@@ -910,37 +958,6 @@ proc cgReprName*(defName: string): string =
   ## The emitted proc name for a representation-specialized definition.
   "eponymCompiledRepr_" & defName
 
-type
-  ReprKind* = enum
-    repInt  # Eponym type mapped to Nim `int` via plain runtimeType
-    repSeq  # `Vec`/`List` family mapped to Nim `seq[int]`
-    repOption  # `Option` family mapped to Nim `Option[int]`
-    repOpaque  # Issue #401: any other concrete `runtimeType` mapping is an
-      # identity representation over its declared host type. Covers atomic
-      # postulated types (`Promise` -> `PaxosPromise`) and applied families
-      # declared at the family level (`Chan s` -> `PaxosChannel` for every
-      # session index `s`): family indices are dropped from the host
-      # signature, exactly as `Vec A n` maps to one `seq[int]`. Declaring
-      # one host type for a whole family asserts the host layout is
-      # index-independent; the checker cannot verify host layout, so this
-      # is trusted (see docs/trust-model.md).
-    repSigma  # Issue #401: a dependent `Sig` over representation
-      # components maps to the host tuple of the components. The second
-      # component's representation is selected with its index-dependence
-      # on the first component erased: sound precisely when the component
-      # mappings are index-independent (e.g. an opaque family), and
-      # honestly rejected when a live index (a `Vec` length) would mention
-      # the bound value.
-
-  ReprType* = object
-    ## The host representation of one signature position (a non-q0
-    ## binder domain or the result type).
-    kind*: ReprKind
-    isVector*: bool  # for repSeq: from runtimeVector (length-indexed)
-    index*: Term  # for repSeq+isVector: the length index term
-    hostType*: NimNode  # for repOpaque: the declared Nim type AST
-    sigmaFields*: seq[ReprType]  # for repSigma: the component reprs
-
 proc isPlainIntMapping*(m: HostRuntimeType): bool =
   ## True when the mapping is a plain `runtimeType ... -> int` (not a
   ## vector/list/option/variant/codec mapping): the host representation
@@ -1031,6 +1048,9 @@ proc reprTypeLiveMentionsMarker(rt: ReprType, markerRefId: int): bool =
     rt.isVector and reprTypeMentionsMarker(rt.index, markerRefId)
   of repSigma:
     rt.sigmaFields.anyIt(reprTypeLiveMentionsMarker(it, markerRefId))
+  of repFunc:
+    reprTypeLiveMentionsMarker(rt.funcDom[], markerRefId) or
+      reprTypeLiveMentionsMarker(rt.funcCod[], markerRefId)
   else: false
 
 const sigmaMarkerRefId = -401
@@ -1073,6 +1093,26 @@ proc reprTypeOf(ctx: CodegenCtx, t: Term): ReprType =
       raise newException(CgUnsupported,
         "Sigma codomain mentions the bound value in a live index position")
     return ReprType(kind: repSigma, sigmaFields: @[first, second])
+  if t.kind == tPi:
+    # Issue #407 slice 3: a function type denotes a `{.closure.}` proc
+    # type. A quantity-0 binder has no host denotation inside a function
+    # type (its argument is erased at every call site), so it is honestly
+    # rejected rather than silently dropped from the proc type. The
+    # codomain's dependence on the bound value is erased exactly as for
+    # `Sig`: a live index position mentioning it has no host denotation
+    # and is honestly rejected.
+    if t.qty == q0:
+      raise newException(CgUnsupported,
+        "quantity-0 function domain has no host representation")
+    let domRt = ctx.reprTypeOf(t.dom)
+    let marker = Term(kind: tR, refId: sigmaMarkerRefId)
+    let opened = subst(t.scope.bdy, 0, marker)
+    let codRt = ctx.reprTypeOf(opened)
+    if reprTypeLiveMentionsMarker(codRt, sigmaMarkerRefId):
+      raise newException(CgUnsupported,
+        "function codomain mentions the bound value in a live index position")
+    return ReprType(kind: repFunc, funcDom: boxRepr(domRt),
+                      funcCod: boxRepr(codRt))
   if t.kind == tApp:
     var argTerms: seq[Term] = @[]
     var head = t
@@ -1132,6 +1172,25 @@ proc nimReprType*(rt: ReprType): NimNode =
     var tup = newNimNode(nnkTupleConstr)
     for f in rt.sigmaFields: tup.add(nimReprType(f))
     tup
+  of repFunc:
+    # Issue #407 slice 3: flatten curried binders into one multi-parameter
+    # `{.closure.}` proc type. This matches both the closures
+    # `cgReprElimClosure` emits (one parameter per missing argument) and
+    # the uncurried compiled defs (Nim converts a `nimcall` proc to a
+    # `{.closure.}` proc type of the same shape implicitly).
+    var doms: seq[ReprType] = @[]
+    var cur = rt
+    while cur.kind == repFunc:
+      doms.add(cur.funcDom[])
+      cur = cur.funcCod[]
+    var formal = newNimNode(nnkFormalParams)
+    formal.add(nimReprType(cur))
+    for i, d in doms:
+      formal.add(newIdentDefs(genSym(nskParam, "repFnArg" & $i),
+                             nimReprType(d), newEmptyNode()))
+    var pragmas = newNimNode(nnkPragma)
+    pragmas.add(ident"closure")
+    newTree(nnkProcTy, formal, pragmas)
 
 proc nimTypeName*(n: NimNode): string =
   ## Best-effort rendering of a type AST for the tier report. `$` on a raw
@@ -1160,6 +1219,13 @@ proc reprTypeName*(rt: ReprType): string =
   of repOption: "Option[int]"
   of repOpaque: nimTypeName(rt.hostType)
   of repSigma: "(" & rt.sigmaFields.mapIt(reprTypeName(it)).join(", ") & ")"
+  of repFunc:
+    var doms: seq[string] = @[]
+    var cur = rt
+    while cur.kind == repFunc:
+      doms.add(reprTypeName(cur.funcDom[]))
+      cur = cur.funcCod[]
+    "(" & doms.join(", ") & ") -> " & reprTypeName(cur) & " {.closure.}"
 
 proc reprSigSummary*(sig: seq[ReprType]): string =
   ## One-line signature summary for the codegen tier report (issue #401):
@@ -1170,6 +1236,7 @@ proc reprSigSummary*(sig: seq[ReprType]): string =
     case rt.kind
     of repOpaque: base & " (opaque)"
     of repSigma: base & " (dependent Sigma)"
+    of repFunc: base & " (function)"
     else: base
   if sig.len == 0: return "()"
   "(" & sig[0 ..< ^1].mapIt(posName(it)).join(", ") & ") -> " &
@@ -1225,6 +1292,30 @@ proc nimTypeMatchesRepr*(n: NimNode, rt: ReprType): bool =
     # `nnkTupleTy` spellings of the same tuple also match structurally.
     (n.kind == nnkTupleConstr or n.kind == nnkTupleTy) and
       n.len == rt.sigmaFields.len and sigmaFieldsMatch(n, rt.sigmaFields)
+  of repFunc:
+    # Issue #407 slice 3: a surface `proc (d1: T1, ..., dn: Tn): TR
+    # {.closure.}` denotes the flattened function representation. The
+    # closure pragma is required so a plain `nimcall` surface type does
+    # not silently match.
+    if n.kind != nnkProcTy or n.len != 2: return false
+    var doms: seq[ReprType] = @[]
+    var cur = rt
+    while cur.kind == repFunc:
+      doms.add(cur.funcDom[])
+      cur = cur.funcCod[]
+    let formal = n[0]
+    if formal.kind != nnkFormalParams or formal.len != doms.len + 1:
+      return false
+    if not nimTypeMatchesRepr(formal[0], cur): return false
+    for i, d in doms:
+      let idef = formal[i + 1]
+      if idef.kind != nnkIdentDefs or idef.len != 3: return false
+      if not nimTypeMatchesRepr(idef[1], d): return false
+    let pragmas = n[1]
+    if pragmas.kind != nnkPragma: return false
+    for p in pragmas:
+      if p.kind in {nnkIdent, nnkSym} and $p == "closure": return true
+    false
 
 proc reprSigOfType*(ctx: CodegenCtx, ty: Term): seq[ReprType] =
   ## Representation types of a Pi telescope's binder domains (outermost
@@ -1374,6 +1465,34 @@ proc cgReprElimClosure(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
 proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
                 env: seq[NimNode]): NimNode  # forward
 
+proc sameReprType(a, b: ReprType): bool =
+  ## Structural equality of two representation types: same host Nim type.
+  ## Vector length indices are runtime values, not part of the host type,
+  ## so only the vector flag is compared.
+  if a.kind != b.kind: return false
+  case a.kind
+  of repInt: true
+  of repSeq: a.isVector == b.isVector
+  of repOption: true
+  of repOpaque: sameNimTypeName(a.hostType, b.hostType)
+  of repSigma:
+    a.sigmaFields.len == b.sigmaFields.len and
+      toSeq(0 ..< a.sigmaFields.len).allIt(
+        sameReprType(a.sigmaFields[it], b.sigmaFields[it]))
+  of repFunc:
+    sameReprType(a.funcDom[], b.funcDom[]) and
+      sameReprType(a.funcCod[], b.funcCod[])
+
+proc flattenFuncType(rt: ReprType): tuple[doms: seq[ReprType], cod: ReprType] =
+  ## The flattened reading of a (possibly curried) function representation:
+  ## `repFunc(d1, repFunc(d2, R))` is `proc (d1, d2): R {.closure.}`.
+  result.doms = @[]
+  var cur = rt
+  while cur.kind == repFunc:
+    result.doms.add(cur.funcDom[])
+    cur = cur.funcCod[]
+  result.cod = cur
+
 proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   ## Compile a `tApp` chain in the repr tier. Primitive Int ops become direct
   ## Nim arithmetic (the interpreter fires them as `x + y` etc. on machine
@@ -1419,12 +1538,43 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       let qtys = if rh.kind == cgkPostulate:
         ctx.reprPostulateQtys.getOrDefault(head.refId, @[])
       else: rh.piQuantities
+      let calleeSig = ctx.reprProcs[head.refId].sig
       var args: seq[NimNode] = @[]
       var argIdx = 0
+      var sigPos = 0
       for qty in qtys:
         if argIdx >= appArgs.len: break
         if qty != q0:
+          if sigPos < calleeSig.len - 1:
+            let formalRt = calleeSig[sigPos]
+            let argTm = appArgs[argIdx]
+            if formalRt.kind == repFunc and argTm.kind == tR and
+                argTm.refId in ctx.reprProcs:
+              # Issue #407 slice 3: a bare compiled definition at a
+              # function-typed formal. The emitted proc is uncurried; the
+              # formal is the flattened closure type. Nim converts a
+              # `nimcall` proc to the `{.closure.}` type implicitly only
+              # when the shapes agree — anything else would be a hard Nim
+              # type error for the whole block, so it is an honest named
+              # fallback instead (eta-expansion of def references is future
+              # work).
+              let aSig = ctx.reprProcs[argTm.refId].sig
+              let (doms, cod) = flattenFuncType(formalRt)
+              var ok = aSig.len - 1 == doms.len and
+                sameReprType(aSig[^1], cod)
+              if ok:
+                for i in 0 ..< doms.len:
+                  if not sameReprType(aSig[i], doms[i]):
+                    ok = false
+                    break
+              if not ok:
+                raise newException(CgUnsupported,
+                  "passing compiled definition '" &
+                  ctx.refs[argTm.refId].name &
+                  "' as a function value needs eta-expansion (outside the " &
+                  "representation fragment)")
           args.add(cgRepr(ctx, appArgs[argIdx], env))
+          inc sigPos
         inc argIdx
       if argIdx != appArgs.len:
         raise newException(CgUnsupported,
@@ -2475,6 +2625,8 @@ proc reprTypeHasLiveVector(rt: ReprType): bool =
   case rt.kind
   of repSeq: rt.isVector
   of repSigma: rt.sigmaFields.anyIt(reprTypeHasLiveVector(it))
+  of repFunc:
+    reprTypeHasLiveVector(rt.funcDom[]) or reprTypeHasLiveVector(rt.funcCod[])
   else: false
 
 proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
@@ -2530,12 +2682,14 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
         return nil
       let rt = sig[sigIdx]
       inc sigIdx
-      if rt.kind == repSigma and reprTypeHasLiveVector(rt):
-        # A `Vec` nested in a tuple parameter has no entry-check site
-        # (checks are emitted per top-level `Vec` parameter only); reject
-        # honestly rather than skip the interpreter's length validation.
+      if (rt.kind == repSigma or rt.kind == repFunc) and
+          reprTypeHasLiveVector(rt):
+        # A `Vec` nested in a tuple or function-typed parameter has no
+        # entry-check site (checks are emitted per top-level `Vec`
+        # parameter only); reject honestly rather than skip the
+        # interpreter's length validation.
         failureReason =
-          "Vec length inside a Sigma parameter has no entry check site"
+          "Vec length inside a composite parameter has no entry check site"
         return nil
       let psym = genSym(nskParam, "cgReprArg" & $params.len)
       params.add(psym)
@@ -2822,7 +2976,7 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       let fwdName = cgReprName(binding.postulateName)
       # The forwarder just succeeded, so the signature is representable.
       let sig = ctx.reprSigOfType(entry.ty)
-      ctx.reprProcs[refId] = (name: fwdName, arity: sig.len - 1)
+      ctx.reprProcs[refId] = (name: fwdName, arity: sig.len - 1, sig: sig)
       ctx.reprPostulateQtys[refId] = piQuantities(entry.ty)
       reprBodies.add(procNode)
       result.report[binding.postulateName] = CodegenReportEntry(
@@ -2843,7 +2997,8 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     except CgUnsupported as e:
       reprFailures[name] = e.msg
       continue
-    ctx.reprProcs[refId] = (name: cgReprName(name), arity: sig.len - 1)
+    ctx.reprProcs[refId] = (name: cgReprName(name), arity: sig.len - 1,
+                             sig: sig)
     var failureReason = ""
     let procNode = compileDefProcRepr(d, ctx, locFile,
       userLines.getOrDefault(name, 1), failureReason)
