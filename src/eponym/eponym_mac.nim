@@ -2721,16 +2721,32 @@ proc runtimeValueConversionExpr(eponymType, nimType, value: NimNode,
             familyName, constructors)
         return newCall(bindSym"valueToRuntimeVariant", value, globals,
           familyName, constructors)
-    if toValue and eponymType.kind in {nnkIdent, nnkSym}:
-      for mapping in mappings:
-        if mapping.eponymName == $typeHead and
-            not isSyntheticGenericRuntimeType(mapping) and
-            not mapping.isRuntimeCodec and not mapping.isRuntimeVariant and
-            not mapping.isRuntimeVector and not mapping.isRuntimeList and
-            not mapping.isRuntimeOption and
-            findHostRecord(records, mapping.eponymName) < 0:
-          return newCall(bindSym"toHostValueWithType", value,
-            runtimeTypeValueExpr(eponymType, globals, indexOverrides))
+  # Built-in scalar Eponym types keep their value-level encoding even when
+  # runtimeType(Nat, int) (or the corresponding Int/Bool mapping) supplies
+  # the Nim boundary type. Treating these mappings as opaque host boxes makes
+  # checked definitions see a host value where they expect a scalar Eponym
+  # value; e.g. natElim over a wrapped int becomes stuck at runtime.
+  let scalarCodec = simpleRuntimeCodec(eponymType)
+  if scalarCodec == "int":
+    if toValue: return newCall(bindSym"intToValue", value)
+    return newCall(bindSym"valueToInt", value)
+  elif scalarCodec == "nat":
+    if toValue:
+      return newCall(bindSym"natToValue", value, globals)
+    return newCall(bindSym"valueToNat", value, globals)
+  elif scalarCodec == "bool":
+    if toValue: return newCall(bindSym"boolToValue", value, globals)
+    return newCall(bindSym"valueToBool", value, globals)
+  if toValue and eponymType.kind in {nnkIdent, nnkSym}:
+    for mapping in mappings:
+      if mapping.eponymName == $typeHead and
+          not isSyntheticGenericRuntimeType(mapping) and
+          not mapping.isRuntimeCodec and not mapping.isRuntimeVariant and
+          not mapping.isRuntimeVector and not mapping.isRuntimeList and
+          not mapping.isRuntimeOption and
+          findHostRecord(records, mapping.eponymName) < 0:
+        return newCall(bindSym"toHostValueWithType", value,
+          runtimeTypeValueExpr(eponymType, globals, indexOverrides))
   if eponymType.kind in {nnkIdent, nnkSym}:
     var isGenericTypeParameter = false
     for mapping in mappings:
