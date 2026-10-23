@@ -378,8 +378,11 @@ let q0EffectCases = forAll(
     generatedBindings[tickId] = vHostFunc(proc(x: Value): Value =
       inc generatedCalls
       x)
+    # `n` appears only in the erased argument to the inner q0 lambda, so
+    # #371 infers this function parameter as q0. Pass it through the
+    # generated wrapper's separate erased-argument channel.
     let generated = eponymCompiled_q0EffectCall(
-      @[natToValue(n, natGlobals)], generatedBindings)
+      @[], generatedBindings, @[natToValue(n, natGlobals)])
     var interpretedCalls = 0
     var interpretedBindings = testPostulateBindings()
     interpretedBindings[tickId] = vHostFunc(proc(x: Value): Value =
