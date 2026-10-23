@@ -131,6 +131,8 @@ run_step nim c -r $NC --hints:off $P "tests/test_nat_binding_identity.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_nat_to_int.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_int_to_nat.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_debug_echo.nim"
+# Typed postulate adapters for bindPostulateValue (issue #409)
+run_step nim c -r $NC --hints:off $P "tests/test_postulate_typed_adapter.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_scalar_runtime_codecs.nim"
 # Representation derivation from checked type structure (issue #402)
 run_step nim c -r $NC --hints:off $P "tests/test_derive_repr.nim"

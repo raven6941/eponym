@@ -361,7 +361,14 @@ Checked definitions can emit a runtime debug trace by importing
 the value unchanged and prints its Eponym representation when the checked
 wrapper runs. This is an explicit, trusted Nim effect; checking or compiling
 the definition does not print. Opaque host payloads are shown only by Nim type
-name.
+name. Every application of a `bindPostulateValue`-bound postulate inside a
+compiled definition must instantiate the postulate's type arguments at
+statically known types; the macro then emits one typed adapter per distinct
+instantiation and routes each matching call site to a direct call of the host
+procedure (no per-call bindings-table lookup, no per-argument application
+fold — values in the Value tier need no codecs). A call site whose type
+arguments are not statically known is a compile-time error rather than a
+silent slow path.
 
 A `runtimeCodec` mapping for an unindexed Eponym type can also supply the
 runtime type witness and encoder/decoder for a generic type parameter. This

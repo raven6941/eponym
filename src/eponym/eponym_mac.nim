@@ -4126,6 +4126,10 @@ proc rawRuntimeValueWrapper(baseDir, src, defName: string,
   result.add(newEmptyNode())
   result.add(body)
 
+var postulateAdapterBlockSeq409 {.compileTime.} = 0
+  ## Issue #409: per-`eponymBlock`-expansion counter so emitted typed
+  ## adapter proc names are unique across blocks in one compilation.
+
 macro eponymBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
@@ -4457,12 +4461,22 @@ macro eponymBlock*(body: untyped): untyped =
   # binders at statically known types (a type reference with a runtime
   # codec, or a primitive); anything else is a named error rather than a
   # silent Value-tier fallback. The collected instantiations drive the
-  # typed-adapter emission (next slice); this slice establishes the
-  # static-instantiation discipline and its diagnostics.
+  # typed-adapter emission in `compileBlockProcs` (slice 2): each distinct
+  # instantiation gets a Nim proc calling the user's adapter directly.
   type PostulateInstantiation = object
     postulateName: string
     typeArgNames: seq[string]
     key: string
+    implementation: NimNode
+    procName: string
+  proc adapterProcName409(key: string, seqNum: int): string =
+    ## Block-unique adapter proc name for an instantiation key.
+    var sanitized = ""
+    for c in key:
+      sanitized.add(if c.isAlphaNumeric: c else: '_')
+    "eponymTypedAdapter_" & sanitized & "_" & $seqNum
+  inc postulateAdapterBlockSeq409
+  let adapterBlockSeq = postulateAdapterBlockSeq409
   var rawValueInstantiations: seq[PostulateInstantiation] = @[]
   var seenInstantiationKeys = initHashSet[string]()
   var refNames409 = initTable[int, string]()
@@ -4470,12 +4484,14 @@ macro eponymBlock*(body: untyped): untyped =
     if not gentry.tm.isNil and gentry.tm.kind == tR:
       refNames409[gentry.tm.refId] = gname
   var rawValuePostulates = initTable[int, string]()
+  var rawValueImpls = initTable[string, NimNode]()
   for binding in bindings:
     if not binding.rawValue: continue
     if binding.postulateName notin checkedGlobals: continue
     let pentry = checkedGlobals[binding.postulateName]
     if pentry.tm.isNil or pentry.tm.kind != tR: continue
     rawValuePostulates[pentry.tm.refId] = binding.postulateName
+    rawValueImpls[binding.postulateName] = binding.implementation
   proc staticTypeArgKey409(term: Term): string =
     ## Canonical key for a postulate type argument, or "" when the
     ## argument is not statically known. Slice 1 covers type references
@@ -4556,7 +4572,9 @@ macro eponymBlock*(body: untyped): untyped =
         if key notin seenInstantiationKeys:
           seenInstantiationKeys.incl(key)
           rawValueInstantiations.add(PostulateInstantiation(
-            postulateName: pname, typeArgNames: typeKeys, key: key))
+            postulateName: pname, typeArgNames: typeKeys, key: key,
+            implementation: rawValueImpls[pname],
+            procName: adapterProcName409(key, adapterBlockSeq)))
       scanRawValueApps409(term.fn)
       scanRawValueApps409(term.arg)
     of tPi, tSi, tLam:
@@ -4582,10 +4600,15 @@ macro eponymBlock*(body: untyped): untyped =
     echo "[eponym codegen] issue #409: rawValue postulate instantiations:"
     for inst in rawValueInstantiations:
       echo "[eponym codegen]   " & inst.postulateName & "[" &
-        inst.typeArgNames.join(", ") & "]"
+        inst.typeArgNames.join(", ") & "] -> " & inst.procName
+  var adapterSpecs: seq[RawValueAdapterSpec] = @[]
+  for inst in rawValueInstantiations:
+    adapterSpecs.add(RawValueAdapterSpec(postulateName: inst.postulateName,
+      typeArgNames: inst.typeArgNames, key: inst.key,
+      implementation: inst.implementation, procName: inst.procName))
   var cgBlock = compileBlockProcs(codegenDefs, checkedGlobals, baseDir, src,
     cgLocFile, cgUserLines, runtimeTypes, postulateReprs, allDefs,
-    crossBlockExports)
+    adapterSpecs, crossBlockExports)
 
   # Issue #408: publish this block's compiled import-origin definitions
   # into the cross-block registry for later blocks in this compilation.
