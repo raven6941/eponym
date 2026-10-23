@@ -60,7 +60,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `runtimeCodec(Tree, NimType, encode, decode)` | Register typed Nim encoders/decoders for a named Eponym type or family; the codec implementation is trusted |
 | `runtimeValue(checkedDefinition)` | Expose checked values and globals; imported definitions without a local Nim signature use the raw `Value` ABI |
 | `requireCompiled()` | Require the representation backend and direct typed wrappers for the local and transitive imported definitions; currently limited to plain `int` mappings, with unsupported shapes rejected at compile time |
-| `debugEcho[A](value)` | Opt-in runtime trace from `lib/debug.ep`; bind `debugEcho` with `debugEchoRuntimeValue` or a custom raw adapter |
+| `debugEcho[A](value)` | Opt-in runtime trace from `lib/debug.ep`; bind `debugEcho` with `debugEchoRuntimeValue` or a custom raw adapter. Type arguments must be statically known: each distinct instantiation gets a generated typed adapter, and int-fragment instantiations additionally get a representation-tier adapter with no `RuntimeValue` in its signature |
 | `echo`, `for`, `var`, effectful Nim control flow, Nim library calls | Not supported as host Nim statements/expressions in the block |
 
 Put ordinary computation, IO, control flow, and Nim library calls outside
