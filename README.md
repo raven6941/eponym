@@ -58,8 +58,12 @@ pairs, named records, the standard `Vec`, `List`, and `Option` types, and —
 with codecs registered — nested and indexed structures, dynamic values, and
 callbacks. The new session runtime demo connects checked roles to Nim
 adapters, and `paxos_session.nim` runs its checked proposer and acceptor
-through bound TCP adapters. The borrowing and optimization examples still
-have separate hand-written drivers. The
+through bound TCP adapters. `qtt_borrow.nim` calls the checked
+`borrowClient(Buffer)` through bound Nim postulates; the adapter still owns
+buffer aliasing and lifetime. The convex optimization examples interpret the
+exact checked objective through the runtime Value bridge, then use a
+host-side solver. The buffer adapter, objective interpreters, solver, and
+numerical behavior remain trusted Nim responsibilities. The
 [known limitations](docs/known-limitations.md) page summarizes what Eponym
 checks, which definitions have generated runtime wrappers, and which parts
 of the Nim boundary remain trusted or disconnected.

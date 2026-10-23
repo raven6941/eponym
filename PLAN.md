@@ -23,9 +23,11 @@ violations rejected at compile time through plain `send`/`recv` calls
 (issue #28). The in-memory and TCP session examples already run checked
 sender/receiver roles through bound Nim postulates. The Paxos demo now runs its
 checked proposer and acceptor through bound TCP adapters. The single-variable
-DCP example interprets its checked objective at runtime; the borrow and vector
-logistic examples still have separate runtime implementations. The embedding
-applicability plan tracks remaining gaps. Deliberate-embedding prior art:
+DCP and vector logistic examples interpret their checked objectives at runtime.
+The borrow example calls its checked `borrowClient` through bound Nim
+postulates. The host objective interpreters, solver, and buffer adapter remain
+trusted Nim code; the embedding applicability plan tracks those boundary
+responsibilities and remaining gaps. Deliberate-embedding prior art:
 Turnstile/Turnstile+ (the architectural ancestor — dependent type systems as
 macros), SynQ, Liquid Haskell.
 
