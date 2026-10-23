@@ -245,10 +245,22 @@ representation *kind* depends on a bound value.
 
 Manual-only (not derivable): postulate/opaque leaves (their mapping is the
 base case), `runtimeOption` (traversal not landed yet), and opaque host
-codecs for non-structural representations. Derivation is currently a
-library-level step (`deriveSpec`, `registerDerivedMapping`,
-`genBoundaryCodec`, `genCodecFactory`); wiring it into `eponymBlock` as a
-`runtimeDerive(...)` statement is the remaining integration slice.
+codecs for non-structural representations. The block form is
+`runtimeDerive(EponymType)` (issue #402, slice 3): it runs the same
+derivation inside `eponymBlock`, registers the mapping alongside the manual
+declarations, and emits the generated encoder/decoder procs with the block's
+wrappers. Derived products register as `isRuntimeCodec` mappings (the
+generated procs are the codec); derived variants register as
+`isRuntimeVariant` (the existing structural conversion applies, no emission);
+atoms and vectors register exactly as their manual counterparts. Products
+with index-dependent vector components get the codec factory plus thin
+`Encode`/`Decode` adapters that read each length index from the host tuple
+field (encode) or the value's corresponding component (decode). Vector
+lengths must be a single bound field or a literal — computed indices are a
+compile-time error, as are duplicate declarations and derivations naming a
+type with a manual mapping. `Int`/`Nat`/`Bool` are primitive base cases (no
+manual declaration needed); canonical `Nat`/`Bool` use the `natToValue` /
+`boolToValue` converters, matching the wrapper layer.
 
 ### Compile-time performance
 

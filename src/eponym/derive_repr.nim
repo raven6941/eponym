@@ -26,7 +26,7 @@
 ## (registration as a `HostRuntimeType` with generated boundary codecs);
 ## this module derives the structure and the host-type AST.
 
-import std/[tables, macros, strutils]
+import std/[tables, macros, strutils, sequtils]
 import eponym_init   # Term, TermKind, subst, Quantity
 import preterm       # q0
 import elab          # Globals, GEntry
@@ -39,6 +39,8 @@ type
 
   DerivedKind* = enum
     dkInt       # int-fragment atom (existing plain `runtimeType .. int`)
+    dkNat       # canonical Nat (zero/suc): host int, `natToValue`/`valueToNat`
+    dkBool      # canonical Bool (true/false): host bool, `boolToValue`/`valueToBool`
     dkOpaque    # concrete `runtimeType` identity over its declared host type
     dkVector    # existing `runtimeVector`/`runtimeList` mapping: `seq[int]`
     dkOption    # existing `runtimeOption` mapping: `Option[int]`
@@ -60,11 +62,23 @@ type
     indexTerm*: Term    # dkVector: the length index term (boundary-check
                        # obligation for the later codec step; may mention
                        # the sigma-marker when the length is a bound value)
+    markerFields*: Table[int, int]  # slice 3: binder-marker refId ->
+                       # product field index holding that binder's value.
+                       # The Sigma walk uses one marker refId per binder
+                       # depth (`deriveMarkerRefId - depth`), so a vector
+                       # length mentioning a bound index attributes to the
+                       # field that carries the index at runtime.
 
 const deriveMarkerRefId* = -402
-  ## Impossible refId used as the Sigma-bound-variable marker when opening a
-  ## codomain (mirrors codegen's `-401` marker). `subst` leaves `tR` nodes
-  ## alone, so the marker is never shifted away.
+  ## Base marker refId for a Sigma-bound variable opened during derivation
+  ## (mirrors codegen's `-401` marker). Each binder depth gets its own
+  ## marker (`deriveMarkerRefId - depth`) so an index mentioning a bound
+  ## value attributes to the field carrying it (`markerFields`).
+  ## `subst` leaves `tR` nodes alone, so markers are never shifted away.
+
+proc isDeriveMarker*(refId: int): bool =
+  ## Any binder-marker refId introduced by the derivation walks.
+  refId <= deriveMarkerRefId
 
 proc deriveErr(msg: string): ref DeriveError =
   newException(DeriveError, msg)
@@ -75,7 +89,7 @@ proc kindDependsOnMarker(ty: Term): bool =
   ## (or projects/applies it): then no constant host layout exists.
   if ty.isNil: return false
   case ty.kind
-  of tR: ty.refId == deriveMarkerRefId
+  of tR: isDeriveMarker(ty.refId)
   of tFst, tSnd, tAbsurd: kindDependsOnMarker(ty.sub)
   of tApp: kindDependsOnMarker(ty.fn)
   else: false
@@ -122,10 +136,69 @@ proc nameOf(ctx: DeriveCtx, refId: int): string =
   if refId in ctx.idToName: ctx.idToName[refId]
   else: "refId=" & $refId
 
+proc familyConstructors(ctx: DeriveCtx, refId: int): seq[(string, GEntry)]
+  # forward (used by primitiveSpec)
+
+proc isCanonicalNat(ctx: DeriveCtx, refId: int): bool =
+  ## `refId` is the Nat family with canonical `zero`/`suc` constructors
+  ## (mirrors `canonicalNatConstructorIds` in eponym_embed): its values
+  ## cross the boundary via `natToValue`/`valueToNat`, not the primitive
+  ## Int converters.
+  if "zero" notin ctx.globals or "suc" notin ctx.globals: return false
+  let z = ctx.globals["zero"]
+  let s = ctx.globals["suc"]
+  z.isDataConstructor and s.isDataConstructor and
+    not z.ty.isNil and z.ty.kind == tR and z.ty.refId == refId and
+    not s.ty.isNil and s.ty.kind == tPi and
+    not s.ty.dom.isNil and s.ty.dom.kind == tR and
+    s.ty.dom.refId == refId and
+    not s.ty.scope.bdy.isNil and s.ty.scope.bdy.kind == tR and
+    s.ty.scope.bdy.refId == refId
+
+proc isCanonicalBool(ctx: DeriveCtx, refId: int): bool =
+  ## `refId` is the Bool family with canonical nullary `true`/`false`
+  ## constructors: its values cross via `boolToValue`/`valueToBool`.
+  for cname in ["true", "false"]:
+    if cname notin ctx.globals: return false
+    let c = ctx.globals[cname]
+    if not c.isDataConstructor or c.ty.isNil or
+        c.ty.kind != tR or c.ty.refId != refId:
+      return false
+  true
+
+proc primitiveSpec(ctx: DeriveCtx, refId: int): DerivedSpec =
+  ## The int-fragment primitive base cases (mirroring the wrapper layer's
+  ## `simpleRuntimeCodec`): primitive `Int`, canonical `Nat`, canonical
+  ## `Bool`. Returns nil when `refId` is none of these. Manual mappings
+  ## take precedence — this only fires for otherwise-unmapped leaves.
+  let nm = ctx.nameOf(refId)
+  if nm == "Int" and ctx.familyConstructors(refId).len == 0:
+    return DerivedSpec(kind: dkInt, nimType: ident"int", refId: refId,
+                       typeName: nm)
+  if isCanonicalNat(ctx, refId):
+    return DerivedSpec(kind: dkNat, nimType: ident"int", refId: refId,
+                       typeName: nm)
+  if isCanonicalBool(ctx, refId):
+    return DerivedSpec(kind: dkBool, nimType: ident"bool", refId: refId,
+                       typeName: nm)
+  nil
+
+proc markerFieldIndex*(spec: DerivedSpec, indexTerm: Term): int =
+  ## The product field index holding the runtime value a binder-marker
+  ## `indexTerm` refers to, or -1 when the term is not a field-attributed
+  ## marker (a literal, a missing index, or an erased binder's marker).
+  if indexTerm.isNil or indexTerm.kind != tR: return -1
+  if not isDeriveMarker(indexTerm.refId): return -1
+  spec.markerFields.getOrDefault(indexTerm.refId, -1)
+
 proc leafSpec(ctx: DeriveCtx, m: HostRuntimeType, refId: int): DerivedSpec =
   ## A hand-written mapping is a base case: classify it, don't re-derive.
   let nm = ctx.nameOf(refId)
   if m.isPlainIntMapping:
+    # A hand-declared `int` mapping over canonical Nat/Bool still needs
+    # the Nat/Bool value converters, not the primitive Int ones.
+    let prim = ctx.primitiveSpec(refId)
+    if not prim.isNil: return prim
     return DerivedSpec(kind: dkInt, nimType: ident"int", refId: refId,
                        typeName: nm)
   if m.isRuntimeVector or m.isRuntimeList:
@@ -145,6 +218,45 @@ proc leafSpec(ctx: DeriveCtx, m: HostRuntimeType, refId: int): DerivedSpec =
 
 proc deriveType(ctx: DeriveCtx, ty: Term, path: seq[string]): DerivedSpec
   # forward
+
+proc deriveRecordProduct(ctx: DeriveCtx, name: string,
+    mkEntry: GEntry, path: seq[string]): DerivedSpec =
+  ## A `record` declaration elaborates to a type former (its `ty` is `Univ`);
+  ## the product structure is recovered from the generated `mk<name>`
+  ## constructor's Pi type, whose domains are the positional fields.
+  let at = path.join(" > ")
+  var fields: seq[DerivedField] = @[]
+  var markerFields = initTable[int, int]()
+  var cty = mkEntry.ty
+  var pos = 0
+  var depth = 0
+  while not cty.isNil and cty.kind == tPi:
+    let marker = Term(kind: tR, refId: deriveMarkerRefId - depth)
+    if cty.qty != q0:
+      let fname = "f" & $pos
+      let dom = cty.dom
+      if not dom.isNil and dom.kind == tPi:
+        raise deriveErr("record field '" & fname & "' of '" & name &
+          "' is a function type with no runtime representation")
+      if not dom.isNil and dom.kind == tType:
+        raise deriveErr("record field '" & fname & "' of '" & name &
+          "' is a type with no runtime representation")
+      if kindDependsOnMarker(dom):
+        raise deriveErr("record field '" & fname & "' of '" & name &
+          "' depends on the value of an earlier field to select its " &
+          "representation; no constant host layout exists")
+      fields.add(DerivedField(name: fname,
+        spec: ctx.deriveType(dom, path & @[fname])))
+      markerFields[marker.refId] = pos
+      inc pos
+    cty = subst(cty.scope.bdy, 0, marker)
+    inc depth
+  var tup = nnkTupleTy.newTree()
+  for f in fields:
+    tup.add(nnkIdentDefs.newTree(ident(f.name), f.spec.nimType,
+                                newEmptyNode()))
+  DerivedSpec(kind: dkProduct, nimType: tup, refId: -1, typeName: at,
+             fields: fields, markerFields: markerFields)
 
 proc familyConstructors(ctx: DeriveCtx, refId: int): seq[(string, GEntry)] =
   ## The `data` constructors whose return type head is the family refId.
@@ -182,6 +294,7 @@ proc deriveFamily(ctx: DeriveCtx, refId: int,
     var payload: seq[DerivedField] = @[]
     var cty = centry.ty
     var i = 0
+    var depth = 0
     while not cty.isNil and cty.kind == tPi:
       let dom = cty.dom
       if cty.qty != q0:
@@ -199,7 +312,8 @@ proc deriveFamily(ctx: DeriveCtx, refId: int,
         payload.add(DerivedField(name: fname,
           spec: c.deriveType(dom, path & @[cname & "." & fname])))
       cty = subst(cty.scope.bdy, 0,
-        Term(kind: tR, refId: deriveMarkerRefId))
+        Term(kind: tR, refId: deriveMarkerRefId - depth))
+      inc depth
       inc i
     varFields.add(DerivedField(name: cname,
       spec: DerivedSpec(kind: dkProduct, refId: -1, typeName: cname,
@@ -224,6 +338,10 @@ proc deriveType(ctx: DeriveCtx, ty: Term, path: seq[string]): DerivedSpec =
                          typeName: ctx.nameOf(ty.refId))
     if ty.refId in ctx.reps:
       return ctx.leafSpec(ctx.reps[ty.refId], ty.refId)
+    # Unmapped int-fragment primitives are base cases (no manual
+    # declaration needed); anything else must be declared or derived.
+    let prim = ctx.primitiveSpec(ty.refId)
+    if not prim.isNil: return prim
     return ctx.deriveFamily(ty.refId, path)
   of tApp:
     let h = headId(ty)
@@ -256,16 +374,24 @@ proc deriveType(ctx: DeriveCtx, ty: Term, path: seq[string]): DerivedSpec =
     # the marker may survive in dropped index positions (opaque families)
     # or as a recorded boundary-check obligation (vector lengths) — only
     # a marker that selects the representation *kind* is rejected, above.
+    # Each binder depth gets its own marker refId (`deriveMarkerRefId -
+    # depth`); `markerFields` records which product field carries each
+    # binder's runtime value, for codec-factory index attribution.
     var fields: seq[DerivedField] = @[]
+    var markerFields = initTable[int, int]()
     var cur = ty
     var pos = 0
+    var depth = 0
     while not cur.isNil and cur.kind == tSi:
+      let marker = Term(kind: tR, refId: deriveMarkerRefId - depth)
       if cur.qty != q0:
         let fname = "f" & $pos
         fields.add(DerivedField(name: fname,
           spec: ctx.deriveType(cur.dom, path & @[fname])))
+        markerFields[marker.refId] = pos
         inc pos
-      cur = subst(cur.scope.bdy, 0, Term(kind: tR, refId: deriveMarkerRefId))
+      cur = subst(cur.scope.bdy, 0, marker)
+      inc depth
     # `cur` is the final codomain (not a tSi), possibly mentioning markers.
     let fname = "f" & $pos
     fields.add(DerivedField(name: fname,
@@ -275,7 +401,8 @@ proc deriveType(ctx: DeriveCtx, ty: Term, path: seq[string]): DerivedSpec =
       tup.add(nnkIdentDefs.newTree(ident(f.name), f.spec.nimType,
                                   newEmptyNode()))
     return DerivedSpec(kind: dkProduct, nimType: tup, refId: -1,
-                       typeName: at, fields: fields)
+                       typeName: at, fields: fields,
+                       markerFields: markerFields)
   of tPi:
     raise deriveErr("field at " & at &
       " is a function type with no runtime representation")
@@ -308,6 +435,17 @@ proc deriveSpec*(globals: Globals, reps: Table[int, HostRuntimeType],
   # parameters/indices): derive the variant from its constructors.
   if ctx.familyConstructors(refId).len > 0:
     return ctx.deriveFamily(refId, @[name])
+  # A `record` declaration elaborates to a type former (`ty` is `Univ`);
+  # recover the product from the generated `mk<name>` constructor's Pi.
+  let mkName = "mk" & name
+  if mkName in globals:
+    let mkEntry = globals[mkName]
+    if not mkEntry.ty.isNil and mkEntry.ty.kind == tPi:
+      var retTy = mkEntry.ty
+      while not retTy.isNil and retTy.kind == tPi:
+        retTy = retTy.scope.bdy
+      if not retTy.isNil and headId(retTy) == refId:
+        return ctx.deriveRecordProduct(name, mkEntry, @[name])
   # Otherwise the entry's type is the type to derive from (records/Sigma).
   return ctx.deriveType(entry.ty, @[name])
 
@@ -352,8 +490,10 @@ proc registerDerivedMapping*(spec: DerivedSpec, name: string): HostRuntimeType =
   ## registration) and for option (no hand-written option shape is derivable
   ## yet — `runtimeOption` stays manual until its traversal lands).
   case spec.kind
-  of dkInt:
+  of dkInt, dkNat:
     HostRuntimeType(eponymName: name, nimType: ident"int")
+  of dkBool:
+    HostRuntimeType(eponymName: name, nimType: ident"bool")
   of dkVector:
     HostRuntimeType(eponymName: name, nimType: ident"seq",
                     isRuntimeVector: true)
@@ -383,7 +523,8 @@ proc rgSym(): NimNode = bindSym"RuntimeGlobals"
 proc hostTypeOf(spec: DerivedSpec): NimNode =
   ## The host type AST a boundary codec converts at.
   case spec.kind
-  of dkInt: ident"int"
+  of dkInt, dkNat: ident"int"
+  of dkBool: ident"bool"
   of dkProduct: copyNimTree(spec.nimType)
   of dkVariant: bindSym"RuntimeVariant"
   of dkVector: nnkBracketExpr.newTree(ident"seq", ident"int")
@@ -398,6 +539,10 @@ proc encodeInto(spec: DerivedSpec, hostExpr, globalsExpr: NimNode,
   case spec.kind
   of dkInt:
     newCall(bindSym"intToValue", hostExpr)
+  of dkNat:
+    newCall(bindSym"natToValue", hostExpr, globalsExpr)
+  of dkBool:
+    newCall(bindSym"boolToValue", hostExpr, globalsExpr)
   of dkProduct:
     var acc = newCall(bindSym"unitValue")
     for i in countdown(spec.fields.high, 0):
@@ -438,6 +583,10 @@ proc decodeInto(spec: DerivedSpec, valueExpr, globalsExpr: NimNode,
   case spec.kind
   of dkInt:
     newCall(bindSym"valueToInt", valueExpr)
+  of dkNat:
+    newCall(bindSym"valueToNat", valueExpr, globalsExpr)
+  of dkBool:
+    newCall(bindSym"valueToBool", valueExpr, globalsExpr)
   of dkProduct:
     var cur = valueExpr
     var parts: seq[NimNode] = @[]
@@ -476,11 +625,11 @@ proc decodeInto(spec: DerivedSpec, valueExpr, globalsExpr: NimNode,
     raise deriveErr("no boundary codec generated for spec kind " &
       $spec.kind & " of '" & spec.typeName & "' yet")
 
-proc genBoundaryCodec*(spec: DerivedSpec, procPrefix: string): GeneratedCodec =
-  ## Synthesize encoder/decoder procs for a spec with a static boundary
-  ## (int-fragment products and variants). Vector components carry a
-  ## length-index obligation: use `genCodecFactory` for those.
-  if spec.kind notin {dkInt, dkProduct, dkVariant}:
+proc genBoundaryCodecWithVecIdxs*(spec: DerivedSpec, procPrefix: string,
+    vecIdxs: Table[string, NimNode]): GeneratedCodec =
+  ## `genBoundaryCodec` with an explicit vector-index table: static
+  ## boundaries whose vector lengths are baked literals need no factory.
+  if spec.kind notin {dkInt, dkNat, dkBool, dkProduct, dkVariant}:
     raise deriveErr("genBoundaryCodec needs a static boundary spec, got " &
       $spec.kind & " for '" & spec.typeName &
       "'; use genCodecFactory for index-dependent components")
@@ -488,14 +637,13 @@ proc genBoundaryCodec*(spec: DerivedSpec, procPrefix: string): GeneratedCodec =
   let x = ident"x"
   let g = ident"g"
   let v = ident"v"
-  let emptyIdxs = initTable[string, NimNode]()
   let encoder = newProc(ident(procPrefix & "Encode"),
     params = @[rvSym(),
                newIdentDefs(x, hostT, newEmptyNode()),
                newIdentDefs(g, rgSym(), newEmptyNode())],
-    body = newStmtList(encodeInto(spec, x, g, "", emptyIdxs)))
+    body = newStmtList(encodeInto(spec, x, g, "", vecIdxs)))
   var stmts: seq[NimNode] = @[]
-  let decoded = decodeInto(spec, v, g, "", emptyIdxs, stmts)
+  let decoded = decodeInto(spec, v, g, "", vecIdxs, stmts)
   stmts.add(decoded)
   let decoder = newProc(ident(procPrefix & "Decode"),
     params = @[hostT,
@@ -504,10 +652,52 @@ proc genBoundaryCodec*(spec: DerivedSpec, procPrefix: string): GeneratedCodec =
     body = newStmtList(stmts))
   GeneratedCodec(encoder: encoder, decoder: decoder)
 
+proc genBoundaryCodec*(spec: DerivedSpec, procPrefix: string): GeneratedCodec =
+  ## Synthesize encoder/decoder procs for a spec with a static boundary
+  ## (int-fragment products and variants). Vector components carry a
+  ## length-index obligation: use `genCodecFactory` for those.
+  genBoundaryCodecWithVecIdxs(spec, procPrefix, initTable[string, NimNode]())
+
 proc asClosure(p: NimNode): NimNode =
   ## Mark a generated proc `{.closure.}` so it may capture factory params.
   result = p
   result[4] = newTree(nnkPragma, ident"closure")
+
+type
+  VectorIndexParam* = object
+    ## One vector component's codec-factory parameter (or baked literal),
+    ## in product field order.
+    path*: string      # vecIdxs key, e.g. ".f1"
+    fieldPos*: int     # product field index of the vector component
+    fieldName*: string # product field name, for diagnostics
+    param*: NimNode    # the `idxN` ident, or nil when the length is baked
+    literal*: int      # the baked Nat-literal length
+    isLiteral*: bool
+    indexTerm*: Term   # the vector's length index term (for attribution)
+
+proc vectorIndexParams*(spec: DerivedSpec): seq[VectorIndexParam] =
+  ## The codec-factory parameters for a product spec's vector components:
+  ## one `int` parameter per length mentioning a bound index, a baked
+  ## literal per static length. Anything else is a loud `DeriveError`.
+  if spec.kind != dkProduct:
+    raise deriveErr("vector index parameters need a product spec, got " &
+      $spec.kind & " for '" & spec.typeName & "'")
+  var pi = 0
+  for fi, f in spec.fields:
+    if f.spec.kind != dkVector: continue
+    let p = "." & f.name
+    let it = f.spec.indexTerm
+    if it.isNil or kindDependsOnMarker(it):
+      result.add(VectorIndexParam(path: p, fieldPos: fi, fieldName: f.name,
+                                  param: ident("idx" & $pi), indexTerm: it))
+      inc pi
+    elif it.kind == tNatLit:
+      result.add(VectorIndexParam(path: p, fieldPos: fi, fieldName: f.name,
+                                  isLiteral: true,
+                                  literal: int(it.natLitVal), indexTerm: it))
+    else:
+      raise deriveErr("vector field '" & f.name & "' of '" & spec.typeName &
+        "' has a length index the codec factory cannot take as a host value")
 
 proc genCodecFactory*(spec: DerivedSpec, procPrefix: string): NimNode =
   ## Synthesize `proc procPrefix(idx0: int, ...): tuple[enc, dec]` for a
@@ -518,23 +708,15 @@ proc genCodecFactory*(spec: DerivedSpec, procPrefix: string): NimNode =
   if spec.kind != dkProduct:
     raise deriveErr("genCodecFactory needs a product spec, got " &
       $spec.kind & " for '" & spec.typeName & "'")
+  let vips = vectorIndexParams(spec)
   var vecIdxs = initTable[string, NimNode]()
   var params: seq[NimNode] = @[]
-  var pi = 0
-  for f in spec.fields:
-    if f.spec.kind != dkVector: continue
-    let p = "." & f.name
-    let it = f.spec.indexTerm
-    if it.isNil or kindDependsOnMarker(it):
-      let pname = ident("idx" & $pi)
-      inc pi
-      params.add(newIdentDefs(pname, ident"int", newEmptyNode()))
-      vecIdxs[p] = pname
-    elif it.kind == tNatLit:
-      vecIdxs[p] = newLit(it.natLitVal)
+  for vip in vips:
+    if vip.isLiteral:
+      vecIdxs[vip.path] = newLit(vip.literal)
     else:
-      raise deriveErr("vector field '" & f.name & "' of '" & spec.typeName &
-        "' has a length index the codec factory cannot take as a host value")
+      params.add(newIdentDefs(vip.param, ident"int", newEmptyNode()))
+      vecIdxs[vip.path] = vip.param
   if params.len == 0:
     raise deriveErr("no index-dependent component in '" & spec.typeName &
       "'; use genBoundaryCodec")
@@ -569,3 +751,81 @@ proc genCodecFactory*(spec: DerivedSpec, procPrefix: string): NimNode =
   newProc(ident(procPrefix),
     params = allParams,
     body = newStmtList(newTree(nnkTupleConstr, encClos, decClos)))
+
+proc valueComponent(valueExpr: NimNode, k: int): NimNode =
+  ## The k-th component of a right-nested pair value.
+  var cur = valueExpr
+  for _ in 0 ..< k:
+    cur = newCall(bindSym"runtimePairSecond", cur)
+  newCall(bindSym"runtimePairFirst", cur)
+
+proc genFactoryAdapters*(spec: DerivedSpec, procPrefix: string):
+    tuple[factory, encoder, decoder: NimNode] =
+  ## The codec factory for an index-dependent product, plus the
+  ## `isRuntimeCodec`-shaped adapter procs that apply it: the encoder reads
+  ## each length index from the host tuple field carrying it, the decoder
+  ## reads each length index from the value's corresponding component
+  ## (decoded through that field's own spec). Vector lengths must be a
+  ## single bound field or a literal; computed indices are a loud
+  ## `DeriveError`, not a silent tier-down.
+  if spec.kind != dkProduct:
+    raise deriveErr("genFactoryAdapters needs a product spec, got " &
+      $spec.kind & " for '" & spec.typeName & "'")
+  let vips = vectorIndexParams(spec)
+  let indexed = vips.filterIt(not it.isLiteral)
+  if indexed.len == 0:
+    raise deriveErr("no index-dependent component in '" & spec.typeName &
+      "'; use genBoundaryCodec")
+  let factoryName = ident(procPrefix & "Factory")
+  let factory = genCodecFactory(spec, procPrefix & "Factory")
+  let hostT = copyNimTree(spec.nimType)
+  let x = ident"x"
+  let g = ident"g"
+  let v = ident"v"
+  var encIdxs: seq[NimNode] = @[]
+  var decIdxs: seq[NimNode] = @[]
+  for vip in indexed:
+    let k = markerFieldIndex(spec, vip.indexTerm)
+    if k < 0:
+      raise deriveErr("vector field '" & vip.fieldName & "' of '" &
+        spec.typeName & "' has a length index that is not a single " &
+        "product field; codec factories for computed indices are not " &
+        "supported yet")
+    if spec.fields[k].spec.kind != dkInt and
+        spec.fields[k].spec.kind != dkNat:
+      raise deriveErr("vector field '" & vip.fieldName & "' of '" &
+        spec.typeName & "' takes its length from field '" &
+        spec.fields[k].name & "', which is not an int-valued index")
+    encIdxs.add(newDotExpr(x, ident(spec.fields[k].name)))
+    var decStmts: seq[NimNode] = @[]
+    decIdxs.add(decodeInto(spec.fields[k].spec, valueComponent(v, k), g,
+                           "", initTable[string, NimNode](), decStmts))
+    if decStmts.len > 0:
+      raise deriveErr("vector field '" & vip.fieldName & "' of '" &
+        spec.typeName & "': index decoding needs statements; not supported")
+  let encoder = newProc(ident(procPrefix & "Encode"),
+    params = @[rvSym(),
+               newIdentDefs(x, hostT, newEmptyNode()),
+               newIdentDefs(g, rgSym(), newEmptyNode())],
+    body = newStmtList(
+      newCall(
+        newDotExpr(newCall(factoryName, encIdxs), ident"enc"), x, g)))
+  let decoder = newProc(ident(procPrefix & "Decode"),
+    params = @[hostT,
+               newIdentDefs(v, rvSym(), newEmptyNode()),
+               newIdentDefs(g, rgSym(), newEmptyNode())],
+    body = newStmtList(
+      newCall(
+        newDotExpr(newCall(factoryName, decIdxs), ident"dec"), v, g)))
+  (factory: factory, encoder: encoder, decoder: decoder)
+
+proc derivedCodecMapping*(spec: DerivedSpec, name: string,
+                          encoder, decoder: NimNode): HostRuntimeType =
+  ## The `isRuntimeCodec` registration for a derived product: the mapping
+  ## the equivalent hand-written `runtimeCodec` produces, with
+  ## macro-generated encoder/decoder procs.
+  if spec.kind != dkProduct:
+    raise deriveErr("derived codec mappings need a product spec, got " &
+      $spec.kind & " for '" & spec.typeName & "'")
+  HostRuntimeType(eponymName: name, nimType: copyNimTree(spec.nimType),
+                  isRuntimeCodec: true, encoder: encoder, decoder: decoder)

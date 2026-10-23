@@ -133,6 +133,7 @@ run_step nim c -r $NC --hints:off $P "tests/test_debug_echo.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_scalar_runtime_codecs.nim"
 # Representation derivation from checked type structure (issue #402)
 run_step nim c -r $NC --hints:off $P "tests/test_derive_repr.nim"
+run_step nim c -r $NC --hints:off $P "tests/test_runtime_derive_block.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_session_tcp_bindings.nim"
 # Embedded error paths (issue #199)
 run_step nim c -r $NC --hints:off $P "tests/test_embedded_error_path.nim"

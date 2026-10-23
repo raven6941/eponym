@@ -13,6 +13,7 @@ import eponym_init # opaque Value conversion helpers
 import codegen     # issue #329: naive Value-level backend
 import preterm
 import parse_surf
+import derive_repr  # issue #402: runtimeDerive block form
 import os  # issue #131: parentDir of the eponymBlock call site
 import strutils
 import sequtils
@@ -1235,6 +1236,12 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
         # Raw structural codec for payload-bearing data families.
         if st.len != 2 or st[1].kind != nnkIdent:
           error("runtimeVariant expects (DataFamily)", st)
+      elif head == "runtimeDerive":
+        # Representation mapping derived from the checked type structure
+        # (issue #402); consumed by the wrapper generator, never
+        # interpreted as an Eponym declaration.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("runtimeDerive expects (EponymType)", st)
       elif head == "runtimeValue":
         # Request a raw Eponym Value wrapper for a checked definition,
         # typically for a host interpreter of reified data.
@@ -1355,19 +1362,30 @@ proc findHostRecord(records: seq[HostRecord], name: string): int =
     if record.name == name: return i
   -1
 
-proc hostRuntimeTypes(body: NimNode, checkedGlobals: Globals):
-    seq[HostRuntimeType] =
+proc hostRuntimeTypes*(body: NimNode, checkedGlobals: Globals,
+    emitted: var seq[NimNode]): seq[HostRuntimeType] =
+  ## Exported for testing (issue #402).
   var seen = initHashSet[string]()
+  # Manual declarations parsed so far, keyed by type refId: the base cases
+  # `deriveSpec` resolves leaves against (issue #402). A `runtimeDerive`
+  # only sees the manual declarations preceding it in the block.
+  var reps = initTable[int, HostRuntimeType]()
   for st in body:
     if st.kind == nnkCall and st.len > 0 and st[0].kind == nnkIdent and
         $st[0] in ["runtimeType", "runtimeVector", "runtimeList",
-                   "runtimeOption", "runtimeVariant", "runtimeCodec"]:
-      let isVector = $st[0] == "runtimeVector"
-      let isList = $st[0] == "runtimeList"
-      let isOption = $st[0] == "runtimeOption"
-      let isVariant = $st[0] == "runtimeVariant"
-      let isCodec = $st[0] == "runtimeCodec"
-      if ((isVector or isList or isOption or isVariant) and
+                   "runtimeOption", "runtimeVariant", "runtimeCodec",
+                   "runtimeDerive"]:
+      let head = $st[0]
+      let isVector = head == "runtimeVector"
+      let isList = head == "runtimeList"
+      let isOption = head == "runtimeOption"
+      let isVariant = head == "runtimeVariant"
+      let isCodec = head == "runtimeCodec"
+      let isDerive = head == "runtimeDerive"
+      if isDerive:
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("runtimeDerive expects (EponymType)", st)
+      elif ((isVector or isList or isOption or isVariant) and
           (st.len != 2 or st[1].kind != nnkIdent)) or
           (isCodec and (st.len != 5 or st[1].kind != nnkIdent or
             st[3].kind notin {nnkIdent, nnkSym} or
@@ -1385,12 +1403,65 @@ proc hostRuntimeTypes(body: NimNode, checkedGlobals: Globals):
       if name in seen:
         error("duplicate runtime type mapping for '" & name & "'", st)
       seen.incl(name)
+      if isDerive:
+        # Issue #402: derive the mapping from the checked type structure.
+        var spec: DerivedSpec
+        try:
+          spec = deriveSpec(checkedGlobals, reps, name)
+        except DeriveError as e:
+          error("runtimeDerive(" & name & "): " & e.msg, st)
+        let prefix = name & "Derived"
+        var mapping: HostRuntimeType
+        try:
+          case spec.kind
+          of dkInt, dkNat, dkBool, dkOpaque, dkVector, dkVariant:
+            mapping = registerDerivedMapping(spec, name)
+          of dkOption, dkRecurse:
+            # registerDerivedMapping raises the honest DeriveError.
+            mapping = registerDerivedMapping(spec, name)
+          of dkProduct:
+            let vips = vectorIndexParams(spec)
+            let indexed = vips.filterIt(not it.isLiteral)
+            if vips.len == 0:
+              let codec = genBoundaryCodec(spec, prefix)
+              emitted.add(codec.encoder)
+              emitted.add(codec.decoder)
+            elif indexed.len == 0:
+              # Static boundary: every vector length is a literal, baked
+              # into the codec — no factory needed.
+              var vecIdxs = initTable[string, NimNode]()
+              for vip in vips:
+                vecIdxs[vip.path] = newLit(vip.literal)
+              let codec = genBoundaryCodecWithVecIdxs(spec, prefix, vecIdxs)
+              emitted.add(codec.encoder)
+              emitted.add(codec.decoder)
+            else:
+              let adapters = genFactoryAdapters(spec, prefix)
+              emitted.add(adapters.factory)
+              emitted.add(adapters.encoder)
+              emitted.add(adapters.decoder)
+            mapping = derivedCodecMapping(spec, name,
+              ident(prefix & "Encode"), ident(prefix & "Decode"))
+            var genericTypeWitnessable = false
+            if name in checkedGlobals:
+              let checkedType = checkedGlobals[name].ty
+              genericTypeWitnessable = not checkedType.isNil and
+                checkedType.kind == tType and checkedType.lvl == 0
+            mapping.isGenericTypeWitnessable = genericTypeWitnessable
+        except DeriveError as e:
+          error("runtimeDerive(" & name & "): " & e.msg, st)
+        if name in checkedGlobals:
+          let entry = checkedGlobals[name]
+          if not entry.tm.isNil and entry.tm.kind == tR:
+            reps[entry.tm.refId] = mapping
+        result.add(mapping)
+        continue
       var genericTypeWitnessable = not isCodec
       if isCodec and name in checkedGlobals:
         let checkedType = checkedGlobals[name].ty
         genericTypeWitnessable = not checkedType.isNil and
           checkedType.kind == tType and checkedType.lvl == 0
-      result.add(HostRuntimeType(eponymName: name,
+      let manual = HostRuntimeType(eponymName: name,
         nimType: if isVector or isList: ident"seq"
           elif isVariant: bindSym"RuntimeVariant"
           elif isOption: ident"Option" else: st[2],
@@ -1399,7 +1470,12 @@ proc hostRuntimeTypes(body: NimNode, checkedGlobals: Globals):
         isRuntimeCodec: isCodec,
         isGenericTypeWitnessable: genericTypeWitnessable,
         encoder: if isCodec: st[3] else: nil,
-        decoder: if isCodec: st[4] else: nil))
+        decoder: if isCodec: st[4] else: nil)
+      if name in checkedGlobals:
+        let entry = checkedGlobals[name]
+        if not entry.tm.isNil and entry.tm.kind == tR:
+          reps[entry.tm.refId] = manual
+      result.add(manual)
 
 proc validateHostBoolCodec(globals: Globals) =
   if "Bool" notin globals:
@@ -4105,7 +4181,9 @@ macro eponymBlock*(body: untyped): untyped =
                                checkedGlobals):
       error("eponymBlock binding error: binding for postulate '" &
         binding.postulateName & "' is unused by every proc body", body)
-  var runtimeTypes = hostRuntimeTypes(body, checkedGlobals)
+  var emittedDerivedCodecs: seq[NimNode] = @[]
+  var runtimeTypes = hostRuntimeTypes(body, checkedGlobals,
+                                      emittedDerivedCodecs)
   let trustedRuntimeRecords = trustedRuntimeRecordNames(body)
   # Issue #401: a `runtimeType` mapping for a trusted record carries a
   # codec with boundary semantics (dependent-index checks); it must not
@@ -4359,6 +4437,11 @@ macro eponymBlock*(body: untyped): untyped =
 
   result = newStmtList()
   let dirLit = newLit(baseDir)
+  # Issue #402: macro-generated boundary codecs for `runtimeDerive`
+  # mappings, ahead of the codegen procs and typed wrappers that
+  # reference them.
+  for emittedProc in emittedDerivedCodecs:
+    result.add(emittedProc)
   for p in cgBlock.procs:
     if not requireCompiled or
         (p.kind == nnkProcDef and p[0].kind == nnkPostfix and

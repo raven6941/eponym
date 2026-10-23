@@ -289,7 +289,11 @@ carries. Two assertions stay with the author: opaque-family index-independence
 mapping, whose index-independence is trusted exactly as in the hand-written
 case), and the boundary checks the derivation retains rather than proves
 away (the `Vec` length O(1) check in a generated codec factory is enforced at
-runtime, not discharged at compile time).
+runtime, not discharged at compile time). The `runtimeDerive` block form
+adds one mechanical assertion: the derivation runs against the manual
+declarations *preceding* it in the same block, so moving a `runtimeDerive`
+above the leaf mappings it needs is a compile error naming the leaf, not a
+silent change of meaning.
 
 ## Summary of the trust boundary
 
