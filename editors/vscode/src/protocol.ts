@@ -216,6 +216,28 @@ export class LspClient {
     });
   }
 
+  /** Rewrite the shed goal using an equality proof in local context (#428). */
+  refineEqualityShed(
+    docUri: string,
+    shedName: string,
+    rewrite?: string
+  ): Promise<{
+    shedName: string;
+    candidates: string[];
+    term: string;
+    nimLine: number;
+    nimCol: number;
+    status: "white" | "yellow" | "brown";
+    yellowCount: number;
+    message?: string;
+  }> {
+    return this.request("eponym/refineEqualityShed", {
+      textDocument: { uri: docUri },
+      shedName,
+      ...(rewrite ? { rewrite } : {}),
+    });
+  }
+
   shutdown() {
     this.notify("exit", {});
     this.proc.kill();

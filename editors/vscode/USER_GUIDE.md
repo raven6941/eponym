@@ -22,9 +22,10 @@ an error notification. Configure `eponym.nimPath` if VS Code cannot find
 your Nim executable.
 
 While it is expanded, press **i** to introduce a function binder, **r** to
-refine, **g** to give, or **c** to case-split. The latter three open an input
-prompt for a term or variable name. The same actions are printed on the last
-line of the inline view.
+refine, **g** to give, or **c** to case-split. Use the **Apply**, **Construct**,
+and **Rewrite** buttons in the inline view to choose a checked candidate from
+a filterable list. Refine, Give, and Case-split open an input prompt for a term
+or variable name.
 
 ## Read the 2D view
 
@@ -126,9 +127,24 @@ generated eliminator before returning the splice. If a type expression is
 outside the supported Nim shed syntax, the extension reports why it rejected
 the split.
 
+### Rewrite
+
+Use **Rewrite** when an equality proof in the local context relates a term in
+the goal to another term. The picker names the proof, direction, and matching
+occurrence. `e forward occurrence 1` uses `e : Eq A x y` to replace the first
+exact occurrence of `x` by `y`; the generated equality eliminator transports
+the remaining proof goal back to the original target. Reverse choices use the
+symmetric equality. Each selected occurrence is checked before it is spliced.
+
+Rewrite currently matches structurally identical endpoint terms. It needs the
+`Eq` family and its `eqElim`/`sym` definitions in scope, for example through
+`lib/eq.ep`. If no checked choice can be generated, the action reports why it
+could not offer a rewrite and leaves the source unchanged.
+
 ## After an action
 
-Intro, Apply, Construct, Refine, Give, and Case-split splice their result into the Nim source and
+Intro, Apply, Construct, Rewrite, Refine, Give, and Case-split splice their
+result into the Nim source and
 save the document. The extension recompiles the `shedsBlock`, refreshing the
 sidecar and CodeLens goals. A remaining open goal stays yellow and gets its
 own marker; a completed shed is white and has no open goal. If a newly

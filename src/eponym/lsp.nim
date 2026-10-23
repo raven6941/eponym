@@ -248,9 +248,12 @@ proc nimTypeExpr(term: Term, ctx: seq[HoleContextBinder],
       var argText = ""
       if not nimTypeExpr(zonk(ms, arg), ctx, ms, argText): return false
       argTexts.add(argText)
-    if spine.head == nil or spine.head.kind != tR or
-        spine.head.refId notin ms.refNames:
-      return false
+    if spine.head == nil: return false
+    if spine.head.kind != tR or spine.head.refId notin ms.refNames:
+      var headText = ""
+      if not nimTypeExpr(zonk(ms, spine.head), ctx, ms, headText): return false
+      rendered = headText & "(" & argTexts.join(", ") & ")"
+      return true
     var headName = ms.refNames[spine.head.refId]
     if spine.head.refId in ms.ctorTable.dataNames:
       rendered = headName & "[" & argTexts.join(", ") & "]"
@@ -270,7 +273,7 @@ proc nimTypeExpr(term: Term, ctx: seq[HoleContextBinder],
       # parenthesized call syntax; datatype families above use brackets.
       rendered = headName & "(" & argTexts.join(", ") & ")"
     true
-  of tPi:
+  of tPi, tLam:
     var dom = ""
     if not nimTypeExpr(zonk(ms, term.dom), ctx, ms, dom): return false
     let requestedName = if term.scope.adv == "" or term.scope.adv == "_":
@@ -283,7 +286,8 @@ proc nimTypeExpr(term: Term, ctx: seq[HoleContextBinder],
     var body = ""
     if not nimTypeExpr(zonk(ms, term.scope.bdy), bodyCtx, ms, body):
       return false
-    rendered = "Pi(" & binderName & ", " & dom & ", " & body & ")"
+    let constructor = if term.kind == tPi: "Pi" else: "lam"
+    rendered = constructor & "(" & binderName & ", " & dom & ", " & body & ")"
     true
   of tSi:
     var dom = ""
@@ -414,6 +418,71 @@ proc replaceOccurrences(term, pattern: Term, replacement: int,
       spine.add(next.term)
       count += next.count
     (tmMeta(term.metaId, spine), count)
+
+proc replaceOccurrenceAt(term, pattern: Term, replacement, wanted: int,
+                         seen: var int, depth = 0):
+    tuple[term: Term, found: bool] =
+  ## Replace one preorder occurrence while preserving binder depth. This is
+  ## used by equality rewrite so repeated endpoints are individually
+  ## selectable rather than all silently rewritten together.
+  if term == nil: return (nil, false)
+  var shiftedPattern = pattern
+  for _ in 0 ..< depth: shiftedPattern = weaken(shiftedPattern)
+  if sameTerm(term, shiftedPattern):
+    if seen == wanted: return (vv(replacement + depth), true)
+    inc seen
+    return (term, false)
+  template recur(child: Term, childDepth: int): untyped =
+    replaceOccurrenceAt(child, pattern, replacement, wanted, seen, childDepth)
+  case term.kind
+  of tR, tV, tC, tInt, tNatLit, tNatSing, tType: (term, false)
+  of tPrim:
+    let ty = recur(term.primTy, depth)
+    (tmPrim(term.primOp, ty.term), ty.found)
+  of tPi, tSi, tLam:
+    let dom = recur(term.dom, depth)
+    let bdy = recur(term.scope.bdy, depth + 1)
+    let rebuilt = case term.kind
+      of tPi: tmPi(dom.term, term.scope.adv, bdy.term, term.impl,
+                   term.erased, term.qty, term.peg)
+      of tSi: tmSi(dom.term, term.scope.adv, bdy.term, term.impl,
+                   term.erased, term.qty)
+      of tLam: tmLam(dom.term, term.scope.adv, bdy.term, term.impl,
+                     term.erased, term.qty, term.peg)
+      else: term
+    (rebuilt, dom.found or bdy.found)
+  of tPair:
+    let fst = recur(term.pFst, depth)
+    let snd = recur(term.pSnd, depth)
+    let bdy = recur(term.pScope.bdy, depth + 1)
+    (tmPair(fst.term, snd.term, term.pScope.adv, bdy.term),
+     fst.found or snd.found or bdy.found)
+  of tApp:
+    let fn = recur(term.fn, depth)
+    let arg = recur(term.arg, depth)
+    (tmApp(fn.term, arg.term), fn.found or arg.found)
+  of tFst, tSnd, tAbsurd:
+    let sub = recur(term.sub, depth)
+    let rebuilt = case term.kind
+      of tFst: tmFst(sub.term)
+      of tSnd: tmSnd(sub.term)
+      of tAbsurd: tmAbsurd(sub.term)
+      else: term
+    (rebuilt, sub.found)
+  of tLet:
+    let value = recur(term.letVal, depth)
+    let ty = recur(term.letTy, depth)
+    let bdy = recur(term.letScope.bdy, depth + 1)
+    (tmLet(value.term, ty.term, term.letScope.adv, bdy.term),
+     value.found or ty.found or bdy.found)
+  of tMeta:
+    var spine: seq[Term] = @[]
+    var found = false
+    for arg in term.metaSpine:
+      let next = recur(arg, depth)
+      spine.add(next.term)
+      found = found or next.found
+    (tmMeta(term.metaId, spine), found)
 
 proc freshen(base: string, used: seq[string]): string =
   result = base
@@ -1233,6 +1302,175 @@ proc refineFromContextShed*(nimFile, shedName: string,
   (true, "", candidates, refined.term, refined.nimLine, refined.nimCol,
    refined.status, refined.yellowCount)
 
+proc refineEqualityShed*(nimFile, shedName: string,
+                         selected = ""):
+    tuple[ok: bool, why: string, candidates: seq[string], term: string,
+          nimLine, nimCol: int, status: string, yellowCount: int] =
+  ## Equality rewrite (#428). Offer each orientation of an in-scope Eq proof
+  ## whose endpoint occurs structurally in the target. Build transport with
+  ## Eq's generated eliminator, leave the rewritten target as a checked hole,
+  ## and let refineShed create its durable child shed after selection.
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
+  let (sheds, _) = readShedSidecarEx(sc)
+  var si = -1
+  for i, shed in sheds:
+    if shed.name == shedName: si = i; break
+  if si < 0:
+    return (false, "unknown shed '" & shedName & "'", @[], "", 0, 0, "", 0)
+  if sheds[si].genSrc == "":
+    return (false, "shed '" & shedName & "': no generated source recorded; recompile",
+            @[], "", 0, 0, "", 0)
+  if sheds[si].status != ssYellow:
+    return (false, "shed '" & shedName & "' is not open (status " &
+            shedStatusToStr(sheds[si].status) & ")", @[], "", 0, 0, "", 0)
+
+  let oldSrc = sheds[si].genSrc
+  let baseDir = parentDir(nimFile)
+  var ms: MetaStore
+  var target: HoleInfo
+  var found = false
+  try:
+    let checked = elabCheckHolesDir(oldSrc, baseDir)
+    ms = checked.ms
+    for h in ms.holes:
+      if h.holeLoc.line == sheds[si].holeLine and
+         (sheds[si].holeCol <= 0 or h.holeLoc.col == sheds[si].holeCol):
+        target = h
+        found = true
+        break
+  except ParseError as e:
+    return (false, "recorded source no longer parses: " & e.msg,
+            @[], "", 0, 0, "", 0)
+  if not found:
+    return (false, "shed hole is no longer open (sidecar stale? recompile)",
+            @[], "", 0, 0, "", 0)
+
+  let p = sourceOffset(oldSrc, sheds[si].holeLine, sheds[si].holeCol)
+  if p < 0:
+    return (false, "shed hole position is outside its generated source",
+            @[], "", 0, 0, "", 0)
+  let (line, col) = sourcePosition(oldSrc, p)
+  let goal = zonk(ms, target.holeGoal)
+  var ctx: Ctx = @[]
+  for b in target.holeCtx:
+    ctx.add(CtxEntry(name: b.name, ty: zonk(ms, b.ty), qty: b.qty))
+  var candidates: seq[string] = @[]
+  var selectedTerm = ""
+  var selectedClientTerm = ""
+
+  for b in target.holeCtx:
+    let eqTy = zonk(ms, b.ty)
+    let eqSpine = applicationSpine(eqTy)
+    if eqSpine.head == nil or eqSpine.head.kind != tR or
+       ms.refNames.getOrDefault(eqSpine.head.refId, "") != "Eq" or
+       eqSpine.args.len != 3:
+      continue
+    let aTy = zonk(ms, eqSpine.args[0])
+    let x = zonk(ms, eqSpine.args[1])
+    let y = zonk(ms, eqSpine.args[2])
+    for reverse in [false, true]:
+      let start = if reverse: y else: x
+      let finish = if reverse: x else: y
+      let shiftedGoal = weaken(weaken(goal))
+      let shiftedStart = weaken(weaken(start))
+      let occurrenceCount = replaceOccurrences(
+        shiftedGoal, shiftedStart, 1).count
+      if occurrenceCount == 0: continue
+
+      let zName = freshen("rewriteValue", target.holeCtx.mapIt(it.name))
+      let qName = freshen("rewriteProof", target.holeCtx.mapIt(it.name) & @[zName])
+      let pName = freshen("rewriteGoal", target.holeCtx.mapIt(it.name) & @[zName, qName])
+      let zCtx = @[CtxEntry(name: zName, ty: aTy, qty: qOmega)] & ctx
+      let xAtZ = weaken(start)
+      let aAtZ = weaken(aTy)
+      let qTy = tmApp(tmApp(tmApp(eqSpine.head, aAtZ), xAtZ), vv(0))
+      let qCtx = @[CtxEntry(name: qName, ty: qTy, qty: qOmega)] & zCtx
+      let goalUnderMotive = weaken(weaken(goal))
+      let goalUnderText = prettyTerm(goalUnderMotive, qCtx,
+        ms.refNames, ms.recordFields)
+      let aText = prettyTerm(aTy, ctx, ms.refNames, ms.recordFields)
+      let startText = prettyTerm(start, ctx, ms.refNames, ms.recordFields)
+      let finishText = prettyTerm(finish, ctx, ms.refNames, ms.recordFields)
+      let qTyText = prettyTerm(qTy, zCtx, ms.refNames, ms.recordFields)
+      let goalText = prettyTerm(goal, ctx, ms.refNames, ms.recordFields)
+      let xText = prettyTerm(x, ctx, ms.refNames, ms.recordFields)
+      let yText = prettyTerm(y, ctx, ms.refNames, ms.recordFields)
+      let proofText = if reverse:
+          "(sym " & aText & " " & xText & " " & yText & " " & b.name & ")"
+        else: b.name
+      for occurrence in 0 ..< occurrenceCount:
+        var seen = 0
+        let replaced = replaceOccurrenceAt(shiftedGoal, shiftedStart, 1,
+                                            occurrence, seen)
+        if not replaced.found: continue
+        let rewrittenText = prettyTerm(replaced.term, qCtx,
+          ms.refNames, ms.recordFields)
+        let candidate = "eqElim " & aText & " " & startText &
+          " (lam (" & zName & " : " & aText & "). lam (" & qName & " : " &
+          qTyText & "). (" & rewrittenText & " -> " & goalUnderText & "))" &
+          " (lam (" & pName & " : " & goalText & "). " & pName & ") " &
+          finishText & " " & proofText & " ?"
+        let key = b.name & (if reverse: " reverse" else: " forward") &
+          " occurrence " & $(occurrence + 1)
+        var nimAText, nimStart, nimFinish, nimX, nimY: string
+        var nimQTy, nimRewritten, nimGoalUnder, nimGoal: string
+        var zHoleCtx: seq[HoleContextBinder] = @[]
+        var qHoleCtx: seq[HoleContextBinder] = @[]
+        for entry in zCtx:
+          zHoleCtx.add(HoleContextBinder(name: entry.name,
+            ty: entry.ty, qty: entry.qty))
+        for entry in qCtx:
+          qHoleCtx.add(HoleContextBinder(name: entry.name,
+            ty: entry.ty, qty: entry.qty))
+        if not nimTypeExpr(aTy, target.holeCtx, ms, nimAText) or
+           not nimTypeExpr(start, target.holeCtx, ms, nimStart) or
+           not nimTypeExpr(finish, target.holeCtx, ms, nimFinish) or
+           not nimTypeExpr(x, target.holeCtx, ms, nimX) or
+           not nimTypeExpr(y, target.holeCtx, ms, nimY) or
+           not nimTypeExpr(qTy, zHoleCtx, ms, nimQTy) or
+           not nimTypeExpr(replaced.term, qHoleCtx, ms, nimRewritten) or
+           not nimTypeExpr(goalUnderMotive, qHoleCtx, ms, nimGoalUnder) or
+           not nimTypeExpr(goal, target.holeCtx, ms, nimGoal):
+          continue
+        let nimProof = if reverse:
+          "sym[" & nimAText & "](" & nimX & ", " & nimY & ", " & b.name & ")"
+        else: b.name
+        let nimMotive = "lam(" & zName & ", " & nimAText & ", lam(" &
+          qName & ", " & nimQTy & ", Pi(" & pName & ": " & nimRewritten &
+          ", " & nimGoalUnder & ")))"
+        let nimBase = "lam(" & pName & ", " & nimGoal & ", " & pName & ")"
+        let nimCandidate = "eqElim[" & nimAText & "](" & nimStart & ", " &
+          nimMotive & ", " & nimBase & ", " & nimFinish & ", " & nimProof &
+          ", shedHole(" & shedName & "))"
+        let probe = fillHoleAt(oldSrc, line - 1, col - 1,
+                               "(" & candidate & ")", baseDir)
+        if not probe.ok:
+          continue
+        candidates.add(key)
+        if key == selected:
+          selectedTerm = candidate
+          selectedClientTerm = nimCandidate
+
+  if selected.len == 0:
+    if candidates.len == 0:
+      return (true, "No checked equality rewrite is available. The goal must " &
+        "contain an exact structural endpoint from an in-scope Eq proof, and " &
+        "the resulting motive must be expressible in shed syntax. No edit was made.",
+        @[], "", 0, 0, "", 0)
+    return (true, "", candidates, "", 0, 0, "", 0)
+  if selected notin candidates:
+    return (false, "rewrite choice '" & selected &
+            "' is not feasible for this goal; available: " & candidates.join(", "),
+            candidates, "", 0, 0, "", 0)
+  let refined = refineShed(nimFile, shedName, selectedTerm)
+  if not refined.ok:
+    return (false, refined.why, candidates, "", 0, 0, "", 0)
+  (true, "", candidates, selectedClientTerm, refined.nimLine, refined.nimCol,
+   refined.status, refined.yellowCount)
+
 proc caseSplitShed*(nimFile, shedName, variable: string):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           subSheds: seq[string]] =
@@ -1643,6 +1881,27 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
                      msg["params"]["candidate"].getStr()
                    else: ""
     let r = refineFromContextShed(uriToPath(uri), shedName, selected)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    var payload = %*{"shedName": shedName, "candidates": r.candidates,
+                     "term": r.term, "nimLine": r.nimLine, "nimCol": r.nimCol,
+                     "status": r.status, "yellowCount": r.yellowCount}
+    if r.why != "": payload["message"] = %r.why
+    return %*{"jsonrpc": "2.0", "id": id, "result": payload}
+  of "eponym/refineEqualityShed":
+    let id = msg["id"]
+    if "textDocument" notin msg["params"] or "shedName" notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "eponym/refineEqualityShed needs " &
+                            "textDocument.uri and shedName"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let shedName = msg["params"]["shedName"].getStr()
+    let selected = if "rewrite" in msg["params"]:
+                     msg["params"]["rewrite"].getStr()
+                   else: ""
+    let r = refineEqualityShed(uriToPath(uri), shedName, selected)
     if not r.ok:
       return %*{"jsonrpc": "2.0", "id": id,
                 "error": {"code": -32602, "message": r.why}}

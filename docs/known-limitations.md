@@ -356,6 +356,13 @@ remaining arguments become typed sheds. Candidate discovery is bounded to
 the hypotheses currently in scope and the unification the elaborator can
 establish.
 
+Goal-directed equality Rewrite uses in-scope proofs of the `Eq` family and
+checks the generated eliminator transport before editing. It offers direction
+and exact structural occurrence choices; definitional-but-not-structural
+matches are not discovered. The `Eq`, `eqElim`, and `sym` definitions must be
+in scope (for example, from `lib/eq.ep`). Goals whose motive cannot be rendered
+in the current shed syntax are reported as unsupported.
+
 Goal-directed Construct is available for datatype goals in a Nim shed. It
 tries each constructor by elaborating an application with typed field holes
 against the goal, then offers the constructors that check. Any unresolved

@@ -28,8 +28,9 @@ sidecar generation. Outside an Eponym checkout, the server path defaults to
 
 See [Working with sheds in VS Code](USER_GUIDE.md) for the inline workflow,
 how to read the 2D proof state, and when to use Refine, Give, or Case-split.
-The inline view also provides goal-directed **Apply** and **Construct**
-pickers for local hypotheses and datatype constructors.
+The inline view also provides goal-directed **Apply**, **Construct**, and
+**Rewrite** pickers for local hypotheses, datatype constructors, and equality
+transport.
 For datatype goals, **Construct** lists constructors whose typed applications
 the elaborator accepts for the goal, then opens the constructor's fields as
 ordinary sheds. This is goal-directed refinement; case-split remains the
