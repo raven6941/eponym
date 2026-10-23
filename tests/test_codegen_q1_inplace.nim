@@ -47,6 +47,10 @@ proc noLiftDup (xs : List Int) (p1 : Int) : List Int =
 proc noLiftAlias (1 xs : List Int) (p1 : Int) : List Int =
   let a = xs in
   lcons1 a p1
+proc betaChainSeq (xs : List Int) (p1 : Int) : List Int =
+  let a = lcons1 xs p1 in
+  let b = (lam (u : Int). lcons1 a u) p1 in
+  lcons1 b p1
 """
 
 differentialBlockRepr(progA, currentSourcePath(), "Int:int,List:list")
@@ -76,6 +80,7 @@ proc checkChain(name: string, args: seq[Value], expected: seq[int],
     of "chainAcross": eponymCompiled_chainAcross(args, bnd)
     of "noLiftDup": eponymCompiled_noLiftDup(args, bnd)
     of "noLiftAlias": eponymCompiled_noLiftAlias(args, bnd)
+    of "betaChainSeq": eponymCompiled_betaChainSeq(args, bnd)
     else: raise newException(ValueError, "unknown def " & name)
   doAssert listValueToSeq[int](got1, qaGlobals, "List", intDec) == expected,
     name & " value backend disagrees"
@@ -126,6 +131,16 @@ when isMainModule:
   block:
     let f = emissionFlags(eponymCompiledRepr_noLiftAlias)
     doAssert not f.varSection, "noLiftAlias head aliases a variable: no lift"
+  block:
+    # The redex step keeps its lambda textually, so the guard
+    # conservatively declines the OUTER chain (the use is under a binder
+    # in the unreduced term) — but `cgReprApp` beta-reduces the redex to
+    # straight-line code whose inner call moves the buffer through its
+    # `sink` formal, so nothing is copied either way. The single inner
+    # binding still lifts; differential soundness below covers the shape.
+    let f = emissionFlags(eponymCompiledRepr_betaChainSeq)
+    doAssert f.varSection, "betaChainSeq's inner binding lifts"
+    doAssert not f.move, "single-binding lift has no step to move"
 
   # Differential soundness over several inputs.
   for xs in [@[], @[7], @[1, 2, 3, 4]]:
@@ -139,5 +154,8 @@ when isMainModule:
       proc(): seq[int] = eponymCompiledRepr_noLiftDup(xs, 1))
     checkChain("noLiftAlias", @[listArg(xs), intToValue(1)], @[1] & xs,
       proc(): seq[int] = eponymCompiledRepr_noLiftAlias(xs, 1))
+    checkChain("betaChainSeq", @[listArg(xs), intToValue(1)],
+      @[1, 1, 1] & xs,
+      proc(): seq[int] = eponymCompiledRepr_betaChainSeq(xs, 1))
 
   echo "test_codegen_q1_inplace: part A (pure chains) passed"

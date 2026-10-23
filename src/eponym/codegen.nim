@@ -2694,27 +2694,75 @@ proc isAliasHead(t: Term): bool =
     u = u.sub
   not u.isNil and u.kind == tV
 
+proc varOccursUnderBinder(t: Term): bool =
+  ## True when de Bruijn index 0 occurs anywhere under a closure-forming
+  ## binder in `t` (a lambda/Pi/Sigma body or pair scope). Such a use is a
+  ## capture, not a straight-line consumption: the closure may be invoked
+  ## zero or many times, so a single syntactic occurrence is not an
+  ## exactly-once runtime use, and the chain lift must not claim it.
+  ## `let` scopes propagate the flag unchanged — a let is sequencing, not
+  ## capture.
+  proc go(u: Term, depth: int, under: bool): bool =
+    if u.isNil:
+      return false
+    case u.kind
+    of tV:
+      u.idx == depth and under
+    of tLam, tSi:
+      go(u.scope.bdy, depth + 1, true)
+    of tPi:
+      go(u.dom, depth, under) or go(u.scope.bdy, depth + 1, true)
+    of tApp:
+      go(u.fn, depth, under) or go(u.arg, depth, under)
+    of tPair:
+      go(u.pFst, depth, under) or go(u.pSnd, depth, under) or
+        go(u.pScope.bdy, depth + 1, true)
+    of tFst, tSnd, tAbsurd:
+      go(u.sub, depth, under)
+    of tLet:
+      go(u.letVal, depth, under) or go(u.letScope.bdy, depth + 1, under)
+    else:
+      false
+  go(t, 0, false)
+
+type ChainMode = enum
+  cmSeq  # every binding is a non-vector `seq` repr: move the buffer
+  cmInt  # every binding is a plain `int` repr: reassign the accumulator
+
 proc tryChainLift(ctx: var CodegenCtx, t: Term,
                   env: seq[NimNode]): NimNode =
-  ## Issue #413: compile a straight-line chain of linear `let` bindings
-  ## over `seq[int]` (List) representations to a single Nim `var` that each
-  ## step moves through, instead of one fresh immutable binding per step.
+  ## Issue #413: compile a straight-line chain of linear `let` bindings to
+  ## a single Nim `var` that each step updates, instead of one fresh
+  ## immutable binding per step.
   ##
-  ## A binding joins the chain when: its representation is a non-vector
-  ## `seq` (a `Vec` length index would be falsified by in-place length
-  ## changes); its variable is used exactly once in the remainder of the
-  ## spine (the quantity-1 guarantee, checked syntactically with
-  ## countVarUses — type/index positions count, conservatively); every
-  ## non-head step mentions the previous variable (otherwise the chain
-  ## ends); and the head value is not a bare variable/projection, i.e. the
-  ## buffer is freshly produced and uniquely owned, never an alias of a
-  ## caller-retained buffer (the wrapper-boundary ownership rule).
+  ## Two homogeneous modes. `cmSeq`: bindings over `seq[int]` (List)
+  ## representations — each step moves the buffer through one `var`
+  ## (`move` at the step sites); a `Vec` length index would be falsified
+  ## by in-place length changes, so vectors never qualify. `cmInt`:
+  ## bindings over plain `int` — one `var acc: int` reassigned per step
+  ## (Aaron's 2026-10-22 scope clarification: the same transform at scalar
+  ## type, for non-fold chains threaded through separately compiled
+  ## definitions). Mixed or other representations fall back to ordinary
+  ## lets.
   ##
-  ## Emission: `var cv = <head>`; each step `cv = <step with move(cv) in
-  ## place of the variable>`; the remainder sees the plain `cv`. `move`
-  ## is sound because the old buffer is dead after the step (exactly-once
-  ## use) and the step's result — a fresh `seq[int]` value — is
-  ## immediately rebound. Spines that do not qualify raise
+  ## A binding joins the chain when: its variable is used exactly once in
+  ## the remainder of the spine (the quantity-1 guarantee, checked
+  ## syntactically with countVarUses — type/index positions count,
+  ## conservatively); every non-head step consumes the previous variable
+  ## in straight-line position (a use under a closure-forming binder is a
+  ## capture, not a consumption — the closure could run any number of
+  ## times); and, in `cmSeq` only, the head value is not a bare
+  ## variable/projection, i.e. the buffer is freshly produced and uniquely
+  ## owned, never an alias of a caller-retained buffer (the
+  ## wrapper-boundary ownership rule). In `cmInt` an alias head is a free
+  ## value copy and cannot leak a buffer, so it qualifies.
+  ##
+  ## Emission: `var cv = <head>`; each step `cv = <step with the previous
+  ## variable replaced>` — `move(cv)` in `cmSeq`, plain `cv` in `cmInt`
+  ## (ints are values; assignment is a register copy). The move is sound
+  ## because the old buffer is dead after the step (exactly-once,
+  ## straight-line use) and the step's result — a fresh `seq[int]` value
+  ## — is immediately rebound. Spines that do not qualify raise
   ## ChainNotLiftable and the caller emits ordinary lets.
   var vals: seq[Term] = @[]
   var tys: seq[Term] = @[]
@@ -2725,34 +2773,52 @@ proc tryChainLift(ctx: var CodegenCtx, t: Term,
     tys.add(cur.letTy)
     rests.add(cur.letScope.bdy)
     cur = cur.letScope.bdy
-  var k = 0
+  if vals.len == 0:
+    raise newException(ChainNotLiftable, "not a let spine")
+  var mode = cmSeq
   try:
-    for i in 0 ..< vals.len:
+    let rt0 = ctx.reprTypeOf(tys[0])
+    if rt0.kind == repInt:
+      mode = cmInt
+    elif not (rt0.kind == repSeq and not rt0.isVector):
+      raise newException(ChainNotLiftable,
+        "binding 0 is not a liftable repr")
+    for i in 1 ..< vals.len:
       let rt = ctx.reprTypeOf(tys[i])
-      if rt.kind != repSeq or rt.isVector:
+      let ok = case mode
+        of cmSeq: rt.kind == repSeq and not rt.isVector
+        of cmInt: rt.kind == repInt
+      if not ok:
         raise newException(ChainNotLiftable,
-          "binding " & $i & " is not a plain seq repr")
-      if i == 0:
-        if isAliasHead(vals[0]):
-          raise newException(ChainNotLiftable, "chain head aliases a variable")
-      elif countVarUses(vals[i]) < 1:
-        raise newException(ChainNotLiftable,
-          "step " & $i & " does not consume the previous variable")
-      if countVarUses(rests[i]) != 1:
-        raise newException(ChainNotLiftable,
-          "binding " & $i & " is not used exactly once")
-      inc k
+          "binding " & $i & " changes representation: chain ends")
   except CgUnsupported as e:
     raise newException(ChainNotLiftable,
       "representation outside fragment: " & e.msg)
+  var k = 0
+  for i in 0 ..< vals.len:
+    if i == 0:
+      if mode == cmSeq and isAliasHead(vals[0]):
+        raise newException(ChainNotLiftable, "chain head aliases a variable")
+    elif countVarUses(vals[i]) < 1 or varOccursUnderBinder(vals[i]):
+      raise newException(ChainNotLiftable,
+        "step " & $i & " does not consume the previous variable " &
+        "in straight-line position")
+    if countVarUses(rests[i]) != 1:
+      raise newException(ChainNotLiftable,
+        "binding " & $i & " is not used exactly once")
+    inc k
   if k < 1:
     raise newException(ChainNotLiftable, "no liftable binding")
   let cv = genSym(nskVar, "cgChainVar")
   var stmts = newStmtList()
   stmts.add(newVarStmt(cv, cgRepr(ctx, vals[0], env)))
-  let moved = newCall(bindSym"move", cv)
+  # In `cmSeq` the step moves the dead buffer; in `cmInt` the previous
+  # accumulator is a plain value copy.
+  let prevVar = case mode
+    of cmSeq: newCall(bindSym"move", cv)
+    of cmInt: cv
   for i in 1 ..< k:
-    stmts.add(newTree(nnkAsgn, cv, cgRepr(ctx, vals[i], @[moved] & env)))
+    stmts.add(newTree(nnkAsgn, cv, cgRepr(ctx, vals[i], @[prevVar] & env)))
   # The remainder was elaborated under all k chain binders; every one of
   # them denotes the single buffer now (the dead ones, x_0..x_{k-2}, never
   # occur — each was consumed exactly once by its step — so aliasing them
@@ -2811,8 +2877,9 @@ proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
     # representation they are just int literals.
     newLit(t.natLitVal)
   of tLet:
-    # Issue #413: a straight-line chain of linear lets over seq reprs
-    # becomes one mutable buffer; anything else keeps ordinary lets.
+    # Issue #413: a straight-line chain of linear lets over seq or int
+    # reprs becomes one mutable buffer/accumulator; anything else keeps
+    # ordinary lets.
     try:
       return tryChainLift(ctx, t, env)
     except ChainNotLiftable:
