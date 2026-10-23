@@ -34,6 +34,7 @@ run_driver bench/bench_runtime_dps_vec.nim ""
 # The List interpreter recurses per element; the depth knob only raises the
 # debug-build safety rail (no semantic change).
 run_driver bench/bench_runtime_dps_list.nim "-d:nimCallDepthLimit=30000"
+run_driver bench/bench_runtime_defheavy.nim ""
 
 echo ""
 echo "bench-runtime.sh done. Numbers are wall-clock on this machine; the"

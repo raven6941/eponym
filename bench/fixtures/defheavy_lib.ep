@@ -1,0 +1,44 @@
+# Definition-heavy library for the #432 runtime benchmark (slice 2).
+#
+# The workload is deliberately definition-heavy: `pipeline` nests calls
+# across three definitions (`vsum` over `vmapDbl` over `addInt`), so the
+# benchmark measures call-heavy generated code, not a single hot loop.
+# Two `requireCompiled` eponymBlocks import this file; the second reuses
+# the first block's compiled procs through the #408 compile-time export
+# registry instead of re-emitting them.
+#
+# `pipelineOnes` keeps the benchmark's block entries first-order over
+# `Int` (no `Vec`-typed wrapper arguments): the vector is built inside by
+# `ones`, so all `Vec` plumbing stays inside the measured code.
+#
+# Note: elements and results are `Int`, not `Nat`. Nat-*returning* typed
+# wrappers are broken (issue #441: the wrapper's `valueToNat` decode fails
+# at runtime); Int return avoids that unrelated defect.
+data Nat : Type 0 where
+| zero : Nat
+| suc (n : Nat) : Nat
+postulate Int : Type 0
+data Vec (A : Type 0) : Nat -> Type 0 where
+| nil : Vec A zero
+| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+proc vmapDbl (n : Nat) (xs : Vec Int n) : Vec Int n =
+  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Vec Int i)
+            (nil Int)
+            (lam (i : Nat). lam (x : Int). lam (xs2 : Vec Int i).
+              lam (ih : Vec Int i). cons Int i (addInt x x) ih)
+            n xs
+proc vsum (n : Nat) (xs : Vec Int n) : Int =
+  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Int)
+            0
+            (lam (i : Nat). lam (x : Int). lam (xs2 : Vec Int i).
+              lam (ih : Int). addInt x ih)
+            n xs
+proc replicate (n : Nat) (x : Int) : Vec Int n =
+  natElim (lam (u : Nat). Vec Int u)
+          (nil Int)
+          (lam (p : Nat). lam (ih : Vec Int p). cons Int p x ih)
+          n
+proc pipeline (n : Nat) (xs : Vec Int n) : Int =
+  addInt (vsum n xs) (vsum n (vmapDbl n xs))
+proc pipelineRep (n : Nat) (x : Int) : Int =
+  pipeline n (replicate n x)

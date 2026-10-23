@@ -9,6 +9,13 @@ suite (issue #432) is the `bench_runtime_*` family:
   `vlenDps`): interpreter vs Value backend vs repr backend.
 - `bench_runtime_dps_list.nim` — List DPS folds (`lmapDps`, `lappendDps`,
   `lfilterNonZero`): same three paths.
+- `bench_runtime_defheavy.nim` (+ `fixtures/defheavy_lib.ep`,
+  `fixtures/defheavy_score.ep`) — definition-heavy program: `pipelineRep`
+  (nested cross-definition Vec calls) compares interpreter vs repr
+  same-block vs repr cross-block (the #408 registry pair, 1.00x on the
+  reference run); `scoreOfRep` exercises the #402 derived `Score` mapping
+  on the interpreter and Value paths (no repr row — the derived
+  single-field-variant representation is outside the Phase-2 fragment).
 
 ## Running
 
