@@ -1032,6 +1032,94 @@ proc introShed*(nimFile, shedName: string, count = 1):
     let residualBody = result.term[checkedPrefixLen .. ^1]
     result.term = clientPrefixes.join("") & residualBody & repeat(")", count)
 
+proc refineConstructorsShed*(nimFile, shedName: string,
+                             selected = ""):
+    tuple[ok: bool, why: string, constructors: seq[string], term: string,
+          nimLine, nimCol: int, status: string, yellowCount: int] =
+  ## Goal-directed constructor refinement (#426). Candidate feasibility is
+  ## decided by the normal elaborator: each constructor is applied to typed
+  ## holes for its complete Pi telescope and checked against the selected
+  ## shed goal. The probe never writes the sidecar. Selecting a candidate
+  ## delegates to refineShed so generated field goals become real sheds.
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
+  let (sheds, _) = readShedSidecarEx(sc)
+  var si = -1
+  for i, shed in sheds:
+    if shed.name == shedName: si = i; break
+  if si < 0:
+    return (false, "unknown shed '" & shedName & "'", @[], "", 0, 0, "", 0)
+  if sheds[si].genSrc == "":
+    return (false, "shed '" & shedName & "': no generated source recorded; recompile",
+            @[], "", 0, 0, "", 0)
+  if sheds[si].status != ssYellow:
+    return (false, "shed '" & shedName & "' is not open (status " &
+            shedStatusToStr(sheds[si].status) & ")", @[], "", 0, 0, "", 0)
+
+  let oldSrc = sheds[si].genSrc
+  let baseDir = parentDir(nimFile)
+  var ms: MetaStore
+  var target: HoleInfo
+  var found = false
+  try:
+    let checked = elabCheckHolesDir(oldSrc, baseDir)
+    ms = checked.ms
+    for h in ms.holes:
+      if h.holeLoc.line == sheds[si].holeLine and
+         (sheds[si].holeCol <= 0 or h.holeLoc.col == sheds[si].holeCol):
+        target = h
+        found = true
+        break
+  except ParseError as e:
+    return (false, "recorded source no longer parses: " & e.msg,
+            @[], "", 0, 0, "", 0)
+  if not found:
+    return (false, "shed hole is no longer open (sidecar stale? recompile)",
+            @[], "", 0, 0, "", 0)
+
+  let spine = applicationSpine(zonk(ms, target.holeGoal))
+  if spine.head == nil or spine.head.kind != tR or
+     spine.head.refId notin ms.ctorTable.dataCtors:
+    return (false, "goal is not headed by a registered datatype",
+            @[], "", 0, 0, "", 0)
+  let family = spine.head.refId
+
+  var candidates: seq[string] = @[]
+  var selectedTerm = ""
+  for cid in ms.ctorTable.dataCtors[family]:
+    if cid notin ms.ctorTable.ctorTypes: continue
+    var arity = 0
+    var ty = zonk(ms, ms.ctorTable.ctorTypes[cid])
+    while ty != nil and ty.kind == tPi:
+      inc arity
+      ty = zonk(ms, ty.scope.bdy)
+    let name = ms.ctorTable.ctorNames[cid]
+    let candidate = name & repeat(" ?", arity)
+    let p = sourceOffset(oldSrc, sheds[si].holeLine, sheds[si].holeCol)
+    if p < 0: continue
+    let (line, col) = sourcePosition(oldSrc, p)
+    let probe = fillHoleAt(oldSrc, line - 1, col - 1,
+                           "(" & candidate & ")", baseDir)
+    if probe.ok:
+      candidates.add(name)
+      if name == selected: selectedTerm = candidate
+  if selected.len == 0:
+    if candidates.len == 0:
+      return (true, "no constructor is currently known to fit this goal",
+              @[], "", 0, 0, "", 0)
+    return (true, "", candidates, "", 0, 0, "", 0)
+  if selected notin candidates:
+    return (false, "constructor '" & selected &
+            "' is not feasible for this goal; available: " & candidates.join(", "),
+            candidates, "", 0, 0, "", 0)
+  let refined = refineShed(nimFile, shedName, selectedTerm)
+  if not refined.ok:
+    return (false, refined.why, candidates, "", 0, 0, "", 0)
+  (true, "", candidates, refined.term, refined.nimLine, refined.nimCol,
+   refined.status, refined.yellowCount)
+
 proc caseSplitShed*(nimFile, shedName, variable: string):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           subSheds: seq[string]] =
@@ -1408,6 +1496,27 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
               "result": {"shedName": shedName, "term": r.term,
                          "nimLine": r.nimLine, "nimCol": r.nimCol,
                          "status": r.status, "yellowCount": r.yellowCount}}
+  of "eponym/refineConstructorsShed":
+    let id = msg["id"]
+    if "textDocument" notin msg["params"] or "shedName" notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "eponym/refineConstructorsShed needs " &
+                            "textDocument.uri and shedName"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let shedName = msg["params"]["shedName"].getStr()
+    let selected = if "constructor" in msg["params"]:
+                     msg["params"]["constructor"].getStr()
+                   else: ""
+    let r = refineConstructorsShed(uriToPath(uri), shedName, selected)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    var payload = %*{"shedName": shedName, "constructors": r.constructors,
+                     "term": r.term, "nimLine": r.nimLine, "nimCol": r.nimCol,
+                     "status": r.status, "yellowCount": r.yellowCount}
+    if r.why != "": payload["message"] = %r.why
+    return %*{"jsonrpc": "2.0", "id": id, "result": payload}
   of "eponym/caseSplitShed":
     let id = msg["id"]
     if "textDocument" notin msg["params"] or "shedName" notin msg["params"] or

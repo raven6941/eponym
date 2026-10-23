@@ -172,6 +172,28 @@ export class LspClient {
     });
   }
 
+  /** Goal-directed constructor refinement for indexed datatype goals (#426). */
+  refineConstructorsShed(
+    docUri: string,
+    shedName: string,
+    constructor?: string
+  ): Promise<{
+    shedName: string;
+    constructors: string[];
+    term: string;
+    nimLine: number;
+    nimCol: number;
+    status: "white" | "yellow" | "brown";
+    yellowCount: number;
+    message?: string;
+  }> {
+    return this.request("eponym/refineConstructorsShed", {
+      textDocument: { uri: docUri },
+      shedName,
+      ...(constructor ? { constructor } : {}),
+    });
+  }
+
   shutdown() {
     this.notify("exit", {});
     this.proc.kill();

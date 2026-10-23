@@ -349,6 +349,12 @@ Goal-directed Intro is available for leading Pi binders; it introduces one
 binder per action. Persisted semantic action history, undo, and replay are
 tracked separately and are not implemented.
 
+Goal-directed Construct is available for datatype goals in a Nim shed. It
+tries each constructor by elaborating an application with typed field holes
+against the goal, then offers the constructors that check. Any unresolved
+index constraints remain as ordinary field goals; feasibility is limited to
+what the current elaborator can establish.
+
 Case-splitting in a Nim shed supports parameterized and indexed datatype
 families. It constructs a motive generalized over every index and carries
 exact occurrences of actual index expressions from the goal into that motive.
