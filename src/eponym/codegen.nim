@@ -58,6 +58,7 @@ import preterm       # Quantity
 import elab          # ElabDef, Globals, GEntry
 import erasure       # eraseQ0Arguments
 import eponym_embed  # callValueFuncDir, initRuntimeBindings (bindSym targets)
+import usage_check  # countVarUses for the #413 chain-lift linearity check
 
 type
   ReprKind* = enum
@@ -2677,6 +2678,93 @@ proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
     raise newException(CgUnsupported, "constructor '" & r.name &
       "' of '" & m.eponymName & "' outside the representation fragment")
 
+type ChainNotLiftable = object of CatchableError
+  ## tryChainLift raises this when a `tLet` spine is not a liftable linear
+  ## chain; the caller falls back to ordinary let emission. Distinct from
+  ## CgUnsupported so a fragment failure inside a liftable chain still
+  ## falls back to the Phase 1 backend.
+
+proc isAliasHead(t: Term): bool =
+  ## True when the term (through `fst`/`snd` projections) is a bare
+  ## variable: its value aliases an outer buffer rather than being freshly
+  ## produced, so taking ownership of it could leak mutation to whoever
+  ## retains that buffer.
+  var u = t
+  while not u.isNil and u.kind in {tFst, tSnd}:
+    u = u.sub
+  not u.isNil and u.kind == tV
+
+proc tryChainLift(ctx: var CodegenCtx, t: Term,
+                  env: seq[NimNode]): NimNode =
+  ## Issue #413: compile a straight-line chain of linear `let` bindings
+  ## over `seq[int]` (List) representations to a single Nim `var` that each
+  ## step moves through, instead of one fresh immutable binding per step.
+  ##
+  ## A binding joins the chain when: its representation is a non-vector
+  ## `seq` (a `Vec` length index would be falsified by in-place length
+  ## changes); its variable is used exactly once in the remainder of the
+  ## spine (the quantity-1 guarantee, checked syntactically with
+  ## countVarUses — type/index positions count, conservatively); every
+  ## non-head step mentions the previous variable (otherwise the chain
+  ## ends); and the head value is not a bare variable/projection, i.e. the
+  ## buffer is freshly produced and uniquely owned, never an alias of a
+  ## caller-retained buffer (the wrapper-boundary ownership rule).
+  ##
+  ## Emission: `var cv = <head>`; each step `cv = <step with move(cv) in
+  ## place of the variable>`; the remainder sees the plain `cv`. `move`
+  ## is sound because the old buffer is dead after the step (exactly-once
+  ## use) and the step's result — a fresh `seq[int]` value — is
+  ## immediately rebound. Spines that do not qualify raise
+  ## ChainNotLiftable and the caller emits ordinary lets.
+  var vals: seq[Term] = @[]
+  var tys: seq[Term] = @[]
+  var rests: seq[Term] = @[]
+  var cur = t
+  while not cur.isNil and cur.kind == tLet:
+    vals.add(cur.letVal)
+    tys.add(cur.letTy)
+    rests.add(cur.letScope.bdy)
+    cur = cur.letScope.bdy
+  var k = 0
+  try:
+    for i in 0 ..< vals.len:
+      let rt = ctx.reprTypeOf(tys[i])
+      if rt.kind != repSeq or rt.isVector:
+        raise newException(ChainNotLiftable,
+          "binding " & $i & " is not a plain seq repr")
+      if i == 0:
+        if isAliasHead(vals[0]):
+          raise newException(ChainNotLiftable, "chain head aliases a variable")
+      elif countVarUses(vals[i]) < 1:
+        raise newException(ChainNotLiftable,
+          "step " & $i & " does not consume the previous variable")
+      if countVarUses(rests[i]) != 1:
+        raise newException(ChainNotLiftable,
+          "binding " & $i & " is not used exactly once")
+      inc k
+  except CgUnsupported as e:
+    raise newException(ChainNotLiftable,
+      "representation outside fragment: " & e.msg)
+  if k < 1:
+    raise newException(ChainNotLiftable, "no liftable binding")
+  let cv = genSym(nskVar, "cgChainVar")
+  var stmts = newStmtList()
+  stmts.add(newVarStmt(cv, cgRepr(ctx, vals[0], env)))
+  let moved = newCall(bindSym"move", cv)
+  for i in 1 ..< k:
+    stmts.add(newTree(nnkAsgn, cv, cgRepr(ctx, vals[i], @[moved] & env)))
+  # The remainder was elaborated under all k chain binders; every one of
+  # them denotes the single buffer now (the dead ones, x_0..x_{k-2}, never
+  # occur — each was consumed exactly once by its step — so aliasing them
+  # to cv is unobservable), and outer indices stay aligned.
+  var restEnv = newSeq[NimNode](k)
+  for i in 0 ..< k: restEnv[i] = cv
+  stmts.add(cgRepr(ctx, rests[k-1], restEnv & env))
+  var blk = newNimNode(nnkBlockStmt)
+  blk.add(newEmptyNode())
+  blk.add(stmts)
+  blk
+
 proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   if t.isNil:
     raise newException(CgUnsupported, "nil term")
@@ -2723,6 +2811,12 @@ proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
     # representation they are just int literals.
     newLit(t.natLitVal)
   of tLet:
+    # Issue #413: a straight-line chain of linear lets over seq reprs
+    # becomes one mutable buffer; anything else keeps ordinary lets.
+    try:
+      return tryChainLift(ctx, t, env)
+    except ChainNotLiftable:
+      discard
     let vsym = genSym(nskLet, "cgReprLet")
     let vcode = cgRepr(ctx, t.letVal, env)
     let bcode = cgRepr(ctx, t.letScope.bdy, @[vsym] & env)
@@ -2816,6 +2910,8 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
   var body = erased
   var params: seq[NimNode] = @[]
   var paramTypes: seq[NimNode] = @[]
+  var paramQtys: seq[Quantity] = @[]
+  var paramRts: seq[ReprType] = @[]
   var envOuterToInner: seq[NimNode] = @[]
   var qtyOuterToInner: seq[Quantity] = @[]
   # (paramSym, indexTerm, preceding binder quantities innermost-first,
@@ -2850,6 +2946,8 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
       let psym = genSym(nskParam, "cgReprArg" & $params.len)
       params.add(psym)
       paramTypes.add(nimReprType(rt))
+      paramQtys.add(ty.qty)
+      paramRts.add(rt)
       if rt.kind == repSeq and rt.isVector:
         var preQtys: seq[Quantity] = @[]
         var preEnv: seq[NimNode] = @[]
@@ -2910,7 +3008,16 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
   var formal = newNimNode(nnkFormalParams)
   formal.add(nimReprType(sig[^1]))
   for i, psym in params:
-    formal.add(newIdentDefs(psym, paramTypes[i], newEmptyNode()))
+    # Issue #413: a quantity-1 seq parameter takes ownership of its
+    # argument buffer (`sink`): the caller moves the buffer in instead of
+    # sharing it. `sink` is a move hint only — value semantics are
+    # unchanged, and an lvalue argument is still copied by the caller, so
+    # the boundary never aliases a caller-retained buffer.
+    if paramQtys[i] == q1 and paramRts[i].kind == repSeq:
+      formal.add(newIdentDefs(psym,
+        newTree(nnkCommand, ident"sink", paramTypes[i]), newEmptyNode()))
+    else:
+      formal.add(newIdentDefs(psym, paramTypes[i], newEmptyNode()))
   var procNode = newNimNode(nnkProcDef)
   procNode.add(newTree(nnkPostfix, ident"*", ident(cgReprName(d.name))))
   procNode.add(newEmptyNode())
@@ -2958,9 +3065,18 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
   var formal = newNimNode(nnkFormalParams)
   formal.add(nimReprType(sig[^1]))
   var argSyms: seq[NimNode] = @[]
-  for rt in sig[0 ..< sig.len - 1]:
+  # Issue #413: quantities of the non-erased binders, outermost first,
+  # aligned with the sig positions (reprSigOfType drops q0 binders).
+  let argQtys = piQuantities(ty).filterIt(it != q0)
+  for i, rt in sig[0 ..< sig.len - 1]:
     let psym = genSym(nskParam, "cgReprPostArg" & $argSyms.len)
-    formal.add(newIdentDefs(psym, nimReprType(rt), newEmptyNode()))
+    let rtNim = nimReprType(rt)
+    # A quantity-1 seq parameter takes ownership of its argument buffer.
+    let ftype = if i < argQtys.len and argQtys[i] == q1 and
+        rt.kind == repSeq:
+      newTree(nnkCommand, ident"sink", rtNim)
+    else: rtNim
+    formal.add(newIdentDefs(psym, ftype, newEmptyNode()))
     argSyms.add(psym)
   var call = newCall(copyNimTree(binding.implementation))
   for s in argSyms: call.add(s)
