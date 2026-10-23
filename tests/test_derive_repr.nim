@@ -9,6 +9,7 @@ import std/[tables, macros, strutils]
 import eponym_init
 import eponym_embed  # elabCheckDirStateAll, HostRuntimeType
 import elab          # Globals, GEntry
+import eponym_mac    # hostRuntimeTypes (slice 4 differential)
 import derive_repr
 
 proc expect(ok: bool, message: string) =
@@ -77,6 +78,53 @@ macro emitCodecFactory(src: static string, name: static string,
   let checked = elabCheckDirStateAll(src, "")
   let spec = deriveSpec(checked.globals, fixtureReps(checked.globals), name)
   result = genCodecFactory(spec, prefix)
+
+macro deriveOpaqueSummary(src: static string, name: static string,
+                          hostType: static string): untyped =
+  ## Elaborate `src`, run the slice-4 opaque kind check for `name` with the
+  ## declared host type; returns "kind|typeName|nimType".
+  let checked = elabCheckDirStateAll(src, "")
+  let spec = deriveOpaqueSpec(checked.globals,
+    fixtureReps(checked.globals), name, ident(hostType))
+  result = newLit($spec.kind & "|" & spec.typeName & "|" &
+    $spec.nimType.toStrLit)
+
+macro deriveOpaqueError(src: static string, name: static string): untyped =
+  ## Elaborate `src`; the slice-4 opaque check for `name` must raise
+  ## DeriveError. Returns the diagnostic message for assertion.
+  let checked = elabCheckDirStateAll(src, "")
+  try:
+    discard deriveOpaqueSpec(checked.globals, fixtureReps(checked.globals),
+                             name, ident"HostT")
+    error("deriveOpaqueError: expected DeriveError for '" & name &
+      "' but the opaque check succeeded")
+  except DeriveError as e:
+    result = newLit(e.msg)
+
+macro deriveTwoArgDifferential(src: static string): untyped =
+  ## Elaborate `src`; register `runtimeDerive(Chan, PaxosChannel)` and the
+  ## hand-written `runtimeType(Chan, PaxosChannel)` through
+  ## `hostRuntimeTypes`. Returns "derived // manual // emitted:d/m" — the
+  ## slice-4 differential property is that the two registrations are
+  ## structurally identical and neither emits procs.
+  let checked = elabCheckDirStateAll(src, "")
+  var emittedD: seq[NimNode] = @[]
+  let derived = hostRuntimeTypes(
+    newStmtList(
+      newCall(ident"runtimeDerive", ident"Chan", ident"PaxosChannel")),
+    checked.globals, emittedD)
+  var emittedM: seq[NimNode] = @[]
+  let manual = hostRuntimeTypes(
+    newStmtList(
+      newCall(ident"runtimeType", ident"Chan", ident"PaxosChannel")),
+    checked.globals, emittedM)
+  proc summ(m: HostRuntimeType): string =
+    m.eponymName & "|" & $m.nimType.toStrLit & "|" & $m.isRuntimeVector &
+    "|" & $m.isRuntimeList & "|" & $m.isRuntimeOption & "|" &
+    $m.isRuntimeVariant & "|" & $m.isRuntimeCodec & "|" &
+    $m.isGenericTypeWitnessable & "|" & $m.hasRecordCodec
+  result = newLit(summ(derived[0]) & " // " & summ(manual[0]) &
+    " // emitted:" & $emittedD.len & "/" & $emittedM.len)
 
 macro codecGenError(src: static string, name: static string,
                     prefix: static string): untyped =
@@ -169,6 +217,21 @@ data Vec : Pi (A : Type 0). Pi (n : Nat). Type 0 where
 | nil (A : Type 0) : Vec A zero
 | cons (A : Type 0) (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 postulate Pair2 : Sig (n : Nat). Vec Int n
+"""
+
+const opaqueFamSrc = """
+postulate Session : Type 0
+postulate Nat : Type 0
+postulate Chan : Session -> Type 0
+postulate Promise : Type 0
+postulate AcceptMsg : Nat -> Type 0
+"""
+
+const opaqueDefSrc = """
+data Nat : Type 0 where
+| zero : Nat
+| suc (n : Nat) : Nat
+postulate f : Nat -> Nat
 """
 
 emitCodec(recordSrc, "Point", "point")
@@ -270,5 +333,42 @@ when isMainModule:
   let opqErr = codecGenError(opaqueDepSrc, "Box", "box")
   expect("identity host representation" in opqErr,
     "opaque codec generation fails honestly, got: " & opqErr)
+
+  # -- Slice 4: two-arg `runtimeDerive(Name, HostType)` — the kind is
+  # derived from the checked structure, the host type declared.
+  let chanOpaq = deriveOpaqueSummary(opaqueFamSrc, "Chan", "PaxosChannel")
+  expect(chanOpaq == "dkOpaque|Chan|PaxosChannel",
+    "indexed family is opaque-shaped, got: " & chanOpaq)
+  let promOpaq = deriveOpaqueSummary(opaqueFamSrc, "Promise", "PaxosPromise")
+  expect(promOpaq == "dkOpaque|Promise|PaxosPromise",
+    "plain abstract type is opaque-shaped, got: " & promOpaq)
+  let accOpaq = deriveOpaqueSummary(opaqueFamSrc, "AcceptMsg", "PaxosTicket")
+  expect(accOpaq == "dkOpaque|AcceptMsg|PaxosTicket",
+    "Nat-indexed family is opaque-shaped, got: " & accOpaq)
+  let recOpaqErr = deriveOpaqueError(recordSrc, "Point")
+  expect("one-arg runtimeDerive('Point')" in recOpaqErr,
+    "record is not opaque: directed at the one-arg form, got: " & recOpaqErr)
+  let varOpaqErr = deriveOpaqueError(variantSrc, "Tree")
+  expect("one-arg runtimeDerive('Tree')" in varOpaqErr,
+    "data family is not opaque: directed at the one-arg form, got: " &
+    varOpaqErr)
+  let ixFamOpaqErr = deriveOpaqueError(indexedSrc, "IVec")
+  expect("has data constructors" in ixFamOpaqErr,
+    "indexed data family is not opaque, got: " & ixFamOpaqErr)
+  let defOpaqErr = deriveOpaqueError(opaqueDefSrc, "f")
+  expect("not a plain or indexed type family" in defOpaqErr,
+    "a term-level postulate is not a family, got: " & defOpaqErr)
+  let missingOpaqErr = deriveOpaqueError(opaqueFamSrc, "Nope")
+  expect("not declared" in missingOpaqErr,
+    "undeclared name fails, got: " & missingOpaqErr)
+
+  # -- Slice 4: the two-arg registration is structurally identical to the
+  # hand-written `runtimeType` it replaces (the differential property).
+  let diff = deriveTwoArgDifferential(opaqueFamSrc)
+  let dparts = diff.split(" // ")
+  expect(dparts.len == 3 and dparts[0] == dparts[1] and
+    dparts[2] == "emitted:0/0",
+    "two-arg runtimeDerive registers exactly what manual runtimeType " &
+    "produces, got: " & diff)
 
   echo "test_derive_repr: all derivation cases passed"

@@ -449,6 +449,66 @@ proc deriveSpec*(globals: Globals, reps: Table[int, HostRuntimeType],
   # Otherwise the entry's type is the type to derive from (records/Sigma).
   return ctx.deriveType(entry.ty, @[name])
 
+proc deriveOpaqueSpec*(globals: Globals, reps: Table[int, HostRuntimeType],
+                       name: string, hostType: NimNode): DerivedSpec =
+  ## Slice 4: the kind check behind the two-arg `runtimeDerive(Name,
+  ## HostType)`. Derivation cannot invent a host type for a
+  ## postulate/opaque family; the author declares it, and this proc verifies
+  ## from the checked structure that the family is genuinely opaque:
+  ## - its `tm` is a type/family declaration (same gate as `deriveSpec`);
+  ## - the one-arg derivation does NOT succeed for it — a derivable
+  ##   structure means the host type is derived, not declared (records via
+  ##   their generated `mk<name>` constructor, `data` families via their
+  ##   constructors, atoms/vectors via base cases);
+  ## - it has no data constructors (an indexed family's variant structure
+  ##   is rejected by the one-arg form honestly; it is still not opaque);
+  ## - its checked type is `Univ` (a plain abstract type) or a Pi-chain
+  ##   ending in `Univ` (an indexed family).
+  ## The uniformity claim — one host type for all indices, e.g.
+  ## `Chan s` mapping to `PaxosChannel` for every `s` — is the author's, the
+  ## same claim the equivalent hand-written `runtimeType` makes; the check's
+  ## job is to confirm no derivable structure is being shadowed, not to
+  ## re-justify the claim. Indexed families are accepted regardless of the
+  ## index binders' quantities: the erasure argument is usage-based (index
+  ## values are compile-time-only, cf. #401), not quantity-based.
+  if name notin globals:
+    raise deriveErr("'" & name & "' is not declared")
+  let entry = globals[name]
+  if entry.tm.isNil or entry.tm.kind != tR:
+    raise deriveErr("'" & name & "' is not a type/family declaration")
+  let refId = entry.tm.refId
+  var probe: DerivedSpec = nil
+  try:
+    probe = deriveSpec(globals, reps, name)
+  except DeriveError:
+    discard
+  if not probe.isNil:
+    var msg = "'" & name & "' derives a " & $probe.kind
+    if not probe.nimType.isNil:
+      msg &= " with host type " & $probe.nimType.toStrLit
+    raise deriveErr(msg & "; the host type is derived, not declared — " &
+      "use the one-arg runtimeDerive('" & name & "')")
+  var idToName = initTable[int, string]()
+  for n, e in globals.pairs:
+    if not e.tm.isNil and e.tm.kind == tR:
+      idToName[e.tm.refId] = n
+  var ctx = DeriveCtx(globals: globals,
+                      reps: initTable[int, HostRuntimeType](),
+                      idToName: idToName)
+  if ctx.familyConstructors(refId).len > 0:
+    raise deriveErr("'" & name & "' has data constructors; it is not " &
+      "opaque — use the one-arg runtimeDerive('" & name &
+      "') or a hand-written mapping")
+  var ty = entry.ty
+  while not ty.isNil and ty.kind == tPi:
+    ty = ty.scope.bdy
+  if ty.isNil or ty.kind != tType:
+    raise deriveErr("'" & name &
+      "' is not a plain or indexed type family (its type is not Univ or " &
+      "a Pi-chain over Univ); no opaque host representation applies")
+  DerivedSpec(kind: dkOpaque, nimType: copyNimTree(hostType), refId: refId,
+              typeName: name)
+
 proc specSummary*(spec: DerivedSpec, indent = 0): string =
   ## A readable rendering of a derived spec, for tests and diagnostics.
   let pad = "  ".repeat(indent)

@@ -251,10 +251,18 @@ leaves with no mapping, type- or function-typed fields (no honest runtime
 representation exists), genuinely indexed families, and components whose
 representation *kind* depends on a bound value.
 
-Manual-only (not derivable): postulate/opaque leaves (their mapping is the
-base case), `runtimeOption` (traversal not landed yet), and opaque host
-codecs for non-structural representations. The block form is
-`runtimeDerive(EponymType)` (issue #402, slice 3): it runs the same
+Manual-only (not derivable): `runtimeOption` (traversal not landed yet), and
+opaque host codecs for non-structural representations. Postulate/opaque
+families are derivable with the host type declared: the block form is
+`runtimeDerive(EponymType)` (issue #402, slice 3) or
+`runtimeDerive(EponymType, HostType)` (slice 4) for opaque families whose
+host type derivation cannot invent — derivation verifies the family is
+genuinely opaque (no data constructors, not a record, type `Univ` or a
+Pi-chain over `Univ`; a derivable structure is a compile error directing
+at the one-arg form) and registers exactly what the hand-written
+`runtimeType(EponymType, HostType)` produces. The Paxos `requireCompiled()`
+block's `Chan`/`Promise`/`AcceptMsg` mappings are derived this way. The
+block form runs the same
 derivation inside `eponymBlock`, registers the mapping alongside the manual
 declarations, and emits the generated encoder/decoder procs with the block's
 wrappers. Derived products register as `isRuntimeCodec` mappings (the
