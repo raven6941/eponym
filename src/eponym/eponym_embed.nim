@@ -50,6 +50,17 @@ type
     encoder*: NimNode
     decoder*: NimNode
 
+  PostulateReprBinding* = object
+    ## Issue #401: a postulate bound to a host procedure, for direct
+    ## representation-tier calls. The repr backend emits a forwarder
+    ## `eponymCompiledRepr_<name>` that calls the host implementation with
+    ## host-typed arguments — no `Value` layer, no interpreter. Only
+    ## bindings whose postulate type is fully within the representation
+    ## fragment get a forwarder; the rest keep the Phase 1 backend.
+    postulateName*: string
+    implementation*: NimNode  ## the bound host procedure
+    argCount*: int  ## host-procedure value arguments (excluding the result)
+
 proc hostIntUnary*(implementation: proc(x: int): int): Value
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
 proc hostOpaqueMapUnary*[A, B](implementation: proc(x: A): B): Value

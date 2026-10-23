@@ -49,7 +49,7 @@
 ##   erasure is a closed-term pass and templates are open. This matches the
 ##   interpreter, which fires `fireRed` on the unerased template.
 
-import std/[tables, macros, algorithm]
+import std/[tables, macros, algorithm, sequtils, strutils, sets]
 import eponym_init   # Term, Value, WhnfKind, smart constructors
 import preterm       # Quantity
 import elab          # ElabDef, Globals, GEntry
@@ -112,6 +112,13 @@ type
       ## Issue #330 repr tier: def refId -> (emitted proc name, int arity)
       ## for definitions compiled against host representations directly.
       ## Pre-assigned before compiling a body so recursion resolves.
+      ## Issue #401: also holds postulate forwarders (see
+      ## `compilePostulateProcRepr`), so in-body calls to bound postulates
+      ## become direct calls.
+    reprPostulateQtys*: Table[int, seq[Quantity]]
+      ## Issue #401: postulate refId -> Pi-binder quantities for postulate
+      ## forwarders, so call sites skip q0 arguments exactly like the
+      ## `cgkDefn` path skips them via `piQuantities`.
 
 proc cgName*(defName: string): string =
   ## The emitted proc name for a compiled definition.
@@ -179,7 +186,8 @@ proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
     src: src, badElims: initTable[int, bool](),
     usedElims: initTable[int, bool](),
     reps: initTable[int, HostRuntimeType](),
-    reprProcs: initTable[int, tuple[name: string, arity: int]]())
+    reprProcs: initTable[int, tuple[name: string, arity: int]](),
+    reprPostulateQtys: initTable[int, seq[Quantity]]())
   var refIdToName = initTable[int, string]()
   for name, e in globals.pairs:
     if e.tm != nil and e.tm.kind == tR:
@@ -412,6 +420,36 @@ proc collectReferencedRefIds*(t: Term): seq[int] =
   collectRefIds(t, ids)
   for id in ids.keys:
     result.add(id)
+
+proc collectRuntimeRefIds(t: Term, acc: var Table[int, bool]) =
+  ## Collect every `tR` refId occurring in a *runtime term position* of an
+  ## erased term. Binder domains, `let` types, pair type annotations, and
+  ## primop types are type positions and skipped; quantity-0 arguments are
+  ## already unit after erasure. A `tPi`/`tSi` occurring as a term (a type
+  ## passed as an explicit `Univ` argument) is walked conservatively.
+  if t.isNil: return
+  case t.kind
+  of tR:
+    acc[t.refId] = true
+  of tPi, tSi:
+    collectRuntimeRefIds(t.dom, acc)
+    collectRuntimeRefIds(t.scope.bdy, acc)
+  of tLam:
+    collectRuntimeRefIds(t.scope.bdy, acc)
+  of tPair:
+    collectRuntimeRefIds(t.pFst, acc)
+    collectRuntimeRefIds(t.pSnd, acc)
+  of tApp:
+    collectRuntimeRefIds(t.fn, acc)
+    collectRuntimeRefIds(t.arg, acc)
+  of tFst, tSnd, tAbsurd:
+    collectRuntimeRefIds(t.sub, acc)
+  of tLet:
+    collectRuntimeRefIds(t.letVal, acc)
+    collectRuntimeRefIds(t.letScope.bdy, acc)
+  of tMeta:
+    for arg in t.metaSpine: collectRuntimeRefIds(arg, acc)
+  else: discard
 
 proc elimDispatchCase(procNode: NimNode): NimNode =
   ## Find the generated case over a scrutinee's constructor refId.
@@ -831,6 +869,22 @@ type
     repInt  # Eponym type mapped to Nim `int` via plain runtimeType
     repSeq  # `Vec`/`List` family mapped to Nim `seq[int]`
     repOption  # `Option` family mapped to Nim `Option[int]`
+    repOpaque  # Issue #401: any other concrete `runtimeType` mapping is an
+      # identity representation over its declared host type. Covers atomic
+      # postulated types (`Promise` -> `PaxosPromise`) and applied families
+      # declared at the family level (`Chan s` -> `PaxosChannel` for every
+      # session index `s`): family indices are dropped from the host
+      # signature, exactly as `Vec A n` maps to one `seq[int]`. Declaring
+      # one host type for a whole family asserts the host layout is
+      # index-independent; the checker cannot verify host layout, so this
+      # is trusted (see docs/trust-model.md).
+    repSigma  # Issue #401: a dependent `Sig` over representation
+      # components maps to the host tuple of the components. The second
+      # component's representation is selected with its index-dependence
+      # on the first component erased: sound precisely when the component
+      # mappings are index-independent (e.g. an opaque family), and
+      # honestly rejected when a live index (a `Vec` length) would mention
+      # the bound value.
 
   ReprType* = object
     ## The host representation of one signature position (a non-q0
@@ -838,6 +892,8 @@ type
     kind*: ReprKind
     isVector*: bool  # for repSeq: from runtimeVector (length-indexed)
     index*: Term  # for repSeq+isVector: the length index term
+    hostType*: NimNode  # for repOpaque: the declared Nim type AST
+    sigmaFields*: seq[ReprType]  # for repSigma: the component reprs
 
 proc isPlainIntMapping*(m: HostRuntimeType): bool =
   ## True when the mapping is a plain `runtimeType ... -> int` (not a
@@ -847,6 +903,22 @@ proc isPlainIntMapping*(m: HostRuntimeType): bool =
     not m.isRuntimeOption and not m.isRuntimeVariant and
     not m.isRuntimeCodec and
     m.nimType.kind in {nnkIdent, nnkSym} and $m.nimType == "int"
+
+proc isTypeVariableMapping*(m: HostRuntimeType): bool =
+  ## True for `runtimeType(T, T)`-style mappings whose host type is a bare
+  ## type variable rather than a concrete host type: there is no identity
+  ## representation to compile against.
+  m.nimType.kind in {nnkIdent, nnkSym} and $m.nimType == m.eponymName
+
+proc isOpaqueIdentityMapping*(m: HostRuntimeType): bool =
+  ## True when the mapping declares a concrete host type used as-is, with
+  ## no conversion: a plain `runtimeType` that is not an int mapping, not a
+  ## vector/list/option/variant/codec mapping, and not a type variable.
+  ## Issue #401: these become the `repOpaque` representation kind.
+  not m.isRuntimeVector and not m.isRuntimeList and
+    not m.isRuntimeOption and not m.isRuntimeVariant and
+    not m.isRuntimeCodec and not m.isPlainIntMapping and
+    not m.isTypeVariableMapping
 
 proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
   ## The representation kind for a type/family refId. Raises CgUnsupported
@@ -861,6 +933,8 @@ proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
     return repSeq
   if m.isRuntimeOption:
     return repOption
+  if m.isOpaqueIdentityMapping:
+    return repOpaque
   raise newException(CgUnsupported,
     "runtime representation outside the fragment")
 
@@ -870,20 +944,86 @@ proc checkIntElem(ctx: CodegenCtx, t: Term) =
     raise newException(CgUnsupported,
       "collection element type outside the int fragment")
 
+proc reprTypeMentionsMarker(t: Term, markerRefId: int): bool =
+  ## Does the marker reference survive anywhere in `t`? Used to detect a
+  ## Sigma codomain whose live index positions mention the bound value.
+  if t.isNil: return false
+  case t.kind
+  of tR: t.refId == markerRefId
+  of tV: false
+  of tPi, tSi, tLam:
+    reprTypeMentionsMarker(t.dom, markerRefId) or
+      reprTypeMentionsMarker(t.scope.bdy, markerRefId)
+  of tPair:
+    reprTypeMentionsMarker(t.pFst, markerRefId) or
+      reprTypeMentionsMarker(t.pSnd, markerRefId) or
+      reprTypeMentionsMarker(t.pScope.bdy, markerRefId)
+  of tApp:
+    reprTypeMentionsMarker(t.fn, markerRefId) or
+      reprTypeMentionsMarker(t.arg, markerRefId)
+  of tFst, tSnd, tAbsurd:
+    reprTypeMentionsMarker(t.sub, markerRefId)
+  of tLet:
+    reprTypeMentionsMarker(t.letVal, markerRefId) or
+      reprTypeMentionsMarker(t.letTy, markerRefId) or
+      reprTypeMentionsMarker(t.letScope.bdy, markerRefId)
+  of tMeta:
+    t.metaSpine.anyIt(reprTypeMentionsMarker(it, markerRefId))
+  of tPrim:
+    reprTypeMentionsMarker(t.primTy, markerRefId)
+  else: false
+
+proc reprTypeLiveMentionsMarker(rt: ReprType, markerRefId: int): bool =
+  ## Does the marker survive in a *live* position of the representation?
+  ## Opaque families drop their indices, so mentions there are harmless;
+  ## only `Vec` length indices (checked at the boundary) are live.
+  case rt.kind
+  of repSeq:
+    rt.isVector and reprTypeMentionsMarker(rt.index, markerRefId)
+  of repSigma:
+    rt.sigmaFields.anyIt(reprTypeLiveMentionsMarker(it, markerRefId))
+  else: false
+
+const sigmaMarkerRefId = -401
+  ## Impossible refId used as the Sigma-bound-variable marker when opening
+  ## a `tSi` codomain for representation selection (issue #401). `subst`
+  ## leaves `tR` nodes alone, so the marker is never shifted or dropped.
+
 proc reprTypeOf(ctx: CodegenCtx, t: Term): ReprType =
   ## The host representation of a binder domain or result type: an atomic
-  ## `tR` in the int fragment, or a fully-applied `Vec`/`List`/`Option`
-  ## family over int elements. Raises CgUnsupported otherwise. The check
-  ## is structural only: length-index terms are validated when compiled
-  ## (entry check), never here.
+  ## `tR` in the int fragment, a fully-applied `Vec`/`List`/`Option`
+  ## family over int elements, a concrete `runtimeType` mapping used as an
+  ## identity representation (applied families drop their indices), or a
+  ## dependent `Sig` over representable components (the host tuple).
+  ## Raises CgUnsupported otherwise. The check is structural only:
+  ## length-index terms are validated when compiled (entry check), never
+  ## here.
   if t.isNil:
     raise newException(CgUnsupported, "nil type")
   if t.kind == tR:
     let k = ctx.reprKindOf(t.refId)
+    if k == repOpaque:
+      return ReprType(kind: repOpaque,
+                      hostType: copyNimTree(ctx.reps[t.refId].nimType))
     if k != repInt:
       raise newException(CgUnsupported,
         "unapplied family outside the representation fragment")
     return ReprType(kind: repInt)
+  if t.kind == tSi:
+    # Issue #401: `Sig(x: A, B)` maps to the host tuple of the component
+    # representations. The codomain is opened with the bound variable
+    # replaced by a marker; the marker may survive only in dropped index
+    # positions (opaque families) — a live index (a `Vec` length) mentioning
+    # the bound value has no host denotation without a runtime check the
+    # tuple boundary cannot express, so it is honestly rejected.
+    let first = ctx.reprTypeOf(t.dom)
+    let marker = Term(kind: tR, refId: sigmaMarkerRefId)
+    let opened = subst(t.scope.bdy, 0, marker)
+    let second = ctx.reprTypeOf(opened)
+    if reprTypeLiveMentionsMarker(second, sigmaMarkerRefId):
+      raise newException(CgUnsupported,
+        "Sigma codomain mentions the bound value in a live index position")
+    return ReprType(kind: repSigma, sigmaFields: @[first, second])
   if t.kind == tApp:
     var argTerms: seq[Term] = @[]
     var head = t
@@ -917,6 +1057,14 @@ proc reprTypeOf(ctx: CodegenCtx, t: Term): ReprType =
           "Option application has " & $appArgs.len & " args, needs 1")
       ctx.checkIntElem(appArgs[0])
       return ReprType(kind: repOption)
+    if m.isOpaqueIdentityMapping:
+      # Issue #401: an applied family with a concrete `runtimeType`
+      # mapping denotes the declared host type for every index tuple —
+      # `Chan s` is `PaxosChannel` for all `s`. The indices are dropped
+      # from the host signature; the mapping itself is the trust anchor
+      # (docs/trust-model.md). Arity is guaranteed by the checked term.
+      return ReprType(kind: repOpaque,
+                      hostType: copyNimTree(m.nimType))
     raise newException(CgUnsupported,
       "family outside the representation fragment")
   raise newException(CgUnsupported, "type outside the representation fragment")
@@ -927,30 +1075,169 @@ proc nimReprType*(rt: ReprType): NimNode =
   of repInt: ident"int"
   of repSeq: newTree(nnkBracketExpr, ident"seq", ident"int")
   of repOption: newTree(nnkBracketExpr, ident"Option", ident"int")
+  of repOpaque: copyNimTree(rt.hostType)
+  of repSigma:
+    # The host tuple of the component representations. `nnkTupleConstr`
+    # matches what the wrapper layer's `runtimeNimType` produces for `Sig`,
+    # so the identity-boundary check compares like with like.
+    var tup = newNimNode(nnkTupleConstr)
+    for f in rt.sigmaFields: tup.add(nimReprType(f))
+    tup
 
 proc reprTypeName*(rt: ReprType): string =
-  ## The Nim type name for the wrapper identity-boundary check
-  ## (issue #330 v3): `int`, `seq[int]`, or `Option[int]`.
+  ## The Nim type name for the tier report (issue #386): `int`, `seq[int]`,
+  ## `Option[int]`, the declared host type, or the parenthesized host
+  ## tuple.
   case rt.kind
   of repInt: "int"
   of repSeq: "seq[int]"
   of repOption: "Option[int]"
+  of repOpaque: $rt.hostType
+  of repSigma: "(" & rt.sigmaFields.mapIt(reprTypeName(it)).join(", ") & ")"
+
+proc sameNimTypeName(a, b: NimNode): bool =
+  ## Structural equality of two Nim type ASTs for the wrapper
+  ## identity-boundary check: kinds must agree (`nnkIdent`/`nnkSym` are
+  ## interchangeable when they spell the same name), children recurse.
+  if a.isNil or b.isNil: return a.isNil and b.isNil
+  if a.kind in {nnkIdent, nnkSym} and b.kind in {nnkIdent, nnkSym}:
+    return $a == $b
+  if a.kind != b.kind or a.len != b.len: return false
+  if a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
+      nnkInt64Lit, nnkUIntLit..nnkUInt64Lit}:
+    return a.intVal == b.intVal
+  if a.kind == nnkStrLit: return a.strVal == b.strVal
+  for i in 0 ..< a.len:
+    if not sameNimTypeName(a[i], b[i]): return false
+  true
+
+proc nimTypeMatchesRepr*(n: NimNode, rt: ReprType): bool
+
+proc sigmaFieldsMatch(n: NimNode, fields: seq[ReprType]): bool =
+  for i in 0 ..< n.len:
+    let field = if n.kind == nnkTupleTy and n[i].kind == nnkIdentDefs:
+      n[i][^2] else: n[i]
+    if not nimTypeMatchesRepr(field, fields[i]): return false
+  true
+
+proc nimTypeMatchesRepr*(n: NimNode, rt: ReprType): bool =
+  ## Does the surface Nim type AST denote the repr-tier representation?
+  ## Structural match (issue #330 v3, extended by #401): the wrapper
+  ## identity-boundary check compares the declared formals/result against
+  ## the repr signature threaded through `compileBlockProcs`, so a wrapper
+  ## whose surface types disagree with the compiled repr proc keeps the
+  ## Value path instead of mis-calling it.
+  case rt.kind
+  of repInt:
+    n.kind in {nnkIdent, nnkSym} and $n == "int"
+  of repSeq:
+    n.kind == nnkBracketExpr and n.len == 2 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "seq" and
+      n[1].kind in {nnkIdent, nnkSym} and $n[1] == "int"
+  of repOption:
+    n.kind == nnkBracketExpr and n.len == 2 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Option" and
+      n[1].kind in {nnkIdent, nnkSym} and $n[1] == "int"
+  of repOpaque:
+    sameNimTypeName(n, rt.hostType)
+  of repSigma:
+    # The wrapper layer renders `Sig` as an `nnkTupleConstr`; named-field
+    # `nnkTupleTy` spellings of the same tuple also match structurally.
+    (n.kind == nnkTupleConstr or n.kind == nnkTupleTy) and
+      n.len == rt.sigmaFields.len and sigmaFieldsMatch(n, rt.sigmaFields)
+
+proc reprSigOfType*(ctx: CodegenCtx, ty: Term): seq[ReprType] =
+  ## Representation types of a Pi telescope's binder domains (outermost
+  ## first), followed by the result type. Quantity-0 binders are erased
+  ## from the host signature. Raises CgUnsupported when anything else is
+  ## outside the fragment.
+  var t = ty
+  while t != nil and t.kind == tPi:
+    if t.qty != q0:
+      # Issue #386: a binder domain outside the representation fragment
+      # keeps the established "non-atomic binder domain" diagnostic.
+      # Issue #401: chain the underlying reason instead of discarding it,
+      # so the report names the real cause.
+      try: result.add(ctx.reprTypeOf(t.dom))
+      except CgUnsupported as e:
+        raise newException(CgUnsupported,
+          "non-atomic binder domain (" & e.msg & ")")
+    t = t.scope.bdy
+  result.add(ctx.reprTypeOf(t))
 
 proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprType] =
   ## Representation types of the def's Pi-binder domains (outermost
   ## first), followed by the result type. Quantity-0 binders are erased
   ## from the host signature. Raises CgUnsupported when anything else is
   ## outside the fragment.
-  var t = d.tyTm
-  while t != nil and t.kind == tPi:
-    if t.qty != q0:
-      # Issue #386: a binder domain outside the representation fragment
-      # keeps the established "non-atomic binder domain" diagnostic.
-      try: result.add(ctx.reprTypeOf(t.dom))
-      except CgUnsupported:
-        raise newException(CgUnsupported, "non-atomic binder domain")
-    t = t.scope.bdy
-  result.add(ctx.reprTypeOf(t))
+  ctx.reprSigOfType(d.tyTm)
+
+proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
+                             globals: Globals):
+    tuple[runtimeDefs: seq[ElabDef],
+          compileTimeOnly: Table[string, string]] =
+  ## Issue #401: split the `requireCompiled` definition closure into the
+  ## runtime closure (definitions whose code may execute) and
+  ## compile-time-only definitions (type-level computation never evaluated
+  ## at runtime, e.g. the `Session`-valued protocol constructors, which are
+  ## referenced only from type positions and never from runtime term
+  ## positions after erasure). Returns the runtime definitions plus the
+  ## compile-time-only names with the reason each was excluded.
+  ##
+  ## The runtime closure seeds from local definitions with representable
+  ## types — only those can a runtime caller (compiled code or a Nim
+  ## wrapper) invoke — and follows runtime references through erased
+  ## bodies, skipping type positions. A definition is compile-time-only
+  ## when no runtime definition references it from a runtime term position.
+  ## Erasure failures fall back to the unerased body (conservative: every
+  ## reference counts as a runtime reference).
+  var defsByRefId = initTable[int, ElabDef]()
+  for d in allDefs:
+    if d.name in globals and not globals[d.name].tm.isNil and
+        globals[d.name].tm.kind == tR and globals[d.name].tm.refIsDefn:
+      defsByRefId[globals[d.name].tm.refId] = d
+  var included = initTable[int, bool]()
+  var pending: seq[int] = @[]
+  var compileTimeOnly = initTable[string, string]()
+  for d in localDefs:
+    if d.name in globals and not globals[d.name].tm.isNil and
+        globals[d.name].tm.kind == tR and globals[d.name].tm.refIsDefn:
+      let refId = globals[d.name].tm.refId
+      try:
+        discard ctx.reprSigOfType(d.tyTm)
+      except CgUnsupported as e:
+        # Type-level definition: no host values can flow through it, so no
+        # runtime body can call it. Excluded from the runtime closure.
+        compileTimeOnly[d.name] = e.msg
+        continue
+      if not included.getOrDefault(refId, false):
+        included[refId] = true
+        pending.add(refId)
+  var cursor = 0
+  while cursor < pending.len:
+    let refId = pending[cursor]
+    inc cursor
+    if refId notin defsByRefId: continue
+    let d = defsByRefId[refId]
+    if d.tmTm.isNil: continue
+    var body: Term
+    try: body = eraseQ0Arguments(d.tmTm)
+    except ValueError: body = d.tmTm
+    var acc = initTable[int, bool]()
+    collectRuntimeRefIds(body, acc)
+    for dependencyId in acc.keys:
+      if dependencyId in defsByRefId and
+          not included.getOrDefault(dependencyId, false):
+        included[dependencyId] = true
+        pending.add(dependencyId)
+  var runtimeDefs: seq[ElabDef] = @[]
+  for d in allDefs:
+    if d.name in globals and not globals[d.name].tm.isNil and
+        globals[d.name].tm.kind == tR and
+        included.getOrDefault(globals[d.name].tm.refId, false):
+      runtimeDefs.add(d)
+  (runtimeDefs, compileTimeOnly)
+
 
 proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode  # forward
 proc cgReprElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
@@ -991,10 +1278,17 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       return cgReprElim(ctx, rh, appArgs, env)
     if rh.kind == cgkCtor:
       return cgReprCtor(ctx, rh, appArgs, env)
-    if rh.kind == cgkDefn and head.refId in ctx.reprProcs:
+    if rh.kind in {cgkDefn, cgkPostulate} and head.refId in ctx.reprProcs:
+      # Issue #401: a bound postulate with an emitted forwarder (see
+      # `compilePostulateProcRepr`) is called directly, like a compiled
+      # definition. A postulate without a forwarder stays outside the
+      # fragment (the caller falls back to the Phase 1 backend).
+      let qtys = if rh.kind == cgkPostulate:
+        ctx.reprPostulateQtys.getOrDefault(head.refId, @[])
+      else: rh.piQuantities
       var args: seq[NimNode] = @[]
       var argIdx = 0
-      for qty in rh.piQuantities:
+      for qty in qtys:
         if argIdx >= appArgs.len: break
         if qty != q0:
           args.add(cgRepr(ctx, appArgs[argIdx], env))
@@ -1825,7 +2119,9 @@ proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       raise newException(CgUnsupported,
         "reference id " & $t.refId & " not in codegen scope")
     let r = ctx.refs[t.refId]
-    if r.kind == cgkDefn and t.refId in ctx.reprProcs:
+    if r.kind in {cgkDefn, cgkPostulate} and t.refId in ctx.reprProcs:
+      # Issue #401: postulates with an emitted forwarder resolve like
+      # compiled definitions; the enclosing `tApp` emits the direct call.
       let rp = ctx.reprProcs[t.refId]
       if rp.arity == 0:
         newCall(ident(rp.name))
@@ -1859,6 +2155,14 @@ proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
     blk
   of tApp:
     cgReprApp(ctx, t, env)
+  of tFst:
+    # Issue #401: a `Sig` value is the host tuple of its components, so
+    # `fst`/`snd` are tuple projections.
+    let sub = cgRepr(ctx, t.sub, env)
+    newTree(nnkBracketExpr, sub, newLit(0))
+  of tSnd:
+    let sub = cgRepr(ctx, t.sub, env)
+    newTree(nnkBracketExpr, sub, newLit(1))
   else:
     raise newException(CgUnsupported,
       "term kind outside the representation fragment")
@@ -1888,6 +2192,16 @@ proc collectTVarIndices(t: Term, acc: var Table[int, bool]) =
   of tPrim:
     collectTVarIndices(t.primTy, acc)
   else: discard
+
+proc reprTypeHasLiveVector(rt: ReprType): bool =
+  ## Does the representation contain a length-checked `Vec` anywhere,
+  ## including inside a `Sig`? The entry length check is emitted only for
+  ## top-level `Vec` parameters; a `Vec` nested in a tuple parameter has
+  ## no check site, so it is honestly rejected (issue #401).
+  case rt.kind
+  of repSeq: rt.isVector
+  of repSigma: rt.sigmaFields.anyIt(reprTypeHasLiveVector(it))
+  else: false
 
 proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
                         locFile: string, locLine: int,
@@ -1942,6 +2256,13 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
         return nil
       let rt = sig[sigIdx]
       inc sigIdx
+      if rt.kind == repSigma and reprTypeHasLiveVector(rt):
+        # A `Vec` nested in a tuple parameter has no entry-check site
+        # (checks are emitted per top-level `Vec` parameter only); reject
+        # honestly rather than skip the interpreter's length validation.
+        failureReason =
+          "Vec length inside a Sigma parameter has no entry check site"
+        return nil
       let psym = genSym(nskParam, "cgReprArg" & $params.len)
       params.add(psym)
       paramTypes.add(nimReprType(rt))
@@ -2024,28 +2345,79 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
   procNode.add(bodyStmts)
   procNode
 
+proc compilePostulateProcRepr(postulateName: string, ty: Term,
+                              binding: PostulateReprBinding,
+                              ctx: var CodegenCtx,
+                              locFile: string, locLine: int,
+                              failureReason: var string): NimNode =
+  ## Emit a representation-tier forwarder for a host-bound postulate:
+  ## `proc eponymCompiledRepr_<name>*(p1: T1, ...): R = hostImpl(p1, ...)`.
+  ## The boundary is the identity (issue #401): every formal and the
+  ## result are already the host representations, so the host procedure is
+  ## called directly with no `Value` allocated and no codec run. A `Sig`
+  ## result is the host tuple the bound procedure returns.
+  ##
+  ## Returns nil when the postulate's type is outside the representation
+  ## fragment, or when the representable arity disagrees with the binding's
+  ## declared argument count (callers then keep the Phase 1 backend).
+  ## Quantity-0 binders have no Nim formal parameters.
+  let sig =
+    try: ctx.reprSigOfType(ty)
+    except CgUnsupported as e:
+      failureReason = e.msg
+      return nil
+  if sig.len - 1 != binding.argCount:
+    failureReason = "postulate '" & postulateName & "' has " &
+      $(sig.len - 1) & " representable arguments but its host binding " &
+      "declares " & $binding.argCount
+    return nil
+  var formal = newNimNode(nnkFormalParams)
+  formal.add(nimReprType(sig[^1]))
+  var argSyms: seq[NimNode] = @[]
+  for rt in sig[0 ..< sig.len - 1]:
+    let psym = genSym(nskParam, "cgReprPostArg" & $argSyms.len)
+    formal.add(newIdentDefs(psym, nimReprType(rt), newEmptyNode()))
+    argSyms.add(psym)
+  var call = newCall(copyNimTree(binding.implementation))
+  for s in argSyms: call.add(s)
+  var procNode = newNimNode(nnkProcDef)
+  procNode.add(newTree(nnkPostfix, ident"*", ident(cgReprName(postulateName))))
+  procNode.add(newEmptyNode())
+  procNode.add(newEmptyNode())
+  procNode.add(formal)
+  procNode.add(newEmptyNode())
+  procNode.add(newEmptyNode())
+  procNode.setLineInfo(LineInfo(filename: locFile, line: locLine, column: 0))
+  procNode.add(call)
+  procNode
+
 proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
                         baseDir, src, locFile: string,
                         userLines: Table[string, int],
-                        runtimeTypes: seq[HostRuntimeType] = @[]):
+                        runtimeTypes: seq[HostRuntimeType] = @[],
+                        postulateReprs: seq[PostulateReprBinding] = @[]):
     tuple[procs: seq[NimNode], compiled: Table[string, string],
           compiledRepr: Table[string, string],
-          reprTypes: Table[string, seq[string]],
+          reprTypes: Table[string, seq[ReprType]],
           report: Table[string, CodegenReportEntry]] =
   ## Compile every eligible block-local definition, in dependency order.
   ## Returns the emitted procs, the def-name -> Phase-1 proc-name table for
   ## wrapper rerouting, the def-name -> repr-tier proc-name table, the
-  ## def-name -> repr-tier Nim type names (params then result, e.g.
-  ## `@["int", "seq[int]", "seq[int]"]`) for the wrapper identity-boundary
-  ## check (issue #330 v3), and the per-definition codegen report
-  ## (emitted tier + why the next tier was unavailable, issue #386).
+  ## def-name -> repr-tier representations (params then result) for the
+  ## wrapper identity-boundary check (issue #330 v3, extended by #401),
+  ## and the per-definition codegen report (emitted tier + why the next
+  ## tier was unavailable, issue #386).
   ## Emission order: eliminator forward declarations, Phase-1 definition
-  ## bodies (callees first), repr-tier bodies (callees first, same order),
-  ## eliminator bodies.
+  ## bodies, postulate forwarders, repr-tier bodies (callees first, same
+  ## order), eliminator bodies.
   ## `runtimeTypes` is the block's codec mapping (issue #330 representation
   ## spec); the emitter consults it to compile bodies against host
   ## representations. Definitions outside any representation keep the
   ## Phase 1 Value backend.
+  ## `postulateReprs` (issue #401) are the block's host-bound postulates;
+  ## each representable one gets an `eponymCompiledRepr_<name>` forwarder
+  ## calling the host procedure directly, so in-body calls from repr-tier
+  ## definitions never touch the interpreter.
   var ctx = buildCodegenCtx(globals, baseDir, src, runtimeTypes)
   var bakedIds = initTable[int, string]()
   for refId, cgRef in ctx.refs.pairs:
@@ -2057,7 +2429,7 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   validateBakedRefIds(globals, bakedIds)
   result = (procs: @[], compiled: initTable[string, string](),
             compiledRepr: initTable[string, string](),
-            reprTypes: initTable[string, seq[string]](),
+            reprTypes: initTable[string, seq[ReprType]](),
             report: initTable[string, CodegenReportEntry]())
   detectBadElims(ctx)
   var defRefIds = initTable[string, int]()
@@ -2149,8 +2521,40 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   # back to the Phase 1 backend — no cascade needed. Pre-assignment is per
   # definition (not all-at-once) so a later failure can never strand an
   # already-emitted caller referencing a missing proc.
+  #
+  # Issue #401: postulate forwarders come first. A bound postulate whose
+  # type is fully within the representation fragment gets an
+  # `eponymCompiledRepr_<name>` forwarder calling the host procedure
+  # directly; in-body calls from repr-tier definitions then avoid the
+  # interpreter entirely. Postulates without a representable type (or
+  # without a binding) keep the Phase 1 backend.
   var reprBodies: seq[NimNode] = @[]
   var reprFailures = initTable[string, string]()
+  for binding in postulateReprs:
+    if binding.postulateName notin globals: continue
+    let entry = globals[binding.postulateName]
+    if entry.tm.isNil or entry.tm.kind != tR: continue
+    let refId = entry.tm.refId
+    if refId notin ctx.refs or ctx.refs[refId].kind != cgkPostulate: continue
+    var failureReason = ""
+    let procNode = compilePostulateProcRepr(binding.postulateName, entry.ty,
+      binding, ctx, locFile, userLines.getOrDefault(binding.postulateName, 1),
+      failureReason)
+    if procNode.isNil:
+      result.report[binding.postulateName] = CodegenReportEntry(
+        tier: cgtValue,
+        reason: "Phase 2 unavailable: " & failureReason, slowPaths: @[])
+    else:
+      let fwdName = cgReprName(binding.postulateName)
+      # The forwarder just succeeded, so the signature is representable.
+      let sig = ctx.reprSigOfType(entry.ty)
+      ctx.reprProcs[refId] = (name: fwdName, arity: sig.len - 1)
+      ctx.reprPostulateQtys[refId] = piQuantities(entry.ty)
+      reprBodies.add(procNode)
+      result.report[binding.postulateName] = CodegenReportEntry(
+        tier: cgtRepr,
+        reason: "Phase 2 representation-tier host forwarder emitted",
+        slowPaths: @[])
   for name in order:
     var d: ElabDef
     for cand in defs:
@@ -2174,10 +2578,7 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     else:
       reprBodies.add(procNode)
       result.compiledRepr[name] = cgReprName(name)
-      var typeNames: seq[string] = @[]
-      for rt in sig:
-        typeNames.add(reprTypeName(rt))
-      result.reprTypes[name] = typeNames
+      result.reprTypes[name] = sig
   # Summarize the best emitted tier and why the next tier was unavailable.
   for d in defs:
     var entry = CodegenReportEntry(tier: cgtInterpreter,
@@ -2192,8 +2593,11 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       entry.tier = cgtRepr
       entry.reason = "Phase 2 representation code emitted"
     if d.name in erasedTerms:
+      # Issue #401: slow paths are runtime calls to uncompiled definitions;
+      # references from type positions (binder domains, `let` types) are
+      # never evaluated, so only runtime references count.
       var ids = initTable[int, bool]()
-      collectRefIds(erasedTerms[d.name], ids)
+      collectRuntimeRefIds(erasedTerms[d.name], ids)
       var seenSlowPaths = initTable[string, bool]()
       for refId in ids.keys:
         if refId in ctx.refs and ctx.refs[refId].kind == cgkDefn and

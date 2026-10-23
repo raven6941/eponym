@@ -3317,26 +3317,6 @@ proc runtimePiValueSlots(globals: Globals, defName: string,
   if i != wrapperNames.len:
     result.aligned = false
 
-proc nimTypeMatchesRepr(n: NimNode, want: string): bool =
-  ## Does the surface Nim type AST denote the repr-tier type name
-  ## (`int`, `seq[int]`, or `Option[int]`)? Structural match: the wrapper
-  ## identity-boundary check (issue #330 v3) compares the declared
-  ## formals/result against the repr signature threaded through
-  ## `compileBlockProcs`, so a `seq[int]` wrapper never calls an `int`
-  ## repr proc.
-  case want
-  of "int":
-    n.kind in {nnkIdent, nnkSym} and $n == "int"
-  of "seq[int]":
-    n.kind == nnkBracketExpr and n.len == 2 and
-      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "seq" and
-      n[1].kind in {nnkIdent, nnkSym} and $n[1] == "int"
-  of "Option[int]":
-    n.kind == nnkBracketExpr and n.len == 2 and
-      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Option" and
-      n[1].kind in {nnkIdent, nnkSym} and $n[1] == "int"
-  else: false
-
 proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          bindings: seq[HostPostulateBinding],
                          mappings: seq[HostRuntimeType],
@@ -3346,8 +3326,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          compiled: Table[string, string],
                          compiledRepr: Table[string, string] =
                            initTable[string, string](),
-                         compiledReprTypes: Table[string, seq[string]] =
-                           initTable[string, seq[string]](),
+                         compiledReprTypes: Table[string, seq[ReprType]] =
+                           initTable[string, seq[ReprType]](),
                          requireCompiled = false): NimNode =
   ## Emit concrete Nim wrappers for first-order types, including generic type
   ## variables represented as opaque host boxes.
@@ -3451,9 +3431,10 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   # Issue #330: when the definition has a representation-specialized proc
   # and the wrapper boundary is the identity (every formal and the result
   # are already the host representation — v1: `int`; v3: `int`,
-  # `seq[int]`, `Option[int]`), call it directly with the host arguments.
+  # `seq[int]`, `Option[int]`; issue #401 adds opaque host types and host
+  # tuples for dependent `Sig`), call it directly with the host arguments.
   # No Value is allocated and no codec runs. The declared formals/result
-  # are compared against the repr signature threaded through
+  # are compared structurally against the repr signature threaded through
   # `compileBlockProcs` (`compiledReprTypes`), not just shape-checked, so
   # a wrapper whose surface types disagree with the compiled repr proc
   # keeps the Value path instead of mis-calling it.
@@ -4017,42 +3998,6 @@ proc rawRuntimeValueWrapper(baseDir, src, defName: string,
   result.add(newEmptyNode())
   result.add(body)
 
-proc reachableDefinitionClosure(localDefs, allDefs: seq[ElabDef],
-                                globals: Globals): seq[ElabDef] =
-  ## Include imported checked definitions referenced transitively by this
-  ## block. Used by requireCompiled so direct representation calls can cross
-  ## `.ep` module boundaries without runtime elaboration or interpreter calls.
-  var defsByRefId = initTable[int, ElabDef]()
-  for d in allDefs:
-    if d.name in globals and not globals[d.name].tm.isNil and
-        globals[d.name].tm.kind == tR and globals[d.name].tm.refIsDefn:
-      defsByRefId[globals[d.name].tm.refId] = d
-  var included = initTable[int, bool]()
-  var pending: seq[int] = @[]
-  for d in localDefs:
-    if d.name in globals and not globals[d.name].tm.isNil and
-        globals[d.name].tm.kind == tR and globals[d.name].tm.refIsDefn:
-      let refId = globals[d.name].tm.refId
-      if not included.getOrDefault(refId, false):
-        included[refId] = true
-        pending.add(refId)
-  var cursor = 0
-  while cursor < pending.len:
-    let refId = pending[cursor]
-    inc cursor
-    if refId notin defsByRefId: continue
-    let d = defsByRefId[refId]
-    for dependencyId in collectReferencedRefIds(d.tmTm):
-      if dependencyId in defsByRefId and
-          not included.getOrDefault(dependencyId, false):
-        included[dependencyId] = true
-        pending.add(dependencyId)
-  for d in allDefs:
-    if d.name in globals and not globals[d.name].tm.isNil and
-        globals[d.name].tm.kind == tR and
-        included.getOrDefault(globals[d.name].tm.refId, false):
-      result.add(d)
-
 macro eponymBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
@@ -4339,11 +4284,35 @@ macro eponymBlock*(body: untyped): untyped =
         userLine = lineInfoObj(st).line
         break
     cgUserLines[d.name] = userLine
+  # Issue #401: split the requireCompiled closure into the runtime closure
+  # (definitions whose code may execute) and compile-time-only definitions
+  # (type-level computation, e.g. `Session`-valued protocol constructors).
+  # The runtime closure seeds from local definitions with representable
+  # types and follows runtime references through erased bodies; the
+  # compile-time-only set is excluded from compilation and wrapper
+  # generation alike.
+  var compileTimeOnlyDefs = initTable[string, string]()
   let codegenDefs = if requireCompiled:
-    reachableDefinitionClosure(defs, allDefs, checkedGlobals)
-    else: defs
+    let closureCtx = buildCodegenCtx(checkedGlobals, baseDir, src,
+      runtimeTypes)
+    let closure = classifyRuntimeClosure(closureCtx, defs, allDefs,
+      checkedGlobals)
+    compileTimeOnlyDefs = closure.compileTimeOnly
+    closure.runtimeDefs
+  else: defs
+  # Issue #401: host-bound postulates whose types are fully within the
+  # representation fragment get direct-call forwarders, so repr-tier
+  # bodies never route postulate calls through the interpreter.
+  var postulateReprs: seq[PostulateReprBinding] = @[]
+  for binding in bindings:
+    if binding.rawValue or binding.mutableArgs: continue
+    let argCount = if binding.pairResult: binding.pairArgCount
+                   else: binding.eponymTypes.len - 1
+    postulateReprs.add(PostulateReprBinding(
+      postulateName: binding.postulateName,
+      implementation: binding.implementation, argCount: argCount))
   let cgBlock = compileBlockProcs(codegenDefs, checkedGlobals, baseDir, src,
-    cgLocFile, cgUserLines, runtimeTypes)
+    cgLocFile, cgUserLines, runtimeTypes, postulateReprs)
 
   if requireCompiled:
     for d in codegenDefs:
@@ -4358,6 +4327,13 @@ macro eponymBlock*(body: untyped): untyped =
 
   when defined(eponymCodegenReport):
     for d in defs:
+      if d.name in compileTimeOnlyDefs:
+        # Issue #401: type-level definitions never reach a backend; say
+        # why they were excluded instead of reporting a fallback tier.
+        echo "[eponym codegen] " & d.name &
+          ": compile-time-only — " & compileTimeOnlyDefs[d.name] &
+          "; excluded from the requireCompiled runtime closure"
+        continue
       let entry = cgBlock.report.getOrDefault(d.name)
       let tierName = case entry.tier
         of cgtInterpreter: "interpreter fallback"
@@ -4368,6 +4344,11 @@ macro eponymBlock*(body: untyped): untyped =
       if entry.slowPaths.len > 0:
         echo "[eponym codegen]   runtime slow paths: " &
           entry.slowPaths.join(", ")
+    for binding in postulateReprs:
+      let entry = cgBlock.report.getOrDefault(binding.postulateName)
+      if entry.tier == cgtRepr:
+        echo "[eponym codegen] " & binding.postulateName &
+          ": Phase 2 representation backend — " & entry.reason
 
   result = newStmtList()
   let dirLit = newLit(baseDir)
@@ -4377,6 +4358,12 @@ macro eponymBlock*(body: untyped): untyped =
          ($p[0][1]).startsWith("eponymCompiledRepr_")):
       result.add(p)
   for d in defs:
+    if d.name in compileTimeOnlyDefs:
+      # Issue #401: type-level definitions have no runtime denotation —
+      # no Nim proc takes or returns their unrepresentable types — so no
+      # wrapper is emitted. Referencing one from Nim is a compile error,
+      # which is honest: there is nothing to call.
+      continue
     let srcLit = newLit(src)
     let nameLit = newLit(d.name)
     var procDecl: NimNode = nil
