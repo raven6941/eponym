@@ -44,8 +44,11 @@ macro differentialBlockRepr(src: static string, srcFile: static string): untyped
     srcFile, userLines, mappings)
   if cgBlock.report["fortyTwo"].tier != cgtRepr or
       cgBlock.report["higher"].tier != cgtValue or
-      not cgBlock.report["higher"].reason.contains("non-atomic binder domain"):
-    error("codegen report should distinguish Phase 2 and Phase 1 fallback")
+      not cgBlock.report["higher"].reason.contains("non-atomic binder domain") or
+      cgBlock.report["addN3"].tier != cgtRepr or
+      cgBlock.report["chooseOr"].tier != cgtRepr:
+    error("codegen report should distinguish Phase 2 and Phase 1 fallback, " &
+      "and put let-bound partial eliminators at the repr tier (issue #407)")
   result = newStmtList()
   for p in cgBlock.procs:
     result.add(p)
@@ -115,6 +118,10 @@ proc natDouble (n : Nat) : Nat =
   natElim (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). suc (suc ih)) n
 proc isZero (n : Nat) : Bool =
   natElim (lam (u : Nat). Bool) true (lam (p : Nat). lam (ih : Bool). false) n
+proc addN3 (n : Nat) : Nat =
+  let add3 = natElim (lam (u : Nat). Nat) (suc (suc (suc zero))) (lam (p : Nat). lam (ih : Nat). suc ih) in add3 n
+proc chooseOr (a : Bool) (b : Bool) : Nat =
+  let choose = boolElim (lam (u : Bool). Nat) (suc zero) zero in natAdd (choose a) (choose b)
 proc notb (b : Bool) : Bool =
   boolElim (lam (u : Bool). Bool) false true b
 proc andb (a : Bool) (b : Bool) : Bool =
@@ -247,6 +254,7 @@ proc checkReprNat(name: string, args: seq[int], expected: int) =
     of "natMul": eponymCompiledRepr_natMul(args[0], args[1])
     of "natDouble": eponymCompiledRepr_natDouble(args[0])
     of "stepFn2": eponymCompiledRepr_stepFn2(args[0], args[1])
+    of "addN3": eponymCompiledRepr_addN3(args[0])
     else: raise newException(ValueError, "unknown repr def " & name)
   expect(got == expected,
     name & " repr computes " & $expected & " on " & $args)
@@ -262,6 +270,7 @@ proc checkReprNat(name: string, args: seq[int], expected: int) =
     of "natMul": eponymCompiled_natMul(argVals, bnd)
     of "natDouble": eponymCompiled_natDouble(argVals, bnd)
     of "stepFn2": eponymCompiled_stepFn2(argVals, bnd)
+    of "addN3": eponymCompiled_addN3(argVals, bnd)
     else: raise newException(ValueError, "unknown phase-1 def " & name)
   expect(valueToNat(got1, natGlobals) == expected,
     name & " phase-1 agrees")
@@ -299,6 +308,25 @@ for (x, y) in [(3, 4), (0, 7), (5, 5)]:
   checkReprNat("natMul", @[x, y], x * y)
 for x in [0, 1, 21]:
   checkReprNat("natDouble", @[x], 2 * x)
+for x in [0, 1, 21]:
+  checkReprNat("addN3", @[x], x + 3)
+# chooseOr: Bool arguments (1 = true), Nat result — the partially-applied
+# boolElim is let-bound, stored, and called twice (issue #407 slice 2).
+for (a, b) in [(1, 1), (1, 0), (0, 1), (0, 0)]:
+  let expectedChoose = (if a != 0: 1 else: 0) + (if b != 0: 1 else: 0)
+  let gotChoose = eponymCompiledRepr_chooseOr(a, b)
+  expect(gotChoose == expectedChoose,
+    "chooseOr repr computes " & $expectedChoose)
+  let chooseArgs = @[boolToValue(a != 0, natGlobals),
+                     boolToValue(b != 0, natGlobals)]
+  let chooseBnd = testPostulateBindings()
+  let wantChoose = callValueFuncDir("", prog, "chooseOr", chooseArgs,
+    chooseBnd)
+  expect(valueToNat(wantChoose, natGlobals) == expectedChoose,
+    "chooseOr interpreter agrees")
+  let got1Choose = eponymCompiled_chooseOr(chooseArgs, chooseBnd)
+  expect(valueToNat(got1Choose, natGlobals) == expectedChoose,
+    "chooseOr phase-1 agrees")
 for (x, y) in [(3, 4), (0, 0)]:
   checkReprNat("stepFn2", @[x, y], x + y + 1)
 for x in [1, 0]:
@@ -308,7 +336,7 @@ for (x, y) in [(1, 1), (1, 0), (0, 1), (0, 0)]:
 for x in [0, 1, 42]:
   checkReprBool("isZero", @[x], if x == 0: 1 else: 0)
 for name in ["natZero", "natSeven", "natAdd", "natMul", "natDouble",
-    "isZero", "notb", "andb", "stepFn2"]:
+    "isZero", "notb", "andb", "stepFn2", "addN3", "chooseOr"]:
   expect(name in reprCompiledNames(), name & " has a repr proc")
 for name in ["stepFn", "q0Prefix", "q0Call", "q0Middle",
     "q0MiddleCall"]:
@@ -565,3 +593,59 @@ when isMainModule:
     for y in [-3, 0, 9]:
       expect(wAdd(x, y) == x + y, "e2e wAdd agrees with (+)")
   echo "all Phase 2 end-to-end wrapper checks passed"
+
+# --- issue #407 slice 2: repr-tier typed closures for partial eliminators ---
+# A partial application missing its case arguments (here the natElim step
+# case) is honestly rejected by the repr tier with a named diagnostic and
+# falls back to the Phase-1 backend (which eta-expands it as a Value
+# closure); a requireCompiled-style all-repr check accepts a block whose
+# only partial eliminators have their case arguments present.
+macro checkElimClosureTiers(src: static string): untyped =
+  let checked = elabCheckDirStateAll(src, "")
+  var userLines = initTable[string, int]()
+  for d in checked.defs: userLines[d.name] = 1
+  proc intMappingFor(eponymName: string): HostRuntimeType =
+    HostRuntimeType(eponymName: eponymName, nimType: ident"int",
+      isRuntimeVector: false, isRuntimeList: false, isRuntimeOption: false,
+      isRuntimeVariant: false, isRuntimeCodec: false,
+      isGenericTypeWitnessable: true, encoder: nil, decoder: nil)
+  let mappings = @[intMappingFor("Int"), intMappingFor("Nat"),
+                   intMappingFor("Bool"),
+                   HostRuntimeType(eponymName: "List", nimType: ident"seq",
+      isRuntimeVector: false, isRuntimeList: true, isRuntimeOption: false,
+      isRuntimeVariant: false, isRuntimeCodec: false,
+      isGenericTypeWitnessable: true, encoder: nil, decoder: nil)]
+  let cgBlock = compileBlockProcs(checked.defs, checked.globals, "", src,
+    currentSourcePath(), userLines, mappings)
+  if cgBlock.report["missingStep"].tier != cgtValue or
+      not cgBlock.report["missingStep"].reason.contains("step case"):
+    error("missingStep should fall back to Phase 1 with the named #407 " &
+      "diagnostic (got tier " & $cgBlock.report["missingStep"].tier &
+      " reason: " & cgBlock.report["missingStep"].reason & ")")
+  for name in ["closedNat", "closedBool", "closedList"]:
+    if cgBlock.report[name].tier != cgtRepr:
+      error(name & " should be repr-tier (typed eliminator closure); " &
+        "reason: " & cgBlock.report[name].reason)
+  result = newStmtList()
+
+const closureSrc = """
+data Nat : Type 0 where
+| zero : Nat
+| suc (n : Nat) : Nat
+data Bool : Type 0 where
+| true : Bool
+| false : Bool
+data List (A : Type 0) : Type 0 where
+| nil : List A
+| cons (x : A) (xs : List A) : List A
+proc closedNat (n : Nat) : Nat =
+  let add3 = natElim (lam (u : Nat). Nat) (suc (suc (suc zero))) (lam (p : Nat). lam (ih : Nat). suc ih) in add3 n
+proc closedBool (b : Bool) : Nat =
+  let isT = boolElim (lam (u : Bool). Nat) (suc zero) zero in isT b
+proc closedList (xs : List Nat) : Nat =
+  let count = listElim Nat (lam (u : List Nat). Nat) zero (lam (x : Nat). lam (tl : List Nat). lam (ih : Nat). suc ih) in count xs
+proc missingStep (n : Nat) : Nat =
+  let noStep = natElim (lam (u : Nat). Nat) zero in noStep (lam (p : Nat). lam (ih : Nat). suc ih) n
+"""
+checkElimClosureTiers(closureSrc)
+echo "all Phase 2 eliminator-closure checks passed"
