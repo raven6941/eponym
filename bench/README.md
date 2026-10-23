@@ -71,3 +71,30 @@ The ETT interpreter recurses per list element, so List workloads need
 The knob raises the debug-build safety rail only; it changes no
 semantics. Stack depth scaling with input size is a property of the
 interpreter worth knowing when reading the interpreter column.
+
+## Programs the suite does not time, and why (issue #432 slice 3)
+
+Issue #432 named four representatives: the DPS fold workloads (timed
+above), the definition-heavy program (timed above), the Paxos pipeline,
+and the DCP logistic-regression demo. The last two have no executable
+eponym program to time, so they appear here as explicit non-coverage
+rather than as rows. Absence of a driver is data, not an omission.
+
+- **Paxos** (`examples/embedded/paxos_session.nim`): the pipeline's
+  per-round work is loopback-TCP socket I/O (`runPaxosRound` blocks on
+  `recv` in every phase). Wall-clock on it would measure socket latency,
+  not generated-code quality — the interpreter and the repr backend would
+  differ by the noise floor of loopback, which says nothing about the
+  codegen story this suite exists to check. Correctness across paths is
+  covered by `tests/test_require_compiled_paxos.nim` (real TCP rounds
+  through the compiled wrappers). If Paxos ever grows an in-memory
+  variant, that variant belongs in this suite.
+- **DCP logistic regression** (`examples/embedded/convex_opt_vec.nim`):
+  the eponym block is proof layer only — datatypes, postulates, and proof
+  terms; it defines no executable functions (`grep 'def \|fn '` over the
+  block finds nothing). The executing logistic regression
+  (`lrProbRuntimeValue`) is plain Nim, outside the eponym execution
+  paths entirely, so there is no interpreter/Value/repr comparison to
+  make. The proof layer's measurement instrument is the compile-time
+  regression tracker (#376), not this suite. If the objective function is
+  ever written as an executable eponym program, that program belongs here.
