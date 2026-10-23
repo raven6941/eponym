@@ -81,12 +81,14 @@ Generated higher-order `Value` code uses nullary closures for q0 lambdas,
 while the interpreter retains unary closures and inert unit witnesses.
 
 **Inference** (issue #84). Unannotated binders do not default to
-unrestricted: each becomes a quantity variable solved from observed usage —
-zero relevant uses becomes erased (`0`), any use becomes unrestricted
-(`ω`); quantity `1` is never inferred. Explicit annotations override.
-Only term positions count as uses (domains, annotations, and motives do
-not), and a body that still mentions unsolved metavariables keeps the
-conservative `ω` (sound: only precision is lost, never correctness).
+unrestricted: zero relevant uses becomes erased (`0`), and any use becomes
+unrestricted (`ω`). Path-sensitive profiles can establish exactly-once use
+for supported branches, but quantity `1` inference remains disabled until
+generic type parameters are distinguished from runtime values by
+erased-argument checks. Unsupported branch shapes and bodies with unresolved
+metavariables stay conservative. Explicit annotations override inference.
+Only term positions count as uses (domains, annotations, and motives do not).
+Postulates have no body to analyze, so required quantities must be annotated.
 
 **Singleton types** (issue #74). Nat literals carry singleton types in
 type position (`(d : 2)` demands exactly `2`); the one-directional

@@ -305,12 +305,16 @@ implementations.
    higher-order recursive fields, and user-written case templates that
    compute with branch values rather than following generated data rules.
    These forms currently keep conservative sequential counting. Add generated
-   compile-time regressions for each newly supported eliminator shape. Do not
-   infer q1 until every runtime path is accounted for.
-- [ ] Decide quantity subsumption for q1 under Pi domains before enabling q1
-   inference. The rule must respect contravariance and pass both elaborator and
-   independent kernel checks; the existing inferred-q0-to-qOmega exception
-   does not establish a general quantity subtyping rule.
+   compile-time regressions for each newly supported eliminator shape. They
+   remain conservative, so they cannot establish q1 inference.
+- [ ] Infer q1 only when supported path-sensitive usage profiles prove every
+   run-time path consumes a runtime value exactly once. Generated type
+   parameters still need classification so they are not treated as runtime
+   linear resources.
+- [x] Retain the sound quantity subsumption boundary: only q0 implementations
+   may satisfy qOmega Pi contracts; q1 remains exact. Keep Pi domains and
+   nominal constructor arguments exact because their variance is negative or
+   unknown.
 
 ### Ordered implementation stages
 

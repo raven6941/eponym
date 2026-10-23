@@ -340,6 +340,13 @@ proc varUsageProfile*(tm: Term): UsageProfile =
         else:
           usageThen(usageThen(strictProfile, go(choice.condition, depth)),
                    caseProfile)
+      elif t.fn.kind == tLam and t.arg.kind == tLam:
+        # Generated Nim `if` lowers through the polymorphic `ifThenElse`
+        # definition, whose two value arguments are lambda thunks. Applying
+        # the selected thunk evaluates exactly one branch; analyze those
+        # alternatives as a choice, not as two sequential argument uses.
+        usageChoice([go(t.fn.scope.bdy, depth + 1),
+                     go(t.arg.scope.bdy, depth + 1)])
       elif choice.unsupportedChoice:
         if containsVarAt(t, 0, depth): {ucZero, ucOnce, ucMany}
         else: {ucZero}

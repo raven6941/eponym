@@ -422,9 +422,17 @@ generated case rule is checked against its constructor fields and recursive
 calls before the analysis treats its cases as alternatives. Indexed recursive
 families, higher-order recursive fields, closure-valued result motives, and
 user-written eliminators still use conservative counting and can reject valid
-branch-dependent usage. Unannotated
-binders still do not infer quantity 1; quantity variance for q1 function
-types remains undecided.
+branch-dependent usage. Unannotated binders still do not infer quantity `1`.
+Although supported path profiles can prove exactly-once use, generated type
+parameters are currently treated like runtime values by erased-argument
+checks; enabling q1 inference would reject ordinary polymorphic code such as
+generic identity wrappers. A body with unresolved holes or an unsupported
+branch shape also stays conservative.
+
+An implementation with quantity `0` may satisfy a function contract with
+quantity `ω`; quantity `1` remains exact. Function domains and nominal type
+arguments are compared exactly. Postulates have no bodies to analyze, so
+write their required quantity explicitly.
 
 Quantitative checking already drives code generation where the
 representation choice follows the quantity: erasure (#328) and the

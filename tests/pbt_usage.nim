@@ -181,11 +181,17 @@ proc checkUsageChoices(): bool =
   let usedInBoth = usageChoice([{ucOnce}, {ucOnce}])
   let droppedOnOnePath = usageChoice([{ucOnce}, {ucZero}])
   let duplicatedInOnePath = usageChoice([{ucOnce}, {ucMany}])
+  let generatedBoth = usageChoice([{ucOnce}, {ucOnce}])
+  let generatedDrop = usageChoice([{ucOnce}, {ucZero}])
+  let generatedDuplicate = usageChoice([{ucOnce}, {ucMany}])
   usedInBoth == {ucOnce} and satisfiesQuantity(usedInBoth, q1) and
     droppedOnOnePath == {ucZero, ucOnce} and
     not satisfiesQuantity(droppedOnOnePath, q1) and
     duplicatedInOnePath == {ucOnce, ucMany} and
-    not satisfiesQuantity(duplicatedInOnePath, q1)
+    not satisfiesQuantity(duplicatedInOnePath, q1) and
+    usageCountSummary(generatedBoth) == 1 and
+    usageCountSummary(generatedDrop) > 1 and
+    usageCountSummary(generatedDuplicate) > 1
 
 type
   UsageShapeKind = enum uskUse, uskSequential, uskChoice

@@ -506,14 +506,15 @@ In canonical surface text the spellings are `(1 x : T)` (linear),
 `(0 x : T)` (erased), `(q x : T)` (quantity variable, issue #66).
 
 **Inference (issue #84).** An unannotated binder gets its quantity inferred
-from usage: zero relevant uses becomes erased (`0`), any use becomes
-unrestricted (`ω`). Linearity (`1`) is never inferred — write
-`{.linear.}` / `(1 x : T)` wherever you need it — and explicit annotations
-always override inference. Only *term* positions count as uses: mentions in
-binder domains, type annotations, and eliminator motives neither consume a
-linear variable nor violate erasure. If the body still has unsolved
-metavariables when the count runs, the binder conservatively keeps `ω`
-(sound — only erasure/linearity *precision* is lost, never correctness).
+from usage: zero relevant uses becomes erased (`0`); any use becomes
+unrestricted (`ω`). Linearity (`1`) is not inferred yet: path-sensitive usage
+profiles can prove exactly-once use for supported branches, but generic type
+parameters are not yet distinguished from runtime values by erased-argument
+checks. Explicit annotations always override inference. Only *term* positions
+count as uses: mentions in binder domains, type annotations, and eliminator
+motives neither consume a linear variable nor violate erasure. Postulates
+have no body to analyze, so annotate their quantity when the API requires
+linear use.
 
 ### Natural numbers
 

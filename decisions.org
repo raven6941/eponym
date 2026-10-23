@@ -3143,8 +3143,11 @@
   analysis is the shared mechanism.
   Decision: unannotated binders parse to fresh quantity variables
   (`#q<N>`, `#` is not an identifier char so they cannot collide with
-  user-written names); `enforceBinderQty` solves them from the use count —
-  0 relevant uses -> q0 (erasure), otherwise -> qOmega — and never q1.
+  user-written names); `enforceBinderQty` solves them from the usage profile —
+  0 relevant uses -> q0 (erasure), otherwise -> qOmega. The path-profile
+  analyzer can identify exactly-once use across supported branches, but
+  generated q1 inference is deferred until type-level parameters are
+  distinguished from runtime values in erased-argument checks.
   Explicit annotations (0/1/named qvar) override; user-written qvars keep
   the full 0/1/many rule.
   Usage-counting rules (usage_check.countVarUses, mirrors the #64
@@ -3168,15 +3171,11 @@
   is unreachable by construction: q0 is only solved from a meta-free
   body, and a meta-free body cannot gain occurrences later (substitution
   and unification never introduce new occurrences of the binder).
-  Why inferred qvars never infer q1: the kernel (#66) converts Pi binder
-  quantities *exactly*, so an inferred q1 would not convert against the
-  qOmega positions the existing corpus was written with (e.g. an inferred
-  `Pi (x:A)[q1]. A` against `vmap`'s `Pi (x:A)[qOmega]. A` domain).
-  Linearity inference is future work, pending either kernel quantity
-  subsumption or a quantity-precise corpus. Consequence, measured on the
-  corpus: all 20 manual quantity annotations are `(1 ...)` (9 in
-  examples/ep, 11 in lib/ postulates) and stay required — linearity is
-  never inferred, and postulates have no bodies to infer from. Stripping
+  Usage profiles preserve finite alternatives for Nim `if`, complete
+  generated finite eliminators, and supported unindexed first-order
+  recursive eliminators. Unsupported indexed/high-order shapes, user-written
+  eliminators, and unresolved metas stay conservative. Postulates have no
+  bodies to analyze, so their required quantities remain explicit. Stripping
   the example-level `(1 ...)` annotations breaks 3 of 7 neg-example
   rejection contracts outright (the rest still fail on types or via lib
   postulate linearity). Zero `(0 ...)`/`(ω ...)` annotations exist or are
@@ -3220,8 +3219,8 @@
   term-against-type checks inside elaborated types. Handler-evidence
   (LCF) and checkLemma audits stay exact: they audit untrusted/generated
   output, and strictness is the point there. Soundness: only
-  inferred-q0 vs expected-qOmega is subsumed; q1 and the reverse stay
-  rejected; quantities are elaboration-time usage tags (kernel checking
+  inferred-q0 vs expected-qOmega is subsumed; q1 and the reverse remain
+  exact; quantities are elaboration-time usage tags (kernel checking
   ignores them; erasure is the separate erased flag); the linearity
   enforcement that matters (application-site checkErasedArg,
   enforceBinderQty) runs on inferred types and is unaffected. Known
@@ -3230,27 +3229,16 @@
   conversion, and harmless under the system's shallow linearity, but
   not a fully principled subtyping relation; revisit if the conversion
   relation is ever generalized.
-  Issue #371 review: keep inferred q1 disabled until usage analysis is
-  path-sensitive and q1 quantity subsumption has a variance-correct rule.
-  The current countVarUses counter aggregates occurrences syntactically,
-  but embedded Nim `if` lowers to lazy branch thunks. A reproduced checked
-  definition with a q1 parameter used only in the true arm compiles, then
-  returns from the false arm without invoking the consuming postulate. A
-  q1 value used once in each arm is instead counted twice. Thus an occurrence
-  count of one does not establish exactly-once consumption on every runtime
-  path; enabling q1 inference would amplify this gap. This also exposes a
-  pre-existing q1 checking limitation, so it needs its own correctness work
-  before inference can proceed. The planned fix is a path-sensitive usage
-  analysis across conditional/eliminator alternatives. A local exception in
-  countVarUses is not sufficient: Nim `if` currently lowers to an ordinary
-  ifThenElse call with lazy lambda arguments, and treating arbitrary callback
-  applications as alternatives could accept code that invokes both. Preserve
-  branch structure through lowering and use one per-path analysis for both
-  the in-judgment check and post-pass. Add positive and negative regressions
-  and property coverage. Separately, q1-to-qOmega
-  subsumption cannot be generalized from the q0 rule without proving its
-  behavior under contravariant Pi domains and matching the independent kernel.
-  Status: OPEN (branch =exp84-qty-infer=).
+  Issue #371 progress (2026-10-22): path-sensitive usage profiles are
+  implemented for Nim `if`, complete generated finite eliminators, and
+  supported first-order recursive eliminators. Alternatives combine profiles
+  rather than summing syntactic occurrences. Unsupported indexed or
+  higher-order recursive shapes and user-written eliminators stay
+  conservative. Property and compile-time regressions cover branches,
+  three-way cases, recursive chains, drops, and duplicates. Enabling inferred
+  q1 remains open: generic type parameters can flow to q0 arguments and are
+  currently mistaken for runtime linear resources. Quantity subsumption stays
+  at q0-to-qOmega; Pi domains and nominal type arguments remain exact.
 
 * 2026-10-15 — Elaborator conversion gains covariant singleton widening (issue #223)
 
