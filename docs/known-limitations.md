@@ -666,7 +666,10 @@ the definition; typed wrapper eligibility can impose an additional boundary.
 ## Some demos still have host-side parts
 
 The session and Paxos examples call checked roles through bound Nim adapters.
-Other examples demonstrate checked certificates or borrowing rules, while
-their optimizer or buffer driver is still ordinary Nim code. The
-[README](../README.md#use-cases) links to each example and describes which
-parts are connected.
+`qtt_borrow.nim` calls the checked `borrowClient` through bound postulates;
+the Nim buffer adapter remains responsible for aliasing and lifetime. The
+convex examples pass the exact checked objective through `runtimeValue` and
+interpret its Value tree in Nim before running a host-side solver. The
+interpreters, buffer adapter, solver, and numerical behavior remain trusted
+host responsibilities. The [README](../README.md#use-cases) links to each
+example and summarizes these boundaries.
