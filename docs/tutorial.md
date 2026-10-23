@@ -294,7 +294,12 @@ Because `Int` is statically known at the call site, the macro generates a
 typed adapter for the `debugEcho[Int]` instantiation and the compiled body
 calls the host procedure directly — the `Int` witness is baked into the
 adapter, so there is no per-call bindings-table lookup. A call site whose
-type arguments are not statically known is a compile-time error.
+type arguments are not statically known is a compile-time error. When the
+block additionally maps `Int` to Nim `int` with `runtimeType(Int, int)`,
+the macro emits a second, representation-tier adapter `proc (x: int): int`
+for the instantiation — no `RuntimeValue` in its signature — and
+representation-compiled definitions call it directly, with codecs only on
+the adapter's value boundary.
 
 ## 4. Why bother: a protocol, stated once as a type
 

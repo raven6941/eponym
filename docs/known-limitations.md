@@ -368,7 +368,15 @@ instantiation and routes each matching call site to a direct call of the host
 procedure (no per-call bindings-table lookup, no per-argument application
 fold — values in the Value tier need no codecs). A call site whose type
 arguments are not statically known is a compile-time error rather than a
-silent slow path.
+silent slow path. When every value argument and the result of an
+instantiation denote the `int` representation (e.g. `debugEcho[Int]` with
+`runtimeType(Int, int)` declared), the macro additionally emits a
+representation-tier adapter with the representation signature
+(`int -> int`): it encodes each argument, calls the Value-tier adapter,
+and decodes the result, so representation-compiled callers never allocate
+a `Value` and the adapter's signature contains no `RuntimeValue`.
+Instantiations outside the int fragment keep the Value-tier adapter; their
+representation-tier callers fall back to the Value backend as before.
 
 A `runtimeCodec` mapping for an unindexed Eponym type can also supply the
 runtime type witness and encoder/decoder for a generic type parameter. This

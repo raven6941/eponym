@@ -124,7 +124,9 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_named_argument_duplicate.nim",
      "duplicate argument for 'left'"),
     ("tests/fixtures/embedded_err_named_argument_missing.nim",
-     "missing required argument for 'right'")]:
+     "missing required argument for 'right'"),
+    ("tests/fixtures/typed_adapter_err_nonstatic.nim",
+     "bindPostulateValue 'debugEcho' applied at a non-static type")]:
   if not checkFixture(path, expected):
     inc failed
 
