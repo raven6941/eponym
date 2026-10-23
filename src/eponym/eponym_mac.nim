@@ -4469,12 +4469,13 @@ macro eponymBlock*(body: untyped): untyped =
     key: string
     implementation: NimNode
     procName: string
-  proc adapterProcName409(key: string, seqNum: int): string =
+    reprProcName: string
+  proc adapterProcName409(prefix, key: string, seqNum: int): string =
     ## Block-unique adapter proc name for an instantiation key.
     var sanitized = ""
     for c in key:
       sanitized.add(if c.isAlphaNumeric: c else: '_')
-    "eponymTypedAdapter_" & sanitized & "_" & $seqNum
+    prefix & sanitized & "_" & $seqNum
   inc postulateAdapterBlockSeq409
   let adapterBlockSeq = postulateAdapterBlockSeq409
   var rawValueInstantiations: seq[PostulateInstantiation] = @[]
@@ -4574,7 +4575,10 @@ macro eponymBlock*(body: untyped): untyped =
           rawValueInstantiations.add(PostulateInstantiation(
             postulateName: pname, typeArgNames: typeKeys, key: key,
             implementation: rawValueImpls[pname],
-            procName: adapterProcName409(key, adapterBlockSeq)))
+            procName: adapterProcName409("eponymTypedAdapter_", key,
+              adapterBlockSeq),
+            reprProcName: adapterProcName409("eponymReprAdapter_", key,
+              adapterBlockSeq)))
       scanRawValueApps409(term.fn)
       scanRawValueApps409(term.arg)
     of tPi, tSi, tLam:
@@ -4605,7 +4609,8 @@ macro eponymBlock*(body: untyped): untyped =
   for inst in rawValueInstantiations:
     adapterSpecs.add(RawValueAdapterSpec(postulateName: inst.postulateName,
       typeArgNames: inst.typeArgNames, key: inst.key,
-      implementation: inst.implementation, procName: inst.procName))
+      implementation: inst.implementation, procName: inst.procName,
+      reprProcName: inst.reprProcName))
   var cgBlock = compileBlockProcs(codegenDefs, checkedGlobals, baseDir, src,
     cgLocFile, cgUserLines, runtimeTypes, postulateReprs, allDefs,
     adapterSpecs, crossBlockExports)

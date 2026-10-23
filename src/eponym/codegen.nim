@@ -187,6 +187,11 @@ type
     key*: string
     implementation*: NimNode
     procName*: string
+    reprProcName*: string
+      ## Issue #409 slice 3: macro-assigned (block-unique) name for the
+      ## repr-tier adapter proc of this instantiation (the `int -> int`
+      ## style forwarder that encodes its arguments, calls the Value-tier
+      ## adapter, and decodes the result).
 
   PostulateAdapter* = object
     ## Issue #409: an emitted typed adapter, registered on CodegenCtx by
@@ -194,6 +199,23 @@ type
     ## (outermost first): type-binder positions carry baked type witnesses
     ## in the adapter body, the rest become the adapter's Value parameters
     ## in spine order. `typeKey` is `typeArgNames.join(";")`.
+    key*: string
+    typeKey*: string
+    procName*: string
+    isTypeBinder*: seq[bool]
+
+  ReprPostulateAdapter* = object
+    ## Issue #409 slice 3: an emitted repr-tier adapter, registered on
+    ## CodegenCtx by postulate refId, one per statically-known
+    ## instantiation of a `bindPostulateValue`-bound postulate whose value
+    ## binders and result all denote the int representation. `isTypeBinder`
+    ## classifies the postulate's Pi spine (outermost first) exactly like
+    ## `PostulateAdapter`: type-binder positions are erased (their
+    ## witnesses are baked into the Value-tier adapter this one calls),
+    ## value positions become the adapter's `int` formals in spine order.
+    ## `typeKey` is `typeArgNames.join(";")`. `cgReprApp` reroutes
+    ## fully-applied call sites whose type arguments match to a direct
+    ## call; codecs run only on the adapter's value boundary.
     key*: string
     typeKey*: string
     procName*: string
@@ -228,6 +250,13 @@ type
       ## statically-known instantiation of a `bindPostulateValue`-bound
       ## postulate. `cgAppChain` reroutes fully-applied call sites whose
       ## type arguments match an adapter's key to a direct call.
+    postulateReprAdapters*: Table[int, seq[ReprPostulateAdapter]]
+      ## Issue #409 slice 3: postulate refId -> emitted repr-tier
+      ## adapters, one per statically-known instantiation whose value
+      ## binders and result all denote the int representation.
+      ## `cgReprApp` reroutes fully-applied call sites whose type
+      ## arguments match an adapter's key to a direct call of the repr
+      ## forwarder (codecs only on the value boundary).
 
 proc cgName*(defName: string): string =
   ## The emitted proc name for a compiled definition.
@@ -297,7 +326,8 @@ proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
     reps: initTable[int, HostRuntimeType](),
     reprProcs: initTable[int, tuple[name: string, arity: int, sig: seq[ReprType]]](),
     reprPostulateQtys: initTable[int, seq[Quantity]](),
-    postulateAdapters: initTable[int, seq[PostulateAdapter]]())
+    postulateAdapters: initTable[int, seq[PostulateAdapter]](),
+    postulateReprAdapters: initTable[int, seq[ReprPostulateAdapter]]())
   var refIdToName = initTable[int, string]()
   for name, e in globals.pairs:
     if e.tm != nil and e.tm.kind == tR:
@@ -1629,6 +1659,33 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       return cgReprElim(ctx, rh, appArgs, env)
     if rh.kind == cgkCtor:
       return cgReprCtor(ctx, rh, appArgs, env)
+    if rh.kind == cgkPostulate and head.refId in ctx.postulateReprAdapters:
+      # Issue #409 slice 3: a fully-applied call to a
+      # `bindPostulateValue`-bound postulate whose type arguments match an
+      # emitted repr-tier adapter becomes a direct call of the repr
+      # forwarder. Value arguments compile in the repr tier; codecs run
+      # only on the adapter's value boundary (type binders are erased,
+      # their witnesses baked into the Value-tier adapter it calls).
+      # Anything else (partial application, non-matching instantiation)
+      # falls through to the existing paths below.
+      for adapter in ctx.postulateReprAdapters[head.refId]:
+        if appArgs.len != adapter.isTypeBinder.len: continue
+        var keys: seq[string] = @[]
+        var ok = true
+        for i in 0 ..< appArgs.len:
+          if adapter.isTypeBinder[i]:
+            let k = postulateTypeArgKey409(ctx, appArgs[i])
+            if k.len == 0:
+              ok = false
+              break
+            keys.add(k)
+        if not ok: continue
+        if keys.join(";") != adapter.typeKey: continue
+        var call = newCall(ident(adapter.procName))
+        for i in 0 ..< appArgs.len:
+          if not adapter.isTypeBinder[i]:
+            call.add(cgRepr(ctx, appArgs[i], env))
+        return call
     if rh.kind in {cgkDefn, cgkPostulate} and head.refId in ctx.reprProcs:
       # Issue #401: a bound postulate with an emitted forwarder (see
       # `compilePostulateProcRepr`) is called directly, like a compiled
@@ -2918,6 +2975,42 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
   procNode.add(call)
   procNode
 
+proc substTypeBinders409(ty: Term, typeArgNames: seq[string],
+                         globals: Globals,
+                         valueDomains: var seq[Term],
+                         isTypeBinder: var seq[bool]): Term =
+  ## Issue #409 slice 3: walk a postulate's Pi spine outermost-first,
+  ## substituting each type-binder position (domain is a universe) with
+  ## the corresponding concrete type from `typeArgNames` (Pi-spine order)
+  ## and dropping the binder; value-binder domains are collected fully
+  ## substituted. Returns the substituted result type. Raises
+  ## CgUnsupported when the spine and the instantiation disagree or a
+  ## type name has no global term. `subst` (eponym_init) drops the
+  ## substituted binder and shifts the rest, so kept value binders stay
+  ## correctly indexed.
+  var rest = ty
+  var typeIdx = 0
+  while not rest.isNil and rest.kind == tPi:
+    let isTy = not rest.dom.isNil and rest.dom.kind == tType
+    isTypeBinder.add(isTy)
+    if isTy:
+      if typeIdx >= typeArgNames.len:
+        raise newException(CgUnsupported,
+          "more type binders than instantiation type arguments")
+      let tname = typeArgNames[typeIdx]
+      if tname notin globals or globals[tname].tm.isNil:
+        raise newException(CgUnsupported,
+          "instantiation type '" & tname & "' has no global term")
+      rest = subst(rest.scope.bdy, 0, globals[tname].tm)
+      inc typeIdx
+    else:
+      valueDomains.add(rest.dom)
+      rest = rest.scope.bdy
+  if typeIdx != typeArgNames.len:
+    raise newException(CgUnsupported,
+      "fewer type binders than instantiation type arguments")
+  rest
+
 proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
                         baseDir, src, locFile: string,
                         userLines: Table[string, int],
@@ -3029,6 +3122,14 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   # Value tier needs no codecs: values are already `Value`s. Globals come
   # from the cached `getGlobalsDir`, the same source the wrapper's
   # `bindHostValueNary` call uses.
+  #
+  # Slice 3 (below): a second adapter per instantiation gets the repr-tier
+  # signature (`int -> int` for `debugEcho[Int]`). It encodes each
+  # argument with the `intToValue`-family codecs, calls the Value-tier
+  # adapter (type witnesses already baked there), and decodes the result —
+  # codecs only on the value boundary. Only the int fragment is covered;
+  # other representations keep the Value-tier adapter (repr-tier callers
+  # fall back to Phase 1 exactly as before).
   var adapterBodies: seq[NimNode] = @[]
   for spec in rawValueAdapters:
     if spec.postulateName notin globals: continue
@@ -3092,6 +3193,67 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       isTypeBinder: isTypeBinder))
     ctx.postulateAdapters[refId] = adapters
     echo "[eponym codegen] issue #409: typed adapter " & spec.procName &
+      " for " & spec.postulateName & "[" & spec.typeArgNames.join(", ") & "]"
+  # Issue #409 slice 3: one repr-tier adapter per statically-known
+  # instantiation whose value binders and result all denote the int
+  # representation. The adapter's signature is the representation
+  # signature (`int -> int` for `debugEcho[Int]`): it encodes each
+  # argument with the `intToValue`-family codecs, calls the Value-tier
+  # typed adapter emitted above (type witnesses already baked there),
+  # and decodes the result — codecs only on the value boundary, and no
+  # `RuntimeValue` anywhere in the adapter's signature. Instantiations
+  # outside the int fragment get no repr adapter: repr-tier callers fall
+  # back to Phase 1 exactly as before (no behavior change).
+  var reprAdapterBodies: seq[NimNode] = @[]
+  for spec in rawValueAdapters:
+    if spec.postulateName notin globals: continue
+    let entry = globals[spec.postulateName]
+    if entry.tm.isNil or entry.tm.kind != tR: continue
+    let refId = entry.tm.refId
+    var valueDomains: seq[Term] = @[]
+    var isTypeBinder: seq[bool] = @[]
+    var resultTy: Term
+    try:
+      resultTy = substTypeBinders409(entry.ty, spec.typeArgNames, globals,
+        valueDomains, isTypeBinder)
+      for d in valueDomains:
+        if ctx.reprTypeOf(d).kind != repInt:
+          raise newException(CgUnsupported, "non-int value binder")
+      if ctx.reprTypeOf(resultTy).kind != repInt:
+        raise newException(CgUnsupported, "non-int result type")
+    except CgUnsupported as e:
+      echo "[eponym codegen] issue #409: no repr adapter for " &
+        spec.postulateName & "[" & spec.typeArgNames.join(", ") & "]: " & e.msg
+      continue
+    var formal = newNimNode(nnkFormalParams)
+    formal.add(nimReprType(ReprType(kind: repInt)))
+    var argSyms: seq[NimNode] = @[]
+    for i in 0 ..< valueDomains.len:
+      let vsym = ident("cgReprAdapterArg" & $i)
+      formal.add(newIdentDefs(vsym, nimReprType(ReprType(kind: repInt)),
+        newEmptyNode()))
+      argSyms.add(vsym)
+    var inner = newCall(ident(spec.procName),
+      newCall(bindSym"initRuntimeBindings"))
+    for vsym in argSyms:
+      inner.add(newCall(bindSym"intToValue", vsym))
+    var reprBody = newStmtList()
+    reprBody.add(newCall(bindSym"valueToInt", inner))
+    var reprProcNode = newNimNode(nnkProcDef)
+    reprProcNode.add(newTree(nnkPostfix, ident"*", ident(spec.reprProcName)))
+    reprProcNode.add(newEmptyNode())
+    reprProcNode.add(newEmptyNode())
+    reprProcNode.add(formal)
+    reprProcNode.add(newEmptyNode())
+    reprProcNode.add(newEmptyNode())
+    reprProcNode.add(reprBody)
+    reprAdapterBodies.add(reprProcNode)
+    var reprAdapters = ctx.postulateReprAdapters.getOrDefault(refId, @[])
+    reprAdapters.add(ReprPostulateAdapter(key: spec.key,
+      typeKey: spec.typeArgNames.join(";"), procName: spec.reprProcName,
+      isTypeBinder: isTypeBinder))
+    ctx.postulateReprAdapters[refId] = reprAdapters
+    echo "[eponym codegen] issue #409: repr adapter " & spec.reprProcName &
       " for " & spec.postulateName & "[" & spec.typeArgNames.join(", ") & "]"
   for refId, cgRef in ctx.refs.pairs:
     bakedIds[refId] = cgRef.name
@@ -3399,4 +3561,5 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     fwd.add(newEmptyNode())
     fwd.add(newEmptyNode())  # forward declaration: empty body
     elimFwds.add(fwd)
-  result.procs = elimFwds & adapterBodies & defBodies & reprBodies & elimBodies
+  result.procs = elimFwds & adapterBodies & reprAdapterBodies & defBodies &
+    reprBodies & elimBodies
