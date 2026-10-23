@@ -171,6 +171,19 @@ async function prefetchLayouts(doc: vscode.TextDocument): Promise<void> {
   }
 }
 
+async function submitDiscoveredAction(
+  client: LspClient, docUri: string, shedName: string, actionId: string,
+  arguments_: Record<string, unknown>
+) {
+  const state = await client.availableShedActions(docUri, shedName);
+  if (!state.actions.some((action) => action.id === actionId)) {
+    throw new Error(`action '${actionId}' is not available for shed '${shedName}'`);
+  }
+  return client.submitShedAction(
+    docUri, shedName, state.stateVersion, actionId, arguments_
+  );
+}
+
 async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<boolean> {
   // Sidecar compilation reads the file from disk. Save dirty editor content
   // first so a just-added marker is included instead of silently using an
@@ -410,7 +423,13 @@ export function activate(ctx: vscode.ExtensionContext) {
             entry.panel.title = `Shed: ${m.shedName}`;
             await entry.refresh();
           } else if (m.cmd === "intro") {
-            const res = await client.introShed(docUri, entry.shedName, m.count ?? 1);
+            const state = await client.availableShedActions(docUri, entry.shedName);
+            const intro = state.actions.find((action) => action.id === "intro");
+            if (!intro) throw new Error("Intro is not applicable to this goal");
+            const res = await client.submitShedAction(
+              docUri, entry.shedName, state.stateVersion, "intro",
+              { count: m.count ?? 1 }
+            );
             const line = res.nimLine - 1;
             const startCh = res.nimCol - 1;
             const startOffset = editor.document.offsetAt(
@@ -434,23 +453,25 @@ export function activate(ctx: vscode.ExtensionContext) {
             });
             await refresh();
           } else if (m.cmd === "construct") {
-            const options = await client.refineConstructorsShed(
-              docUri, entry.shedName
-            );
-            if (options.constructors.length === 0) {
+            const state = await client.availableShedActions(docUri, entry.shedName);
+            const construct = state.actions.find((action) => action.id === "construct");
+            const choices = construct?.arguments.find((argument) =>
+              argument.name === "constructor")?.choices?.map(String) ?? [];
+            if (choices.length === 0) {
               panel.webview.postMessage({
                 cmd: "actionmsg",
-                text: options.message ?? "No constructor is known to fit this goal",
+                text: "No constructor is known to fit this goal",
               });
               return;
             }
             const constructor = await vscode.window.showQuickPick(
-              options.constructors.map((label) => ({ label })),
+              choices.map((label) => ({ label })),
               { placeHolder: `Constructor for ${entry.shedName}` }
             );
             if (!constructor) return;
-            const res = await client.refineConstructorsShed(
-              docUri, entry.shedName, constructor.label
+            const res = await client.submitShedAction(
+              docUri, entry.shedName, state.stateVersion, "construct",
+              { constructor: constructor.label }
             );
             const line = res.nimLine - 1;
             const startCh = res.nimCol - 1;
@@ -475,23 +496,25 @@ export function activate(ctx: vscode.ExtensionContext) {
             });
             await refresh();
           } else if (m.cmd === "apply") {
-            const options = await client.refineFromContextShed(
-              docUri, entry.shedName
-            );
-            if (options.candidates.length === 0) {
+            const state = await client.availableShedActions(docUri, entry.shedName);
+            const apply = state.actions.find((action) => action.id === "apply");
+            const choices = apply?.arguments.find((argument) =>
+              argument.name === "candidate")?.choices?.map(String) ?? [];
+            if (choices.length === 0) {
               panel.webview.postMessage({
                 cmd: "actionmsg",
-                text: options.message ?? "No local hypothesis is known to fit this goal",
+                text: "No local hypothesis is known to fit this goal",
               });
               return;
             }
             const candidate = await vscode.window.showQuickPick(
-              options.candidates.map((label) => ({ label })),
+              choices.map((label) => ({ label })),
               { placeHolder: `Apply from context to ${entry.shedName}` }
             );
             if (!candidate) return;
-            const res = await client.refineFromContextShed(
-              docUri, entry.shedName, candidate.label
+            const res = await client.submitShedAction(
+              docUri, entry.shedName, state.stateVersion, "apply",
+              { candidate: candidate.label }
             );
             const line = res.nimLine - 1;
             const startCh = res.nimCol - 1;
@@ -516,23 +539,25 @@ export function activate(ctx: vscode.ExtensionContext) {
             });
             await refresh();
           } else if (m.cmd === "rewrite") {
-            const options = await client.refineEqualityShed(
-              docUri, entry.shedName
-            );
-            if (options.candidates.length === 0) {
+            const state = await client.availableShedActions(docUri, entry.shedName);
+            const rewriteAction = state.actions.find((action) => action.id === "rewrite");
+            const choices = rewriteAction?.arguments.find((argument) =>
+              argument.name === "rewrite")?.choices?.map(String) ?? [];
+            if (choices.length === 0) {
               panel.webview.postMessage({
                 cmd: "actionmsg",
-                text: options.message ?? "No equality rewrite is known to fit this goal",
+                text: "No equality rewrite is known to fit this goal",
               });
               return;
             }
             const rewrite = await vscode.window.showQuickPick(
-              options.candidates.map((label) => ({ label })),
+              choices.map((label) => ({ label })),
               { placeHolder: `Rewrite ${entry.shedName} using equality (choose direction)` }
             );
             if (!rewrite) return;
-            const res = await client.refineEqualityShed(
-              docUri, entry.shedName, rewrite.label
+            const res = await client.submitShedAction(
+              docUri, entry.shedName, state.stateVersion, "rewrite",
+              { rewrite: rewrite.label }
             );
             const line = res.nimLine - 1;
             const startCh = res.nimCol - 1;
@@ -558,12 +583,8 @@ export function activate(ctx: vscode.ExtensionContext) {
             await refresh();
           } else if (m.cmd === "refine" || m.cmd === "give") {
             const sourceBefore = editor.document.getText();
-            const action = m.cmd === "give"
-              ? { kind: "give" as const, target: entry.shedName,
-                  arguments: { term: m.term ?? "" } }
-              : { kind: "refine" as const, target: entry.shedName,
-                  arguments: { term: m.term ?? "" } };
-            const res = await client.performShedAction(docUri, action);
+            const res = await submitDiscoveredAction(client, docUri,
+              entry.shedName, m.cmd, { term: m.term ?? "" });
             const line = res.edit.nimLine - 1;
             const startCh = res.edit.nimCol - 1;
             const startOffset = editor.document.offsetAt(
@@ -602,11 +623,17 @@ export function activate(ctx: vscode.ExtensionContext) {
               });
               return;
             }
+            const state = await client.availableShedActions(docUri, entry.shedName);
+            const splitAction = state.actions.find((action) => action.id === "caseSplit");
+            const choices = splitAction?.arguments.find((argument) =>
+              argument.name === "variable")?.choices?.map(String) ?? [];
+            if (!choices.includes(variable)) {
+              throw new Error(`'${variable}' is not a case-split choice for this goal`);
+            }
             const sourceBefore = editor.document.getText();
-            const res = await client.performShedAction(docUri, {
-              kind: "caseSplit", target: entry.shedName,
-              arguments: { variable },
-            });
+            const res = await client.submitShedAction(
+              docUri, entry.shedName, state.stateVersion, "caseSplit", { variable }
+            );
             // Splice the eliminator term over the shed marker
             // (same single-line span logic as refine).
             const line = res.edit.nimLine - 1;
@@ -890,7 +917,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       const client = await inlineClient(editor.document);
       if (!client) return;
       try {
-        const res = await client.introShed(cur.docUri, cur.shedName);
+        const res = await submitDiscoveredAction(
+          client, cur.docUri, cur.shedName, "intro", { count: 1 }
+        );
         const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
         if (!ok) {
           vscode.window.showWarningMessage(
@@ -932,9 +961,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (!client) return; // binary missing; actionable error already shown
       try {
         const sourceBefore = editor.document.getText();
-        const res = await client.performShedAction(cur.docUri, {
-          kind: "refine", target: cur.shedName, arguments: { term },
-        });
+        const res = await submitDiscoveredAction(
+          client, cur.docUri, cur.shedName, "refine", { term }
+        );
         // Complete the round-trip: splice the returned term over the shed
         // node, collapse its virtual view, then save so the sidecar regenerates.
         const ok = await spliceTermOverShed(
@@ -983,9 +1012,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (!client) return; // binary missing; actionable error already shown
       try {
         const sourceBefore = editor.document.getText();
-        const res = await client.performShedAction(cur.docUri, {
-          kind: "caseSplit", target: cur.shedName, arguments: { variable },
-        });
+        const res = await submitDiscoveredAction(
+          client, cur.docUri, cur.shedName, "caseSplit", { variable }
+        );
         // Splice the eliminator term (carrying the new sub-shed nodes)
         // over the shed node, then save so the recompile discovers them.
         const ok = await spliceTermOverShed(
@@ -1033,9 +1062,9 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (!client) return; // binary missing; actionable error already shown
       try {
         const sourceBefore = editor.document.getText();
-        const res = await client.performShedAction(cur.docUri, {
-          kind: "give", target: cur.shedName, arguments: { term },
-        });
+        const res = await submitDiscoveredAction(
+          client, cur.docUri, cur.shedName, "give", { term }
+        );
         const ok = await spliceTermOverShed(
           editor, res.edit.nimLine, res.edit.nimCol, res.edit.term
         );

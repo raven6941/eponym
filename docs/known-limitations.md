@@ -356,6 +356,20 @@ Other edits invalidate the recorded state and disable undo/redo rather than
 overwriting changed source. Intro, Apply, Construct, and Rewrite are not yet
 part of the shared action history interface.
 
+The LSP also exposes `eponym/availableShedActions` and
+`eponym/submitShedAction`. Discovery derives applicability from the checked
+goal and context, returning stable action-family IDs, accepted argument
+choices, and expected subgoal descriptions. Submission includes the returned
+`stateVersion`; edits, recompilation, or a prior accepted action make that
+version stale, and the server checks the selected action again before editing.
+Applicability is shared with editor/search clients, while display and ranking
+remain client decisions. Expected subgoal shapes are exact for case-split
+branches, Intro choices, feasible constructor fields, and unresolved Apply
+arguments. Refine and Rewrite can produce goals that depend on the submitted
+term, so their exact goals are returned after the checked submission. Search
+is still bounded by the existing local-hypothesis, constructor, equality, and
+elaborator capabilities described below.
+
 Goal-directed Apply searches local hypotheses and checks their applications
 against the goal. The VS Code picker is filterable; named global definitions
 are not searched. Arguments fixed by the expected result are filled in, while

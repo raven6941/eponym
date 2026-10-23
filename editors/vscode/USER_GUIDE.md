@@ -154,6 +154,25 @@ restarting the extension clears it. Edits made outside Refine, Give, and
 Case-split are not recorded; they make older transitions stale, so Undo and
 Redo become unavailable instead of replacing newer source edits.
 
+### Action discovery for other clients
+
+The LSP provides `eponym/availableShedActions` for editor integrations,
+search tools, and other clients. It returns the checked goal and context plus
+the actions that currently apply, their argument choices, and a
+`stateVersion`. Send the selected action and its arguments to
+`eponym/submitShedAction` with that version. If the document changes while a
+client presents choices, submission is rejected as stale; the client should
+query again. The server rechecks the selected action before returning a source
+edit. Clients decide how to display and rank choices; applicability comes
+from Eponym's checker-backed action providers.
+
+Action IDs are `intro`, `construct`, `apply`, `rewrite`, `refine`, `give`,
+and `caseSplit`. The argument schema and choices are returned with each
+query. Expected subgoal metadata describes the available shape before an
+action; after submission, `after.goals` contains the checked goals created by
+the edit. The current search scope matches the VS Code actions: local
+hypotheses, feasible datatype constructors, and applicable equality rewrites.
+
 ## After an action
 
 Intro, Apply, Construct, Rewrite, Refine, Give, and Case-split splice their

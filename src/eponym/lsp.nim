@@ -40,6 +40,7 @@ import sheds  # ShedInfo, semanticShedState, renderShedHover, sidecar IO
 import shed_layout  # Box, layoutShed, boxToJson (issue #135)
 
 const MaxShedHistoryTransitions = 64
+const MaxShedActionStateVersions = 128
 
 type
   ShedActionKind* = enum
@@ -84,10 +85,23 @@ type
     pendingMove*: ShedHistoryMove
     pendingId*: int
 
+  ShedActionStateVersion* = object
+    version*: int
+    uri*: string
+    shedName*: string
+    documentRevision*: int
+    generatedSource*: string
+    goal*: string
+    context*: seq[string]
+    actions*: JsonNode
+
   LspServer* = object
     documents*: Table[string, string]  # uri -> text
     shedHistories*: seq[ShedActionHistory]
     nextShedTransitionId*: int
+    documentRevisions*: seq[tuple[uri: string, revision: int]]
+    shedActionStateVersions*: seq[ShedActionStateVersion]
+    nextShedActionStateVersion*: int
 
 proc readMessage(): JsonNode =
   ## Read one LSP message from stdin (Content-Length framed).
@@ -1777,6 +1791,410 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
   var generatedSource = ""
   caseSplitShedDetailed(nimFile, shedName, variable, generatedSource)
 
+proc documentRevision(server: LspServer, uri: string): int =
+  for item in server.documentRevisions:
+    if item.uri == uri: return item.revision
+
+proc bumpDocumentRevision(server: var LspServer, uri: string) =
+  for i in 0 ..< server.documentRevisions.len:
+    if server.documentRevisions[i].uri == uri:
+      inc server.documentRevisions[i].revision
+      return
+  server.documentRevisions.add((uri, 1))
+
+proc invalidateShedActionVersions(server: var LspServer, uri: string) =
+  var live: seq[ShedActionStateVersion] = @[]
+  for version in server.shedActionStateVersions:
+    if version.uri != uri: live.add(version)
+  server.shedActionStateVersions = live
+
+proc actionDescriptor(id, kind, label, argumentName, argumentType: string,
+                      choices, expectedSubgoals: JsonNode): JsonNode =
+  var argument = %*{"name": argumentName, "type": argumentType,
+                     "required": true}
+  if not choices.isNil: argument["choices"] = choices
+  %*{"id": id, "kind": kind, "label": label,
+     "arguments": [argument], "expectedSubgoals": expectedSubgoals}
+
+proc checkedSubgoalSnapshots(generatedSource, nimFile, previousSource: string,
+                             holeLine, holeCol: int,
+                             names: seq[string]): JsonNode =
+  result = newJArray()
+  try:
+    let checked = elabCheckHolesDir(generatedSource, parentDir(nimFile))
+    let holeOffset = sourceOffset(previousSource, holeLine, holeCol)
+    if holeOffset < 0: return
+    var tokenLen = 1
+    while holeOffset + tokenLen < previousSource.len and
+          previousSource[holeOffset + tokenLen] in {'0'..'9'}:
+      inc tokenLen
+    let prefix = previousSource[0 ..< holeOffset]
+    let suffixOffset = holeOffset + tokenLen
+    let suffix = if suffixOffset < previousSource.len:
+      previousSource[suffixOffset .. ^1]
+    else: ""
+    if not generatedSource.startsWith(prefix) or
+       (suffix.len > 0 and not generatedSource.endsWith(suffix)):
+      return
+    let changedEnd = generatedSource.len - suffix.len
+    var index = 0
+    for hole in checked.ms.holes:
+      let offset = sourceOffset(generatedSource, hole.holeLoc.line,
+                                hole.holeLoc.col)
+      if offset < prefix.len or offset >= changedEnd: continue
+      let (goal, context, _) = shedGoalAndCtx(checked.ms, hole)
+      let name = if index < names.len: names[index] else: "goal" & $index
+      result.add(%*{"name": name, "goal": goal, "context": context})
+      inc index
+  except ParseError:
+    discard
+
+proc availableShedActions*(server: var LspServer, uri, shedName: string):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  ## Query checker-backed affordances for one open shed. Returned choices are
+  ## presentation-neutral; consumers choose how to rank or render them.
+  if uri notin server.documents:
+    return (false, "unknown document; open it before querying shed actions", nil)
+  let nimFile = uriToPath(uri)
+  if not fileExists(nimFile):
+    return (false, "document file does not exist: " & nimFile, nil)
+  if readFile(nimFile) != server.documents[uri]:
+    return (false, "document changed on disk; synchronize or save before querying shed actions", nil)
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar; compile the document before querying shed actions", nil)
+  var target: ShedInfo
+  var found = false
+  for shed in readShedSidecar(sc):
+    if shed.name == shedName:
+      target = shed
+      found = true
+      break
+  if not found:
+    return (false, "unknown shed '" & shedName & "'", nil)
+  if target.status != ssYellow or target.genSrc == "":
+    return (false, "shed '" & shedName & "' is not an open checked goal", nil)
+
+  var ms: MetaStore
+  var targetHole: HoleInfo
+  var foundHole = false
+  try:
+    ms = elabCheckHolesDir(target.genSrc, parentDir(nimFile)).ms
+    for hole in ms.holes:
+      if hole.holeLoc.line == target.holeLine and
+         (target.holeCol <= 0 or hole.holeLoc.col == target.holeCol):
+        targetHole = hole
+        foundHole = true
+        break
+  except ParseError as e:
+    return (false, "checked shed source no longer parses: " & e.msg, nil)
+  if not foundHole:
+    return (false, "shed goal is stale; compile the document again", nil)
+
+  let semantic = semanticShedState(ms, targetHole)
+  let rendered = renderShedGoalCtx(ms, semantic)
+  var actions = newJArray()
+  actions.add(actionDescriptor("refine", "refine", "Refine with a term",
+    "term", "eponym-term", nil,
+    %*{"kind": "checker-determined", "description":
+       "The accepted term may leave zero or more typed goals."}))
+  actions.add(actionDescriptor("give", "give", "Give a complete term",
+    "term", "eponym-term", nil,
+    %*{"kind": "complete-proof", "description":
+       "The checker requires the term to close this goal completely."}))
+
+  if semantic.goalPi.len > 0:
+    var counts = newJArray()
+    var shapes = newJObject()
+    for count in 1 .. semantic.goalPi.len:
+      counts.add(%count)
+      var binders = newJArray()
+      var goal = zonk(ms, semantic.goal)
+      var context = semanticContext(semantic)
+      for _ in 0 ..< count:
+        if goal.kind != tPi: break
+        let name = goal.scope.adv
+        let domain = zonk(ms, goal.dom)
+        binders.add(%*{"name": name,
+                       "type": prettyTerm(domain, context, ms.refNames,
+                                            ms.recordFields),
+                       "implicit": goal.impl,
+                       "quantity": $goal.qty})
+        context = @[CtxEntry(name: name, ty: domain,
+                             qty: toQty(goal.qty))] & context
+        goal = zonk(ms, goal.scope.bdy)
+      shapes[$count] = %*{"binders": binders,
+        "goal": prettyTerm(goal, context, ms.refNames, ms.recordFields)}
+    actions.add(actionDescriptor("intro", "intro", "Introduce binders",
+      "count", "positive-integer", counts,
+      %*{"kind": "byChoice", "choices": shapes}))
+
+  var splitChoices = newJArray()
+  var splitShapes = newJObject()
+  for binder in semantic.context:
+    if binder.name.len == 0 or binder.name == "_": continue
+    var generated = ""
+    let split = caseSplitShedDetailed(nimFile, shedName, binder.name, generated)
+    if not split.ok: continue
+    splitChoices.add(%binder.name)
+    splitShapes[binder.name] = checkedSubgoalSnapshots(generated, nimFile,
+      target.genSrc, target.holeLine, target.holeCol, split.subSheds)
+  if splitChoices.len > 0:
+    actions.add(actionDescriptor("caseSplit", "caseSplit", "Case-split",
+      "variable", "local-variable", splitChoices,
+      %*{"kind": "constructor-branches", "byChoice": splitShapes}))
+
+  let constructors = refineConstructorsShed(nimFile, shedName)
+  if constructors.ok and constructors.constructors.len > 0:
+    var choices = newJArray()
+    var shapeByConstructor = newJObject()
+    for name in constructors.constructors: choices.add(%name)
+    for cid, ctorName in ms.ctorTable.ctorNames:
+      if ctorName notin constructors.constructors or
+         cid notin ms.ctorTable.ctorTypes: continue
+      var arity = 0
+      var ctorTy = zonk(ms, ms.ctorTable.ctorTypes[cid])
+      while ctorTy != nil and ctorTy.kind == tPi:
+        inc arity
+        ctorTy = zonk(ms, ctorTy.scope.bdy)
+      let candidate = ctorName & repeat(" ?", arity)
+      let probe = fillHoleAt(target.genSrc, target.holeLine - 1,
+        target.holeCol - 1, "(" & candidate & ")", parentDir(nimFile))
+      if not probe.ok: continue
+      var fieldNames: seq[string] = @[]
+      for i in 0 ..< arity:
+        fieldNames.add(ctorName & "_field" & $i)
+      shapeByConstructor[ctorName] = checkedSubgoalSnapshots(probe.newSrc,
+        nimFile, target.genSrc, target.holeLine, target.holeCol, fieldNames)
+    actions.add(actionDescriptor("construct", "construct",
+      "Construct a value", "constructor", "feasible-constructor", choices,
+      %*{"kind": "byChoice", "choices": shapeByConstructor}))
+
+  let applications = refineFromContextShed(nimFile, shedName)
+  if applications.ok and applications.candidates.len > 0:
+    var choices = newJArray()
+    var shapeByCandidate = newJObject()
+    for candidate in applications.candidates:
+      choices.add(%candidate)
+      let probe = fillHoleAt(target.genSrc, target.holeLine - 1,
+        target.holeCol - 1, "(" & candidate & ")", parentDir(nimFile))
+      var goalNames: seq[string] = @[]
+      for i in 0 ..< candidate.count('?'):
+        goalNames.add("apply_goal" & $i)
+      shapeByCandidate[candidate] = if probe.ok:
+        checkedSubgoalSnapshots(probe.newSrc, nimFile, target.genSrc,
+          target.holeLine, target.holeCol, goalNames)
+      else: newJArray()
+    actions.add(actionDescriptor("apply", "apply",
+      "Apply a local hypothesis", "candidate", "feasible-application",
+      choices, %*{"kind": "byChoice", "choices": shapeByCandidate}))
+
+  let rewrites = refineEqualityShed(nimFile, shedName)
+  if rewrites.ok and rewrites.candidates.len > 0:
+    var choices = newJArray()
+    for candidate in rewrites.candidates: choices.add(%candidate)
+    actions.add(actionDescriptor("rewrite", "rewrite",
+      "Rewrite using an equality", "rewrite", "checked-equality-rewrite",
+      choices, %*{"kind": "one-residual-goal"}))
+
+  inc server.nextShedActionStateVersion
+  let version = server.nextShedActionStateVersion
+  if server.shedActionStateVersions.len >= MaxShedActionStateVersions:
+    server.shedActionStateVersions.delete(0)
+  server.shedActionStateVersions.add(ShedActionStateVersion(
+    version: version, uri: uri, shedName: shedName,
+    documentRevision: documentRevision(server, uri),
+    generatedSource: target.genSrc, goal: rendered.goal,
+    context: rendered.ctx, actions: actions))
+  result = (true, "", %*{
+    "stateVersion": version,
+    "goal": rendered.goal,
+    "context": rendered.ctx,
+    "actions": actions
+  })
+
+proc validateShedActionVersion(server: LspServer, uri, shedName: string,
+                               version: int, actionId: string):
+    tuple[ok: bool, why: string, snapshot: ShedActionStateVersion] =
+  var found = false
+  for snapshot in server.shedActionStateVersions:
+    if snapshot.version == version:
+      result.snapshot = snapshot
+      found = true
+      break
+  if not found or result.snapshot.uri != uri or
+     result.snapshot.shedName != shedName:
+    return (false, "unknown or expired proof-state version", result.snapshot)
+  if uri notin server.documents or
+     documentRevision(server, uri) != result.snapshot.documentRevision or
+     not fileExists(uriToPath(uri)) or
+     readFile(uriToPath(uri)) != server.documents[uri]:
+    return (false, "proof state changed since actions were queried", result.snapshot)
+  var currentGenSrc = ""
+  for shed in readShedSidecar(sidecarPath(uriToPath(uri))):
+    if shed.name == shedName:
+      currentGenSrc = shed.genSrc
+      break
+  if currentGenSrc == "" or currentGenSrc != result.snapshot.generatedSource:
+    return (false, "proof state changed since actions were queried", result.snapshot)
+  var actionFound = false
+  for action in result.snapshot.actions:
+    if action["id"].getStr() == actionId:
+      actionFound = true
+      break
+  if not actionFound:
+    return (false, "action was not offered for this proof-state version", result.snapshot)
+  (true, "", result.snapshot)
+
+proc argumentOffered(action: JsonNode, arguments: JsonNode): bool =
+  if arguments.kind != JObject or "arguments" notin action: return false
+  let schema = action["arguments"]
+  for key in arguments.keys:
+    var known = false
+    for argument in schema:
+      if argument["name"].getStr() == key:
+        known = true
+        break
+    if not known: return false
+  for required in schema:
+    let name = required["name"].getStr()
+    if required["required"].getBool() and name notin arguments: return false
+    if name notin arguments: continue
+    if "choices" in required:
+      var choiceFound = false
+      for choice in required["choices"]:
+        if choice == arguments[name]: choiceFound = true
+      if not choiceFound: return false
+    case required["type"].getStr()
+    of "positive-integer":
+      if arguments[name].kind != JInt or arguments[name].getInt() < 1:
+        return false
+    of "string", "eponym-term", "local-variable", "feasible-constructor",
+       "feasible-application", "checked-equality-rewrite":
+      if arguments[name].kind != JString: return false
+    else: discard
+  true
+
+proc currentShedGoals(nimFile, shedName, previousSource: string): JsonNode =
+  result = newJArray()
+  if not fileExists(sidecarPath(nimFile)): return
+  let sheds = readShedSidecar(sidecarPath(nimFile))
+  var resultingSource = ""
+  for shed in sheds:
+    if shed.genSrc != "" and shed.genSrc != previousSource:
+      resultingSource = shed.genSrc
+      break
+  if resultingSource == "":
+    for shed in sheds:
+      if shed.name == shedName or shed.name.startsWith(shedName & "_"):
+        resultingSource = shed.genSrc
+        break
+  if resultingSource == "": return
+  for shed in sheds:
+    if shed.genSrc == resultingSource and shed.status == ssYellow:
+      result.add(%*{"name": shed.name, "goal": shed.goal,
+                     "context": shed.ctx, "status": shedStatusToStr(shed.status)})
+
+proc prepareShedAction*(server: var LspServer, uri, shedName,
+                        actionName, term, variable: string,
+                        requireComplete: bool):
+    tuple[ok: bool, why: string, result: JsonNode]
+
+proc submitShedAction*(server: var LspServer, uri, shedName: string,
+                       stateVersion: int, actionId: string,
+                       arguments: JsonNode):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  let checkedVersion = validateShedActionVersion(server, uri, shedName,
+                                                  stateVersion, actionId)
+  if not checkedVersion.ok: return (false, checkedVersion.why, nil)
+  var descriptor: JsonNode
+  for item in checkedVersion.snapshot.actions:
+    if item["id"].getStr() == actionId:
+      descriptor = item
+      break
+  if descriptor.isNil or not argumentOffered(descriptor, arguments):
+    return (false, "action arguments do not match the queried affordance", nil)
+
+  let kind = descriptor["kind"].getStr()
+  let term = if "term" in arguments: arguments["term"].getStr() else: ""
+  let variable = if "variable" in arguments: arguments["variable"].getStr() else: ""
+  let previousSource = checkedVersion.snapshot.generatedSource
+  if kind == "refine" or kind == "give" or kind == "caseSplit":
+    let r = prepareShedAction(server, uri, shedName, kind, term, variable,
+                              kind == "give")
+    if not r.ok: return (false, r.why, nil)
+    invalidateShedActionVersions(server, uri)
+    var payload = r.result
+    payload["proofStateVersion"] = %stateVersion
+    payload["action"]["id"] = %actionId
+    return (true, "", payload)
+
+  var editTerm = ""
+  var nimLine = 0
+  var nimCol = 0
+  var status = "yellow"
+  var yellowCount = 0
+  var subSheds: seq[string] = @[]
+  var actionArguments = arguments
+  case kind
+  of "intro":
+    let count = arguments["count"].getInt()
+    let r = introShed(uriToPath(uri), shedName, count)
+    if not r.ok: return (false, r.why, nil)
+    editTerm = r.term
+    nimLine = r.nimLine
+    nimCol = r.nimCol
+    status = r.status
+    yellowCount = r.yellowCount
+  of "construct":
+    let constructor = arguments["constructor"].getStr()
+    let r = refineConstructorsShed(uriToPath(uri), shedName, constructor)
+    if not r.ok: return (false, r.why, nil)
+    editTerm = r.term
+    nimLine = r.nimLine
+    nimCol = r.nimCol
+    status = r.status
+    yellowCount = r.yellowCount
+  of "apply":
+    let candidate = arguments["candidate"].getStr()
+    let r = refineFromContextShed(uriToPath(uri), shedName, candidate)
+    if not r.ok: return (false, r.why, nil)
+    editTerm = r.term
+    nimLine = r.nimLine
+    nimCol = r.nimCol
+    status = r.status
+    yellowCount = r.yellowCount
+  of "rewrite":
+    let rewrite = arguments["rewrite"].getStr()
+    let r = refineEqualityShed(uriToPath(uri), shedName, rewrite)
+    if not r.ok: return (false, r.why, nil)
+    editTerm = r.term
+    nimLine = r.nimLine
+    nimCol = r.nimCol
+    status = r.status
+    yellowCount = r.yellowCount
+  else:
+    return (false, "unsupported semantic shed action '" & kind & "'", nil)
+
+  let afterGoals = currentShedGoals(uriToPath(uri), shedName, previousSource)
+  for goal in afterGoals:
+    let name = goal["name"].getStr()
+    if name.startsWith(shedName & "_"): subSheds.add(name)
+  invalidateShedActionVersions(server, uri)
+  result = (true, "", %*{
+    "id": stateVersion,
+    "proofStateVersion": stateVersion,
+    "action": {"id": actionId, "kind": kind, "target": shedName,
+                "arguments": actionArguments},
+    "before": {"goal": checkedVersion.snapshot.goal,
+               "context": checkedVersion.snapshot.context},
+    "edit": {"term": editTerm, "nimLine": nimLine, "nimCol": nimCol},
+    "after": {"goals": afterGoals},
+    "validation": {"accepted": true, "status": status,
+                   "yellowCount": yellowCount},
+    "subSheds": subSheds
+  })
+
 proc shedHistoryIndex(server: LspServer, uri: string): int =
   for i, history in server.shedHistories:
     if history.uri == uri: return i
@@ -2134,11 +2552,14 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
     let uri = msg["params"]["textDocument"]["uri"].getStr()
     let text = msg["params"]["textDocument"]["text"].getStr()
     server.documents[uri] = text
+    bumpDocumentRevision(server, uri)
+    invalidateShedActionVersions(server, uri)
     return publishDiagnostics(server, uri)
   of "textDocument/didChange":
     let uri = msg["params"]["textDocument"]["uri"].getStr()
     let text = msg["params"]["contentChanges"][0]["text"].getStr()
     server.documents[uri] = text
+    bumpDocumentRevision(server, uri)
     return publishDiagnostics(server, uri)
   of "textDocument/hover":
     let id = msg["id"]
@@ -2193,6 +2614,37 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
     var arr = newJArray()
     for nm in shedNames(uri): arr.add(%nm)
     return %*{"jsonrpc": "2.0", "id": id, "result": arr}
+  of "eponym/availableShedActions":
+    let id = msg["id"]
+    let params = msg["params"]
+    if "textDocument" notin params or "shedName" notin params:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "availableShedActions needs textDocument.uri and shedName"}}
+    let uri = params["textDocument"]["uri"].getStr()
+    let r = availableShedActions(server, uri, params["shedName"].getStr())
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": r.result}
+  of "eponym/submitShedAction":
+    let id = msg["id"]
+    let params = msg["params"]
+    if "textDocument" notin params or "shedName" notin params or
+       "stateVersion" notin params or "action" notin params or
+       "id" notin params["action"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "submitShedAction needs textDocument.uri, shedName, stateVersion, and action.id"}}
+    let uri = params["textDocument"]["uri"].getStr()
+    let action = params["action"]
+    let arguments = if "arguments" in action: action["arguments"] else: newJObject()
+    let r = submitShedAction(server, uri, params["shedName"].getStr(),
+      params["stateVersion"].getInt(), action["id"].getStr(), arguments)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": r.result}
   of "eponym/performShedAction":
     let id = msg["id"]
     let params = msg["params"]

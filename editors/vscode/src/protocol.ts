@@ -26,12 +26,43 @@ export type ShedAction =
 
 export interface ShedTransition {
   id: number;
-  action: { kind: ShedAction["kind"]; target: string; arguments: Record<string, string> };
+  proofStateVersion?: number;
+  action: { id?: string; kind: string; target: string; arguments: Record<string, unknown> };
   before: { goal: string; context: string[] };
   edit: { term: string; nimLine: number; nimCol: number };
   after: { goals: Array<{ shedName: string; goal: string; status: string }> };
   validation: { accepted: boolean; status: string; yellowCount: number };
   subSheds: string[];
+}
+
+/** Submission shape used by the existing shed editor splice handlers. */
+export interface SubmittedShedAction extends ShedTransition {
+  shedName: string;
+  term: string;
+  nimLine: number;
+  nimCol: number;
+  status: string;
+  yellowCount: number;
+}
+
+export interface AvailableShedAction {
+  id: string;
+  kind: string;
+  label: string;
+  arguments: Array<{
+    name: string;
+    type: string;
+    required: boolean;
+    choices?: Array<string | number>;
+  }>;
+  expectedSubgoals: Record<string, unknown>;
+}
+
+export interface AvailableShedActions {
+  stateVersion: number;
+  goal: string;
+  context: string[];
+  actions: AvailableShedAction[];
 }
 
 export class LspClient {
@@ -176,6 +207,30 @@ export class LspClient {
     return this.request("eponym/performShedAction", {
       textDocument: { uri: docUri }, action,
     });
+  }
+
+  availableShedActions(docUri: string, shedName: string): Promise<AvailableShedActions> {
+    return this.request("eponym/availableShedActions", {
+      textDocument: { uri: docUri }, shedName,
+    });
+  }
+
+  submitShedAction(
+    docUri: string, shedName: string, stateVersion: number,
+    actionId: string, arguments_: Record<string, unknown>
+  ): Promise<SubmittedShedAction> {
+    return this.request("eponym/submitShedAction", {
+      textDocument: { uri: docUri }, shedName, stateVersion,
+      action: { id: actionId, arguments: arguments_ },
+    }).then((transition: ShedTransition): SubmittedShedAction => ({
+      ...transition,
+      shedName: transition.action.target,
+      term: transition.edit.term,
+      nimLine: transition.edit.nimLine,
+      nimCol: transition.edit.nimCol,
+      status: transition.validation.status,
+      yellowCount: transition.validation.yellowCount,
+    }));
   }
 
   commitShedAction(docUri: string, transitionId: number): Promise<ShedTransition> {
