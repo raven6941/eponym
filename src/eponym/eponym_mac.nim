@@ -4470,8 +4470,13 @@ macro eponymBlock*(body: untyped): untyped =
       continue
     let info = cgBlock.exportInfo.getOrDefault(d.name)
     if info.valueProc == "" and info.reprProc == "": continue
+    var valueProc = info.valueProc
     var reprProc = info.reprProc
     var sigSummary = info.sigSummary
+    # Under requireCompiled the macro filters non-repr procs out of the
+    # emitted output (interpreter-freedom), so a compiled-but-unemitted
+    # value proc must not be advertised to later blocks.
+    if requireCompiled: valueProc = ""
     if reprProc != "":
       var hitsBound = false
       for p in info.postulatesUsed:
@@ -4483,8 +4488,13 @@ macro eponymBlock*(body: untyped): untyped =
         entry.reason &= "; repr tier not exported cross-block: transitive " &
           "closure references a postulate bound in this block"
         cgBlock.report[d.name] = entry
+        when defined(eponymCodegenReport):
+          echo "[eponym codegen] " & d.name &
+            ": repr tier not exported cross-block — transitive closure " &
+            "references a postulate bound in this block"
+    if valueProc == "" and reprProc == "": continue
     crossBlockExports[info.origin & "\x00" & d.name] =
-      CrossBlockExport(valueProc: info.valueProc, reprProc: reprProc,
+      CrossBlockExport(valueProc: valueProc, reprProc: reprProc,
                        sigSummary: sigSummary)
 
   if requireCompiled:

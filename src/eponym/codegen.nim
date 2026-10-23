@@ -3156,12 +3156,20 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       # Issue #401: slow paths are runtime calls to uncompiled definitions;
       # references from type positions (binder domains, `let` types) are
       # never evaluated, so only runtime references count.
+      # Issue #408: a repr-compiled caller reaches its callees through
+      # ctx.reprProcs (cross-block reused procs included), so for such a
+      # caller only a callee without a repr proc is a slow path; a
+      # value-tier caller still needs compiledProc.
       var ids = initTable[int, bool]()
       collectRuntimeRefIds(erasedTerms[d.name], ids)
       var seenSlowPaths = initTable[string, bool]()
       for refId in ids.keys:
-        if refId in ctx.refs and ctx.refs[refId].kind == cgkDefn and
-            ctx.refs[refId].compiledProc.len == 0:
+        if refId notin ctx.refs or ctx.refs[refId].kind != cgkDefn:
+          continue
+        let calleeSlow =
+          if entry.tier == cgtRepr: refId notin ctx.reprProcs
+          else: ctx.refs[refId].compiledProc.len == 0
+        if calleeSlow:
           let slowName = ctx.refs[refId].name
           if not seenSlowPaths.getOrDefault(slowName, false):
             entry.slowPaths.add(slowName)
