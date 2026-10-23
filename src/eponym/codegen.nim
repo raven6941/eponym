@@ -1084,6 +1084,23 @@ proc nimReprType*(rt: ReprType): NimNode =
     for f in rt.sigmaFields: tup.add(nimReprType(f))
     tup
 
+proc nimTypeName*(n: NimNode): string =
+  ## Best-effort rendering of a type AST for the tier report. `$` on a raw
+  ## macro node fails for composite kinds (e.g. `nnkBracketExpr` like
+  ## `TransportResult[int]`), so render the common shapes structurally.
+  if n.isNil: return "?"
+  case n.kind
+  of nnkIdent, nnkSym: $n
+  of nnkBracketExpr:
+    if n.len == 0: return "?"
+    nimTypeName(n[0]) & "[" &
+      n[1 .. ^1].mapIt(nimTypeName(it)).join(", ") & "]"
+  of nnkTupleTy:
+    "(" & toSeq(n.children).mapIt(nimTypeName(it)).join(", ") & ")"
+  else:
+    try: $n
+    except: "?"
+
 proc reprTypeName*(rt: ReprType): string =
   ## The Nim type name for the tier report (issue #386): `int`, `seq[int]`,
   ## `Option[int]`, the declared host type, or the parenthesized host
@@ -1092,7 +1109,7 @@ proc reprTypeName*(rt: ReprType): string =
   of repInt: "int"
   of repSeq: "seq[int]"
   of repOption: "Option[int]"
-  of repOpaque: $rt.hostType
+  of repOpaque: nimTypeName(rt.hostType)
   of repSigma: "(" & rt.sigmaFields.mapIt(reprTypeName(it)).join(", ") & ")"
 
 proc reprSigSummary*(sig: seq[ReprType]): string =
