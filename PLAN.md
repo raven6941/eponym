@@ -1173,6 +1173,15 @@ destination-passing optimization in (F).
 Surface syntax and package onboarding (G) can proceed alongside A–C, but must
 not imply that unsupported host Nim is executable inside `eponymBlock`.
 
+### Interactive editing experience for the first release
+
+- [ ] [#425 — Goal-directed Intro for dependent function goals](https://github.com/raven6941/eponym/issues/425) — LSP operation and VS Code action implemented; regression coverage and full CI remain.
+- [ ] [#426 — Constructor refinement with index-aware feasibility](https://github.com/raven6941/eponym/issues/426)
+- [ ] [#427 — Context-directed Apply/refine](https://github.com/raven6941/eponym/issues/427)
+- [ ] [#428 — Goal-directed equality rewrite and transport](https://github.com/raven6941/eponym/issues/428)
+- [ ] [#429 — Semantic proof-state edit actions with undo and replay](https://github.com/raven6941/eponym/issues/429)
+- [ ] [#430 — Discover available semantic actions for a proof state](https://github.com/raven6941/eponym/issues/430)
+
 ## Building
 
 Requires Nim 2.x (built with 2.2.12 via choosenim):

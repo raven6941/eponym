@@ -347,6 +347,30 @@ export function activate(ctx: vscode.ExtensionContext) {
             if (!entry.shedNames.includes(m.shedName)) entry.shedNames.push(m.shedName);
             entry.panel.title = `Shed: ${m.shedName}`;
             await entry.refresh();
+          } else if (m.cmd === "intro") {
+            const res = await client.introShed(docUri, entry.shedName, m.count ?? 1);
+            const line = res.nimLine - 1;
+            const startCh = res.nimCol - 1;
+            const startOffset = editor.document.offsetAt(
+              new vscode.Position(line, startCh)
+            );
+            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
+            if (!node || editor.document.positionAt(node.end).line !== line) {
+              throw new Error(`intro: could not find the shed marker for '${entry.shedName}'`);
+            }
+            const endCh = editor.document.positionAt(node.end).character;
+            await editor.edit((b) =>
+              b.replace(new vscode.Range(line, startCh, line, endCh), res.term)
+            );
+            await editor.document.save();
+            layoutCache.delete(docUri);
+            if (!(await ensureSidecar(editor.document, true))) return;
+            lensProvider.refreshDoc(editor.document);
+            panel.webview.postMessage({
+              cmd: "actionmsg",
+              text: `introduced ${res.shedName}: ${res.status} (${res.yellowCount} yellow left)`,
+            });
+            await refresh();
           } else if (m.cmd === "refine" || m.cmd === "give") {
             // Issue #137: the server owns the whole refine round-trip --
             // it fills the hole in the macro-recorded generated source,
@@ -537,8 +561,46 @@ export function activate(ctx: vscode.ExtensionContext) {
     return true;
   }
 
-  // Keyboard-bound shed actions (r/c/g) operate on the expanded shed.
+  // Keyboard-bound shed actions (i/r/c/g) operate on the expanded shed.
   // They reuse the webview's refine/case-split flows via a transient client.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("eponym.shedIntro", async () => {
+      const cur = currentExpanded();
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showErrorMessage("Eponym: no active text editor");
+        return;
+      }
+      if (!cur) {
+        vscode.window.showErrorMessage("Eponym: no shed expanded");
+        return;
+      }
+      const client = await inlineClient(editor.document);
+      if (!client) return;
+      try {
+        const res = await client.introShed(cur.docUri, cur.shedName);
+        const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
+        if (!ok) {
+          vscode.window.showWarningMessage(
+            `Introduced ${cur.shedName} server-side, but could not locate its shed marker to splice.`
+          );
+          return;
+        }
+        await collapseShed();
+        await editor.document.save();
+        layoutCache.delete(editor.document.uri.toString());
+        if (!(await ensureSidecar(editor.document, true))) return;
+        lensProvider.refreshDoc(editor.document);
+        vscode.window.showInformationMessage(
+          `Introduced a binder for ${cur.shedName}: ${res.status} (${res.yellowCount} yellow left)`
+        );
+      } catch (e) {
+        vscode.window.showErrorMessage(`Intro failed: ${String(e)}`);
+      } finally {
+        client.shutdown();
+      }
+    })
+  );
   ctx.subscriptions.push(
     vscode.commands.registerCommand("eponym.shedRefine", async () => {
       const cur = currentExpanded();

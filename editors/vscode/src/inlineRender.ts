@@ -79,7 +79,7 @@ export function renderInlineShed(
     44,
     ...bodyLines.map((l) => l.length + 2),
     opts.keyHints.length + 2,
-    opts.showButtons ? "[refine] [case-split] [give]".length + 2 : 0
+    opts.showButtons ? "[refine] [case-split] [give] [intro]".length + 2 : 0
   );
   const bar = (s: string) => `│ ${s}`.padEnd(width + 1) + "│";
   out.push(`┌─ ${shedName} ${"─".repeat(Math.max(0, width - shedName.length - 4))}┐`);
@@ -88,7 +88,7 @@ export function renderInlineShed(
   }
   out.push(`├${"─".repeat(width)}┤`);
   if (opts.showButtons) {
-    out.push(bar("[refine] [case-split] [give]"));
+    out.push(bar("[refine] [case-split] [give] [intro]"));
   }
   // Advisory keybinding line (always shown, uneditable)
   out.push(bar(opts.keyHints));

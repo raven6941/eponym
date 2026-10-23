@@ -944,6 +944,83 @@ proc refineShed*(nimFile, shedName, term: string,
   (true, "", clientTerm, spliceLine, spliceCol,
    shedStatusToStr(responseShed.status), yellowCount)
 
+proc introShed*(nimFile, shedName: string, count = 1):
+    tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
+          status: string, yellowCount: int] =
+  ## Goal-directed Intro for a real `.nim` shed. The selected Pi binders
+  ## are read from the checked hole goal, rendered as typed lambda binders,
+  ## then passed through refineShed's normal checker and source round-trip.
+  ## Clients request the semantic operation and never synthesize lambda text.
+  if count < 1:
+    return (false, "Intro needs a positive binder count", "", 0, 0, "", 0)
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)", "", 0, 0, "", 0)
+  let (sheds, _) = readShedSidecarEx(sc)
+  var si = -1
+  for i, shed in sheds:
+    if shed.name == shedName:
+      si = i
+      break
+  if si < 0:
+    return (false, "unknown shed '" & shedName & "'", "", 0, 0, "", 0)
+  if sheds[si].genSrc == "":
+    return (false, "shed '" & shedName &
+            "': no generated source recorded (sidecar predates #137; " &
+            "recompile)", "", 0, 0, "", 0)
+  if sheds[si].status != ssYellow:
+    return (false, "shed '" & shedName & "' is not open (status " &
+            shedStatusToStr(sheds[si].status) & ")", "", 0, 0, "", 0)
+
+  var ms: MetaStore
+  var holeIdx = -1
+  try:
+    let checked = elabCheckHolesDir(sheds[si].genSrc, parentDir(nimFile))
+    ms = checked.ms
+    for i, h in ms.holes:
+      if h.holeLoc.line != sheds[si].holeLine: continue
+      if sheds[si].holeCol <= 0 or h.holeLoc.col == sheds[si].holeCol:
+        holeIdx = i
+        break
+  except ParseError as e:
+    return (false, "recorded source no longer parses: " & e.msg,
+            "", 0, 0, "", 0)
+  if holeIdx < 0:
+    return (false, "shed '" & shedName &
+            "': hole no longer open in the recorded source (sidecar stale? recompile)",
+            "", 0, 0, "", 0)
+
+  let state = semanticShedState(ms, ms.holes[holeIdx])
+  if count > state.goalPi.len:
+    return (false, "Intro requested " & $count & " binder(s), but the goal " &
+            "has only " & $state.goalPi.len & " leading function binder(s)",
+            "", 0, 0, "", 0)
+
+  var ctx = semanticContext(state)
+  var usedNames = state.context.mapIt(it.name)
+  var term = ""
+  for i in 0 ..< count:
+    let binder = state.goalPi[i]
+    let baseName = if binder.name.len > 0 and binder.name != "_":
+                     binder.name
+                   else: "intro"
+    let name = freshShedName(baseName, usedNames)
+    let domain = prettyTerm(binder.domain, ctx, ms.refNames, ms.recordFields)
+    var quantity = ""
+    if binder.qty == q0 or binder.erased: quantity = "0 "
+    elif binder.qty == q1: quantity = "1 "
+    if binder.implicit:
+      if quantity != "":
+        return (false, "Intro does not support linear or erased implicit " &
+                "binders yet", "", 0, 0, "", 0)
+      term.add("lam {" & name & " : " & domain & "}. ")
+    else:
+      term.add("lam (" & quantity & name & " : " & domain & "). ")
+    ctx = @[CtxEntry(name: name, ty: binder.domain, qty: toQty(binder.qty))] & ctx
+  term.add("?")
+  refineShed(nimFile, shedName, term)
+
 proc caseSplitShed*(nimFile, shedName, variable: string):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           subSheds: seq[string]] =
@@ -1293,6 +1370,26 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
     let requireComplete = "requireComplete" in msg["params"] and
       msg["params"]["requireComplete"].getBool()
     let r = refineShed(uriToPath(uri), shedName, term, requireComplete)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id,
+              "result": {"shedName": shedName, "term": r.term,
+                         "nimLine": r.nimLine, "nimCol": r.nimCol,
+                         "status": r.status, "yellowCount": r.yellowCount}}
+  of "eponym/introShed":
+    let id = msg["id"]
+    if "textDocument" notin msg["params"] or "shedName" notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32602,
+                          "message": "eponym/introShed needs " &
+                            "textDocument.uri and shedName"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let shedName = msg["params"]["shedName"].getStr()
+    let count = if "count" in msg["params"]:
+                  msg["params"]["count"].getInt()
+                else: 1
+    let r = introShed(uriToPath(uri), shedName, count)
     if not r.ok:
       return %*{"jsonrpc": "2.0", "id": id,
                 "error": {"code": -32602, "message": r.why}}

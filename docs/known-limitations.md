@@ -345,6 +345,9 @@ cross-process presentation path; those strings are not parsed back into
 terms. Refinement edits generated source and re-elaborates it. Draft text is
 user-owned scratch and is not checked by Eponym. A persisted semantic editing
 session would need a versioned structural term codec and is not implemented.
+Goal-directed Intro is available for leading Pi binders; it introduces one
+binder per action. Persisted semantic action history, undo, and replay are
+tracked separately and are not implemented.
 
 Case-splitting in a Nim shed supports parameterized and indexed datatype
 families. It constructs a motive generalized over every index and carries

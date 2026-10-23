@@ -156,6 +156,22 @@ export class LspClient {
     });
   }
 
+  /** Introduce checked Pi binders into a shed goal (#425). */
+  introShed(docUri: string, shedName: string, count = 1): Promise<{
+    shedName: string;
+    term: string;
+    nimLine: number;
+    nimCol: number;
+    status: "white" | "yellow" | "brown";
+    yellowCount: number;
+  }> {
+    return this.request("eponym/introShed", {
+      textDocument: { uri: docUri },
+      shedName,
+      count,
+    });
+  }
+
   shutdown() {
     this.notify("exit", {});
     this.proc.kill();
