@@ -704,7 +704,8 @@ proc validateHostOpaqueType*(globals: Globals, typeName: string) =
 
 proc validateHostRuntimeCodecType*(globals: Globals, typeName: string) =
   ## A user codec may describe any named Eponym type or family, including
-  ## transparent data whose constructors the adapter translates itself.
+  ## transparent data whose constructors the adapter translates itself,
+  ## and record types (their checked type is the Sigma, issue #402).
   if typeName notin globals:
     raise newException(ValueError,
       "runtime codec type '" & typeName & "' is not declared")
@@ -715,7 +716,7 @@ proc validateHostRuntimeCodecType*(globals: Globals, typeName: string) =
   var terminalType = entry.ty
   while not terminalType.isNil and terminalType.kind == tPi:
     terminalType = terminalType.scope.bdy
-  if terminalType.isNil or terminalType.kind != tType:
+  if terminalType.isNil or terminalType.kind notin {tType, tSi}:
     raise newException(ValueError,
       "runtime codec mapping '" & typeName & "' must name an Eponym type")
 
