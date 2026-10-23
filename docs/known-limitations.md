@@ -514,7 +514,22 @@ inlined, never passed as values: a partial application missing its step /
 cons / some case is honestly rejected by the repr tier with a named
 diagnostic and falls back to the Phase 1 `Value` backend (which still
 eta-expands it). A bare eliminator reference has no motive, so the closure
-result representation cannot be established there either. Nested collections, non-`int` elements, and indices
+result representation cannot be established there either. Function types
+themselves are representable (#407 slice 3): a (non-dependent) function
+type maps to a `{.closure.}` Nim proc type, flattened across curried binders
+(`Pi x:A. Pi y:B. C` is `proc (x: reprA, y: reprB): reprC {.closure.}`), so a
+closure value — a partially-applied eliminator, or a compiled definition
+whose uncurried host arity matches the flattened shape — can be stored in a
+`let`, passed to another compiled definition, and applied there, all at the
+repr tier. Dependency of a codomain on the bound value is erased: a live
+index position (a `Vec` length) mentioning it is honestly rejected, as is a
+quantity-0 function domain (its argument is erased at every call site).
+Passing a compiled definition whose host arity does not match the flattened
+formal — e.g. after quantity inference erases an unused parameter — is an
+honest Phase-1 fallback ("needs eta-expansion"), not a hard Nim type error;
+a `let`-bound definition reference flowing into an incompatible curried
+formal is a current limitation (the general application path does not track
+the formal's expected shape there). Nested collections, non-`int` elements, and indices
 mentioning quantity-0-erased binders fall back to the Phase 1 `Value` backend,
 as do definitions whose declared wrapper types disagree with the compiled repr
 signature. Definitions outside the compiled

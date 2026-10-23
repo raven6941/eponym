@@ -17,9 +17,17 @@ eponymBlock:
       vecnil[Int](),
       lam(i, Nat, lam(x, Int, lam(xs, Vec[Int, i],
         lam(ih, Vec[Int, i], cons[Int, i](addInt(x, x), ih))))), n, values)
+  # Issue #407 slice 3: function types are representable — a higher-order
+  # definition compiles at the repr tier and its wrapper takes an
+  # ordinary {.closure.} proc.
+  proc applyOnce(f: Int -> Int, x: Int): Int = f x
+  proc doubleFn(x: Int): Int = x + x
+  proc doubleIt(x: Int): Int = applyOnce doubleFn x
 
 doAssert addOne(41) == 42
 doAssert importedAddTwo(41) == 43
+doAssert applyOnce(proc (v: int): int {.closure.} = v * 3, 5) == 15
+doAssert doubleIt(21) == 42
 doAssert doubleVector(3, @[2, 3, 5]) == @[4, 6, 10]
 var vectorLengthRejected = false
 try:

@@ -108,7 +108,7 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_binding_quaternary_type.nim",
      "opaque quaternary adapter requires postulate 'hostFourPostulate'"),
     ("tests/fixtures/embedded_err_require_compiled_unsupported.nim",
-     "eponymBlock requireCompiled: definition 'applyTwice' has no representation-compiled body: Phase 2 unavailable: non-atomic binder domain (type outside the representation fragment)"),
+     "eponymBlock requireCompiled: definition 'applyQ0' has no representation-compiled body: Phase 2 unavailable: non-atomic binder domain (quantity-0 function domain has no host representation)"),
     ("tests/fixtures/embedded_err_require_compiled_erased_vec_index.nim",
      "eponymBlock requireCompiled: definition 'keepVector' has no representation-compiled body: Phase 2 unavailable: Vec length index mentions an erased binder"),
     ("tests/fixtures/embedded_err_require_compiled_dynamic.nim",

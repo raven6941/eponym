@@ -3,7 +3,12 @@ import eponym_mac
 eponymBlock:
   requireCompiled()
   postulate(Int, Univ)
+  postulate(Nat, Univ)
   runtimeType(Int, int)
-  # Higher-order binder domains stay outside the representation fragment:
-  # the repr tier compiles first-order host signatures only.
-  proc applyTwice(f: Int -> Int, x: Int): Int = f x
+  runtimeType(Nat, int)
+  # A quantity-0 function domain has no host representation (its argument
+  # is erased at every call site), so the repr tier honestly rejects it.
+  # (First-order function domains like `Int -> Int` compile to
+  # `{.closure.}` proc types since issue #407 slice 3; `f` is used here so
+  # its quantity stays ω and the q0 domain reaches the signature check.)
+  proc applyQ0(f: Pi(p {.erased.}: Nat, Int), x: Int): Int = f 0

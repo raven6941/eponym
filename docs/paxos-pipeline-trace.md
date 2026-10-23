@@ -271,7 +271,13 @@ typed wrapper **prefers the repr proc when the boundary is the identity**
 `runtimeType` mapping via `isPlainIntMapping`), skipping the `Value`
 conversions. `reprSig` raises `CgUnsupported` — falling back to the Phase 1
 tier — for anything outside the fragment (non-atomic binder domains,
-non-`tR` result, erased binders in the signature, missing mappings).
+non-`tR` result, erased binders in the signature, missing mappings). Since
+#407 slice 3, function types are inside the fragment: a (non-dependent)
+function type is a `{.closure.}` Nim proc type flattened across curried
+binders, so closure values (partially-applied eliminators) and compiled
+definitions of matching host arity cross definition boundaries as ordinary
+proc values; quantity-0 function domains and arity mismatches (e.g. after
+quantity inference erases a parameter) are honest named fallbacks.
 
 The representation spec is the same `runtimeTypes` block mapping from Stage
 5: where `Nat`→`int` is declared, host `int`s replace `Value`s. The
