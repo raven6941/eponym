@@ -498,7 +498,13 @@ scalar fragment (`Int`/`Nat`/`Bool`) plus `Vec`/`List` over int-fragment
 elements (as `seq[int]`) and `Option` (as `Option[int]`). Eliminators compile to
 sequence folds or `isSome` branches; each `Vec A n` parameter gets an entry
 length check that raises `ValueError` on mismatch, preserving the interpreter
-codec's loud failure. Nested collections, non-`int` elements, and indices
+codec's loud failure. In the Phase 1 `Value` backend, a partially-applied or
+bare eliminator eta-expands at macro time into nested `vHostFunc` closures
+over the missing arguments whose innermost body is the saturated eliminator
+dispatch call (#407) — the closure is an ordinary first-class function value,
+so such definitions compile at the `Value` tier instead of falling back to the
+interpreter. The repr tier does not yet generate closures: a partially-applied
+eliminator in a representation-tier body falls back to the Phase 1 backend. Nested collections, non-`int` elements, and indices
 mentioning quantity-0-erased binders fall back to the Phase 1 `Value` backend,
 as do definitions whose declared wrapper types disagree with the compiled repr
 signature. Definitions outside the compiled

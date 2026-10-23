@@ -28,11 +28,12 @@
 ## - `tR` to postulates / data constructors: neutral value or bindings lookup
 ## - `tR` to definitions compiled in the same block: direct recursive call
 ## - `tR` to other definitions: slow path through `callValueFuncDir`
-## - eliminators (`wRed`): only fully applied, via a generated
+## - eliminators (`wRed`): fully applied via a generated
 ##   `eponymElim_<name>` proc holding the static case dispatch over the
 ##   registered reduction rules; emitted constructor labels are validated
 ##   against that table before code is returned; partially-applied or bare
-##   eliminator references fall back to the interpreter
+##   eliminator references eta-expand into nested `vHostFunc` closures
+##   over the missing arguments (issue #407)
 ## - `tPrim`: primitive Int ops via the existing `vPrim` accumulation
 ##
 ## Deliberate deviations from the interpreter (all unreachable in checked
@@ -260,6 +261,43 @@ proc cgNullaryLambda(bodyCode: NimNode): NimNode =
   quote do:
     proc (): Value = `bodyCode`
 
+proc cgElimClosure(ctx: var CodegenCtx, r: CgRef, elimRefId: int,
+                   provided: seq[Term], env: seq[NimNode],
+                   bnd: NimNode): NimNode =
+  ## Eta-expand a partially-applied (or bare) eliminator into nested host
+  ## closures (issue #407). The provided arguments are evaluated
+  ## left-to-right at the creation site — matching the interpreter's strict
+  ## application order — and each missing argument becomes one
+  ## `proc (Value): Value` parameter; the innermost body is the saturated
+  ## `eponymElim_<name>` dispatch call. The result is an ordinary
+  ## `vHostFunc` closure value: it can be stored, passed to compiled
+  ## definitions, returned, and applied later with `vAppWithBindings`.
+  ## Like every other Value-backend closure, the missing parameters are
+  ## plain `Value`s, so quantity-0 binders and type-level positions (the
+  ## motive) need no special treatment here.
+  ctx.usedElims[elimRefId] = true
+  let missing = r.nargs - provided.len
+  var preStmts = newStmtList()
+  var argSyms: seq[NimNode] = @[]
+  for a in provided:
+    let s = genSym(nskLet, "cgElimPart")
+    preStmts.add(newLetStmt(s, cg(ctx, a, env, bnd)))
+    argSyms.add(s)
+  var paramSyms: seq[NimNode] = @[]
+  for i in 0 ..< missing:
+    paramSyms.add(genSym(nskParam, "cgElimMiss"))
+  var body = newCall(ident(elimProcName(r.name)),
+    bracketOf(argSyms & paramSyms), bnd)
+  for i in countdown(paramSyms.high, 0):
+    body = newCall(bindSym"vHostFunc", cgLambda(paramSyms[i], body))
+  if preStmts.len == 0:
+    return body
+  preStmts.add(body)
+  var blk = newNimNode(nnkBlockStmt)
+  blk.add(newEmptyNode())
+  blk.add(preStmts)
+  blk
+
 proc cgAppChain(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
                 bnd: NimNode): NimNode =
   ## Compile `tApp` chains. Everything folds through `vCompiledAppWithBindings`
@@ -280,10 +318,14 @@ proc cgAppChain(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
       if head.refId in ctx.badElims:
         raise newException(CgUnsupported,
           "eliminator '" & r.name & "' is not compilable")
-      if appArgs.len != r.nargs:
+      if appArgs.len < r.nargs:
+        # Issue #407: a partially-applied eliminator eta-expands into a
+        # closure over the missing arguments (an ordinary vHostFunc value).
+        return cgElimClosure(ctx, r, head.refId, appArgs, env, bnd)
+      if appArgs.len > r.nargs:
         raise newException(CgUnsupported,
           "eliminator '" & r.name & "' applied to " & $appArgs.len &
-          " args, needs " & $r.nargs & " (partial application falls back)")
+          " args, needs " & $r.nargs & " (over-application is outside the fragment)")
       ctx.usedElims[head.refId] = true
       var argCodes: seq[NimNode] = @[]
       for a in appArgs:
@@ -315,8 +357,12 @@ proc cg(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
     of cgkPostulate, cgkCtor:
       newCall(bindSym"postulateValue", newLit(t.refId), bnd)
     of cgkElim:
-      raise newException(CgUnsupported,
-        "bare eliminator reference '" & r.name & "' (not fully applied)")
+      # Issue #407: a bare eliminator reference is the fully-eta-expanded
+      # closure (every argument missing).
+      if t.refId in ctx.badElims:
+        raise newException(CgUnsupported,
+          "eliminator '" & r.name & "' is not compilable")
+      return cgElimClosure(ctx, r, t.refId, @[], env, bnd)
     of cgkDefn:
       if r.compiledProc.len > 0:
         # The definition's value: the compiled proc applied to no args.
