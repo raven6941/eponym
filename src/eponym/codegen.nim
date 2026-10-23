@@ -913,12 +913,15 @@ proc isTypeVariableMapping*(m: HostRuntimeType): bool =
 proc isOpaqueIdentityMapping*(m: HostRuntimeType): bool =
   ## True when the mapping declares a concrete host type used as-is, with
   ## no conversion: a plain `runtimeType` that is not an int mapping, not a
-  ## vector/list/option/variant/codec mapping, and not a type variable.
-  ## Issue #401: these become the `repOpaque` representation kind.
+  ## vector/list/option/variant/codec mapping, not a type variable, and not
+  ## carrying a trusted record codec (the codec defines the boundary
+  ## semantics, including dependent-index checks, so the mapping is not an
+  ## identity representation). Issue #401: these become the `repOpaque`
+  ## representation kind.
   not m.isRuntimeVector and not m.isRuntimeList and
     not m.isRuntimeOption and not m.isRuntimeVariant and
     not m.isRuntimeCodec and not m.isPlainIntMapping and
-    not m.isTypeVariableMapping
+    not m.isTypeVariableMapping and not m.hasRecordCodec
 
 proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
   ## The representation kind for a type/family refId. Raises CgUnsupported

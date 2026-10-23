@@ -185,7 +185,11 @@ eponymBlock:
 
 A concrete `runtimeType` mapping whose Nim type is not `int` becomes an
 identity representation: the compiled proc takes and returns the declared
-host type directly, with no conversion. An applied family with such a mapping
+host type directly, with no conversion. (A mapping for a type with a
+`runtimeCodec` or `runtimeRecordTrusted` codec is excluded: the codec
+defines the boundary semantics, including dependent-index checks, so the
+type keeps the codec-checked Value path instead of an unchecked
+identity.) An applied family with such a mapping
 (`Chan s`, `AcceptMsg n`) denotes the one declared host type for every index
 tuple — the indices are dropped from the host signature, exactly as
 `Vec A n` maps to one `seq[int]`. Declaring one host type for a whole family

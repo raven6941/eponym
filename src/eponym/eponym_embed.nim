@@ -46,6 +46,11 @@ type
     isRuntimeOption*: bool
     isRuntimeVariant*: bool
     isRuntimeCodec*: bool
+    hasRecordCodec*: bool  ## Issue #401: the Eponym type also has a
+      ## `runtimeRecordTrusted` codec. The codec defines the boundary
+      ## semantics (including dependent-index checks), so the mapping is
+      ## not an opaque identity representation even though it is a plain
+      ## `runtimeType` declaration.
     isGenericTypeWitnessable*: bool
     encoder*: NimNode
     decoder*: NimNode

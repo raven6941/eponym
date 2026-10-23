@@ -4105,8 +4105,14 @@ macro eponymBlock*(body: untyped): untyped =
                                checkedGlobals):
       error("eponymBlock binding error: binding for postulate '" &
         binding.postulateName & "' is unused by every proc body", body)
-  let runtimeTypes = hostRuntimeTypes(body, checkedGlobals)
+  var runtimeTypes = hostRuntimeTypes(body, checkedGlobals)
   let trustedRuntimeRecords = trustedRuntimeRecordNames(body)
+  # Issue #401: a `runtimeType` mapping for a trusted record carries a
+  # codec with boundary semantics (dependent-index checks); it must not
+  # become an opaque identity representation in the repr tier.
+  for i in 0 ..< runtimeTypes.len:
+    if runtimeTypes[i].eponymName in trustedRuntimeRecords:
+      runtimeTypes[i].hasRecordCodec = true
   let records = hostRecords(body, trustedRuntimeRecords)
   for requested in trustedRuntimeRecords:
     let recordIndex = findHostRecord(records, requested)
