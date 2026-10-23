@@ -214,6 +214,8 @@ type
     # earlier parameters and indices. The LSP uses these to build typed
     # index-generalized motives for shed case-splitting.
     dataIndexDomains*: Table[int, seq[Term]]
+    # Constructor Pi types are retained for goal-directed shed refinement.
+    ctorTypes*: Table[int, Term]
 
 proc initCtorTable*(): CtorTable =
   CtorTable(ctorData: initTable[int, int](),
@@ -222,20 +224,23 @@ proc initCtorTable*(): CtorTable =
             dataNames: initTable[int, string](),
             dataParamCounts: initTable[int, int](),
             dataIndexCounts: initTable[int, int](),
-            dataIndexDomains: initTable[int, seq[Term]]())
+            dataIndexDomains: initTable[int, seq[Term]](),
+            ctorTypes: initTable[int, Term]())
 
 proc registerDataCtors*(ms: var MetaStore, dataRefId: int, dataName: string,
                         ctors: seq[(int, string)], paramCount = 0,
                         indexCount = 0,
-                        indexDomains: seq[Term] = @[]) =  ## Issue #80: record one `data` declaration's constructor set.
+                        indexDomains: seq[Term] = @[],
+                        ctorTypes: seq[Term] = @[]) =  ## Issue #80: record one `data` declaration's constructor set.
   ms.ctorTable.dataNames[dataRefId] = dataName
   ms.ctorTable.dataParamCounts[dataRefId] = paramCount
   ms.ctorTable.dataIndexCounts[dataRefId] = indexCount
   ms.ctorTable.dataIndexDomains[dataRefId] = indexDomains
   var ids: seq[int] = @[]
-  for (cid, cname) in ctors:
+  for i, (cid, cname) in ctors:
     ms.ctorTable.ctorData[cid] = dataRefId
     ms.ctorTable.ctorNames[cid] = cname
+    if i < ctorTypes.len: ms.ctorTable.ctorTypes[cid] = ctorTypes[i]
     ids.add(cid)
   ms.ctorTable.dataCtors[dataRefId] = ids
 

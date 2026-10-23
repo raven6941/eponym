@@ -444,6 +444,41 @@ writeFile(vecFile, vecV0)
 compiled = compileFixture(vecFile, scratch)
 if not compiled.ok: echo compiled.output
 check(compiled.ok, "indexed Vec fixture compiles with an initial shed")
+let vecGoalFile = scratch / "goal_constructor_vec.nim"
+let vecGoalV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & vecImport & "\"\n" &
+  "  proc makeNonempty(n : Nat) : Vec[Nat, suc(n)] = ![makeVecBody]\n"
+writeFile(vecGoalFile, vecGoalV0)
+compiled = compileFixture(vecGoalFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "goal-directed Vec constructor fixture compiles")
+let vecOptions = refineConstructorsShed(vecGoalFile, "makeVecBody")
+check(vecOptions.ok and vecOptions.constructors == @["cons"],
+  "goal-directed constructor options prune nil for Vec[Nat, suc(n)]: " &
+    (if vecOptions.ok: $vecOptions.constructors else: vecOptions.why))
+let vecBeforeBadChoice = readFile(sidecarPath(vecGoalFile))
+let impossibleVecChoice = refineConstructorsShed(
+  vecGoalFile, "makeVecBody", "nil")
+check(not impossibleVecChoice.ok and
+      readFile(sidecarPath(vecGoalFile)) == vecBeforeBadChoice,
+  "goal-directed refinement rejects an impossible constructor without mutation")
+if vecOptions.ok:
+  let vecConstructed = refineConstructorsShed(vecGoalFile, "makeVecBody", "cons")
+  check(vecConstructed.ok and "shedHole(" in vecConstructed.term,
+    "selected constructor creates editable field sheds: " &
+      (if vecConstructed.ok: vecConstructed.term else: vecConstructed.why))
+  if vecConstructed.ok:
+    let vecGoalV1 = spliceShed(vecGoalV0, vecConstructed.nimLine,
+      vecConstructed.nimCol, vecConstructed.term)
+    writeFile(vecGoalFile, vecGoalV1)
+    compiled = compileFixture(vecGoalFile, scratch)
+    if not compiled.ok: echo compiled.output
+    check(compiled.ok, "goal-directed indexed constructor splice recompiles")
+    let vecGoalSheds = readShedSidecar(sidecarPath(vecGoalFile))
+    check(vecGoalSheds.len == 4 and
+          vecGoalSheds.anyIt(it.goal == "Nat") and
+          vecGoalSheds.anyIt(it.goal == "(Vec Nat n)"),
+      "constructor field sheds preserve the index substitutions in their goals")
 let vecCases = caseSplitShed(vecFile, "vecBody", "xs")
 check(vecCases.ok and vecCases.term.startsWith(
         "vecElim[Nat](lam(i0, Nat, lam(u, Vec[Nat, i0], Nat)),"),

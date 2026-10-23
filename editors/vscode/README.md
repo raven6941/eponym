@@ -28,6 +28,10 @@ sidecar generation. Outside an Eponym checkout, the server path defaults to
 
 See [Working with sheds in VS Code](USER_GUIDE.md) for the inline workflow,
 how to read the 2D proof state, and when to use Refine, Give, or Case-split.
+For datatype goals, **Construct** lists constructors whose typed applications
+the elaborator accepts for the goal, then opens the constructor's fields as
+ordinary sheds. This is goal-directed refinement; case-split remains the
+separate action for eliminating a value already in scope.
 
 In brief: open a Nim file with a `shedsBlock`, place the cursor on a `![name]`
 marker, and run **Eponym: Expand inline shed view** (default shortcut

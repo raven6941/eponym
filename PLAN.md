@@ -1176,7 +1176,7 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 ### Interactive editing experience for the first release
 
 - [ ] [#425 — Goal-directed Intro for dependent function goals](https://github.com/raven6941/eponym/issues/425) — LSP operation, VS Code action, and dependent/implicit/quantity round-trip coverage implemented; full CI remains.
-- [ ] [#426 — Constructor refinement with index-aware feasibility](https://github.com/raven6941/eponym/issues/426)
+- [x] [#426 — Constructor refinement with index-aware feasibility](https://github.com/raven6941/eponym/issues/426): shed constructor picker filters candidates by elaborating typed constructor applications against the goal, then creates checked field sheds through the normal refinement round-trip.
 - [ ] [#427 — Context-directed Apply/refine](https://github.com/raven6941/eponym/issues/427)
 - [ ] [#428 — Goal-directed equality rewrite and transport](https://github.com/raven6941/eponym/issues/428)
 - [ ] [#429 — Semantic proof-state edit actions with undo and replay](https://github.com/raven6941/eponym/issues/429)

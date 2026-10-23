@@ -75,6 +75,7 @@ export function pageHtml(layoutJson: string, shedName: string, shedNames: string
 <div id="refinebar">
   <input id="term" placeholder="refine term (e.g. zero())" size="40"/>
   <button onclick="intro()">intro</button>
+  <button onclick="construct()">construct</button>
   <button onclick="refine()">refine</button>
   <button onclick="give()">give</button>
   <button onclick="casesplit()">case-split</button>
@@ -112,6 +113,7 @@ function refine(){ const t=document.getElementById('term').value; vscode.postMes
 function give(){ const t=document.getElementById('term').value; vscode.postMessage({cmd:'give', term:t, hole:selectedHole}); }
 function casesplit(){ const v=document.getElementById('term').value; vscode.postMessage({cmd:'case-split', variable:v, hole:selectedHole}); }
 function intro(){ vscode.postMessage({cmd:'intro', hole:selectedHole}); }
+function construct(){ vscode.postMessage({cmd:'construct', hole:selectedHole}); }
 function switchShed(name){ vscode.postMessage({cmd:'switch-shed', shedName:name}); }
 window.addEventListener('message', e=>{
   const m=e.data;
