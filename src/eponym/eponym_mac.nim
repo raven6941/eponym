@@ -4451,6 +4451,138 @@ macro eponymBlock*(body: untyped): untyped =
     postulateReprs.add(PostulateReprBinding(
       postulateName: binding.postulateName,
       implementation: binding.implementation, argCount: argCount))
+  # Issue #409: per-instantiation typed adapters for bindPostulateValue.
+  # Scan the compiled definitions for applications of rawValue-bound
+  # postulates. Every application must instantiate the postulate's type
+  # binders at statically known types (a type reference with a runtime
+  # codec, or a primitive); anything else is a named error rather than a
+  # silent Value-tier fallback. The collected instantiations drive the
+  # typed-adapter emission (next slice); this slice establishes the
+  # static-instantiation discipline and its diagnostics.
+  type PostulateInstantiation = object
+    postulateName: string
+    typeArgNames: seq[string]
+    key: string
+  var rawValueInstantiations: seq[PostulateInstantiation] = @[]
+  var seenInstantiationKeys = initHashSet[string]()
+  var refNames409 = initTable[int, string]()
+  for gname, gentry in checkedGlobals:
+    if not gentry.tm.isNil and gentry.tm.kind == tR:
+      refNames409[gentry.tm.refId] = gname
+  var rawValuePostulates = initTable[int, string]()
+  for binding in bindings:
+    if not binding.rawValue: continue
+    if binding.postulateName notin checkedGlobals: continue
+    let pentry = checkedGlobals[binding.postulateName]
+    if pentry.tm.isNil or pentry.tm.kind != tR: continue
+    rawValuePostulates[pentry.tm.refId] = binding.postulateName
+  proc staticTypeArgKey409(term: Term): string =
+    ## Canonical key for a postulate type argument, or "" when the
+    ## argument is not statically known. Slice 1 covers type references
+    ## (primitives and mapped families); applied type families report
+    ## their own named reason at the call site below.
+    if term.isNil: return ""
+    case term.kind
+    of tR:
+      if term.refId in refNames409:
+        let tname = refNames409[term.refId]
+        if tname in ["Int", "Nat", "Bool"]: return tname
+        for m in runtimeTypes:
+          if m.eponymName == tname: return tname
+      ""
+    of tApp:
+      "applied:" & $term.kind
+    else: ""
+  proc scanRawValueApps409(term: Term) =
+    if term.isNil: return
+    case term.kind
+    of tApp:
+      var head = term
+      var args: seq[Term] = @[]
+      while head.kind == tApp:
+        args.add(head.arg)
+        head = head.fn
+      args.reverse()
+      if head.kind == tR and head.refId in rawValuePostulates:
+        let pname = rawValuePostulates[head.refId]
+        let psig = checkedGlobals[pname].ty
+        # Walk the Pi spine alongside the application args; the type
+        # arguments are those in type-binder positions (domain is a
+        # universe).
+        var sig = psig
+        var pos = 0
+        var typeKeys: seq[string] = @[]
+        var badArg = -1
+        var appliedFamily = false
+        while not sig.isNil and sig.kind == tPi and pos < args.len:
+          if not sig.dom.isNil and sig.dom.kind == tType:
+            if args[pos].kind == tApp:
+              appliedFamily = true
+              badArg = pos
+              break
+            let k = staticTypeArgKey409(args[pos])
+            if k.len == 0:
+              badArg = pos
+              break
+            typeKeys.add(k)
+          sig = sig.scope.bdy
+          inc pos
+        if badArg >= 0:
+          if appliedFamily:
+            error("bindPostulateValue '" & pname &
+              "' applied at an applied type family: issue #409 typed " &
+              "adapters do not yet support type families applied to " &
+              "arguments (e.g. Vec Int n); bind the monomorphic " &
+              "instantiation with bindPostulate instead")
+          error("bindPostulateValue '" & pname &
+            "' applied at a non-static type: issue #409 typed adapters " &
+            "require every type argument to be a statically known type " &
+            "with a runtime codec (a type variable or stuck type cannot " &
+            "be adapted)")
+        # Any type binder left uninstantiated is likewise non-static.
+        var remaining = sig
+        var uninstantiated = false
+        while not remaining.isNil and remaining.kind == tPi:
+          if not remaining.dom.isNil and remaining.dom.kind == tType:
+            uninstantiated = true
+            break
+          remaining = remaining.scope.bdy
+        if uninstantiated:
+          error("bindPostulateValue '" & pname &
+            "' applied without instantiating every type binder: issue " &
+            "#409 typed adapters require a statically known " &
+            "instantiation at each call site")
+        let key = pname & "@" & typeKeys.join(";")
+        if key notin seenInstantiationKeys:
+          seenInstantiationKeys.incl(key)
+          rawValueInstantiations.add(PostulateInstantiation(
+            postulateName: pname, typeArgNames: typeKeys, key: key))
+      scanRawValueApps409(term.fn)
+      scanRawValueApps409(term.arg)
+    of tPi, tSi, tLam:
+      scanRawValueApps409(term.dom)
+      scanRawValueApps409(term.scope.bdy)
+    of tPair:
+      scanRawValueApps409(term.pFst)
+      scanRawValueApps409(term.pSnd)
+      scanRawValueApps409(term.pScope.bdy)
+    of tFst, tSnd, tAbsurd:
+      scanRawValueApps409(term.sub)
+    of tLet:
+      scanRawValueApps409(term.letVal)
+      scanRawValueApps409(term.letTy)
+      scanRawValueApps409(term.letScope.bdy)
+    of tMeta:
+      for item in term.metaSpine: scanRawValueApps409(item)
+    else: discard
+  for d in codegenDefs:
+    scanRawValueApps409(d.tyTm)
+    scanRawValueApps409(d.tmTm)
+  if rawValueInstantiations.len > 0:
+    echo "[eponym codegen] issue #409: rawValue postulate instantiations:"
+    for inst in rawValueInstantiations:
+      echo "[eponym codegen]   " & inst.postulateName & "[" &
+        inst.typeArgNames.join(", ") & "]"
   var cgBlock = compileBlockProcs(codegenDefs, checkedGlobals, baseDir, src,
     cgLocFile, cgUserLines, runtimeTypes, postulateReprs, allDefs,
     crossBlockExports)
