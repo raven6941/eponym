@@ -83,7 +83,7 @@ echo "### Build: production modules"
 # and `installFiles` (the installed set; issue #183). These are the full
 # import closure of the public entry points (issue #189): every module a
 # user compile pulls in must also build standalone in CI.
-for f in abilities codegen eponym_init erasure preterm parse_surf elab elab_prof unify usage_check eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout mutual_termination; do
+for f in abilities codegen derive_repr eponym_init erasure preterm parse_surf elab elab_prof unify usage_check eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout mutual_termination; do
   run_step nim c $NC --hints:off $P "src/eponym/$f.nim"
 done
 # Build repl (issue #50)
@@ -131,6 +131,8 @@ run_step nim c -r $NC --hints:off $P "tests/test_nat_binding_identity.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_nat_to_int.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_debug_echo.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_scalar_runtime_codecs.nim"
+# Representation derivation from checked type structure (issue #402)
+run_step nim c -r $NC --hints:off $P "tests/test_derive_repr.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_session_tcp_bindings.nim"
 # Embedded error paths (issue #199)
 run_step nim c -r $NC --hints:off $P "tests/test_embedded_error_path.nim"

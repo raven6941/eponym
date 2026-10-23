@@ -279,6 +279,18 @@ machine-readable interface. QTT linearity still checks uses of Eponym values
 inside the block; it cannot detect two Nim references that alias the same
 host resource.
 
+**Derived mappings shift trust from the declaration to the derivation
+(#402).** A hand-written `runtimeType` trusts the author's stated
+correspondence; a *derived* mapping is computed deterministically from the
+checked `Term`, so the remaining trust is that the elaborator's term is the
+type the author meant — the same trust every checked definition already
+carries. Two assertions stay with the author: opaque-family index-independence
+(deriving over an applied family like `Wrap n` keeps the family's declared
+mapping, whose index-independence is trusted exactly as in the hand-written
+case), and the boundary checks the derivation retains rather than proves
+away (the `Vec` length O(1) check in a generated codec factory is enforced at
+runtime, not discharged at compile time).
+
 ## Summary of the trust boundary
 
 | Checked for you | Your responsibility |
