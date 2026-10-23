@@ -163,6 +163,8 @@ run_step nim c -r $NC --hints:off $P "tests/test_codegen_phase2_option.nim"
 # Phase 2 Vec end-to-end wrapper test (issue #330 v3)
 run_step nim c -r $NC --hints:off $P "tests/test_codegen_phase2_vec_e2e.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_require_compiled.nim"
+# Paxos under requireCompiled: opaque/index-erased families + dependent Sigma (issue #401)
+run_step nim c -r $NC --hints:off $P "tests/test_require_compiled_paxos.nim"
 # Phase 3 DPS Vec fold tests + benchmark (issue #331)
 run_step nim c -r $NC --hints:off $P "tests/test_codegen_phase3_dps_vec.nim"
 # Phase 3 DPS List fold tests + benchmark (issue #331)

@@ -46,9 +46,25 @@ type
     isRuntimeOption*: bool
     isRuntimeVariant*: bool
     isRuntimeCodec*: bool
+    hasRecordCodec*: bool  ## Issue #401: the Eponym type also has a
+      ## `runtimeRecordTrusted` codec. The codec defines the boundary
+      ## semantics (including dependent-index checks), so the mapping is
+      ## not an opaque identity representation even though it is a plain
+      ## `runtimeType` declaration.
     isGenericTypeWitnessable*: bool
     encoder*: NimNode
     decoder*: NimNode
+
+  PostulateReprBinding* = object
+    ## Issue #401: a postulate bound to a host procedure, for direct
+    ## representation-tier calls. The repr backend emits a forwarder
+    ## `eponymCompiledRepr_<name>` that calls the host implementation with
+    ## host-typed arguments — no `Value` layer, no interpreter. Only
+    ## bindings whose postulate type is fully within the representation
+    ## fragment get a forwarder; the rest keep the Phase 1 backend.
+    postulateName*: string
+    implementation*: NimNode  ## the bound host procedure
+    argCount*: int  ## host-procedure value arguments (excluding the result)
 
 proc hostIntUnary*(implementation: proc(x: int): int): Value
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
