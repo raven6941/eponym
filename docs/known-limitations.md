@@ -428,10 +428,13 @@ unrestricted so it cannot be silently discarded as linear.
 
 Indexed recursive families, higher-order recursive fields, closure-valued
 result motives, and user-written eliminators still use conservative counting
-and can reject valid branch-dependent usage. Applications whose callable
-signature is not available to the usage analyzer are counted syntactically,
-so erased arguments there can prevent q1 inference. A body with unresolved
-holes or an unsupported branch shape also stays conservative.
+for branch-dependent usage and can reject valid programs. For a complete
+generated eliminator, a value used only as its scrutinee is known to be
+consumed once; if that value also appears in another eliminator argument, the
+profile stays conservative. Applications whose callable signature is not
+available to the usage analyzer are counted syntactically, so erased
+arguments there can prevent q1 inference. A body with unresolved holes or an
+unsupported branch shape also stays conservative.
 
 An implementation with quantity `0` or `1` may satisfy a function contract
 with quantity `ω` when the quantity occurs in a covariant Pi codomain.

@@ -513,11 +513,13 @@ complete generated finite eliminators, and supported unindexed first-order
 recursive eliminators with ground result motives. Known global and primitive
 call signatures let the analyzer exclude type arguments and q0 arguments
 from runtime use counts. An erased argument combined with a runtime use keeps
-the binder unrestricted. Indexed recursive families, higher-order recursive
-fields, closure-valued motives, user-written eliminators, unresolved holes,
-and calls without an available signature remain conservative. Explicit
-annotations always override inference. Only *term* positions count as uses:
-mentions in binder domains, type annotations, and eliminator motives neither
+the binder unrestricted. For complete generated eliminators whose indexed or
+higher-order recursion is not summarized, a value used only as the scrutinee
+is still known to be consumed once; branch-dependent captures remain
+conservative. Closure-valued motives, user-written eliminators, unresolved
+holes, and calls without an available signature also remain conservative.
+Explicit annotations always override inference. Only *term* positions count as
+uses: mentions in binder domains, type annotations, and eliminator motives neither
 consume a linear variable nor violate erasure. Postulates have no body to
 analyze, so annotate their quantity when the API requires linear use.
 

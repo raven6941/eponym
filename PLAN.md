@@ -292,21 +292,24 @@ implementations.
    least fixed point over saturated usage profiles accounts for every finite
    recursive shape and all direct recursive fields when the result motive is
    ground (so recursive hypotheses cannot defer captured uses in closures).
-   Indexed families, higher-order recursive fields, closure-valued motives,
-   and unrecognized templates stay conservative. In-judgment checks, the
-   post-elaboration backstop, and
-   codegen erasure share the analyzer; `kernel_audit` independently checks
+   Indexed families and higher-order recursive fields stay conservative for
+   branch-dependent usage (a value appearing only as the scrutinee of a
+   complete generated eliminator is still counted exactly once). Closure-valued
+   motives and unrecognized templates also stay conservative. In-judgment
+   checks, the post-elaboration backstop, and codegen erasure share the
+   analyzer; `kernel_audit` independently checks
    registered rules. A 200-case Option property checks payload paths, a
    200-case List property checks strict nil-case evaluation at lengths 0–20, and
    compile-time regressions cover three-case and recursive data. Negative
    cases reject drops and duplicates. Usage profile properties, erasure, and
    the kernel audit pass.
-- [ ] Extend path-sensitive usage to indexed recursive families,
-   higher-order recursive fields, and user-written case templates that
-   compute with branch values rather than following generated data rules.
-   These forms currently keep conservative sequential counting. Add generated
-   compile-time regressions for each newly supported eliminator shape. They
-   remain conservative, so they cannot establish q1 inference.
+- [ ] Extend path-sensitive branch usage to indexed recursive families,
+   higher-order recursive fields, and user-written case templates that compute
+   with branch values rather than following generated data rules. A value used
+   only as the scrutinee of a complete generated eliminator is already known
+   to be consumed once; other branch-dependent uses stay conservative. Add
+   generated compile-time regressions for each newly supported eliminator
+   shape.
 - [x] Infer q1 only when supported path-sensitive usage profiles prove every
   run-time path consumes a runtime value exactly once. Global and primitive
   call signatures classify type and q0 arguments so they do not count as
