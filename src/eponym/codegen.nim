@@ -1369,6 +1369,8 @@ proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
 proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode  # forward
 proc cgReprElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
                 env: seq[NimNode]): NimNode  # forward
+proc cgReprElimClosure(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                       env: seq[NimNode]): NimNode  # forward
 proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
                 env: seq[NimNode]): NimNode  # forward
 
@@ -1402,6 +1404,10 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   if head.kind == tR and head.refId in ctx.refs:
     let rh = ctx.refs[head.refId]
     if rh.kind == cgkElim:
+      if appArgs.len < rh.nargs:
+        # Issue #407 slice 2: a partially-applied eliminator eta-expands
+        # into a typed closure proc instead of falling back.
+        return cgReprElimClosure(ctx, rh, appArgs, env)
       return cgReprElim(ctx, rh, appArgs, env)
     if rh.kind == cgkCtor:
       return cgReprCtor(ctx, rh, appArgs, env)
@@ -2108,8 +2114,7 @@ proc cgReprElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
                 env: seq[NimNode]): NimNode =
   ## Match-compile an eliminator application in the repr tier. Only the
   ## canonical eliminators of int-mapped families are supported; anything
-  ## else (including partial application) falls back to the Phase 1
-  ## backend via CgUnsupported.
+  ## else falls back to the Phase 1 backend via CgUnsupported.
   if appArgs.len != r.nargs:
     raise newException(CgUnsupported, "eliminator '" & r.name &
       "' applied to " & $appArgs.len & " args, needs " & $r.nargs &
@@ -2123,6 +2128,140 @@ proc cgReprElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   else:
     raise newException(CgUnsupported, "eliminator '" & r.name &
       "' outside the representation fragment")
+
+proc cgReprElimClosure(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
+                       env: seq[NimNode]): NimNode =
+  ## Eta-expand a partially-applied eliminator in the repr tier (issue
+  ## #407, slice 2): generate a typed `{.closure.}` Nim proc whose
+  ## parameters are the missing arguments at representation-backend types
+  ## and whose body is the saturated eliminator compiled by the existing
+  ## match compilers. Provided value arguments are evaluated left-to-right
+  ## at the creation site and captured; motive, family-parameter, and
+  ## length-index positions are skipped (type-level, never evaluated — as
+  ## in the saturated path). Case arguments (the step/cons/some-case
+  ## lambdas) are inlined by the match compilers, never passed as values,
+  ## so a partial application missing one is honestly rejected with a
+  ## named reason instead of silently tiering down.
+  ##
+  ## Per-eliminator closure schema (positions are argument indices;
+  ## application is always a prefix, so the missing arguments are a
+  ## suffix):
+  ##   natElim:    [motive, z: int, s: double-lambda, n: int]
+  ##   boolElim:   [motive, t: int, f: int, b: int]
+  ##   optionElim: [A, motive, noneC: int, someC: single-lambda, o: Option[int]]
+  ##   listElim:   [A, motive, nilC: seq[int], consC: triple-lambda, xs: seq[int]]
+  ##   vecElim:    [A, motive, nilC: seq[int], consC: quad-lambda, n: index, xs: seq[int]]
+  var skipIdx: set[uint8]
+  var synIdx: set[uint8]
+  var paramTypes = initTable[int, NimNode]()
+  var motiveIdx = 0
+  var minProvided = 0
+  var missingCaseName = ""
+  let seqIntT = newTree(nnkBracketExpr, ident"seq", ident"int")
+  let optIntT = newTree(nnkBracketExpr, ident"Option", ident"int")
+  case r.name
+  of "natElim":
+    skipIdx = {0u8}; synIdx = {2u8}; motiveIdx = 0; minProvided = 3
+    missingCaseName = "step case"
+    paramTypes[1] = ident"int"; paramTypes[3] = ident"int"
+  of "boolElim":
+    skipIdx = {0u8}; synIdx = {}; motiveIdx = 0; minProvided = 1
+    paramTypes[1] = ident"int"; paramTypes[2] = ident"int"
+    paramTypes[3] = ident"int"
+  of "optionElim":
+    skipIdx = {0u8, 1u8}; synIdx = {3u8}; motiveIdx = 1; minProvided = 4
+    missingCaseName = "some case"
+    paramTypes[2] = ident"int"; paramTypes[4] = optIntT
+  of "listElim":
+    skipIdx = {0u8, 1u8}; synIdx = {3u8}; motiveIdx = 1; minProvided = 4
+    missingCaseName = "cons case"
+    paramTypes[2] = seqIntT; paramTypes[4] = seqIntT
+  of "vecElim":
+    skipIdx = {0u8, 1u8, 4u8}; synIdx = {3u8}; motiveIdx = 1; minProvided = 4
+    missingCaseName = "cons case"
+    paramTypes[2] = seqIntT; paramTypes[5] = seqIntT
+  else:
+    raise newException(CgUnsupported, "eliminator '" & r.name &
+      "' has no representation-tier closure schema (falls back)")
+  if appArgs.len < minProvided:
+    raise newException(CgUnsupported, "eliminator '" & r.name &
+      "' partially applied without its " & missingCaseName &
+      ": representation-tier closures inline case bodies, so a missing " &
+      missingCaseName & " is outside the fragment (falls back)")
+  # The closure result representation comes from the motive's codomain,
+  # exactly as checkMotiveKind establishes it for the saturated path.
+  let resRt =
+    try: ctx.reprTypeOf(motiveCodomain(appArgs[motiveIdx]))
+    except CgUnsupported as e:
+      raise newException(CgUnsupported, "eliminator '" & r.name &
+        "' closure result outside the representation fragment: " & e.msg)
+  # Missing non-skipped positions become proc parameters (arg order);
+  # provided value positions are let-bound at creation (arg order).
+  var missingPos: seq[int] = @[]
+  for i in appArgs.len ..< r.nargs:
+    if uint8(i) notin skipIdx: missingPos.add(i)
+  var valPos: seq[int] = @[]
+  for i in 0 ..< appArgs.len:
+    if uint8(i) notin skipIdx and uint8(i) notin synIdx: valPos.add(i)
+  let k = missingPos.len
+  let v = valPos.len
+  var preStmts = newStmtList()
+  var letSyms = initTable[int, NimNode]()
+  for i in valPos:
+    let s = genSym(nskLet, "cgReprElimPart")
+    preStmts.add(newLetStmt(s, cgRepr(ctx, appArgs[i], env)))
+    letSyms[i] = s
+  var paramSyms: seq[NimNode] = @[]
+  for pos in missingPos:
+    paramSyms.add(genSym(nskParam, "cgReprElimMiss"))
+  # env2: innermost-first. Closure parameters are the innermost binders
+  # (last missing position innermost), then the creation-site let
+  # bindings, then the original environment.
+  var env2 = env
+  for j in 0 ..< k:
+    env2 = @[paramSyms[j]] & env2
+  for m in 0 ..< v:
+    env2 = @[letSyms[valPos[m]]] & env2
+  # fullArgs for the match compiler: provided value positions become
+  # references to the creation-site bindings; provided case lambdas are
+  # weakened under the new binders; missing positions become parameter
+  # references; missing skipped positions get a dummy (never read).
+  var fullArgs = newSeq[Term](r.nargs)
+  for i in 0 ..< appArgs.len:
+    if uint8(i) in skipIdx:
+      fullArgs[i] = appArgs[i]
+    elif uint8(i) in synIdx:
+      fullArgs[i] = shiftN(appArgs[i], k + v)
+    else:
+      let m = valPos.find(i)
+      fullArgs[i] = vv(v - 1 - m)
+  for j, pos in missingPos:
+    fullArgs[pos] = vv(v + (k - 1 - j))
+  for i in appArgs.len ..< r.nargs:
+    if uint8(i) in skipIdx:
+      fullArgs[i] = tmInt(0)
+  let bodyCode =
+    case r.name
+    of "natElim": cgReprNatElim(ctx, r, fullArgs, env2)
+    of "boolElim": cgReprBoolElim(ctx, r, fullArgs, env2)
+    of "optionElim": cgReprOptionElim(ctx, r, fullArgs, env2)
+    of "listElim": cgReprListElim(ctx, r, fullArgs, env2)
+    of "vecElim": cgReprVecElim(ctx, r, fullArgs, env2)
+    else: raise newException(CgUnsupported, "unreachable")
+  var lam = quote do:
+    proc {.closure.} = `bodyCode`
+  var formal = newNimNode(nnkFormalParams)
+  formal.add(nimReprType(resRt))
+  for j, pos in missingPos:
+    formal.add(newIdentDefs(paramSyms[j], paramTypes[pos], newEmptyNode()))
+  lam[3] = formal
+  if preStmts.len == 0:
+    return lam
+  preStmts.add(lam)
+  var blk = newNimNode(nnkBlockStmt)
+  blk.add(newEmptyNode())
+  blk.add(preStmts)
+  blk
 
 proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
                 env: seq[NimNode]): NimNode =
@@ -2260,6 +2399,14 @@ proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       # (`zero`, `true`, `false`) denote ints; anything else (e.g. a bare
       # `suc`, a function value) is outside the fragment.
       cgReprCtor(ctx, r, @[], env)
+    elif r.kind == cgkElim:
+      # Issue #407 slice 2: a bare eliminator reference. With no arguments
+      # at all the motive is absent, so the closure result representation
+      # cannot be established — a named diagnostic rather than the generic
+      # fallback (the Phase-1 backend eta-expands it instead).
+      raise newException(CgUnsupported, "bare eliminator '" & r.name &
+        "' outside the representation fragment (no motive: the closure " &
+        "result type cannot be established)")
     else:
       raise newException(CgUnsupported,
         "reference '" & r.name & "' outside the representation fragment")

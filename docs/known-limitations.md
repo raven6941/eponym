@@ -503,8 +503,18 @@ bare eliminator eta-expands at macro time into nested `vHostFunc` closures
 over the missing arguments whose innermost body is the saturated eliminator
 dispatch call (#407) — the closure is an ordinary first-class function value,
 so such definitions compile at the `Value` tier instead of falling back to the
-interpreter. The repr tier does not yet generate closures: a partially-applied
-eliminator in a representation-tier body falls back to the Phase 1 backend. Nested collections, non-`int` elements, and indices
+interpreter. The repr tier also generates closures: a partially-applied
+eliminator whose case arguments are present eta-expands at macro time into a
+typed `{.closure.}` Nim proc over the missing arguments (at
+representation-backend types), with the provided value arguments evaluated
+left-to-right at the creation site and captured, and the saturated
+eliminator match-compiled as the body (#407) — so such definitions compile
+at the repr tier instead of falling back to Phase 1. Case arguments are
+inlined, never passed as values: a partial application missing its step /
+cons / some case is honestly rejected by the repr tier with a named
+diagnostic and falls back to the Phase 1 `Value` backend (which still
+eta-expands it). A bare eliminator reference has no motive, so the closure
+result representation cannot be established there either. Nested collections, non-`int` elements, and indices
 mentioning quantity-0-erased binders fall back to the Phase 1 `Value` backend,
 as do definitions whose declared wrapper types disagree with the compiled repr
 signature. Definitions outside the compiled
