@@ -108,6 +108,34 @@ macro emissionFlags(p: typed): untyped =
     newTree(nnkExprColonExpr, ident"varSection", newLit(hasVarSection)),
     newTree(nnkExprColonExpr, ident"move", newLit(hasMove)))
 
+## Part B: `requireCompiled()` + `bindPostulate` in-place host step.
+##
+## `lpush` is postulate-bound to a host proc that appends in place on a
+## `sink` buffer. The forwarder must mark its q1 seq formal `sink` (so the
+## lifted chain's `move`d buffer reaches the host proc without a copy), a
+## chain of pushes through linear lets must lift to one `var` with moves,
+## and the typed wrapper must not mutate a caller-retained buffer (the
+## wrapper-boundary ownership rule: `sink` is a move hint only, so an lvalue
+## argument is copied once at entry).
+
+proc lpushHost(xs: sink seq[int], x: int): seq[int] =
+  result = xs
+  result.add(x)
+
+eponymBlock:
+  requireCompiled()
+  import "../lib/list.ep"
+  postulate(Int, Univ)
+  runtimeType(Int, int)
+  runtimeList(List)
+  postulate(lpush, Pi(xs {.linear.}: List[Int], x: Int, List[Int]))
+  bindPostulate(lpush, lpushHost, List, Int, List)
+  proc pushChain(xs {.linear.}: List[Int], a: Int, b: Int,
+                 c: Int): List[Int] =
+    let x1 = lpush(xs, a)
+    let x2 = lpush(x1, b)
+    lpush(x2, c)
+
 when isMainModule:
   # Structural assertions on the emitted code.
   block:
@@ -159,3 +187,27 @@ when isMainModule:
       proc(): seq[int] = eponymCompiledRepr_betaChainSeq(xs, 1))
 
   echo "test_codegen_q1_inplace: part A (pure chains) passed"
+
+  # Part B: in-place host step under requireCompiled().
+  block:
+    let f = emissionFlags(eponymCompiledRepr_lpush)
+    doAssert f.sink, "lpush forwarder formal should be sink (q1 seq)"
+    doAssert not f.varSection, "lpush forwarder has no chain to lift"
+  block:
+    let f = emissionFlags(eponymCompiledRepr_pushChain)
+    doAssert f.sink, "pushChain's used-once xs is q1: sink formal"
+    doAssert f.varSection, "pushChain should lift to a single var"
+    doAssert f.move, "pushChain steps should move the buffer"
+  # Runtime behavior: correct results.
+  doAssert pushChain(@[1, 2], 3, 4, 5) == @[1, 2, 3, 4, 5],
+    "pushChain result wrong"
+  doAssert pushChain(@[], 1, 2, 3) == @[1, 2, 3],
+    "pushChain on empty head wrong"
+  # Wrapper-boundary ownership: a caller-retained buffer is never mutated.
+  var retained = @[10, 20]
+  let snapshot = retained
+  doAssert pushChain(retained, 30, 40, 50) == @[10, 20, 30, 40, 50],
+    "pushChain on retained buffer gave wrong result"
+  doAssert retained == snapshot,
+    "typed wrapper mutated the caller-retained buffer: " & $retained
+  echo "test_codegen_q1_inplace: part B (in-place host step) passed"
