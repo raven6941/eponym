@@ -4803,10 +4803,11 @@ proc elabCheckHoles*(src: string): tuple[defs: seq[ElabDef], ms: MetaStore,
         try:
           let eds = elabDecl(d, globals, supply, ms, dataInfos)
           for ed in eds:
-            # checkUsage is meta-safe (tMeta is a no-op case); open defs keep
-            # their holes in tmTm.
+            # Open contextual holes leave binder usage unresolved for this
+            # tooling pass; strict elaboration rechecks after the hole is
+            # filled. Open defs keep their holes in tmTm.
             try:
-              checkUsage(ed.tmTm)
+              checkUsage(ed.tmTm, allowOpenHoles = true)
             except UsageError as e:
               raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
             defs.add(ed)
@@ -4877,7 +4878,7 @@ proc elabDeclsDirInner(drv: var ModuleDriver, decls: seq[SurfDecl],
         for ed in eds:
           # Issue #64: verify linear/erased usage in the elaborated term
           try:
-            checkUsage(ed.tmTm)
+            checkUsage(ed.tmTm, allowOpenHoles = holeTolerant)
           except UsageError as e:
             raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
           defs.add(ed)

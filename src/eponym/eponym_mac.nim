@@ -644,6 +644,16 @@ proc nimExprToEponym(n: NimNode): string =
       return nimTypeToEponym(n)
     # lam(x, T, body) -> lam (x : T). body (surface lambdas in eponymBlock bodies)
     if n[0].kind == nnkIdent and $n[0] == "lam":
+      # Nim cannot parse the canonical Eponym spelling `lam {A : T}. body`
+      # as a lambda expression. Accept `lam({A: T}, body)` as its Nim-side
+      # representation, parallel to `Pi({A: T}, ...)` for implicit binders.
+      if n.len == 3 and n[1].kind == nnkTableConstr:
+        if n[1].len != 1 or n[1][0].kind != nnkExprColonExpr or
+           n[1][0].len != 2 or n[1][0][0].kind != nnkIdent:
+          error("implicit lam expects ({binder: type}, body)", n)
+        let binder = n[1][0]
+        return "lam {" & $binder[0] & " : " &
+               nimTypeToEponym(binder[1]) & "}. " & nimExprToEponym(n[2])
       if n.len != 4 or n[1].kind notin {nnkIdent, nnkPragmaExpr}:
         error("lam expects (binder, type, body)", n)
       return "lam (" & qtyPrefix(n[1]) & binderName(n[1]) & " : " &

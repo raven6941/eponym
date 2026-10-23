@@ -1175,7 +1175,7 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 
 ### Interactive editing experience for the first release
 
-- [ ] [#425 — Goal-directed Intro for dependent function goals](https://github.com/raven6941/eponym/issues/425) — LSP operation and VS Code action implemented; regression coverage and full CI remain.
+- [ ] [#425 — Goal-directed Intro for dependent function goals](https://github.com/raven6941/eponym/issues/425) — LSP operation, VS Code action, and dependent/implicit/quantity round-trip coverage implemented; full CI remains.
 - [ ] [#426 — Constructor refinement with index-aware feasibility](https://github.com/raven6941/eponym/issues/426)
 - [ ] [#427 — Context-directed Apply/refine](https://github.com/raven6941/eponym/issues/427)
 - [ ] [#428 — Goal-directed equality rewrite and transport](https://github.com/raven6941/eponym/issues/428)

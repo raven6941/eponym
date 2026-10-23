@@ -999,7 +999,9 @@ proc introShed*(nimFile, shedName: string, count = 1):
 
   var ctx = semanticContext(state)
   var usedNames = state.context.mapIt(it.name)
-  var term = ""
+  var checkedTerm = ""
+  var clientPrefixes: seq[string] = @[]
+  var checkedPrefixLen = 0
   for i in 0 ..< count:
     let binder = state.goalPi[i]
     let baseName = if binder.name.len > 0 and binder.name != "_":
@@ -1011,15 +1013,24 @@ proc introShed*(nimFile, shedName: string, count = 1):
     if binder.qty == q0 or binder.erased: quantity = "0 "
     elif binder.qty == q1: quantity = "1 "
     if binder.implicit:
-      if quantity != "":
-        return (false, "Intro does not support linear or erased implicit " &
-                "binders yet", "", 0, 0, "", 0)
-      term.add("lam {" & name & " : " & domain & "}. ")
+      let prefix = "lam {" & name & " : " & domain & "}. "
+      checkedTerm.add(prefix)
+      checkedPrefixLen += prefix.len
+      clientPrefixes.add("lam({" & name & ": " & domain & "}, ")
     else:
-      term.add("lam (" & quantity & name & " : " & domain & "). ")
+      let prefix = "lam (" & quantity & name & " : " & domain & "). "
+      checkedTerm.add(prefix)
+      checkedPrefixLen += prefix.len
+      let clientName = if quantity == "1 ": name & " {.linear.}"
+                       elif quantity == "0 ": name & " {.erased.}"
+                       else: name
+      clientPrefixes.add("lam(" & clientName & ", " & domain & ", ")
     ctx = @[CtxEntry(name: name, ty: binder.domain, qty: toQty(binder.qty))] & ctx
-  term.add("?")
-  refineShed(nimFile, shedName, term)
+  checkedTerm.add("?")
+  result = refineShed(nimFile, shedName, checkedTerm)
+  if result.ok:
+    let residualBody = result.term[checkedPrefixLen .. ^1]
+    result.term = clientPrefixes.join("") & residualBody & repeat(")", count)
 
 proc caseSplitShed*(nimFile, shedName, variable: string):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
