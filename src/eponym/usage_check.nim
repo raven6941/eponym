@@ -77,6 +77,14 @@ proc argumentUseKinds(t: Term): seq[ArgumentUseKind] =
   of tR:
     if not head.refTyp.isNil: ty = head.refTyp.syn
   of tPrim: ty = head.primTy
+  of tLam:
+    # A direct lambda application has an explicit binder quantity in the
+    # term. Its first argument can be classified even without a separate
+    # type annotation; arguments to returned functions stay conservative.
+    result.add(if head.qty == q0: aukErased else: aukRuntime)
+    if args.len > 1:
+      for _ in 1 ..< args.len: result.add(aukRuntime)
+    return
   else: discard
   if ty.isNil: return
   for arg in args:

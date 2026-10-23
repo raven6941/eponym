@@ -5636,6 +5636,15 @@ proc erasedOnly (q y : N) : N = z0 y
     qttQVarErasedOnly[0].tyTm.kind == tPi and
     qttQVarErasedOnly[0].tyTm.qty == q0
   echo "ok: qvar used only as erased argument infers q0 (#371)"
+  let qttQVarDirectLambda = elabCheck("""
+postulate N : Type 0
+postulate n0 : N
+proc erasedByLambda (q y : N) : N = (lam (x : N). n0) y
+""")
+  assert qttQVarDirectLambda.len == 1 and
+    qttQVarDirectLambda[0].tyTm.kind == tPi and
+    qttQVarDirectLambda[0].tyTm.qty == q0
+  echo "ok: direct lambda q0 arguments do not infer q1 (#371)"
   # But the same shape with 2+ uses solves to qOmega: discarding an
   # unrestricted variable is fine.
   let qttQVarOmegaDrop = elabCheck("""
