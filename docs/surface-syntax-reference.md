@@ -477,9 +477,13 @@ postulate(recvNat, Pi(ch {.linear.}: Chan(recvS(Nat, endS())), Sig(x: Nat, Chan(
 
 Nim side (call syntax): `lam(x: Nat, addInt(x, x))`. Canonical surface:
 `lam (x : A). x` — one binder, dot before the body, as with `Pi`.
+An implicit lambda binder uses `lam({A: Type 0}, body)` on the Nim side;
+the macro lowers it to canonical `lam {A : Type 0}. body`. This is useful
+when introducing an implicit binder into a shed goal.
 
 ```nim
 lam(_: NatD, NatD)          # the motive in an eliminator call (Nim side)
+lam({A: Type 0}, lam(x, A, x)) # implicit identity (Nim side)
 ```
 
 ### `let` (typed)

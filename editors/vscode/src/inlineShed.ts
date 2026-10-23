@@ -213,7 +213,7 @@ export async function expandShed(
     return;
   }
 
-  const keyHints = "r: refine  c: case-split  g: give  (Esc: collapse)";
+  const keyHints = "i: intro  r: refine  c: case-split  g: give  (Esc: collapse)";
   const text = renderInlineShed(shedName, box, { showButtons: opts.showButtons, keyHints });
   const viewLines = text.split("\n");
   log("[eponym] expandShed: rendered " + viewLines.length + " lines");

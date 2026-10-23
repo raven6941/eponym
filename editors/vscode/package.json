@@ -51,6 +51,11 @@
         "category": "Eponym"
       },
       {
+        "command": "eponym.shedIntro",
+        "title": "Eponym: Introduce goal binder (inline)",
+        "category": "Eponym"
+      },
+      {
         "command": "eponym.shedRefine",
         "title": "Eponym: Refine shed (inline)",
         "category": "Eponym"
@@ -75,6 +80,11 @@
       {
         "command": "eponym.collapseShed",
         "key": "escape",
+        "when": "eponym.shedExpanded && editorTextFocus"
+      },
+      {
+        "command": "eponym.shedIntro",
+        "key": "i",
         "when": "eponym.shedExpanded && editorTextFocus"
       },
       {

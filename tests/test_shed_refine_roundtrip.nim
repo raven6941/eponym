@@ -1,9 +1,9 @@
-## The refine contract across the real Nim macro boundary.
+## The shed-edit contract across the real Nim macro boundary.
 ##
 ## A partial refinement must survive the entire editor loop:
-## compile shedsBlock -> refine the generated Eponym hole -> splice the
-## returned Nim term -> compile shedsBlock again -> address the residual
-## goal by its shed name -> finish the proof -> compile strictly.
+## compile shedsBlock -> perform goal-directed or term-directed edits ->
+## splice the returned Nim term -> compile shedsBlock again -> address the
+## residual goal by its shed name -> finish the proof -> compile strictly.
 ##
 ## Run: nim c -r --hints:off --path:src --path:src/eponym \
 ##   tests/test_shed_refine_roundtrip.nim
@@ -135,6 +135,136 @@ if partial.ok:
       check(true, "completed generated Eponym source passes strict checking")
     except CatchableError as e:
       check(false, "completed generated Eponym source checks: " & e.msg)
+
+# Goal-directed Intro uses the checked Pi telescope and preserves dependent
+# domains in both the generated lambda and the residual shed context.
+let introVecFile = scratch / "intro_dependent_vec.nim"
+let vecImportForIntro = (RepoRoot / "lib" / "vec.ep").replace("\\", "/")
+let introVecV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & vecImportForIntro & "\"\n" &
+  "  proc identityVec: Pi(n: Nat, Pi(xs: Vec[Nat, n], Vec[Nat, n])) = " &
+  "![introVecBody]\n"
+writeFile(introVecFile, introVecV0)
+compiled = compileFixture(introVecFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "dependent Intro fixture compiles with an initial shed")
+let introVecSidecar0 = readShedSidecar(sidecarPath(introVecFile))
+let tooManyIntros = introShed(introVecFile, "introVecBody", 3)
+check(not tooManyIntros.ok and "only 2 leading function binder(s)" in tooManyIntros.why,
+  "Intro rejects a binder count beyond the checked Pi telescope")
+check(readShedSidecar(sidecarPath(introVecFile))[0].genSrc ==
+      introVecSidecar0[0].genSrc,
+  "rejected Intro leaves the sidecar unchanged")
+let introVec = introShed(introVecFile, "introVecBody", 2)
+check(introVec.ok and "lam(n, Nat," in introVec.term and
+      "lam(xs, (Vec Nat n)," in introVec.term,
+  "Intro emits typed lambdas for dependent binders: " &
+    (if introVec.ok: introVec.term else: introVec.why))
+if introVec.ok:
+  let introVecV1 = spliceShed(introVecV0, introVec.nimLine, introVec.nimCol,
+                              introVec.term)
+  writeFile(introVecFile, introVecV1)
+  compiled = compileFixture(introVecFile, scratch)
+  if not compiled.ok: echo compiled.output
+  check(compiled.ok, "dependent Intro splice recompiles through shedsBlock")
+  let introVecSidecar1 = readShedSidecar(sidecarPath(introVecFile))
+  check(introVecSidecar1.len == 1 and
+        "n : Nat" in introVecSidecar1[0].ctx and
+        "xs : (Vec Nat n)" in introVecSidecar1[0].ctx and
+        introVecSidecar1[0].goal == "(Vec Nat n)",
+    "Intro residual goal retains introduced context and index dependency")
+  let nonFunctionIntro = introShed(introVecFile, "introVecBody")
+  check(not nonFunctionIntro.ok and "only 0 leading function binder(s)" in
+        nonFunctionIntro.why,
+    "Intro explains when the residual goal is not a function")
+  check(readShedSidecar(sidecarPath(introVecFile))[0].genSrc ==
+        introVecSidecar1[0].genSrc,
+    "rejected non-function Intro leaves the sidecar unchanged")
+
+let implicitIntroFile = scratch / "intro_implicit.nim"
+let implicitIntroV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  proc implicitId(): Pi({A: Univ}, A -> A) = ![implicitIntroBody]\n"
+writeFile(implicitIntroFile, implicitIntroV0)
+compiled = compileFixture(implicitIntroFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "implicit Intro fixture compiles with an initial shed")
+let implicitIntro = introShed(implicitIntroFile, "implicitIntroBody")
+check(implicitIntro.ok and "lam({A: Type 0}," in implicitIntro.term,
+  "Intro preserves implicit Pi binders: " &
+    (if implicitIntro.ok: implicitIntro.term else: implicitIntro.why))
+if implicitIntro.ok:
+  let implicitIntroV1 = spliceShed(implicitIntroV0, implicitIntro.nimLine,
+                                  implicitIntro.nimCol, implicitIntro.term)
+  writeFile(implicitIntroFile, implicitIntroV1)
+  compiled = compileFixture(implicitIntroFile, scratch)
+  if not compiled.ok: echo compiled.output
+  check(compiled.ok, "implicit Intro splice recompiles through shedsBlock")
+  let implicitSheds = readShedSidecar(sidecarPath(implicitIntroFile))
+  check(implicitSheds.len == 1 and "A : Type 0" in implicitSheds[0].ctx and
+        implicitSheds[0].goalPi.len == 2 and
+        implicitSheds[0].goalPi[0].startsWith("_ : A"),
+    "implicit Intro residual retains its binder and function goal")
+  let dependentExplicitIntro = introShed(
+    implicitIntroFile, "implicitIntroBody")
+  check(dependentExplicitIntro.ok and "lam(intro, A," in
+        dependentExplicitIntro.term,
+    "a later Intro uses the previously introduced implicit type binder")
+  if dependentExplicitIntro.ok:
+    let implicitIntroV2 = spliceShed(implicitIntroV1,
+      dependentExplicitIntro.nimLine, dependentExplicitIntro.nimCol,
+      dependentExplicitIntro.term)
+    writeFile(implicitIntroFile, implicitIntroV2)
+    compiled = compileFixture(implicitIntroFile, scratch)
+    if not compiled.ok: echo compiled.output
+    check(compiled.ok, "dependent explicit Intro after implicit binder recompiles")
+    let implicitSheds2 = readShedSidecar(sidecarPath(implicitIntroFile))
+    check(implicitSheds2.len == 1 and "A : Type 0" in implicitSheds2[0].ctx and
+          "intro : A" in implicitSheds2[0].ctx and
+          implicitSheds2[0].goal == "A",
+      "residual goal keeps the implicit dependency through explicit Intro")
+
+let quantityIntroFile = scratch / "intro_quantities.nim"
+let natImportForQuantity = (RepoRoot / "lib" / "nat.ep").replace("\\", "/")
+let quantityIntroV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & natImportForQuantity & "\"\n" &
+  "  proc quantityGoal(): Pi(x {.linear.}: Nat, " &
+  "Pi(proof {.erased.}: Nat, Nat)) = ![quantityIntroBody]\n"
+writeFile(quantityIntroFile, quantityIntroV0)
+compiled = compileFixture(quantityIntroFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "quantity Intro fixture compiles with an initial shed")
+let quantityIntro = introShed(quantityIntroFile, "quantityIntroBody", 2)
+check(quantityIntro.ok and "x {.linear.}" in quantityIntro.term and
+      "proof {.erased.}" in quantityIntro.term,
+  "Intro preserves linear and erased binder quantities: " &
+    (if quantityIntro.ok: quantityIntro.term else: quantityIntro.why))
+if quantityIntro.ok:
+  let quantityIntroV1 = spliceShed(quantityIntroV0, quantityIntro.nimLine,
+                                   quantityIntro.nimCol, quantityIntro.term)
+  writeFile(quantityIntroFile, quantityIntroV1)
+  compiled = compileFixture(quantityIntroFile, scratch)
+  if not compiled.ok: echo compiled.output
+  check(compiled.ok, "quantity Intro splice recompiles through shedsBlock")
+  let quantitySidecar = readShedSidecar(sidecarPath(quantityIntroFile))
+  check(quantitySidecar.len == 1 and "x : Nat" in quantitySidecar[0].ctx and
+        "proof : Nat" in quantitySidecar[0].ctx,
+    "linear and erased binders remain available in the residual context")
+  let invalidLinearFill = refineShed(
+    quantityIntroFile, "quantityIntroBody", "zero", requireComplete = true)
+  check(not invalidLinearFill.ok and "linear variable 'x' not used" in
+        invalidLinearFill.why,
+    "filling Intro's hole still enforces the linear binder")
+  let validLinearFill = refineShed(
+    quantityIntroFile, "quantityIntroBody", "x", requireComplete = true)
+  check(validLinearFill.ok and validLinearFill.status == "white",
+    "a later proof can satisfy the introduced linear binder")
+  if validLinearFill.ok:
+    let quantityIntroV2 = spliceShed(quantityIntroV1, validLinearFill.nimLine,
+                                     validLinearFill.nimCol, validLinearFill.term)
+    writeFile(quantityIntroFile, quantityIntroV2)
+    compiled = compileFixture(quantityIntroFile, scratch)
+    if not compiled.ok: echo compiled.output
+    check(compiled.ok, "completed quantity Intro proof recompiles strictly")
 
 # Two holes on one generated-source line must get distinct names and exact
 # positions. Filling either child must not accidentally fill its sibling.

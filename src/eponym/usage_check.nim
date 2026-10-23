@@ -566,7 +566,7 @@ proc collectBinderUseLocs*(body: PreTerm, binder: PreTerm): seq[Loc] =
   var stack: seq[PreTerm] = @[binder]  # the binder scopes over `body`
   collectUseLocsWalk(body, binder, stack, result)
 
-proc checkUsage*(tm: Term): void =
+proc checkUsage*(tm: Term, allowOpenHoles = false): void =
   profilePhase(epUsage):
       ## Verify linear/erased usage in the elaborated term.
       ## Raises UsageError on violation.
@@ -580,6 +580,11 @@ proc checkUsage*(tm: Term): void =
       ## the all-0 context.
       proc verifyBinder(t: Term) =
         if t.qty == qOmega: return
+        # An open contextual hole may later use this binder. Hole-tolerant
+        # elaboration must preserve that possibility for interactive proof
+        # states (including linear and erased Pi binders); strict elaboration
+        # rechecks the binder after the hole is filled.
+        if allowOpenHoles and hasUnresolvedMetas(t.scope.bdy): return
         let profile = varUsageProfile(t.scope.bdy)
         let n = countVarUses(t.scope.bdy)
         case t.qty

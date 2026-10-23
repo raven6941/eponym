@@ -21,9 +21,10 @@ Nim compiles the file on disk. Compilation errors appear in the **Eponym** Outpu
 an error notification. Configure `eponym.nimPath` if VS Code cannot find
 your Nim executable.
 
-While it is expanded, press **r** to refine, **g** to give, or **c** to
-case-split. Each key opens an input prompt for a term or variable name. The
-same actions are printed on the last line of the inline view.
+While it is expanded, press **i** to introduce a function binder, **r** to
+refine, **g** to give, or **c** to case-split. The latter three open an input
+prompt for a term or variable name. The same actions are printed on the last
+line of the inline view.
 
 ## Read the 2D view
 
@@ -74,6 +75,16 @@ This introduces both arguments and leaves a goal of type `A` in the context
 expression position. It is still a named shed: the extension can reopen it,
 and the macro records its goal like any `![name]` shed.
 
+### Intro
+
+Use **Intro** when the goal is a function type. It introduces the first
+function binder with its goal-provided name and type, then leaves the
+dependent codomain as the new goal. The operation checks the generated lambda
+against the current goal and preserves any dependency on the introduced
+variable. Repeat Intro to introduce further binders. For example, a goal
+`Pi(f: A, g: A, A)` becomes a goal `Pi(g: A, A)` in the context `f : A`.
+Intro reports a useful error when the goal is not a function type.
+
 ### Give
 
 Use **Give** when the term is the complete answer. Give checks both that the
@@ -106,8 +117,8 @@ the split.
 
 ## After an action
 
-Refine, Give, and Case-split splice their result into the Nim source and save
-the document. The extension recompiles the `shedsBlock`, refreshing the
+Intro, Refine, Give, and Case-split splice their result into the Nim source and
+save the document. The extension recompiles the `shedsBlock`, refreshing the
 sidecar and CodeLens goals. A remaining open goal stays yellow and gets its
 own marker; a completed shed is white and has no open goal. If a newly
 created marker does not appear in the extension, check the **Eponym** Output
