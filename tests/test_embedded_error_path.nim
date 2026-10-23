@@ -55,6 +55,18 @@ for path in ["tests/fixtures/embedded_err_unbound.nim",
   if not checkFixture(path):
     inc failed
 
+for (path, expected) in [
+    ("tests/fixtures/embedded_err_q1_if_one_branch.nim",
+     "used 0 or 1 time(s)"),
+    ("tests/fixtures/embedded_err_q1_if_duplicate_branch.nim",
+     "used 1 or 2+ time(s)"),
+    ("tests/fixtures/embedded_err_q1_option_one_branch.nim",
+     "used 0 or 1 time(s)"),
+    ("tests/fixtures/embedded_err_q1_option_duplicate_branch.nim",
+     "used 1 or 2+ time(s)")]:
+  if not checkFixture(path, expected):
+    inc failed
+
 if not checkFixture("tests/fixtures/embedded_err_nat_literal_index.nim",
     "does not match expected type"):
   inc failed

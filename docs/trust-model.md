@@ -46,14 +46,23 @@ recursive calls in `red` rules at declaration time (see Termination below).
 **Quantity discipline** (issues #64, #66; `usage_check.nim`). QTT quantities
 are enforced, not advisory:
 
-- `q1` (linear) binders must be used exactly once;
+- `q1` (linear) binders used in Nim `if` expressions and supported finite
+  data eliminators are checked per runtime path. For unindexed first-order
+  recursive data with ground result motives, usage counts are closed over all
+  finite recursive shapes. The checker recovers alternatives from complete
+  generated rules and validates direct recursive hypotheses;
 - `q0` (erased) binders must not be used;
 - `qω` (unrestricted) binders are unchecked.
 
-Enforcement happens in two places: in-judgment checks at each lambda while
-the body is being checked (with correct depth tracking, so a type-level
-mention of a linear variable does not consume it — types are checked in the
-all-0 context), plus a post-elaboration whole-term pass as a backstop.
+Indexed recursive families, higher-order recursive fields, closure-valued
+result motives, and user-written case templates still use conservative
+counting. This can reject valid branch-dependent use; do not assume every
+Eponym case split has path-sensitive QTT checking yet. Enforcement happens in two places:
+in-judgment checks at each lambda while the body is being checked (with
+correct depth tracking, so a type-level mention of a linear variable does not
+consume it — types are checked in the all-0 context), plus a post-elaboration
+whole-term pass as a backstop. Both use the same per-path profile for
+supported conditional shapes, and codegen erasure checks it again.
 Known wart: the post-pass attributes domain (type-annotation) occurrences to
 the innermost binder — an off-by-one the in-judgment check does not have.
 Conversion respects binder quantities (#66), and erased parameters are
@@ -71,13 +80,18 @@ witness vector may still carry them to validate dependent runtime types.
 Generated higher-order `Value` code uses nullary closures for q0 lambdas,
 while the interpreter retains unary closures and inert unit witnesses.
 
-**Inference** (issue #84). Unannotated binders do not default to
-unrestricted: each becomes a quantity variable solved from observed usage —
-zero relevant uses becomes erased (`0`), any use becomes unrestricted
-(`ω`); quantity `1` is never inferred. Explicit annotations override.
-Only term positions count as uses (domains, annotations, and motives do
-not), and a body that still mentions unsolved metavariables keeps the
-conservative `ω` (sound: only precision is lost, never correctness).
+**Inference** (issues #84/#371). Unannotated binders do not default to
+unrestricted: zero relevant uses becomes erased (`0`), exactly-once runtime
+use on every supported path becomes linear (`1`), and other or uncertain
+usage becomes unrestricted (`ω`). Path-sensitive profiles cover Nim `if`,
+complete generated finite eliminators, and supported unindexed first-order
+recursive eliminators with ground result motives. Known global and primitive
+signatures distinguish type and q0 arguments from runtime values; unknown
+signatures and unsupported branch shapes stay conservative. Bodies with
+unresolved metavariables also stay conservative. Explicit annotations
+override inference. Only term positions count as uses (domains, annotations,
+and motives do not). Postulates have no body to analyze, so required
+quantities must be annotated.
 
 **Singleton types** (issue #74). Nat literals carry singleton types in
 type position (`(d : 2)` demands exactly `2`); the one-directional

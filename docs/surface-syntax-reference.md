@@ -505,15 +505,23 @@ context, so a type-level mention of a linear variable does not consume it.
 In canonical surface text the spellings are `(1 x : T)` (linear),
 `(0 x : T)` (erased), `(q x : T)` (quantity variable, issue #66).
 
-**Inference (issue #84).** An unannotated binder gets its quantity inferred
-from usage: zero relevant uses becomes erased (`0`), any use becomes
-unrestricted (`ω`). Linearity (`1`) is never inferred — write
-`{.linear.}` / `(1 x : T)` wherever you need it — and explicit annotations
-always override inference. Only *term* positions count as uses: mentions in
-binder domains, type annotations, and eliminator motives neither consume a
-linear variable nor violate erasure. If the body still has unsolved
-metavariables when the count runs, the binder conservatively keeps `ω`
-(sound — only erasure/linearity *precision* is lost, never correctness).
+**Inference (issues #84/#371).** An unannotated binder gets its quantity
+inferred from usage: zero relevant uses becomes erased (`0`); exactly one
+runtime use on every supported path becomes linear (`1`); other or uncertain
+usage becomes unrestricted (`ω`). Path-sensitive analysis covers Nim `if`,
+complete generated finite eliminators, and supported unindexed first-order
+recursive eliminators with ground result motives. Known global and primitive
+call signatures let the analyzer exclude type arguments and q0 arguments
+from runtime use counts. An erased argument combined with a runtime use keeps
+the binder unrestricted. For complete generated eliminators whose indexed or
+higher-order recursion is not summarized, a value used only as the scrutinee
+is still known to be consumed once; branch-dependent captures remain
+conservative. Closure-valued motives, user-written eliminators, unresolved
+holes, and calls without an available signature also remain conservative.
+Explicit annotations always override inference. Only *term* positions count as
+uses: mentions in binder domains, type annotations, and eliminator motives neither
+consume a linear variable nor violate erasure. Postulates have no body to
+analyze, so annotate their quantity when the API requires linear use.
 
 ### Natural numbers
 

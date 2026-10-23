@@ -78,6 +78,10 @@ type
   RedRule* = object
     nargs*: int
     cases*: Table[int, Term]
+    caseArities*: Table[int, int]
+    caseRecursiveFields*: Table[int, seq[int]]
+    caseRecursiveSupported*: Table[int, bool]
+    completeCases*: Table[int, bool]
     nParams*: int  # leading scrutinee spine args that are (already-bound)
                   # params, not fresh ctor vars (Experiment 5: data)
   ElimVKind* = enum eApp, eFst, eSnd, eAbsurd
@@ -91,6 +95,7 @@ type
       refTyp*: Value
       refIsDefn*: bool
       refVal*: Value
+      qttGroundType*: bool
     of tV:
       idx*: int
     of tPi, tSi, tLam:
@@ -184,6 +189,11 @@ type
 
 proc mkR(id: int, typ: Value, isDefn: bool, dval: Value): Term =
   Term(kind: tR, refId: id, refTyp: typ, refIsDefn: isDefn, refVal: dval)
+
+proc markQttGroundType*(t: Term) =
+  ## Mark an Eponym type whose values cannot contain Eponym closures.
+  ## Recursive usage summaries may only return this first-order subset.
+  if t.kind == tR: t.qttGroundType = true
 
 proc vv*(i: int): Term = Term(kind: tV, idx: i)
 
@@ -459,11 +469,16 @@ proc newRedRef*(s: var Supply, typ: Value, nargs: int): Term =
   let r = mkR(id, typ, true, nil)
   r.refVal = Value(syn: r,
     whnf: Whnf(kind: wRed, elimId: id,
-               rule: RedRule(nargs: nargs, cases: initTable[int, Term]()),
+               rule: RedRule(nargs: nargs, cases: initTable[int, Term](),
+                 caseArities: initTable[int, int](),
+                 caseRecursiveFields: initTable[int, seq[int]](),
+                 caseRecursiveSupported: initTable[int, bool](),
+                 completeCases: initTable[int, bool]()),
                args: newSeq[Value]()))
   r
 
-proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term, nParams = 0) =
+proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term, nParams = 0,
+                    ctorArity = -1) =
   ## Experiment 4: register one constructor case on an eliminator.
   ## Raises on duplicates (overlapping rules would break confluence).
   ## nParams (Experiment 5): leading scrutinee spine args that are
@@ -474,10 +489,64 @@ proc attachRedCase*(elim: Term, ctorId: int, tmpl: Term, nParams = 0) =
   if ctorId in w.rule.cases:
     raise newException(ValueError, "duplicate reduction rule for constructor")
   w.rule.cases[ctorId] = tmpl
+  w.rule.caseArities[ctorId] = ctorArity
   if w.rule.nParams == 0:
     w.rule.nParams = nParams
   elif w.rule.nParams != nParams:
     raise newException(ValueError, "inconsistent param count in reduction rules")
+
+proc markRedCasesComplete*(elim: Term, ctorIds: openArray[int]) =
+  ## Mark an eliminator generated from a complete `data` declaration after
+  ## its rules have been registered. Incomplete user-written eliminators are
+  ## never treated as exhaustive alternatives by QTT usage analysis.
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  if ctorIds.len != w.rule.cases.len:
+    raise newException(ValueError, "data eliminator is missing constructor cases")
+  for id in ctorIds:
+    if id notin w.rule.cases or w.rule.caseArities.getOrDefault(id, -1) < 0:
+      raise newException(ValueError, "data eliminator has an unknown constructor case")
+    w.rule.completeCases[id] = true
+    w.rule.caseRecursiveFields[id] = @[]
+    w.rule.caseRecursiveSupported[id] = true
+
+proc redRuleCaseArities*(elim: Term): Table[int, int] =
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  w.rule.caseArities
+
+proc setRedCaseRecursiveFields*(elim: Term, ctorId: int,
+                                fieldPositions: openArray[int],
+                                supported: bool) =
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  if ctorId notin w.rule.cases or ctorId notin w.rule.completeCases:
+    raise newException(ValueError, "unknown complete constructor case")
+  w.rule.caseRecursiveFields[ctorId] = @fieldPositions
+  w.rule.caseRecursiveSupported[ctorId] = supported
+
+proc redRuleCaseRecursiveFields*(elim: Term, ctorId: int): seq[int] =
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  w.rule.caseRecursiveFields.getOrDefault(ctorId, @[])
+
+proc redRuleCaseRecursiveSupported*(elim: Term, ctorId: int): bool =
+  let w = elim.refVal.whnf
+  if w.kind != wRed:
+    raise newException(ValueError, "not an eliminator reference")
+  w.rule.caseRecursiveSupported.getOrDefault(ctorId, false)
+
+proc redRuleIsComplete*(elim: Term): bool =
+  let w = elim.refVal.whnf
+  if w.kind != wRed or w.rule.completeCases.len != w.rule.cases.len:
+    return false
+  for id in w.rule.cases.keys:
+    if id notin w.rule.completeCases: return false
+  true
 
 proc redNargs*(elim: Term): int =
   ## number of arguments (incl. scrutinee) the eliminator takes
@@ -1260,18 +1329,10 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
   ## Supply type). The refIds are verified, so no well-typedness
   ## assumption is needed. While unset, comparison stays strict.
   ##
-  ## Issue #84: `qtySubsumption` enables the directional q0 ≤ ω rule
-  ## for the elaborator's inferred-vs-expected check: a Pi/Sigma binder
-  ## with quantity q0 on the inferred side (`a`) is accepted against
-  ## qOmega on the expected side (`b`). A function that ignores its
-  ## argument is usable where an unrestricted function is expected;
-  ## the reverse (and anything involving q1) stays rejected. This is
-  ## what lets inferred-precise types (unused binders infer q0)
-  ## interoperate with ω-annotated code. The def-declaration re-check
-  ## (elabDefDecl step 3) passes the flag too — it audits the
-  ## elaborator's conversion, so it implements the same relation.
-  ## Well-formedness checks (against ?) keep the flag off: exact
-  ## matching there is unaffected.
+  ## Issues #84/#371: in inferred-vs-expected checking, q0 and q1 Pi
+  ## implementations may satisfy a qOmega contract. The relation is
+  ## covariant through Pi codomains only: Pi domains and nominal constructor
+  ## arguments remain exact. Sigma quantities keep the existing q0-only rule.
   if a.whnf.kind == wNatLit and b.whnf.kind != wNatLit and
       s.natSucRefId >= 0 and s.natZeroRefId >= 0:
     if numeralChainEq(a.whnf.natLitVal, b, s.natZeroRefId, s.natSucRefId): return
@@ -1309,26 +1370,26 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
       raise newException(ValueError, "universe level mismatch: Type " &
         $a.whnf.lvl & " vs Type " & $b.whnf.lvl)
   of wPi, wSi:
-    if a.whnf.qty != b.whnf.qty and
-        not (qtySubsumption and a.whnf.qty == q0 and
-             b.whnf.qty == qOmega):
+    let inferredUseFitsOmega = qtySubsumption and
+      b.whnf.qty == qOmega and
+      (a.whnf.qty == q0 or
+       (a.whnf.kind == wPi and a.whnf.qty == q1))
+    if a.whnf.qty != b.whnf.qty and not inferredUseFitsOmega:
       raise newException(ValueError, "quantity mismatch: " & $a.whnf.qty &
         " vs " & $b.whnf.qty)  # Issue #66: Pi/Sigma binder quantities are
-                               # part of the type; (1 x : A) -> B is not
-                               # convertible with (ω x : A) -> B. Issue #84
-                               # adds the directional q0 ≤ ω subsumption
-                               # (see qtySubsumption above).
-    structuralEq(s, a.whnf.dom, b.whnf.dom, qtySubsumption)
+                               # part of the type. Issues #84/#371 permit
+                               # only q0/q1 <= qOmega for inferred Pi values.
+    structuralEq(s, a.whnf.dom, b.whnf.dom, false)
     let x = freshPara(s, a.whnf.dom)
     structuralEq(s, a.whnf.tscope.fn(x), b.whnf.tscope.fn(x), qtySubsumption)
   of wLam:
     let x = freshPara(s, nil)
-    structuralEq(s, a.whnf.lscope.fn(x), b.whnf.lscope.fn(x), qtySubsumption)
+    structuralEq(s, a.whnf.lscope.fn(x), b.whnf.lscope.fn(x), false)
   of wLam0:
-    structuralEq(s, a.whnf.nullaryFn(), b.whnf.nullaryFn(), qtySubsumption)
+    structuralEq(s, a.whnf.nullaryFn(), b.whnf.nullaryFn(), false)
   of wPair:
-    structuralEq(s, a.whnf.fstV, b.whnf.fstV, qtySubsumption)
-    structuralEq(s, a.whnf.sndV, b.whnf.sndV, qtySubsumption)
+    structuralEq(s, a.whnf.fstV, b.whnf.fstV, false)
+    structuralEq(s, a.whnf.sndV, b.whnf.sndV, false)
   of wRef:
     if a.whnf.refId != b.whnf.refId or a.whnf.spine.len != b.whnf.spine.len:
       raise newException(ValueError, "neutral mismatch: " & $a.syn & " vs " & $b.syn)
@@ -1338,14 +1399,14 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
       if ea.kind != eb.kind:
         raise newException(ValueError, "spine mismatch")
       if ea.kind == eApp:
-        structuralEq(s, ea.arg, eb.arg, qtySubsumption)
+        structuralEq(s, ea.arg, eb.arg, false)
   of wRed:
     ## partially applied eliminators: same eliminator, same accumulated args
     ## (fully applied stuck eliminators are rebuilt as wRef by applyWhnf)
     if a.whnf.elimId != b.whnf.elimId or a.whnf.args.len != b.whnf.args.len:
       raise newException(ValueError, "eliminator mismatch")
     for i in 0 ..< a.whnf.args.len:
-      structuralEq(s, a.whnf.args[i], b.whnf.args[i], qtySubsumption)
+      structuralEq(s, a.whnf.args[i], b.whnf.args[i], false)
   of wInt:
     if a.whnf.intVal != b.whnf.intVal:
       raise newException(ValueError, "integer mismatch")
@@ -1359,7 +1420,7 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
     if a.whnf.op != b.whnf.op or a.whnf.pargs.len != b.whnf.pargs.len:
       raise newException(ValueError, "primitive op mismatch")
     for i in 0 ..< a.whnf.pargs.len:
-      structuralEq(s, a.whnf.pargs[i], b.whnf.pargs[i], qtySubsumption)
+      structuralEq(s, a.whnf.pargs[i], b.whnf.pargs[i], false)
   of wHost:
     raise newException(ValueError,
       "opaque Nim values cannot participate in Eponym conversion")

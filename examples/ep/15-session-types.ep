@@ -17,10 +17,9 @@ import "../../lib/session.ep"
 proc proto : Session =
   sendS Nat (recvS Nat endS)
 
-# Correct client: follows the protocol exactly
-# The (1 ch) binder ensures the channel is used exactly once (Issue #64).
-# Note: simplified to a single send for the linearity demo.
-proc client (1 ch : Chan (sendS Nat endS)) : Chan endS =
+# Correct client: follows the protocol exactly. Its channel binder infers
+# quantity 1 from the single send operation (Issue #371).
+proc client (ch : Chan (sendS Nat endS)) : Chan endS =
   sendNat zero ch
 
 # The following are REJECTED at compile time (each exercised as a negative

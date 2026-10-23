@@ -1458,7 +1458,12 @@ proc validateRuntimeValueType*(value, expectedType: Value,
     if not entry.tm.isNil and entry.tm.kind == tR:
       reserveFreshIdsThrough(supply, entry.tm.refId)
   let inferred = inferRuntimeValueType(value, globals, supply)
-  areEqual(supply, vStar(), inferred, expectedType)
+  # Runtime values produced by checked Eponym code may have a more precise
+  # Pi quantity than the API contract. A q0/q1 implementation can satisfy a
+  # qOmega contract through covariant Pi codomains, while domain quantities
+  # remain exact; use the same directional relation as elaboration.
+  areEqual(supply, vStar(), inferred, expectedType,
+    qtySubsumption = true)
 
 proc validateRuntimeValueAgainstType*(value, expectedType: Value,
     globals: Globals) =

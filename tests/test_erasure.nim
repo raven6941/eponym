@@ -1,11 +1,12 @@
 ## Differential and effect-count checks for the core QTT erasure pass (#328).
 
-import std/[tables, os]
+import std/[tables, os, strutils]
 import falsify
 import eponym_init
 import erasure
 import preterm
 import elab
+import parse_surf
 
 proc expect(ok: bool, message: string) =
   if not ok:
@@ -90,6 +91,208 @@ for definition in vecChecked.allDefs:
     foundVappend = true
     discard eraseQ0Arguments(definition.tmTm)
 expect(foundVappend, "length-indexed vector append erases without refId collisions")
+
+var indexedUsageDrv = initModuleDriver()
+discard indexedUsageDrv.elabFile(repoRoot / "lib/vec.ep")
+let indexedUsageDefs = indexedUsageDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+proc linearVecElim (n : Nat) (xs : Vec Int n) : Vec Int n =
+  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Vec Int i)
+    (nil Int)
+    (lam (i : Nat). lam (x : Int). lam (tail : Vec Int i).
+      lam (ih : Vec Int i). cons Int i x ih)
+    n xs
+"""), repoRoot, "<indexed-q1-elimination>")
+var linearVecElimDef: ElabDef
+for defn in indexedUsageDefs:
+  if defn.name == "linearVecElim": linearVecElimDef = defn
+expect(not linearVecElimDef.tmTm.isNil and
+       linearVecElimDef.tyTm.kind == tPi and
+       linearVecElimDef.tyTm.scope.bdy.kind == tPi and
+       linearVecElimDef.tyTm.scope.bdy.qty == q1,
+  "indexed recursive eliminator infers q1 for its once-consumed scrutinee")
+
+var indexedBranchCaptureRejected = false
+var indexedCaptureDrv = initModuleDriver()
+discard indexedCaptureDrv.elabFile(repoRoot / "lib/vec.ep")
+try:
+  discard indexedCaptureDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+proc indexedBranchCapture (n : Nat) (xs : Vec Int n)
+    (1 value : Int) : Int =
+  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Int)
+    value
+    (lam (i : Nat). lam (x : Int). lam (tail : Vec Int i).
+      lam (ih : Int). ih)
+    n xs
+"""), repoRoot, "<indexed-q1-branch-capture>")
+except ElabError as e:
+  indexedBranchCaptureRejected =
+    "linear variable 'value' used 0 or 1 or 2+ time(s)" in e.msg
+expect(indexedBranchCaptureRejected,
+  "indexed recursive branch captures stay conservative for q1 checking")
+
+var branchDrv = initModuleDriver()
+discard branchDrv.elabFile(repoRoot / "lib/bool.ep")
+let branchDefs = branchDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+proc branchLinear (flag : Bool) (value : Int) : Int =
+  ifThenElse flag (lam (u : 1). value) (lam (u : 1). value) <>
+"""), repoRoot, "<q1-branch-erasure>")
+var branchLinearDef: ElabDef
+for defn in branchDefs:
+  if defn.name == "branchLinear": branchLinearDef = defn
+expect(not branchLinearDef.tmTm.isNil,
+  "branch-linear definition elaborates")
+expect(branchLinearDef.tyTm.kind == tPi and
+       branchLinearDef.tyTm.scope.bdy.kind == tPi and
+       branchLinearDef.tyTm.scope.bdy.qty == q1,
+  "balanced if branches infer q1")
+discard eraseQ0Arguments(branchLinearDef.tmTm)
+expect(true,
+  "q1 branch profiles are rechecked consistently by codegen erasure")
+
+var multiBranchDrv = initModuleDriver()
+let multiBranchDefs = multiBranchDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+data Tri : Type 0 where
+| first : Tri
+| second : Tri
+| third : Tri
+proc triLinear (tag : Tri) (value : Int) : Int =
+  triElim (lam (u : Tri). Pi(unit : 1). Int)
+          (lam (unit : 1). value)
+          (lam (unit : 1). value)
+          (lam (unit : 1). value)
+          tag
+          <>
+"""), repoRoot, "<three-way-q1-branch>")
+var triLinearDef: ElabDef
+for defn in multiBranchDefs:
+  if defn.name == "triLinear": triLinearDef = defn
+expect(not triLinearDef.tmTm.isNil,
+  "q1 usage accepts balanced alternatives in a three-case eliminator")
+expect(triLinearDef.tyTm.kind == tPi and
+       triLinearDef.tyTm.scope.bdy.kind == tPi and
+       triLinearDef.tyTm.scope.bdy.qty == q1,
+  "three-case alternatives infer q1")
+discard eraseQ0Arguments(triLinearDef.tmTm)
+expect(true, "three-case q1 branch profiles pass codegen erasure")
+
+var triDuplicateRejected = false
+var badTriDrv = initModuleDriver()
+try:
+  discard badTriDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+postulate duplicateInt : Int -> Int -> Int
+data Tri : Type 0 where
+| first : Tri
+| second : Tri
+| third : Tri
+proc triDuplicate (tag : Tri) (1 value : Int) : Int =
+  triElim (lam (u : Tri). Pi(unit : 1). Int)
+          (lam (unit : 1). value)
+          (lam (unit : 1). value)
+          (lam (unit : 1). duplicateInt value value)
+          tag
+          <>
+"""), repoRoot, "<three-way-q1-duplicate>")
+except ElabError as e:
+  triDuplicateRejected = "linear variable 'value' used 1 or 2+ time(s)" in e.msg
+expect(triDuplicateRejected,
+  "three-case q1 analysis rejects a duplicate on one branch")
+
+var recursiveDrv = initModuleDriver()
+let recursiveDefs = recursiveDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+data Chain : Type 0 where
+| chainEnd (item : Int) : Chain
+| chainNext (item : Int) (tail : Chain) : Chain
+proc linearAtChainEnd (xs : Chain) (value : Int) : Int =
+  chainElim (lam (u : Chain). Int)
+    (lam (item : Int). value)
+    (lam (item : Int). lam (tail : Chain).
+      lam (ih : Int). ih)
+    xs
+"""), repoRoot, "<recursive-q1-branch>")
+var linearAtEndDef: ElabDef
+for defn in recursiveDefs:
+  if defn.name == "linearAtChainEnd": linearAtEndDef = defn
+expect(not linearAtEndDef.tmTm.isNil,
+  "q1 usage accepts one use at the base of every recursive chain")
+expect(linearAtEndDef.tyTm.kind == tPi and
+       linearAtEndDef.tyTm.scope.bdy.kind == tPi and
+       linearAtEndDef.tyTm.scope.bdy.qty == q1,
+  "recursive alternatives infer q1")
+discard eraseQ0Arguments(linearAtEndDef.tmTm)
+
+var recursiveDuplicateRejected = false
+var badRecursiveDrv = initModuleDriver()
+try:
+  discard badRecursiveDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+postulate duplicateInt : Int -> Int -> Int
+data Chain : Type 0 where
+| chainEnd (item : Int) : Chain
+| chainNext (item : Int) (tail : Chain) : Chain
+proc duplicateAlongChain (xs : Chain) (1 value : Int) : Int =
+  chainElim (lam (u : Chain). Int)
+    (lam (item : Int). value)
+    (lam (item : Int). lam (tail : Chain).
+      lam (ih : Int). duplicateInt value ih)
+    xs
+"""), repoRoot, "<recursive-q1-duplicate>")
+except ElabError as e:
+  recursiveDuplicateRejected =
+    "linear variable 'value' used 1 or 2+ time(s)" in e.msg
+expect(recursiveDuplicateRejected,
+  "recursive q1 analysis rejects use at both the base and recursive case")
+
+var closureMotiveRejected = false
+var closureMotiveDrv = initModuleDriver()
+try:
+  discard closureMotiveDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+data Chain : Type 0 where
+| chainEnd (item : Int) : Chain
+| chainNext (item : Int) (tail : Chain) : Chain
+proc capturesLinearValue(xs : Chain) (1 value : Int) : Pi(unit : 1). Int =
+  chainElim (lam (u : Chain). Pi(unit : 1). Int)
+    (lam (item : Int). lam (unit : 1). value)
+    (lam (item : Int). lam (tail : Chain).
+      lam (ih : Pi(unit : 1). Int). ih)
+    xs
+    <>
+"""), repoRoot, "<recursive-q1-closure-motive>")
+except ElabError as e:
+  closureMotiveRejected =
+    "linear variable 'value' used 0 or 1 or 2+ time(s)" in e.msg
+expect(closureMotiveRejected,
+  "recursive path analysis stays conservative for closure-valued motives")
+
+var multiRecursiveRejected = false
+var binaryTreeDrv = initModuleDriver()
+try:
+  discard binaryTreeDrv.elabDeclsDir(parseProgram("""
+postulate Int : Type 0
+postulate duplicateInt : Int -> Int -> Int
+data Tree : Type 0 where
+| leaf (item : Int) : Tree
+| fork (left : Tree) (right : Tree) : Tree
+proc linearAtLeaf (tree : Tree) (1 value : Int) : Int =
+  treeElim (lam (u : Tree). Int)
+    (lam (item : Int). value)
+    (lam (left : Tree).
+      lam (ihLeft : Int).
+        lam (right : Tree).
+          lam (ihRight : Int). duplicateInt value ihLeft)
+    tree
+"""), repoRoot, "<binary-tree-q1-duplicate>")
+except ElabError as e:
+  multiRecursiveRejected =
+    "linear variable 'value' used 1 or 2+ time(s)" in e.msg
+expect(multiRecursiveRejected,
+  "recursive q1 analysis accounts for each recursive child")
 
 # Constructor identities in an eliminator's cached rule table do not appear as
 # ordinary tR nodes. Make the first fresh inference parameter collide with one

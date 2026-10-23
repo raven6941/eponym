@@ -642,8 +642,8 @@ proc univLevelOfTy(s: var Supply, ms: var MetaStore, t: Term, ctx: Ctx): int =
   ## unsolved hole under allowHoles, or a non-universe): the elaborator
   ## never invents levels.
   try:
-    # Issue #84: `t` is elaborator output; classify with the same
-    # conversion relation the elaborator used (directional q0 ≤ ω), so a
+    # Issues #84/#371: `t` is elaborator output; classify with the same
+    # conversion relation the elaborator used, so a
     # nested inferred-q0/expected-qOmega application does not spuriously
     # fall back to level 0.
     univIdx(infer(s, closeOverCtx(zonk(ms, t), ctx, closeParams(s, ctx)),
@@ -1513,22 +1513,29 @@ proc enforceQtyCount(q: Quantity, body: Term, loc: Loc, name: string,
   if q == qOmega: return
   let zb = zonk(ms, body)
   if hasUnresolvedMetas(zb): return
-  let n = countVarUses(zb)
+  let profile = varUsageProfile(zb)
+  let n = usageCountSummary(profile)
   case q
   of q0:
-    if n > 0:
-      raise elabErr(loc, "erased variable '" & name & "' used " & $n &
+    if not satisfiesQuantity(profile, q0):
+      raise elabErr(loc, "erased variable '" & name & "' used " &
+        usageProfileDescription(profile) &
         " time(s) in term position: erased (quantity-0) variables may only " &
         "be used in types")
   of q1:
-    if n == 0:
+    if profile == {ucZero}:
       raise elabErr(loc, "linear variable '" & name &
         "' not used (expected exactly once): a linear binder must be used " &
         "exactly once in the body")
-    elif n > 1:
+    elif profile == {ucMany}:
       raise elabErr(loc, "linear variable '" & name & "' used " & $n &
         " times (expected exactly once): use the variable exactly once in " &
         "the body")
+    elif not satisfiesQuantity(profile, q1):
+      raise elabErr(loc, "linear variable '" & name & "' used " &
+        usageProfileDescription(profile) &
+        " time(s) (expected exactly once): use the variable exactly once " &
+        "on every runtime path in the body")
   of qOmega: discard
 
 proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
@@ -1560,19 +1567,12 @@ proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
     # of the declaration, when metas are solved or reported. The variable
     # then keeps its default (qOmega, see zonkQty).
     if hasUnresolvedMetas(zb): return
-    let n = countVarUses(zb)
-    # Issue #84 (conservative inference): a `#q`-prefixed variable is an
-    # *inferred default* (unannotated binder, see parse_surf.parseBinder),
-    # not a user-written `(q x : A)`. Inferred defaults solve 0 -> q0
-    # (erasure) and otherwise -> qOmega. They never solve to q1: the
-    # kernel (#66) converts Pi binder quantities exactly, so an inferred
-    # q1 would not convert against the qOmega positions the existing
-    # corpus was written with (e.g. `myid A : Pi (x:A)[q1]. A` against
-    # `vmap`'s `Pi (x:A)[qOmega]. A` domain). Linearity inference (q1) is
-    # future work, pending either kernel quantity subsumption or a
-    # quantity-precise corpus. User-written qvars keep the full rule.
+    let profile = varUsageProfile(zb)
+    let n = usageCountSummary(profile)
+    # Issue #371: usage profiles exclude arguments passed to universe-domain
+    # parameters. Generated defaults infer q1 only from exactly-once runtime
+    # use; user-written quantity variables retain their full rule.
     let inferred = if n == 0: q0
-                   elif qty.vname.len > 2 and qty.vname[0 .. 1] == "#q": qOmega
                    elif n == 1: q1
                    else: qOmega
     solveQVar(ms, qty.vname, inferred, loc)
@@ -1597,11 +1597,10 @@ proc reconcileInferredQty(tyPre, tmPre: PreTerm, tmT0, tmTy: Term,
   ##   ("unannotated" means "infer", wherever the binder is written). A
   ##   genuine conflict raises solveQVar's error.
   ## - Ascribed qOmega: never conflicts — it is the "don't care" quantity
-  ##   (`A -> B` desugars to an omega Pi). An inferred q0 is widened to
-  ##   qOmega in both the term and the inferred type, so `N -> N` keeps
-  ##   accepting bodies that ignore the argument, exactly as on main (the
-  ##   kernel's checking rule ignores lambda/Pi quantities; only the
-  ##   elaborator's exact conversion needs them to agree).
+  ##   (`A -> B` desugars to an omega Pi). An inferred q0 or q1 is widened to
+  ##   qOmega in both the term and inferred type: an implementation that
+  ##   ignores or consumes its argument at most once can satisfy an
+  ##   unrestricted contract.
   ## - Ascribed explicit 0/1 disagreeing with the inference: an error naming
   ##   the binder and the usage sites that forced the inference — instead
   ##   of the generic conversion "quantity mismatch", whose printed types
@@ -1615,7 +1614,9 @@ proc reconcileInferredQty(tyPre, tmPre: PreTerm, tmT0, tmTy: Term,
     if tp.qty.isVar:
       solveQVar(ms, tp.qty.vname, tt.qty, tp.loc)
     elif tp.qty.q == qOmega:
-      if tt.qty == q0:
+      if tt.qty in {q0, q1}:
+        # A body verified to use its parameter at most once safely
+        # implements an unrestricted ascribed function.
         bt.qty = qOmega
         tt.qty = qOmega
     elif tp.qty.q != tt.qty:
@@ -1630,10 +1631,9 @@ proc reconcileInferredQty(tyPre, tmPre: PreTerm, tmT0, tmTy: Term,
         "quantity mismatch for binder '" & bp.name & "': the ascribed type " &
         "requires quantity " & $tp.qty.q & ", but " & useMsg &
         ", inferring quantity " & $tt.qty &
-        " (unannotated binders infer 0 when unused, \u03c9 otherwise; " &
-        "quantity 1 is never inferred \u2014 to demand linearity, annotate " &
-        "the body's binder explicitly, e.g. `lam (1 " & bp.name &
-        " : T). \u2026`)")
+        " (unannotated binders infer 0 when unused, 1 for exactly-once use " &
+        "on every supported path, and \u03c9 otherwise; " &
+        "`lam (1 " & bp.name & " : T). \u2026`)")
     tp = tp.c2
     tt = tt.scope.bdy
     bp = bp.c2
@@ -2367,7 +2367,7 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
   if qtyFirst:
     let inferred = inferTm(tmPre, @[], globals, ms, supply, ab)
     tmT0 = inferred.tm
-    # Issue #84: reconcile the inference with the ascribed type before
+    # Issues #84/#371: reconcile the inference with the ascribed type before
     # zonking (zonk rebuilds binder nodes, so widening must happen here):
     # solve unshared ascribed quantity variables positionally, widen
     # inferred q0 to an ascribed qOmega, and report explicit-quantity
@@ -2388,8 +2388,8 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
       # is never read.
       vStar()
     else:
-      # Issue #84: the ascribed type is elaborator output (its nested
-      # applications were validated with the directional q0 ≤ ω
+      # Issues #84/#371: the ascribed type is elaborator output (its nested
+      # applications were validated with directional quantity subsumption
       # subsumption), so the well-formedness audit uses the same relation.
       try: check(supply, vStar(), tyT, qtySubsumption = true)
       except ValueError as e:
@@ -2434,10 +2434,9 @@ proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
     return ElabDef(name: d.name, tyTm: tyT, tmTm: tmT, loc: d.loc)
   # 3. the core verifies the zonked (meta-free) terms — unless a
   # domain handler extended conversion for this definition (see above).
-  # Issue #84: the re-check audits the elaborator, so it implements the
+  # Issues #84/#371: the re-check audits the elaborator, so it implements the
   # same inferred-vs-expected relation — including the directional q0 ≤ ω
-  # subsumption (an inferred-erased binder is usable where an
-  # unrestricted one is expected). Without the flag the elaborator would
+  # subsumption. Without the flag the elaborator would
   # accept programs the audit then rejects.
   let tmV =
     if ms.extDischarges != extBefore:
@@ -2478,8 +2477,8 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
       # value it and registration is skipped below — dummy never read.
       vStar()
     else:
-      # Issue #84: the postulate's type is elaborator output (nested
-      # applications were validated with the directional q0 ≤ ω
+      # Issues #84/#371: the postulate's type is elaborator output (nested
+      # applications were validated with directional quantity subsumption
       # subsumption), so the well-formedness audit uses the same relation.
       try: check(supply, vStar(), tyT, qtySubsumption = true)
       except ValueError as e:
@@ -2502,6 +2501,7 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
   let tm =
     if isElim: newRedRef(supply, tyV, nargs)
     else: newPostulateRef(supply, tyV)
+  if name == "Int": markQttGroundType(tm)
   globals[name] = GEntry(tm: tm, ty: tyT, isElim: isElim, elimNargs: nargs,
                          peg: ab)
   ms.refNames[tm.refId] = name  # Issue #139: name-resolving pretty-printer
@@ -2691,7 +2691,7 @@ proc elabRedDecl(lhs, rhs: PreTerm, loc: Loc,
       " in the contractum of a red rule" &
       unsolvedMetaHint())
   try:
-    attachRedCase(g.tm, cg.tm.refId, rhsTm, nParams)
+    attachRedCase(g.tm, cg.tm.refId, rhsTm, nParams, ctorVars.len)
   except ValueError as e:
     raise elabErr(loc, sanitizeKernelMsg(e.msg))
 
@@ -3051,6 +3051,37 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
       # reduction rules
       for rd in genRedDecls(d, elimName, methodNames, loc):
         elabRedDecl(rd.lhs, rd.rhs, rd.rloc, globals, supply, ms)
+      var completeCtorIds: seq[int] = @[]
+      for ctor in d.ctors:
+        let ctorId = globals[ctor.name].tm.refId
+        completeCtorIds.add(ctorId)
+      try:
+        markRedCasesComplete(globals[elimName].tm, completeCtorIds)
+        let (indexTele, _) = flattenPiPre(d.indexTy)
+        var qttGroundFamily = d.params.len == 0 and indexTele.len == 0
+        for ctor in d.ctors:
+          let ctorId = globals[ctor.name].tm.refId
+          var recursivePositions: seq[int] = @[]
+          var recursiveSupported = indexTele.len == 0
+          for fieldIndex, field in ctor.tele:
+            if mentionsFam(field.ty, d.dname):
+              recursivePositions.add(fieldIndex)
+              let (hoTele, _) = splitCtorArg(field.ty, d.dname, ctor.name,
+                field.name, d.params.len, ctor.cloc)
+              if hoTele.len != 0:
+                recursiveSupported = false
+            elif field.ty.kind == pkVar and field.ty.name in globals and
+                globals[field.ty.name].tm.qttGroundType:
+              discard
+            else:
+              qttGroundFamily = false
+          if not recursiveSupported: qttGroundFamily = false
+          setRedCaseRecursiveFields(globals[elimName].tm, ctorId,
+                                    recursivePositions, recursiveSupported)
+        if qttGroundFamily:
+          markQttGroundType(globals[d.dname].tm)
+      except ValueError as e:
+        raise elabErr(loc, sanitizeKernelMsg(e.msg))
       # record for coverage checking (issue #32)
       dataInfos[d.dname] = d
       # Issue #80: register the constructor disjointness facts (noConfusion /
@@ -5027,7 +5058,12 @@ proc useId (A : Type 0) (x : A) : A =
   myId A x
 """)
   assert defs2.len == 2
+  for defn in defs2:
+    assert defn.tyTm.kind == tPi and defn.tyTm.qty == q0
+    assert defn.tyTm.scope.bdy.kind == tPi and
+      defn.tyTm.scope.bdy.qty == q1
   echo "ok: later defs can mention earlier defs"
+  echo "ok: generic type arguments are erased while value arguments infer q1 (#371)"
 
   let defs3 = elabCheck("""
 proc withLet (A : Type 0) (x : A) : A =
@@ -5508,15 +5544,17 @@ proc sameQty0 : Pi (0 x : N). N = idN0
 """)
   assert qttQtyConvOk.len == 2
   echo "ok: Pi conversion accepts matching quantities (#66)"
-  expectElabErr("""
+  let qttLinearInferred = elabCheck("""
 postulate N : Type 0
 proc idN (x : N) : N = x
-proc qtyMismatch : Pi (1 x : N). N = idN
-""", "quantity mismatch")
-  # Issue #84 refines the rule above: the directional q0 ≤ ω subsumption
-  # holds in the inferred-vs-expected check, so an erasing function is
-  # usable where an unrestricted one is expected (this is what lets
-  # inferred-precise types interoperate with ω-annotated code).
+proc qtyExact : Pi (1 x : N). N = idN
+proc qtyWide : N -> N = idN
+""")
+  assert qttLinearInferred[0].tyTm.kind == tPi and
+    qttLinearInferred[0].tyTm.qty == q1
+  assert qttLinearInferred.len == 3
+  echo "ok: exactly-once use infers q1 and fits both linear and omega contracts (#371)"
+  # Issue #84: an unused (q0) implementation may satisfy a qOmega contract.
   let qttSubOk = elabCheck("""
 postulate N : Type 0
 postulate idN0 : Pi (0 x : N). N
@@ -5532,6 +5570,15 @@ postulate idNW : Pi (x : N). N
 proc revMismatch : Pi (0 x : N). N = idNW
 """, "quantity mismatch")
   echo "ok: Pi conversion rejects mismatched quantities (#66); q0 ≤ ω subsumed (#84)"
+
+  # Quantity subsumption must not leak into a contravariant function domain.
+  expectElabErr("""
+postulate N : Type 0
+postulate n0 : N
+proc takesLinearFunction (f : Pi (1 x : N). N) : N = f n0
+proc domainVariance : Pi (f : Pi (x : N). N). N = takesLinearFunction
+""", "quantity mismatch")
+  echo "ok: quantity subsumption stays out of Pi domains (#371)"
 
   # --- Issue #66: application-site quantity enforcement ------------------
   # A linear variable must not be passed to an erased (q0) parameter: the
@@ -5579,15 +5626,25 @@ proc qconf (q x : N) (q y : N) : Sig (u : N). N =
   (x, (y, y))
 """, "requires quantity")
   echo "ok: conflicting quantity-variable solutions rejected (#66)"
-  # A variable solved linear after being passed to a q0 parameter is the
-  # same leak as a concrete linear variable: the app-site check runs while
-  # the variable is unsolved, so the obligation is deferred to solve time.
-  expectElabErr("""
+  # A variable used only as a q0 argument has no runtime use and can infer q0.
+  let qttQVarErasedOnly = elabCheck("""
 postulate N : Type 0
 postulate z0 : Pi (0 x : N). N
-proc badQDrop (q y : N) : N = z0 y
-""", "silently discarded")
-  echo "ok: qty-var solved linear into erased parameter rejected (#66)"
+proc erasedOnly (q y : N) : N = z0 y
+""")
+  assert qttQVarErasedOnly.len == 1 and
+    qttQVarErasedOnly[0].tyTm.kind == tPi and
+    qttQVarErasedOnly[0].tyTm.qty == q0
+  echo "ok: qvar used only as erased argument infers q0 (#371)"
+  let qttQVarDirectLambda = elabCheck("""
+postulate N : Type 0
+postulate n0 : N
+proc erasedByLambda (q y : N) : N = (lam (x : N). n0) y
+""")
+  assert qttQVarDirectLambda.len == 1 and
+    qttQVarDirectLambda[0].tyTm.kind == tPi and
+    qttQVarDirectLambda[0].tyTm.qty == q0
+  echo "ok: direct lambda q0 arguments do not infer q1 (#371)"
   # But the same shape with 2+ uses solves to qOmega: discarding an
   # unrestricted variable is fine.
   let qttQVarOmegaDrop = elabCheck("""
@@ -5595,7 +5652,9 @@ postulate N : Type 0
 postulate z0 : Pi (0 x : N). N
 proc okQDrop (q y : N) : N = snd (z0 y, y)
 """)
-  assert qttQVarOmegaDrop.len == 1
+  assert qttQVarOmegaDrop.len == 1 and
+    qttQVarOmegaDrop[0].tyTm.kind == tPi and
+    qttQVarOmegaDrop[0].tyTm.qty == qOmega
   echo "ok: qty-var solved unrestricted into erased parameter accepted (#66)"
 
   # --- Issue #66: subject-side quantity tracking (Gamma |- t :^q A) ------
@@ -5652,11 +5711,11 @@ proc qconfTy : N =
 """, "requires quantity")
   echo "ok: checking-mode quantity mismatches rejected (#66)"
 
-  # --- Issue #84: quantity-first reconciliation ------------------------
+  # --- Issues #84/#371: quantity-first reconciliation -------------------
   # Unannotated binders parse to fresh quantity variables; in the
-  # quantity-first order the body's inference solves them (0 uses -> q0,
-  # otherwise -> qOmega, never q1) and the ascribed type is reconciled
-  # against the inference before the generic conversion check.
+  # quantity-first order the body's every-path usage profile solves them
+  # (0 -> q0, exactly once on every path -> q1, otherwise -> qOmega), and
+  # the ascribed type is reconciled before the generic conversion check.
   # An unshared ascribed quantity variable (unannotated binder written only
   # in the ascribed type) is solved positionally from the inference.
   let q84Pos = elabCheck("""
@@ -5669,15 +5728,15 @@ proc p (A : Type 0) : Pi (x : A). N = lam (x : A). n0
   assert pTy.scope.bdy.qty == q0
   echo "ok: unshared ascribed quantity variable solved positionally (#84)"
   # Ascribed qOmega never conflicts: `A -> B` desugars to an omega Pi, and
-  # an inferred q0 widens to it (no regression vs main, where the body
-  # inherited omega in checking mode).
+  # an inferred q0 widens to it after its use has been checked.
   discard elabCheck("""
 postulate N : Type 0
 postulate n0 : N
 proc w (A : Type 0) : N -> N = lam (x : N). n0
 """)
   echo "ok: inferred q0 widens to ascribed qOmega (#84)"
-  # Plain inference: unused binders infer q0, used binders qOmega.
+  # Plain inference: unused binders infer q0, exactly-once binders q1,
+  # and other usage profiles qOmega.
   let q84Inf = elabCheck("""
 postulate N : Type 0
 postulate n0 : N
@@ -5689,8 +5748,8 @@ proc u (A : Type 0) (x : A) : A = x
   assert kTy.scope.bdy.kind == tPi and kTy.scope.bdy.qty == q0
   let uTy = q84Inf[^1].tyTm
   assert uTy.kind == tPi and uTy.qty == q0
-  assert uTy.scope.bdy.kind == tPi and uTy.scope.bdy.qty == qOmega
-  echo "ok: unannotated binders infer 0 when unused, omega otherwise (#84)"
+  assert uTy.scope.bdy.kind == tPi and uTy.scope.bdy.qty == q1
+  echo "ok: unannotated binders infer 0, 1, or omega from usage (#371)"
   # An explicit ascribed 0/1 disagreeing with the inference is an error
   # naming the binder and the usage sites that forced the inference.
   expectElabErr("""
@@ -5706,11 +5765,11 @@ postulate N : Type 0
 postulate n0 : N
 proc g2 (A : Type 0) : Pi (1 x : A). N = lam (x : A). n0
 """, "the body never uses 'x', inferring quantity q0")
-  expectElabErr("""
+  discard elabCheck("""
 postulate N : Type 0
 proc g (A : Type 0) : Pi (1 x : A). A = lam (x : A). x
-""", "quantity 1 is never inferred")
-  echo "ok: inferred/ascribed quantity conflicts name binder and use sites (#84)"
+""")
+  echo "ok: explicit quantity conflicts name the binder and use sites (#84)"
 
   # --- Experiment 41: conversion cache as a scoped handler ---------
   # The Experiment 10 cache is no longer a global switch: it is probed

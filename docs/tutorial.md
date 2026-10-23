@@ -351,14 +351,17 @@ Notes:
   It cannot see whether two Nim references point to the same socket, buffer,
   or other host object. Keep aliases and ownership rules in the Nim adapter
   layer; `{.linear.}` does not make a Nim object exclusive.
-- Quantity inference (issue #84): you only need to *write* an annotation
-  when you want quantity 1. An unannotated binder gets its quantity
-  inferred from usage — zero relevant uses becomes erased (`0`), any use
-  becomes unrestricted (`ω`). Linearity is never inferred, so
-  `{.linear.}` (`.ep` files: `(1 x : T)`) stays required wherever you
-  need it, and explicit annotations always override inference. Only
-  *term* positions count as uses: a mention inside a type does not
-  consume a linear variable or violate erasure.
+- Quantity inference (issues #84/#371): an unannotated binder becomes
+  erased (`0`) when unused, linear (`1`) when the checker proves exactly one
+  runtime use on every supported path, and unrestricted (`ω`) otherwise.
+  Path analysis covers Nim `if`, complete generated finite eliminators, and
+  supported unindexed first-order recursive eliminators. Some indexed,
+  higher-order, user-written, unresolved, or signature-unknown cases remain
+  conservative. Write `{.linear.}` (`.ep` files: `(1 x : T)`) when the API
+  contract itself must require linear use; postulates also need explicit
+  quantities because they have no body to analyze. Only *term* positions
+  count as uses: a mention inside a type does not consume a linear variable
+  or violate erasure.
 - `postulate` declares an operation without defining it — here a mock
   backend. A real library binds these to socket code; the types are the
   contract the backend must uphold (the typed-API-over-untrusted-backend

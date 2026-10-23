@@ -481,6 +481,32 @@ They do not inspect aliases or ownership in surrounding Nim code. For
 example, Eponym can check that a modeled channel is consumed once, but it
 cannot tell whether two Nim references alias the same socket.
 
+Conditional usage is path-sensitive for Nim `if` expressions and generated
+data eliminators. For unindexed, first-order recursive data with a ground
+result motive, usage profiles cover all finite recursive shapes. Each
+generated case rule is checked against its constructor fields and recursive
+calls before the analysis treats its cases as alternatives. Unannotated
+binders infer quantity `1` only when the analysis proves exactly one runtime
+use on every path. Known global and primitive call signatures distinguish
+type arguments and erased (`q0`) arguments from runtime values. If a value is
+also used at runtime and passed to a `q0` argument, inference stays
+unrestricted so it cannot be silently discarded as linear.
+
+Indexed recursive families, higher-order recursive fields, closure-valued
+result motives, and user-written eliminators still use conservative counting
+for branch-dependent usage and can reject valid programs. For a complete
+generated eliminator, a value used only as its scrutinee is known to be
+consumed once; if that value also appears in another eliminator argument, the
+profile stays conservative. Applications whose callable signature is not
+available to the usage analyzer are counted syntactically, so erased
+arguments there can prevent q1 inference. A body with unresolved holes or an
+unsupported branch shape also stays conservative.
+
+An implementation with quantity `0` or `1` may satisfy a function contract
+with quantity `ω` when the quantity occurs in a covariant Pi codomain.
+Function domains and nominal type arguments are compared exactly. Postulates
+have no bodies to analyze, so write their required quantity explicitly.
+
 Quantitative checking already drives code generation where the
 representation choice follows the quantity: erasure (#328) and the
 representation tier (#330) omit quantity-0 formals and use plain host
