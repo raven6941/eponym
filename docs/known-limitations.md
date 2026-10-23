@@ -168,9 +168,9 @@ By default, a runtime wrapper can interpret a checked definition when it has
 no compiled body or calls a checked definition outside its block. Add
 `requireCompiled()` to opt into the representation backend: macro expansion
 fails unless every local definition and call is compiled to direct Nim
-representation code and its typed wrapper is direct too. Today it supports
-`int`, `seq[int]` (`Vec`/`List`), and `Option[int]` representations from the
-Phase 2 backend:
+representation code and its typed wrapper is direct too. The backend supports
+`int`, `seq[int]` (`Vec`/`List`), and `Option[int]` representations, plus —
+since #401 — opaque identity representations and dependent `Sig` tuples:
 
 ```nim
 eponymBlock:
@@ -182,6 +182,34 @@ eponymBlock:
   runtimeVector(Vec)
   proc doubleVector(n: Nat, values: Vec[Int, n]): Vec[Int, n] = ...
 ```
+
+A concrete `runtimeType` mapping whose Nim type is not `int` becomes an
+identity representation: the compiled proc takes and returns the declared
+host type directly, with no conversion. An applied family with such a mapping
+(`Chan s`, `AcceptMsg n`) denotes the one declared host type for every index
+tuple — the indices are dropped from the host signature, exactly as
+`Vec A n` maps to one `seq[int]`. Declaring one host type for a whole family
+asserts the host layout is index-independent; the checker cannot verify host
+layout, so this is trusted (see the trust model). A dependent
+`Sig(x: A, B)` over representable components maps to the host tuple of the
+components; the second component's representation is selected with its
+index-dependence erased, which is sound precisely for index-independent
+mappings. A `Vec` length index mentioning the bound Sigma value is rejected
+rather than silently erased.
+
+Postulates bound with `bindPostulate` / `bindPostulatePair[Trusted]` whose
+types are fully representable get direct-call forwarders, so compiled bodies
+never route postulate calls through the interpreter. Definitions referenced
+only from type positions — for example `Session`-valued protocol constructors
+consumed solely as `Chan` indices — are classified compile-time-only and
+excluded from the `requireCompiled` runtime closure; they get no Nim wrapper,
+since no Nim proc could take or return their unrepresentable types. An
+unrepresentable definition that is *not* type-level in this sense (for
+example a higher-order `Int -> Int` parameter, or a definition referenced
+from nowhere) stays in the closure and `requireCompiled` rejects it with the
+real representation reason instead of silently dropping it. The tier
+report (`-d:eponymCodegenReport`) names the new kinds and says why each
+definition did or did not reach them.
 
 The strict wrapper uses no `Value` runtime and rejects dynamic `runtimeValue`
 entrypoints. A regression inspects the compiled artifact and confirms it has

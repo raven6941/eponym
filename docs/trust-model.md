@@ -253,6 +253,18 @@ the Eponym type and the chosen Nim representation, including aliasing and
 lifetime behavior. A custom `runtimeCodec` additionally trusts its encoder and
 decoder. Neither opt-in proves properties of the host value itself.
 
+**Family-wide opaque mappings assert index-independence (#401).** A
+`runtimeType` mapping on an applied family (`Chan s`, `AcceptMsg n`) declares
+*one* host type for every index tuple: the representation tier drops the
+indices from the host signature (`Chan s` is `PaxosChannel` for all `s`, as
+`Vec A n` is `seq[int]` for all `n`). The checker cannot verify that the host
+layout is genuinely index-independent — for example, that no `s` needs a
+differently-shaped channel — so declaring the mapping is a trust assertion by
+the block author, in the same family as `bindPostulatePairTrusted`. The
+dependent `Sig` compiled to a host tuple is sound exactly when its component
+mappings are index-independent in this sense; a `Vec` length index mentioning
+the bound Sigma value is honestly rejected instead of silently erased.
+
 `bindPostulateMutable` is retained with decoded-local/result-out semantics:
 the adapter receives decoded local variables, and its encoded result returns
 to Eponym. It does not receive the caller's Nim variable as a `var` alias, and

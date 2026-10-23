@@ -1095,6 +1095,20 @@ proc reprTypeName*(rt: ReprType): string =
   of repOpaque: $rt.hostType
   of repSigma: "(" & rt.sigmaFields.mapIt(reprTypeName(it)).join(", ") & ")"
 
+proc reprSigSummary*(sig: seq[ReprType]): string =
+  ## One-line signature summary for the codegen tier report (issue #401):
+  ## names the representation kind at every signature position, e.g.
+  ## `(int, PaxosChannel (opaque)) -> (PaxosPromise, PaxosChannel) (dependent Sigma)`.
+  proc posName(rt: ReprType): string =
+    let base = reprTypeName(rt)
+    case rt.kind
+    of repOpaque: base & " (opaque)"
+    of repSigma: base & " (dependent Sigma)"
+    else: base
+  if sig.len == 0: return "()"
+  "(" & sig[0 ..< ^1].mapIt(posName(it)).join(", ") & ") -> " &
+    posName(sig[^1])
+
 proc sameNimTypeName(a, b: NimNode): bool =
   ## Structural equality of two Nim type ASTs for the wrapper
   ## identity-boundary check: kinds must agree (`nnkIdent`/`nnkSym` are
@@ -1177,42 +1191,89 @@ proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
     tuple[runtimeDefs: seq[ElabDef],
           compileTimeOnly: Table[string, string]] =
   ## Issue #401: split the `requireCompiled` definition closure into the
-  ## runtime closure (definitions whose code may execute) and
-  ## compile-time-only definitions (type-level computation never evaluated
-  ## at runtime, e.g. the `Session`-valued protocol constructors, which are
-  ## referenced only from type positions and never from runtime term
-  ## positions after erasure). Returns the runtime definitions plus the
-  ## compile-time-only names with the reason each was excluded.
+  ## runtime closure (definitions whose code may execute, or which
+  ## `requireCompiled` must honestly reject) and compile-time-only
+  ## definitions (type-level computation never evaluated at runtime, e.g.
+  ## the `Session`-valued protocol constructors).
+  ##
+  ## A local definition is compile-time-only exactly when its type is
+  ## outside the representation fragment AND it is actually referenced
+  ## AND every reference is type-level: from a type position (a binder
+  ## domain, result type, or `let` annotation of some definition) or from
+  ## the body of a type-level definition (a definition whose own type is
+  ## unrepresentable, e.g. a `Session`-building body). In particular an
+  ## unrepresentable definition referenced from nowhere — or from a
+  ## runtime term position — is NOT compile-time-only: it stays in the
+  ## runtime closure so `requireCompiled` rejects it with the real
+  ## `CgUnsupported` reason instead of silently excluding it.
   ##
   ## The runtime closure seeds from local definitions with representable
   ## types — only those can a runtime caller (compiled code or a Nim
-  ## wrapper) invoke — and follows runtime references through erased
-  ## bodies, skipping type positions. A definition is compile-time-only
-  ## when no runtime definition references it from a runtime term position.
-  ## Erasure failures fall back to the unerased body (conservative: every
-  ## reference counts as a runtime reference).
+  ## wrapper) invoke — plus the honestly-rejected unrepresentable ones,
+  ## and follows runtime references through erased bodies, skipping type
+  ## positions. Erasure failures fall back to the unerased body
+  ## (conservative: every reference counts as a runtime reference).
   var defsByRefId = initTable[int, ElabDef]()
   for d in allDefs:
     if d.name in globals and not globals[d.name].tm.isNil and
         globals[d.name].tm.kind == tR and globals[d.name].tm.refIsDefn:
       defsByRefId[globals[d.name].tm.refId] = d
+  # Representability of each definition's type.
+  var typeUnrep = initTable[string, string]()  # def name -> reason
+  for d in localDefs:
+    if d.name in globals and not globals[d.name].tm.isNil and
+        globals[d.name].tm.kind == tR and globals[d.name].tm.refIsDefn:
+      try:
+        discard ctx.reprSigOfType(d.tyTm)
+      except CgUnsupported as e:
+        typeUnrep[d.name] = e.msg
+  # Reference census: for every referenced refId, the (referencer name,
+  # fromType) pairs, where fromType=true means the reference occurs in the
+  # referencer's declared type (a type position).
+  var referencers = initTable[int, seq[tuple[name: string, fromType: bool]]]()
+  for d in allDefs:
+    if d.name notin globals or globals[d.name].tm.isNil or
+        globals[d.name].tm.kind != tR or not globals[d.name].tm.refIsDefn:
+      continue
+    if not d.tyTm.isNil:
+      for refId in collectReferencedRefIds(d.tyTm):
+        referencers.mgetOrPut(refId, @[]).add((d.name, true))
+    if d.tmTm.isNil: continue
+    var body: Term
+    try: body = eraseQ0Arguments(d.tmTm)
+    except ValueError: body = d.tmTm
+    var acc = initTable[int, bool]()
+    collectRuntimeRefIds(body, acc)
+    for refId in acc.keys:
+      referencers.mgetOrPut(refId, @[]).add((d.name, false))
+  var compileTimeOnly = initTable[string, string]()
+  for d in localDefs:
+    let reason = typeUnrep.getOrDefault(d.name, "")
+    if reason == "": continue  # representable: a runtime seed candidate
+    let refId = globals[d.name].tm.refId
+    let refs = referencers.getOrDefault(refId, @[])
+    if refs.len == 0: continue  # referenced from nowhere: honestly reject
+    var allTypeLevel = true
+    for (rName, fromType) in refs:
+      if fromType: continue
+      if typeUnrep.hasKey(rName): continue  # body of a type-level def
+      allTypeLevel = false
+      break
+    if allTypeLevel:
+      compileTimeOnly[d.name] = reason
   var included = initTable[int, bool]()
   var pending: seq[int] = @[]
-  var compileTimeOnly = initTable[string, string]()
   for d in localDefs:
     if d.name in globals and not globals[d.name].tm.isNil and
         globals[d.name].tm.kind == tR and globals[d.name].tm.refIsDefn:
       let refId = globals[d.name].tm.refId
-      try:
-        discard ctx.reprSigOfType(d.tyTm)
-      except CgUnsupported as e:
-        # Type-level definition: no host values can flow through it, so no
-        # runtime body can call it. Excluded from the runtime closure.
-        compileTimeOnly[d.name] = e.msg
-        continue
-      if not included.getOrDefault(refId, false):
-        included[refId] = true
-        pending.add(refId)
+      # Representable definitions are runtime seeds; unrepresentable
+      # non-compile-time-only definitions are included so `requireCompiled`
+      # rejects them with the real reason instead of dropping them.
+      if not typeUnrep.hasKey(d.name) or d.name notin compileTimeOnly:
+        if not included.getOrDefault(refId, false):
+          included[refId] = true
+          pending.add(refId)
   var cursor = 0
   while cursor < pending.len:
     let refId = pending[cursor]
@@ -2553,7 +2614,8 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       reprBodies.add(procNode)
       result.report[binding.postulateName] = CodegenReportEntry(
         tier: cgtRepr,
-        reason: "Phase 2 representation-tier host forwarder emitted",
+        reason: "Phase 2 representation-tier host forwarder emitted (" &
+          reprSigSummary(sig) & ")",
         slowPaths: @[])
   for name in order:
     var d: ElabDef
@@ -2591,7 +2653,8 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
         reprFailures.getOrDefault(d.name, "definition was not considered")
     if d.name in result.compiledRepr:
       entry.tier = cgtRepr
-      entry.reason = "Phase 2 representation code emitted"
+      entry.reason = "Phase 2 representation code emitted (" &
+        reprSigSummary(result.reprTypes[d.name]) & ")"
     if d.name in erasedTerms:
       # Issue #401: slow paths are runtime calls to uncompiled definitions;
       # references from type positions (binder domains, `let` types) are

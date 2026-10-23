@@ -4285,12 +4285,13 @@ macro eponymBlock*(body: untyped): untyped =
         break
     cgUserLines[d.name] = userLine
   # Issue #401: split the requireCompiled closure into the runtime closure
-  # (definitions whose code may execute) and compile-time-only definitions
-  # (type-level computation, e.g. `Session`-valued protocol constructors).
-  # The runtime closure seeds from local definitions with representable
-  # types and follows runtime references through erased bodies; the
-  # compile-time-only set is excluded from compilation and wrapper
-  # generation alike.
+  # (definitions whose code may execute, or which requireCompiled must
+  # honestly reject) and compile-time-only definitions (type-level
+  # computation, e.g. `Session`-valued protocol constructors referenced
+  # only from type positions). The runtime closure seeds from local
+  # definitions with representable types and follows runtime references
+  # through erased bodies; the compile-time-only set is excluded from
+  # compilation and wrapper generation alike.
   var compileTimeOnlyDefs = initTable[string, string]()
   let codegenDefs = if requireCompiled:
     let closureCtx = buildCodegenCtx(checkedGlobals, baseDir, src,
