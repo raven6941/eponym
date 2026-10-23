@@ -78,6 +78,9 @@ export function pageHtml(layoutJson: string, shedName: string, shedNames: string
   <button onclick="construct()">construct</button>
   <button onclick="apply()">apply</button>
   <button onclick="rewrite()">rewrite</button>
+  <button id="undoButton" onclick="undo()" disabled>undo</button>
+  <button id="redoButton" onclick="redo()" disabled>redo</button>
+  <button onclick="showHistory()">history</button>
   <button onclick="refine()">refine</button>
   <button onclick="give()">give</button>
   <button onclick="casesplit()">case-split</button>
@@ -118,11 +121,19 @@ function intro(){ vscode.postMessage({cmd:'intro', hole:selectedHole}); }
 function construct(){ vscode.postMessage({cmd:'construct', hole:selectedHole}); }
 function apply(){ vscode.postMessage({cmd:'apply', hole:selectedHole}); }
 function rewrite(){ vscode.postMessage({cmd:'rewrite', hole:selectedHole}); }
+function undo(){ vscode.postMessage({cmd:'undo'}); }
+function redo(){ vscode.postMessage({cmd:'redo'}); }
+function showHistory(){ vscode.postMessage({cmd:'history'}); }
 function switchShed(name){ vscode.postMessage({cmd:'switch-shed', shedName:name}); }
 window.addEventListener('message', e=>{
   const m=e.data;
   if(m.cmd==='actionmsg') document.getElementById('actionmsg').textContent=m.text;
+  if(m.cmd==='historyState'){
+    document.getElementById('undoButton').disabled=!m.canUndo;
+    document.getElementById('redoButton').disabled=!m.canRedo;
+  }
   if(m.cmd==='rerender'){ location.reload(); }
 });
+vscode.postMessage({cmd:'ready'});
 </script></body></html>`;
 }

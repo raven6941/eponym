@@ -141,6 +141,19 @@ Rewrite currently matches structurally identical endpoint terms. It needs the
 `lib/eq.ep`. If no checked choice can be generated, the action reports why it
 could not offer a rewrite and leaves the source unchanged.
 
+### Action history
+
+The **History** button lists checked Refine, Give, and Case-split actions for
+the currently open document. **Undo** restores the source before the latest
+tracked action; **Redo** runs that recorded action through the checker again.
+The extension applies the source edit and recompiles the `shedsBlock` before
+the history cursor moves.
+
+History is kept for the open document session. Closing the document or
+restarting the extension clears it. Edits made outside Refine, Give, and
+Case-split are not recorded; they make older transitions stale, so Undo and
+Redo become unavailable instead of replacing newer source edits.
+
 ## After an action
 
 Intro, Apply, Construct, Rewrite, Refine, Give, and Case-split splice their

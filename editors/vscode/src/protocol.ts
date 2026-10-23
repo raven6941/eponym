@@ -19,6 +19,21 @@ export interface BoxJson {
   height?: number;
 }
 
+export type ShedAction =
+  | { kind: "refine"; target: string; arguments: { term: string } }
+  | { kind: "give"; target: string; arguments: { term: string } }
+  | { kind: "caseSplit"; target: string; arguments: { variable: string } };
+
+export interface ShedTransition {
+  id: number;
+  action: { kind: ShedAction["kind"]; target: string; arguments: Record<string, string> };
+  before: { goal: string; context: string[] };
+  edit: { term: string; nimLine: number; nimCol: number };
+  after: { goals: Array<{ shedName: string; goal: string; status: string }> };
+  validation: { accepted: boolean; status: string; yellowCount: number };
+  subSheds: string[];
+}
+
 export class LspClient {
   private proc: ChildProcess;
   private buf = Buffer.alloc(0);
@@ -153,6 +168,53 @@ export class LspClient {
       shedName,
       term,
       requireComplete,
+    });
+  }
+
+  /** Run Refine, Give, or Case-split through the common transition contract (#429). */
+  performShedAction(docUri: string, action: ShedAction): Promise<ShedTransition> {
+    return this.request("eponym/performShedAction", {
+      textDocument: { uri: docUri }, action,
+    });
+  }
+
+  commitShedAction(docUri: string, transitionId: number): Promise<ShedTransition> {
+    return this.request("eponym/commitShedAction", {
+      textDocument: { uri: docUri }, transitionId,
+    });
+  }
+
+  shedActionHistory(docUri: string): Promise<{
+    cursor: number;
+    canUndo: boolean;
+    canRedo: boolean;
+    transitions: Array<ShedTransition & { applied: boolean }>;
+  }> {
+    return this.request("eponym/shedActionHistory", {
+      textDocument: { uri: docUri },
+    });
+  }
+
+  undoShedAction(docUri: string): Promise<{
+    transitionId: number;
+    transition: ShedTransition;
+  }> {
+    return this.request("eponym/undoShedAction", {
+      textDocument: { uri: docUri },
+    });
+  }
+
+  redoShedAction(docUri: string): Promise<ShedTransition> {
+    return this.request("eponym/redoShedAction", {
+      textDocument: { uri: docUri },
+    });
+  }
+
+  commitShedHistoryMove(
+    docUri: string, transitionId: number, direction: "undo" | "redo"
+  ): Promise<{ cursor: number; transitions: Array<ShedTransition & { applied: boolean }> }> {
+    return this.request("eponym/commitShedHistoryMove", {
+      textDocument: { uri: docUri }, transitionId, direction,
     });
   }
 
