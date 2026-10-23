@@ -85,6 +85,17 @@ variable. Repeat Intro to introduce further binders. For example, a goal
 `Pi(f: A, g: A, A)` becomes a goal `Pi(g: A, A)` in the context `f : A`.
 Intro reports a useful error when the goal is not a function type.
 
+### Apply
+
+Use **Apply** to search local hypotheses for terms that can produce the
+current goal. Its filterable picker displays applications accepted by the
+checker. Arguments determined by the expected dependent result are filled in;
+remaining arguments stay as named sheds. For example, with
+`f : Pi(x: A, B x)`, `a : A`, and goal `B a`, the picker offers `f a`. If a
+candidate still needs an argument, applying it creates a shed with that
+argument's type after substituting the inferred values. Apply searches local
+hypotheses; named global definitions are not searched.
+
 ### Give
 
 Use **Give** when the term is the complete answer. Give checks both that the
@@ -117,7 +128,7 @@ the split.
 
 ## After an action
 
-Intro, Refine, Give, and Case-split splice their result into the Nim source and
+Intro, Apply, Construct, Refine, Give, and Case-split splice their result into the Nim source and
 save the document. The extension recompiles the `shedsBlock`, refreshing the
 sidecar and CodeLens goals. A remaining open goal stays yellow and gets its
 own marker; a completed shed is white and has no open goal. If a newly

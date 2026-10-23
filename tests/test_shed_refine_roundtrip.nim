@@ -479,6 +479,55 @@ if vecOptions.ok:
           vecGoalSheds.anyIt(it.goal == "Nat") and
           vecGoalSheds.anyIt(it.goal == "(Vec Nat n)"),
       "constructor field sheds preserve the index substitutions in their goals")
+
+let applyFile = scratch / "dependent_apply_context.nim"
+let applyV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  proc applyAt(A : Univ, B : A -> Univ, C : A -> Univ, " &
+  "f : Pi(x : A, B(x)), " &
+  "g : Pi(x : A, Pi(y : B(x), C(x))), a : A) : B(a) = ![applyBody]\n" &
+  "  proc partiallyApply(A : Univ, B : A -> Univ, C : A -> Univ, " &
+  "g : Pi(x : A, Pi(y : B(x), C(x))), a : A) : C(a) = ![partialBody]\n"
+writeFile(applyFile, applyV0)
+compiled = compileFixture(applyFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "dependent context Apply fixture compiles")
+let applyOptions = refineFromContextShed(applyFile, "applyBody")
+check(applyOptions.ok and "f a" in applyOptions.candidates,
+  "context Apply offers a dependent function candidate: " &
+    (if applyOptions.ok: $applyOptions.candidates else: applyOptions.why))
+if applyOptions.ok:
+  let applied = refineFromContextShed(applyFile, "applyBody", "f a")
+  check(applied.ok and applied.term == "f a" and applied.status == "white",
+    "dependent Apply infers its argument from the goal: " &
+      (if applied.ok: applied.term else: applied.why))
+  if applied.ok:
+    let applyV1 = spliceShed(applyV0, applied.nimLine, applied.nimCol, applied.term)
+    writeFile(applyFile, applyV1)
+    compiled = compileFixture(applyFile, scratch)
+    if not compiled.ok: echo compiled.output
+    check(compiled.ok, "dependent context Apply splice recompiles")
+
+let partialOptions = refineFromContextShed(applyFile, "partialBody")
+check(partialOptions.ok and "g a ?" in partialOptions.candidates,
+  "Apply retains unresolved dependent arguments after inferring earlier ones: " &
+    (if partialOptions.ok: $partialOptions.candidates else: partialOptions.why))
+if partialOptions.ok:
+  let partialApply = refineFromContextShed(applyFile, "partialBody", "g a ?")
+  check(partialApply.ok and "shedHole(" in partialApply.term,
+    "partial Apply creates a named goal for its remaining argument: " &
+      (if partialApply.ok: partialApply.term else: partialApply.why))
+  if partialApply.ok:
+    let partialV1 = spliceShed(readFile(applyFile), partialApply.nimLine,
+      partialApply.nimCol, partialApply.term)
+    writeFile(applyFile, partialV1)
+    compiled = compileFixture(applyFile, scratch)
+    if not compiled.ok: echo compiled.output
+    check(compiled.ok, "partial dependent Apply splice recompiles")
+    let partialSheds = readShedSidecar(sidecarPath(applyFile))
+    check(partialSheds.len == 1 and
+          partialSheds[0].ctx.anyIt(it.startsWith("a :")) and
+          partialSheds[0].goal == "(B a)",
+      "partial Apply goal substitutes the inferred binder into its dependent domain")
 let vecCases = caseSplitShed(vecFile, "vecBody", "xs")
 check(vecCases.ok and vecCases.term.startsWith(
         "vecElim[Nat](lam(i0, Nat, lam(u, Vec[Nat, i0], Nat)),"),
