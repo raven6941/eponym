@@ -3,7 +3,9 @@
 # The same dependent session protocol as examples/embedded/paxos_session.nim,
 # but the block demands representation-compiled definitions with direct typed
 # wrappers: opaque host types (PaxosChannel/PaxosPromise/PaxosTicket) for the
-# Chan/Promise/AcceptMsg families, host tuples for the dependent Sigmas, and
+# Chan/Promise/AcceptMsg families — declared via the two-arg
+# `runtimeDerive(Name, HostType)` (issue #402 slice 4: kind derived, host
+# type declared), host tuples for the dependent Sigmas, and
 # the Session-valued protocol constructors classified compile-time-only.
 # The test runs real TCP rounds through the compiled wrappers (differential
 # coverage against the interpreter-backed example) and checks the artifact
@@ -125,9 +127,13 @@ eponymBlock:
   postulate(Chan, Session -> Univ)
   postulate(Promise, Univ)
   postulate(AcceptMsg, Nat -> Univ)
-  runtimeType(Chan, PaxosChannel)
-  runtimeType(Promise, PaxosPromise)
-  runtimeType(AcceptMsg, PaxosTicket)
+  # Issue #402 slice 4: the opaque families' mappings are derived (kind
+  # from the checked structure, host type declared) rather than
+  # hand-written — structurally identical to the `runtimeType` lines they
+  # replace.
+  runtimeDerive(Chan, PaxosChannel)
+  runtimeDerive(Promise, PaxosPromise)
+  runtimeDerive(AcceptMsg, PaxosTicket)
   runtimeType(Nat, int)
 
   postulate(promiseValue, Promise -> Nat)

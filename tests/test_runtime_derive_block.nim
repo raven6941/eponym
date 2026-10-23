@@ -119,8 +119,54 @@ template badDeriveBlock(): untyped =
 
 const badDeriveFails = not compiles(badDeriveBlock())
 
+# ---------------------------------------------------------------------------
+# 5. Two-arg form: opaque families declare the host type, derivation checks
+# the kind. The wrapper treats the declared host type as the identity
+# boundary, exactly like the hand-written `runtimeType` it replaces.
+type
+  OpaqueToken = object
+    tag: int
+
+eponymBlock:
+  import "../lib/nat.ep"
+  postulate(Tok, Univ)
+  postulate(TokFam, Nat -> Univ)
+  runtimeDerive(Tok, OpaqueToken)
+  runtimeDerive(TokFam, OpaqueToken)
+  proc tokId(t: Tok): Tok = t
+  proc tokFamId(t: TokFam[zero]): TokFam[zero] = t
+
 when isMainModule:
-  expect(badDeriveFails,
-    "runtimeDerive on a function-typed field is a compile error")
+  let tok = OpaqueToken(tag: 7)
+  expect(tokId(tok).tag == 7,
+    "two-arg runtimeDerive: opaque identity wrapper roundtrips")
+  expect(tokFamId(tok).tag == 7,
+    "two-arg runtimeDerive: indexed opaque family wrapper roundtrips")
+
+# ---------------------------------------------------------------------------
+# 6. The two-arg form is only for opaque families: a derivable record is a
+# compile error directing at the one-arg form, and so is a bad arity.
+template badDeriveTwoArgRecord(): untyped =
+  eponymBlock:
+    import "../lib/nat.ep"
+    postulate(Int, Univ)
+    record(BadRec):
+      field(x, Nat)
+    runtimeDerive(BadRec, OpaqueToken)
+
+template badDeriveArity(): untyped =
+  eponymBlock:
+    import "../lib/nat.ep"
+    postulate(Tok2, Univ)
+    runtimeDerive(Tok2, OpaqueToken, Extra)
+
+const badTwoArgRecordFails = not compiles(badDeriveTwoArgRecord())
+const badArityFails = not compiles(badDeriveArity())
+
+when isMainModule:
+  expect(badTwoArgRecordFails,
+    "two-arg runtimeDerive on a derivable record is a compile error")
+  expect(badArityFails,
+    "three-arg runtimeDerive is a compile error")
 
   echo "test_runtime_derive_block: all block-wiring cases passed"

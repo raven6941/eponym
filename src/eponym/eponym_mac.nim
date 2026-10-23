@@ -1239,9 +1239,13 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
       elif head == "runtimeDerive":
         # Representation mapping derived from the checked type structure
         # (issue #402); consumed by the wrapper generator, never
-        # interpreted as an Eponym declaration.
-        if st.len != 2 or st[1].kind != nnkIdent:
-          error("runtimeDerive expects (EponymType)", st)
+        # interpreted as an Eponym declaration. The two-arg form declares
+        # the host type for an opaque family whose host type derivation
+        # cannot invent (slice 4).
+        if st.len notin {2, 3} or st[1].kind != nnkIdent or
+            (st.len == 3 and st[2].kind != nnkIdent):
+          error("runtimeDerive expects (EponymType) or " &
+            "(EponymType, HostType)", st)
       elif head == "runtimeValue":
         # Request a raw Eponym Value wrapper for a checked definition,
         # typically for a host interpreter of reified data.
@@ -1383,8 +1387,10 @@ proc hostRuntimeTypes*(body: NimNode, checkedGlobals: Globals,
       let isCodec = head == "runtimeCodec"
       let isDerive = head == "runtimeDerive"
       if isDerive:
-        if st.len != 2 or st[1].kind != nnkIdent:
-          error("runtimeDerive expects (EponymType)", st)
+        if st.len notin {2, 3} or st[1].kind != nnkIdent or
+            (st.len == 3 and st[2].kind != nnkIdent):
+          error("runtimeDerive expects (EponymType) or " &
+            "(EponymType, HostType)", st)
       elif ((isVector or isList or isOption or isVariant) and
           (st.len != 2 or st[1].kind != nnkIdent)) or
           (isCodec and (st.len != 5 or st[1].kind != nnkIdent or
@@ -1405,6 +1411,29 @@ proc hostRuntimeTypes*(body: NimNode, checkedGlobals: Globals,
       seen.incl(name)
       if isDerive:
         # Issue #402: derive the mapping from the checked type structure.
+        # The two-arg form (slice 4) declares the host type for an opaque
+        # family whose host type derivation cannot invent; derivation then
+        # verifies the family is genuinely opaque.
+        if st.len == 3:
+          let hostTypeName = $st[2]
+          try:
+            discard deriveOpaqueSpec(checkedGlobals, reps, name, st[2])
+          except DeriveError as e:
+            error("runtimeDerive(" & name & ", " & hostTypeName &
+              "): " & e.msg, st)
+          # Structurally identical to the hand-written
+          # `runtimeType(name, HostType)` this replaces (the slice-2
+          # differential property): concrete identity over the declared
+          # host type, including the manual form's
+          # `isGenericTypeWitnessable`.
+          let mapping = HostRuntimeType(eponymName: name,
+            nimType: copyNimTree(st[2]), isGenericTypeWitnessable: true)
+          if name in checkedGlobals:
+            let entry = checkedGlobals[name]
+            if not entry.tm.isNil and entry.tm.kind == tR:
+              reps[entry.tm.refId] = mapping
+          result.add(mapping)
+          continue
         var spec: DerivedSpec
         try:
           spec = deriveSpec(checkedGlobals, reps, name)
