@@ -25,6 +25,11 @@ eponymBlock:
 
   proc compiledIntToNat(value: Int): Nat = intToNat(value)
 
+eponymBlock:
+  import "../lib/nat.ep"
+  runtimeType(Nat, int)
+  proc entryP(n: Nat): Nat = add(n, n)
+
 proc rejectsNegativeConversion(convert: proc(value: int): int): bool =
   try:
     discard convert(-1)
@@ -84,4 +89,6 @@ when isMainModule:
       not intValueRejectsNegative or not valuePathRejectsNegative or
       not typedWrapperRejectsNegative or not reprPathRejectsNegative:
     quit(1)
+  doAssert entryP(21) == 42,
+    "typed runtime wrapper should accept and return Nat values"
   echo "test_int_to_nat: Value and representation properties passed"
