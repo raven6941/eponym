@@ -55,16 +55,25 @@ if [ -n "${EPONYM_CI_SHARD:-}" ]; then
 fi
 
 STEP_N=0
-run_step() {
-  STEP_N=$((STEP_N + 1))
-  if [ $(((STEP_N - 1) % SHARD_COUNT)) -ne $SHARD_INDEX ]; then
-    echo "=== skip step $STEP_N (shard $SHARD_INDEX/$SHARD_COUNT): $* ==="
-    return 0
-  fi
-  echo "=== step $STEP_N: $* ==="
-  "$@" || { _rc=$?; echo "step $STEP_N FAILED (exit $_rc): $*" >&2; exit $_rc; }
-}
+if [ "${EPONYM_LIST_STEPS:-}" = "1" ]; then
+  # List mode (issue #405): print each step's full command, one per line,
+  # instead of running the matrix. tools/test-affected.sh enumerates the
+  # steps this way and selects the affected subset. CI never sets this
+  # variable, so merge-gate behavior is unchanged.
+  run_step() { printf 'STEP: %s\n' "$*"; }
+else
+  run_step() {
+    STEP_N=$((STEP_N + 1))
+    if [ $(((STEP_N - 1) % SHARD_COUNT)) -ne $SHARD_INDEX ]; then
+      echo "=== skip step $STEP_N (shard $SHARD_INDEX/$SHARD_COUNT): $* ==="
+      return 0
+    fi
+    echo "=== step $STEP_N: $* ==="
+    "$@" || { _rc=$?; echo "step $STEP_N FAILED (exit $_rc): $*" >&2; exit $_rc; }
+  }
+fi
 
+if [ "${EPONYM_LIST_STEPS:-}" != "1" ]; then
 echo "shard: $SHARD_INDEX/$SHARD_COUNT"
 nim --version
 
@@ -76,6 +85,7 @@ if nimble path falsify >/dev/null 2>&1; then
   echo "falsify already installed; skipping reinstall"
 else
   nimble install -y https://github.com/raven6941/falsify
+fi
 fi
 
 echo "### Build: production modules"
@@ -195,19 +205,11 @@ run_step nim c -r $NC --hints:off $P "tests/test_shed_refine_roundtrip.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_mutual_termination.nim"
 
 # VSCode extension smoke (issue #136 client path, real lsp binary).
-# The smoke test self-provisions the shed sidecar: it exercises the
-# extension's own generateSidecar path (issue #153) on the demo before
-# reading layouts from it. The sidecar is gitignored (*.sheds.json),
-# so this also covers the fresh-checkout case (was issue #142's fix).
-vscode_smoke() {
-  # Depends on the lsp binary from the production-build section; in a
-  # sharded run that build may belong to another shard, so build it here
-  # too (the nimcache makes the rebuild cheap when it already ran).
-  nim c $NC --hints:off $P "src/eponym/lsp.nim" || return $?
-  (cd editors/vscode && npm install --no-audit --no-fund && npm run build) || return $?
-  LSP=src/eponym/lsp DEMO=examples/embedded/sheds_demo.nim node editors/vscode/out/smoke.js
-}
-run_step vscode_smoke
+# Lives in tools/vscode-smoke.sh so the affected-only runner (issue #405)
+# can invoke it as a plain step; behavior is unchanged.
+run_step sh tools/vscode-smoke.sh
 # Note: bench/ contains expensive benchmarks, not run in CI.
 
+if [ "${EPONYM_LIST_STEPS:-}" != "1" ]; then
 echo "### CI PASSED (shard $SHARD_INDEX/$SHARD_COUNT, $STEP_N steps total)"
+fi
