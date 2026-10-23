@@ -1,0 +1,14 @@
+# Score family for the #432 runtime benchmark (slice 2): exercises the
+# #402 derived mapping. `Score` is a single-constructor data family whose
+# representation is *derived* from the checked structure via the one-arg
+# `runtimeDerive(Score)` block form (no hand-written codec, no postulate,
+# no host binding). Imported alongside defheavy_lib.ep (which supplies
+# `pipeline`/`ones`); kept in its own file so the `requireCompiled` blocks
+# of the benchmark can import the library without the Score definitions
+# (the derived single-field-variant representation is outside the Phase-2
+# codegen fragment, so `scoreOfOnes` has no repr body and would fail the
+# `requireCompiled` gate — a coverage finding, not a driver bug).
+data Score : Type 0 where
+| mkScore (s : Int) : Score
+proc scoreOfRep (n : Nat) (x : Int) : Score =
+  mkScore (pipelineRep n x)

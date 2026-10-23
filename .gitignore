@@ -21,6 +21,7 @@ bench/**
 !bench/**/
 !bench/**/*.nim
 !bench/**/*.md
+!bench/**/*.ep
 # Examples dir: keep sources, ignore built outputs
 examples/**
 !examples/**/
