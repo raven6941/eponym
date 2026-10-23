@@ -647,5 +647,92 @@ check(unrelatedIndexCases.ok and "Vec[Nat, n]" in unrelatedIndexCases.term and
     (if unrelatedIndexCases.ok: unrelatedIndexCases.term
      else: unrelatedIndexCases.why))
 
+# Equality rewrite uses the selected Eq proof and explicit orientation to
+# transport a rewritten goal back to the original target.
+let equalityRewriteFile = scratch / "equality_rewrite.nim"
+let equalityLib = (RepoRoot / "lib" / "eq.ep").replace("\\", "/")
+let equalityRewriteV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & equalityLib & "\"\n" &
+  "  proc rewriteForward(A: Univ, P: A -> Univ, x: A, y: A, " &
+  "e: Eq[A, x, y]) : P(x) = ![forwardBody]\n" &
+  "  proc rewriteReverse(A: Univ, P: A -> Univ, x: A, y: A, " &
+  "e: Eq[A, x, y]) : P(y) = ![reverseBody]\n" &
+  "  proc rewriteOccurrence(A: Univ, x: A, y: A, " &
+  "e: Eq[A, x, y]) : Eq[A, x, x] = ![occurrenceBody]\n"
+writeFile(equalityRewriteFile, equalityRewriteV0)
+compiled = compileFixture(equalityRewriteFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "equality rewrite fixture compiles with Eq imported")
+let forwardChoices = refineEqualityShed(equalityRewriteFile, "forwardBody")
+check(forwardChoices.ok and "e forward occurrence 1" in forwardChoices.candidates,
+  "equality rewrite offers the x-to-y orientation when the goal contains x: " &
+    (if forwardChoices.ok: $forwardChoices.candidates else: forwardChoices.why))
+if forwardChoices.ok:
+  let forwardRewrite = refineEqualityShed(
+    equalityRewriteFile, "forwardBody", "e forward occurrence 1")
+  check(forwardRewrite.ok and "eqElim" in forwardRewrite.term and
+        "shedHole(" in forwardRewrite.term,
+    "forward equality rewrite returns checked eliminator transport: " &
+      (if forwardRewrite.ok: forwardRewrite.term else: forwardRewrite.why))
+  if forwardRewrite.ok:
+    let forwardV1 = spliceShed(equalityRewriteV0, forwardRewrite.nimLine,
+      forwardRewrite.nimCol, forwardRewrite.term)
+    writeFile(equalityRewriteFile, forwardV1)
+    compiled = compileFixture(equalityRewriteFile, scratch)
+    if not compiled.ok: echo compiled.output
+    check(compiled.ok, "forward equality transport splice recompiles")
+    let forwardSheds = readShedSidecar(sidecarPath(equalityRewriteFile))
+    check(forwardSheds.anyIt(it.name == "forwardBody" and "(P y)" in it.goal),
+      "forward rewrite leaves the correctly transported P(y) goal")
+
+let reverseChoices = refineEqualityShed(equalityRewriteFile, "reverseBody")
+check(reverseChoices.ok and "e reverse occurrence 1" in reverseChoices.candidates,
+  "equality rewrite offers the y-to-x orientation when the goal contains y: " &
+    (if reverseChoices.ok: $reverseChoices.candidates else: reverseChoices.why))
+if reverseChoices.ok:
+  let reverseRewrite = refineEqualityShed(
+    equalityRewriteFile, "reverseBody", "e reverse occurrence 1")
+  check(reverseRewrite.ok and "sym[A](x, y, e)" in reverseRewrite.term,
+    "reverse equality rewrite uses the symmetric equality proof: " &
+      (if reverseRewrite.ok: reverseRewrite.term else: reverseRewrite.why))
+  if reverseRewrite.ok:
+    let reverseV1 = spliceShed(readFile(equalityRewriteFile),
+      reverseRewrite.nimLine, reverseRewrite.nimCol, reverseRewrite.term)
+    writeFile(equalityRewriteFile, reverseV1)
+    compiled = compileFixture(equalityRewriteFile, scratch)
+    if not compiled.ok: echo compiled.output
+    check(compiled.ok, "reverse equality transport splice recompiles")
+    let reverseSheds = readShedSidecar(sidecarPath(equalityRewriteFile))
+    check(reverseSheds.anyIt(it.name == "reverseBody" and "(P x)" in it.goal),
+      "reverse rewrite leaves the correctly transported P(x) goal")
+
+let occurrenceChoices = refineEqualityShed(
+  equalityRewriteFile, "occurrenceBody")
+check(occurrenceChoices.ok and
+      "e forward occurrence 1" in occurrenceChoices.candidates and
+      "e forward occurrence 2" in occurrenceChoices.candidates,
+  "equality rewrite offers separate choices for repeated goal occurrences: " &
+    (if occurrenceChoices.ok: $occurrenceChoices.candidates
+     else: occurrenceChoices.why))
+if occurrenceChoices.ok:
+  let occurrenceRewrite = refineEqualityShed(
+    equalityRewriteFile, "occurrenceBody", "e forward occurrence 2")
+  check(occurrenceRewrite.ok,
+    "selected occurrence gets a checked transport: " &
+      (if occurrenceRewrite.ok: occurrenceRewrite.term
+       else: occurrenceRewrite.why))
+  if occurrenceRewrite.ok:
+    let occurrenceV1 = spliceShed(readFile(equalityRewriteFile),
+      occurrenceRewrite.nimLine, occurrenceRewrite.nimCol,
+      occurrenceRewrite.term)
+    writeFile(equalityRewriteFile, occurrenceV1)
+    compiled = compileFixture(equalityRewriteFile, scratch)
+    if not compiled.ok: echo compiled.output
+    check(compiled.ok, "selected occurrence transport splice recompiles")
+    let occurrenceSheds = readShedSidecar(sidecarPath(equalityRewriteFile))
+    check(occurrenceSheds.anyIt(it.name == "occurrenceBody" and
+                                "Eq A x y" in it.goal),
+      "selected second occurrence rewrites only that target position")
+
 removeDir(scratch)
 echo "--- shed refine round-trip contract passed ---"
