@@ -225,6 +225,31 @@ representation backend can compile them; unsupported imported code is rejected.
 For an indexed `Vec`, an index that exists only in an erased binder cannot be
 checked by the representation backend and causes a compile-time error.
 
+### Derived representation mappings (#402)
+
+Representation mappings can be *derived* from the checked type structure
+instead of declared by hand (`src/eponym/derive_repr.nim`). Derivation walks
+the elaborated `Term` and synthesizes the host layout: products (records /
+`Sig`) become host tuples, `data` families become tagged variants with
+per-constructor payloads, quantity-0 binders are erased, and hand-written
+`runtimeType`/`runtimeVector`/`runtimeOption` mappings are the base cases
+(the analogue of hand-written `given`s in Scala 3 derivation). The derived
+registration is structurally identical to the hand-written declaration it
+replaces, and boundary codecs are generated componentwise, with vector
+lengths over bound indices becoming codec *factories*
+(`Π (idx : I) -> Codec (T idx)`; the O(1) length check is the boundary
+obligation). Derivation fails loudly, naming the field and the reason, for:
+leaves with no mapping, type- or function-typed fields (no honest runtime
+representation exists), genuinely indexed families, and components whose
+representation *kind* depends on a bound value.
+
+Manual-only (not derivable): postulate/opaque leaves (their mapping is the
+base case), `runtimeOption` (traversal not landed yet), and opaque host
+codecs for non-structural representations. Derivation is currently a
+library-level step (`deriveSpec`, `registerDerivedMapping`,
+`genBoundaryCodec`, `genCodecFactory`); wiring it into `eponymBlock` as a
+`runtimeDerive(...)` statement is the remaining integration slice.
+
 ### Compile-time performance
 
 Eponym checks embedded definitions during Nim compilation, so elaborator and

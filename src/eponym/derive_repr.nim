@@ -320,3 +320,252 @@ proc specSummary*(spec: DerivedSpec, indent = 0): string =
   for f in spec.fields:
     result &= "\n" & pad & "- " & f.name & ":\n" &
       specSummary(f.spec, indent + 2)
+
+## ---------------------------------------------------------------------------
+## Slice 2: registration + boundary-codec generation.
+##
+## `registerDerivedMapping` turns a DerivedSpec into the `HostRuntimeType`
+## record the wrapper/codegen layers consume. The record is structurally
+## identical to what the equivalent hand-written declaration (`runtimeType`,
+## `runtimeVector`, `runtimeVariant`, ...) produces in `hostRuntimeTypes` —
+## that equivalence is the differential property the tests assert.
+##
+## `genBoundaryCodec` synthesizes the encoder/decoder proc ASTs for a spec
+## whose boundary conversion is structural (the int fragment: products and
+## variants over ints, vectors, and nested products/variants). Opaque leaves
+## have no structural codec: their boundary conversion is the identity host
+## representation (the wrapper layer's typed `valueToHost`/`toHostValue`
+## instantiations cover those; a later slice emits them from the spec).
+##
+## Vector lengths that mention a bound index become codec *factories*
+## (`genCodecFactory`): `proc (idx0: int, ...): tuple[enc, dec]` — the
+## decisions.org codec-factory decision (`Π (idx : I) -> Codec (T idx)`)
+## with each index supplied as a host value. The O(1) length boundary check
+## lives inside `seqToVecValue`/`vecValueToSeq`; the factory only selects
+## the expected length. A vector length that is a static Nat literal needs
+## no factory parameter: the literal is baked in.
+
+proc registerDerivedMapping*(spec: DerivedSpec, name: string): HostRuntimeType =
+  ## The `HostRuntimeType` registration for a derived spec: the mapping the
+  ## hand-written declaration would have produced, computed instead of
+  ## declared. Raises DeriveError for `dkRecurse` (never a top-level
+  ## registration) and for option (no hand-written option shape is derivable
+  ## yet — `runtimeOption` stays manual until its traversal lands).
+  case spec.kind
+  of dkInt:
+    HostRuntimeType(eponymName: name, nimType: ident"int")
+  of dkVector:
+    HostRuntimeType(eponymName: name, nimType: ident"seq",
+                    isRuntimeVector: true)
+  of dkOption:
+    raise deriveErr("cannot register a derived mapping for option '" &
+      name & "': runtimeOption stays hand-written for now")
+  of dkOpaque:
+    HostRuntimeType(eponymName: name, nimType: copyNimTree(spec.nimType))
+  of dkProduct:
+    HostRuntimeType(eponymName: name, nimType: copyNimTree(spec.nimType))
+  of dkVariant:
+    HostRuntimeType(eponymName: name, nimType: bindSym"RuntimeVariant",
+                    isRuntimeVariant: true)
+  of dkRecurse:
+    raise deriveErr("cannot register a recursive occurrence of '" &
+      name & "' as a top-level mapping")
+
+type
+  GeneratedCodec* = object
+    ## encoder: `proc (x: hostT, g: RuntimeGlobals): RuntimeValue`;
+    ## decoder: `proc (v: RuntimeValue, g: RuntimeGlobals): hostT`.
+    encoder*, decoder*: NimNode
+
+proc rvSym(): NimNode = bindSym"RuntimeValue"
+proc rgSym(): NimNode = bindSym"RuntimeGlobals"
+
+proc hostTypeOf(spec: DerivedSpec): NimNode =
+  ## The host type AST a boundary codec converts at.
+  case spec.kind
+  of dkInt: ident"int"
+  of dkProduct: copyNimTree(spec.nimType)
+  of dkVariant: bindSym"RuntimeVariant"
+  of dkVector: nnkBracketExpr.newTree(ident"seq", ident"int")
+  else:
+    raise deriveErr("no host type for spec kind " & $spec.kind &
+      " of '" & spec.typeName & "'")
+
+proc encodeInto(spec: DerivedSpec, hostExpr, globalsExpr: NimNode,
+                path: string,
+                vecIdxs: Table[string, NimNode]): NimNode =
+  ## Host expression -> `Value` expression for the spec.
+  case spec.kind
+  of dkInt:
+    newCall(bindSym"intToValue", hostExpr)
+  of dkProduct:
+    var acc = newCall(bindSym"unitValue")
+    for i in countdown(spec.fields.high, 0):
+      let f = spec.fields[i]
+      let fh = newDotExpr(hostExpr, ident(f.name))
+      acc = newCall(bindSym"pairValue",
+        encodeInto(f.spec, fh, globalsExpr, path & "." & f.name, vecIdxs),
+        acc)
+    acc
+  of dkVariant:
+    var ctors = newNimNode(nnkBracket)
+    for f in spec.fields: ctors.add(newLit(f.name))
+    newCall(bindSym"runtimeVariantToValue", hostExpr, globalsExpr,
+            newLit(spec.typeName), ctors)
+  of dkVector:
+    if path notin vecIdxs:
+      raise deriveErr("vector component at " & path &
+        " needs its length index; generate a codec factory instead")
+    let itemEnc = newProc(
+      params = @[rvSym(),
+                 newIdentDefs(ident"item", ident"int", newEmptyNode()),
+                 newIdentDefs(ident"gg", rgSym(), newEmptyNode())],
+      body = newStmtList(newCall(bindSym"intToValue", ident"item")))
+    newCall(bindSym"seqToVecValue", hostExpr, vecIdxs[path], globalsExpr,
+            newLit(spec.typeName), itemEnc)
+  of dkOpaque:
+    raise deriveErr("opaque leaf '" & spec.typeName &
+      "' has the identity host representation; no structural codec is " &
+      "generated for it")
+  of dkOption, dkRecurse:
+    raise deriveErr("no boundary codec generated for spec kind " &
+      $spec.kind & " of '" & spec.typeName & "' yet")
+
+proc decodeInto(spec: DerivedSpec, valueExpr, globalsExpr: NimNode,
+                path: string, vecIdxs: Table[string, NimNode],
+                stmts: var seq[NimNode]): NimNode =
+  ## Appends decode statements for `valueExpr`; returns the host expression.
+  case spec.kind
+  of dkInt:
+    newCall(bindSym"valueToInt", valueExpr)
+  of dkProduct:
+    var cur = valueExpr
+    var parts: seq[NimNode] = @[]
+    for f in spec.fields:
+      let headSym = genSym(nskLet, "vhead")
+      stmts.add(newLetStmt(headSym,
+        newCall(bindSym"runtimePairFirst", cur)))
+      parts.add(decodeInto(f.spec, headSym, globalsExpr,
+                           path & "." & f.name, vecIdxs, stmts))
+      let restSym = genSym(nskLet, "vrest")
+      stmts.add(newLetStmt(restSym,
+        newCall(bindSym"runtimePairSecond", cur)))
+      cur = restSym
+    newTree(nnkTupleConstr, parts)
+  of dkVariant:
+    var ctors = newNimNode(nnkBracket)
+    for f in spec.fields: ctors.add(newLit(f.name))
+    newCall(bindSym"valueToRuntimeVariant", valueExpr, globalsExpr,
+            newLit(spec.typeName), ctors)
+  of dkVector:
+    if path notin vecIdxs:
+      raise deriveErr("vector component at " & path &
+        " needs its length index; generate a codec factory instead")
+    let itemDec = newProc(
+      params = @[ident"int",
+                 newIdentDefs(ident"item", rvSym(), newEmptyNode()),
+                 newIdentDefs(ident"gg", rgSym(), newEmptyNode())],
+      body = newStmtList(newCall(bindSym"valueToInt", ident"item")))
+    newCall(bindSym"vecValueToSeq", valueExpr, vecIdxs[path], globalsExpr,
+            newLit(spec.typeName), itemDec)
+  of dkOpaque:
+    raise deriveErr("opaque leaf '" & spec.typeName &
+      "' has the identity host representation; no structural codec is " &
+      "generated for it")
+  of dkOption, dkRecurse:
+    raise deriveErr("no boundary codec generated for spec kind " &
+      $spec.kind & " of '" & spec.typeName & "' yet")
+
+proc genBoundaryCodec*(spec: DerivedSpec, procPrefix: string): GeneratedCodec =
+  ## Synthesize encoder/decoder procs for a spec with a static boundary
+  ## (int-fragment products and variants). Vector components carry a
+  ## length-index obligation: use `genCodecFactory` for those.
+  if spec.kind notin {dkInt, dkProduct, dkVariant}:
+    raise deriveErr("genBoundaryCodec needs a static boundary spec, got " &
+      $spec.kind & " for '" & spec.typeName &
+      "'; use genCodecFactory for index-dependent components")
+  let hostT = hostTypeOf(spec)
+  let x = ident"x"
+  let g = ident"g"
+  let v = ident"v"
+  let emptyIdxs = initTable[string, NimNode]()
+  let encoder = newProc(ident(procPrefix & "Encode"),
+    params = @[rvSym(),
+               newIdentDefs(x, hostT, newEmptyNode()),
+               newIdentDefs(g, rgSym(), newEmptyNode())],
+    body = newStmtList(encodeInto(spec, x, g, "", emptyIdxs)))
+  var stmts: seq[NimNode] = @[]
+  let decoded = decodeInto(spec, v, g, "", emptyIdxs, stmts)
+  stmts.add(decoded)
+  let decoder = newProc(ident(procPrefix & "Decode"),
+    params = @[hostT,
+               newIdentDefs(v, rvSym(), newEmptyNode()),
+               newIdentDefs(g, rgSym(), newEmptyNode())],
+    body = newStmtList(stmts))
+  GeneratedCodec(encoder: encoder, decoder: decoder)
+
+proc asClosure(p: NimNode): NimNode =
+  ## Mark a generated proc `{.closure.}` so it may capture factory params.
+  result = p
+  result[4] = newTree(nnkPragma, ident"closure")
+
+proc genCodecFactory*(spec: DerivedSpec, procPrefix: string): NimNode =
+  ## Synthesize `proc procPrefix(idx0: int, ...): tuple[enc, dec]` for a
+  ## product with index-dependent (vector) components: the codec factory
+  ## `Π (idx : I) -> Codec (T idx)`. Each vector field whose length mentions
+  ## a bound value becomes one `int` factory parameter; a static Nat-literal
+  ## length is baked in. Non-vector fields encode as in `genBoundaryCodec`.
+  if spec.kind != dkProduct:
+    raise deriveErr("genCodecFactory needs a product spec, got " &
+      $spec.kind & " for '" & spec.typeName & "'")
+  var vecIdxs = initTable[string, NimNode]()
+  var params: seq[NimNode] = @[]
+  var pi = 0
+  for f in spec.fields:
+    if f.spec.kind != dkVector: continue
+    let p = "." & f.name
+    let it = f.spec.indexTerm
+    if it.isNil or kindDependsOnMarker(it):
+      let pname = ident("idx" & $pi)
+      inc pi
+      params.add(newIdentDefs(pname, ident"int", newEmptyNode()))
+      vecIdxs[p] = pname
+    elif it.kind == tNatLit:
+      vecIdxs[p] = newLit(it.natLitVal)
+    else:
+      raise deriveErr("vector field '" & f.name & "' of '" & spec.typeName &
+        "' has a length index the codec factory cannot take as a host value")
+  if params.len == 0:
+    raise deriveErr("no index-dependent component in '" & spec.typeName &
+      "'; use genBoundaryCodec")
+  let hostT = copyNimTree(spec.nimType)
+  let x = ident"x"
+  let g = ident"g"
+  let v = ident"v"
+  let encBody = newStmtList(encodeInto(spec, x, g, "", vecIdxs))
+  var decStmts: seq[NimNode] = @[]
+  decStmts.add(decodeInto(spec, v, g, "", vecIdxs, decStmts))
+  let encTy = newTree(nnkProcTy,
+    newTree(nnkFormalParams, rvSym(),
+      newIdentDefs(x, hostT, newEmptyNode()),
+      newIdentDefs(g, rgSym(), newEmptyNode())),
+    newTree(nnkPragma, ident"closure"))
+  let decTy = newTree(nnkProcTy,
+    newTree(nnkFormalParams, hostT,
+      newIdentDefs(v, rvSym(), newEmptyNode()),
+      newIdentDefs(g, rgSym(), newEmptyNode())),
+    newTree(nnkPragma, ident"closure"))
+  let retTy = nnkTupleTy.newTree(
+    nnkIdentDefs.newTree(ident"enc", encTy, newEmptyNode()),
+    nnkIdentDefs.newTree(ident"dec", decTy, newEmptyNode()))
+  let encClos = asClosure(newProc(params = @[rvSym(),
+      newIdentDefs(x, hostT, newEmptyNode()),
+      newIdentDefs(g, rgSym(), newEmptyNode())], body = encBody))
+  let decClos = asClosure(newProc(params = @[hostT,
+      newIdentDefs(v, rvSym(), newEmptyNode()),
+      newIdentDefs(g, rgSym(), newEmptyNode())],
+    body = newStmtList(decStmts)))
+  let allParams = @[retTy] & params
+  newProc(ident(procPrefix),
+    params = allParams,
+    body = newStmtList(newTree(nnkTupleConstr, encClos, decClos)))
