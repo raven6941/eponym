@@ -1827,6 +1827,15 @@ proc isCheckedNatType(globals: Globals, typeName: string): bool =
   not nat.isNil and not candidate.isNil and nat.kind == tR and
     candidate.kind == tR and nat.refId == candidate.refId
 
+proc isCheckedIntType(globals: Globals, typeName: string): bool =
+  ## Classify Int by its checked declaration identity, not by spelling.
+  if "Int" notin globals or typeName notin globals:
+    return false
+  let intTy = globals["Int"].tm
+  let candidate = globals[typeName].tm
+  not intTy.isNil and not candidate.isNil and intTy.kind == tR and
+    candidate.kind == tR and intTy.refId == candidate.refId
+
 proc simpleRuntimeCodec(n: NimNode): string =
   if n.kind == nnkIdent:
     case $n
@@ -3147,6 +3156,11 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
   if binding.rawValue:
     return newCall(bindSym"bindHostValueNary", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
+  if binding.eponymTypes.len == 2 and
+      isCheckedIntType(checkedGlobals, binding.eponymTypes[0]) and
+      isCheckedNatType(checkedGlobals, binding.eponymTypes[1]):
+    return newCall(bindSym"bindHostIntToNat", bindingsSym, globalsSym,
+                   nameLit, binding.implementation)
   if binding.pairResult:
     let bindingForm = if binding.trustedPairIndex:
       "bindPostulatePairTrusted"
@@ -4295,7 +4309,10 @@ macro eponymBlock*(body: untyped): untyped =
             "postulate '" & binding.postulateName & "' requires opaque Eponym type '" &
             required & "', not '" & binding.eponymTypes[0] & "'")
       of 2:
-        if isCheckedNatType(checkedGlobals, binding.eponymTypes[1]):
+        if isCheckedIntType(checkedGlobals, binding.eponymTypes[0]) and
+            isCheckedNatType(checkedGlobals, binding.eponymTypes[1]):
+          validateHostIntToNatType(checkedGlobals, binding.postulateName)
+        elif isCheckedNatType(checkedGlobals, binding.eponymTypes[1]):
           validateHostOpaqueNatUnaryType(checkedGlobals,
             binding.postulateName, binding.eponymTypes[0])
         else:

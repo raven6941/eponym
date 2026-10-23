@@ -41,8 +41,9 @@ types remain open.
 
 ## Current implementation and remaining obstacle
 
-`eponymBlock` now accepts `bindPostulate(name, nimProc)` for postulates whose
-exact Eponym type is `Int -> Int`. Generated wrappers use a call-local runtime
+`eponymBlock` accepts `bindPostulate(name, nimProc)` for supported primitive
+and mapped postulate signatures, including `Int -> Int` and the explicit
+partial conversion `Int -> Nat`. Generated wrappers use a call-local runtime
 binding table keyed by the checked postulate reference ID; cached definitions
 are not mutated. This works through imported definitions too. The Nim
 adapter has the concrete signature `proc(x: int): int`, and Eponym's
@@ -109,11 +110,12 @@ Generated `eponymBlock` wrappers support first-order primitive `Int` and
 fields have runtime codecs, and explicitly mapped opaque types or indexed
 families. Dependent Sigma values and records with dependent fields remain
 unsupported.
-`bindPostulate` supports unary `Int -> Int`, opaque `T -> T`, opaque `T -> U`,
-`T -> Nat`, `Nat -> A -> B`, and typed curried postulates of arbitrary arity
-when every argument and result has a runtime codec. A mapped `Future[T]` may be
-returned opaquely; it is not awaited and async failure/cancellation semantics
-are undefined. `bindPostulatePair` supports one to three codec-supported
+`bindPostulate` supports unary `Int -> Int`, `Int -> Nat`, opaque `T -> T`,
+opaque `T -> U`, `T -> Nat`, `Nat -> A -> B`, and typed curried postulates of
+arbitrary arity when every argument and result has a runtime codec. A mapped
+`Future[T]` may be returned opaquely; it is not awaited and async
+failure/cancellation semantics are undefined. `bindPostulatePair` supports
+one to three codec-supported
 named arguments with a non-dependent Sigma result, encoded as a typed Nim
 tuple. The separate `bindPostulatePairTrusted` accepts dependent Sigma results
 and leaves the index relationship to the host adapter. Longer callback

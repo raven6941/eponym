@@ -67,6 +67,9 @@ type
     argCount*: int  ## host-procedure value arguments (excluding the result)
 
 proc hostIntUnary*(implementation: proc(x: int): int): Value
+proc hostIntToNat*(implementation: proc(x: int): int,
+                   globals: Globals): Value
+proc intToNatHost*(value: int): int
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value
 proc hostOpaqueMapUnary*[A, B](implementation: proc(x: A): B): Value
 proc hostOpaqueBinary*[A, B, C](implementation: proc(x: A, y: B): C): Value
@@ -638,6 +641,31 @@ proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
       "Nim proc(int): int requires Eponym postulate '" & postulateName &
       "' to have type Int -> Int")
 
+proc validateHostIntToNatType*(globals: Globals, postulateName: string) =
+  ## Require the exact primitive conversion contract `Int -> Nat`.
+  if postulateName notin globals:
+    raise newException(ValueError, "postulate not found: " & postulateName)
+  let entry = globals[postulateName]
+  if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
+    raise newException(ValueError,
+      "runtime binding target is not a postulate: " & postulateName)
+  if "Int" notin globals or "Nat" notin globals:
+    raise newException(ValueError,
+      "Int -> Nat adapter requires Eponym Int and Nat declarations")
+  let ty = entry.ty
+  let intType = globals["Int"].tm
+  let natType = globals["Nat"].tm
+  if ty.isNil or intType.isNil or natType.isNil or
+      intType.kind != tR or natType.kind != tR:
+    raise newException(ValueError,
+      "Int -> Nat adapter requires checked Int and Nat type declarations")
+  if ty.kind != tPi or ty.impl or ty.qty == q0 or ty.dom.kind != tR or
+      ty.dom.refId != intType.refId or ty.scope.bdy.kind != tR or
+      ty.scope.bdy.refId != natType.refId:
+    raise newException(ValueError,
+      "Nim proc(int): int requires Eponym postulate '" & postulateName &
+      "' to have type Int -> Nat")
+
 proc opaqueTypeName(globals: Globals, typeId: int,
                     postulateName: string): string
 proc opaqueTypeId(globals: Globals, typeName, postulateName: string): int
@@ -1002,6 +1030,14 @@ proc bindHostIntUnary*(bindings: var RuntimeBindings, globals: Globals,
   ## runtime shape `Int -> Int`. The implementation's behavior is trusted.
   validateHostIntUnaryType(globals, postulateName)
   bindHostValue(bindings, globals, postulateName, hostIntUnary(implementation))
+
+proc bindHostIntToNat*(bindings: var RuntimeBindings, globals: Globals,
+                       postulateName: string,
+                       implementation: proc(x: int): int) =
+  ## Bind a Nim int conversion to an Eponym `Int -> Nat` postulate.
+  validateHostIntToNatType(globals, postulateName)
+  bindHostValue(bindings, globals, postulateName,
+    hostIntToNat(implementation, globals))
 
 proc findDef*(defs: seq[ElabDef], name: string): ElabDef =
   for d in defs:
@@ -1520,6 +1556,20 @@ proc hostIntUnary*(implementation: proc(x: int): int): Value =
   ## remains trusted relative to the Eponym postulate.
   vHostFunc(proc(value: Value): Value =
     intToValue(implementation(valueToInt(value))))
+
+proc hostIntToNat*(implementation: proc(x: int): int,
+                   globals: Globals): Value =
+  ## Adapt a Nim `proc(int): int` to a checked `Int -> Nat` postulate.
+  ## The imported Nat constructors are used to create the Value-level result;
+  ## negative results are rejected by `natToValue` at this boundary.
+  vHostFunc(proc(value: Value): Value =
+    natToValue(implementation(valueToInt(value)), globals))
+
+proc intToNatHost*(value: int): int =
+  ## Default trusted adapter for `lib/int_to_nat.ep`.
+  if value < 0:
+    raise newException(ValueError, "cannot convert negative Int to Nat")
+  value
 
 proc hostOpaqueUnary*[T](implementation: proc(x: T): T): Value =
   ## Adapt an opaque Nim T -> T procedure. Eponym passes the value through

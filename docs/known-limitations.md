@@ -51,16 +51,24 @@ silently wraps. The Phase 2 `natElim` fold is iterative but remains O(n), so
 values close to `high(int)` are representable but impractical to fold. The
 interpreter's constructor-based folds can also run slowly or exhaust the
 stack on large inputs.
-There is no `Int -> Nat` conversion helper yet; any such conversion must
-reject negative integers. Conversion stays explicit because postulates can
-hide host effects that their Eponym type does not prove absent, so implicit
-insertion could hide a call to user code.
+The partial direction is available through `lib/int_to_nat.ep`. Bind its
+postulate to the provided `intToNatHost` Nim adapter:
 
 ```nim
 eponymBlock:
-  import "lib/nat_to_int.ep"
-  proc sendCount(count: Nat): Int = natToInt(count)
+  import "lib/int_to_nat.ep"
+  bindPostulate(intToNat, intToNatHost, Int, Nat)
+  proc checkedCount(count: Int): Nat = intToNat(count)
 ```
+
+The adapter raises `ValueError("cannot convert negative Int to Nat")` for a
+negative input. Conversion stays explicit because postulates can hide host
+effects that their Eponym type does not prove absent. The Value runtime builds
+the imported `zero`/`suc` constructor chain; the representation backend uses
+the existing host `int` representation after the negativity check. In a
+`requireCompiled()` block, declare `runtimeType(Int, int)` and
+`runtimeType(Nat, int)` to select those representations. Large conversions
+through the Value path therefore take linear time and space.
 
 ## Scalar host values are opaque
 

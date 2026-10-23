@@ -129,6 +129,7 @@ run_step nim c -r $NC --hints:off $P "tests/test_paxos_session_runtime.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_borrow_runtime.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_nat_binding_identity.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_nat_to_int.nim"
+run_step nim c -r $NC --hints:off $P "tests/test_int_to_nat.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_debug_echo.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_scalar_runtime_codecs.nim"
 # Representation derivation from checked type structure (issue #402)

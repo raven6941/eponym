@@ -527,7 +527,11 @@ The unit value is `<>` (Nim side: `unitv`).
 
 `Nat` and primitive `Int` remain distinct types. To pass a natural number to
 an Int-taking operation, import `lib/nat_to_int.ep` and write `natToInt(n)`.
-This conversion is explicit; the elaborator does not insert it for you.
+To convert in the other direction, import `lib/int_to_nat.ep`, bind
+`intToNat` to `intToNatHost` with `bindPostulate(intToNat, intToNatHost,
+Int, Nat)`, and call it explicitly. Negative inputs raise `ValueError`.
+For `requireCompiled()`, map `Int` and `Nat` to Nim `int` with `runtimeType`.
+Conversions are explicit; the elaborator does not insert them for you.
 
 Inside `eponymBlock`, ordinary Nim integer literals can also be used for Nat
 indices and bracketed arguments whose Eponym binder is `Nat`: for example,
