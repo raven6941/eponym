@@ -18,6 +18,9 @@ type
   UsageCount* = enum
     ucZero, ucOnce, ucMany
   UsageProfile* = set[UsageCount]
+  UsageSummary = object
+    profile: UsageProfile
+    hasErasedUse: bool
 
 proc usageThen*(left, right: UsageProfile): UsageProfile =
   ## Sequential composition: every left path is followed by every right path.
@@ -53,6 +56,10 @@ proc usageProfileDescription*(profile: UsageProfile): string =
     for count in profile:
       counts.add(if count == ucMany: "2+" else: $ord(count))
     counts.join(" or ")
+
+proc usageThen(left, right: UsageSummary): UsageSummary =
+  UsageSummary(profile: usageThen(left.profile, right.profile),
+               hasErasedUse: left.hasErasedUse or right.hasErasedUse)
 
 type UsageChoiceExpansion = object
   found: bool
@@ -116,35 +123,6 @@ proc termContainsRef(t: Term, refId: int): bool =
   of tV, tC, tType, tMeta, tInt, tNatLit, tNatSing: false
 
 proc containsVarAt(t: Term, target: int, depth: int): bool
-
-proc hasErasedVarUse(t: Term, depth: int): bool =
-  ## Whether the variable at `depth` occurs inside an argument supplied to
-  ## a q0 binder. This matters to quantity inference: a value used once at
-  ## runtime and also passed to an erased parameter cannot be inferred q1,
-  ## because a q1 value may not be silently discarded by that call.
-  if t.isNil: return false
-  case t.kind
-  of tApp:
-    let kinds = argumentUseKinds(t)
-    if kinds.len > 0:
-      let (_, args) = flattenApps(t)
-      for i, arg in args:
-        if i < kinds.len and kinds[i] == aukErased and
-            containsVarAt(arg, 0, depth):
-          return true
-    hasErasedVarUse(t.fn, depth) or hasErasedVarUse(t.arg, depth)
-  of tLam, tPi, tSi:
-    hasErasedVarUse(t.scope.bdy, depth + 1)
-  of tPair:
-    hasErasedVarUse(t.pFst, depth) or hasErasedVarUse(t.pSnd, depth) or
-      hasErasedVarUse(t.pScope.bdy, depth + 1)
-  of tFst, tSnd, tAbsurd:
-    hasErasedVarUse(t.sub, depth)
-  of tLet:
-    hasErasedVarUse(t.letVal, depth) or
-      hasErasedVarUse(t.letScope.bdy, depth + 1)
-  of tV, tR, tC, tType, tMeta, tInt, tNatLit, tNatSing, tPrim:
-    false
 
 proc isQttGroundType(t: Term): bool =
   if t.isNil: return false
@@ -406,82 +384,95 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
 proc varUsageProfile*(tm: Term): UsageProfile =
   ## Possible saturated free-use counts for de Bruijn index 0 in term
   ## positions. `tm` is the body of a lambda; index 0 denotes that binder.
-  proc go(t: Term, depth: int): UsageProfile =
+  ## Carry erased-argument use through the same walk so inference does not
+  ## need to traverse the term a second time.
+  proc go(t: Term, depth: int): UsageSummary =
     case t.kind
     of tV:
-      if t.idx == depth: {ucOnce} else: {ucZero}
+      result.profile = if t.idx == depth: {ucOnce} else: {ucZero}
     of tLam, tPi, tSi:
       # dom is a type annotation: not a term position, skip it
-      go(t.scope.bdy, depth + 1)
+      result = go(t.scope.bdy, depth + 1)
     of tApp:
       let choice = expandBranchEliminator(t)
       if choice.found:
-        var strictProfile: UsageProfile = {ucZero}
+        var strictUsage = UsageSummary(profile: {ucZero})
         for arg in choice.strictArgs:
-          strictProfile = usageThen(strictProfile, go(arg, depth))
+          strictUsage = usageThen(strictUsage, go(arg, depth))
         var branchProfiles: seq[UsageProfile] = @[]
+        var branchHasErasedUse = false
         for branch in choice.branches:
-          branchProfiles.add(if branch.isNil: {ucZero} else: go(branch, depth))
+          if branch.isNil:
+            branchProfiles.add({ucZero})
+          else:
+            let branchUsage = go(branch, depth)
+            branchProfiles.add(branchUsage.profile)
+            branchHasErasedUse = branchHasErasedUse or
+              branchUsage.hasErasedUse
         let caseProfile = recursiveUsageChoice(branchProfiles,
           choice.recursiveCounts)
         if caseProfile == {}:
-          usageThen(go(t.fn, depth), go(t.arg, depth))
+          result = usageThen(go(t.fn, depth), go(t.arg, depth))
         else:
-          usageThen(usageThen(strictProfile, go(choice.condition, depth)),
-                   caseProfile)
+          let conditionUsage = go(choice.condition, depth)
+          result.profile = usageThen(
+            usageThen(strictUsage.profile, conditionUsage.profile), caseProfile)
+          result.hasErasedUse = strictUsage.hasErasedUse or
+            conditionUsage.hasErasedUse or branchHasErasedUse
       elif t.fn.kind == tLam and t.arg.kind == tLam:
         # Generated Nim `if` lowers through the polymorphic `ifThenElse`
         # definition, whose two value arguments are lambda thunks. Applying
         # the selected thunk evaluates exactly one branch; analyze those
         # alternatives as a choice, not as two sequential argument uses.
-        usageChoice([go(t.fn.scope.bdy, depth + 1),
-                     go(t.arg.scope.bdy, depth + 1)])
+        let left = go(t.fn.scope.bdy, depth + 1)
+        let right = go(t.arg.scope.bdy, depth + 1)
+        result.profile = usageChoice([left.profile, right.profile])
+        result.hasErasedUse = left.hasErasedUse or right.hasErasedUse
       elif choice.unsupportedChoice:
         if not choice.condition.isNil:
-          var profile = go(choice.condition, depth)
+          result = go(choice.condition, depth)
           var capturedByUnknownCase = false
           for arg in choice.strictArgs:
             if containsVarAt(arg, 0, depth):
               capturedByUnknownCase = true
           if capturedByUnknownCase:
-            profile = usageThen(profile, {ucZero, ucOnce, ucMany})
-          profile
-        elif containsVarAt(t, 0, depth): {ucZero, ucOnce, ucMany}
-        else: {ucZero}
+            result.profile = usageThen(result.profile,
+              {ucZero, ucOnce, ucMany})
+        elif containsVarAt(t, 0, depth):
+          result.profile = {ucZero, ucOnce, ucMany}
+        else:
+          result.profile = {ucZero}
       else:
         let useKinds = argumentUseKinds(t)
         if useKinds.len > 0:
-          var profile = {ucZero}
-          var hasErasedUse = false
+          result.profile = {ucZero}
           # The flattened spine's function head and all value arguments
           # contribute; universe-domain arguments are erased type positions.
           let (head, args) = flattenApps(t)
-          profile = usageThen(profile, go(head, depth))
+          result = usageThen(result, go(head, depth))
           for i, arg in args:
             if i >= useKinds.len or useKinds[i] == aukRuntime:
-              profile = usageThen(profile, go(arg, depth))
+              result = usageThen(result, go(arg, depth))
             elif useKinds[i] == aukErased and containsVarAt(arg, 0, depth):
-              hasErasedUse = true
-          if hasErasedUse and profile != {ucZero}:
-            profile = {ucZero, ucOnce, ucMany}
-          profile
+              result.hasErasedUse = true
         else:
-          usageThen(go(t.fn, depth), go(t.arg, depth))
+          result = usageThen(go(t.fn, depth), go(t.arg, depth))
     of tPair:
-      usageThen(usageThen(go(t.pFst, depth), go(t.pSnd, depth)),
+      result = usageThen(usageThen(go(t.pFst, depth), go(t.pSnd, depth)),
         go(t.pScope.bdy, depth + 1))
     of tFst, tSnd, tAbsurd:
-      go(t.sub, depth)
+      result = go(t.sub, depth)
     of tLet:
       # letTy is a type annotation: skip; val and body are term positions
-      usageThen(go(t.letVal, depth), go(t.letScope.bdy, depth + 1))
+      result = usageThen(go(t.letVal, depth), go(t.letScope.bdy, depth + 1))
     of tPrim:
-      {ucZero}  # primTy is a type annotation; primOp carries no terms
+      result.profile = {ucZero}  # annotation only; primOp carries no terms
     of tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
-      {ucZero}
+      result.profile = {ucZero}
   if tm.isNil: return {ucZero}
-  result = go(tm, 0)
-  if result != {ucZero} and hasErasedVarUse(tm, 0):
+  let summary = go(tm, 0)
+  result = summary.profile
+  if result != {ucZero} and summary.hasErasedUse:
     # Keep inference conservative across nested applications and pairs. The
     # occurrence may be structurally separate from the runtime use, so a
     # local per-application adjustment would miss expressions such as
