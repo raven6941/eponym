@@ -1,0 +1,5 @@
+# Cross-block fixture for issue #408: two eponymBlock invocations in one Nim
+# module importing the same .ep file.
+postulate Int : Type 0
+postulate addInt : Int -> Int -> Int
+proc double (x : Int) : Int = addInt x x

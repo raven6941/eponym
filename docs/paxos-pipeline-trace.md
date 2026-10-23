@@ -237,8 +237,12 @@ partially-applied/bare and eta-expanded at macro time into nested
 `vHostFunc` closures over the missing arguments whose innermost body is
 the saturated dispatch call (issue #407); an over-applied eliminator
 falls back to the interpreter. `tR` to block-local definitions becomes a direct recursive
-call; to other definitions, the `callValueFuncDir` slow path; `tPrim`
-becomes `vPrim` accumulation.
+call; to other definitions, a cross-block direct call when the callee was
+exported by an earlier block in the same compilation via the compile-time
+export registry (issue #408 — value tier unconditional, repr tier on
+signature agreement and only when the callee's closure touches no postulate
+bound in the exporting block), else the `callValueFuncDir` slow path;
+`tPrim` becomes `vPrim` accumulation.
 
 The module header documents the **deliberate deviations from the
 interpreter** (all unreachable in checked code): `syn` fields are

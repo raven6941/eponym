@@ -27,7 +27,9 @@
 ## - all term forms except `tMeta` (rejected already by erasure)
 ## - `tR` to postulates / data constructors: neutral value or bindings lookup
 ## - `tR` to definitions compiled in the same block: direct recursive call
-## - `tR` to other definitions: slow path through `callValueFuncDir`
+## - `tR` to other definitions: a cross-block direct call when the callee
+##   was exported by an earlier block in the same compilation (issue #408),
+##   else the slow path through `callValueFuncDir`
 ## - eliminators (`wRed`): fully applied via a generated
 ##   `eponymElim_<name>` proc holding the static case dispatch over the
 ##   registered reduction rules; emitted constructor labels are validated
@@ -116,6 +118,34 @@ type
     tier*: CodegenTier
     reason*: string
     slowPaths*: seq[string]
+    crossBlockFrom*: string
+      ## Issue #408: non-empty when this definition reuses a proc emitted
+      ## by an earlier eponymBlock in the same compilation, of the form
+      ## "<proc> from <origin>"; empty for locally compiled definitions.
+
+  CrossBlockExport* = object
+    ## Issue #408: one entry of the compile-time cross-block export
+    ## registry. An earlier eponymBlock in the same Nim module published
+    ## the emitted proc names of an import-origin definition; a later
+    ## block reuses them via direct calls instead of re-emitting (which
+    ## would be a redefinition error, since emitted proc names are
+    ## deterministic in the definition name). Registry key:
+    ## `loc.source & "\x00" & name`.
+    valueProc*: string  ## "" when the def was not value-compiled
+    reprProc*: string   ## "" when the def was not repr-compiled
+    sigSummary*: string ## repr signature agreement token (reprSigSummary)
+
+  CrossBlockExportInfo* = object
+    ## Issue #408: what one compileBlockProcs invocation publishes about
+    ## an import-origin definition it compiled, for the macro to register
+    ## into the cross-block registry.
+    origin*: string     ## the def's loc.source (the .ep file it came from)
+    valueProc*: string
+    reprProc*: string
+    sigSummary*: string
+    postulatesUsed*: seq[string]
+      ## Names of postulates in the definition's transitive runtime
+      ## closure, for the repr-tier bound-postulate exclusion rule.
 
   CgRefKind* = enum
     cgkPostulate  # postulate, type former, or anything neutral
@@ -2823,18 +2853,24 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
                         baseDir, src, locFile: string,
                         userLines: Table[string, int],
                         runtimeTypes: seq[HostRuntimeType] = @[],
-                        postulateReprs: seq[PostulateReprBinding] = @[]):
+                        postulateReprs: seq[PostulateReprBinding] = @[],
+                        allDefs: seq[ElabDef] = @[],
+                        crossBlockImports:
+                          Table[string, CrossBlockExport] =
+                          initTable[string, CrossBlockExport]()):
     tuple[procs: seq[NimNode], compiled: Table[string, string],
           compiledRepr: Table[string, string],
           reprTypes: Table[string, seq[ReprType]],
-          report: Table[string, CodegenReportEntry]] =
+          report: Table[string, CodegenReportEntry],
+          exportInfo: Table[string, CrossBlockExportInfo]] =
   ## Compile every eligible block-local definition, in dependency order.
   ## Returns the emitted procs, the def-name -> Phase-1 proc-name table for
   ## wrapper rerouting, the def-name -> repr-tier proc-name table, the
   ## def-name -> repr-tier representations (params then result) for the
   ## wrapper identity-boundary check (issue #330 v3, extended by #401),
-  ## and the per-definition codegen report (emitted tier + why the next
-  ## tier was unavailable, issue #386).
+  ## the per-definition codegen report (emitted tier + why the next
+  ## tier was unavailable, issue #386), and the cross-block export info
+  ## (issue #408).
   ## Emission order: eliminator forward declarations, Phase-1 definition
   ## bodies, postulate forwarders, repr-tier bodies (callees first, same
   ## order), eliminator bodies.
@@ -2846,7 +2882,69 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   ## each representable one gets an `eponymCompiledRepr_<name>` forwarder
   ## calling the host procedure directly, so in-body calls from repr-tier
   ## definitions never touch the interpreter.
+  ## `allDefs` (issue #408) is the full elaborated closure including
+  ## imports; `crossBlockImports` is the compile-time registry of procs
+  ## emitted by earlier eponymBlock invocations in the same compilation,
+  ## keyed by `loc.source & "\x00" & name`. An import-origin definition
+  ## with a registry hit is reused via direct calls — no local emission —
+  ## and published in `exportInfo` for the macro to register.
   var ctx = buildCodegenCtx(globals, baseDir, src, runtimeTypes)
+  # Issue #408: resolve cross-block reuse before any emission. A registry
+  # hit pre-assigns the emitted proc names on the callee's ref, so callers
+  # compiled below emit direct calls; the definition itself is marked
+  # emitted so the dependency order and both emission loops skip it
+  # (re-emitting the deterministically-named procs would be a redefinition
+  # error). An emitted proc is self-contained — it bakes its own block's
+  # (baseDir, src) literals and refIds — so cross-block calls are sound.
+  # The value tier reuses unconditionally (uniform
+  # `eponymCompiled_<name>` convention; postulate refs resolve through the
+  # *caller's* bindings, exactly like the slow path). The repr tier reuses
+  # only on signature agreement with this block's representation mapping.
+  var reused = initTable[string, string]()  # def name -> registry key
+  var reusedReprNote = initTable[string, string]()  # def name -> repr skip note
+  var reusedSig = initTable[string, seq[ReprType]]()  # def name -> agreed sig
+  if crossBlockImports.len > 0:
+    var defsByName = initTable[string, ElabDef]()
+    for d in (if allDefs.len > 0: allDefs else: defs):
+      defsByName[d.name] = d
+    for refId, r in ctx.refs.pairs:
+      if r.kind != cgkDefn or r.name notin defsByName: continue
+      let d = defsByName[r.name]
+      if d.loc.source.len == 0 or d.loc.source.startsWith("<eponymBlock>"):
+        continue  # block-local: always compiled fresh
+      let key = d.loc.source & "\x00" & d.name
+      if key notin crossBlockImports: continue
+      let e = crossBlockImports[key]
+      if e.valueProc == "" and e.reprProc == "": continue
+      let valueReused = e.valueProc != ""
+      if valueReused:
+        var rr = ctx.refs[refId]
+        rr.compiledProc = e.valueProc
+        ctx.refs[refId] = rr
+      var reprReused = false
+      if e.reprProc != "":
+        var sig: seq[ReprType] = @[]
+        var sigOk = true
+        try: sig = ctx.reprSig(d)
+        except CgUnsupported as ex:
+          sigOk = false
+          reusedReprNote[r.name] = "repr tier not reused: callee type not " &
+            "representable in this block (" & ex.msg & ")"
+        if sigOk:
+          if reprSigSummary(sig) == e.sigSummary:
+            ctx.reprProcs[refId] = (name: e.reprProc, arity: sig.len - 1,
+                                    sig: sig)
+            reusedSig[r.name] = sig
+            reprReused = true
+          else:
+            reusedReprNote[r.name] = "repr tier not reused: signature " &
+              "mismatch (this block " & reprSigSummary(sig) &
+              " vs exported " & e.sigSummary & ")"
+      # Only a hit that reuses at least one tier suppresses local emission.
+      # A hit reusing nothing (e.g. a repr-only entry this block disagrees
+      # with) falls through to normal local compilation.
+      if valueReused or reprReused:
+        reused[r.name] = key
   var bakedIds = initTable[int, string]()
   for refId, cgRef in ctx.refs.pairs:
     bakedIds[refId] = cgRef.name
@@ -2858,7 +2956,8 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   result = (procs: @[], compiled: initTable[string, string](),
             compiledRepr: initTable[string, string](),
             reprTypes: initTable[string, seq[ReprType]](),
-            report: initTable[string, CodegenReportEntry]())
+            report: initTable[string, CodegenReportEntry](),
+            exportInfo: initTable[string, CrossBlockExportInfo]())
   detectBadElims(ctx)
   var defRefIds = initTable[string, int]()
   for d in defs:
@@ -2894,6 +2993,10 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   # Kahn's algorithm, callees first; leftovers are cycles -> interpreter.
   var order: seq[string] = @[]
   var emitted = initTable[string, bool]()
+  # Issue #408: reused definitions need no local emission. Marking them
+  # emitted up front keeps dependents schedulable and keeps both emission
+  # loops (which iterate `order`) from re-emitting their procs.
+  for name in reused.keys: emitted[name] = true
   var progress = true
   while progress:
     progress = false
@@ -3011,6 +3114,32 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       result.reprTypes[name] = sig
   # Summarize the best emitted tier and why the next tier was unavailable.
   for d in defs:
+    if d.name in reused:
+      # Issue #408: no local emission; the report names the reused proc
+      # and the origin it was exported from. The def counts as compiled
+      # at the reused tiers, so the requireCompiled gate and wrapper
+      # rerouting see it as compiled.
+      let e = crossBlockImports[reused[d.name]]
+      let key = reused[d.name]
+      let origin = key[0 ..< key.find("\x00")]
+      var entry = CodegenReportEntry(tier: cgtValue, slowPaths: @[])
+      var usedProc = e.valueProc
+      let reprReused = e.reprProc != "" and
+        reusedReprNote.getOrDefault(d.name, "") == ""
+      if reprReused:
+        entry.tier = cgtRepr
+        usedProc = e.reprProc
+      entry.reason = "cross-block reuse of '" & usedProc & "' from '" &
+        origin & "'"
+      let note = reusedReprNote.getOrDefault(d.name, "")
+      if note != "": entry.reason &= " (" & note & ")"
+      entry.crossBlockFrom = usedProc & " from " & origin
+      result.report[d.name] = entry
+      if e.valueProc != "": result.compiled[d.name] = e.valueProc
+      if reprReused:
+        result.compiledRepr[d.name] = e.reprProc
+        result.reprTypes[d.name] = reusedSig[d.name]
+      continue
     var entry = CodegenReportEntry(tier: cgtInterpreter,
       reason: "Phase 1 unavailable: " &
         phase1Failures.getOrDefault(d.name, "definition was not compiled"),
@@ -3027,18 +3156,72 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       # Issue #401: slow paths are runtime calls to uncompiled definitions;
       # references from type positions (binder domains, `let` types) are
       # never evaluated, so only runtime references count.
+      # Issue #408: a repr-compiled caller reaches its callees through
+      # ctx.reprProcs (cross-block reused procs included), so for such a
+      # caller only a callee without a repr proc is a slow path; a
+      # value-tier caller still needs compiledProc.
       var ids = initTable[int, bool]()
       collectRuntimeRefIds(erasedTerms[d.name], ids)
       var seenSlowPaths = initTable[string, bool]()
       for refId in ids.keys:
-        if refId in ctx.refs and ctx.refs[refId].kind == cgkDefn and
-            ctx.refs[refId].compiledProc.len == 0:
+        if refId notin ctx.refs or ctx.refs[refId].kind != cgkDefn:
+          continue
+        let calleeSlow =
+          if entry.tier == cgtRepr: refId notin ctx.reprProcs
+          else: ctx.refs[refId].compiledProc.len == 0
+        if calleeSlow:
           let slowName = ctx.refs[refId].name
           if not seenSlowPaths.getOrDefault(slowName, false):
             entry.slowPaths.add(slowName)
             seenSlowPaths[slowName] = true
       entry.slowPaths.sort()
     result.report[d.name] = entry
+  # Issue #408: publish cross-block export info for import-origin defs
+  # this block compiled (locally or by reuse — re-exporting a reused def
+  # republishes the same proc names under the same key, so it is
+  # idempotent). `postulatesUsed` is the transitive runtime closure's
+  # postulate references, following cgkDefn refs through their erased
+  # terms; the macro drops the repr tier when it intersects the block's
+  # bound postulates, since a reusing block must not silently inherit
+  # this block's host implementations.
+  var refIdToDefName = initTable[int, string]()
+  for name, refId in defRefIds.pairs:
+    refIdToDefName[refId] = name
+  for d in defs:
+    if d.loc.source.len == 0 or d.loc.source.startsWith("<eponymBlock>"):
+      continue
+    let valueProc = result.compiled.getOrDefault(d.name, "")
+    let reprProc = result.compiledRepr.getOrDefault(d.name, "")
+    if valueProc == "" and reprProc == "": continue
+    var postulatesUsed: seq[string] = @[]
+    var seenPost = initHashSet[string]()
+    var visited = initHashSet[string]()
+    var stack = @[d.name]
+    while stack.len > 0:
+      let nm = stack.pop()
+      if nm in visited: continue
+      visited.incl(nm)
+      if nm notin erasedTerms: continue
+      var ids = initTable[int, bool]()
+      collectRuntimeRefIds(erasedTerms[nm], ids)
+      for refId in ids.keys:
+        if refId notin ctx.refs: continue
+        let r = ctx.refs[refId]
+        if r.kind == cgkPostulate:
+          if r.name notin seenPost:
+            seenPost.incl(r.name)
+            postulatesUsed.add(r.name)
+        elif r.kind == cgkDefn:
+          let callee = refIdToDefName.getOrDefault(refId, "")
+          if callee != "" and callee notin visited:
+            stack.add(callee)
+    postulatesUsed.sort()
+    result.exportInfo[d.name] = CrossBlockExportInfo(
+      origin: d.loc.source, valueProc: valueProc, reprProc: reprProc,
+      sigSummary: if reprProc != "" and d.name in result.reprTypes:
+                    reprSigSummary(result.reprTypes[d.name])
+                  else: "",
+      postulatesUsed: postulatesUsed)
   # Emit eliminator procs for every used eliminator. The fixpoint handles
   # templates that reference further eliminators; detectBadElims already
   # guaranteed templates compile.

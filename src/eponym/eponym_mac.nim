@@ -40,6 +40,15 @@ var legacyNatConstructors {.compileTime.} = initHashSet[string]()
 var legacyNatFunctions {.compileTime.} = initHashSet[string]()
 var scopedNatNames {.compileTime.} = initHashSet[string]()
 
+# Issue #408: cross-block export registry. Maps `loc.source & "\x00" & name`
+# to the procs an earlier eponymBlock in this compilation emitted for an
+# import-origin definition, so later blocks reuse them via direct calls
+# instead of re-emitting (which would be a redefinition error, since
+# emitted proc names are deterministic in the definition name). Compile-time
+# state, like the legacy* tables above: it lives for one Nim module's
+# compilation, and macro expansions run in source order.
+var crossBlockExports {.compileTime.} = initTable[string, CrossBlockExport]()
+
 proc isLegacyTypeName(n: NimNode): bool =
   n.kind in {nnkIdent, nnkSym} and
     ($n in legacyTypeNames or $n in scopedLegacyTypeNames)
@@ -4442,8 +4451,51 @@ macro eponymBlock*(body: untyped): untyped =
     postulateReprs.add(PostulateReprBinding(
       postulateName: binding.postulateName,
       implementation: binding.implementation, argCount: argCount))
-  let cgBlock = compileBlockProcs(codegenDefs, checkedGlobals, baseDir, src,
-    cgLocFile, cgUserLines, runtimeTypes, postulateReprs)
+  var cgBlock = compileBlockProcs(codegenDefs, checkedGlobals, baseDir, src,
+    cgLocFile, cgUserLines, runtimeTypes, postulateReprs, allDefs,
+    crossBlockExports)
+
+  # Issue #408: publish this block's compiled import-origin definitions
+  # into the cross-block registry for later blocks in this compilation.
+  # The repr tier is exported only when the definition's transitive
+  # runtime closure references no postulate bound in this block — otherwise
+  # a reusing block would silently inherit this block's host
+  # implementation. The value tier is unconditional: its convention is
+  # uniform and postulate refs resolve through the *caller's* bindings,
+  # exactly like the slow path it replaces.
+  var boundPostulateNames = initHashSet[string]()
+  for b in bindings: boundPostulateNames.incl(b.postulateName)
+  for d in codegenDefs:
+    if d.loc.source.len == 0 or d.loc.source.startsWith("<eponymBlock>"):
+      continue
+    let info = cgBlock.exportInfo.getOrDefault(d.name)
+    if info.valueProc == "" and info.reprProc == "": continue
+    var valueProc = info.valueProc
+    var reprProc = info.reprProc
+    var sigSummary = info.sigSummary
+    # Under requireCompiled the macro filters non-repr procs out of the
+    # emitted output (interpreter-freedom), so a compiled-but-unemitted
+    # value proc must not be advertised to later blocks.
+    if requireCompiled: valueProc = ""
+    if reprProc != "":
+      var hitsBound = false
+      for p in info.postulatesUsed:
+        if p in boundPostulateNames: hitsBound = true; break
+      if hitsBound:
+        reprProc = ""
+        sigSummary = ""
+        var entry = cgBlock.report.getOrDefault(d.name)
+        entry.reason &= "; repr tier not exported cross-block: transitive " &
+          "closure references a postulate bound in this block"
+        cgBlock.report[d.name] = entry
+        when defined(eponymCodegenReport):
+          echo "[eponym codegen] " & d.name &
+            ": repr tier not exported cross-block — transitive closure " &
+            "references a postulate bound in this block"
+    if valueProc == "" and reprProc == "": continue
+    crossBlockExports[info.origin & "\x00" & d.name] =
+      CrossBlockExport(valueProc: valueProc, reprProc: reprProc,
+                       sigSummary: sigSummary)
 
   if requireCompiled:
     for d in codegenDefs:
@@ -4475,6 +4527,19 @@ macro eponymBlock*(body: untyped): untyped =
       if entry.slowPaths.len > 0:
         echo "[eponym codegen]   runtime slow paths: " &
           entry.slowPaths.join(", ")
+    # Issue #408: surface cross-block reuse of imported definitions —
+    # they are not in `defs`, so the loop above never shows them.
+    for d in codegenDefs:
+      if d.loc.source.len == 0 or d.loc.source.startsWith("<eponymBlock>"):
+        continue
+      let entry = cgBlock.report.getOrDefault(d.name)
+      if entry.crossBlockFrom == "": continue
+      let tierName = case entry.tier
+        of cgtInterpreter: "interpreter fallback"
+        of cgtValue: "Phase 1 Value backend"
+        of cgtRepr: "Phase 2 representation backend"
+      echo "[eponym codegen] " & d.name & ": " & tierName &
+        " — " & entry.reason
     for binding in postulateReprs:
       let entry = cgBlock.report.getOrDefault(binding.postulateName)
       if entry.tier == cgtRepr:

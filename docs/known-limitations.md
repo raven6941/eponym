@@ -233,6 +233,19 @@ representation backend can compile them; unsupported imported code is rejected.
 For an indexed `Vec`, an index that exists only in an erased binder cannot be
 checked by the representation backend and causes a compile-time error.
 
+When several `eponymBlock`s in one Nim module import the same `.ep` file,
+the first block to expand publishes its compiled import-origin definitions
+into a compile-time registry, and later blocks call those already-emitted
+procs directly instead of re-emitting them (emitted proc names are
+deterministic, so re-emission would be a redefinition error). Exports flow
+in source order, so the exporting block must come first in the file. The
+value tier reuses unconditionally; the representation tier reuses only when
+the importing block computes the same representation signature, and only
+when the definition's transitive closure references no postulate bound in
+the exporting block — otherwise the later block would silently inherit the
+earlier block's host implementation. The tier report
+(`-d:eponymCodegenReport`) names reused definitions and their origin.
+
 ### Derived representation mappings (#402)
 
 Representation mappings can be *derived* from the checked type structure
