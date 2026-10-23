@@ -40,6 +40,9 @@ chain. `tests/run_examples.nim` elaborates every file with
   declares the primitive `Int` type and imports `nat.ep`. Use the conversion
   when a checked natural number must be passed to an Int-taking operation;
   Eponym does not insert this conversion implicitly.
+- **int_to_nat.ep** — explicit, partial `intToNat : Int -> Nat`. It imports
+  `nat_to_int.ep`; bind the postulate with `bindPostulate(intToNat,
+  intToNatHost, Int, Nat)`. The provided Nim adapter rejects negative inputs.
 - **eq.ep** — propositional equality: `Eq` (indexed family), `refl`,
   `cong`, `sym`, `trans`.
 - **bool.ep** — `Bool`, `not`/`and`/`or`; lemma `notNot`.

@@ -1,0 +1,8 @@
+# Explicit conversion from primitive Int to inductive Nat.
+#
+# This direction is partial: its Nim adapter must reject negative values.
+# Importing nat_to_int.ep supplies the shared Int and Nat declarations.
+
+import "nat_to_int.ep"
+
+postulate intToNat : Int -> Nat
