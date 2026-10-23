@@ -232,9 +232,11 @@ Semantics: the same as the `evalWhnf` interpreter, but with no dispatch loop
 over `Term` nodes and no per-call re-walk of the definition's term (today
 every wrapper call re-runs `evalWithBindings` on the def term). Eliminators
 (`wRed`) become a generated `eponymElim_<name>` proc holding the static
-case dispatch over the registered reduction rules — **fully applied only**;
-partially-applied or bare eliminator references fall back to the
-interpreter. `tR` to block-local definitions becomes a direct recursive
+case dispatch over the registered reduction rules — fully applied, or
+partially-applied/bare and eta-expanded at macro time into nested
+`vHostFunc` closures over the missing arguments whose innermost body is
+the saturated dispatch call (issue #407); an over-applied eliminator
+falls back to the interpreter. `tR` to block-local definitions becomes a direct recursive
 call; to other definitions, the `callValueFuncDir` slow path; `tPrim`
 becomes `vPrim` accumulation.
 

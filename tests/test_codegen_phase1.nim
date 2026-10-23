@@ -36,9 +36,9 @@ macro differentialBlock(src: static string, srcFile: static string): untyped =
   if cgBlock.report["add42"].tier != cgtValue or
       not cgBlock.report["add42"].reason.contains("Phase 2 unavailable"):
     error("codegen report should identify add42 as Phase 1 Value code")
-  if cgBlock.report["natElimPartial"].tier != cgtInterpreter or
-      not cgBlock.report["natElimPartial"].reason.contains("Phase 1 unavailable"):
-    error("codegen report should explain natElimPartial interpreter fallback")
+  if cgBlock.report["natElimPartial"].tier != cgtValue or
+      not cgBlock.report["natElimPartial"].reason.contains("Phase 2 unavailable"):
+    error("codegen report should identify natElimPartial as Phase 1 Value code (eta-expanded, issue #407)")
   var isolatedDefs: seq[ElabDef] = @[]
   for d in checked.defs:
     if d.name == "add42": isolatedDefs.add(d)
@@ -165,6 +165,13 @@ proc isZero (n : Nat) : Nat =
 proc natElimPartial (C : Nat -> Type 0) (z : C zero)
     (s : Pi (n : Nat). C n -> C (suc n)) : Pi (m : Nat). C m =
   natElim C z s
+proc motiveNatLam : Nat -> Type 0 = lam (u : Nat). Nat
+proc sucStepFn : Pi (p : Nat). Nat -> Nat =
+  lam (p : Nat). lam (ih : Nat). suc ih
+proc applyToTwo (f : Pi (m : Nat). Nat) : Nat = f two
+proc natElimBare : Pi (C : Nat -> Type 0). C zero ->
+    (Pi (n : Nat). C n -> C (suc n)) -> Pi (m : Nat). C m =
+  natElim
 
 data Vec (A : Type 0) : Nat -> Type 0 where
 | nil : Vec A zero
@@ -227,8 +234,8 @@ macro checkElimTranslation(src: static string): untyped =
     userLines[d.name] = 1
   let generated = compileBlockProcs(checked.defs, checked.globals, "", src,
     currentSourcePath(), userLines)
-  if "natElimPartial" in generated.compiled:
-    error("partially applied natElim unexpectedly compiled instead of falling back")
+  if "natElimPartial" notin generated.compiled:
+    error("partially applied natElim should compile via eta-expansion (issue #407)")
   let ctx = buildCodegenCtx(checked.globals, "", src)
   let elimId = checked.globals["natElim"].tm.refId
   let elim = ctx.refs[elimId]
@@ -366,6 +373,47 @@ block:
   expect(got.whnfKind == wInt and got.whnfIntVal == 42,
     "partial application applies")
   expect(whnfEq(got, want), "partial application agrees")
+
+# --- Issue #407: partially-applied eliminator eta-expands to a closure ---
+block:
+  let bnd = testPostulateBindings()
+  let cVal = callValueFuncDir("", prog, "motiveNatLam", @[], bnd)
+  let zVal = callValueFuncDir("", prog, "two", @[], bnd)
+  let sVal = callValueFuncDir("", prog, "sucStepFn", @[], bnd)
+  # compiled closure from the partial application `natElim C z s`
+  let closC = eponymCompiled_natElimPartial(@[cVal, zVal, sVal], bnd)
+  # interpreter's closure from the same partial application
+  let closI = callValueFuncDir("", prog, "natElimPartial",
+    @[cVal, zVal, sVal], bnd)
+  let got = vAppWithBindings(closC, zVal, bnd)
+  let want = vAppWithBindings(closI, zVal, bnd)
+  expect(whnfEq(got, want),
+    "eta-expanded natElim closure agrees with interpreter")
+  # suc^2 (suc^2 zero) = suc^4 zero: count the suc spine
+  var depth = 0
+  var cur = got
+  while cur.whnfKind == wRef and cur.whnfSpineLen == 1:
+    inc depth
+    cur = cur.whnfSpineArg(0)
+  expect(depth == 4 and cur.whnfKind == wRef and cur.whnfSpineLen == 0,
+    "closure computes 4 as a suc-chain")
+  # the closure is a first-class value: pass it to another compiled def
+  let got2 = eponymCompiled_applyToTwo(@[closC], bnd)
+  let want2 = callValueFuncDir("", prog, "applyToTwo", @[closI], bnd)
+  expect(whnfEq(got2, want2), "closure passed to compiled def agrees")
+
+# --- Issue #407: bare eliminator reference eta-expands fully ---
+block:
+  let bnd = testPostulateBindings()
+  let cVal = callValueFuncDir("", prog, "motiveNatLam", @[], bnd)
+  let zVal = callValueFuncDir("", prog, "two", @[], bnd)
+  let sVal = callValueFuncDir("", prog, "sucStepFn", @[], bnd)
+  var got = eponymCompiled_natElimBare(@[], bnd)
+  var want = callValueFuncDir("", prog, "natElimBare", @[], bnd)
+  for v in [cVal, zVal, sVal, zVal]:
+    got = vAppWithBindings(got, v, bnd)
+    want = vAppWithBindings(want, v, bnd)
+  expect(whnfEq(got, want), "bare natElim reference agrees with interpreter")
 
 # --- Nat eliminator over suc-chains ---
 block:
