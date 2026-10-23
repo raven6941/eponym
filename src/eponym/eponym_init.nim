@@ -1329,18 +1329,10 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
   ## Supply type). The refIds are verified, so no well-typedness
   ## assumption is needed. While unset, comparison stays strict.
   ##
-  ## Issue #84: `qtySubsumption` enables the directional q0 ≤ ω rule
-  ## for the elaborator's inferred-vs-expected check: a Pi/Sigma binder
-  ## with quantity q0 on the inferred side (`a`) is accepted against
-  ## qOmega on the expected side (`b`). A function that ignores its
-  ## argument is usable where an unrestricted function is expected;
-  ## the reverse (and anything involving q1) stays rejected. This is
-  ## what lets inferred-precise types (unused binders infer q0)
-  ## interoperate with ω-annotated code. The def-declaration re-check
-  ## (elabDefDecl step 3) passes the flag too — it audits the
-  ## elaborator's conversion, so it implements the same relation.
-  ## Well-formedness checks (against ?) keep the flag off: exact
-  ## matching there is unaffected.
+  ## Issues #84/#371: in inferred-vs-expected checking, q0 and q1 Pi
+  ## implementations may satisfy a qOmega contract. The relation is
+  ## covariant through Pi codomains only: Pi domains and nominal constructor
+  ## arguments remain exact. Sigma quantities keep the existing q0-only rule.
   if a.whnf.kind == wNatLit and b.whnf.kind != wNatLit and
       s.natSucRefId >= 0 and s.natZeroRefId >= 0:
     if numeralChainEq(a.whnf.natLitVal, b, s.natZeroRefId, s.natSucRefId): return
@@ -1378,26 +1370,26 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
       raise newException(ValueError, "universe level mismatch: Type " &
         $a.whnf.lvl & " vs Type " & $b.whnf.lvl)
   of wPi, wSi:
-    if a.whnf.qty != b.whnf.qty and
-        not (qtySubsumption and a.whnf.qty == q0 and
-             b.whnf.qty == qOmega):
+    let inferredUseFitsOmega = qtySubsumption and
+      b.whnf.qty == qOmega and
+      (a.whnf.qty == q0 or
+       (a.whnf.kind == wPi and a.whnf.qty == q1))
+    if a.whnf.qty != b.whnf.qty and not inferredUseFitsOmega:
       raise newException(ValueError, "quantity mismatch: " & $a.whnf.qty &
         " vs " & $b.whnf.qty)  # Issue #66: Pi/Sigma binder quantities are
-                               # part of the type; (1 x : A) -> B is not
-                               # convertible with (ω x : A) -> B. Issue #84
-                               # adds the directional q0 ≤ ω subsumption
-                               # (see qtySubsumption above).
-    structuralEq(s, a.whnf.dom, b.whnf.dom, qtySubsumption)
+                               # part of the type. Issues #84/#371 permit
+                               # only q0/q1 <= qOmega for inferred Pi values.
+    structuralEq(s, a.whnf.dom, b.whnf.dom, false)
     let x = freshPara(s, a.whnf.dom)
     structuralEq(s, a.whnf.tscope.fn(x), b.whnf.tscope.fn(x), qtySubsumption)
   of wLam:
     let x = freshPara(s, nil)
-    structuralEq(s, a.whnf.lscope.fn(x), b.whnf.lscope.fn(x), qtySubsumption)
+    structuralEq(s, a.whnf.lscope.fn(x), b.whnf.lscope.fn(x), false)
   of wLam0:
-    structuralEq(s, a.whnf.nullaryFn(), b.whnf.nullaryFn(), qtySubsumption)
+    structuralEq(s, a.whnf.nullaryFn(), b.whnf.nullaryFn(), false)
   of wPair:
-    structuralEq(s, a.whnf.fstV, b.whnf.fstV, qtySubsumption)
-    structuralEq(s, a.whnf.sndV, b.whnf.sndV, qtySubsumption)
+    structuralEq(s, a.whnf.fstV, b.whnf.fstV, false)
+    structuralEq(s, a.whnf.sndV, b.whnf.sndV, false)
   of wRef:
     if a.whnf.refId != b.whnf.refId or a.whnf.spine.len != b.whnf.spine.len:
       raise newException(ValueError, "neutral mismatch: " & $a.syn & " vs " & $b.syn)
@@ -1407,14 +1399,14 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
       if ea.kind != eb.kind:
         raise newException(ValueError, "spine mismatch")
       if ea.kind == eApp:
-        structuralEq(s, ea.arg, eb.arg, qtySubsumption)
+        structuralEq(s, ea.arg, eb.arg, false)
   of wRed:
     ## partially applied eliminators: same eliminator, same accumulated args
     ## (fully applied stuck eliminators are rebuilt as wRef by applyWhnf)
     if a.whnf.elimId != b.whnf.elimId or a.whnf.args.len != b.whnf.args.len:
       raise newException(ValueError, "eliminator mismatch")
     for i in 0 ..< a.whnf.args.len:
-      structuralEq(s, a.whnf.args[i], b.whnf.args[i], qtySubsumption)
+      structuralEq(s, a.whnf.args[i], b.whnf.args[i], false)
   of wInt:
     if a.whnf.intVal != b.whnf.intVal:
       raise newException(ValueError, "integer mismatch")
@@ -1428,7 +1420,7 @@ proc structuralEq(s: var Supply, a, b: Value, qtySubsumption = false) =
     if a.whnf.op != b.whnf.op or a.whnf.pargs.len != b.whnf.pargs.len:
       raise newException(ValueError, "primitive op mismatch")
     for i in 0 ..< a.whnf.pargs.len:
-      structuralEq(s, a.whnf.pargs[i], b.whnf.pargs[i], qtySubsumption)
+      structuralEq(s, a.whnf.pargs[i], b.whnf.pargs[i], false)
   of wHost:
     raise newException(ValueError,
       "opaque Nim values cannot participate in Eponym conversion")

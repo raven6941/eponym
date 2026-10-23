@@ -3229,16 +3229,21 @@
   conversion, and harmless under the system's shallow linearity, but
   not a fully principled subtyping relation; revisit if the conversion
   relation is ever generalized.
-  Issue #371 progress (2026-10-22): path-sensitive usage profiles are
-  implemented for Nim `if`, complete generated finite eliminators, and
-  supported first-order recursive eliminators. Alternatives combine profiles
-  rather than summing syntactic occurrences. Unsupported indexed or
-  higher-order recursive shapes and user-written eliminators stay
-  conservative. Property and compile-time regressions cover branches,
-  three-way cases, recursive chains, drops, and duplicates. Enabling inferred
-  q1 remains open: generic type parameters can flow to q0 arguments and are
-  currently mistaken for runtime linear resources. Quantity subsumption stays
-  at q0-to-qOmega; Pi domains and nominal type arguments remain exact.
+  Issue #371 implementation (2026-10-22): inferred q1 is enabled when the
+  usage profile proves exactly one runtime use on every supported path.
+  Path-sensitive profiles cover Nim `if`, complete generated finite
+  eliminators, and supported unindexed first-order recursive eliminators
+  with ground result motives. Global and primitive call signatures classify
+  type and q0 arguments so they do not count as runtime uses; if a value is
+  both passed to a q0 argument and used at runtime, inference stays qOmega.
+  Unsupported indexed or higher-order recursive shapes, closure-valued
+  motives, user-written eliminators, unknown call signatures, and unresolved
+  metas remain conservative. The regression corpus removes `(1 ...)` from
+  balanced branches, three-way cases, recursive chains, and the session
+  channel example; negative tests still reject drops and duplicates. q0/q1
+  implementations may satisfy qOmega Pi contracts only through covariant Pi
+  codomains. Pi domains and nominal constructor arguments remain exact. This
+  supersedes the 2026-10-15 decision to defer q1 inference.
 
 * 2026-10-15 — Elaborator conversion gains covariant singleton widening (issue #223)
 

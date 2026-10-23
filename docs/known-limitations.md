@@ -419,20 +419,24 @@ Conditional usage is path-sensitive for Nim `if` expressions and generated
 data eliminators. For unindexed, first-order recursive data with a ground
 result motive, usage profiles cover all finite recursive shapes. Each
 generated case rule is checked against its constructor fields and recursive
-calls before the analysis treats its cases as alternatives. Indexed recursive
-families, higher-order recursive fields, closure-valued result motives, and
-user-written eliminators still use conservative counting and can reject valid
-branch-dependent usage. Unannotated binders still do not infer quantity `1`.
-Although supported path profiles can prove exactly-once use, generated type
-parameters are currently treated like runtime values by erased-argument
-checks; enabling q1 inference would reject ordinary polymorphic code such as
-generic identity wrappers. A body with unresolved holes or an unsupported
-branch shape also stays conservative.
+calls before the analysis treats its cases as alternatives. Unannotated
+binders infer quantity `1` only when the analysis proves exactly one runtime
+use on every path. Known global and primitive call signatures distinguish
+type arguments and erased (`q0`) arguments from runtime values. If a value is
+also used at runtime and passed to a `q0` argument, inference stays
+unrestricted so it cannot be silently discarded as linear.
 
-An implementation with quantity `0` may satisfy a function contract with
-quantity `ω`; quantity `1` remains exact. Function domains and nominal type
-arguments are compared exactly. Postulates have no bodies to analyze, so
-write their required quantity explicitly.
+Indexed recursive families, higher-order recursive fields, closure-valued
+result motives, and user-written eliminators still use conservative counting
+and can reject valid branch-dependent usage. Applications whose callable
+signature is not available to the usage analyzer are counted syntactically,
+so erased arguments there can prevent q1 inference. A body with unresolved
+holes or an unsupported branch shape also stays conservative.
+
+An implementation with quantity `0` or `1` may satisfy a function contract
+with quantity `ω` when the quantity occurs in a covariant Pi codomain.
+Function domains and nominal type arguments are compared exactly. Postulates
+have no bodies to analyze, so write their required quantity explicitly.
 
 Quantitative checking already drives code generation where the
 representation choice follows the quantity: erasure (#328) and the

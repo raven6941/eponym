@@ -96,7 +96,7 @@ var branchDrv = initModuleDriver()
 discard branchDrv.elabFile(repoRoot / "lib/bool.ep")
 let branchDefs = branchDrv.elabDeclsDir(parseProgram("""
 postulate Int : Type 0
-proc branchLinear (flag : Bool) (1 value : Int) : Int =
+proc branchLinear (flag : Bool) (value : Int) : Int =
   ifThenElse flag (lam (u : 1). value) (lam (u : 1). value) <>
 """), repoRoot, "<q1-branch-erasure>")
 var branchLinearDef: ElabDef
@@ -104,6 +104,10 @@ for defn in branchDefs:
   if defn.name == "branchLinear": branchLinearDef = defn
 expect(not branchLinearDef.tmTm.isNil,
   "branch-linear definition elaborates")
+expect(branchLinearDef.tyTm.kind == tPi and
+       branchLinearDef.tyTm.scope.bdy.kind == tPi and
+       branchLinearDef.tyTm.scope.bdy.qty == q1,
+  "balanced if branches infer q1")
 discard eraseQ0Arguments(branchLinearDef.tmTm)
 expect(true,
   "q1 branch profiles are rechecked consistently by codegen erasure")
@@ -115,7 +119,7 @@ data Tri : Type 0 where
 | first : Tri
 | second : Tri
 | third : Tri
-proc triLinear (tag : Tri) (1 value : Int) : Int =
+proc triLinear (tag : Tri) (value : Int) : Int =
   triElim (lam (u : Tri). Pi(unit : 1). Int)
           (lam (unit : 1). value)
           (lam (unit : 1). value)
@@ -128,6 +132,10 @@ for defn in multiBranchDefs:
   if defn.name == "triLinear": triLinearDef = defn
 expect(not triLinearDef.tmTm.isNil,
   "q1 usage accepts balanced alternatives in a three-case eliminator")
+expect(triLinearDef.tyTm.kind == tPi and
+       triLinearDef.tyTm.scope.bdy.kind == tPi and
+       triLinearDef.tyTm.scope.bdy.qty == q1,
+  "three-case alternatives infer q1")
 discard eraseQ0Arguments(triLinearDef.tmTm)
 expect(true, "three-case q1 branch profiles pass codegen erasure")
 
@@ -160,7 +168,7 @@ postulate Int : Type 0
 data Chain : Type 0 where
 | chainEnd (item : Int) : Chain
 | chainNext (item : Int) (tail : Chain) : Chain
-proc linearAtChainEnd (xs : Chain) (1 value : Int) : Int =
+proc linearAtChainEnd (xs : Chain) (value : Int) : Int =
   chainElim (lam (u : Chain). Int)
     (lam (item : Int). value)
     (lam (item : Int). lam (tail : Chain).
@@ -172,6 +180,10 @@ for defn in recursiveDefs:
   if defn.name == "linearAtChainEnd": linearAtEndDef = defn
 expect(not linearAtEndDef.tmTm.isNil,
   "q1 usage accepts one use at the base of every recursive chain")
+expect(linearAtEndDef.tyTm.kind == tPi and
+       linearAtEndDef.tyTm.scope.bdy.kind == tPi and
+       linearAtEndDef.tyTm.scope.bdy.qty == q1,
+  "recursive alternatives infer q1")
 discard eraseQ0Arguments(linearAtEndDef.tmTm)
 
 var recursiveDuplicateRejected = false

@@ -64,6 +64,33 @@ type UsageChoiceExpansion = object
 
 proc flattenApps(t: Term): tuple[head: Term, args: seq[Term]]
 
+type ArgumentUseKind = enum aukRuntime, aukType, aukErased
+
+proc argumentUseKinds(t: Term): seq[ArgumentUseKind] =
+  ## For a global or primitive call, recover arguments that are erased at
+  ## runtime: universe-domain type arguments and q0 arguments. They do not
+  ## consume the enclosing variable's runtime quantity.
+  let (head, args) = flattenApps(t)
+  if head.isNil or args.len == 0: return
+  var ty: Term
+  case head.kind
+  of tR:
+    if not head.refTyp.isNil: ty = head.refTyp.syn
+  of tPrim: ty = head.primTy
+  else: discard
+  if ty.isNil: return
+  for arg in args:
+    while ty.kind == tLam:
+      ty = ty.scope.bdy
+    if ty.kind != tPi:
+      result.add(aukRuntime)
+      continue
+    let domain = ty.dom
+    result.add(if domain.kind == tType: aukType
+               elif ty.qty == q0: aukErased
+               else: aukRuntime)
+    ty = subst(ty.scope.bdy, 0, arg)
+
 proc termContainsRef(t: Term, refId: int): bool =
   if t.isNil: return false
   case t.kind
@@ -79,6 +106,37 @@ proc termContainsRef(t: Term, refId: int): bool =
            termContainsRef(t.letScope.bdy, refId)
   of tPrim: termContainsRef(t.primTy, refId)
   of tV, tC, tType, tMeta, tInt, tNatLit, tNatSing: false
+
+proc containsVarAt(t: Term, target: int, depth: int): bool
+
+proc hasErasedVarUse(t: Term, depth: int): bool =
+  ## Whether the variable at `depth` occurs inside an argument supplied to
+  ## a q0 binder. This matters to quantity inference: a value used once at
+  ## runtime and also passed to an erased parameter cannot be inferred q1,
+  ## because a q1 value may not be silently discarded by that call.
+  if t.isNil: return false
+  case t.kind
+  of tApp:
+    let kinds = argumentUseKinds(t)
+    if kinds.len > 0:
+      let (_, args) = flattenApps(t)
+      for i, arg in args:
+        if i < kinds.len and kinds[i] == aukErased and
+            containsVarAt(arg, 0, depth):
+          return true
+    hasErasedVarUse(t.fn, depth) or hasErasedVarUse(t.arg, depth)
+  of tLam, tPi, tSi:
+    hasErasedVarUse(t.scope.bdy, depth + 1)
+  of tPair:
+    hasErasedVarUse(t.pFst, depth) or hasErasedVarUse(t.pSnd, depth) or
+      hasErasedVarUse(t.pScope.bdy, depth + 1)
+  of tFst, tSnd, tAbsurd:
+    hasErasedVarUse(t.sub, depth)
+  of tLet:
+    hasErasedVarUse(t.letVal, depth) or
+      hasErasedVarUse(t.letScope.bdy, depth + 1)
+  of tV, tR, tC, tType, tMeta, tInt, tNatLit, tNatSing, tPrim:
+    false
 
 proc isQttGroundType(t: Term): bool =
   if t.isNil: return false
@@ -351,7 +409,24 @@ proc varUsageProfile*(tm: Term): UsageProfile =
         if containsVarAt(t, 0, depth): {ucZero, ucOnce, ucMany}
         else: {ucZero}
       else:
-        usageThen(go(t.fn, depth), go(t.arg, depth))
+        let useKinds = argumentUseKinds(t)
+        if useKinds.len > 0:
+          var profile = {ucZero}
+          var hasErasedUse = false
+          # The flattened spine's function head and all value arguments
+          # contribute; universe-domain arguments are erased type positions.
+          let (head, args) = flattenApps(t)
+          profile = usageThen(profile, go(head, depth))
+          for i, arg in args:
+            if i >= useKinds.len or useKinds[i] == aukRuntime:
+              profile = usageThen(profile, go(arg, depth))
+            elif useKinds[i] == aukErased and containsVarAt(arg, 0, depth):
+              hasErasedUse = true
+          if hasErasedUse and profile != {ucZero}:
+            profile = {ucZero, ucOnce, ucMany}
+          profile
+        else:
+          usageThen(go(t.fn, depth), go(t.arg, depth))
     of tPair:
       usageThen(usageThen(go(t.pFst, depth), go(t.pSnd, depth)),
         go(t.pScope.bdy, depth + 1))
@@ -364,7 +439,14 @@ proc varUsageProfile*(tm: Term): UsageProfile =
       {ucZero}  # primTy is a type annotation; primOp carries no terms
     of tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
       {ucZero}
-  if tm.isNil: {ucZero} else: go(tm, 0)
+  if tm.isNil: return {ucZero}
+  result = go(tm, 0)
+  if result != {ucZero} and hasErasedVarUse(tm, 0):
+    # Keep inference conservative across nested applications and pairs. The
+    # occurrence may be structurally separate from the runtime use, so a
+    # local per-application adjustment would miss expressions such as
+    # `pair (drop x) x`.
+    result = {ucZero, ucOnce, ucMany}
 
 proc countVarUses*(tm: Term): int =
   ## Exact syntactic count retained for existing callers and diagnostics.

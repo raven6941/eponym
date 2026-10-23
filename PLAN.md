@@ -307,14 +307,14 @@ implementations.
    These forms currently keep conservative sequential counting. Add generated
    compile-time regressions for each newly supported eliminator shape. They
    remain conservative, so they cannot establish q1 inference.
-- [ ] Infer q1 only when supported path-sensitive usage profiles prove every
-   run-time path consumes a runtime value exactly once. Generated type
-   parameters still need classification so they are not treated as runtime
-   linear resources.
-- [x] Retain the sound quantity subsumption boundary: only q0 implementations
-   may satisfy qOmega Pi contracts; q1 remains exact. Keep Pi domains and
-   nominal constructor arguments exact because their variance is negative or
-   unknown.
+- [x] Infer q1 only when supported path-sensitive usage profiles prove every
+  run-time path consumes a runtime value exactly once. Global and primitive
+  call signatures classify type and q0 arguments so they do not count as
+  runtime uses; unsupported signatures and branch forms remain conservative.
+- [x] Retain the sound quantity subsumption boundary: q0/q1 implementations
+  may satisfy qOmega Pi contracts only through covariant Pi codomains. Keep
+  Pi domains and nominal constructor arguments exact because their variance
+  is negative or unknown.
 
 ### Ordered implementation stages
 

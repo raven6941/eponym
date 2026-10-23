@@ -1569,15 +1569,10 @@ proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
     if hasUnresolvedMetas(zb): return
     let profile = varUsageProfile(zb)
     let n = usageCountSummary(profile)
-    # Issue #84 (conservative inference): a `#q`-prefixed variable is an
-    # inferred default (unannotated binder, see parse_surf.parseBinder),
-    # not a user-written `(q x : A)`. Inferred defaults solve 0 -> q0
-    # (erasure) and otherwise -> qOmega. They never solve to q1: the
-    # kernel (#66) converts Pi binder quantities exactly, so an inferred
-    # q1 would not convert against the qOmega positions the existing
-    # corpus was written with. User-written qvars keep the full rule.
+    # Issue #371: usage profiles exclude arguments passed to universe-domain
+    # parameters. Generated defaults infer q1 only from exactly-once runtime
+    # use; user-written quantity variables retain their full rule.
     let inferred = if n == 0: q0
-                   elif qty.vname.len > 2 and qty.vname[0 .. 1] == "#q": qOmega
                    elif n == 1: q1
                    else: qOmega
     solveQVar(ms, qty.vname, inferred, loc)
@@ -1602,11 +1597,10 @@ proc reconcileInferredQty(tyPre, tmPre: PreTerm, tmT0, tmTy: Term,
   ##   ("unannotated" means "infer", wherever the binder is written). A
   ##   genuine conflict raises solveQVar's error.
   ## - Ascribed qOmega: never conflicts — it is the "don't care" quantity
-  ##   (`A -> B` desugars to an omega Pi). An inferred q0 is widened to
-  ##   qOmega in both the term and the inferred type, so `N -> N` keeps
-  ##   accepting bodies that ignore the argument, exactly as on main (the
-  ##   kernel's checking rule ignores lambda/Pi quantities; only the
-  ##   elaborator's exact conversion needs them to agree).
+  ##   (`A -> B` desugars to an omega Pi). An inferred q0 or q1 is widened to
+  ##   qOmega in both the term and inferred type: an implementation that
+  ##   ignores or consumes its argument at most once can satisfy an
+  ##   unrestricted contract.
   ## - Ascribed explicit 0/1 disagreeing with the inference: an error naming
   ##   the binder and the usage sites that forced the inference — instead
   ##   of the generic conversion "quantity mismatch", whose printed types
@@ -1620,7 +1614,9 @@ proc reconcileInferredQty(tyPre, tmPre: PreTerm, tmT0, tmTy: Term,
     if tp.qty.isVar:
       solveQVar(ms, tp.qty.vname, tt.qty, tp.loc)
     elif tp.qty.q == qOmega:
-      if tt.qty == q0:
+      if tt.qty in {q0, q1}:
+        # A body verified to use its parameter at most once safely
+        # implements an unrestricted ascribed function.
         bt.qty = qOmega
         tt.qty = qOmega
     elif tp.qty.q != tt.qty:
@@ -1635,8 +1631,8 @@ proc reconcileInferredQty(tyPre, tmPre: PreTerm, tmT0, tmTy: Term,
         "quantity mismatch for binder '" & bp.name & "': the ascribed type " &
         "requires quantity " & $tp.qty.q & ", but " & useMsg &
         ", inferring quantity " & $tt.qty &
-        " (unannotated binders infer 0 when unused and \u03c9 otherwise; " &
-        "quantity 1 is never inferred — annotate explicitly, e.g. " &
+        " (unannotated binders infer 0 when unused, 1 for exactly-once use " &
+        "on every supported path, and \u03c9 otherwise; " &
         "`lam (1 " & bp.name & " : T). \u2026`)")
     tp = tp.c2
     tt = tt.scope.bdy
@@ -5062,7 +5058,12 @@ proc useId (A : Type 0) (x : A) : A =
   myId A x
 """)
   assert defs2.len == 2
+  for defn in defs2:
+    assert defn.tyTm.kind == tPi and defn.tyTm.qty == q0
+    assert defn.tyTm.scope.bdy.kind == tPi and
+      defn.tyTm.scope.bdy.qty == q1
   echo "ok: later defs can mention earlier defs"
+  echo "ok: generic type arguments are erased while value arguments infer q1 (#371)"
 
   let defs3 = elabCheck("""
 proc withLet (A : Type 0) (x : A) : A =
@@ -5543,15 +5544,17 @@ proc sameQty0 : Pi (0 x : N). N = idN0
 """)
   assert qttQtyConvOk.len == 2
   echo "ok: Pi conversion accepts matching quantities (#66)"
-  expectElabErr("""
+  let qttLinearInferred = elabCheck("""
 postulate N : Type 0
 proc idN (x : N) : N = x
-proc qtyMismatch : Pi (1 x : N). N = idN
-""", "quantity mismatch")
-  # Issue #84 refines this: inferred q0 subsumes to qOmega, while q1 and the
-  # reverse direction stay exact.
-  # Issue #84: a q0 implementation may satisfy a qOmega function contract.
-  # Quantity 1 remains exact.
+proc qtyExact : Pi (1 x : N). N = idN
+proc qtyWide : N -> N = idN
+""")
+  assert qttLinearInferred[0].tyTm.kind == tPi and
+    qttLinearInferred[0].tyTm.qty == q1
+  assert qttLinearInferred.len == 3
+  echo "ok: exactly-once use infers q1 and fits both linear and omega contracts (#371)"
+  # Issue #84: an unused (q0) implementation may satisfy a qOmega contract.
   let qttSubOk = elabCheck("""
 postulate N : Type 0
 postulate idN0 : Pi (0 x : N). N
@@ -5623,15 +5626,16 @@ proc qconf (q x : N) (q y : N) : Sig (u : N). N =
   (x, (y, y))
 """, "requires quantity")
   echo "ok: conflicting quantity-variable solutions rejected (#66)"
-  # A variable solved linear after being passed to a q0 parameter is the
-  # same leak as a concrete linear variable: the app-site check runs while
-  # the variable is unsolved, so the obligation is deferred to solve time.
-  expectElabErr("""
+  # A variable used only as a q0 argument has no runtime use and can infer q0.
+  let qttQVarErasedOnly = elabCheck("""
 postulate N : Type 0
 postulate z0 : Pi (0 x : N). N
-proc badQDrop (q y : N) : N = z0 y
-""", "silently discarded")
-  echo "ok: qty-var solved linear into erased parameter rejected (#66)"
+proc erasedOnly (q y : N) : N = z0 y
+""")
+  assert qttQVarErasedOnly.len == 1 and
+    qttQVarErasedOnly[0].tyTm.kind == tPi and
+    qttQVarErasedOnly[0].tyTm.qty == q0
+  echo "ok: qvar used only as erased argument infers q0 (#371)"
   # But the same shape with 2+ uses solves to qOmega: discarding an
   # unrestricted variable is fine.
   let qttQVarOmegaDrop = elabCheck("""
@@ -5639,7 +5643,9 @@ postulate N : Type 0
 postulate z0 : Pi (0 x : N). N
 proc okQDrop (q y : N) : N = snd (z0 y, y)
 """)
-  assert qttQVarOmegaDrop.len == 1
+  assert qttQVarOmegaDrop.len == 1 and
+    qttQVarOmegaDrop[0].tyTm.kind == tPi and
+    qttQVarOmegaDrop[0].tyTm.qty == qOmega
   echo "ok: qty-var solved unrestricted into erased parameter accepted (#66)"
 
   # --- Issue #66: subject-side quantity tracking (Gamma |- t :^q A) ------
@@ -5720,7 +5726,8 @@ postulate n0 : N
 proc w (A : Type 0) : N -> N = lam (x : N). n0
 """)
   echo "ok: inferred q0 widens to ascribed qOmega (#84)"
-  # Plain inference: unused binders infer q0, used binders infer qOmega.
+  # Plain inference: unused binders infer q0, exactly-once binders q1,
+  # and other usage profiles qOmega.
   let q84Inf = elabCheck("""
 postulate N : Type 0
 postulate n0 : N
@@ -5732,8 +5739,8 @@ proc u (A : Type 0) (x : A) : A = x
   assert kTy.scope.bdy.kind == tPi and kTy.scope.bdy.qty == q0
   let uTy = q84Inf[^1].tyTm
   assert uTy.kind == tPi and uTy.qty == q0
-  assert uTy.scope.bdy.kind == tPi and uTy.scope.bdy.qty == qOmega
-  echo "ok: unannotated binders infer 0 or omega from usage (#84)"
+  assert uTy.scope.bdy.kind == tPi and uTy.scope.bdy.qty == q1
+  echo "ok: unannotated binders infer 0, 1, or omega from usage (#371)"
   # An explicit ascribed 0/1 disagreeing with the inference is an error
   # naming the binder and the usage sites that forced the inference.
   expectElabErr("""
@@ -5749,10 +5756,10 @@ postulate N : Type 0
 postulate n0 : N
 proc g2 (A : Type 0) : Pi (1 x : A). N = lam (x : A). n0
 """, "the body never uses 'x', inferring quantity q0")
-  expectElabErr("""
+  discard elabCheck("""
 postulate N : Type 0
 proc g (A : Type 0) : Pi (1 x : A). A = lam (x : A). x
-""", "quantity 1 is never inferred")
+""")
   echo "ok: explicit quantity conflicts name the binder and use sites (#84)"
 
   # --- Experiment 41: conversion cache as a scoped handler ---------
