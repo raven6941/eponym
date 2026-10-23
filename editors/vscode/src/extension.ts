@@ -791,7 +791,21 @@ export function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument((event) => {
       const docUri = event.document.uri.toString();
-      documentClients.get(docUri)?.didChange(docUri, event.document.getText());
+      const client = documentClients.get(docUri);
+      client?.didChange(docUri, event.document.getText());
+      const panel = openPanels.get(docUri);
+      if (client && panel) {
+        void client.shedActionHistory(docUri).then((history) => {
+          if (openPanels.get(docUri) !== panel) return;
+          panel.panel.webview.postMessage({
+            cmd: "historyState",
+            canUndo: history.canUndo,
+            canRedo: history.canRedo,
+          });
+        }).catch(() => {
+          // Keep the current button state if the LSP is shutting down.
+        });
+      }
     })
   );
   ctx.subscriptions.push(
