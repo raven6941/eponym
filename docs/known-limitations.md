@@ -603,9 +603,33 @@ the false branch, and a condition mentioning only the head (and, for
 `vecElim`, the index) — compiles to the same destination with a write
 pointer: the condition is tested per iteration and only kept heads are
 written (capacity `xs.len + acc0.len`, truncated afterwards). In-place
-reuse of linear buffers — mutating the
-accumulator or the caller's input buffer rather than copying — is the
-remaining quantity-gated step.
+reuse of linear buffers has landed in its first form (#413): a chain of
+linear `let` bindings over `seq[int]` (List) representations compiles to
+one Nim `var` that each step moves through (`move` at the step sites),
+instead of one fresh buffer per step — a length-n chain costs one
+allocation plus O(total work), not O(n) buffer copies. Chains of linear
+`int` bindings compile to one reassigned `var acc: int`. Qualification is
+conservative and syntactic: each binding used exactly once in straight-line
+position (a use under a closure-forming binder does not qualify — a single
+syntactic occurrence there is not an exactly-once runtime use), the chain
+representation-uniform (`Vec` excluded: in-place length changes would
+falsify the length index), and, for buffers, the chain head freshly
+produced rather than aliasing a caller-retained buffer. Non-qualifying
+shapes keep ordinary `let` emission with identical value semantics.
+
+### Wrapper-boundary ownership rule (#413)
+
+Quantity-1 `seq` parameters of compiled repr procs are `sink`: the caller
+moves the buffer in instead of sharing it. `sink` is a move hint only —
+value semantics are unchanged, and an lvalue argument is still copied by
+the caller under Nim's rules, so the boundary never aliases a
+caller-retained buffer. The typed wrapper therefore copies once at entry
+when the Nim caller may retain its buffer, or takes `sink` itself and
+documents the ownership transfer. Never mutate a buffer the caller may
+still hold: in-place mutation through a retained Nim reference would leak
+through Nim value semantics. `Vec` parameters are never mutated in place
+(length invariant); quantity-1 `int` parameters are plain values (`sink`
+is meaningless on `int`).
 
 Checked definitions compile to native Nim procs per definition:
 in-fragment definitions run compiled `eponymCompiled_<name>` procs (Phase 1
