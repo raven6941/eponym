@@ -123,14 +123,19 @@ eponymBlock:
 
 ## Installation
 
-Prerequisites: Nim >= 2.0 (built with 2.2.12 via
-[choosenim](https://github.com/dom96/choosenim)) and nimble.
+Prerequisites: Nim 2.2 (tested with 2.2.12 via
+[choosenim](https://github.com/dom96/choosenim)) and nimble. Older
+2.x versions may work but are untested.
 
 ```sh
+nimble install https://github.com/raven6941/eponym   # until the package is published
 nimble install eponym        # from the nimble package directory (once published)
 # or, from a checkout of this repo:
 nimble install
 ```
+
+Note: installing from the URL tracks the default branch until the
+first release is tagged, so repeat installs can move under you.
 
 This installs the production modules (`src/eponym/`, issue #189) and the
 Eponym prelude (`lib/*.ep`) into the nimble package directory. Experimental
