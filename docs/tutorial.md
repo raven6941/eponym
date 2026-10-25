@@ -11,12 +11,14 @@ checked dependent type to one motivating example of why dependent types
 earn their keep. Every snippet below compiles as shown (each was
 machine-checked while writing this document).
 
-You will need Nim >= 2.0 (built with 2.2.12 via
-[choosenim](https://github.com/dom96/choosenim)) and `nimble`.
+You will need Nim 2.2 (tested with 2.2.12 via
+[choosenim](https://github.com/dom96/choosenim)) and `nimble`. Older
+2.x versions may work but are untested.
 
 ## 1. Install
 
 ```sh
+nimble install https://github.com/raven6941/eponym   # until the package is published
 nimble install eponym        # from the nimble package directory (once published)
 # or, from a checkout of this repo:
 nimble install
