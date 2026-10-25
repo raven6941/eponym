@@ -2319,6 +2319,32 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
             tacRefl(expTy, ctx, globals, ms, supply, pre.loc))
         else: raise elabErr(pre.loc, "unknown tactic '" & pre.name &
           "'; known tactics: refl, assumption, arith")
+      of pkUnitTy:
+        # Issue #458: the surface `1` is the unit type, not the integer
+        # literal one (spelled `01`). Checked against a value type it
+        # fails conversion, and the generic message renders the unit
+        # type's type (the legacy universe) as `?`, which reads as an
+        # unsolved metavariable and hides the real mistake. The success
+        # path is identical to the fallthrough below; only the failure
+        # gains the hint, and only when the expected type is a known
+        # non-universe (a universe-typed or meta-typed expectation keeps
+        # the original error verbatim).
+        var (t, ty) = inferTm(pre, ctx, globals, ms, supply, ab)
+        (t, ty) = insertImplicits(pre, t, ty, ctx.len, ms)
+        try:
+          discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
+        except ElabError as e:
+          let expZ = zonk(ms, expTy)
+          let expIsUniverse = expZ.kind == tType or
+            (expZ.kind == tC and expZ.c == cStar)
+          if expIsUniverse or findUnsolved(ms, expZ).found:
+            raise e
+          # Append to the caught message rather than re-wrapping: elabErr
+          # prefixes the location, and re-wrapping would double it.
+          e.msg = e.msg &
+            " (note: `1` in surface syntax is the unit type; write `01` for the integer literal one)"
+          raise e
+        t
       else:
         var (t, ty) = inferTm(pre, ctx, globals, ms, supply, ab)
         # Issue #201: the insertion inferTm's pkVar used to do now lives

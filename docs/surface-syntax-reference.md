@@ -532,8 +532,8 @@ analyze, so annotate their quantity when the API requires linear use.
 Integer literals are overloaded by the expected type. In checking mode
 against `Nat` they become the primitive `tNatLit` (O(1) — not a `suc`
 chain); against the postulated `Int` they are primitive integers; in
-inference mode a literal requires `Int` in scope. `1` in *type* position
-lexes as the unit type — write `01` for the literal one (the renderer
+inference mode a literal requires `Int` in scope. `1` lexes as the
+unit type in every position — write `01` for the literal one (the renderer
 emits `01` for `pkInt(1)` so render→parse stays faithful, issue #158).
 The unit value is `<>` (Nim side: `unitv`).
 
