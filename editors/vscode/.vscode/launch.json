@@ -11,7 +11,7 @@
         "${workspaceFolder}/../../examples/embedded/sheds_walkthrough.nim"
       ],
       "outFiles": ["${workspaceFolder}/out/**/*.js"],
-      "preLaunchTask": "Build Eponym Sheds extension",
+      "preLaunchTask": "Build Eponym Sheds extension and LSP",
       "internalConsoleOptions": "openOnSessionStart"
     }
   ]

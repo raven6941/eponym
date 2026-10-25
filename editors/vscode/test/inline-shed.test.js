@@ -59,9 +59,20 @@ function makeHarness() {
 
 async function testExpandInsertsBox() {
   const h = makeHarness();
+  const source = h.doc.getText();
+  h.mock.setAfterEditorEdit((doc) => {
+    assert.strictEqual(
+      h.inlineShed.sourceTextWithoutExpandedView(doc), source,
+      "source synchronization during insertion omits the temporary rows"
+    );
+  });
   await h.inlineShed.expandShed(h.editor, h.getClient, { showButtons: true });
   assert.strictEqual(h.doc._getLines().length, 111, "11 lines inserted");
   assert.ok(h.inlineShed.currentExpanded(), "expanded state set");
+  assert.strictEqual(
+    h.inlineShed.sourceTextWithoutExpandedView(h.doc), source,
+    "LSP source projection omits the temporary inline rows"
+  );
   console.log("ok: expand inserts 11-line box");
 }
 

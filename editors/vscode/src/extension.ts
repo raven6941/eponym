@@ -36,6 +36,7 @@ import {
   currentExpanded,
   setInlineShedRefresh,
   removeExpandedForSave,
+  sourceTextWithoutExpandedView,
 } from "./inlineShed";
 
 function nimBin(): string {
@@ -428,7 +429,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       const docUri = doc.uri.toString();
       layoutCache.delete(docUri);
       const entry = openPanels.get(docUri);
-      if (entry) entry.client.didChange(docUri, doc.getText());
+      if (entry) entry.client.didChange(docUri, sourceTextWithoutExpandedView(doc));
       if (!(await ensureSidecar(doc, true))) return;
       lensProvider.refreshDoc(doc);
 
@@ -873,14 +874,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     const docUri = doc.uri.toString();
     const existing = documentClients.get(docUri);
     if (existing) {
-      existing.didChange(docUri, doc.getText());
+      existing.didChange(docUri, sourceTextWithoutExpandedView(doc));
       return existing;
     }
     const sp = ensureServerBinary();
     if (!sp) return null;
     const c = new LspClient(sp);
     await c.initialize(path.dirname(doc.uri.fsPath));
-    c.didOpen(docUri, doc.getText());
+    c.didOpen(docUri, sourceTextWithoutExpandedView(doc));
     documentClients.set(docUri, c);
     return c;
   }
@@ -904,7 +905,7 @@ export function activate(ctx: vscode.ExtensionContext) {
         }
       }
       const client = documentClients.get(docUri);
-      client?.didChange(docUri, event.document.getText());
+      client?.didChange(docUri, sourceTextWithoutExpandedView(event.document));
       const panel = openPanels.get(docUri);
       postLocalHistoryState(docUri, panel);
     })

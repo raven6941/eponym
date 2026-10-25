@@ -264,13 +264,17 @@ export async function expandShed(
   }
   const anchorLine = doc.positionAt(currentMarker.start).line;
   const insertPos = new vscode.Position(anchorLine + 1, 0);
+  // Publish the preview range before editing. VS Code fires document-change
+  // events during this edit, and LSP synchronization must already know which
+  // inserted rows to omit from the source snapshot.
+  expanded = { docUri, shedName, anchorLine, viewLineCount: viewLines.length, editor };
   const ok = await editor.edit((eb) => eb.insert(insertPos, viewLines.join("\n") + "\n"));
   if (!ok) {
+    expanded = null;
     vscode.window.showErrorMessage("Eponym: could not insert shed view");
     return;
   }
   log("[eponym] expandShed: text inserted");
-  expanded = { docUri, shedName, anchorLine, viewLineCount: viewLines.length, editor };
   vscode.commands.executeCommand("setContext", "eponym.shedExpanded", true);
   refreshCodeLenses?.();
 
@@ -293,4 +297,13 @@ export async function collapseShedForDocument(docUri: string): Promise<boolean> 
 export function currentExpanded(): { docUri: string; shedName: string } | null {
   if (!expanded) return null;
   return { docUri: expanded.docUri, shedName: expanded.shedName };
+}
+
+/** Return source text without the temporary rows used to display an expanded shed. */
+export function sourceTextWithoutExpandedView(doc: vscode.TextDocument): string {
+  const text = doc.getText();
+  if (!expanded || expanded.docUri !== doc.uri.toString()) return text;
+  const lines = text.split(doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n");
+  lines.splice(expanded.anchorLine + 1, expanded.viewLineCount);
+  return lines.join(doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n");
 }
