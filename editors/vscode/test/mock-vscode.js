@@ -6,6 +6,7 @@
 
 function makeMockVscode() {
   const listeners = { selection: [] };
+  let afterEditorEdit = null;
 
   class Position {
     constructor(line, character) {
@@ -26,6 +27,7 @@ function makeMockVscode() {
     get event() { return () => ({}); }
     fire() {}
   }
+  const EndOfLine = { LF: 1, CRLF: 2 };
 
   // Document model: array of lines.
   function makeDocument(initialLines) {
@@ -33,6 +35,7 @@ function makeMockVscode() {
     const uriStr = "file:///test.nim";
     return {
       uri: { toString: () => uriStr, fsPath: "/test.nim" },
+      eol: EndOfLine.LF,
       getText: () => lines.join("\n"),
       lineCount: () => lines.length,
       positionAt: (offset) => {
@@ -82,6 +85,7 @@ function makeMockVscode() {
         };
         fn(eb);
         doc._applyEdit(edits);
+        if (afterEditorEdit) afterEditorEdit(doc);
         return true;
       },
       _setNextEditResult: (result) => { nextEditResult = result; },
@@ -89,7 +93,7 @@ function makeMockVscode() {
   }
 
   const vscode = {
-    Position, Range, ThemeColor, EventEmitter,
+    Position, Range, ThemeColor, EventEmitter, EndOfLine,
     window: {
       activeTextEditor: null,
       createTextEditorDecorationType: () => ({ dispose: () => {} }),
@@ -112,6 +116,7 @@ function makeMockVscode() {
 
   return {
     vscode, listeners, makeDocument, makeEditor,
+    setAfterEditorEdit: (callback) => { afterEditorEdit = callback; },
     // Fire a synthetic selection-change event through all registered listeners.
     fireSelection: (editor, line, character = 0) => {
       const e = {

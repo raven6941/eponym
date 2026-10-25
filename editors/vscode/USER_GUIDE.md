@@ -12,9 +12,8 @@ view** from the Command Palette. The default shortcut is **Ctrl+Shift+S**.
 You can also use the `shed name : goal` CodeLens above a marker; clicking it
 opens that specific shed without relying on cursor position. The 2D display
 is temporarily inserted below the marker so it can display the 2D box and
-accept keyboard actions. It is editor-only preview text: collapse it with
-**Escape**, or save normally and the extension removes it before writing the
-Nim file.
+accept keyboard actions. Collapse it with **Escape**; the extension also
+removes it before saving the Nim file.
 
 The extension compiles a `shedsBlock` file with Nim to generate or refresh
 its `.sheds.json` sidecar. This is how it learns the current goals and

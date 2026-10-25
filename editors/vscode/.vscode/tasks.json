@@ -2,6 +2,13 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Build Eponym LSP",
+      "type": "shell",
+      "command": "nim c --hints:off --path:src --path:src/eponym src/eponym/lsp.nim",
+      "options": { "cwd": "${workspaceFolder}/../.." },
+      "problemMatcher": []
+    },
+    {
       "label": "Build Eponym Sheds extension",
       "type": "npm",
       "script": "build",
@@ -10,6 +17,15 @@
         "isDefault": true
       },
       "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "Build Eponym Sheds extension and LSP",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Build Eponym LSP",
+        "Build Eponym Sheds extension"
+      ],
+      "problemMatcher": []
     },
     {
       "label": "Build and package Eponym Sheds VSIX",
