@@ -11,6 +11,7 @@
 import { execFile } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+import type { EponymSource } from "./serverSetup";
 
 const NIM_PATH_FLAGS = ["src", "src/eponym"];
 
@@ -46,6 +47,14 @@ export function sidecarCompileArgs(repoRoot: string, nimFile: string): string[] 
   for (const p of NIM_PATH_FLAGS) args.push("--path:" + path.join(repoRoot, p));
   args.push(nimFile);
   return args;
+}
+
+/** Build args using either checkout paths or a flat Nimble package root. */
+export function sidecarCompileArgsForSource(source: EponymSource, nimFile: string): string[] {
+  if (source.kind === "repo" && source.repoRoot) {
+    return sidecarCompileArgs(source.repoRoot, nimFile);
+  }
+  return ["c", "--hints:off", `--path:${source.dir}`, nimFile];
 }
 
 export interface GenerateResult {
@@ -207,14 +216,29 @@ export function generateSidecar(
   repoRoot: string,
   nimFile: string
 ): Promise<GenerateResult> {
+  return runSidecarCompile(nimBin, sidecarCompileArgs(repoRoot, nimFile), repoRoot);
+}
+
+/** Generate a user's sidecar from a repo checkout or Nimble-installed source. */
+export function generateSidecarForSource(
+  nimBin: string,
+  source: EponymSource,
+  nimFile: string,
+): Promise<GenerateResult> {
+  const cwd = source.kind === "repo" && source.repoRoot
+    ? source.repoRoot
+    : path.dirname(nimFile);
+  return runSidecarCompile(nimBin, sidecarCompileArgsForSource(source, nimFile), cwd);
+}
+
+function runSidecarCompile(nimBin: string, args: string[], cwd: string): Promise<GenerateResult> {
   // Compile the file (macro expansion writes the sidecar). Plain `c`,
   // not `c -r`: we need the sidecar, not the program's stdout.
   return new Promise((resolve) => {
-    const args = sidecarCompileArgs(repoRoot, nimFile);
     execFile(
       nimBin,
       args,
-      { cwd: repoRoot, timeout: 300_000, maxBuffer: 8 * 1024 * 1024 },
+      { cwd, timeout: 300_000, maxBuffer: 8 * 1024 * 1024 },
       (err, _stdout, stderr) => {
         if (err) {
           let detail = String(stderr || err.message || err).trim();

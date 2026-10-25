@@ -71,10 +71,11 @@ the server-extension protocol changes.
 ### If sidecar generation fails
 
 The compile output goes to the **Eponym** output channel and an error
-notification offers to show it. Common causes: Nim not on PATH (set the
-`eponym.nimPath` setting to the Nim binary), or the file not being inside
-the eponym repo checkout (the extension derives the `--path` flags from
-the repo root containing `src/eponym/lsp.nim`).
+notification offers to show it. Common causes: Nim is missing (set the
+`eponym.nimPath` setting to the Nim binary), or Eponym is missing from both
+the containing checkout and the Nimble package cache. A Nimble user can install
+or upgrade it with `nimble install eponym`; a checkout user can open the project
+under the Eponym repository.
 
 ### Settings
 
@@ -93,20 +94,21 @@ version, and reuses that binary until the installed version changes. The
 compile runs with a progress notification; details are available from the
 Eponym output channel if setup fails. A fresh user profile therefore needs
 Nim 2.0+ and `nimble install eponym`, but does not need this repository checkout
-or a manually built server binary.
+or a manually built server binary. The same source discovery also drives
+sidecar compilation: in a Nimble user project, the extension adds the installed
+package root to Nim's module path and runs the compile from the project folder.
+Imports beside the user's file keep their normal relative resolution, and the
+installed package supplies the Eponym modules and `lib/` prelude.
 
 ## Headless smoke test
 
-No VSCode needed; drives the real LSP server:
+No VSCode needed; drives the real LSP server from a repo checkout, then installs
+Eponym into an isolated Nimble directory and checks sidecar generation and shed
+layout rendering from a project outside the repository:
 
 ```sh
-# from the repo root:
-nim c --hints:off --path:src --path:src/eponym src/eponym/lsp.nim
-cd editors/vscode && npm install && npm run build
-# NIMBIN= only needed when nim is not on PATH. The smoke test drives the
-# extension's own generateSidecar path to produce the sidecar (issue #153),
-# so the fresh-checkout case is covered without a manual nim invocation.
-LSP=../../src/eponym/lsp DEMO=../../examples/embedded/sheds_demo.nim npm run smoke
+# from the repo root; NIMBIN= only needed when nim is not on PATH:
+sh tools/vscode-smoke.sh
 ```
 
 The inline expand/collapse state machine also has a headless test:

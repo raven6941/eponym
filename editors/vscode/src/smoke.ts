@@ -15,8 +15,8 @@ import {
   hasShedBlocks,
   eponymRepoRoot,
   defaultLspServerPath,
-  sidecarCompileArgs,
-  generateSidecar,
+  sidecarCompileArgsForSource,
+  generateSidecarForSource,
   shedBlocks,
   shedAtCursor,
   shedNodeStartingAt,
@@ -25,6 +25,7 @@ import {
   sidecarFresh,
   readSidecarShedNames,
 } from "./sidecar";
+import { discoverEponymSource } from "./serverSetup";
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
@@ -70,6 +71,10 @@ async function main() {
     "eponymRepoRoot finds the repo root from the demo dir: " + maybeRoot);
   if (maybeRoot === null) throw new Error("repo root not found; cannot continue");
   const root: string = maybeRoot;
+  const source = await discoverEponymSource(path.dirname(demo));
+  check(source !== null && source.kind === "repo" && source.repoRoot === root,
+    "shared source discovery selects the containing repository checkout");
+  if (!source) throw new Error("Eponym source not found");
   check(defaultLspServerPath(path.join(root, "editors", "vscode")) ===
     path.join(root, "src", "eponym", "lsp"),
     "default LSP path finds the repo root from the extension workspace");
@@ -81,22 +86,22 @@ async function main() {
     "default LSP path falls back to a non-repo workspace root");
   check(eponymRepoRoot(path.parse(root).root) === null,
     "eponymRepoRoot returns null above the filesystem root's repo check");
-  const cargs = sidecarCompileArgs(root, demo);
+  const cargs = sidecarCompileArgsForSource(source, demo);
   check(cargs[0] === "c" && cargs.includes("--hints:off") &&
         cargs.includes("--path:" + path.join(root, "src")) &&
         cargs.includes("--path:" + path.join(root, "src", "eponym")) &&
         !cargs.some(a => a.includes("staging") || a.includes("relational")) &&
         cargs[cargs.length - 1] === demo,
-    "sidecarCompileArgs builds the nim invocation: " + cargs.join(" "));
+    "sidecarCompileArgsForSource preserves repo compile paths: " + cargs.join(" "));
   // End-to-end: delete the sidecar and regenerate it via the real `nim c`,
   // exactly as the extension does on document open/save.
   const demoSidecar = demo.replace(/\.nim$/, ".sheds.json");
   fs.rmSync(demoSidecar, { force: true });
   const nimBin = process.env.NIMBIN ?? "nim";
-  const gen = await generateSidecar(nimBin, root, demo);
-  check(gen.ok, "generateSidecar compiles the demo (nim c): " + (gen.error ?? "ok"));
+  const gen = await generateSidecarForSource(nimBin, source, demo);
+  check(gen.ok, "generateSidecarForSource compiles the demo (nim c): " + (gen.error ?? "ok"));
   check(fs.existsSync(demoSidecar),
-    "generateSidecar wrote the sidecar: " + demoSidecar);
+    "generateSidecarForSource wrote the sidecar: " + demoSidecar);
   const regen = JSON.parse(fs.readFileSync(demoSidecar, "utf8"));
   check(Array.isArray(regen.sheds) && regen.sheds.length === 1 &&
         regen.sheds[0].name === "quadBody",
@@ -155,8 +160,8 @@ async function main() {
   if (fs.existsSync(wt)) {
     // The walkthrough layout checks below need its sidecar; generate it
     // exactly as the extension does (a fresh checkout has none).
-    const wtGen = await generateSidecar(nimBin, root, wt);
-    check(wtGen.ok, "generateSidecar compiles the walkthrough (nim c): " + (wtGen.error ?? "ok"));
+    const wtGen = await generateSidecarForSource(nimBin, source, wt);
+    check(wtGen.ok, "generateSidecarForSource compiles the walkthrough (nim c): " + (wtGen.error ?? "ok"));
     const wtText = fs.readFileSync(wt, "utf8");
     const wtBlocks = shedBlocks(wtText);
     const wtNames = wtBlocks.flatMap((b) => b.sheds.map((s) => s.name));
