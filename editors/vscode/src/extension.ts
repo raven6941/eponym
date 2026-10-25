@@ -11,7 +11,7 @@ import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
 import { LspClient, ShedStateGoal, ShedStateTransition } from "./protocol";
-import { serverPath, ensureServerBinary } from "./serverPath";
+import { ensureServerBinary } from "./serverPath";
 import { initLog, log } from "./log";
 import { pageHtml } from "./render";
 import {
@@ -48,6 +48,7 @@ function nimBin(): string {
   const candidates = [
     "nim", // PATH
     `${home}/.nimble/bin/nim`, // choosenim default
+    "/opt/homebrew/bin/nim",
     "/opt/nim/bin/nim",
     "/usr/local/bin/nim",
   ];
@@ -305,16 +306,18 @@ async function currentStateActions(
   );
 }
 
-async function prefetchLayouts(doc: vscode.TextDocument): Promise<void> {
-  // Eager render, minus the expensive part: measured 2026-10-14, `nim c`
-  // (sidecar generation) costs ~9s cold, so we never eagerly *compile*.
+async function prefetchLayouts(doc: vscode.TextDocument, storageDir: string): Promise<void> {
+  // Eager render, minus sidecar generation: measured 2026-10-14, `nim c`
+  // (sidecar generation) costs ~9s cold. LSP setup is compiled on first use.
   // Pre-fetching layouts is ~0.3ms per shedLayout over stdio, but only
   // trustworthy when the sidecar is already fresh.
   const nimFile = doc.uri.fsPath;
   if (!sidecarFresh(nimFile)) return;
   let client: LspClient;
   try {
-    client = new LspClient(serverPath());
+    const binary = await ensureServerBinary(storageDir, path.dirname(nimFile), nimBin(), out);
+    if (!binary) return;
+    client = new LspClient(binary);
     await client.initialize(nimFile.replace(/\/[^/]+$/, ""));
   } catch (e) {
     out.appendLine(`[eponym] prefetch: no LSP server: ${String(e)}`);
@@ -414,7 +417,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.workspace.onDidOpenTextDocument((doc) => {
       if (doc.languageId !== "nim" && !doc.fileName.endsWith(".nim")) return;
       if (!hasShedBlocks(doc.getText())) return;
-      prefetchLayouts(doc).catch((e) =>
+      prefetchLayouts(doc, ctx.globalStorageUri.fsPath).catch((e) =>
         out.appendLine(`[eponym] prefetch failed: ${String(e)}`)
       );
     })
@@ -877,7 +880,10 @@ export function activate(ctx: vscode.ExtensionContext) {
       existing.didChange(docUri, sourceTextWithoutExpandedView(doc));
       return existing;
     }
-    const sp = ensureServerBinary();
+    const sp = await ensureServerBinary(
+      ctx.globalStorageUri.fsPath, path.dirname(doc.uri.fsPath), nimBin(),
+      out,
+    );
     if (!sp) return null;
     const c = new LspClient(sp);
     await c.initialize(path.dirname(doc.uri.fsPath));

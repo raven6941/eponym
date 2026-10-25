@@ -39,8 +39,8 @@ import sheds_mac  # shedGoalAndCtx for residual refinement holes
 import sheds  # ShedInfo, semanticShedState, renderShedHover, sidecar IO
 import shed_layout  # Box, layoutShed, boxToJson (issue #135)
 import shed_state
-import ../experimental/shed_state_dag
-import ../experimental/sha256
+import shed_state_dag
+import sha256
 
 const MaxShedHistoryTransitions = 64
 const MaxShedActionStateVersions = 128

@@ -2,7 +2,7 @@
 ## This module is intentionally experimental until #450 establishes the format.
 
 import std/[algorithm, hashes, tables]
-import ./sha256
+import sha256
 
 type
   NodeId* = distinct string

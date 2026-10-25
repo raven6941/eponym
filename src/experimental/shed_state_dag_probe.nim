@@ -6,8 +6,8 @@ import std/[json, os, sequtils, strutils, tables]
 import eponym/lsp
 import eponym/sheds
 import eponym/shed_state
-import ./shed_state_dag
-import ./sha256
+import ../eponym/shed_state_dag
+import ../eponym/sha256
 
 type StateBuild = object
   root: NodeId

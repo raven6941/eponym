@@ -3,8 +3,8 @@
 
 import std/[algorithm, base64, json, strutils, tables]
 import sheds
-import ../experimental/shed_state_dag
-import ../experimental/sha256
+import shed_state_dag
+import sha256
 
 type
   ShedProofState* = object

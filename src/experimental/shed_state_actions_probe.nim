@@ -3,7 +3,7 @@
 import std/[json, os, tables]
 import eponym/lsp
 import eponym/sheds
-import ./shed_state_dag
+import ../eponym/shed_state_dag
 
 type ClientNodes = Table[string, JsonNode]
 
