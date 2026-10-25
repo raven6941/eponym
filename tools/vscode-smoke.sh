@@ -19,7 +19,7 @@ mkdir -p "$NC_DIR"
 NC="--nimcache:$NC_DIR"
 NIMBLE_TEST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/eponym-vscode-nimble.XXXXXX")
 trap 'rm -rf "$NIMBLE_TEST_DIR"' EXIT
-mkdir -p "$NIMBLE_TEST_DIR/home" "$NIMBLE_TEST_DIR/nimble" \
+mkdir -p "$NIMBLE_TEST_DIR/nimble" \
   "$NIMBLE_TEST_DIR/project" "$NIMBLE_TEST_DIR/storage"
 printf '[]\n' > "$NIMBLE_TEST_DIR/nimble/packages_official.json"
 
@@ -28,7 +28,14 @@ printf '[]\n' > "$NIMBLE_TEST_DIR/nimble/packages_official.json"
 # too (the nimcache makes the rebuild cheap when it already ran).
 nim c $NC --hints:off $P "src/eponym/lsp.nim"
 (cd editors/vscode && npm install --no-audit --no-fund && npm run build)
-HOME="$NIMBLE_TEST_DIR/home" LSP=src/eponym/lsp \
+# NOTE: do not override HOME for the node smoke runs. `nim`/`nimble`
+# are choosenim shims on CI and on dev machines, and a shim resolves
+# its toolchain from $HOME/.choosenim/current -- pointing HOME at the
+# temp dir below makes every `nim c` fail instantly. That is what
+# broke shard 2/3 on PR #457 on CI while the same script passed
+# locally with a real HOME. Isolation for the Nimble path comes from
+# NIMBLE_DIR below, not from HOME.
+LSP=src/eponym/lsp \
   DEMO=examples/embedded/sheds_demo.nim node editors/vscode/out/smoke.js
 
 # Exercise the Marketplace-user path from outside the checkout: install the
@@ -44,7 +51,6 @@ shedsBlock:
   proc installedUserGoal(n: Nat): Nat = ![installedBody]
 EOF
 NIMBLE_DIR="$NIMBLE_TEST_DIR/nimble" \
-  HOME="$NIMBLE_TEST_DIR/home" \
   EPONYM_NIMBLE_PROJECT="$NIMBLE_TEST_DIR/project" \
   EPONYM_NIMBLE_STORAGE="$NIMBLE_TEST_DIR/storage" \
   node editors/vscode/out/nimbleSmoke.js

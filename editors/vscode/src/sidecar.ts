@@ -239,9 +239,16 @@ function runSidecarCompile(nimBin: string, args: string[], cwd: string): Promise
       nimBin,
       args,
       { cwd, timeout: 300_000, maxBuffer: 8 * 1024 * 1024 },
-      (err, _stdout, stderr) => {
+      (err, stdout, stderr) => {
         if (err) {
-          let detail = String(stderr || err.message || err).trim();
+          // Nim reports fatal errors on stderr, but choosenim shims (and
+          // other wrappers) report theirs on stdout. With stderr empty
+          // the real cause was previously dropped, leaving only the
+          // command line -- which is how the PR #457 shard failure
+          // looked like an inexplicable `nim c` failure plus an
+          // unrelated server EOF trace.
+          const output = (stderr && stderr.trim()) || (stdout && stdout.trim()) || "";
+          let detail = (output || String(err.message || err)).trim();
           if (/ENOENT/.test(detail) || /ENOENT/.test(String(err))) {
             detail =
               `could not run '${nimBin}' (ENOENT) -- is Nim on PATH? ` +
