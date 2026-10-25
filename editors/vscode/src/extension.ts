@@ -19,15 +19,15 @@ import {
   requestGoalLayout, requestGoalTransition, stateGoalReference,
 } from "./stateHistory";
 import {
-  generateSidecar,
+  generateSidecarForSource,
   hasShedBlocks,
-  eponymRepoRoot,
   shedAtCursor,
   blockShedsAtCursor,
   sidecarPathFor,
   sidecarFresh,
   readSidecarShedNames,
 } from "./sidecar";
+import { discoverEponymSource } from "./serverSetup";
 import {
   ShedCodeLensProvider,
   expandShed,
@@ -364,11 +364,11 @@ async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<b
       out.appendLine(`[eponym] sidecar fresh for ${doc.uri.fsPath}, skipping nim c`);
       return true;
     }
-    const root = eponymRepoRoot(path.dirname(doc.uri.fsPath));
-    if (!root) {
+    const source = await discoverEponymSource(path.dirname(doc.uri.fsPath));
+    if (!source) {
       vscode.window.showErrorMessage(
-        "Eponym: could not find the eponym repo (no src/eponym/lsp.nim above this file). " +
-          "Open the eponym repo as a workspace folder so the extension can compile shed files."
+        "Eponym: could not find Eponym source. Install or upgrade the Eponym Nimble package (`nimble install eponym`), " +
+          "or open a checkout containing src/eponym/lsp.nim."
       );
       return false;
     }
@@ -379,7 +379,7 @@ async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<b
         title: `Eponym: generating shed sidecar (${path.basename(doc.uri.fsPath)})`,
       },
       async () => {
-        const res = await generateSidecar(nimBin(), root, doc.uri.fsPath);
+        const res = await generateSidecarForSource(nimBin(), source, doc.uri.fsPath);
         if (res.ok) {
           ok = true;
         } else {
@@ -407,7 +407,7 @@ async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<b
 export function activate(ctx: vscode.ExtensionContext) {
   out = vscode.window.createOutputChannel("Eponym");
   initLog(out);
-  log("[eponym] extension v0.1.19 activated");
+  log("[eponym] extension v0.1.20 activated");
 
   // Issue #190: eager pre-render. When a shed file is opened and its
   // sidecar is already fresh, fetch the shed layouts in the background so
