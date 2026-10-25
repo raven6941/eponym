@@ -1,48 +1,58 @@
-// LSP server binary resolution + pre-spawn validation.
-//
-// Clicking a shed CodeLens silently did nothing when the server binary was
-// missing: `new LspClient(path)` spawns in its constructor, the spawn of a
-// nonexistent binary fails asynchronously, and the click handler's promise
-// rejected with no user-visible feedback. Every interactive spawn site now
-// goes through ensureServerBinary() first, which shows an actionable error
-// and returns null so the caller returns early.
-
 import * as vscode from "vscode";
 import * as fs from "fs";
-import { defaultLspServerPath } from "./sidecar";
+import * as path from "path";
+import { buildServerBinary, discoverEponymSource } from "./serverSetup";
 
-export function serverPath(): string {
-  const cfg = vscode.workspace.getConfiguration("eponym").get<string>("lspServerPath", "");
-  if (cfg) return cfg;
-  const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!ws) throw new Error("Eponym: no workspace folder open");
-  return defaultLspServerPath(ws);
-}
-
-/** The repo-root build command for the LSP server (matches tools/ci-local.sh). */
-export const LSP_BUILD_CMD =
-  "nim c --hints:off --path:src --path:src/eponym src/eponym/lsp.nim";
-
-/**
- * Resolve the server binary and verify it exists and is executable.
- * Shows an actionable error message and returns null when unusable —
- * callers must return early (never spawn a missing binary silently).
- */
-export function ensureServerBinary(): string | null {
-  let p: string;
-  try {
-    p = serverPath();
-  } catch (e) {
-    vscode.window.showErrorMessage(`Eponym: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
+/** Resolve or build the LSP in extension-owned storage, with visible progress. */
+export async function ensureServerBinary(
+  storageDir: string,
+  workspaceDir: string,
+  nim: string,
+  output: vscode.OutputChannel,
+): Promise<string | null> {
+  const configured = vscode.workspace.getConfiguration("eponym").get<string>("lspServerPath", "").trim();
+  if (configured) {
+    try {
+      fs.accessSync(configured, fs.constants.X_OK);
+      return configured;
+    } catch {
+      vscode.window.showErrorMessage(`Eponym: configured LSP server is not executable: ${configured}`);
+      return null;
+    }
   }
-  try {
-    fs.accessSync(p, fs.constants.X_OK);
-  } catch {
+
+  const source = await discoverEponymSource(workspaceDir);
+  if (!source) {
     vscode.window.showErrorMessage(
-      `Eponym: LSP server not found at ${p}. Build it from the eponym repo root with: ${LSP_BUILD_CMD} — or set eponym.lspServerPath.`
+      "Eponym: could not find the server source. Install Eponym with `nimble install eponym`, or open an Eponym repository."
     );
     return null;
   }
-  return p;
+  if (source.kind === "repo") {
+    const existing = path.join(source.dir, process.platform === "win32" ? "lsp.exe" : "lsp");
+    try { fs.accessSync(existing, fs.constants.X_OK); return existing; } catch { /* Build below. */ }
+  }
+
+  let binary: string | null = null;
+  let buildError = "";
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "Eponym: preparing LSP server" },
+    async () => {
+      try { binary = await buildServerBinary(nim, source, storageDir, workspaceDir); }
+      catch (error) { buildError = error instanceof Error ? error.message : String(error); }
+    },
+  );
+  if (!binary) {
+    const show = await vscode.window.showErrorMessage(
+      `Eponym: could not build the LSP server with Nim. Install Nim 2.0 or newer and ensure the Eponym Nimble package is current.`,
+      "Show details",
+    );
+    if (show === "Show details") {
+      output.appendLine(`[eponym] LSP build failed from ${source.dir}`);
+      output.appendLine(buildError);
+      output.show();
+    }
+    return null;
+  }
+  return binary;
 }

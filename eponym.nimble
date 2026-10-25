@@ -7,8 +7,10 @@ license       = "MIT"
 # Production modules live in src/eponym/ and import each other bare
 # (e.g. `import eponym_mac`); pointing srcDir there makes the installed
 # package support exactly the import style the embedded examples use.
-# Experimental code (src/experimental/) is outside srcDir and is never
-# installed (issue #189: release packaging excludes experiment code).
+# Experimental probes remain outside srcDir and are never installed
+# (issue #189: release packaging excludes experiment code). The stable SHA-256
+# and shed-state DAG runtime modules live in src/eponym because the LSP and
+# shed state implementation depend on them.
 srcDir        = "src/eponym"
 
 # Dependencies
@@ -33,7 +35,7 @@ installDirs   = @["lib"]
 # public entry points (eponym_mac, eponym_embed, sheds_mac, lsp): missing
 # one breaks `import eponym_mac` for users (2026-10-14: abilities,
 # elab_prof, usage_check were missing).
-# (Experimental code in src/experimental/ is deliberately excluded:
+# (Experimental probes in src/experimental/ are deliberately excluded:
 # issue #189, release packaging excludes experiment code. src/repl.nim
 # is a dev tool, not part of the installed library.)
 installFiles  = @["abilities.nim",
@@ -43,6 +45,8 @@ installFiles  = @["abilities.nim",
                   "erasure.nim",
                   "preterm.nim",
                   "parse_surf.nim",
+                  "sha256.nim",
+                  "shed_state_dag.nim",
                   "elab.nim",
                   "elab_prof.nim",
                   "elab_trace.nim",
@@ -56,6 +60,7 @@ installFiles  = @["abilities.nim",
                   "sheds.nim",
                   "sheds_mac.nim",
                   "shed_layout.nim",
+                  "shed_state.nim",
                   "mutual_termination.nim"]
 
 # Tasks
@@ -72,7 +77,7 @@ task test, "Run the full CI matrix (same matrix GitHub CI runs)":
 # by a custom task -- `nimble build` runs the built-in and reports
 # "Nothing to build" for a library with no `bin`.)
 task buildall, "Build all production modules":
-  for f in ["abilities", "codegen", "derive_repr", "eponym_init", "erasure", "preterm", "parse_surf", "elab", "elab_prof", "unify", "usage_check", "eponym_mac", "lsp", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout", "mutual_termination"]:
+  for f in ["abilities", "codegen", "derive_repr", "eponym_init", "erasure", "preterm", "parse_surf", "sha256", "shed_state_dag", "elab", "elab_prof", "unify", "usage_check", "eponym_mac", "lsp", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout", "shed_state", "mutual_termination"]:
     echo "=== build " & f & " ==="
     exec "nim c --hints:off --path:src --path:src/eponym src/eponym/" & f & ".nim"
   echo "=== build repl (issue #50) ==="

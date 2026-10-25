@@ -93,7 +93,7 @@ echo "### Build: production modules"
 # and `installFiles` (the installed set; issue #183). These are the full
 # import closure of the public entry points (issue #189): every module a
 # user compile pulls in must also build standalone in CI.
-for f in abilities codegen derive_repr eponym_init erasure preterm parse_surf elab elab_prof unify usage_check eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout mutual_termination; do
+for f in abilities codegen derive_repr eponym_init erasure preterm parse_surf sha256 shed_state_dag elab elab_prof unify usage_check eponym_mac lsp egraph eponym_embed kernel_check sheds sheds_mac shed_layout shed_state mutual_termination; do
   run_step nim c $NC --hints:off $P "src/eponym/$f.nim"
 done
 # Build repl (issue #50)

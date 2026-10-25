@@ -20,9 +20,11 @@ open `editors/vscode` as the workspace and press **F5**. The launch profile
 builds the extension, opens the repository and `sheds_walkthrough.nim`, and
 starts the extension against that workspace. The server path defaults to the
 nearest Eponym repository root, so the extension subdirectory uses the
-repository's `src/eponym/lsp` binary. Nim must be available on `PATH` for
-sidecar generation. Outside an Eponym checkout, the server path defaults to
-`<workspace>/src/eponym/lsp`.
+repository's source. On first use the extension compiles the LSP into its
+VS Code global storage. Outside a checkout, it finds the Eponym package from
+Nimble; users need Nim and an installed Eponym package (`nimble install
+eponym`). `eponym.lspServerPath` can still point at an existing server binary.
+Nim must also be available for sidecar generation.
 
 ## Use
 
@@ -76,11 +78,21 @@ the repo root containing `src/eponym/lsp.nim`).
 ### Settings
 
 - `eponym.lspServerPath` — path to the compiled `lsp` server binary
-  (defaults to the nearest Eponym repo root, or `<workspace>/src/eponym/lsp`
-  outside the checkout; build it from the repo root with
-  `nim c --hints:off --path:src --path:src/eponym src/eponym/lsp.nim`).
+  (optional; by default the extension discovers source in the nearest Eponym
+  checkout or via Nimble and builds a versioned server in extension storage).
 - `eponym.nimPath` — Nim binary used for automatic sidecar generation
-  (defaults to `nim` on PATH).
+  and LSP setup (defaults to `nim` on PATH).
+
+### First-use LSP setup
+
+With no explicit server path, the extension searches a containing Eponym
+checkout first, then `nimble path eponym`, then Nimble's package cache. It
+compiles `lsp.nim` once into VS Code global storage, keyed by the source package
+version, and reuses that binary until the installed version changes. The
+compile runs with a progress notification; details are available from the
+Eponym output channel if setup fails. A fresh user profile therefore needs
+Nim 2.0+ and `nimble install eponym`, but does not need this repository checkout
+or a manually built server binary.
 
 ## Headless smoke test
 

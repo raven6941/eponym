@@ -109,12 +109,12 @@
         "eponym.lspServerPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the compiled `lsp` server binary (src/eponym/lsp). Defaults to the nearest Eponym repository root, or <workspace>/src/eponym/lsp outside the repository."
+          "description": "Optional path to an existing Eponym LSP server binary. By default the extension finds a repository checkout or Nimble-installed Eponym source and builds the server into extension storage on first use."
         },
         "eponym.nimPath": {
           "type": "string",
-          "default": "nim",
-          "description": "Nim binary used to compile shed files for automatic sidecar generation. Defaults to `nim` on PATH."
+          "default": "",
+          "description": "Nim binary used to build the LSP server and compile shed files. Defaults to `nim` on PATH, then common Nim install locations."
         },
         "eponym.inlineShed.showButtons": {
           "type": "boolean",
@@ -127,7 +127,7 @@
   "scripts": {
     "build": "tsc -p .",
     "smoke": "node out/smoke.js",
-    "test:headless": "node test/inline-shed.test.js && node test/state-history.test.js && node test/sidecar.test.js"
+    "test:headless": "node test/inline-shed.test.js && node test/state-history.test.js && node test/sidecar.test.js && node test/server-setup.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

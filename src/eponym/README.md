@@ -55,6 +55,9 @@ Surface syntax → PreTerm → Elaboration → Core Term → (usage check) → N
 - `abilities.nim` — ambient abilities (Frank-style), issue #177
 - `eponym_mac.nim` — `eponym`, `eponymBlock` macros
 - `eponym_embed.nim` — runtime: definition cache, `callIntFunc`
+- `sha256.nim`, `shed_state_dag.nim` — canonical shed state identifiers and
+  Merkle node cache used by the LSP. These are production package modules;
+  experimental probes remain under `src/experimental/`.
 - `egraph.nim` — e-graph conversion cache (Experiment 10)
 - `lsp.nim` — language server (Experiment 7)
 - `heap.nim` — heap for the evaluator
