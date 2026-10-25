@@ -8,17 +8,19 @@
 # type and context; try refine / give / case-split and watch the shed go
 # from yellow (stuck) to white (done).
 #
-# The six sheds cover the three hole actions and the layout engine:
+# The walkthrough includes six focused sheds plus a two-goal branching demo:
 #   quadBody     -- sketched: the programmer knows the answer, draft is the plan
 #   addThreeBody -- developing: draft is real scratch, with a wrong turn in it
 #   shuffleBody  -- greenfield: no draft at all, just a hole and a goal
 #   constABody   -- give: the goal is exactly `x`, in scope; one step, no holes
-#   isZeroBody   -- case-split: `n : Nat` is the first explicit argument, so
-#                   the natural move is case-split on `n` (rewrites this proc
-#                   into clause form, one clause per constructor)
+#   isZeroBody   -- case-split: `n : Nat` is in scope, so split on `n` and
+#                   fill the generated Nat eliminator's zero/successor methods
 #   constEndoBody-- deep nesting: the hole's goal is a Pi type with two
 #                   binders, so the 2D layout nests one box per binder around
 #                   the hole -- three nested boxes, real Epigram-style depth
+#   branchLeft and branchRight -- two open goals in one proof state; refine
+#                   either one, switch goals, and use History / Undo / Redo
+#                   to move between the locally known state branches
 #
 # What to try per shed (webview: "Eponym: Show shed layout", pick the name):
 #   quadBody:      click the hole, refine with the draft text `double (double n)`
@@ -28,10 +30,14 @@
 #   shuffleBody:   click the hole, refine with `x`
 #   constABody:    click the hole and choose "give x" (not refine -- the term
 #                  is complete, no holes left behind)
-#   isZeroBody:    click the hole, case-split on `n`; fill the two clause
-#                  holes (`false` for zero, `true` for suc)
+#   isZeroBody:    click the hole, case-split on `n`; fill the zero method
+#                  with `false` and the successor method with a function
 #   constEndoBody: click the hole, refine with `lam (f : A). lam (g : A). f`;
 #                  watch the nested binder boxes collapse as binders discharge
+#   branchLeft:    refine with `add ( ? ) ( ? )`; the residual goals and
+#                  branchRight remain independently addressable in one state
+#   branchRight:   switch from the branchLeft residual, give `n`, then use
+#                  Undo / Redo or History to select a locally known root
 #
 # The draft is captured as text and never reaches the elaborator, so it can
 # contain wrong turns, Nim-isms, or pseudocode. Only the signature is
@@ -69,7 +75,7 @@ shedsBlock:
   #  b. Enter `double ( ? )` and press Enter. The extension wraps the new
   #     hole in `double` and gives it a fresh name.
   #  c. Click the new hole and refine it with `double n` to finish.
-  proc quad(n: Int): Int = ![quadBody, double (double n)]
+  proc quad(n: Int): Int = double ( shedHole(quadBody) )
 
   # Shed 2 -- developing. The draft is honest scratch: the programmer tried
   # threading the addition through `double` and hasn't decided. (Deliberate
@@ -107,17 +113,21 @@ shedsBlock:
   proc constA(A: Univ, x: A): A = ![constABody, x]
 
   # Shed 5 -- case-split. `n` is the first explicit argument and has an
-  # inductive type (Nat from the prelude), so the natural move is
-  # case-split on `n`: the webview rewrites this proc into clause form
-  # with one clause per constructor, each RHS a fresh hole.
+  # inductive type (Nat from the prelude), so split on `n`. The action
+  # replaces the hole with a Nat eliminator and creates a fresh shed for
+  # each constructor method.
   # Ways you might complete this shed with the VSCode editor:
   # 1. Split on `n`, then give each case:
   #  a. Expand the inline shed with Ctrl+Shift+S, then click its hole.
-  #  b. Press `c` for case-split and enter `n`. The extension rewrites the
-  #     proc into one clause per constructor, with a fresh shed in each.
+  #  b. Press `c` for case-split and enter `n`. The extension replaces the
+  #     hole with a Nat eliminator and creates a fresh shed for each method.
   #  c. Click the zero-case hole, press `g`, and enter `false`.
-  #  d. Click the successor-case hole, press `g`, and enter `true`. The
-  #     diagnostics should clear as both clauses complete.
+  #  d. Click the successor-case hole, press `g`, and enter
+  #     `lam (n : Nat). lam (b : Bool). true`. Nat case-split uses the
+  #     induction eliminator: the successor method receives the predecessor
+  #     `n` and the induction result `b : Bool`, so bare `true` does not
+  #     inhabit that method goal. The diagnostics should clear after both
+  #     methods are filled.
   proc isZero(n: Nat): Bool = ![isZeroBody]
 
   # Shed 6 -- deep nesting. The hole's goal is a Pi type with two binders
@@ -141,6 +151,11 @@ shedsBlock:
   proc constEndo(A: Univ): Pi(f: A, g: A, A) =
     ![constEndoBody, "lam (f : A). lam (g : A). f"]
 
+  # Two independent goals make branch selection visible in the walkthrough.
+  # Refine either marker while preserving its sibling, then select another
+  # known proof-state root from the History button without an LSP commit.
+  proc branchDemo(n: Nat): Nat = add ( ![branchLeft] ) ( ![branchRight] )
+
 # --- Normal Nim program ------------------------------------------------
 # Plain Nim from here. The checked `double` is called like any Nim proc;
 # the shed metadata is read from the sidecar exactly as the LSP server
@@ -156,7 +171,7 @@ proc main() =
   let path = sidecarPath(me)
   doAssert fileExists(path), "sidecar not written: " & path
   let ss = readShedSidecar(path)
-  doAssert ss.len == 6, "expected 6 sheds, got " & $ss.len
+  doAssert ss.len == 8, "expected 8 sheds, got " & $ss.len
   for sh in ss:
     echo "  shed '", sh.name, "' at ", me, ":", sh.nimLine, ":", sh.nimCol
     echo "    goal: ", sh.goal

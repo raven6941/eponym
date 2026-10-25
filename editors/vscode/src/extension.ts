@@ -10,10 +10,14 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
-import { LspClient } from "./protocol";
+import { LspClient, ShedStateGoal, ShedStateTransition } from "./protocol";
 import { serverPath, ensureServerBinary } from "./serverPath";
 import { initLog, log } from "./log";
 import { pageHtml } from "./render";
+import {
+  canAdoptSuccessor, knownGoalNames, restoredStateForDocumentText,
+  requestGoalLayout, requestGoalTransition, stateGoalReference,
+} from "./stateHistory";
 import {
   generateSidecar,
   hasShedBlocks,
@@ -23,12 +27,12 @@ import {
   sidecarPathFor,
   sidecarFresh,
   readSidecarShedNames,
-  shedNodeStartingAt,
 } from "./sidecar";
 import {
   ShedCodeLensProvider,
   expandShed,
   collapseShed,
+  collapseShedForDocument,
   currentExpanded,
   setInlineShedRefresh,
   removeExpandedForSave,
@@ -69,14 +73,37 @@ interface ShedPanel {
   refresh: () => Promise<void>;
 }
 
-interface ActionSourceSnapshot {
-  beforeText: string;
-  afterText: string;
+interface LocalShedState {
+  stateId: string;
+  documentText: string;
+  goals: ShedStateGoal[];
+  parentStateId?: string;
+  actionLabel?: string;
+  targetName?: string;
+  beforeGoal?: string;
+}
+
+interface LocalShedEdge {
+  parentStateId: string;
+  successorStateId: string;
+  goalId: string;
+  targetName: string;
+  actionId: string;
+  arguments: Record<string, unknown>;
+  beforeGoal: string;
+}
+
+interface LocalShedHistory {
+  currentStateId: string;
+  states: Map<string, LocalShedState>;
+  edges: LocalShedEdge[];
+  editorText: string;
+  editorVersion: number;
 }
 
 const openPanels = new Map<string, ShedPanel>(); // docUri -> panel
 const documentClients = new Map<string, LspClient>();
-const actionSourceSnapshots = new Map<string, Map<number, ActionSourceSnapshot>>();
+const localShedHistories = new Map<string, LocalShedHistory>();
 const sidecarJobs = new Map<string, Promise<boolean>>();
 let lensProvider: ShedCodeLensProvider;
 let out: vscode.OutputChannel;
@@ -111,31 +138,170 @@ async function applySourceSnapshot(
   const start = editor.document.positionAt(prefix);
   const end = editor.document.positionAt(current.length - suffix);
   const newText = replacement.slice(prefix, replacement.length - suffix);
-  return editor.edit((builder) =>
+  const applied = await editor.edit((builder) =>
     builder.replace(new vscode.Range(start, end), newText)
   );
+  // A successful edit transaction is not enough to claim that the requested
+  // projection is visible. The editor can be stale or the document can have
+  // changed while an adoption request was in flight; report a conflict unless
+  // the target snapshot is now the document contents.
+  return applied && editor.document.getText() === replacement;
 }
 
-function rememberActionSource(
-  docUri: string, transitionId: number, beforeText: string, afterText: string
-): void {
-  let snapshots = actionSourceSnapshots.get(docUri);
-  if (!snapshots) {
-    snapshots = new Map<number, ActionSourceSnapshot>();
-    actionSourceSnapshots.set(docUri, snapshots);
-  }
-  snapshots.set(transitionId, { beforeText, afterText });
+async function ensureLocalShedHistory(
+  client: LspClient, doc: vscode.TextDocument
+): Promise<LocalShedHistory> {
+  const docUri = doc.uri.toString();
+  const existing = localShedHistories.get(docUri);
+  if (existing) return existing;
+  const bootstrap = await client.createShedState(docUri);
+  const state: LocalShedState = {
+    stateId: bootstrap.stateId,
+    documentText: doc.getText(),
+    goals: bootstrap.goals,
+  };
+  const history: LocalShedHistory = {
+    currentStateId: state.stateId,
+    states: new Map([[state.stateId, state]]),
+    edges: [],
+    editorText: doc.getText(),
+    editorVersion: doc.version,
+  };
+  localShedHistories.set(docUri, history);
+  return history;
 }
 
-function syncActionSourceHistory(
-  docUri: string, transitions: Array<{ id: number }>
+function refreshEditorBaselineIfUnchanged(
+  editor: vscode.TextEditor, history: LocalShedHistory
 ): void {
-  const snapshots = actionSourceSnapshots.get(docUri);
-  if (!snapshots) return;
-  const liveIds = new Set(transitions.map((transition) => transition.id));
-  for (const id of snapshots.keys()) {
-    if (!liveIds.has(id)) snapshots.delete(id);
+  // Inline preview insertion/removal advances VS Code's document version while
+  // restoring identical source. Treat that as the same base revision; any
+  // actual source difference still blocks source adoption.
+  if (editor.document.getText() === history.editorText) {
+    history.editorVersion = editor.document.version;
   }
+}
+
+function selectedLocalState(history: LocalShedHistory): LocalShedState {
+  const state = history.states.get(history.currentStateId);
+  if (!state) throw new Error("selected proof state is missing from local history");
+  return state;
+}
+
+function postLocalHistoryState(docUri: string, panel?: ShedPanel): void {
+  const history = localShedHistories.get(docUri);
+  if (!history || !panel) return;
+  const canUndo = !!selectedLocalState(history).parentStateId;
+  const canRedo = history.edges.some((edge) => edge.parentStateId === history.currentStateId);
+  panel.panel.webview.postMessage({ cmd: "historyState", canUndo, canRedo });
+}
+
+async function selectLocalState(
+  editor: vscode.TextEditor, history: LocalShedHistory, targetStateId: string
+): Promise<boolean> {
+  const target = history.states.get(targetStateId);
+  if (!target) throw new Error("that proof state is no longer in local history");
+  // Root selection is local and immediate. Source adoption is a separate,
+  // compare-and-apply operation against the last editor revision we observed.
+  history.currentStateId = targetStateId;
+  // A local undo can return the editor buffer to a previously known snapshot
+  // while the cached baseline still names another branch. The snapshot itself
+  // is the compare token; an editor version change alone is not a conflict.
+  if (editor.document.getText() === target.documentText) {
+    history.editorText = target.documentText;
+    history.editorVersion = editor.document.version;
+    return true;
+  }
+  refreshEditorBaselineIfUnchanged(editor, history);
+  const safe = editor.document.version === history.editorVersion &&
+    editor.document.getText() === history.editorText;
+  if (!safe) return false;
+  if (target.documentText !== history.editorText) {
+    const applied = await applySourceSnapshot(editor, history.editorText, target.documentText);
+    if (!applied) return false;
+  }
+  history.editorText = target.documentText;
+  history.editorVersion = editor.document.version;
+  return true;
+}
+
+async function recordLocalTransition(
+  editor: vscode.TextEditor, history: LocalShedHistory,
+  transition: ShedStateTransition, actionId: string,
+  arguments_: Record<string, unknown>, targetName: string
+): Promise<boolean> {
+  const parent = history.states.get(transition.stateId);
+  if (!parent) throw new Error("transition refers to a proof state not in local history");
+  const beforeGoal = parent.goals.find((goal) =>
+    goal.name === targetName && goal.goalId === transition.goalId
+  );
+  if (!beforeGoal) throw new Error(`goal '${targetName}' is not present in the transition's source state`);
+  const next: LocalShedState = {
+    stateId: transition.successorStateId,
+    documentText: transition.documentText,
+    goals: transition.goals,
+    parentStateId: parent.stateId,
+    actionLabel: actionId,
+    targetName,
+    beforeGoal: beforeGoal.goal,
+  };
+  history.states.set(next.stateId, next);
+  history.edges.push({
+    parentStateId: parent.stateId,
+    successorStateId: next.stateId,
+    goalId: transition.goalId,
+    targetName,
+    actionId,
+    arguments: { ...arguments_ },
+    beforeGoal: next.beforeGoal ?? "",
+  });
+  // A request may target a known historical root while another root remains
+  // selected. Keep the checked successor in the local DAG, but only adopt it
+  // when that exact source root is selected and displayed in the editor.
+  if (!canAdoptSuccessor(history.currentStateId, editor.document.getText(),
+      parent.stateId, parent.documentText)) return false;
+  refreshEditorBaselineIfUnchanged(editor, history);
+  if (editor.document.getText() !== history.editorText) return false;
+  const applied = await applySourceSnapshot(editor, parent.documentText, next.documentText);
+  if (!applied) return false;
+  history.currentStateId = next.stateId;
+  history.editorText = next.documentText;
+  history.editorVersion = editor.document.version;
+  return true;
+}
+
+async function performLocalAction(
+  client: LspClient, editor: vscode.TextEditor, docUri: string,
+  shedName: string, actionId: string, arguments_: Record<string, unknown>
+): Promise<{ transition: ShedStateTransition; history: LocalShedHistory; applied: boolean }> {
+  let history = localShedHistories.get(docUri);
+  if (!history) {
+    if (!(await ensureSidecar(editor.document))) throw new Error("shed sidecar is unavailable");
+    history = await ensureLocalShedHistory(client, editor.document);
+  }
+  const transition = await requestGoalTransition(
+    client, history, docUri, shedName, actionId, arguments_
+  );
+  const applied = await recordLocalTransition(
+    editor, history, transition, actionId, arguments_, shedName
+  );
+  return { transition, history, applied };
+}
+
+async function currentStateActions(
+  client: LspClient, docUri: string, shedName: string
+) {
+  const history = localShedHistories.get(docUri);
+  if (!history) throw new Error("local proof-state history was not initialized");
+  const reference = stateGoalReference(history, shedName);
+  if (!reference) {
+    throw new Error(
+      `no locally known proof state contains an unresolved goal named '${shedName}'`
+    );
+  }
+  return client.queryShedStateActions(
+    docUri, reference.state.stateId, reference.goal.goalId
+  );
 }
 
 async function prefetchLayouts(doc: vscode.TextDocument): Promise<void> {
@@ -171,24 +337,13 @@ async function prefetchLayouts(doc: vscode.TextDocument): Promise<void> {
   }
 }
 
-async function submitDiscoveredAction(
-  client: LspClient, docUri: string, shedName: string, actionId: string,
-  arguments_: Record<string, unknown>
-) {
-  const state = await client.availableShedActions(docUri, shedName);
-  if (!state.actions.some((action) => action.id === actionId)) {
-    throw new Error(`action '${actionId}' is not available for shed '${shedName}'`);
-  }
-  return client.submitShedAction(
-    docUri, shedName, state.stateVersion, actionId, arguments_
-  );
-}
-
 async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<boolean> {
-  // Sidecar compilation reads the file from disk. Save dirty editor content
-  // first so a just-added marker is included instead of silently using an
-  // older but mtime-fresh sidecar.
-  if (doc.isDirty && !(await doc.save())) {
+  // Sidecar compilation reads the file from disk. Do not save editor content
+  // as a side effect of opening a shed view: that buffer may contain a local
+  // proof-state projection or edits that have not been adopted by the user.
+  // The state-addressed path can keep using its client-held root without the
+  // sidecar; a fresh bootstrap requires an explicit save first.
+  if (doc.isDirty) {
     vscode.window.showWarningMessage("Eponym: save the Nim file before opening its shed view");
     return false;
   }
@@ -248,7 +403,7 @@ async function ensureSidecar(doc: vscode.TextDocument, force = false): Promise<b
 export function activate(ctx: vscode.ExtensionContext) {
   out = vscode.window.createOutputChannel("Eponym");
   initLog(out);
-  log("[eponym] extension v0.1.18 activated");
+  log("[eponym] extension v0.1.19 activated");
 
   // Issue #190: eager pre-render. When a shed file is opened and its
   // sidecar is already fresh, fetch the shed layouts in the background so
@@ -273,13 +428,37 @@ export function activate(ctx: vscode.ExtensionContext) {
       const docUri = doc.uri.toString();
       layoutCache.delete(docUri);
       const entry = openPanels.get(docUri);
-      if (entry) {
-        // Keep the open LSP document current before the sidecar is read.
-        entry.client.didChange(docUri, doc.getText());
-      }
+      if (entry) entry.client.didChange(docUri, doc.getText());
       if (!(await ensureSidecar(doc, true))) return;
       lensProvider.refreshDoc(doc);
-      if (entry) await entry.refresh();
+
+      const history = localShedHistories.get(docUri);
+      const client = entry?.client ?? documentClients.get(docUri);
+      if (history && client) {
+        const bootstrap = await client.createShedState(docUri);
+        const state: LocalShedState = {
+          stateId: bootstrap.stateId,
+          documentText: doc.getText(),
+          goals: bootstrap.goals,
+        };
+        const current = selectedLocalState(history);
+        if (current.documentText !== doc.getText()) {
+          // A saved manual edit establishes a new root while keeping prior
+          // local states selectable as branches.
+          history.states.set(state.stateId, state);
+          history.currentStateId = state.stateId;
+        }
+        // Saving an adopted transition preserves its root and local edges.
+        history.editorText = doc.getText();
+        history.editorVersion = doc.version;
+        if (entry && state.goals.length > 0) entry.shedName = state.goals[0].name;
+        await entry?.refresh();
+      } else if (entry) {
+        await ensureLocalShedHistory(entry.client, doc);
+        const state = selectedLocalState(localShedHistories.get(docUri)!);
+        if (state.goals.length > 0) entry.shedName = state.goals[0].name;
+        await entry.refresh();
+      }
     })
   );
 
@@ -323,7 +502,11 @@ export function activate(ctx: vscode.ExtensionContext) {
         );
         return;
       }
-      if (!(await ensureSidecar(editor.document))) return;
+      // A client-held DAG already has the selected state's open goal set. Do
+      // not compile the disk sidecar here: this editor may contain an
+      // unsaved source projection from the preceding state transition.
+      const localHistory = localShedHistories.get(docUri);
+      if (!localHistory && !(await ensureSidecar(editor.document))) return;
 
       // Issue #190: cursor-aware default. With the cursor inside a shed
       // marker (`![ name ...]` or `shedHole(name)`), open that shed directly.
@@ -333,12 +516,26 @@ export function activate(ctx: vscode.ExtensionContext) {
       // back to the free-text box only when the sidecar lists nothing.
       const text = editor.document.getText();
       const cursorOff = requestedOffset ?? editor.document.offsetAt(editor.selection.active);
-      let shedName: string | undefined = shedAtCursor(text, cursorOff)?.name;
+      let shedName: string | undefined;
+      const activeInline = currentExpanded();
+      if (activeInline?.docUri === docUri && localHistory?.states.has(localHistory.currentStateId)) {
+        const currentState = selectedLocalState(localHistory);
+        if (currentState.goals.some((goal) => goal.name === activeInline.shedName)) {
+          shedName = activeInline.shedName;
+        }
+      }
+      if (!shedName) shedName = shedAtCursor(text, cursorOff)?.name;
       if (!shedName) {
         const inBlock = blockShedsAtCursor(text, cursorOff);
         if (inBlock.length === 1) shedName = inBlock[0].name;
       }
-      const shedNames = readSidecarShedNames(sidecarPathFor(editor.document.uri.fsPath));
+      const shedNames = localHistory
+        ? selectedLocalState(localHistory).goals.map((goal) => goal.name)
+        : readSidecarShedNames(sidecarPathFor(editor.document.uri.fsPath));
+      // The cursor can still point at the old source marker after a local
+      // transition (for example, case-split replaces it with clause goals).
+      // In that case let the picker target a goal in the selected state.
+      if (shedName && !shedNames.includes(shedName)) shedName = undefined;
       if (!shedName) {
         if (shedNames.length > 0) {
           const picked = await vscode.window.showQuickPick(shedNames, {
@@ -368,6 +565,20 @@ export function activate(ctx: vscode.ExtensionContext) {
         vscode.window.showErrorMessage("Eponym: could not start LSP server: " + String(e));
         return;
       }
+      try {
+        const history = await ensureLocalShedHistory(client, editor.document);
+        if (!stateGoalReference(history, shedName)) {
+          throw new Error(
+            `goal '${shedName}' has no unique state reference in local history; ` +
+            "select a history state that contains the unresolved goal"
+          );
+        }
+      } catch (e) {
+        vscode.window.showErrorMessage(`Eponym: could not initialize proof state: ${String(e)}`);
+        return;
+      }
+      // State queries are rooted in immutable client-selected proof states;
+      // no server history or transition acceptance message is involved.
       // Issue #208: the server's textDocument/codeAction path ("case-split"
       // in the webview) requires an open document; shedLayout/refineShed
       // work from disk and never needed this.
@@ -377,6 +588,32 @@ export function activate(ctx: vscode.ExtensionContext) {
         vscode.ViewColumn.Beside,
         { enableScripts: true }
       );
+      // Render a usable shell before the first asynchronous layout request.
+      // If LSP initialization/layout fails, the error is posted below; without
+      // this initial HTML there is no page to receive that message and the
+      // newly opened panel appears completely blank.
+      panel.webview.html = pageHtml(JSON.stringify({ box: {} }), shedName, shedNames);
+      let webviewReady = false;
+      let pendingRender: {
+        layout: unknown;
+        shedName: string;
+        shedNames: string[];
+      } | undefined;
+      let pendingActionMessage: string | undefined;
+      const renderPage = (layout: unknown, name: string, names: string[]) => {
+        if (!webviewReady) {
+          pendingRender = { layout, shedName: name, shedNames: names };
+          return;
+        }
+        void panel.webview.postMessage({ cmd: "rerender", layout, shedName: name, shedNames: names });
+      };
+      const showActionMessage = (text: string) => {
+        if (!webviewReady) {
+          pendingActionMessage = text;
+          return;
+        }
+        void panel.webview.postMessage({ cmd: "actionmsg", text });
+      };
       const entry: ShedPanel = {
         panel,
         client,
@@ -386,376 +623,208 @@ export function activate(ctx: vscode.ExtensionContext) {
       };
       const refresh = async () => {
         try {
-          // Prefer a prefetched layout (issue #190) when it matches the
-          // current sidecar; otherwise ask the server live.
-          const cached = layoutCache.get(docUri);
-          const fresh = cached && cached.mtime === sidecarMtime(editor.document.uri.fsPath);
-          const layoutJson =
-            fresh && cached.layouts.has(entry.shedName)
-              ? cached.layouts.get(entry.shedName)!
-              : JSON.stringify(await client.shedLayout(docUri, entry.shedName));
-          panel.webview.html = pageHtml(layoutJson, entry.shedName, entry.shedNames);
-          const history = await client.shedActionHistory(docUri);
-          syncActionSourceHistory(docUri, history.transitions);
-          panel.webview.postMessage({
-            cmd: "historyState",
-            canUndo: history.canUndo,
-            canRedo: history.canRedo,
-          });
+          const history = localShedHistories.get(docUri);
+          if (!history) throw new Error("local proof-state history is unavailable");
+          const selected = selectedLocalState(history);
+          const reference = selected.goals.some((item) => item.name === entry.shedName)
+            ? { state: selected, goal: selected.goals.find((item) => item.name === entry.shedName)! }
+            : stateGoalReference(history, entry.shedName) as
+              { state: LocalShedState; goal: { name: string; goalId: string } } | undefined;
+          const state = reference?.state;
+          const goal = reference?.goal;
+          if (!state || !goal) {
+            const known = knownGoalNames(history).includes(entry.shedName);
+            renderPage({ box: {} }, entry.shedName, []);
+            showActionMessage(known
+                ? `goal '${entry.shedName}' is known in multiple historical branches. ` +
+                  "Select a state where it is open from History, then choose the goal again."
+                : `No locally known proof state contains an unresolved goal named '${entry.shedName}'. ` +
+                  "Restore or declare a state that contains it.");
+            if (webviewReady) postLocalHistoryState(docUri, entry);
+            return;
+          }
+          entry.shedName = goal.name;
+          entry.shedNames = knownGoalNames(history);
+          const historical = state.stateId !== selected.stateId;
+          entry.panel.title = `Shed: ${goal.name}${historical ? " (history)" : ""}`;
+          const rendered = await requestGoalLayout(
+            client, history, docUri, entry.shedName
+          );
+          const layout = rendered.layout;
+          renderPage(layout.box, goal.name, entry.shedNames);
+          if (historical) {
+            showActionMessage(`Showing '${goal.name}' from a known historical state. Actions create a local branch; ` +
+              "select the successor in History to adopt its source projection.");
+          }
+          if (webviewReady) postLocalHistoryState(docUri, entry);
         } catch (e) {
-          panel.webview.postMessage({ cmd: "actionmsg", text: "layout error: " + String(e) });
+          showActionMessage("layout error: " + String(e));
         }
       };
       entry.refresh = refresh;
+      const collapseInlineBeforeAdoption = async () => {
+        if (!(await collapseShedForDocument(docUri))) {
+          throw new Error(
+            "could not remove the inline preview; the proof-state change was not applied"
+          );
+        }
+      };
       panel.webview.onDidReceiveMessage(async (m: any) => {
         try {
           if (m.cmd === "ready") {
-            const history = await client.shedActionHistory(docUri);
-            panel.webview.postMessage({
-              cmd: "historyState",
-              canUndo: history.canUndo,
-              canRedo: history.canRedo,
-            });
-          } else if (m.cmd === "switch-shed" && typeof m.shedName === "string") {
-            // Issue #190: in-view shed switching — no close/reopen.
-            entry.shedName = m.shedName;
-            if (!entry.shedNames.includes(m.shedName)) entry.shedNames.push(m.shedName);
-            entry.panel.title = `Shed: ${m.shedName}`;
-            await entry.refresh();
-          } else if (m.cmd === "intro") {
-            const state = await client.availableShedActions(docUri, entry.shedName);
-            const intro = state.actions.find((action) => action.id === "intro");
-            if (!intro) throw new Error("Intro is not applicable to this goal");
-            const res = await client.submitShedAction(
-              docUri, entry.shedName, state.stateVersion, "intro",
-              { count: m.count ?? 1 }
-            );
-            const line = res.nimLine - 1;
-            const startCh = res.nimCol - 1;
-            const startOffset = editor.document.offsetAt(
-              new vscode.Position(line, startCh)
-            );
-            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
-            if (!node || editor.document.positionAt(node.end).line !== line) {
-              throw new Error(`intro: could not find the shed marker for '${entry.shedName}'`);
+            webviewReady = true;
+            if (pendingRender) {
+              panel.webview.postMessage({ cmd: "rerender", ...pendingRender });
+              pendingRender = undefined;
             }
-            const endCh = editor.document.positionAt(node.end).character;
-            await editor.edit((b) =>
-              b.replace(new vscode.Range(line, startCh, line, endCh), res.term)
-            );
-            await editor.document.save();
-            layoutCache.delete(docUri);
-            if (!(await ensureSidecar(editor.document, true))) return;
-            lensProvider.refreshDoc(editor.document);
-            panel.webview.postMessage({
-              cmd: "actionmsg",
-              text: `introduced ${res.shedName}: ${res.status} (${res.yellowCount} yellow left)`,
-            });
-            await refresh();
-          } else if (m.cmd === "construct") {
-            const state = await client.availableShedActions(docUri, entry.shedName);
-            const construct = state.actions.find((action) => action.id === "construct");
-            const choices = construct?.arguments.find((argument) =>
-              argument.name === "constructor")?.choices?.map(String) ?? [];
-            if (choices.length === 0) {
-              panel.webview.postMessage({
-                cmd: "actionmsg",
-                text: "No constructor is known to fit this goal",
-              });
-              return;
+            if (pendingActionMessage) {
+              panel.webview.postMessage({ cmd: "actionmsg", text: pendingActionMessage });
+              pendingActionMessage = undefined;
             }
-            const constructor = await vscode.window.showQuickPick(
-              choices.map((label) => ({ label })),
-              { placeHolder: `Constructor for ${entry.shedName}` }
-            );
-            if (!constructor) return;
-            const res = await client.submitShedAction(
-              docUri, entry.shedName, state.stateVersion, "construct",
-              { constructor: constructor.label }
-            );
-            const line = res.nimLine - 1;
-            const startCh = res.nimCol - 1;
-            const startOffset = editor.document.offsetAt(
-              new vscode.Position(line, startCh)
-            );
-            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
-            if (!node || editor.document.positionAt(node.end).line !== line) {
-              throw new Error(`construct: could not find shed marker for '${entry.shedName}'`);
-            }
-            const endCh = editor.document.positionAt(node.end).character;
-            await editor.edit((b) =>
-              b.replace(new vscode.Range(line, startCh, line, endCh), res.term)
-            );
-            await editor.document.save();
-            layoutCache.delete(docUri);
-            if (!(await ensureSidecar(editor.document, true))) return;
-            lensProvider.refreshDoc(editor.document);
-            panel.webview.postMessage({
-              cmd: "actionmsg",
-              text: `constructed ${constructor.label}: ${res.status} (${res.yellowCount} yellow left)`,
-            });
-            await refresh();
-          } else if (m.cmd === "apply") {
-            const state = await client.availableShedActions(docUri, entry.shedName);
-            const apply = state.actions.find((action) => action.id === "apply");
-            const choices = apply?.arguments.find((argument) =>
-              argument.name === "candidate")?.choices?.map(String) ?? [];
-            if (choices.length === 0) {
-              panel.webview.postMessage({
-                cmd: "actionmsg",
-                text: "No local hypothesis is known to fit this goal",
-              });
-              return;
-            }
-            const candidate = await vscode.window.showQuickPick(
-              choices.map((label) => ({ label })),
-              { placeHolder: `Apply from context to ${entry.shedName}` }
-            );
-            if (!candidate) return;
-            const res = await client.submitShedAction(
-              docUri, entry.shedName, state.stateVersion, "apply",
-              { candidate: candidate.label }
-            );
-            const line = res.nimLine - 1;
-            const startCh = res.nimCol - 1;
-            const startOffset = editor.document.offsetAt(
-              new vscode.Position(line, startCh)
-            );
-            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
-            if (!node || editor.document.positionAt(node.end).line !== line) {
-              throw new Error(`apply: could not find shed marker for '${entry.shedName}'`);
-            }
-            const endCh = editor.document.positionAt(node.end).character;
-            await editor.edit((b) =>
-              b.replace(new vscode.Range(line, startCh, line, endCh), res.term)
-            );
-            await editor.document.save();
-            layoutCache.delete(docUri);
-            if (!(await ensureSidecar(editor.document, true))) return;
-            lensProvider.refreshDoc(editor.document);
-            panel.webview.postMessage({
-              cmd: "actionmsg",
-              text: `applied ${candidate.label}: ${res.status} (${res.yellowCount} yellow left)`,
-            });
-            await refresh();
-          } else if (m.cmd === "rewrite") {
-            const state = await client.availableShedActions(docUri, entry.shedName);
-            const rewriteAction = state.actions.find((action) => action.id === "rewrite");
-            const choices = rewriteAction?.arguments.find((argument) =>
-              argument.name === "rewrite")?.choices?.map(String) ?? [];
-            if (choices.length === 0) {
-              panel.webview.postMessage({
-                cmd: "actionmsg",
-                text: "No equality rewrite is known to fit this goal",
-              });
-              return;
-            }
-            const rewrite = await vscode.window.showQuickPick(
-              choices.map((label) => ({ label })),
-              { placeHolder: `Rewrite ${entry.shedName} using equality (choose direction)` }
-            );
-            if (!rewrite) return;
-            const res = await client.submitShedAction(
-              docUri, entry.shedName, state.stateVersion, "rewrite",
-              { rewrite: rewrite.label }
-            );
-            const line = res.nimLine - 1;
-            const startCh = res.nimCol - 1;
-            const startOffset = editor.document.offsetAt(
-              new vscode.Position(line, startCh)
-            );
-            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
-            if (!node || editor.document.positionAt(node.end).line !== line) {
-              throw new Error(`rewrite: could not find shed marker for '${entry.shedName}'`);
-            }
-            const endCh = editor.document.positionAt(node.end).character;
-            await editor.edit((b) =>
-              b.replace(new vscode.Range(line, startCh, line, endCh), res.term)
-            );
-            await editor.document.save();
-            layoutCache.delete(docUri);
-            if (!(await ensureSidecar(editor.document, true))) return;
-            lensProvider.refreshDoc(editor.document);
-            panel.webview.postMessage({
-              cmd: "actionmsg",
-              text: `rewrote using ${rewrite.label}: ${res.status} (${res.yellowCount} yellow left)`,
-            });
-            await refresh();
-          } else if (m.cmd === "refine" || m.cmd === "give") {
-            const sourceBefore = editor.document.getText();
-            const res = await submitDiscoveredAction(client, docUri,
-              entry.shedName, m.cmd, { term: m.term ?? "" });
-            const line = res.edit.nimLine - 1;
-            const startCh = res.edit.nimCol - 1;
-            const startOffset = editor.document.offsetAt(
-              new vscode.Position(line, startCh)
-            );
-            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
-            if (!node) throw new Error("Eponym: no shed marker at " +
-              `${res.edit.nimLine}:${res.edit.nimCol}`);
-            const end = editor.document.positionAt(node.end);
-            if (end.line !== line) throw new Error("Eponym: shed marker spans multiple lines");
-            await editor.edit((b) =>
-              b.replace(new vscode.Range(line, startCh, line, end.character), res.edit.term)
-            );
-            await editor.document.save();
-            layoutCache.delete(docUri);
-            if (!(await ensureSidecar(editor.document, true))) return;
-            const committed = await client.commitShedAction(docUri, res.id);
-            rememberActionSource(docUri, res.id, sourceBefore, editor.document.getText());
-            lensProvider.refreshDoc(editor.document);
-            panel.webview.postMessage({
-              cmd: "actionmsg",
-              text: `${m.cmd} ${entry.shedName}: ${committed.validation.status} ` +
-                `(${committed.validation.yellowCount} yellow left)`,
-            });
-            await refresh();
-          } else if (m.cmd === "case-split") {
-            // Issue #209: shed-aware case-split via eponym/caseSplitShed
-            // (term-level eliminator application; the old codeAction path
-            // rewrote .ep procs into clause-defs, which cannot round-trip
-            // through the nim ![...] node).
-            const variable = m.variable ?? "";
-            if (variable === "") {
-              panel.webview.postMessage({
-                cmd: "actionmsg",
-                text: "case-split: type a variable name first",
-              });
-              return;
-            }
-            const state = await client.availableShedActions(docUri, entry.shedName);
-            const splitAction = state.actions.find((action) => action.id === "caseSplit");
-            const choices = splitAction?.arguments.find((argument) =>
-              argument.name === "variable")?.choices?.map(String) ?? [];
-            if (!choices.includes(variable)) {
-              throw new Error(`'${variable}' is not a case-split choice for this goal`);
-            }
-            const sourceBefore = editor.document.getText();
-            const res = await client.submitShedAction(
-              docUri, entry.shedName, state.stateVersion, "caseSplit", { variable }
-            );
-            // Splice the eliminator term over the shed marker
-            // (same single-line span logic as refine).
-            const line = res.edit.nimLine - 1;
-            const startCh = res.edit.nimCol - 1;
-            const startOffset = editor.document.offsetAt(
-              new vscode.Position(line, startCh)
-            );
-            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
-            if (!node || editor.document.positionAt(node.end).line !== line) {
+            postLocalHistoryState(docUri, entry);
+            return;
+          }
+          if (m.cmd === "switch-shed" && typeof m.shedName === "string") {
+            const history = localShedHistories.get(docUri)!;
+            if (!stateGoalReference(history, m.shedName)) {
               throw new Error(
-                `case-split: could not find the shed marker for '${entry.shedName}'`
+                `goal '${m.shedName}' has no unique historical state; ` +
+                "select a state where it is open from History"
               );
             }
-            const endCh = editor.document.positionAt(node.end).character;
-            await editor.edit((b) =>
-              b.replace(
-                new vscode.Range(line, startCh, line, endCh),
-                res.edit.term
-              )
-            );
-            // Persist the source splice, then always compile it so the
-            // macro rewrites the sidecar with the newly-created sub-sheds.
-            // Force avoids same-millisecond mtime races with Auto Save and
-            // the onDidSave handler.
-            await editor.document.save();
-            layoutCache.delete(docUri);
-            if (await ensureSidecar(editor.document, true)) {
-              await client.commitShedAction(docUri, res.id);
-              rememberActionSource(docUri, res.id, sourceBefore, editor.document.getText());
-              lensProvider.refreshDoc(editor.document);
-              entry.shedName = res.subSheds[0];
-              await refresh();
+            entry.shedName = m.shedName;
+            await refresh();
+            return;
+          }
+          if (["intro", "construct", "apply", "rewrite", "case-split"].includes(m.cmd)) {
+            const available = await currentStateActions(client, docUri, entry.shedName);
+            const actionId = m.cmd === "case-split" ? "caseSplit" : m.cmd;
+            const descriptor = available.actions.find((action) => action.id === actionId);
+            if (!descriptor) throw new Error(`${m.cmd} is not applicable to this goal`);
+            let args: Record<string, unknown>;
+            if (m.cmd === "intro") {
+              args = { count: m.count ?? 1 };
+            } else if (m.cmd === "case-split") {
+              const variable = String(m.variable ?? "");
+              const choices = descriptor.arguments.find((arg) => arg.name === "variable")?.choices?.map(String) ?? [];
+              if (!variable || !choices.includes(variable)) {
+                throw new Error(`'${variable}' is not a case-split choice for this goal`);
+              }
+              args = { variable };
+            } else {
+              const argName = m.cmd === "construct" ? "constructor" :
+                m.cmd === "apply" ? "candidate" : "rewrite";
+              const choices = descriptor.arguments.find((arg) => arg.name === argName)?.choices?.map(String) ?? [];
+              if (choices.length === 0) throw new Error(`no ${m.cmd} choice is available`);
+              const picked = await vscode.window.showQuickPick(
+                choices.map((label) => ({ label })),
+                { placeHolder: `${m.cmd} for ${entry.shedName}` }
+              );
+              if (!picked) return;
+              args = { [argName]: picked.label };
             }
+            await collapseInlineBeforeAdoption();
+            const result = await performLocalAction(
+              client, editor, docUri, entry.shedName, actionId, args
+            );
+            if (result.applied) {
+              const successor = selectedLocalState(result.history);
+              const nextGoal = successor.goals.find((goal) => goal.name === entry.shedName) ?? successor.goals[0];
+              if (nextGoal) entry.shedName = nextGoal.name;
+            }
+            lensProvider.refreshDoc(editor.document);
             panel.webview.postMessage({
               cmd: "actionmsg",
-              text: `case-split ${variable}: ${res.subSheds.length} new sheds (${res.subSheds.join(", ")})`,
+              text: result.applied
+                ? `${m.cmd} ${entry.shedName}: ${result.transition.validation.status} ` +
+                  `(${result.transition.validation.yellowCount} open goals)`
+                : `checked ${m.cmd}; successor is stored in History. ` +
+                  "Select that successor in History to adopt its source projection.",
             });
-          } else if (m.cmd === "undo") {
-            const history = await client.shedActionHistory(docUri);
-            syncActionSourceHistory(docUri, history.transitions);
-            const last = history.transitions[history.cursor - 1];
-            const snapshot = last
-              ? actionSourceSnapshots.get(docUri)?.get(last.id)
-              : undefined;
-            if (!last || !snapshot) {
-              throw new Error("no source projection is available for the last checked action");
-            }
-            const res = await client.undoShedAction(docUri);
-            if (res.transitionId !== last.id) {
-              throw new Error("undo history changed while the action was being prepared");
-            }
-            const applied = await applySourceSnapshot(
-              editor, snapshot.afterText, snapshot.beforeText
-            );
-            if (!applied) throw new Error("undo refused because the editor source changed");
-            await editor.document.save();
-            layoutCache.delete(docUri);
-            if (!(await ensureSidecar(editor.document, true))) return;
-            await client.commitShedHistoryMove(docUri, res.transitionId, "undo");
-            entry.shedName = res.transition.action.target;
-            if (!entry.shedNames.includes(entry.shedName)) entry.shedNames.push(entry.shedName);
-            lensProvider.refreshDoc(editor.document);
-            panel.webview.postMessage({ cmd: "actionmsg", text: "undid the last checked shed action" });
             await refresh();
-          } else if (m.cmd === "redo") {
-            const history = await client.shedActionHistory(docUri);
-            syncActionSourceHistory(docUri, history.transitions);
-            const next = history.transitions[history.cursor];
-            const snapshot = next
-              ? actionSourceSnapshots.get(docUri)?.get(next.id)
-              : undefined;
-            if (!next || !snapshot) {
-              throw new Error("no source projection is available for the next checked action");
-            }
-            const res = await client.redoShedAction(docUri);
-            if (res.id !== next.id || editor.document.getText() !== snapshot.beforeText) {
-              throw new Error("redo history no longer matches the current source");
-            }
-            const line = res.edit.nimLine - 1;
-            const startCh = res.edit.nimCol - 1;
-            const startOffset = editor.document.offsetAt(new vscode.Position(line, startCh));
-            const node = shedNodeStartingAt(editor.document.getText(), startOffset);
-            if (!node || editor.document.positionAt(node.end).line !== line) {
-              throw new Error("redo could not locate the original shed marker");
-            }
-            const endCh = editor.document.positionAt(node.end).character;
-            await editor.edit((b) =>
-              b.replace(new vscode.Range(line, startCh, line, endCh), res.edit.term)
+            postLocalHistoryState(docUri, entry);
+            return;
+          }
+          if (m.cmd === "refine" || m.cmd === "give") {
+            await collapseInlineBeforeAdoption();
+            const result = await performLocalAction(
+              client, editor, docUri, entry.shedName, m.cmd, { term: m.term ?? "" }
             );
-            await editor.document.save();
-            layoutCache.delete(docUri);
-            if (!(await ensureSidecar(editor.document, true))) return;
-            await client.commitShedHistoryMove(docUri, res.id, "redo");
-            rememberActionSource(docUri, res.id, snapshot.beforeText, editor.document.getText());
-            const nextGoal = res.after.goals.find((goal) => goal.status === "yellow");
-            if (nextGoal) entry.shedName = nextGoal.shedName;
+            if (result.applied) {
+              const successor = selectedLocalState(result.history);
+              const nextGoal = successor.goals.find((goal) => goal.name === entry.shedName) ?? successor.goals[0];
+              if (nextGoal) entry.shedName = nextGoal.name;
+            }
             lensProvider.refreshDoc(editor.document);
-            panel.webview.postMessage({ cmd: "actionmsg", text: "replayed the checked shed action" });
+            panel.webview.postMessage({
+              cmd: "actionmsg",
+              text: result.applied
+                ? `${m.cmd} ${entry.shedName}: ${result.transition.validation.status} ` +
+                  `(${result.transition.validation.yellowCount} open goals)`
+                : `checked ${m.cmd}; successor is stored in History. ` +
+                  "Select that successor in History to adopt its source projection.",
+            });
             await refresh();
-          } else if (m.cmd === "history") {
-            const history = await client.shedActionHistory(docUri);
-            syncActionSourceHistory(docUri, history.transitions);
-            if (history.transitions.length === 0) {
-              panel.webview.postMessage({ cmd: "actionmsg", text: "no checked actions in this session" });
-              return;
+            postLocalHistoryState(docUri, entry);
+            return;
+          }
+          if (m.cmd === "undo" || m.cmd === "redo") {
+            const history = localShedHistories.get(docUri);
+            if (!history) throw new Error("there is no local proof-state history");
+            const current = selectedLocalState(history);
+            let targetId: string | undefined;
+            if (m.cmd === "undo") {
+              targetId = current.parentStateId;
+            } else {
+              const next = history.edges.filter((edge) => edge.parentStateId === current.stateId);
+              if (next.length === 1) targetId = next[0].successorStateId;
+              else if (next.length > 1) {
+                const picked = await vscode.window.showQuickPick(next.map((edge, index) => ({
+                  label: `${index + 1}. ${edge.actionId} ${edge.targetName}`,
+                  description: JSON.stringify(edge.arguments),
+                  stateId: edge.successorStateId,
+                })), { placeHolder: "Choose a local branch to redo" });
+                targetId = picked?.stateId;
+              }
             }
-            const selected = await vscode.window.showQuickPick(
-              history.transitions.map((transition, index) => ({
-                label: `${transition.applied ? "applied" : "undone"} ${index + 1}. ` +
-                  `${transition.action.kind} ${transition.action.target}`,
-                description: JSON.stringify(transition.action.arguments),
-                detail: transition.before.goal,
-              })),
-              { placeHolder: history.cursor > 0 && !history.canUndo
-                ? `Checked actions (${history.cursor} applied; stale in the current source)`
-                : `Checked actions (${history.cursor} applied)` }
-            );
-            if (selected) {
-              vscode.window.showInformationMessage(
-                `${selected.label}\nGoal before action: ${selected.detail}`
-              );
-            }
+            if (!targetId) throw new Error(m.cmd === "undo" ? "there is no local state to undo to" : "there is no local branch to redo");
+            await collapseInlineBeforeAdoption();
+            const applied = await selectLocalState(editor, history, targetId);
+            const selected = selectedLocalState(history);
+            if (selected.goals.length > 0) entry.shedName = selected.goals[0].name;
+            panel.webview.postMessage({
+              cmd: "actionmsg",
+              text: applied ? `${m.cmd} selected a locally known proof state` :
+                `proof state selected immediately; source adoption conflicted with editor changes`,
+            });
+            await refresh();
+            postLocalHistoryState(docUri, entry);
+            return;
+          }
+          if (m.cmd === "history") {
+            const history = localShedHistories.get(docUri);
+            if (!history) throw new Error("there is no local proof-state history");
+            const options = [...history.states.values()].map((state) => ({
+              label: `${state.stateId === history.currentStateId ? "selected · " : ""}` +
+                `${state.actionLabel ?? "initial"} ${state.targetName ?? "proof state"}`,
+              description: state.stateId,
+              detail: state.beforeGoal ?? state.goals[0]?.goal ?? "",
+              stateId: state.stateId,
+            }));
+            const picked = await vscode.window.showQuickPick(options,
+              { placeHolder: "Select a local proof-state branch" });
+            if (!picked) return;
+            await collapseInlineBeforeAdoption();
+            const applied = await selectLocalState(editor, history, picked.stateId);
+            const selected = selectedLocalState(history);
+            if (selected.goals.length > 0) entry.shedName = selected.goals[0].name;
+            panel.webview.postMessage({
+              cmd: "actionmsg",
+              text: applied ? "selected the local proof state" :
+                "selected the proof state locally; editor source conflicted and was left untouched",
+            });
+            await refresh();
+            postLocalHistoryState(docUri, entry);
           }
         } catch (e) {
           panel.webview.postMessage({ cmd: "actionmsg", text: "action failed: " + String(e) });
@@ -818,21 +887,26 @@ export function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument((event) => {
       const docUri = event.document.uri.toString();
+      const history = localShedHistories.get(docUri);
+      if (history) {
+        const liveText = event.document.getText();
+        const current = selectedLocalState(history);
+        if (current.documentText !== liveText) {
+          // VS Code Undo/Redo and File: Revert File restore text without going
+          // through the webview history controls. Follow a matching snapshot
+          // along this branch so the next goal query uses the represented root.
+          const restored = restoredStateForDocumentText(history, liveText);
+          if (restored) {
+            history.currentStateId = restored.stateId;
+            history.editorText = liveText;
+            history.editorVersion = event.document.version;
+          }
+        }
+      }
       const client = documentClients.get(docUri);
       client?.didChange(docUri, event.document.getText());
       const panel = openPanels.get(docUri);
-      if (client && panel) {
-        void client.shedActionHistory(docUri).then((history) => {
-          if (openPanels.get(docUri) !== panel) return;
-          panel.panel.webview.postMessage({
-            cmd: "historyState",
-            canUndo: history.canUndo,
-            canRedo: history.canRedo,
-          });
-        }).catch(() => {
-          // Keep the current button state if the LSP is shutting down.
-        });
-      }
+      postLocalHistoryState(docUri, panel);
     })
   );
   ctx.subscriptions.push(
@@ -840,6 +914,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       const docUri = doc.uri.toString();
       documentClients.get(docUri)?.shutdown();
       documentClients.delete(docUri);
+      localShedHistories.delete(docUri);
       openPanels.get(docUri)?.panel.dispose();
     })
   );
@@ -860,14 +935,25 @@ export function activate(ctx: vscode.ExtensionContext) {
         vscode.window.showErrorMessage("Eponym: no active text editor");
         return;
       }
-      if (!(await ensureSidecar(editor.document))) return;
+      // Existing client history is authoritative for layouts after an
+      // action. Recompiling the sidecar here could save that selected state
+      // merely because the user moved to another shed in the same file.
+      if (!localShedHistories.has(editor.document.uri.toString()) &&
+          !(await ensureSidecar(editor.document))) return;
       lensProvider.refreshDoc(editor.document);
       try {
         await expandShed(
           editor,
           inlineClient,
           { showButtons: inlineShowButtons() },
-          atOffset
+          atOffset,
+          async (client, doc, shedName) => {
+            const history = await ensureLocalShedHistory(client, doc);
+            const { layout } = await requestGoalLayout(
+              client, history, doc.uri.toString(), shedName
+            );
+            return layout.box;
+          }
         );
       } catch (e) {
         vscode.window.showErrorMessage(`Eponym: expand failed: ${String(e)}`);
@@ -877,216 +963,92 @@ export function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(
     vscode.commands.registerCommand("eponym.collapseShed", () => collapseShed())
   );
-  // Issue #221 follow-up: splice a returned term over the single-line
-  // shed marker at (nimLine, nimCol)
-  // (1-based, from the LSP). Returns false when the node can't be found.
-  async function spliceTermOverShed(
-    editor: vscode.TextEditor,
-    nimLine: number,
-    nimCol: number,
-    term: string
-  ): Promise<boolean> {
-    const line = nimLine - 1;
-    const startCh = nimCol - 1;
-    if (line < 0 || line >= editor.document.lineCount) return false;
-    const startOffset = editor.document.offsetAt(new vscode.Position(line, startCh));
-    const node = shedNodeStartingAt(editor.document.getText(), startOffset);
-    if (!node) return false;
-    const end = editor.document.positionAt(node.end);
-    if (end.line !== line) return false;
-    await editor.edit((b) =>
-      b.replace(new vscode.Range(line, startCh, line, end.character), term)
-    );
-    return true;
+  // Keyboard-bound actions share the panel's immutable state graph. Collapse
+  // the temporary inline text before reading or editing the document.
+  async function runInlineAction(
+    actionId: string, arguments_: Record<string, unknown>, label: string
+  ): Promise<void> {
+    const cur = currentExpanded();
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showErrorMessage("Eponym: no active text editor");
+      return;
+    }
+    if (!cur) {
+      vscode.window.showErrorMessage("Eponym: no shed expanded");
+      return;
+    }
+    const client = await inlineClient(editor.document);
+    if (!client) return;
+    try {
+      if (!(await collapseShed())) {
+        vscode.window.showErrorMessage(
+          `${label} cancelled: the inline view could not be removed, so the source state is unchanged.`
+        );
+        return;
+      }
+      await ensureLocalShedHistory(client, editor.document);
+      const result = await performLocalAction(
+        client, editor, cur.docUri, cur.shedName, actionId, arguments_
+      );
+      lensProvider.refreshDoc(editor.document);
+      vscode.window.showInformationMessage(result.applied
+        ? `${label}: ${result.transition.validation.status} ` +
+          `(${result.transition.validation.yellowCount} open goals)`
+        : `${label} checked; successor is stored in History. ` +
+          "Select that successor in History to adopt its source projection.");
+      const panel = openPanels.get(cur.docUri);
+      await panel?.refresh();
+      postLocalHistoryState(cur.docUri, panel);
+    } catch (e) {
+      vscode.window.showErrorMessage(`${label} failed: ${String(e)}`);
+    }
   }
 
-  // Keyboard-bound shed actions (i/r/c/g) operate on the expanded shed.
-  // They reuse the webview's refine/case-split flows via a transient client.
   ctx.subscriptions.push(
-    vscode.commands.registerCommand("eponym.shedIntro", async () => {
-      const cur = currentExpanded();
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        vscode.window.showErrorMessage("Eponym: no active text editor");
-        return;
-      }
-      if (!cur) {
-        vscode.window.showErrorMessage("Eponym: no shed expanded");
-        return;
-      }
-      const client = await inlineClient(editor.document);
-      if (!client) return;
-      try {
-        const res = await submitDiscoveredAction(
-          client, cur.docUri, cur.shedName, "intro", { count: 1 }
-        );
-        const ok = await spliceTermOverShed(editor, res.nimLine, res.nimCol, res.term);
-        if (!ok) {
-          vscode.window.showWarningMessage(
-            `Introduced ${cur.shedName} server-side, but could not locate its shed marker to splice.`
-          );
-          return;
-        }
-        await collapseShed();
-        await editor.document.save();
-        layoutCache.delete(editor.document.uri.toString());
-        if (!(await ensureSidecar(editor.document, true))) return;
-        lensProvider.refreshDoc(editor.document);
-        vscode.window.showInformationMessage(
-          `Introduced a binder for ${cur.shedName}: ${res.status} (${res.yellowCount} yellow left)`
-        );
-      } catch (e) {
-        vscode.window.showErrorMessage(`Intro failed: ${String(e)}`);
-      }
-    })
+    vscode.commands.registerCommand("eponym.shedIntro", () =>
+      runInlineAction("intro", { count: 1 }, "Intro")
+    )
   );
   ctx.subscriptions.push(
     vscode.commands.registerCommand("eponym.shedRefine", async () => {
       const cur = currentExpanded();
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        vscode.window.showErrorMessage("Eponym: no active text editor");
-        return;
-      }
       if (!cur) {
         vscode.window.showErrorMessage("Eponym: no shed expanded");
         return;
       }
       const term = await vscode.window.showInputBox({
-        prompt: `Refine shed ${cur.shedName} with term`,
-        placeHolder: "e.g. zero()",
+        prompt: `Refine shed ${cur.shedName} with an Eponym term`,
+        placeHolder: "e.g. zero or suc zero",
       });
-      if (term === undefined) return;
-      const client = await inlineClient(editor.document);
-      if (!client) return; // binary missing; actionable error already shown
-      try {
-        const sourceBefore = editor.document.getText();
-        const res = await submitDiscoveredAction(
-          client, cur.docUri, cur.shedName, "refine", { term }
-        );
-        // Complete the round-trip: splice the returned term over the shed
-        // node, collapse its virtual view, then save so the sidecar regenerates.
-        const ok = await spliceTermOverShed(
-          editor, res.edit.nimLine, res.edit.nimCol, res.edit.term
-        );
-        if (!ok) {
-          vscode.window.showWarningMessage(
-            `Refined ${cur.shedName} server-side, but could not locate its shed marker to splice.`
-          );
-          return;
-        }
-        await collapseShed();
-        await editor.document.save();
-        layoutCache.delete(editor.document.uri.toString());
-        if (!(await ensureSidecar(editor.document, true))) return;
-        await client.commitShedAction(cur.docUri, res.id);
-        rememberActionSource(cur.docUri, res.id, sourceBefore, editor.document.getText());
-        lensProvider.refreshDoc(editor.document);
-        vscode.window.showInformationMessage(
-          `Refined ${cur.shedName}: ${res.validation.status} ` +
-            `(${res.validation.yellowCount} yellow left)`
-        );
-      } catch (e) {
-        vscode.window.showErrorMessage(`Refine failed: ${String(e)}`);
-      }
+      if (term !== undefined) await runInlineAction("refine", { term }, "Refine");
     })
   );
   ctx.subscriptions.push(
     vscode.commands.registerCommand("eponym.shedCaseSplit", async () => {
       const cur = currentExpanded();
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        vscode.window.showErrorMessage("Eponym: no active text editor");
-        return;
-      }
       if (!cur) {
         vscode.window.showErrorMessage("Eponym: no shed expanded");
         return;
       }
       const variable = await vscode.window.showInputBox({
-        prompt: `Case-split shed ${cur.shedName} on variable`,
-        placeHolder: "e.g. n",
+        prompt: `Case-split shed ${cur.shedName} on variable`, placeHolder: "e.g. n",
       });
-      if (!variable) return;
-      const client = await inlineClient(editor.document);
-      if (!client) return; // binary missing; actionable error already shown
-      try {
-        const sourceBefore = editor.document.getText();
-        const res = await submitDiscoveredAction(
-          client, cur.docUri, cur.shedName, "caseSplit", { variable }
-        );
-        // Splice the eliminator term (carrying the new sub-shed nodes)
-        // over the shed node, then save so the recompile discovers them.
-        const ok = await spliceTermOverShed(
-          editor, res.edit.nimLine, res.edit.nimCol, res.edit.term
-        );
-        if (!ok) {
-          vscode.window.showWarningMessage(
-            `Case-split ${cur.shedName} server-side, but could not locate its shed marker to splice.`
-          );
-          return;
-        }
-        await collapseShed();
-        await editor.document.save();
-        layoutCache.delete(editor.document.uri.toString());
-        if (!(await ensureSidecar(editor.document, true))) return;
-        await client.commitShedAction(cur.docUri, res.id);
-        rememberActionSource(cur.docUri, res.id, sourceBefore, editor.document.getText());
-        lensProvider.refreshDoc(editor.document);
-        vscode.window.showInformationMessage(
-          `Case-split ${variable}: ${res.subSheds.length} new sheds (${res.subSheds.join(", ")})`
-        );
-      } catch (e) {
-        vscode.window.showErrorMessage(`Case-split failed: ${String(e)}`);
-      }
+      if (variable) await runInlineAction("caseSplit", { variable }, "Case-split");
     })
   );
   ctx.subscriptions.push(
     vscode.commands.registerCommand("eponym.shedGive", async () => {
       const cur = currentExpanded();
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        vscode.window.showErrorMessage("Eponym: no active text editor");
-        return;
-      }
       if (!cur) {
         vscode.window.showErrorMessage("Eponym: no shed expanded");
         return;
       }
       const term = await vscode.window.showInputBox({
-        prompt: `Give term for shed ${cur.shedName}`,
-        placeHolder: "e.g. suc(zero())",
+        prompt: `Give an Eponym term for shed ${cur.shedName}`,
+        placeHolder: "e.g. zero or suc zero",
       });
-      if (term === undefined) return;
-      const client = await inlineClient(editor.document);
-      if (!client) return; // binary missing; actionable error already shown
-      try {
-        const sourceBefore = editor.document.getText();
-        const res = await submitDiscoveredAction(
-          client, cur.docUri, cur.shedName, "give", { term }
-        );
-        const ok = await spliceTermOverShed(
-          editor, res.edit.nimLine, res.edit.nimCol, res.edit.term
-        );
-        if (!ok) {
-          vscode.window.showWarningMessage(
-            `Gave ${cur.shedName} server-side, but could not locate its shed marker to splice.`
-          );
-          return;
-        }
-        await collapseShed();
-        await editor.document.save();
-        layoutCache.delete(editor.document.uri.toString());
-        if (!(await ensureSidecar(editor.document, true))) return;
-        await client.commitShedAction(cur.docUri, res.id);
-        rememberActionSource(cur.docUri, res.id, sourceBefore, editor.document.getText());
-        lensProvider.refreshDoc(editor.document);
-        vscode.window.showInformationMessage(
-          `Gave ${cur.shedName}: ${res.validation.status}`
-        );
-      } catch (e) {
-        vscode.window.showErrorMessage(`Give failed: ${String(e)}`);
-      }
+      if (term !== undefined) await runInlineAction("give", { term }, "Give");
     })
   );
 }

@@ -2,7 +2,7 @@
   "name": "eponym-sheds",
   "displayName": "Eponym Sheds",
   "description": "Renders Eponym shed proof states (Epigram-style 2D boxes) from the eponym LSP server.",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "publisher": "raven6941",
   "license": "MIT",
   "engines": {
@@ -127,7 +127,7 @@
   "scripts": {
     "build": "tsc -p .",
     "smoke": "node out/smoke.js",
-    "test:headless": "node test/inline-shed.test.js"
+    "test:headless": "node test/inline-shed.test.js && node test/state-history.test.js && node test/sidecar.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

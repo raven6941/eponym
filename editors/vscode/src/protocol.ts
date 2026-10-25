@@ -65,11 +65,59 @@ export interface AvailableShedActions {
   actions: AvailableShedAction[];
 }
 
+
+export interface ShedStateGoal {
+  goalId: string;
+  name: string;
+  goal: string;
+  context: string[];
+  status: "white" | "yellow" | "brown";
+  nimLine: number;
+  nimCol: number;
+}
+
+export interface ShedStateBootstrap {
+  stateId: string;
+  nodes: StateNodeWire[];
+  goals: ShedStateGoal[];
+  environment: string;
+}
+
+export interface StateNodeWire {
+  id: string;
+  kind: string;
+  payload: string;
+  children: string[];
+  byteLength: number;
+}
+
+export interface ShedStateActions {
+  stateId: string;
+  goalId: string;
+  goal: string;
+  context: string[];
+  actions: AvailableShedAction[];
+}
+
+export interface ShedStateTransition {
+  stateId: string;
+  goalId: string;
+  successorStateId: string;
+  transitionId: string;
+  nodes: StateNodeWire[];
+  edit: { term: string; nimLine: number; nimCol: number };
+  documentText: string;
+  goals: ShedStateGoal[];
+  validation: { accepted: boolean; status: string; yellowCount: number };
+  subSheds: string[];
+}
+
 export class LspClient {
   private proc: ChildProcess;
   private buf = Buffer.alloc(0);
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+  private stateNodeStore = new Map<string, StateNodeWire>();
 
   constructor(serverPath: string) {
     this.proc = spawn(serverPath, [], { stdio: ["pipe", "pipe", "inherit"] });
@@ -200,6 +248,57 @@ export class LspClient {
       term,
       requireComplete,
     });
+  }
+
+  private rememberStateNodes(nodes: StateNodeWire[]): void {
+    for (const node of nodes) this.stateNodeStore.set(node.id, node);
+  }
+
+  async createShedState(docUri: string): Promise<ShedStateBootstrap> {
+    const state = await this.request("eponym/createShedState", {
+      textDocument: { uri: docUri },
+    }) as ShedStateBootstrap;
+    this.rememberStateNodes(state.nodes);
+    return state;
+  }
+
+  private async stateRequest<T>(method: string, docUri: string, stateId: string,
+                                goalId: string, extra: Record<string, unknown> = {}): Promise<T> {
+    const root = this.stateNodeStore.get(stateId);
+    if (!root) throw new Error(`client has no Merkle root node for state ${stateId}`);
+    let nodes: StateNodeWire[] = [root];
+    for (let attempts = 0; attempts < 64; attempts++) {
+      const result = await this.request(method, {
+        textDocument: { uri: docUri }, stateId, goalId, ...extra, nodes,
+      });
+      if (Array.isArray(result?.needsNodes)) {
+        nodes = result.needsNodes.map((id: string) => {
+          const node = this.stateNodeStore.get(id);
+          if (!node) throw new Error(`client is missing requested Merkle node ${id}`);
+          return node;
+        });
+        continue;
+      }
+      if (Array.isArray(result?.nodes)) this.rememberStateNodes(result.nodes);
+      return result as T;
+    }
+    throw new Error("state recovery exceeded 64 node-transfer rounds");
+  }
+
+  queryShedStateActions(docUri: string, stateId: string, goalId: string): Promise<ShedStateActions> {
+    return this.stateRequest("eponym/queryShedStateActions", docUri, stateId, goalId);
+  }
+
+  transitionShedState(docUri: string, stateId: string, goalId: string,
+                      actionId: string, arguments_: Record<string, unknown>): Promise<ShedStateTransition> {
+    return this.stateRequest("eponym/transitionShedState", docUri, stateId, goalId,
+      { action: { id: actionId, arguments: arguments_ } });
+  }
+
+  shedStateLayout(docUri: string, stateId: string, goalId: string): Promise<{
+    stateId: string; goalId: string; name: string; box: BoxJson;
+  }> {
+    return this.stateRequest("eponym/shedStateLayout", docUri, stateId, goalId);
   }
 
   /** Run Refine, Give, or Case-split through the common transition contract (#429). */

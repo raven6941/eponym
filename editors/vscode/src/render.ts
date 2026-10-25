@@ -88,7 +88,7 @@ export function pageHtml(layoutJson: string, shedName: string, shedNames: string
 </div>
 <script>
 const vscode = acquireVsCodeApi();
-const layout = ${layoutJson};
+let layout = ${layoutJson};
 let selectedHole = null;
 function escHtml(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 function renderBox(b){
@@ -107,13 +107,23 @@ function renderBox(b){
   const attrs = isHole ? ' data-hole="'+holeIds[0]+'" data-goal="'+escHtml(b.holeGoal||'')+'"' : '';
   return '<div class="box'+(isHole?' hole':'')+'"'+attrs+'>'+inner+'</div>';
 }
-document.getElementById('tree').innerHTML = renderBox(layout.box);
-document.querySelectorAll('.hole').forEach(el=>{
+function renderPage(nextLayout, shedName, shedNames){
+  layout = nextLayout;
+  selectedHole = null;
+  const names = shedNames && shedNames.length ? shedNames : [shedName];
+  const picker = document.getElementById('shedpicker');
+  picker.innerHTML = names.map(name => '<option value="'+escHtml(name)+'">'+escHtml(name)+'</option>').join('');
+  picker.value = shedName;
+  document.getElementById('goalpane').textContent = 'Click a hole (?n) to see its goal.';
+  document.getElementById('tree').innerHTML = renderBox(layout.box);
+  document.querySelectorAll('.hole').forEach(el=>{
   el.addEventListener('click', ()=>{
     selectedHole = el.getAttribute('data-hole');
     document.getElementById('goalpane').textContent = '_'+selectedHole+' : '+el.getAttribute('data-goal');
   });
-});
+  });
+}
+renderPage(layout, document.getElementById('shedpicker').value, ${JSON.stringify(names)});
 function refine(){ const t=document.getElementById('term').value; vscode.postMessage({cmd:'refine', term:t, hole:selectedHole}); }
 function give(){ const t=document.getElementById('term').value; vscode.postMessage({cmd:'give', term:t, hole:selectedHole}); }
 function casesplit(){ const v=document.getElementById('term').value; vscode.postMessage({cmd:'case-split', variable:v, hole:selectedHole}); }
@@ -132,7 +142,7 @@ window.addEventListener('message', e=>{
     document.getElementById('undoButton').disabled=!m.canUndo;
     document.getElementById('redoButton').disabled=!m.canRedo;
   }
-  if(m.cmd==='rerender'){ location.reload(); }
+  if(m.cmd==='rerender') renderPage(m.layout, m.shedName, m.shedNames);
 });
 vscode.postMessage({cmd:'ready'});
 </script></body></html>`;

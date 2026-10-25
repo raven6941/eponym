@@ -66,10 +66,15 @@ function makeMockVscode() {
   }
 
   function makeEditor(doc) {
+    let nextEditResult = true;
     return {
       document: doc,
       selection: { active: new Position(0, 0) },
       edit: async (fn) => {
+        if (!nextEditResult) {
+          nextEditResult = true;
+          return false;
+        }
         const edits = [];
         const eb = {
           insert: (pos, text) => edits.push({ type: "insert", pos, text }),
@@ -79,6 +84,7 @@ function makeMockVscode() {
         doc._applyEdit(edits);
         return true;
       },
+      _setNextEditResult: (result) => { nextEditResult = result; },
     };
   }
 

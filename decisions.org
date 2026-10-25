@@ -3871,3 +3871,28 @@
   representation. Factory construction costs once per distinct index
   tuple (closure allocation); factories may be memoized on the index
   value. This direction is folded into #402 as its output shape.
+
+* 2026-10-23 — Shed proof states are client-selected content-addressed roots (Aaron)
+
+  Decision: interactive shed state is an immutable, versioned Merkle DAG.
+  Every state-dependent request names a state root and (for actions) a goal
+  ID. The LSP computes a hypothetical checked successor and returns its root;
+  the client decides locally whether to select it. The LSP never tracks the
+  active editor root and does not require a client adoption/commit message.
+
+  The client owns undo/redo and branch selection, so moving to a previously
+  received root is immediate and does not depend on server responsiveness.
+  Content IDs identify canonical bytes only; they do not establish that a
+  state or transition has been checked. The LSP verifies supplied node hashes
+  and checker-validates each new transition under a fingerprinted environment.
+  A bounded cache is an optimization: if a referenced node was evicted, the
+  server returns the missing IDs and the client resends their node closure.
+
+  Applying a selected source state to the shared Nim document remains an
+  editor-side operation guarded by a source revision/hash comparison. A
+  conflict preserves the selected in-memory state and does not silently
+  overwrite external edits. This design replaces the active VS Code
+  URI-keyed pending-commit/history contract while keeping disk adoption
+  document-scoped. The schema and protocol are specified in
+  =docs/shed-state-dag.md=; #450 probes the two-goal refine/cache-miss case and
+  #451 implements the full editor action surface after the experiment succeeded.

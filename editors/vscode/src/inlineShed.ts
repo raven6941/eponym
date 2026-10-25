@@ -104,10 +104,11 @@ export function setInlineShedRefresh(callback: () => void): void {
   refreshCodeLenses = callback;
 }
 
-async function clearExpanded(): Promise<void> {
+async function clearExpanded(): Promise<boolean> {
   log("[eponym] clearExpanded called, expanded=" + (expanded ? expanded.shedName : "null"));
   if (expanded) {
-    const { editor, anchorLine, viewLineCount } = expanded;
+    const previous = expanded;
+    const { editor, anchorLine, viewLineCount } = previous;
     // Clear state before editing so resulting editor events cannot recurse.
     expanded = null;
     const delRange = new vscode.Range(
@@ -115,9 +116,16 @@ async function clearExpanded(): Promise<void> {
       new vscode.Position(anchorLine + viewLineCount + 1, 0)
     );
     try {
-      await editor.edit((eb) => eb.delete(delRange));
+      const removed = await editor.edit((eb) => eb.delete(delRange));
+      log(`[eponym] clearExpanded: editor edit returned ${removed}`);
+      if (!removed) {
+        expanded = previous;
+        return false;
+      }
     } catch {
-      // The editor may have been closed while the view was expanded.
+      // Keep the view state so the user can retry the collapse.
+      expanded = previous;
+      return false;
     }
   }
   if (cursorListener) {
@@ -126,6 +134,17 @@ async function clearExpanded(): Promise<void> {
   }
   vscode.commands.executeCommand("setContext", "eponym.shedExpanded", false);
   refreshCodeLenses?.();
+  return true;
+}
+
+function collapseAfterCursorLeaves(): void {
+  void clearExpanded().then((removed) => {
+    if (!removed) {
+      vscode.window.showWarningMessage(
+        "Eponym: could not remove the inline view; no shed action was sent. Try Escape again."
+      );
+    }
+  });
 }
 
 /** Remove the preview through VS Code's supported will-save edit mechanism. */
@@ -152,15 +171,23 @@ export function removeExpandedForSave(docUri: string): vscode.TextEdit[] {
  */
 function onCursorChange(e: vscode.TextEditorSelectionChangeEvent): void {
   if (!expanded) return;
+  const activeEditor = vscode.window.activeTextEditor;
+  // VS Code can emit a queued selection event for another editor after the
+  // preview edit. Only an event from the currently active editor represents
+  // the user's cursor leaving this inline view.
+  if (e.textEditor !== activeEditor) {
+    log("[eponym] onCursorChange: ignoring inactive editor selection");
+    return;
+  }
   if (e.textEditor.document.uri.toString() !== expanded.docUri) {
-    log("[eponym] onCursorChange: different doc, clearing");
-    void clearExpanded();
+    log("[eponym] onCursorChange: active selection is in a different doc, clearing");
+    collapseAfterCursorLeaves();
     return;
   }
   const line = e.selections[0].active.line;
   const lo = expanded.anchorLine;
   const hi = expanded.anchorLine + expanded.viewLineCount;
-  if (line < lo || line > hi) void clearExpanded();
+  if (line < lo || line > hi) collapseAfterCursorLeaves();
 }
 
 /**
@@ -173,7 +200,8 @@ export async function expandShed(
   editor: vscode.TextEditor,
   getClient: (doc: vscode.TextDocument) => Promise<LspClient | null>,
   opts: { showButtons: boolean },
-  atOffset?: number
+  atOffset?: number,
+  getLayout?: (client: LspClient, doc: vscode.TextDocument, shedName: string) => Promise<BoxJson>
 ): Promise<void> {
   const doc = editor.document;
   // CodeLens clicks pass the shed marker's offset (clicking doesn't move the
@@ -188,7 +216,10 @@ export async function expandShed(
   const shedName = at.name;
 
   // Collapse any existing expansion first
-  await clearExpanded();
+  if (!(await clearExpanded())) {
+    vscode.window.showWarningMessage("Eponym: could not remove the current inline view");
+    return;
+  }
   log("[eponym] expandShed: cleared");
 
   let client: LspClient | null;
@@ -204,8 +235,12 @@ export async function expandShed(
   const docUri = doc.uri.toString();
   let box: BoxJson;
   try {
-    const res = await client.shedLayout(docUri, shedName);
-    box = res.box;
+    if (getLayout) {
+      box = await getLayout(client, doc, shedName);
+    } else {
+      const res = await client.shedLayout(docUri, shedName);
+      box = res.box;
+    }
     log("[eponym] expandShed: layout ok, box keys=" + Object.keys(box ?? {}).join(","));
   } catch (e) {
     log("[eponym] expandShed: shedLayout failed: " + String(e));
@@ -218,7 +253,16 @@ export async function expandShed(
   const viewLines = text.split("\n");
   log("[eponym] expandShed: rendered " + viewLines.length + " lines");
 
-  const anchorLine = doc.positionAt(at.start).line;
+  // Resolving the requested state may replace the document snapshot. Re-find
+  // the marker by name after that async work instead of using the old offset.
+  const currentMarker = shedBlocks(doc.getText())
+    .flatMap((block) => block.sheds)
+    .find((shed) => shed.name === shedName);
+  if (!currentMarker) {
+    vscode.window.showErrorMessage(`Eponym: shed marker '${shedName}' disappeared while selecting its proof state`);
+    return;
+  }
+  const anchorLine = doc.positionAt(currentMarker.start).line;
   const insertPos = new vscode.Position(anchorLine + 1, 0);
   const ok = await editor.edit((eb) => eb.insert(insertPos, viewLines.join("\n") + "\n"));
   if (!ok) {
@@ -235,8 +279,14 @@ export async function expandShed(
 }
 
 /** Collapse the inline view (bound to Escape via when-clause). */
-export async function collapseShed(): Promise<void> {
-  await clearExpanded();
+export async function collapseShed(): Promise<boolean> {
+  return clearExpanded();
+}
+
+/** Remove an inline preview before adopting a proof state for its document. */
+export async function collapseShedForDocument(docUri: string): Promise<boolean> {
+  if (!expanded || expanded.docUri !== docUri) return true;
+  return clearExpanded();
 }
 
 /** The currently expanded shed, if any (for action commands). */
