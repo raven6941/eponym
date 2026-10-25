@@ -38,9 +38,13 @@ import unify  # HoleInfo, zonk (issue #58)
 import sheds_mac  # shedGoalAndCtx for residual refinement holes
 import sheds  # ShedInfo, semanticShedState, renderShedHover, sidecar IO
 import shed_layout  # Box, layoutShed, boxToJson (issue #135)
+import shed_state
+import ../experimental/shed_state_dag
+import ../experimental/sha256
 
 const MaxShedHistoryTransitions = 64
 const MaxShedActionStateVersions = 128
+const MaxShedStateNodes = 4096
 
 type
   ShedActionKind* = enum
@@ -102,6 +106,7 @@ type
     documentRevisions*: seq[tuple[uri: string, revision: int]]
     shedActionStateVersions*: seq[ShedActionStateVersion]
     nextShedActionStateVersion*: int
+    stateNodeCache*: NodeCache
 
 proc readMessage(): JsonNode =
   ## Read one LSP message from stdin (Content-Length framed).
@@ -878,32 +883,30 @@ proc freshShedName(base: string, used: var seq[string]): string =
     inc suffix
   used.add(result)
 
-proc refineShed*(nimFile, shedName, term: string,
-                 requireComplete = false):
+proc cloneShedInfos(input: seq[ShedInfo]): seq[ShedInfo] =
+  result = newSeq[ShedInfo](input.len)
+  for i, item in input:
+    result[i] = item
+    result[i].ctx = newSeq[string](item.ctx.len)
+    for j, value in item.ctx: result[i].ctx[j] = value
+    result[i].goalPi = newSeq[string](item.goalPi.len)
+    for j, value in item.goalPi: result[i].goalPi[j] = value
+
+proc refineShedPlan*(nimFile, shedName, term: string,
+                     inputSheds: seq[ShedInfo], inputErrMsg: string,
+                     updatedSheds: var seq[ShedInfo],
+                     requireComplete = false):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           status: string, yellowCount: int] =
-  ## Issue #137: the server-owned refine round-trip for real `.nim` shed
-  ## documents -- the #136 gap. The #58 `textDocument/codeAction` path
-  ## elaborates document text as Eponym source, which a `.nim` file is
-  ## not; here the client sends only (shedName, term) and the server does
-  ## the whole loop: fill the hole in the macro-recorded generated source
-  ## (`ShedInfo.genSrc`), refresh statuses, rewrite the sidecar, and
-  ## return a Nim splice plus its replacement position (`nimLine`,
-  ## `nimCol`: 1-based start of the original shed marker). Residual `_`
-  ## holes become `shedHole(name)` markers in the splice and new sidecar
-  ## entries, so recompiling the source preserves their goals.
+  ## Compute a checked refine result without reading or writing the
+  ## document or sidecar. The caller owns persistence/adoption. This pure
+  ## planning boundary is used by the state-DAG experiment (#450).
   ##
   ## Sheds from other shedsBlock expansions in the same file are
   ## identified by sharing the block's `genSrc` string: their sources are
   ## updated to the filled source and their generated-source hole
   ## positions shifted, while sheds from other blocks are untouched.
-  let sc = sidecarPath(nimFile)
-  if not fileExists(sc):
-    return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)",
-            "", 0, 0, "", 0)
-  let (sheds0, errMsg0) = readShedSidecarEx(sc)
-  var sheds = sheds0
+  var sheds = cloneShedInfos(inputSheds)
   var si = -1
   for i in 0 ..< sheds.len:
     if sheds[i].name == shedName:
@@ -949,11 +952,12 @@ proc refineShed*(nimFile, shedName, term: string,
   # generated source so low-precedence forms such as `lam p. ...` do not
   # absorb the following application arguments. The client receives a Nim
   # splice, with residual holes converted to nested shed markers below.
+  let rejectionLabel = if requireComplete: "give rejected" else: "refine rejected"
   let wrappedTerm = "(" & term & ")"
   let f = fillHoleAt(oldSrc, holeLine1 - 1, holeCol1 - 1,
                      wrappedTerm, baseDir)
   if not f.ok:
-    return (false, "refine rejected: " & f.why, "", 0, 0, "", 0)
+    return (false, rejectionLabel & ": " & f.why, "", 0, 0, "", 0)
   let newSrc = f.newSrc
   let fillOffset = sourceOffset(oldSrc, holeLine1, holeCol1)
   if fillOffset < 0:
@@ -968,10 +972,10 @@ proc refineShed*(nimFile, shedName, term: string,
   try:
     let r = elabCheckHolesDir(newSrc, baseDir)
     if r.errMsg != "":
-      return (false, "refine rejected: " & r.errMsg, "", 0, 0, "", 0)
+      return (false, rejectionLabel & ": " & r.errMsg, "", 0, 0, "", 0)
     checked = r.ms
   except ParseError as e:
-    return (false, "refine rejected: parse error: " & e.msg,
+    return (false, rejectionLabel & ": parse error: " & e.msg,
             "", 0, 0, "", 0)
 
   var residual: seq[tuple[offset, holeIdx: int, hole: HoleInfo]] = @[]
@@ -1055,7 +1059,8 @@ proc refineShed*(nimFile, shedName, term: string,
       sheds.insert(child, si + i)
 
   refreshShedStatuses(sheds, newSrc, baseDir, onlyGenSrc = newSrc)
-  writeShedSidecar(nimFile, sheds, errMsg0)  # keep the doc-level message
+    # Do not persist: this result is still hypothetical until the client
+    # chooses a source projection to adopt.
   var yellowCount = 0
   for s in sheds:
     if s.status == ssYellow: inc yellowCount
@@ -1070,10 +1075,31 @@ proc refineShed*(nimFile, shedName, term: string,
   if not foundResponseShed:
     return (false, "internal error: refinement result shed metadata missing",
             "", 0, 0, "", 0)
+  updatedSheds = sheds
   (true, "", clientTerm, spliceLine, spliceCol,
    shedStatusToStr(responseShed.status), yellowCount)
 
-proc introShed*(nimFile, shedName: string, count = 1):
+proc refineShed*(nimFile, shedName, term: string,
+                 requireComplete = false):
+    tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
+          status: string, yellowCount: int] =
+  ## Legacy disk-backed adapter. The state-addressed protocol calls
+  ## refineShedPlan directly and leaves source/sidecar adoption to VS Code.
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)",
+            "", 0, 0, "", 0)
+  let (sheds, errMsg) = readShedSidecarEx(sc)
+  var updated: seq[ShedInfo] = @[]
+  result = refineShedPlan(nimFile, shedName, term, sheds, errMsg,
+                          updated, requireComplete)
+  if result.ok:
+    writeShedSidecar(nimFile, updated, errMsg)
+
+proc introShedPlan*(nimFile, shedName: string, count: int,
+                    inputSheds: seq[ShedInfo], inputErrMsg: string,
+                    updatedSheds: var seq[ShedInfo]):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           status: string, yellowCount: int] =
   ## Goal-directed Intro for a real `.nim` shed. The selected Pi binders
@@ -1082,11 +1108,7 @@ proc introShed*(nimFile, shedName: string, count = 1):
   ## Clients request the semantic operation and never synthesize lambda text.
   if count < 1:
     return (false, "Intro needs a positive binder count", "", 0, 0, "", 0)
-  let sc = sidecarPath(nimFile)
-  if not fileExists(sc):
-    return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)", "", 0, 0, "", 0)
-  let (sheds, _) = readShedSidecarEx(sc)
+  let sheds = inputSheds
   var si = -1
   for i, shed in sheds:
     if shed.name == shedName:
@@ -1156,13 +1178,29 @@ proc introShed*(nimFile, shedName: string, count = 1):
       clientPrefixes.add("lam(" & clientName & ", " & domain & ", ")
     ctx = @[CtxEntry(name: name, ty: binder.domain, qty: toQty(binder.qty))] & ctx
   checkedTerm.add("?")
-  result = refineShed(nimFile, shedName, checkedTerm)
+  var plannedSheds: seq[ShedInfo] = @[]
+  result = refineShedPlan(nimFile, shedName, checkedTerm, sheds,
+                          inputErrMsg, plannedSheds)
   if result.ok:
+    updatedSheds = plannedSheds
     let residualBody = result.term[checkedPrefixLen .. ^1]
     result.term = clientPrefixes.join("") & residualBody & repeat(")", count)
 
-proc refineConstructorsShed*(nimFile, shedName: string,
-                             selected = ""):
+proc introShed*(nimFile, shedName: string, count = 1):
+    tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
+          status: string, yellowCount: int] =
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)", "", 0, 0, "", 0)
+  let (sheds, errMsg) = readShedSidecarEx(sc)
+  var updated: seq[ShedInfo] = @[]
+  result = introShedPlan(nimFile, shedName, count, sheds, errMsg, updated)
+  if result.ok: writeShedSidecar(nimFile, updated, errMsg)
+
+proc refineConstructorsShedPlan*(nimFile, shedName: string, selected: string,
+                             inputSheds: seq[ShedInfo], inputErrMsg: string,
+                             updatedSheds: var seq[ShedInfo]):
     tuple[ok: bool, why: string, constructors: seq[string], term: string,
           nimLine, nimCol: int, status: string, yellowCount: int] =
   ## Goal-directed constructor refinement (#426). Candidate feasibility is
@@ -1170,11 +1208,7 @@ proc refineConstructorsShed*(nimFile, shedName: string,
   ## holes for its complete Pi telescope and checked against the selected
   ## shed goal. The probe never writes the sidecar. Selecting a candidate
   ## delegates to refineShed so generated field goals become real sheds.
-  let sc = sidecarPath(nimFile)
-  if not fileExists(sc):
-    return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
-  let (sheds, _) = readShedSidecarEx(sc)
+  let sheds = inputSheds
   var si = -1
   for i, shed in sheds:
     if shed.name == shedName: si = i; break
@@ -1243,14 +1277,31 @@ proc refineConstructorsShed*(nimFile, shedName: string,
     return (false, "constructor '" & selected &
             "' is not feasible for this goal; available: " & candidates.join(", "),
             candidates, "", 0, 0, "", 0)
-  let refined = refineShed(nimFile, shedName, selectedTerm)
+  var plannedSheds: seq[ShedInfo] = @[]
+  let refined = refineShedPlan(nimFile, shedName, selectedTerm, sheds,
+                               inputErrMsg, plannedSheds)
   if not refined.ok:
     return (false, refined.why, candidates, "", 0, 0, "", 0)
+  updatedSheds = plannedSheds
   (true, "", candidates, refined.term, refined.nimLine, refined.nimCol,
    refined.status, refined.yellowCount)
 
-proc refineFromContextShed*(nimFile, shedName: string,
-                            selected = ""):
+proc refineConstructorsShed*(nimFile, shedName: string, selected = ""):
+    tuple[ok: bool, why: string, constructors: seq[string], term: string,
+          nimLine, nimCol: int, status: string, yellowCount: int] =
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
+  let (sheds, errMsg) = readShedSidecarEx(sc)
+  var updated: seq[ShedInfo] = @[]
+  result = refineConstructorsShedPlan(nimFile, shedName, selected, sheds, errMsg, updated)
+  if result.ok and selected.len > 0:
+    writeShedSidecar(nimFile, updated, errMsg)
+
+proc refineFromContextShedPlan*(nimFile, shedName: string, selected: string,
+                            inputSheds: seq[ShedInfo], inputErrMsg: string,
+                            updatedSheds: var seq[ShedInfo]):
     tuple[ok: bool, why: string, candidates: seq[string], term: string,
           nimLine, nimCol: int, status: string, yellowCount: int] =
   ## Goal-directed Apply (#427). Each local hypothesis is tried as a head,
@@ -1258,11 +1309,7 @@ proc refineFromContextShed*(nimFile, shedName: string,
   ## holes can be solved from the expected goal and validates the residual
   ## dependent argument goals. Candidate enumeration is read-only; applying
   ## one uses refineShed's checked round-trip.
-  let sc = sidecarPath(nimFile)
-  if not fileExists(sc):
-    return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
-  let (sheds, _) = readShedSidecarEx(sc)
+  let sheds = inputSheds
   var si = -1
   for i, shed in sheds:
     if shed.name == shedName: si = i; break
@@ -1356,25 +1403,38 @@ proc refineFromContextShed*(nimFile, shedName: string,
     return (false, "candidate '" & selected &
             "' is not feasible for this goal; available: " & candidates.join(", "),
             candidates, "", 0, 0, "", 0)
-  let refined = refineShed(nimFile, shedName, selectedTerm)
+  var plannedSheds: seq[ShedInfo] = @[]
+  let refined = refineShedPlan(nimFile, shedName, selectedTerm, sheds,
+                               inputErrMsg, plannedSheds)
   if not refined.ok:
     return (false, refined.why, candidates, "", 0, 0, "", 0)
+  updatedSheds = plannedSheds
   (true, "", candidates, refined.term, refined.nimLine, refined.nimCol,
    refined.status, refined.yellowCount)
 
-proc refineEqualityShed*(nimFile, shedName: string,
-                         selected = ""):
+proc refineFromContextShed*(nimFile, shedName: string, selected = ""):
+    tuple[ok: bool, why: string, candidates: seq[string], term: string,
+          nimLine, nimCol: int, status: string, yellowCount: int] =
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
+  let (sheds, errMsg) = readShedSidecarEx(sc)
+  var updated: seq[ShedInfo] = @[]
+  result = refineFromContextShedPlan(nimFile, shedName, selected, sheds, errMsg, updated)
+  if result.ok and selected.len > 0:
+    writeShedSidecar(nimFile, updated, errMsg)
+
+proc refineEqualityShedPlan*(nimFile, shedName: string, selected: string,
+                         inputSheds: seq[ShedInfo], inputErrMsg: string,
+                         updatedSheds: var seq[ShedInfo]):
     tuple[ok: bool, why: string, candidates: seq[string], term: string,
           nimLine, nimCol: int, status: string, yellowCount: int] =
   ## Equality rewrite (#428). Offer each orientation of an in-scope Eq proof
   ## whose endpoint occurs structurally in the target. Build transport with
   ## Eq's generated eliminator, leave the rewritten target as a checked hole,
   ## and let refineShed create its durable child shed after selection.
-  let sc = sidecarPath(nimFile)
-  if not fileExists(sc):
-    return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
-  let (sheds, _) = readShedSidecarEx(sc)
+  let sheds = inputSheds
   var si = -1
   for i, shed in sheds:
     if shed.name == shedName: si = i; break
@@ -1525,14 +1585,31 @@ proc refineEqualityShed*(nimFile, shedName: string,
     return (false, "rewrite choice '" & selected &
             "' is not feasible for this goal; available: " & candidates.join(", "),
             candidates, "", 0, 0, "", 0)
-  let refined = refineShed(nimFile, shedName, selectedTerm)
+  var plannedSheds: seq[ShedInfo] = @[]
+  let refined = refineShedPlan(nimFile, shedName, selectedTerm, sheds,
+                               inputErrMsg, plannedSheds)
   if not refined.ok:
     return (false, refined.why, candidates, "", 0, 0, "", 0)
+  updatedSheds = plannedSheds
   (true, "", candidates, selectedClientTerm, refined.nimLine, refined.nimCol,
    refined.status, refined.yellowCount)
 
-proc caseSplitShedDetailed(nimFile, shedName, variable: string,
-                           generatedSource: var string):
+proc refineEqualityShed*(nimFile, shedName: string, selected = ""):
+    tuple[ok: bool, why: string, candidates: seq[string], term: string,
+          nimLine, nimCol: int, status: string, yellowCount: int] =
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
+  let (sheds, errMsg) = readShedSidecarEx(sc)
+  var updated: seq[ShedInfo] = @[]
+  result = refineEqualityShedPlan(nimFile, shedName, selected, sheds, errMsg, updated)
+  if result.ok and selected.len > 0:
+    writeShedSidecar(nimFile, updated, errMsg)
+
+proc caseSplitShedDetailedPlan(nimFile, shedName, variable: string,
+                           inputSheds: seq[ShedInfo], generatedSource: var string,
+                           updatedSheds: var seq[ShedInfo]):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           subSheds: seq[string]] =
   ## Issue #209: shed-aware case-split (term-level via eliminators).
@@ -1547,12 +1624,7 @@ proc caseSplitShedDetailed(nimFile, shedName, variable: string,
   ## The returned `term` is nim-syntax text for the client to splice over
   ## the `![shedName]` node; `subSheds` are the fresh sub-shed names.
   ## Only non-parameterized, non-indexed datatypes are supported for now.
-  let sc = sidecarPath(nimFile)
-  if not fileExists(sc):
-    return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)",
-            "", 0, 0, @[])
-  let (sheds0, errMsg0) = readShedSidecarEx(sc)
+  let sheds0 = cloneShedInfos(inputSheds)
   var si = -1
   for i in 0 ..< sheds0.len:
     if sheds0[i].name == shedName:
@@ -1781,15 +1853,94 @@ proc caseSplitShedDetailed(nimFile, shedName, variable: string,
   if not f.ok:
     return (false, "case-split rejected: " & f.why, "", 0, 0, @[])
   generatedSource = f.newSrc
+  let fillOffset = sourceOffset(oldSrc, sheds0[si].holeLine, sheds0[si].holeCol)
+  if fillOffset < 0:
+    return (false, "case-split hole position is outside its generated source", "", 0, 0, @[])
+  let checkedAfter = elabCheckHolesDir(f.newSrc, baseDir)
+  if checkedAfter.errMsg != "":
+    return (false, "case-split rejected: " & checkedAfter.errMsg, "", 0, 0, @[])
+  var after: seq[ShedInfo] = @[]
+  for i, oldItem in sheds0:
+    var oldShed = oldItem
+    if oldShed.genSrc != oldSrc:
+      after.add(oldShed)
+      continue
+    if i == si: continue
+    let oldOffset = sourceOffset(oldSrc, oldShed.holeLine, oldShed.holeCol)
+    if oldOffset < 0: continue
+    var movedOffset = oldOffset
+    for edit in f.editRanges:
+      let editOffset = sourceOffset(oldSrc, edit.startLine + 1, edit.startChar + 1)
+      let removed = edit.endChar - edit.startChar
+      if editOffset < oldOffset: movedOffset += epTerm.len - removed
+    var matched = -1
+    for hi, hole in checkedAfter.ms.holes:
+      if sourceOffset(f.newSrc, hole.holeLoc.line, hole.holeLoc.col) == movedOffset:
+        matched = hi
+        oldShed.holeLine = hole.holeLoc.line
+        oldShed.holeCol = hole.holeLoc.col
+        let (goal, ctx, goalPi) = shedGoalAndCtx(checkedAfter.ms, hole)
+        oldShed.goal = goal
+        oldShed.ctx = ctx
+        oldShed.goalPi = goalPi
+        break
+    if matched >= 0:
+      oldShed.holeIdx = matched
+      oldShed.genSrc = f.newSrc
+      oldShed.status = ssYellow
+      after.add(oldShed)
+  var childIndex = 0
+  for holeIndex, hole in checkedAfter.ms.holes:
+    let holeOffset = sourceOffset(f.newSrc, hole.holeLoc.line, hole.holeLoc.col)
+    if holeOffset < fillOffset or holeOffset >= fillOffset + epTerm.len: continue
+    if childIndex >= subSheds.len: break
+    let subName = subSheds[childIndex]
+    let (goal, ctx, goalPi) = shedGoalAndCtx(checkedAfter.ms, hole)
+    let markerOffset = nimTerm.find("![" & subName)
+    if markerOffset < 0:
+      return (false, "case-split result is missing child marker " & subName, "", 0, 0, @[])
+    let markerPos = sourcePosition(nimTerm, markerOffset)
+    let childLine = sheds0[si].nimLine + markerPos.line - 1
+    let childCol = if markerPos.line == 1: sheds0[si].nimCol + markerPos.col - 1
+                   else: markerPos.col
+    after.add(ShedInfo(name: subName, nimLine: childLine, nimCol: childCol,
+      holeLine: hole.holeLoc.line, holeCol: hole.holeLoc.col,
+      holeIdx: holeIndex, genSrc: f.newSrc, goal: goal, ctx: ctx,
+      goalPi: goalPi, status: ssYellow))
+    inc childIndex
+  if childIndex != subSheds.len:
+    return (false, "case-split result did not preserve all child goals", "", 0, 0, @[])
+  refreshShedStatuses(after, f.newSrc, baseDir, onlyGenSrc = f.newSrc)
+  updatedSheds = after
   (true, "", nimTerm, sheds0[si].nimLine, sheds0[si].nimCol, subSheds)
+
+proc caseSplitShedDetailed(nimFile, shedName, variable: string,
+                           generatedSource: var string):
+    tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
+          subSheds: seq[string]] =
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)", "", 0, 0, @[])
+  let (sheds, _) = readShedSidecarEx(sc)
+  var updated: seq[ShedInfo] = @[]
+  caseSplitShedDetailedPlan(nimFile, shedName, variable, sheds,
+                            generatedSource, updated)
 
 proc caseSplitShed*(nimFile, shedName, variable: string):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
           subSheds: seq[string]] =
-  ## Public compatibility wrapper; semantic action history also needs the
-  ## generated source that was checked while building this Nim splice.
-  var generatedSource = ""
-  caseSplitShedDetailed(nimFile, shedName, variable, generatedSource)
+  ## Public disk-backed compatibility wrapper over the in-memory planner.
+  let sc = sidecarPath(nimFile)
+  if not fileExists(sc):
+    return (false, "no sheds sidecar for " & nimFile &
+            " (compile the file with shedsBlock first)", "", 0, 0, @[])
+  let (sheds, errMsg) = readShedSidecarEx(sc)
+  var generated = ""
+  var updated: seq[ShedInfo] = @[]
+  result = caseSplitShedDetailedPlan(nimFile, shedName, variable, sheds,
+                                     generated, updated)
+  discard errMsg
 
 proc documentRevision(server: LspServer, uri: string): int =
   for item in server.documentRevisions:
@@ -2526,6 +2677,420 @@ proc commitShedHistoryMove*(server: var LspServer, uri: string,
   history.pendingId = 0
   (true, "", inspectShedActionHistory(server, uri))
 
+proc sourceMarkerBounds(document: string, nimLine, nimCol: int,
+                        shedName: string): tuple[ok: bool, why: string, first, after: int] =
+  let first = sourceOffset(document, nimLine, nimCol)
+  if first < 0 or first >= document.len:
+    return (false, "shed marker is missing from the selected source state", 0, 0)
+  var openIndex = first
+  var contentStart = first
+  if document[first] == '!' and first + 1 < document.len and document[first + 1] == '[':
+    openIndex = first + 1
+    contentStart = first + 2
+  elif document.len - first >= "shedHole(".len and
+       document[first ..< first + "shedHole(".len] == "shedHole(":
+    openIndex = first + "shedHole".len
+    contentStart = openIndex + 1
+  else:
+    return (false, "shed marker is missing from the selected source state", 0, 0)
+
+  let openDelimiter = document[openIndex]
+  let closeDelimiter = if openDelimiter == '[': ']' else: ')'
+  var depth = 0
+  var inString = false
+  var inChar = false
+  var escaped = false
+  for i in openIndex ..< document.len:
+    let ch = document[i]
+    if inString or inChar:
+      if escaped: escaped = false
+      elif ch == '\\': escaped = true
+      elif inString and ch == '"': inString = false
+      elif inChar and ch == '\'': inChar = false
+      continue
+    if ch == '"': inString = true; continue
+    if ch == '\'': inChar = true; continue
+    if ch == openDelimiter: inc depth
+    elif ch == closeDelimiter:
+      dec depth
+      if depth == 0:
+        var markerName = document[contentStart ..< i].strip()
+        let comma = markerName.find(',')
+        if comma >= 0: markerName = markerName[0 ..< comma].strip()
+        if markerName != shedName:
+          return (false, "source marker does not match goal '" & shedName & "'", 0, 0)
+        return (true, "", first, i + 1)
+  (false, "shed marker is unterminated in the selected source state", 0, 0)
+
+proc replaceShedMarker(document: string, nimLine, nimCol: int,
+                       shedName, replacement: string): tuple[ok: bool, why: string, text: string, first, after: int] =
+  let bounds = sourceMarkerBounds(document, nimLine, nimCol, shedName)
+  if not bounds.ok: return (false, bounds.why, "", 0, 0)
+  result = (true, "", document[0 ..< bounds.first] & replacement &
+    document[bounds.after .. ^1], bounds.first, bounds.after)
+
+proc stableActionArguments(arguments: JsonNode): string =
+  if arguments.isNil or arguments.kind != JObject: return ""
+  var keys: seq[string] = @[]
+  for key in arguments.keys: keys.add(key)
+  keys.sort(system.cmp[string])
+  for key in keys:
+    result.add($key.len & ":" & key & "=" & $arguments[key] & "\n")
+
+proc shedEnvironmentFingerprint(nimFile: string, sheds: seq[ShedInfo]): string =
+  var material = "eponym-shed-env-v1\nNim=" & NimVersion &
+    "\nNIMFLAGS=" & getEnv("NIMFLAGS") & "\n"
+  let sourceDir = parentDir(currentSourcePath())
+  for name in ["elab.nim", "unify.nim", "parse_surf.nim", "eponym_init.nim",
+               "sheds.nim", "sheds_mac.nim", "shed_state.nim", "lsp.nim"]:
+    let path = sourceDir / name
+    if fileExists(path):
+      material.add("checker-file:" & name & "\n" & sha256Hex(readFile(path)) & "\n")
+  var queue: seq[string] = @[]
+  for shed in sheds:
+    for line in shed.genSrc.splitLines():
+      let trimmed = line.strip()
+      if not trimmed.startsWith("import "): continue
+      let firstQuote = trimmed.find('"')
+      let lastQuote = trimmed.rfind('"')
+      if firstQuote >= 0 and lastQuote > firstQuote:
+        queue.add(parentDir(nimFile) / trimmed[firstQuote + 1 ..< lastQuote])
+  var visited = initTable[string, bool]()
+  while queue.len > 0:
+    let path = queue.pop()
+    var canonical = path
+    try: canonical = expandFilename(path)
+    except OSError: discard
+    if visited.hasKey(canonical): continue
+    visited[canonical] = true
+    if not fileExists(canonical):
+      material.add("missing-import:" & canonical & "\n")
+      continue
+    let contents = readFile(canonical)
+    material.add("import:" & canonical & "\n" & sha256Hex(contents) & "\n")
+    for line in contents.splitLines():
+      let trimmed = line.strip()
+      if not trimmed.startsWith("import "): continue
+      let firstQuote = trimmed.find('"')
+      let lastQuote = trimmed.rfind('"')
+      if firstQuote >= 0 and lastQuote > firstQuote:
+        queue.add(parentDir(canonical) / trimmed[firstQuote + 1 ..< lastQuote])
+  sha256Hex(material)
+
+proc stateGoalName(state: ShedProofState, goalId: string): string =
+  for name, id in state.goalIds:
+    if id == goalId: return name
+
+proc findStateShed(state: ShedProofState, goalId: string): tuple[found: bool, shed: ShedInfo] =
+  let name = state.stateGoalName(goalId)
+  if name.len == 0: return
+  for shed in state.sheds:
+    if shed.name == name: return (true, shed)
+
+proc validateStateForQuery(uri: string, state: var ShedProofState): tuple[ok: bool, why: string] =
+  let nimFile = uriToPath(uri)
+  let expectedEnv = shedEnvironmentFingerprint(nimFile, state.sheds) &
+    "\0document-uri=" & uri
+  if state.environment != expectedEnv:
+    return (false, "state environment changed; initialize a fresh shed state")
+  var checkedSources = initTable[string, MetaStore]()
+  for shedIndex in 0 ..< state.sheds.len:
+    let shed = state.sheds[shedIndex]
+    if shed.status != ssYellow: continue
+    if shed.genSrc notin checkedSources:
+      try:
+        let checked = elabCheckHolesDir(shed.genSrc, parentDir(nimFile))
+        if checked.errMsg != "":
+          return (false, "state source is not checker-valid: " & checked.errMsg)
+        checkedSources[shed.genSrc] = checked.ms
+      except ParseError as e:
+        return (false, "state source no longer parses: " & e.msg)
+    let ms = checkedSources[shed.genSrc]
+    var matched = false
+    for holeIndex in 0 ..< ms.holes.len:
+      let hole = ms.holes[holeIndex]
+      if hole.holeLoc.line != shed.holeLine or
+         (shed.holeCol > 0 and hole.holeLoc.col != shed.holeCol): continue
+      let (goal, ctx, _) = shedGoalAndCtx(ms, hole)
+      if goal != shed.goal or ctx != shed.ctx:
+        return (false, "goal metadata does not match the checked state")
+      # Hole indices are process-local elaboration data, so they are omitted
+      # from Merkle nodes and reconstructed only after checking the source.
+      state.sheds[shedIndex].holeIdx = holeIndex
+      matched = true
+      break
+    if not matched:
+      return (false, "goal '" & shed.name & "' is not present in its state source")
+    let marker = sourceMarkerBounds(state.document, shed.nimLine, shed.nimCol, shed.name)
+    if not marker.ok:
+      return (false, marker.why)
+  (true, "")
+
+proc stateActionsForGoal(uri: string, state: ShedProofState, goalId: string):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  let target = findStateShed(state, goalId)
+  if not target.found: return (false, "unknown goal ID in this proof state", nil)
+  if target.shed.status != ssYellow:
+    return (false, "selected goal is not open", nil)
+  let nimFile = uriToPath(uri)
+  var actions = newJArray()
+  actions.add(actionDescriptor("refine", "refine", "Refine with a term",
+    "term", "eponym-term", nil, %*{"kind": "checker-determined"}))
+  actions.add(actionDescriptor("give", "give", "Give a complete term",
+    "term", "eponym-term", nil, %*{"kind": "complete-proof"}))
+
+  var binderCount = max(0, target.shed.goalPi.len - 1)
+  if binderCount == 0:
+    try:
+      let checked = elabCheckHolesDir(target.shed.genSrc, parentDir(nimFile))
+      for hole in checked.ms.holes:
+        if hole.holeLoc.line == target.shed.holeLine and
+           (target.shed.holeCol <= 0 or hole.holeLoc.col == target.shed.holeCol):
+          binderCount = semanticShedState(checked.ms, hole).goalPi.len
+          break
+    except ParseError: discard
+  if binderCount > 0:
+    var choices = newJArray()
+    for count in 1 .. binderCount: choices.add(%count)
+    actions.add(actionDescriptor("intro", "intro", "Introduce binders",
+      "count", "positive-integer", choices, %*{"kind": "byChoice"}))
+
+  var splitChoices = newJArray()
+  for binding in target.shed.ctx:
+    let separator = binding.find(" : ")
+    if separator <= 0: continue
+    let variable = binding[0 ..< separator]
+    var generated = ""
+    var after: seq[ShedInfo] = @[]
+    let split = caseSplitShedDetailedPlan(nimFile, target.shed.name,
+      variable, state.sheds, generated, after)
+    if split.ok and split.subSheds.len > 0: splitChoices.add(%variable)
+  if splitChoices.len > 0:
+    actions.add(actionDescriptor("caseSplit", "caseSplit", "Case-split",
+      "variable", "local-variable", splitChoices, %*{"kind": "branches"}))
+
+  var ignored: seq[ShedInfo] = @[]
+  let constructors = refineConstructorsShedPlan(nimFile, target.shed.name, "",
+    state.sheds, "", ignored)
+  if constructors.ok and constructors.constructors.len > 0:
+    var choices = newJArray()
+    for item in constructors.constructors: choices.add(%item)
+    actions.add(actionDescriptor("construct", "construct", "Construct a value",
+      "constructor", "feasible-constructor", choices, %*{"kind": "byChoice"}))
+  let applications = refineFromContextShedPlan(nimFile, target.shed.name, "",
+    state.sheds, "", ignored)
+  if applications.ok and applications.candidates.len > 0:
+    var choices = newJArray()
+    for item in applications.candidates: choices.add(%item)
+    actions.add(actionDescriptor("apply", "apply", "Apply a local hypothesis",
+      "candidate", "feasible-application", choices, %*{"kind": "byChoice"}))
+  let rewrites = refineEqualityShedPlan(nimFile, target.shed.name, "",
+    state.sheds, "", ignored)
+  if rewrites.ok and rewrites.candidates.len > 0:
+    var choices = newJArray()
+    for item in rewrites.candidates: choices.add(%item)
+    actions.add(actionDescriptor("rewrite", "rewrite", "Rewrite using an equality",
+      "rewrite", "checked-equality-rewrite", choices, %*{"kind": "one-residual-goal"}))
+  (true, "", %*{"stateId": idText(state.id), "goalId": goalId,
+                 "goal": target.shed.goal, "context": target.shed.ctx,
+                 "actions": actions})
+
+proc spliceDocumentState(state: ShedProofState, target: ShedInfo, term: string):
+    tuple[ok: bool, why: string, document: string, rangeStart, rangeEnd: int] =
+  let bounds = sourceMarkerBounds(state.document, target.nimLine,
+                                  target.nimCol, target.name)
+  if not bounds.ok: return (false, bounds.why, "", 0, 0)
+  (true, "", state.document[0 ..< bounds.first] & term &
+    state.document[bounds.after .. ^1], bounds.first, bounds.after)
+
+proc handleStateNodes(server: var LspServer, params: JsonNode, root: NodeId):
+    tuple[ok: bool, why: string, missing: seq[NodeId]] =
+  try:
+    if "nodes" in params:
+      for nodeJson in params["nodes"]:
+        let node = nodeFromJson(nodeJson)
+        server.stateNodeCache.put(node.id, node.node)
+    result.missing = server.stateNodeCache.missingClosure([root])
+    result.ok = true
+  except CatchableError as e:
+    return (false, $e.name & ": " & e.msg, @[])
+
+proc queryShedStateActions(server: var LspServer, uri, stateId, goalId: string,
+                           nodeParams: JsonNode):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  let root = NodeId(stateId)
+  let imported = handleStateNodes(server, nodeParams, root)
+  if not imported.ok: return (false, imported.why, nil)
+  if imported.missing.len > 0:
+    var missing = newJArray()
+    for id in imported.missing: missing.add(%idText(id))
+    return (true, "", %*{"needsNodes": missing, "stateId": stateId})
+  var state: ShedProofState
+  try: state = restoreShedProofState(server.stateNodeCache, root)
+  except CatchableError as e: return (false, "invalid proof state: " & e.msg, nil)
+  let validity = validateStateForQuery(uri, state)
+  if not validity.ok: return (false, validity.why, nil)
+  stateActionsForGoal(uri, state, goalId)
+
+proc queryShedStateLayout(server: var LspServer, uri, stateId, goalId: string,
+                          nodeParams: JsonNode):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  let root = NodeId(stateId)
+  let imported = handleStateNodes(server, nodeParams, root)
+  if not imported.ok: return (false, imported.why, nil)
+  if imported.missing.len > 0:
+    var missing = newJArray()
+    for id in imported.missing: missing.add(%idText(id))
+    return (true, "", %*{"needsNodes": missing, "stateId": stateId})
+  var state: ShedProofState
+  try: state = restoreShedProofState(server.stateNodeCache, root)
+  except CatchableError as e: return (false, "invalid proof state: " & e.msg, nil)
+  let validity = validateStateForQuery(uri, state)
+  if not validity.ok: return (false, validity.why, nil)
+  let target = findStateShed(state, goalId)
+  if not target.found: return (false, "unknown goal ID in this proof state", nil)
+  (true, "", %*{"stateId": stateId, "goalId": goalId,
+                 "name": target.shed.name,
+                 "box": boxToJson(layoutShed(target.shed))})
+
+proc bootstrapShedState(server: var LspServer, uri: string):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  if uri notin server.documents:
+    return (false, "unknown document; open it before initializing shed state", nil)
+  let nimFile = uriToPath(uri)
+  if not fileExists(nimFile): return (false, "document file does not exist", nil)
+  if readFile(nimFile) != server.documents[uri]:
+    return (false, "save or synchronize the Nim document before initializing shed state", nil)
+  let sidecar = sidecarPath(nimFile)
+  if not fileExists(sidecar): return (false, "no sheds sidecar; compile the document first", nil)
+  let (sheds, _) = readShedSidecarEx(sidecar)
+  let env = shedEnvironmentFingerprint(nimFile, sheds)
+  let state = buildShedProofState(server.documents[uri], sheds, env, uri,
+    initTable[string, string]())
+  for (nodeId, node) in state.nodes: server.stateNodeCache.put(nodeId, node)
+  var goals = newJArray()
+  for shed in state.sheds:
+    goals.add(%*{"goalId": state.goalIds[shed.name], "name": shed.name,
+      "goal": shed.goal, "context": shed.ctx,
+      "status": shedStatusToStr(shed.status),
+      "nimLine": shed.nimLine, "nimCol": shed.nimCol})
+  (true, "", %*{"stateId": idText(state.id), "nodes": nodesToJson(state.nodes),
+                 "goals": goals, "environment": state.environment})
+
+proc evaluateStateAction(server: var LspServer, uri, stateId, goalId,
+                         actionId: string, arguments, nodeParams: JsonNode):
+    tuple[ok: bool, why: string, result: JsonNode] =
+  let root = NodeId(stateId)
+  let imported = handleStateNodes(server, nodeParams, root)
+  if not imported.ok: return (false, imported.why, nil)
+  if imported.missing.len > 0:
+    var missing = newJArray()
+    for id in imported.missing: missing.add(%idText(id))
+    return (true, "", %*{"needsNodes": missing, "stateId": stateId})
+  var state: ShedProofState
+  try: state = restoreShedProofState(server.stateNodeCache, root)
+  except CatchableError as e: return (false, "invalid proof state: " & e.msg, nil)
+  let validity = validateStateForQuery(uri, state)
+  if not validity.ok: return (false, validity.why, nil)
+  let available = stateActionsForGoal(uri, state, goalId)
+  if not available.ok: return (false, available.why, nil)
+  var descriptor: JsonNode
+  for item in available.result["actions"]:
+    if item["id"].getStr() == actionId: descriptor = item; break
+  if descriptor.isNil: return (false, "action is not available for this state and goal", nil)
+  if not argumentOffered(descriptor, arguments):
+    return (false, "action arguments do not match the state affordance", nil)
+  let target = findStateShed(state, goalId).shed
+  let nimFile = uriToPath(uri)
+  let kind = descriptor["kind"].getStr()
+  var updated: seq[ShedInfo] = @[]
+  var term = ""
+  var nimLine = target.nimLine
+  var nimCol = target.nimCol
+  var status = "yellow"
+  var yellowCount = 0
+  var subSheds: seq[string] = @[]
+  case kind
+  of "refine", "give":
+    let candidate = arguments["term"].getStr()
+    let plan = refineShedPlan(nimFile, target.name, candidate, state.sheds,
+      "", updated, requireComplete = kind == "give")
+    if not plan.ok: return (false, plan.why, nil)
+    term = plan.term; nimLine = plan.nimLine; nimCol = plan.nimCol
+    status = plan.status; yellowCount = plan.yellowCount
+  of "intro":
+    let plan = introShedPlan(nimFile, target.name, arguments["count"].getInt(),
+      state.sheds, "", updated)
+    if not plan.ok: return (false, plan.why, nil)
+    term = plan.term; nimLine = plan.nimLine; nimCol = plan.nimCol
+    status = plan.status; yellowCount = plan.yellowCount
+  of "construct":
+    let plan = refineConstructorsShedPlan(nimFile, target.name,
+      arguments["constructor"].getStr(), state.sheds, "", updated)
+    if not plan.ok: return (false, plan.why, nil)
+    term = plan.term; nimLine = plan.nimLine; nimCol = plan.nimCol
+    status = plan.status; yellowCount = plan.yellowCount
+  of "apply":
+    let plan = refineFromContextShedPlan(nimFile, target.name,
+      arguments["candidate"].getStr(), state.sheds, "", updated)
+    if not plan.ok: return (false, plan.why, nil)
+    term = plan.term; nimLine = plan.nimLine; nimCol = plan.nimCol
+    status = plan.status; yellowCount = plan.yellowCount
+  of "rewrite":
+    let plan = refineEqualityShedPlan(nimFile, target.name,
+      arguments["rewrite"].getStr(), state.sheds, "", updated)
+    if not plan.ok: return (false, plan.why, nil)
+    term = plan.term; nimLine = plan.nimLine; nimCol = plan.nimCol
+    status = plan.status; yellowCount = plan.yellowCount
+  of "caseSplit":
+    var generated = ""
+    let plan = caseSplitShedDetailedPlan(nimFile, target.name,
+      arguments["variable"].getStr(), state.sheds, generated, updated)
+    if not plan.ok: return (false, plan.why, nil)
+    term = plan.term; nimLine = plan.nimLine; nimCol = plan.nimCol
+    subSheds = plan.subSheds; status = "yellow"; yellowCount = subSheds.len
+  else: return (false, "unknown shed action kind", nil)
+
+  let splice = spliceDocumentState(state, target, term)
+  if not splice.ok: return (false, splice.why, nil)
+  let delta = term.len - (splice.rangeEnd - splice.rangeStart)
+  for shed in updated.mitems:
+    if shed.name == target.name: continue
+    for oldShed in state.sheds:
+      if oldShed.name != shed.name: continue
+      let oldOffset = sourceOffset(state.document, oldShed.nimLine, oldShed.nimCol)
+      if oldOffset >= splice.rangeEnd:
+        let newPos = sourcePosition(splice.document, oldOffset + delta)
+        shed.nimLine = newPos.line; shed.nimCol = newPos.col
+      break
+  var successors = buildShedProofState(splice.document, updated,
+    shedEnvironmentFingerprint(nimFile, updated), uri, state.goalIds,
+    stateId, kind, goalId)
+  var changedNodes: seq[tuple[id: NodeId, node: MerkleNode]] = @[]
+  for (id, node) in successors.nodes:
+    if not server.stateNodeCache.contains(id): changedNodes.add((id, node))
+    server.stateNodeCache.put(id, node)
+  let transitionNode = transition(root, kind, goalId,
+    stableActionArguments(arguments), successors.id, "eponym-checker-v1")
+  let transitionId = nodeId(transitionNode)
+  if not server.stateNodeCache.contains(transitionId):
+    changedNodes.add((transitionId, transitionNode))
+  server.stateNodeCache.put(transitionId, transitionNode)
+  var goals = newJArray()
+  for shed in successors.sheds:
+    goals.add(%*{"goalId": successors.goalIds[shed.name], "name": shed.name,
+      "goal": shed.goal, "context": shed.ctx,
+      "status": shedStatusToStr(shed.status),
+      "nimLine": shed.nimLine, "nimCol": shed.nimCol})
+  (true, "", %*{"stateId": stateId, "goalId": goalId,
+    "successorStateId": idText(successors.id),
+    "transitionId": idText(transitionId), "nodes": nodesToJson(changedNodes),
+    "edit": {"term": term, "nimLine": nimLine, "nimCol": nimCol},
+    "documentText": splice.document, "goals": goals,
+    "validation": {"accepted": true, "status": status,
+                   "yellowCount": yellowCount}, "subSheds": subSheds})
+
+
 proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
   ## Handle one incoming message; returns the outgoing message, or nil
   ## when there is no response (e.g. `initialized`, `exit` handled by caller).
@@ -2614,6 +3179,66 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
     var arr = newJArray()
     for nm in shedNames(uri): arr.add(%nm)
     return %*{"jsonrpc": "2.0", "id": id, "result": arr}
+  of "eponym/createShedState":
+    let id = msg["id"]
+    if "textDocument" notin msg["params"]:
+      return %*{"jsonrpc": "2.0", "id": id,
+        "error": {"code": -32602, "message": "createShedState needs textDocument.uri"}}
+    let uri = msg["params"]["textDocument"]["uri"].getStr()
+    let state = bootstrapShedState(server, uri)
+    if not state.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+        "error": {"code": -32602, "message": state.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": state.result}
+  of "eponym/queryShedStateActions":
+    let id = msg["id"]
+    let params = msg["params"]
+    for key in ["textDocument", "stateId", "goalId"]:
+      if key notin params:
+        return %*{"jsonrpc": "2.0", "id": id,
+          "error": {"code": -32602, "message": "queryShedStateActions needs textDocument, stateId, and goalId"}}
+    let nodes = if "nodes" in params: params else: newJObject()
+    let r = queryShedStateActions(server,
+      params["textDocument"]["uri"].getStr(), params["stateId"].getStr(),
+      params["goalId"].getStr(), nodes)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+        "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": r.result}
+  of "eponym/transitionShedState":
+    let id = msg["id"]
+    let params = msg["params"]
+    for key in ["textDocument", "stateId", "goalId", "action"]:
+      if key notin params:
+        return %*{"jsonrpc": "2.0", "id": id,
+          "error": {"code": -32602, "message": "transitionShedState needs textDocument, stateId, goalId, and action"}}
+    let action = params["action"]
+    if "id" notin action or "arguments" notin action:
+      return %*{"jsonrpc": "2.0", "id": id,
+        "error": {"code": -32602, "message": "action needs id and arguments"}}
+    let nodes = if "nodes" in params: params else: newJObject()
+    let r = evaluateStateAction(server,
+      params["textDocument"]["uri"].getStr(), params["stateId"].getStr(),
+      params["goalId"].getStr(), action["id"].getStr(), action["arguments"], nodes)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+        "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": r.result}
+  of "eponym/shedStateLayout":
+    let id = msg["id"]
+    let params = msg["params"]
+    for key in ["textDocument", "stateId", "goalId"]:
+      if key notin params:
+        return %*{"jsonrpc": "2.0", "id": id,
+          "error": {"code": -32602, "message": "shedStateLayout needs textDocument, stateId, and goalId"}}
+    let nodes = if "nodes" in params: params else: newJObject()
+    let r = queryShedStateLayout(server,
+      params["textDocument"]["uri"].getStr(), params["stateId"].getStr(),
+      params["goalId"].getStr(), nodes)
+    if not r.ok:
+      return %*{"jsonrpc": "2.0", "id": id,
+        "error": {"code": -32602, "message": r.why}}
+    return %*{"jsonrpc": "2.0", "id": id, "result": r.result}
   of "eponym/availableShedActions":
     let id = msg["id"]
     let params = msg["params"]
@@ -2868,7 +3493,8 @@ proc handleMessage*(server: var LspServer, msg: JsonNode): JsonNode =
     return nil
 
 when isMainModule:
-  var server = LspServer(documents: initTable[string, string]())
+  var server = LspServer(documents: initTable[string, string](),
+    stateNodeCache: initNodeCache(MaxShedStateNodes))
   while true:
     let msg = readMessage()
     if msg.isNil:

@@ -2,7 +2,8 @@
 // Headless tests for the inline shed expand/collapse state machine.
 // Runs the real compiled inlineShed.js against a mock vscode API.
 // Covers: expand inserts box, cursor inside region keeps it, cursor outside
-// collapses it, Escape collapses, double-expand is idempotent.
+// collapses it, inactive-editor selection events are ignored, Escape
+// collapses, and double-expand is idempotent.
 //
 // Does NOT cover: whether VS Code actually fires onDidChangeTextEditorSelection
 // (event wiring needs a real extension host).
@@ -22,6 +23,10 @@ function loadInlineShed(mock) {
     if (id === "./sidecar")
       return {
         shedAtCursor: () => ({ name: "shuffleBody", start: 0, end: 10 }),
+        shedBlocks: (text) => {
+          const start = text.indexOf("![shuffleBody]");
+          return start < 0 ? [] : [{ sheds: [{ name: "shuffleBody", start }] }];
+        },
         sidecarPathFor: () => "",
         readSidecarShedNames: () => [],
       };
@@ -80,12 +85,68 @@ async function testCursorOutsideCollapses() {
   console.log("ok: cursor outside region collapses box");
 }
 
+async function testInactiveEditorSelectionIsIgnored() {
+  const h = makeHarness();
+  await h.inlineShed.expandShed(h.editor, h.getClient, { showButtons: true });
+  const otherDoc = h.mock.makeDocument(["another document"]);
+  const otherEditor = h.mock.makeEditor(otherDoc);
+  // The expanded source editor remains active; this is a queued event from a
+  // different, inactive editor (the real host emitted one from the Output view).
+  h.mock.fireSelection(otherEditor, 0);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.strictEqual(h.doc._getLines().length, 111, "inactive event must not collapse the box");
+  assert.ok(h.inlineShed.currentExpanded(), "still expanded after inactive event");
+  console.log("ok: inactive-editor selection event keeps box");
+}
+
+async function testActiveDifferentEditorCollapses() {
+  const h = makeHarness();
+  await h.inlineShed.expandShed(h.editor, h.getClient, { showButtons: true });
+  const otherDoc = h.mock.makeDocument(["another document"]);
+  const otherEditor = h.mock.makeEditor(otherDoc);
+  h.mock.vscode.window.activeTextEditor = otherEditor;
+  h.mock.fireSelection(otherEditor, 0);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.strictEqual(h.doc._getLines().length, 100, "active other document collapses the box");
+  assert.strictEqual(h.inlineShed.currentExpanded(), null, "expansion cleared after leaving document");
+  console.log("ok: active different document collapses box");
+}
+
 async function testCollapseCommand() {
   const h = makeHarness();
   await h.inlineShed.expandShed(h.editor, h.getClient, { showButtons: true });
   await h.inlineShed.collapseShed();
   assert.strictEqual(h.doc._getLines().length, 100, "box removed");
   console.log("ok: collapseShed removes box");
+}
+
+async function testCollapseForDocument() {
+  const h = makeHarness();
+  await h.inlineShed.expandShed(h.editor, h.getClient, { showButtons: true });
+  assert.strictEqual(
+    await h.inlineShed.collapseShedForDocument("file:///other.nim"), true,
+    "adopting a state in another document should not collapse this preview"
+  );
+  assert.strictEqual(h.doc._getLines().length, 111, "other document leaves preview intact");
+  assert.strictEqual(
+    await h.inlineShed.collapseShedForDocument(h.doc.uri.toString()), true,
+    "adopting a state in the preview's document removes its temporary text"
+  );
+  assert.strictEqual(h.doc._getLines().length, 100, "same-document preview removed");
+  console.log("ok: state adoption collapses only its document's inline preview");
+}
+
+async function testFailedCollapsePreservesViewState() {
+  const h = makeHarness();
+  await h.inlineShed.expandShed(h.editor, h.getClient, { showButtons: true });
+  h.editor._setNextEditResult(false);
+  const removed = await h.inlineShed.collapseShed();
+  assert.strictEqual(removed, false, "failed editor edit is reported");
+  assert.strictEqual(h.doc._getLines().length, 111, "failed edit keeps preview text");
+  assert.ok(h.inlineShed.currentExpanded(), "failed edit keeps retryable view state");
+  assert.strictEqual(await h.inlineShed.collapseShed(), true, "retry succeeds");
+  assert.strictEqual(h.doc._getLines().length, 100, "retry removes preview");
+  console.log("ok: failed collapse preserves state and can be retried");
 }
 
 async function testDoubleExpandIdempotent() {
@@ -100,7 +161,11 @@ async function testDoubleExpandIdempotent() {
   await testExpandInsertsBox();
   await testCursorInsideKeepsBox();
   await testCursorOutsideCollapses();
+  await testInactiveEditorSelectionIsIgnored();
+  await testActiveDifferentEditorCollapses();
   await testCollapseCommand();
+  await testCollapseForDocument();
+  await testFailedCollapsePreservesViewState();
   await testDoubleExpandIdempotent();
   console.log("--- inline shed headless tests passed ---");
 })().catch((e) => {

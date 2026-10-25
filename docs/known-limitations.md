@@ -368,27 +368,31 @@ session would need a versioned structural term codec and is not implemented.
 Goal-directed Intro is available for leading Pi binders; it introduces one
 binder per action.
 
-The semantic action history currently records Refine, Give, and Case-split in
-an open LSP session. Undo restores the prior editor source projection and
-recompiles it; Redo reruns the stored action through the checker. History is
-session-local and clears when the document closes or the extension restarts.
-Other edits invalidate the recorded state and disable undo/redo rather than
-overwriting changed source. Intro, Apply, Construct, and Rewrite are not yet
-part of the shared action history interface.
+VS Code uses client-selected, immutable Merkle proof states for all seven shed
+actions: Intro, Construct, Apply, Rewrite, Refine, Give, and Case-split. Each
+state-dependent query names a state ID and goal ID. The server evaluates the
+action hypothetically, checks the generated proof state, and returns a
+successor state and changed nodes; it does not track a selected state or wait
+for a client commit. The client can switch roots and undo locally without an
+LSP request. Every open goal is addressable by its stable goal ID, and
+untouched sibling goals remain in successor states.
 
-The LSP also exposes `eponym/availableShedActions` and
-`eponym/submitShedAction`. Discovery derives applicability from the checked
-goal and context, returning stable action-family IDs, accepted argument
-choices, and expected subgoal descriptions. Submission includes the returned
-`stateVersion`; edits, recompilation, or a prior accepted action make that
-version stale, and the server checks the selected action again before editing.
-Applicability is shared with editor/search clients, while display and ranking
-remain client decisions. Expected subgoal shapes are exact for case-split
-branches, Intro choices, feasible constructor fields, and unresolved Apply
-arguments. Refine and Rewrite can produce goals that depend on the submitted
-term, so their exact goals are returned after the checked submission. Search
-is still bounded by the existing local-hypothesis, constructor, equality, and
-elaborator capabilities described below.
+The LSP verifies node hashes and rechecks goal metadata against the checked
+generated source. Its node cache is bounded by an LRU limit of 4096 nodes.
+Eviction or server restart loses cache acceleration only; the client resends
+missing nodes on demand. The cache is bounded by node count rather than bytes,
+and nodes are not pinned during a request, so very large states may require
+extra transfers. This changes transfer cost, not proof-state validity.
+
+The editor keeps local parent/successor roots and action metadata. Undo and
+Redo select roots locally; Redo can choose among branches. Writing a selected
+state into the shared document is guarded by a compare against the editor text
+and revision captured for that state. If intervening edits conflict, the
+selected proof state remains available locally and the editor is left intact.
+The extension does not save or compile after each transition; save the Nim
+file to persist the source and regenerate its sidecar. A newly opened document
+bootstraps from its saved source and sidecar. Session history is local to the
+extension host and is cleared when the document closes or the host restarts.
 
 Goal-directed Apply searches local hypotheses and checks their applications
 against the goal. The VS Code picker is filterable; named global definitions

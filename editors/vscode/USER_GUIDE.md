@@ -11,8 +11,10 @@ Put the cursor on the `![name]` marker and run **Eponym: Expand inline shed
 view** from the Command Palette. The default shortcut is **Ctrl+Shift+S**.
 You can also use the `shed name : goal` CodeLens above a marker; clicking it
 opens that specific shed without relying on cursor position. The 2D display
-is rendered as virtual CodeLens rows above the marker, so it stays in the
-editor without changing the Nim document. Press **Escape** to collapse it.
+is temporarily inserted below the marker so it can display the 2D box and
+accept keyboard actions. It is editor-only preview text: collapse it with
+**Escape**, or save normally and the extension removes it before writing the
+Nim file.
 
 The extension compiles a `shedsBlock` file with Nim to generate or refresh
 its `.sheds.json` sidecar. This is how it learns the current goals and
@@ -143,41 +145,50 @@ could not offer a rewrite and leaves the source unchanged.
 
 ### Action history
 
-The **History** button lists checked Refine, Give, and Case-split actions for
-the currently open document. **Undo** restores the source before the latest
-tracked action; **Redo** runs that recorded action through the checker again.
-The extension applies the source edit and recompiles the `shedsBlock` before
-the history cursor moves.
+The **History** button lists locally known proof states. **Undo** immediately
+selects the parent state without waiting for the LSP; **Redo** selects a
+locally known successor, and offers a branch picker when there is more than
+one. Refine, Give, Case-split, Intro, Construct, Apply, and Rewrite all create
+branches in this history. You can act on any open goal in the selected state;
+untouched sibling goals remain available after an action.
 
-History is kept for the open document session. Closing the document or
-restarting the extension clears it. Edits made outside Refine, Give, and
-Case-split are not recorded; they make older transitions stale, so Undo and
-Redo become unavailable instead of replacing newer source edits.
+The extension applies the selected source projection only when the editor text
+and revision still match the base captured for that state. If you made other
+edits, the selection stays available as an in-memory branch and the extension
+leaves your editor text untouched. Save a manual source change to compile it
+and bootstrap a new state. History is local to the open document and clears
+when that document closes or the Extension Development Host restarts.
 
 ### Action discovery for other clients
 
-The LSP provides `eponym/availableShedActions` for editor integrations,
-search tools, and other clients. It returns the checked goal and context plus
-the actions that currently apply, their argument choices, and a
-`stateVersion`. Send the selected action and its arguments to
-`eponym/submitShedAction` with that version. If the document changes while a
-client presents choices, submission is rejected as stale; the client should
-query again. The server rechecks the selected action before returning a source
-edit. Clients decide how to display and rank choices; applicability comes
-from Eponym's checker-backed action providers.
+The state-addressed LSP methods are `eponym/createShedState`,
+`eponym/queryShedStateActions`, `eponym/transitionShedState`, and
+`eponym/shedStateLayout`. Each query or transition names both a `stateId` and a
+`goalId`; every action response carries a successor state ID and any new
+Merkle nodes. If the server cache lacks referenced nodes, it returns their IDs
+and the client resends those nodes before retrying. IDs are content addresses:
+the server verifies node hashes and checks transition results before returning
+them. The server does not track which state the client selected.
 
-Action IDs are `intro`, `construct`, `apply`, `rewrite`, `refine`, `give`,
-and `caseSplit`. The argument schema and choices are returned with each
-query. Expected subgoal metadata describes the available shape before an
-action; after submission, `after.goals` contains the checked goals created by
-the edit. The current search scope matches the VS Code actions: local
-hypotheses, feasible datatype constructors, and applicable equality rewrites.
+An action can target a goal in any known state where that goal is open, even
+when another state is selected in the editor. The extension keeps that checked
+successor in History and leaves the editor buffer alone; select the successor
+in History to adopt its source projection. A goal that is closed in a state is
+not actionable from that state, but its earlier open-state reference remains
+usable.
+
+The action IDs are `intro`, `construct`, `apply`, `rewrite`, `refine`, `give`,
+and `caseSplit`. Discovery returns available argument choices for the
+selected state and goal. The older `availableShedActions` and
+`submitShedAction` methods remain for legacy clients; the VS Code action paths
+use the state-addressed methods.
 
 ## After an action
 
-Intro, Apply, Construct, Rewrite, Refine, Give, and Case-split splice their
-result into the Nim source and
-save the document. The extension recompiles the `shedsBlock`, refreshing the
+Intro, Apply, Construct, Rewrite, Refine, Give, and Case-split splice the
+selected successor projection into the editor. The transition is checked in
+memory and does not write the source file or sidecar. Save the document to
+persist the source; the extension recompiles the `shedsBlock`, refreshing the
 sidecar and CodeLens goals. A remaining open goal stays yellow and gets its
 own marker; a completed shed is white and has no open goal. If a newly
 created marker does not appear in the extension, check the **Eponym** Output
@@ -185,5 +196,5 @@ channel for a Nim compile error and make sure the installed extension was
 rebuilt from the current source.
 
 The CodeLens and `shedsBlock` source marker are the durable navigation
-points. The 2D view is virtual editor content, not proof source, and does not
-dirty the document or interfere with manual or automatic saves.
+points. The inline 2D view is temporary preview text, not proof source. The
+extension removes it on collapse and before manual or automatic saves.

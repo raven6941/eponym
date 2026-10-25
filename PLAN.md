@@ -33,6 +33,13 @@ macros), SynQ, Liquid Haskell.
 
 ## Architecture overview
 
+The editor-side shed-state protocol follows the design in #449 and feasibility
+probe in #450. The VS Code implementation for #451 uses client-selected
+immutable state roots: the LSP answers hypothetical checked transitions,
+while local undo and branch selection stay in VS Code. The code, user guide,
+and embedded walkthrough are updated in this branch; manual Extension
+Development Host interaction remains the final demonstration before merge.
+
 Three views of the same system: the **embedding pipeline** (what happens
 at compile time), the **layer stack** (dependency discipline), and the
 **Track C vision** (where the elaborator is heading).

@@ -233,8 +233,10 @@ elaborator and an embedded Nim library:
 
 Eponym includes a Language Server Protocol (LSP) server and a [VS Code
 extension](https://marketplace.visualstudio.com/items?itemName=raven6941.eponym-sheds) for interactive development with sheds. The extension shows each
-goal with its context in an inline 2D view, and provides Refine, Give, and
-Case-split actions that update the source and refresh remaining goals.
+goal with its context in an inline 2D view, and provides seven checked actions
+that create client-selected proof-state branches. Undo selects a known prior
+state immediately; save the chosen source projection to persist it and refresh
+the sidecar.
 
 - Try the [shed walkthrough](examples/embedded/sheds_walkthrough.nim) for
   guided examples of the editor actions.

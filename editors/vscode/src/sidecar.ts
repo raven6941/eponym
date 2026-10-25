@@ -143,13 +143,19 @@ export function shedAtCursor(text: string, offset: number): ShedNode | null {
   }
   const lineStart = offs[lineIdx];
   const lineEnd = lineIdx + 1 < offs.length ? offs[lineIdx + 1] : text.length;
-  for (const b of shedBlocks(text)) {
-    for (const s of b.sheds) {
-      if (s.start <= offset && offset <= s.end) return s;
-      if (s.start >= lineStart && s.start < lineEnd) return s;
-    }
-  }
-  return null;
+  const sheds = shedBlocks(text).flatMap((b) => b.sheds);
+  // Prefer the marker containing the cursor before applying the convenient
+  // same-line fallback. A line can contain several shed nodes (for example
+  // `add ( ![left] ) ( ![right] )`), and returning the first same-line node
+  // would make the later marker impossible to open with the cursor shortcut.
+  const containing = sheds.find((s) => s.start <= offset && offset <= s.end);
+  if (containing) return containing;
+
+  // When the cursor is elsewhere on a proc line, choose the closest marker
+  // on that line rather than always choosing the first one.
+  return sheds
+    .filter((s) => s.start >= lineStart && s.start < lineEnd)
+    .sort((a, b) => Math.abs(a.start - offset) - Math.abs(b.start - offset))[0] ?? null;
 }
 
 /** The sheds of the `shedsBlock:` block containing the cursor, or []. */

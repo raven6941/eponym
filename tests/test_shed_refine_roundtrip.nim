@@ -315,6 +315,43 @@ if split.ok:
     check(first.ok and first.status == "white" and first.yellowCount == 0,
       "the remaining same-line goal closes independently")
 
+# Two sibling sheds on one line remain addressable after a partial fill. This
+# mirrors branchDemo: refine the left side to `suc(?)`, then give the right
+# side the nullary constructor using valid Eponym term syntax (`zero`).
+let branchFile = scratch / "same_line_sibling_action.nim"
+let branchV0 = "import sheds_mac\n\nshedsBlock:\n" &
+  "  import \"" & natImport & "\"\n" &
+  "  proc branchDemo(n: Nat): Nat = add ( ![branchLeft] ) ( ![branchRight] )\n"
+writeFile(branchFile, branchV0)
+compiled = compileFixture(branchFile, scratch)
+if not compiled.ok: echo compiled.output
+check(compiled.ok, "same-line sibling fixture compiles")
+let branchBefore = readShedSidecar(sidecarPath(branchFile))
+var branchAfterLeft: seq[ShedInfo] = @[]
+let leftAction = refineShedPlan(branchFile, "branchLeft", "suc(?)",
+  branchBefore, "", branchAfterLeft)
+check(leftAction.ok and leftAction.status == "yellow" and
+      branchAfterLeft.anyIt(it.name == "branchRight" and it.status == ssYellow),
+  "partial left refinement preserves the same-line right sibling: " &
+    (if leftAction.ok: leftAction.status else: leftAction.why))
+if leftAction.ok:
+  var branchAfterRight: seq[ShedInfo] = @[]
+  let invalidRightAction = refineShedPlan(branchFile, "branchRight", "zero()",
+    branchAfterLeft, "", branchAfterRight, requireComplete = true)
+  check(not invalidRightAction.ok and "give rejected: parse error" in
+        invalidRightAction.why,
+    "nullary constructor syntax errors are reported as Give failures: " &
+      invalidRightAction.why)
+  let rightAction = refineShedPlan(branchFile, "branchRight", "zero",
+    branchAfterLeft, "", branchAfterRight, requireComplete = true)
+  check(rightAction.ok and rightAction.status == "white" and
+        rightAction.yellowCount == 1,
+    "right sibling can be given after a partial same-line left refinement: " &
+      (if rightAction.ok: rightAction.status else: rightAction.why))
+  check(branchAfterRight.anyIt(it.name == "branchLeft" and it.status == ssYellow) and
+        branchAfterRight.anyIt(it.name == "branchRight" and it.status == ssWhite),
+    "right Give leaves only the left child open in the checked successor")
+
 # A case-split introduces sub-sheds. Verify the extension's required next
 # step: source splice + macro recompilation must give every child a usable
 # goal/context/layout, then each child can be completed through refineShed.

@@ -40,14 +40,14 @@ In brief: open a Nim file with a `shedsBlock`, place the cursor on a `![name]`
 marker, and run **Eponym: Expand inline shed view** (default shortcut
 **Ctrl+Shift+S**). A CodeLens above each marker opens that specific shed.
 The extension compiles the file with Nim to generate the sidecar; progress
-and errors are reported in the **Eponym** Output channel. The inline view is
-rendered as virtual CodeLens rows, so it never enters the document or
-interferes with Auto Save.
-Refinement actions splice their result into source and save it so the macro can
-refresh goals and CodeLens.
-Refine, Give, and Case-split actions can be undone and replayed from the inline
-view's session-local history; the extension recompiles the proof after each
-move and disables history actions when the source has changed independently.
+and errors are reported in the **Eponym** Output channel. The inline view temporarily inserts preview text below the marker; it is
+removed when collapsed and before a normal save. Actions are evaluated from
+client-selected Merkle proof states. Refine, Give, Case-split, Intro, Construct,
+Apply, and Rewrite return checked successor states without saving the file.
+Undo selects a locally known parent immediately, and Redo can select a local
+successor branch. Saving persists the selected Nim source and refreshes goals
+and CodeLens. If the editor changed independently, source projection is left
+untouched while the selected proof-state branch remains available.
 
 ### Syntax support and releases
 
