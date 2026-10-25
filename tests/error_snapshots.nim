@@ -56,6 +56,7 @@ const cases: seq[Case] = @[
   ("tests/error_snapshots/cases/tactic-refl-noteq-neg.ep", "tactic: refl on non-equality goal"),
   ("tests/error_snapshots/cases/erased-use-neg.ep", "quantity: erased variable used"),
   ("tests/error_snapshots/cases/refl-fail-neg.ep", "tactic: refl on unequal terms"),
+  ("tests/error_snapshots/cases/unit-ty-vs-int-neg.ep", "literals: surface `1` is the unit type, not the integer literal one (issue #458)"),
 ]
 
 const snapDir = "tests/error_snapshots/snapshots"

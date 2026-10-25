@@ -1,0 +1,2 @@
+postulate Int : Type 0
+proc one : Int = 1
