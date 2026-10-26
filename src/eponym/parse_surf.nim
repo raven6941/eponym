@@ -408,10 +408,14 @@ proc parsePiSigCallForm(p: var Parser, isPi: bool, loc: Loc): PreTerm =
       binders.add (nm.lexeme, p.parseTerm(), q, false)
     elif p.peek().kind == tkIdent and p.pos + 1 <= p.toks.high and
          p.toks[p.pos + 1].kind in {tkComma, close}:
-      let nm = p.next()
       if last:
-        body = mkVar(nm.lexeme, loc)
+        # Body position: parse as a term, so aliases (unitTy, Univ,
+        # emptyTy, vecnil) map to their constants instead of becoming
+        # variables (issue #467: `Sig(v: unitTy, unitTy)` elabbed
+        # `unitTy` as unbound before this fix).
+        body = p.parseTerm()
       else:
+        let nm = p.next()
         let q = qtyVar("#q" & $p.qvarCount)
         inc p.qvarCount
         binders.add ("_", mkVar(nm.lexeme, loc), q, false)
