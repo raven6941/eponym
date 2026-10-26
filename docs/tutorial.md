@@ -73,10 +73,10 @@ What just happened:
   into checked Eponym `ifThenElse` calls when `lib/bool.ep` is imported; it
   does not enable effectful Nim control flow. The current boundary is listed
   in the [surface-syntax reference](surface-syntax-reference.md).
-- `postulate(Int, Univ)` takes `Int` as given (`Univ` is Nim-friendly
-  syntax for `Type 0`). Universes are explicit: `Type 0 : Type 1 : ...`.
-  In surface syntax, `?` introduces a hole to fill, and `_` discards a
-  binder or pattern. The full story is in
+- `postulate(Int, Univ)` takes `Int` as given. Universes are explicit:
+  `Univ : Type 1 : ...`. In surface syntax, `_` introduces a hole to
+  fill in term position (and discards a binder or pattern); named holes
+  are written `?n`. The full story is in
   [the surface-syntax reference](surface-syntax-reference.md). `addInt`
   is a primitive integer operation.
   The prelude (`lib/nat.ep`) defines `Nat` inductively instead — we will
