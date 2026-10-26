@@ -5007,9 +5007,9 @@ macro eponym*(src: string): untyped =
 
 when isMainModule:
   eponym"""
-proc twice (A : Type 0) (f : A -> A) (x : A) : A =
+proc twice (A : Univ) (f : A -> A) (x : A) : A =
   f (f x)
-proc pairSwap (A : Type 0) (B : Type 0) (p : Sig (u : A). B) : Sig (v : B). A =
+proc pairSwap (A : Univ) (B : Univ) (p : Sig(u: A, B)) : Sig(v: B, A) =
   (snd p, fst p)
 """
   echo "ok: eponym macro accepts well-typed programs at compile time"
