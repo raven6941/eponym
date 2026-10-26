@@ -142,7 +142,7 @@ when isMainModule:
 
   let tPre = cpuTime()
   let prelude = elabPrelude("""
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
 """)

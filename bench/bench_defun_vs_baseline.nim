@@ -98,11 +98,11 @@ let tBase2 = stageMin(5, proc() =
 
 assert agree(evalD(dRes2, {0: yV2}.toTable, 1), u2), "p2 defun agreement"
 assert agree(evalSVal(bRes2, {"y": yV2}.toTable), u2), "p2 baseline agreement"
-echo "p2 const <> y:       defun  nodes=", countDNodes(dRes2),
+echo "p2 const unitv y:       defun  nodes=", countDNodes(dRes2),
      " time=", tDef2, "ms   | baseline nodes=", countNodes(bRes2),
      " time=", tBase2, "ms"
 
-# ================= Program 3: pairSwap (pair <> z) (z dynamic) =============
+# ================= Program 3: pairSwap (pair unitv z) (z dynamic) =============
 
 let swapProg = dLam(dPair(dSnd(dVar 0), dFst(dVar 0)))
 let zV3 = neutralB(9)

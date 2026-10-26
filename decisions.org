@@ -3896,3 +3896,25 @@
   document-scoped. The schema and protocol are specified in
   =docs/shed-state-dag.md=; #450 probes the two-goal refine/cache-miss case and
   #451 implements the full editor action surface after the experiment succeeded.
+
+* 2026-10-26 — Single surface syntax: `1` is the integer literal; unit type is `unitTy` (issues #466/#467/#468/#469, PR #471)
+
+  Context: one syntax before release (Aaron, 2026-10-26): `.ep` files use
+  the same syntax as embedded blocks, with hard removal of old `.ep` forms.
+  The lexer change landed in PR #471 (squash-merged as `b38854f`), closing
+  #467/#468/#469; the #466 remainder (bench programs, docs stragglers)
+  is migrated separately.
+  Decision: `1` is the integer literal (resolved by expected type);
+  `01` remains as a tolerated spelling for integer one. The unit type is
+  `unitTy`, the unit value `unitv`, the empty type `emptyTy`; the universe
+  is `Univ` (`Type 0`, `<>`, `O`, dot lam/Pi/Sig, colon decl headers,
+  binder-arrow, anonymous `?`, bare `by` are deleted with loud errors).
+  The renderer emits `unitTy`/`unitv`/`Univ`, so render->parse stays
+  faithful. `.ep` files stay as the importable-definition format.
+  Reversal: supersedes the 2026-10-13 entry above (`1` stays the unit
+  type; renderer emits `01` for `pkInt(1)`). Adequacy P7 now pins
+  `$mkInt(1) == "1"` and `$mkUnitTy() == "unitTy"`; `01` parses to
+  `pkInt(1)`, `1` parses to `pkInt(1)`.
+  Consequences: literal default for unknown expected types is tracked
+  separately (#470, Nat-leaning, unresolved); quantity `0` has no analogous
+  collision (quantity slots are syntactically delimited).

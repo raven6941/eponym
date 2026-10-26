@@ -1,7 +1,7 @@
 ## Comparison harness: direct elaborator vs relational elaborator
 ##
 ## Tests both elaborators on the same fragment and compares accept/reject.
-## Fragment: Pi (non-dep), lam, app, Nat, Vec, vars.
+## Fragment: Pi non-dep, lam, app, Nat, Vec, vars.
 ##
 ## The direct elaborator (elab.nim) handles the full language; we restrict
 ## test cases to the fragment. The relational elaborator (rel_elab_dep.nim)
@@ -31,7 +31,7 @@ proc corpus*(): seq[TestCase] =
   # 1. zero : Nat
   result.add(TestCase(
     name: "zero : Nat",
-    src: "data Nat : Type 0 where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat =\n  zero\n",
+    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat =\n  zero\n",
     tm: zeroTm(),
     ty: natTy(),
     shouldSucceed: true
@@ -39,7 +39,7 @@ proc corpus*(): seq[TestCase] =
   # 2. suc(zero) : Nat
   result.add(TestCase(
     name: "suc(zero) : Nat",
-    src: "data Nat : Type 0 where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat =\n  suc zero\n",
+    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat =\n  suc zero\n",
     tm: sucTm(zeroTm()),
     ty: natTy(),
     shouldSucceed: true
@@ -47,7 +47,7 @@ proc corpus*(): seq[TestCase] =
   # 3. lam(x.x) : Pi(Nat,Nat)
   result.add(TestCase(
     name: "lam(x.x) : Pi(Nat,Nat)",
-    src: "data Nat : Type 0 where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat -> Nat =\n  lam (x : Nat). x\n",
+    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat -> Nat =\n  lam(x, Nat, x)\n",
     tm: lamTm(varTm(0)),
     ty: piTy(natTy(), natTy()),
     shouldSucceed: true
@@ -55,7 +55,7 @@ proc corpus*(): seq[TestCase] =
   # 4. (lam x.x) zero : Nat
   result.add(TestCase(
     name: "(lam x.x) zero : Nat",
-    src: "data Nat : Type 0 where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat =\n  (lam (x : Nat). x) zero\n",
+    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat =\n  (lam(x, Nat, x)) zero\n",
     tm: appTm(lamTm(varTm(0)), zeroTm()),
     ty: natTy(),
     shouldSucceed: true
@@ -63,7 +63,7 @@ proc corpus*(): seq[TestCase] =
   # 5. nil : Vec(Nat, zero)
   result.add(TestCase(
     name: "nil : Vec(Nat,zero)",
-    src: "data Nat : Type 0 where\n| zero : Nat\n| suc (n : Nat) : Nat\ndata Vec (A : Type 0) : Nat -> Type 0 where\n| nil : Vec A zero\n| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)\nproc t : Vec Nat zero =\n  nil Nat\n",
+    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\ndata(Vec, [A: Univ], Nat -> Univ) where\n| nil : Vec A zero\n| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)\nproc t : Vec Nat zero =\n  nil Nat\n",
     tm: nilTm(),
     ty: vecTy(natTy(), zeroTm()),
     shouldSucceed: true
@@ -71,7 +71,7 @@ proc corpus*(): seq[TestCase] =
   # 6. cons(zero, nil) : Vec(Nat, suc(zero))
   result.add(TestCase(
     name: "cons(zero,nil) : Vec(Nat,suc(zero))",
-    src: "data Nat : Type 0 where\n| zero : Nat\n| suc (n : Nat) : Nat\ndata Vec (A : Type 0) : Nat -> Type 0 where\n| nil : Vec A zero\n| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)\nproc t : Vec Nat (suc zero) =\n  cons Nat zero zero (nil Nat)\n",
+    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\ndata(Vec, [A: Univ], Nat -> Univ) where\n| nil : Vec A zero\n| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)\nproc t : Vec Nat (suc zero) =\n  cons Nat zero zero (nil Nat)\n",
     tm: consTm(zeroTm(), nilTm()),
     ty: vecTy(natTy(), sucTm(zeroTm())),
     shouldSucceed: true
@@ -79,7 +79,7 @@ proc corpus*(): seq[TestCase] =
   # 7. REJECT: zero : Vec(Nat,zero)  (wrong type)
   result.add(TestCase(
     name: "REJECT zero : Vec(Nat,zero)",
-    src: "data Nat : Type 0 where\n| zero : Nat\n| suc (n : Nat) : Nat\ndata Vec (A : Type 0) : Nat -> Type 0 where\n| nil : Vec A zero\n| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)\nproc t : Vec Nat zero =\n  zero\n",
+    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\ndata(Vec, [A: Univ], Nat -> Univ) where\n| nil : Vec A zero\n| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)\nproc t : Vec Nat zero =\n  zero\n",
     tm: zeroTm(),
     ty: vecTy(natTy(), zeroTm()),
     shouldSucceed: false
@@ -87,7 +87,7 @@ proc corpus*(): seq[TestCase] =
   # 8. REJECT: nil : Vec(Nat, suc(zero))  (wrong index)
   result.add(TestCase(
     name: "REJECT nil : Vec(Nat,suc(zero))",
-    src: "data Nat : Type 0 where\n| zero : Nat\n| suc (n : Nat) : Nat\ndata Vec (A : Type 0) : Nat -> Type 0 where\n| nil : Vec A zero\n| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)\nproc t : Vec Nat (suc zero) =\n  nil Nat\n",
+    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\ndata(Vec, [A: Univ], Nat -> Univ) where\n| nil : Vec A zero\n| cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)\nproc t : Vec Nat (suc zero) =\n  nil Nat\n",
     tm: nilTm(),
     ty: vecTy(natTy(), sucTm(zeroTm())),
     shouldSucceed: false

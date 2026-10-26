@@ -29,10 +29,10 @@ when isMainModule:
   const Iters = 100
 
   # Test: cons(zero, nil) : Vec(Nat, suc(zero))
-  let src = """data Nat : Type 0 where
+  let src = """data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : Type 0) : Nat -> Type 0 where
+data(Vec, [A: Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc t : Vec Nat (suc zero) =
