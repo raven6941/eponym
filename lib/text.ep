@@ -3,5 +3,5 @@
 # Eponym checks where these values flow and which postulate signatures accept
 # them. Literal construction, text operations, and character operations stay
 # on the Nim side and must be bound by the host program.
-postulate String : Type 0
-postulate Char : Type 0
+postulate(String, Univ)
+postulate(Char, Univ)

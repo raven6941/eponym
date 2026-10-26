@@ -1,4 +1,4 @@
 # Negative test (issue #34): an unbound variable is a located scope error
 # naming the variable.
-proc bad : Type 0 =
+proc bad : Univ =
   x

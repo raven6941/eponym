@@ -1,6 +1,4 @@
 import "../../lib/vec.ep"
 
-postulate Int : Type 0
-postulate makeVectorForIndex :
-  Pi (index : Nat). Pi (seed : Int).
-    Sig (marker : Int). Vec Int index
+postulate(Int, Univ)
+postulate(makeVectorForIndex, Pi(index: Nat, Pi(seed: Int, Sig(marker: Int, Vec Int index))))

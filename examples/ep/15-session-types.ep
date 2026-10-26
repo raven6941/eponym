@@ -1,6 +1,6 @@
 # Session types (indexed protocol descriptions). Tests issue #28.
 # Experiment: session-typed channels
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Univ` = universe
 #
 # A session type describes a communication protocol. A channel indexed by
 # a session type ensures at compile time that send/recv follow the protocol.
@@ -30,7 +30,7 @@ proc client (ch : Chan (sendS Nat endS)) : Chan endS =
 #   15e-session-types-neg.ep — use after close (linearity)
 #
 # Violation 1: recv before send (wrong order)
-# proc badClient1 (1 ch : Chan (sendS Nat endS)) : Sig (x : Nat). Chan endS =
+# proc badClient1 (1 ch : Chan (sendS Nat endS)) : Sig(x: Nat, Chan endS) =
 #   recvNat ch
 # Error: inferred type (Chan (sendS Nat endS)) does not match expected type
 #        (Chan (recvS Nat endS)): noConfusion, distinct constructors

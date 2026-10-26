@@ -95,12 +95,11 @@ expect(foundVappend, "length-indexed vector append erases without refId collisio
 var indexedUsageDrv = initModuleDriver()
 discard indexedUsageDrv.elabFile(repoRoot / "lib/vec.ep")
 let indexedUsageDefs = indexedUsageDrv.elabDeclsDir(parseProgram("""
-postulate Int : Type 0
+postulate(Int, Univ)
 proc linearVecElim (n : Nat) (xs : Vec Int n) : Vec Int n =
-  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Vec Int i)
+  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Vec Int i)))
     (nil Int)
-    (lam (i : Nat). lam (x : Int). lam (tail : Vec Int i).
-      lam (ih : Vec Int i). cons Int i x ih)
+    (lam(i, Nat, lam(x, Int, lam(tail, Vec Int i, lam(ih, Vec Int i, cons Int i x ih)))))
     n xs
 """), repoRoot, "<indexed-q1-elimination>")
 var linearVecElimDef: ElabDef
@@ -117,13 +116,12 @@ var indexedCaptureDrv = initModuleDriver()
 discard indexedCaptureDrv.elabFile(repoRoot / "lib/vec.ep")
 try:
   discard indexedCaptureDrv.elabDeclsDir(parseProgram("""
-postulate Int : Type 0
+postulate(Int, Univ)
 proc indexedBranchCapture (n : Nat) (xs : Vec Int n)
     (1 value : Int) : Int =
-  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Int)
+  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Int)))
     value
-    (lam (i : Nat). lam (x : Int). lam (tail : Vec Int i).
-      lam (ih : Int). ih)
+    (lam(i, Nat, lam(x, Int, lam(tail, Vec Int i, lam(ih, Int, ih)))))
     n xs
 """), repoRoot, "<indexed-q1-branch-capture>")
 except ElabError as e:
@@ -135,9 +133,9 @@ expect(indexedBranchCaptureRejected,
 var branchDrv = initModuleDriver()
 discard branchDrv.elabFile(repoRoot / "lib/bool.ep")
 let branchDefs = branchDrv.elabDeclsDir(parseProgram("""
-postulate Int : Type 0
+postulate(Int, Univ)
 proc branchLinear (flag : Bool) (value : Int) : Int =
-  ifThenElse flag (lam (u : 1). value) (lam (u : 1). value) <>
+  ifThenElse flag (lam(u, unitTy, value)) (lam(u, unitTy, value)) unitv
 """), repoRoot, "<q1-branch-erasure>")
 var branchLinearDef: ElabDef
 for defn in branchDefs:
@@ -154,18 +152,18 @@ expect(true,
 
 var multiBranchDrv = initModuleDriver()
 let multiBranchDefs = multiBranchDrv.elabDeclsDir(parseProgram("""
-postulate Int : Type 0
-data Tri : Type 0 where
+postulate(Int, Univ)
+data(Tri, Univ) where
 | first : Tri
 | second : Tri
 | third : Tri
 proc triLinear (tag : Tri) (value : Int) : Int =
-  triElim (lam (u : Tri). Pi(unit : 1). Int)
-          (lam (unit : 1). value)
-          (lam (unit : 1). value)
-          (lam (unit : 1). value)
+  triElim (lam(u, Tri, Pi(unit: unitTy, Int)))
+          (lam(unit, unitTy, value))
+          (lam(unit, unitTy, value))
+          (lam(unit, unitTy, value))
           tag
-          <>
+          unitv
 """), repoRoot, "<three-way-q1-branch>")
 var triLinearDef: ElabDef
 for defn in multiBranchDefs:
@@ -183,19 +181,19 @@ var triDuplicateRejected = false
 var badTriDrv = initModuleDriver()
 try:
   discard badTriDrv.elabDeclsDir(parseProgram("""
-postulate Int : Type 0
-postulate duplicateInt : Int -> Int -> Int
-data Tri : Type 0 where
+postulate(Int, Univ)
+postulate(duplicateInt, Int -> Int -> Int)
+data(Tri, Univ) where
 | first : Tri
 | second : Tri
 | third : Tri
 proc triDuplicate (tag : Tri) (1 value : Int) : Int =
-  triElim (lam (u : Tri). Pi(unit : 1). Int)
-          (lam (unit : 1). value)
-          (lam (unit : 1). value)
-          (lam (unit : 1). duplicateInt value value)
+  triElim (lam(u, Tri, Pi(unit: unitTy, Int)))
+          (lam(unit, unitTy, value))
+          (lam(unit, unitTy, value))
+          (lam(unit, unitTy, duplicateInt value value))
           tag
-          <>
+          unitv
 """), repoRoot, "<three-way-q1-duplicate>")
 except ElabError as e:
   triDuplicateRejected = "linear variable 'value' used 1 or 2+ time(s)" in e.msg
@@ -204,15 +202,14 @@ expect(triDuplicateRejected,
 
 var recursiveDrv = initModuleDriver()
 let recursiveDefs = recursiveDrv.elabDeclsDir(parseProgram("""
-postulate Int : Type 0
-data Chain : Type 0 where
+postulate(Int, Univ)
+data(Chain, Univ) where
 | chainEnd (item : Int) : Chain
 | chainNext (item : Int) (tail : Chain) : Chain
 proc linearAtChainEnd (xs : Chain) (value : Int) : Int =
-  chainElim (lam (u : Chain). Int)
-    (lam (item : Int). value)
-    (lam (item : Int). lam (tail : Chain).
-      lam (ih : Int). ih)
+  chainElim (lam(u, Chain, Int))
+    (lam(item, Int, value))
+    (lam(item, Int, lam(tail, Chain, lam(ih, Int, ih))))
     xs
 """), repoRoot, "<recursive-q1-branch>")
 var linearAtEndDef: ElabDef
@@ -230,16 +227,15 @@ var recursiveDuplicateRejected = false
 var badRecursiveDrv = initModuleDriver()
 try:
   discard badRecursiveDrv.elabDeclsDir(parseProgram("""
-postulate Int : Type 0
-postulate duplicateInt : Int -> Int -> Int
-data Chain : Type 0 where
+postulate(Int, Univ)
+postulate(duplicateInt, Int -> Int -> Int)
+data(Chain, Univ) where
 | chainEnd (item : Int) : Chain
 | chainNext (item : Int) (tail : Chain) : Chain
 proc duplicateAlongChain (xs : Chain) (1 value : Int) : Int =
-  chainElim (lam (u : Chain). Int)
-    (lam (item : Int). value)
-    (lam (item : Int). lam (tail : Chain).
-      lam (ih : Int). duplicateInt value ih)
+  chainElim (lam(u, Chain, Int))
+    (lam(item, Int, value))
+    (lam(item, Int, lam(tail, Chain, lam(ih, Int, duplicateInt value ih))))
     xs
 """), repoRoot, "<recursive-q1-duplicate>")
 except ElabError as e:
@@ -252,17 +248,16 @@ var closureMotiveRejected = false
 var closureMotiveDrv = initModuleDriver()
 try:
   discard closureMotiveDrv.elabDeclsDir(parseProgram("""
-postulate Int : Type 0
-data Chain : Type 0 where
+postulate(Int, Univ)
+data(Chain, Univ) where
 | chainEnd (item : Int) : Chain
 | chainNext (item : Int) (tail : Chain) : Chain
-proc capturesLinearValue(xs : Chain) (1 value : Int) : Pi(unit : 1). Int =
-  chainElim (lam (u : Chain). Pi(unit : 1). Int)
-    (lam (item : Int). lam (unit : 1). value)
-    (lam (item : Int). lam (tail : Chain).
-      lam (ih : Pi(unit : 1). Int). ih)
+proc capturesLinearValue(xs : Chain) (1 value : Int) : Pi(unit: unitTy, Int) =
+  chainElim (lam(u, Chain, Pi(unit: unitTy, Int)))
+    (lam(item, Int, lam(unit, unitTy, value)))
+    (lam(item, Int, lam(tail, Chain, lam(ih, Pi(unit: unitTy, Int), ih))))
     xs
-    <>
+    unitv
 """), repoRoot, "<recursive-q1-closure-motive>")
 except ElabError as e:
   closureMotiveRejected =
@@ -274,18 +269,15 @@ var multiRecursiveRejected = false
 var binaryTreeDrv = initModuleDriver()
 try:
   discard binaryTreeDrv.elabDeclsDir(parseProgram("""
-postulate Int : Type 0
-postulate duplicateInt : Int -> Int -> Int
-data Tree : Type 0 where
+postulate(Int, Univ)
+postulate(duplicateInt, Int -> Int -> Int)
+data(Tree, Univ) where
 | leaf (item : Int) : Tree
 | fork (left : Tree) (right : Tree) : Tree
 proc linearAtLeaf (tree : Tree) (1 value : Int) : Int =
-  treeElim (lam (u : Tree). Int)
-    (lam (item : Int). value)
-    (lam (left : Tree).
-      lam (ihLeft : Int).
-        lam (right : Tree).
-          lam (ihRight : Int). duplicateInt value ihLeft)
+  treeElim (lam(u, Tree, Int))
+    (lam(item, Int, value))
+    (lam(left, Tree, lam(ihLeft, Int, lam(right, Tree, lam(ihRight, Int, duplicateInt value ihLeft)))))
     tree
 """), repoRoot, "<binary-tree-q1-duplicate>")
 except ElabError as e:

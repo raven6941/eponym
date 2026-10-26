@@ -1,1 +1,1 @@
-line 47, col 18: inferred type (AcceptMsg (suc ((pv.1).1))) does not match expected type (AcceptMsg ((pv.1).1)): not convertible (neutral mismatch)
+line 44, col 18: inferred type (AcceptMsg (suc ((pv.1).1))) does not match expected type (AcceptMsg ((pv.1).1)): not convertible (neutral mismatch)

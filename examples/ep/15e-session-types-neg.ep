@@ -1,7 +1,7 @@
 # Negative test for session types: use after close.
 # Negative tests (files named *-neg.ep) are expected to raise ElabError;
 # tests/run_examples.nim verifies the rejection.
-# closeOp consumes its channel (Pi (1 ch : Chan endS). Nat), so a second
+# closeOp consumes its channel (Pi(1 ch: Chan endS, Nat)), so a second
 # use of the same channel is a linearity violation, not merely a protocol
 # state mismatch: the protocol says close happens exactly once.
 import "../../lib/nat.ep"

@@ -10,5 +10,5 @@ import "../../lib/session.ep"
 # Violation 1: recv on a channel whose protocol says send first.
 # Expected error: inferred type (Chan (sendS Nat endS)) does not match
 # expected type (Chan (recvS Nat endS)) — distinct constructors.
-proc badClient1 (1 ch : Chan (sendS Nat endS)) : Sig (x : Nat). Chan endS =
+proc badClient1 (1 ch : Chan (sendS Nat endS)) : Sig(x: Nat, Chan endS) =
   recvNat ch

@@ -13,6 +13,4 @@ import "../../lib/borrow.ep"
 
 # Violation: owner used inside the borrow scope.
 proc badOwnerUse (1 r : Res) : Nat =
-  withBorrow r (lam (b : Borrow).
-    readB b (lam (v : Nat). lam (b2 : Borrow).
-      endB b2 (freeRes r)))
+  withBorrow r (lam(b, Borrow, readB b (lam(v, Nat, lam(b2, Borrow, endB b2 (freeRes r))))))

@@ -7,8 +7,8 @@
 # their own scoped clients against this library.
 import "nat.ep"
 
-postulate Res : Type 0
-postulate Borrow : Type 0
+postulate(Res, Univ)
+postulate(Borrow, Univ)
 
 # A unique borrow of a resource: `withBorrow r k` hands `k` the *only*
 # borrow of `r`; `r` itself is consumed (linear), so the owner cannot
@@ -18,8 +18,8 @@ postulate Borrow : Type 0
 # (Issue #66) then fires at every step: a borrow used twice or dropped
 # is an elaboration error (see 21a/21b/21c-*-neg.ep). Unannotated
 # lambdas inherit the quantity from the expected Pi (Idris 2
-# behaviour), so `lam (b2 : Borrow). ...` against
-# `Pi (1 b2 : Borrow). Nat` is linear-checked.
+# behaviour), so `lam(b2, Borrow, ...)` against
+# `Pi(1 b2: Borrow, Nat)` is linear-checked.
 #
 # `Borrow` is deliberately *not* indexed by the resource: the owner
 # index would have to travel as an implicit argument, and the
@@ -34,14 +34,12 @@ postulate Borrow : Type 0
 # fully consumed, so a well-typed client cannot leak it — the scope owns
 # the lifetime, exactly like `withFile` / `bracket` in ordinary
 # languages.
-postulate withBorrow : Pi (1 r : Res). Pi (k : Pi (1 b : Borrow). Nat). Nat
+postulate(withBorrow, Pi(1 r: Res, Pi(k: Pi(1 b: Borrow, Nat), Nat)))
 
-postulate readB : Pi (1 b : Borrow).
-  Pi (k : Pi (v : Nat). Pi (1 b2 : Borrow). Nat). Nat
-postulate writeB : Pi (1 b : Borrow). Pi (v : Nat).
-  Pi (k : Pi (1 b2 : Borrow). Nat). Nat
-postulate endB : Pi (1 b : Borrow). Pi (v : Nat). Nat
+postulate(readB, Pi(1 b: Borrow, Pi(k: Pi(v: Nat, Pi(1 b2: Borrow, Nat)), Nat)))
+postulate(writeB, Pi(1 b: Borrow, Pi(v: Nat, Pi(k: Pi(1 b2: Borrow, Nat), Nat))))
+postulate(endB, Pi(1 b: Borrow, Pi(v: Nat, Nat)))
 
 # Deallocation: consumes the owner outside a borrow scope. Using it on
 # the owner while the borrow is live is a linearity violation (21b).
-postulate freeRes : Pi (1 r : Res). Nat
+postulate(freeRes, Pi(1 r: Res, Nat))

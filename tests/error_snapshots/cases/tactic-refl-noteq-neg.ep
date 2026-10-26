@@ -1,5 +1,5 @@
-# Negative test (issue #186): `by refl` on a goal that is not an equality
+# Negative test (issue #186): `byTac(refl)` on a goal that is not an equality
 # names the goal instead of reporting an internal spine length.
-postulate Nat : Type 0
-postulate zero : Nat
-proc bad : Nat = by refl
+postulate(Nat, Univ)
+postulate(zero, Nat)
+proc bad : Nat = byTac(refl)

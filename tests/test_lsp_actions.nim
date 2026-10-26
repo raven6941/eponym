@@ -10,17 +10,17 @@ import tables
 import elab
 import lsp
 
-const appendSrc = """data Nat : Type 0 where
+const appendSrc = """data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-def add : Nat -> Nat -> Nat
-| zero n = n
-| (suc m) n = suc (add m n)
-data Vec (A : Type 0) : Nat -> Type 0 where
+def(add, Nat -> Nat -> Nat):
+clause([zero, n], n)
+clause([(suc m), n], suc (add m n))
+data(Vec, [A : Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-proc append {A : Type 0} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =
-  ?
+proc append {A : Univ} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =
+  _
 """
 
 var failures = 0
@@ -53,13 +53,13 @@ proc applyEdit(src: string, e: JsonNode): string =
   res.join("\n")
 
 proc holePos(src: string, n: int): tuple[line, col: int] =
-  ## 0-based position of the n-th `?` hole in the source.
+  ## 0-based position of the n-th `_` hole in the source.
   var seen = 0
   let lines = src.splitLines()
   for i, ln in lines:
     var j = 0
     while j < ln.len:
-      if ln[j] == '?':
+      if ln[j] == '_':
         if seen == n: return (i, j)
         inc seen
       inc j
@@ -120,8 +120,8 @@ let csActs = csResp["result"]
 check(csActs.len == 1 and csActs[0]["title"].getStr() == "case-split xs",
   "one case-split action offered")
 cur = applyEdit(cur, csActs[0])
-check(cur.contains("| nil ys = ?"), "split generated the nil clause")
-check(cur.contains("| (cons n1 x xs1) ys = ?"),
+check(cur.contains("clause([nil, ys], _)"), "split generated the nil clause")
+check(cur.contains("clause([cons(n1, x, xs1), ys], _)"),
   "split generated the cons clause with freshened binders")
 let chResp = didChange(server, uri, cur)
 check(chResp["params"]["diagnostics"].len == 0,
@@ -192,7 +192,7 @@ check("error" in badSplit2 and
       badSplit2["error"]["message"].getStr().contains("first explicit"),
   "case-split on a non-first argument rejected with the clause restriction")
 
-let holeTerm = codeAction(server, uri2, 53, nhl, nhc, term = "?")
+let holeTerm = codeAction(server, uri2, 53, nhl, nhc, term = "_")
 let htActs = holeTerm["result"]
 var htGive = false
 for a in htActs:

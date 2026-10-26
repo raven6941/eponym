@@ -496,7 +496,7 @@ proc ifExprToEponym(n: NimNode): string =
     let yesBranch = "lam(_, unitTy, " & nimExprToEponym(branchExpr(body)) & ")"
     fallback = "ifThenElse (" & nimExprToEponym(condition) & ") " &
       yesBranch & " (" & fallback & ")"
-  "(" & fallback & ") <>"
+  "(" & fallback & ") unitv"
 
 proc nimCommandLamToEponym(n: NimNode): string =
   ## Convert Nim's command-form untyped lambda (`lam x. body`) to Eponym
@@ -647,6 +647,12 @@ proc nimExprToEponym(n: NimNode): string =
         let binder = n[1][0]
         return "lam({" & $binder[0] & ": " &
                nimTypeToEponym(binder[1]) & "}, " & nimExprToEponym(n[2]) & ")" 
+      if n.len == 3 and n[1].kind in {nnkIdent, nnkPragmaExpr}:
+        # Unannotated 2-item lam(x, body): the parser accepts it in
+        # .ep text, so the macro must accept it in embedded code too
+        # (single syntax; issue #467/#469).
+        return "lam(" & qtyPrefix(n[1]) & binderName(n[1]) & ", " &
+               nimExprToEponym(n[2]) & ")"
       if n.len != 4 or n[1].kind notin {nnkIdent, nnkPragmaExpr}:
         error("lam expects (binder, type, body)", n)
       return "lam(" & qtyPrefix(n[1]) & binderName(n[1]) & ", " &
@@ -821,6 +827,9 @@ proc nimTypeToEponym(n: NimNode): string =
       return piSigToEponym(n)
     if n[0].kind == nnkIdent and $n[0] == "lam":
       # lam(x, T, body) stays lam(x, T, body) (continuations in types).
+      if n.len == 3 and n[1].kind in {nnkIdent, nnkPragmaExpr}:
+        return "lam(" & qtyPrefix(n[1]) & binderName(n[1]) & ", " &
+               nimTypeToEponym(n[2]) & ")"
       if n.len != 4 or n[1].kind notin {nnkIdent, nnkPragmaExpr}:
         error("lam expects (binder, type, body)", n)
       return "lam(" & qtyPrefix(n[1]) & binderName(n[1]) & ", " &
@@ -4172,8 +4181,9 @@ macro eponymBlock*(body: untyped): untyped =
   ## `x {.qvar(q).}` (Issue #151): quantity-variable binder `(q x : T)`.
   ## `requireCompiled()` restricts a block to representation-compiled
   ## definitions with direct typed wrappers; unsupported paths fail here.
-  ## Nim-safe name mappings: `vecnil` -> `nil`, `unitv` -> `<>`,
-  ## `unitTy` -> `1` (unit type), `emptyTy` -> `O` (empty type).
+  ## Nim-safe name mapping: `vecnil` -> `nil` (`nil` is a Nim keyword,
+  ## so embedded code spells the constructor `vecnil`). `unitv`,
+  ## `unitTy`, and `emptyTy` are spelled as-is (single syntax).
   ## Generates callable fixed-arity wrappers for primitive Int/Nat and
   ## explicitly mapped opaque postulated types. Unsupported legacy shapes
   ## retain the varargs[int] compatibility wrapper.

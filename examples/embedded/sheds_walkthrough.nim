@@ -146,10 +146,10 @@ shedsBlock:
   #     `f` ignores `g`, while `g` returns it.
   # 2. All at once:
   #  a. Expand the inline shed as above and press `r` for refine.
-  #  b. Enter `lam (f : A). lam (g : A). f`; the nested binder boxes collapse
+  #  b. Enter `lam(f, lam(g, f))`; the nested binder boxes collapse
   #     as the proof becomes complete.
   proc constEndo(A: Univ): Pi(f: A, g: A, A) =
-    ![constEndoBody, "lam (f : A). lam (g : A). f"]
+    ![constEndoBody, "lam(f, lam(g, f))"]
 
   # Two independent goals make branch selection visible in the walkthrough.
   # Refine either marker while preserving its sibling, then select another

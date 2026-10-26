@@ -1,5 +1,5 @@
 # Negative test (issue #34): a constructor whose return type is not the
 # family being declared.
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
-| suc (n : Nat) : Type 0
+| suc (n : Nat) : Univ

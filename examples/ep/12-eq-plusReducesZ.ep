@@ -1,23 +1,22 @@
 # Propositional equality: Eq, refl, J, cong, plusReducesZ.
 # Experiment: 12
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
-# `data T : Type 0 where` defines inductive types; in eponymBlock: `data(T, Univ):` + indented `proc` ctors
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Univ` = universe
+# `data(T, Univ) where` defines inductive types
 # Eq is an indexed family; refl typechecks up to conversion
 # (not just syntactic equality). J (eqElim) is the eliminator.
 # plusReducesZ is the Idris benchmark: (n : Nat) -> n = plus n Z.
 import "../../lib/nat.ep"
 
-data Eq (A : Type 0) (x : A) : A -> Type 0 where
+data(Eq, [A: Univ, x: A], A -> Univ) where
 | refl : Eq A x x
 
-proc cong (A : Type 0) (B : Type 0) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
+proc cong (A : Univ) (B : Univ) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
     : Eq B (f x) (f y) =
-  eqElim A x (lam (z : A). lam (q : Eq A x z). Eq B (f x) (f z))
+  eqElim A x (lam(z, A, lam(q, Eq A x z, Eq B (f x) (f z))))
          (refl B (f x)) y p
 
 proc plusReducesZ (n : Nat) : Eq Nat n (add n zero) =
-  natElim (lam (m : Nat). Eq Nat m (add m zero))
+  natElim (lam(m, Nat, Eq Nat m (add m zero)))
           (refl Nat zero)
-          (lam (k : Nat). lam (ih : Eq Nat k (add k zero)).
-            cong Nat Nat (lam (x : Nat). suc x) k (add k zero) ih)
+          (lam(k, Nat, lam(ih, Eq Nat k (add k zero), cong Nat Nat (lam(x, Nat, suc x)) k (add k zero) ih)))
           n

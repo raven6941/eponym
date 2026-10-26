@@ -3,88 +3,70 @@
 import "nat.ep"
 import "eq.ep"
 
-data List (A : Type 0) : Type 0 where
+data(List, [A: Univ], Univ) where
 | nil : List A
 | cons (x : A) (xs : List A) : List A
 
-proc map (A : Type 0) (B : Type 0) (f : A -> B) (xs : List A) : List B =
-  listElim A (lam (u : List A). List B)
+proc map (A : Univ) (B : Univ) (f : A -> B) (xs : List A) : List B =
+  listElim A (lam(u, List A, List B))
            (nil B)
-           (lam (x : A). lam (tl : List A). lam (ih : List B).
-             cons B (f x) ih)
+           (lam(x, A, lam(tl, List A, lam(ih, List B, cons B (f x) ih))))
            xs
 
-proc append (A : Type 0) (xs : List A) (ys : List A) : List A =
-  listElim A (lam (u : List A). List A)
+proc append (A : Univ) (xs : List A) (ys : List A) : List A =
+  listElim A (lam(u, List A, List A))
            ys
-           (lam (x : A). lam (tl : List A). lam (ih : List A).
-             cons A x ih)
+           (lam(x, A, lam(tl, List A, lam(ih, List A, cons A x ih))))
            xs
 
-proc length (A : Type 0) (xs : List A) : Nat =
-  listElim A (lam (u : List A). Nat)
+proc length (A : Univ) (xs : List A) : Nat =
+  listElim A (lam(u, List A, Nat))
            zero
-           (lam (x : A). lam (tl : List A). lam (ih : Nat). suc ih)
+           (lam(x, A, lam(tl, List A, lam(ih, Nat, suc ih))))
            xs
 
 # --- Lemmas ---
 
-proc mapId (A : Type 0) (xs : List A)
-    : Eq (List A) (map A A (lam (x : A). x) xs) xs =
-  listElim A (lam (u : List A). Eq (List A) (map A A (lam (x : A). x) u) u)
+proc mapId (A : Univ) (xs : List A)
+    : Eq (List A) (map A A (lam(x, A, x)) xs) xs =
+  listElim A (lam(u, List A, Eq (List A) (map A A (lam(x, A, x)) u) u))
            (refl (List A) (nil A))
-           (lam (x : A). lam (tl : List A).
-             lam (ih : Eq (List A) (map A A (lam (x : A). x) tl) tl).
-               cong (List A) (List A) (lam (t : List A). cons A x t)
-                    (map A A (lam (x : A). x) tl) tl ih)
+           (lam(x, A, lam(tl, List A, lam(ih, Eq (List A) (map A A (lam(x, A, x)) tl) tl, cong (List A) (List A) (lam(t, List A, cons A x t))
+                    (map A A (lam(x, A, x)) tl) tl ih))))
            xs
 
-proc mapComp (A : Type 0) (B : Type 0) (C : Type 0) (f : B -> C) (g : A -> B) (xs : List A)
-    : Eq (List C) (map A C (lam (x : A). f (g x)) xs)
+proc mapComp (A : Univ) (B : Univ) (C : Univ) (f : B -> C) (g : A -> B) (xs : List A)
+    : Eq (List C) (map A C (lam(x, A, f (g x))) xs)
                     (map B C f (map A B g xs)) =
-  listElim A (lam (u : List A). Eq (List C) (map A C (lam (x : A). f (g x)) u)
-                                             (map B C f (map A B g u)))
+  listElim A (lam(u, List A, Eq (List C) (map A C (lam(x, A, f (g x))) u) (map B C f (map A B g u))))
            (refl (List C) (nil C))
-           (lam (x : A). lam (tl : List A).
-             lam (ih : Eq (List C) (map A C (lam (x : A). f (g x)) tl)
-                                       (map B C f (map A B g tl))).
-               cong (List C) (List C) (lam (t : List C). cons C (f (g x)) t)
-                    (map A C (lam (x : A). f (g x)) tl)
-                    (map B C f (map A B g tl)) ih)
+           (lam(x, A, lam(tl, List A, lam(ih, Eq (List C) (map A C (lam(x, A, f (g x))) tl) (map B C f (map A B g tl)), cong (List C) (List C) (lam(t, List C, cons C (f (g x)) t))
+                    (map A C (lam(x, A, f (g x))) tl)
+                    (map B C f (map A B g tl)) ih))))
            xs
 
-proc appendAssoc (A : Type 0) (xs : List A) (ys : List A) (zs : List A)
+proc appendAssoc (A : Univ) (xs : List A) (ys : List A) (zs : List A)
     : Eq (List A) (append A xs (append A ys zs))
                       (append A (append A xs ys) zs) =
-  listElim A (lam (u : List A). Eq (List A) (append A u (append A ys zs))
-                                                 (append A (append A u ys) zs))
+  listElim A (lam(u, List A, Eq (List A) (append A u (append A ys zs)) (append A (append A u ys) zs)))
            (refl (List A) (append A ys zs))
-           (lam (x : A). lam (tl : List A).
-             lam (ih : Eq (List A) (append A tl (append A ys zs))
-                                       (append A (append A tl ys) zs)).
-               cong (List A) (List A) (lam (t : List A). cons A x t)
+           (lam(x, A, lam(tl, List A, lam(ih, Eq (List A) (append A tl (append A ys zs)) (append A (append A tl ys) zs), cong (List A) (List A) (lam(t, List A, cons A x t))
                     (append A tl (append A ys zs))
-                    (append A (append A tl ys) zs) ih)
+                    (append A (append A tl ys) zs) ih))))
            xs
 
-proc appendNilR (A : Type 0) (xs : List A) : Eq (List A) (append A xs (nil A)) xs =
-  listElim A (lam (u : List A). Eq (List A) (append A u (nil A)) u)
+proc appendNilR (A : Univ) (xs : List A) : Eq (List A) (append A xs (nil A)) xs =
+  listElim A (lam(u, List A, Eq (List A) (append A u (nil A)) u))
            (refl (List A) (nil A))
-           (lam (x : A). lam (tl : List A).
-             lam (ih : Eq (List A) (append A tl (nil A)) tl).
-               cong (List A) (List A) (lam (t : List A). cons A x t)
-                    (append A tl (nil A)) tl ih)
+           (lam(x, A, lam(tl, List A, lam(ih, Eq (List A) (append A tl (nil A)) tl, cong (List A) (List A) (lam(t, List A, cons A x t))
+                    (append A tl (nil A)) tl ih))))
            xs
 
-proc lengthAppend (A : Type 0) (xs : List A) (ys : List A)
+proc lengthAppend (A : Univ) (xs : List A) (ys : List A)
     : Eq Nat (length A (append A xs ys)) (add (length A xs) (length A ys)) =
-  listElim A (lam (u : List A). Eq Nat (length A (append A u ys))
-                                             (add (length A u) (length A ys)))
+  listElim A (lam(u, List A, Eq Nat (length A (append A u ys)) (add (length A u) (length A ys))))
            (refl Nat (length A ys))
-           (lam (x : A). lam (tl : List A).
-             lam (ih : Eq Nat (length A (append A tl ys))
-                                   (add (length A tl) (length A ys))).
-               cong Nat Nat (lam (k : Nat). suc k)
+           (lam(x, A, lam(tl, List A, lam(ih, Eq Nat (length A (append A tl ys)) (add (length A tl) (length A ys)), cong Nat Nat (lam(k, Nat, suc k))
                     (length A (append A tl ys))
-                    (add (length A tl) (length A ys)) ih)
+                    (add (length A tl) (length A ys)) ih))))
            xs

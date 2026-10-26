@@ -21,11 +21,11 @@ import "../../lib/usage.ep"
 # The function-argument type selected by the usage value. Each case pins the
 # literal binder quantity; `mapU` below dispatches on `u` so that in each
 # branch `mapCont u A B` reduces (delta + iota) to the concrete Pi type.
-proc mapCont (u : Usage) (A : Type 0) (B : Type 0) : Type 0 =
-  usageElimLarge (lam (w : Usage). Type 0)
-    (Pi (0 x : A). B)
-    (Pi (1 x : A). B)
-    (Pi (x : A). B)
+proc mapCont (u : Usage) (A : Univ) (B : Univ) : Univ =
+  usageElimLarge (lam(w, Usage, Univ))
+    (Pi(0 x: A, B))
+    (Pi(1 x: A, B))
+    (Pi(x: A, B))
     u
 
 # --- One operator, written once, usable at 0, 1, and ω -----------------------
@@ -36,37 +36,25 @@ proc mapCont (u : Usage) (A : Type 0) (B : Type 0) : Type 0 =
 # check by conversion (this needs the #88 elaborator fix: ascribed lambda
 # domains are compared by convElab, since the syntactic unifier cannot see
 # through the definition).
-proc mapU (u : Usage) (A : Type 0) (B : Type 0) : mapCont u A B -> List A -> List B =
-  usageElim (lam (w : Usage). mapCont w A B -> List A -> List B)
-    (lam (f0 : Pi (0 x : A). B). lam (xs0 : List A).
-      listElim A (lam (v : List A). List B)
-        (nil B)
-        (lam (x : A). lam (tl : List A). lam (ih : List B). cons B (f0 x) ih)
-        xs0)
-    (lam (f1 : Pi (1 x : A). B). lam (xs1 : List A).
-      listElim A (lam (v : List A). List B)
-        (nil B)
-        (lam (x : A). lam (tl : List A). lam (ih : List B). cons B (f1 x) ih)
-        xs1)
-    (lam (f2 : Pi (x : A). B). lam (xs2 : List A).
-      listElim A (lam (v : List A). List B)
-        (nil B)
-        (lam (x : A). lam (tl : List A). lam (ih : List B). cons B (f2 x) ih)
-        xs2)
+proc mapU (u : Usage) (A : Univ) (B : Univ) : mapCont u A B -> List A -> List B =
+  usageElim (lam(w, Usage, mapCont w A B -> List A -> List B))
+    (lam(f0, Pi(0 x: A, B), lam(xs0, List A, listElim A (lam(v, List A, List B)) (nil B) (lam(x, A, lam(tl, List A, lam(ih, List B, cons B (f0 x) ih)))) xs0)))
+    (lam(f1, Pi(1 x: A, B), lam(xs1, List A, listElim A (lam(v, List A, List B)) (nil B) (lam(x, A, lam(tl, List A, lam(ih, List B, cons B (f1 x) ih)))) xs1)))
+    (lam(f2, Pi(x: A, B), lam(xs2, List A, listElim A (lam(v, List A, List B)) (nil B) (lam(x, A, lam(tl, List A, lam(ih, List B, cons B (f2 x) ih)))) xs2)))
     u
 
 # --- Tests: all three quantities elaborate and evaluate ---------------------
 # U0: the function must not use its argument (erased); result is all zeros.
 proc testU0 : List Nat =
-  mapU U0 Nat Nat (lam (0 n : Nat). zero) (cons Nat (suc zero) (nil Nat))
+  mapU U0 Nat Nat (lam(0 n, Nat, zero)) (cons Nat (suc zero) (nil Nat))
 
 # U1: the function must use its argument exactly once.
 proc testU1 : List Nat =
-  mapU U1 Nat Nat (lam (1 n : Nat). suc n) (cons Nat zero (nil Nat))
+  mapU U1 Nat Nat (lam(1 n, Nat, suc n)) (cons Nat zero (nil Nat))
 
 # UOmega: unrestricted, the ordinary map.
 proc testUOmega : List Nat =
-  mapU UOmega Nat Nat (lam (n : Nat). suc (suc n)) (cons Nat zero (nil Nat))
+  mapU UOmega Nat Nat (lam(n, Nat, suc (suc n))) (cons Nat zero (nil Nat))
 
 # --- Evaluation checks: each usage site must REDUCE to the expected list ---
 # `refl` typechecks up to conversion (lib/eq.ep), so these procs elaborate
@@ -90,20 +78,20 @@ proc evalUOmega : Eq (List Nat) testUOmega (cons Nat (suc (suc zero)) (nil Nat))
 # The API surface shrinks 3 → 1; the per-quantity bodies move into mapU's
 # branches. Net line delta is small — the win is one name to learn,
 # document, and maintain, exactly the library-scaling wall from #88.
-proc map0 (A : Type 0) (B : Type 0) (f : Pi (0 x : A). B) (xs : List A) : List B =
-  listElim A (lam (v : List A). List B)
+proc map0 (A : Univ) (B : Univ) (f : Pi(0 x: A, B)) (xs : List A) : List B =
+  listElim A (lam(v, List A, List B))
     (nil B)
-    (lam (x : A). lam (tl : List A). lam (ih : List B). cons B (f x) ih)
+    (lam(x, A, lam(tl, List A, lam(ih, List B, cons B (f x) ih))))
     xs
 
-proc map1 (A : Type 0) (B : Type 0) (f : Pi (1 x : A). B) (xs : List A) : List B =
-  listElim A (lam (v : List A). List B)
+proc map1 (A : Univ) (B : Univ) (f : Pi(1 x: A, B)) (xs : List A) : List B =
+  listElim A (lam(v, List A, List B))
     (nil B)
-    (lam (x : A). lam (tl : List A). lam (ih : List B). cons B (f x) ih)
+    (lam(x, A, lam(tl, List A, lam(ih, List B, cons B (f x) ih))))
     xs
 
-proc mapW (A : Type 0) (B : Type 0) (f : A -> B) (xs : List A) : List B =
-  listElim A (lam (v : List A). List B)
+proc mapW (A : Univ) (B : Univ) (f : A -> B) (xs : List A) : List B =
+  listElim A (lam(v, List A, List B))
     (nil B)
-    (lam (x : A). lam (tl : List A). lam (ih : List B). cons B (f x) ih)
+    (lam(x, A, lam(tl, List A, lam(ih, List B, cons B (f x) ih))))
     xs

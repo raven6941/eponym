@@ -1,4 +1,4 @@
 # Negative test (issue #34): a hole with no information to solve it stays
 # an unsolved metavariable instead of silently defaulting.
-proc bad : Type 0 =
-  ?
+proc bad : Univ =
+  _

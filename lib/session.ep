@@ -8,13 +8,13 @@
 import "nat.ep"
 
 # Session protocol descriptions: what comes next on the channel
-data Session : Type 0 where
-| sendS (A : Type 0) (s : Session) : Session
-| recvS (A : Type 0) (s : Session) : Session
+data(Session, Univ) where
+| sendS (A : Univ) (s : Session) : Session
+| recvS (A : Univ) (s : Session) : Session
 | endS : Session
 
 # Channel indexed by current session state
-data Chan : Session -> Type 0 where
+data(Chan, Session -> Univ) where
 | mkChan (s : Session) : Chan s
 
 # Operations as primitives (a real library would bind these to socket
@@ -22,6 +22,6 @@ data Chan : Session -> Type 0 where
 # Linear (1) binders ensure channels are used exactly once (Issue #64).
 # As postulates, the linearity is enforced at use sites (clients), not
 # in the primitive definitions themselves.
-postulate sendNat : Pi (x : Nat). Pi (1 ch : Chan (sendS Nat endS)). Chan endS
-postulate recvNat : Pi (1 ch : Chan (recvS Nat endS)). Sig (x : Nat). Chan endS
-postulate closeOp : Pi (1 ch : Chan endS). Nat
+postulate(sendNat, Pi(x: Nat, Pi(1 ch: Chan (sendS Nat endS), Chan endS)))
+postulate(recvNat, Pi(1 ch: Chan (recvS Nat endS), Sig(x: Nat, Chan endS)))
+postulate(closeOp, Pi(1 ch: Chan endS, Nat))

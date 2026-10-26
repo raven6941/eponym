@@ -30,7 +30,7 @@ proc macroSidecar(nimFile, generatedSource, name: string,
   var holeLine = 0
   var holeCol = 0
   for i, line in lines:
-    let col = line.find('?')
+    let col = line.find('_')
     if col >= 0:
       holeLine = i + 1
       holeCol = col + 1
@@ -61,7 +61,7 @@ let dir = fixtureDir("refine")
 let nimFile = dir / "demo.nim"
 let uri = "file://" & nimFile
 let source0 = "import sheds_mac\nshedsBlock:\n  proc identity(n: Int): Int = ![identityBody]\n"
-let generated0 = "postulate Int : Type 0\nproc identity (n : Int) : Int = ?\n"
+let generated0 = "postulate(Int, Univ)\nproc identity (n : Int) : Int = _\n"
 writeFile(nimFile, source0)
 writeShedSidecar(nimFile, @[macroSidecar(nimFile, generated0,
   "identityBody", "Int", "n : Int")])
@@ -153,7 +153,7 @@ let giveDir = fixtureDir("give")
 let giveFile = giveDir / "demo.nim"
 let giveUri = "file://" & giveFile
 let giveSource = "import sheds_mac\nshedsBlock:\n  proc identity(n: Int): Int = ![giveBody]\n"
-let giveGenerated = "postulate Int : Type 0\nproc identity (n : Int) : Int = ?\n"
+let giveGenerated = "postulate(Int, Univ)\nproc identity (n : Int) : Int = _\n"
 writeFile(giveFile, giveSource)
 writeShedSidecar(giveFile, @[macroSidecar(giveFile, giveGenerated,
   "giveBody", "Int", "n : Int")])
@@ -173,7 +173,7 @@ let natPath = (getCurrentDir() / "lib/nat.ep").replace("\\", "/")
 let boolPath = (getCurrentDir() / "lib/bool.ep").replace("\\", "/")
 let splitSource = "import sheds_mac\nshedsBlock:\n  proc isZero(n: Nat): Bool = ![isZeroBody]\n"
 let splitGenerated = "import \"" & natPath & "\"\nimport \"" & boolPath &
-  "\"\nproc isZero (n : Nat) : Bool = ?\n"
+  "\"\nproc isZero (n : Nat) : Bool = _\n"
 writeFile(splitFile, splitSource)
 writeShedSidecar(splitFile, @[macroSidecar(splitFile, splitGenerated,
   "isZeroBody", "Bool", "n : Nat")])

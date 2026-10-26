@@ -2,6 +2,6 @@
 import "../../lib/nat.ep"
 import "../../lib/bool.ep"
 
-def bad : Nat -> Bool
-| _ = true
-| zero = false
+def(bad, Nat -> Bool):
+  clause([_], true)
+  clause([zero], false)

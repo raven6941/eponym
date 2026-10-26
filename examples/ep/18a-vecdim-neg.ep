@@ -3,10 +3,10 @@
 # it at runtime. `VExpr zero` does not convert with `VExpr (suc zero)`.
 import "../../lib/nat.ep"
 
-data VExpr : Nat -> Type 0 where
+data(VExpr, Nat -> Univ) where
 | vVar (n : Nat) : VExpr n
 
-data CExpr : Type 0 where
+data(CExpr, Univ) where
 | vDot (n : Nat) (e1 : VExpr n) (e2 : VExpr n) : CExpr
 
 # Rejected: e2 has dimension zero, but n is suc zero.

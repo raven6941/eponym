@@ -16,9 +16,10 @@
 ##                        (the contract's "distinct surfaces → distinct cores",
 ##                        pinned on the numeral fragment so a degenerate
 ##                        elaborator cannot pass P1–P4).
-##   P7 integer-one:     `1` is the unit type (QTT); the integer literal one
-##                        is written `01`; the renderer emits `01` for
-##                        pkInt(1) so render->parse is faithful (#158).
+##   P7 integer-one:     `1` is the integer literal one (single syntax,
+##                        #467/#469); the unit type is `unitTy`. The
+##                        renderer emits `1` for pkInt(1) and `unitTy` for
+##                        pkUnitTy so render->parse is faithful.
 ##
 ## α-equality = structural equality on core Terms, ignoring binder *names*
 ## (de Bruijn indices carry binding) but including impl/erased/quantity
@@ -71,7 +72,7 @@ proc below(r: var Rng, n: int): int =
 # --- prelude ----------------------------------------------------------------
 
 let (globals, _, _) = elabPrelude("""
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
 """)
@@ -303,15 +304,16 @@ block:
 
 proc hasIntOne(p: PreTerm): bool =
   ## True if p contains the integer literal 1. Retained as documentation of
-  ## the surface contract (issue #158): `1` lexes as the unit *type* (QTT),
-  ## so the integer literal one is written `01` and the renderer emits `01`
-  ## for pkInt(1) — render->parse is faithful and P4 needs no skip.
+  ## the surface contract (single syntax, #467/#469): `1` is the integer
+  ## literal one and the renderer emits `1` for pkInt(1) — render->parse
+  ## is faithful and P4 needs no skip. (Issue #158's `01` escape is
+  ## superseded; `01` still parses as a tolerated spelling.)
   if p.isNil: return false
   (p.kind == pkInt and p.intVal == 1) or
     hasIntOne(p.c1) or hasIntOne(p.c2) or hasIntOne(p.c3)
 
 # P4: surface round-trip — `$`(t) re-parses and re-elaborates to an α-equal core.
-# (Issue #158: pkInt(1) renders as `01`, which re-parses to pkInt(1); the
+# (Single syntax: pkInt(1) renders as `1`, which re-parses to pkInt(1); the
 # former pkInt(1) skip is gone.)
 block:
   var r = initRng(Seed + 5)
@@ -334,7 +336,7 @@ block:
                 "P4 case " & $i & ": re-elaborated core differs")
   checkProp(withOne > 0, "P4: no generated term contained pkInt(1); #158 case untested")
   echo "ok: P4 surface round-trip (", ran, " cases, ", withOne,
-       " with pkInt(1) via `01`, issue #158)"
+       " with pkInt(1) via `1`, single syntax)"
 
 # P5: injectivity on numerals — distinct surfaces, distinct cores.
 block:
@@ -374,27 +376,34 @@ block:
   checkProp(rejected == 100, "P6: only " & $rejected & "/100 rejected")
   echo "ok: P6 literal inference partiality (", rejected, "/100 rejected)"
 
-# P7: integer-one surface contract (issue #158).
+# P7: integer-one surface contract (single syntax, #467/#469).
 #
-# `1` is the unit *type* (QTT); the integer literal one is written `01`.
-# The renderer must emit `01` for pkInt(1) so render->parse is faithful.
+# `1` is the integer literal one; the unit type is `unitTy`.
+# The renderer must emit `1` for pkInt(1) and `unitTy` for pkUnitTy
+# so render->parse is faithful.
 block:
-  checkProp($mkInt(1) == "01", "P7: $pkInt(1) is \"" & $mkInt(1) & "\", want \"01\"")
+  checkProp($mkInt(1) == "1", "P7: $pkInt(1) is \"" & $mkInt(1) & "\", want \"1\"")
   checkProp($mkInt(2) == "2", "P7: $pkInt(2) is \"" & $mkInt(2) & "\", want \"2\"")
-  checkProp($mkUnitTy() == "1", "P7: $pkUnitTy is \"" & $mkUnitTy() & "\", want \"1\"")
-  elabOk "P7 parse `01`":
+  checkProp($mkUnitTy() == "unitTy", "P7: $pkUnitTy is \"" & $mkUnitTy() & "\", want \"unitTy\"")
+  elabOk "P7 parse `1` as integer one (single syntax)":
+    let decls = parseProgram("proc tmp : Nat =\n  1\n")
+    checkProp(decls.len == 1 and decls[0].kind == dkDef,
+              "P7: `1` did not parse to one def")
+    checkProp(decls[0].def.body == mkInt(1),
+              "P7: `1` parsed to " & $decls[0].def.body & ", want pkInt(1)")
+  elabOk "P7 parse `01` as integer one (tolerated spelling)":
     let decls = parseProgram("proc tmp : Nat =\n  01\n")
     checkProp(decls.len == 1 and decls[0].kind == dkDef,
               "P7: `01` did not parse to one def")
     checkProp(decls[0].def.body == mkInt(1),
               "P7: `01` parsed to " & $decls[0].def.body & ", want pkInt(1)")
-  elabOk "P7 parse `1` as unit type":
-    let decls = parseProgram("proc tmp : Type 0 =\n  1\n")
+  elabOk "P7 parse `unitTy` as unit type":
+    let decls = parseProgram("proc tmp : Univ =\n  unitTy\n")
     checkProp(decls.len == 1 and decls[0].kind == dkDef,
-              "P7: `1` did not parse to one def")
+              "P7: `unitTy` did not parse to one def")
     checkProp(decls[0].def.body.kind == pkUnitTy,
-              "P7: `1` parsed to kind " & $decls[0].def.body.kind & ", want pkUnitTy")
-  echo "ok: P7 integer-one surface contract (issue #158)"
+              "P7: `unitTy` parsed to kind " & $decls[0].def.body.kind & ", want pkUnitTy")
+  echo "ok: P7 integer-one surface contract (single syntax)"
 
 if failures > 0:
   echo failures, " adequacy property failures"

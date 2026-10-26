@@ -6,17 +6,17 @@
 # with VAffine (suc zero) (vMul (suc zero) (vVar (suc zero)) (vVar (suc zero))).
 import "../../lib/nat.ep"
 
-data VExpr : Nat -> Type 0 where
+data(VExpr, Nat -> Univ) where
 | vVar (n : Nat) : VExpr n
 | vMul (n : Nat) (e1 : VExpr n) (e2 : VExpr n) : VExpr n
 
-data CExpr : Type 0 where
+data(CExpr, Univ) where
 | vLogSum (n : Nat) (e : VExpr n) : CExpr
 
-data VAffine (n : Nat) : VExpr n -> Type 0 where
+data(VAffine, [n: Nat], VExpr n -> Univ) where
 | vafVar : VAffine n (vVar n)
 
-data Convex : CExpr -> Type 0 where
+data(Convex, CExpr -> Univ) where
 | cvLogSum (n : Nat) (e : VExpr n) (h : VAffine n e) : Convex (vLogSum n e)
 
 proc minimize (e : CExpr) (h : Convex e) : CExpr = e

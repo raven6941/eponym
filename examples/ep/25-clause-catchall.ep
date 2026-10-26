@@ -8,17 +8,17 @@ import "../../lib/nat.ep"
 import "../../lib/bool.ep"
 
 # variable pattern covers the remaining constructors
-def isZeroV : Nat -> Bool
-| zero = true
-| m = false
+def(isZeroV, Nat -> Bool):
+  clause([zero], true)
+  clause([m], false)
 
 # wildcard covers everything on its own
-def constTrue : Nat -> Bool
-| _ = true
+def(constTrue, Nat -> Bool):
+  clause([_], true)
 
 # a variable pattern stands for the scrutinee: identity rebuilds it
-def idNat : Nat -> Nat
-| x = x
+def(idNat, Nat -> Nat):
+  clause([x], x)
 
 # uses elaborate (the compiled eliminator applications typecheck)
 proc t1 : Bool = isZeroV zero

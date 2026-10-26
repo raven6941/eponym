@@ -8,7 +8,7 @@
 # (the derived single-field-variant representation is outside the Phase-2
 # codegen fragment, so `scoreOfOnes` has no repr body and would fail the
 # `requireCompiled` gate — a coverage finding, not a driver bug).
-data Score : Type 0 where
+data(Score, Univ) where
 | mkScore (s : Int) : Score
 proc scoreOfRep (n : Nat) (x : Int) : Score =
   mkScore (pipelineRep n x)

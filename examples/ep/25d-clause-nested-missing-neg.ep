@@ -3,6 +3,6 @@
 import "../../lib/nat.ep"
 import "../../lib/bool.ep"
 
-def miss : Nat -> Bool
-| zero = true
-| (suc zero) = false
+def(miss, Nat -> Bool):
+  clause([zero], true)
+  clause([suc(zero)], false)

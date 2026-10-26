@@ -123,13 +123,13 @@ proc renderVal(v: Val): string =
       result = "(lcons " & renderVal(Val(kind: vkNat, n: v.elems[i])) &
         " " & result & ")"
 
-const Prelude* = """data Nat : Type 0 where
+const Prelude* = """data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Bool : Type 0 where
+data(Bool, Univ) where
 | true : Bool
 | false : Bool
-data ListN : Type 0 where
+data(ListN, Univ) where
 | lnil : ListN
 | lcons (x : Nat) (xs : ListN) : ListN
 """
@@ -233,10 +233,10 @@ proc genSingleCase(r: var Rng): Case =
       .mapIt(Row(pats: @[it], rhsTrue: r.genBool()))
   let nProbes = 3 + r.below(4)
   var src = Prelude
-  src &= "def f : " & ty & " -> Bool\n"
+  src &= "def(f, " & ty & " -> Bool):\n"
   for row in rows:
-    src &= "| " & renderPat(row.pats[0]) & " = " &
-      (if row.rhsTrue: "true" else: "false") & "\n"
+    src &= "  clause([" & renderPat(row.pats[0]) & "], " &
+      (if row.rhsTrue: "true" else: "false") & ")\n"
   result = Case(src: "", probes: @[], expected: @[])
   for i in 0 ..< nProbes:
     let pv = r.genVal(ty)
@@ -269,10 +269,10 @@ proc genTwoColCase(r: var Rng): Case =
                               Pat(kind: pkCtor, ctor: c2, args: @[])],
                      rhsTrue: r.genBool()))
   var src = Prelude
-  src &= "def g : Bool -> Bool -> Bool\n"
+  src &= "def(g, Bool -> Bool -> Bool):\n"
   for row in rows:
-    src &= "| " & renderPat(row.pats[0]) & " " & renderPat(row.pats[1]) &
-      " = " & (if row.rhsTrue: "true" else: "false") & "\n"
+    src &= "  clause([" & renderPat(row.pats[0]) & ", " & renderPat(row.pats[1]) & "], " &
+      (if row.rhsTrue: "true" else: "false") & ")\n"
   result = Case(src: "", probes: @[], expected: @[])
   for i in 0 ..< 4:
     let pvs = @[r.genVal("Bool"), r.genVal("Bool")]

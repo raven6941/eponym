@@ -26,9 +26,9 @@ checks it succeeds. These test the elaborator in isolation.
 
 - **01-twice-const.ep** — Basic definitions (`twice`, `const`, `pairSwap`).
   Pi types, application.
-- **02-myid.ep** — Identity function. Basic `def`.
+- **02-myid.ep** — Identity function. Basic `proc`.
 - **03-let.ep** — Let bindings.
-- **04-polyid-implicit.ep** — Polymorphic identity with `{A : Type 0}` implicit
+- **04-polyid-implicit.ep** — Polymorphic identity with `{A : Univ}` implicit
   args. Tests implicit insertion (Experiment 3).
 - **05-id-universe.ep** — Universe-polymorphic identity.
 - **06-const-lam.ep** — Constant function via explicit `lam`.
@@ -48,8 +48,8 @@ checks it succeeds. These test the elaborator in isolation.
 - **13-primint.ep** — Primitive machine integers: literals and `addInt`,
   `subInt`, `mulInt` compute via host operations (Experiment 11).
   No unary `s(s(z))`.
-- **14-tactics.ep** — Tactics: `by refl` proves equalities by reflexivity,
-  `by assumption` finds a matching hypothesis (Experiment 6).
+- **14-tactics.ep** — Tactics: `byTac(refl)` proves equalities by reflexivity,
+  `byTac(assumption)` finds a matching hypothesis (Experiment 6).
 - **15-session-types.ep** — Session types with linear channels (Issue #28,
   #64). The `(1 ch : Chan ...)` binders ensure channels are used exactly
   once; the affinity hole is closed.
@@ -174,11 +174,11 @@ surface syntax at compile time, elaborates it (type-checking), and
 generates callable Nim wrappers. If elaboration fails, compilation stops
 with the type error.
 
-Nim-friendly syntax (vs `.ep` surface syntax):
-- `postulate(Int, Univ)` — call syntax; `Univ` maps to `Type 0` (Nim cannot spell the universe token)
+Nim-shaped syntax (the same syntax `.ep` files use):
+- `postulate(Int, Univ)` — call syntax; `Univ` is the universe
 - `data(Nat, Univ):` — block with indented `proc` constructors
 - `Vec(A, n)` — call syntax for type application
-- `proc` / `=` — Nim keywords (Eponym `.ep` also uses these now)
+- `proc` / `=` — shared keywords
 
 ## Running
 

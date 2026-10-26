@@ -1,2 +1,7 @@
-postulate Int : Type 0
-proc one : Int = 1
+# Negative test (issue #458, migrated for the single syntax): the unit value
+# where an integer is expected is a conversion failure naming the unit type.
+# (Under the old .ep syntax this case was `proc one : Int = 1`, where bare
+# `1` was the unit type; under the single syntax `1` is the integer literal
+# and the unit value is spelled `unitv`.)
+postulate(Int, Univ)
+proc one : Int = unitv

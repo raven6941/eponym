@@ -6,7 +6,7 @@ A small STLC fragment, self-contained, exercising Pi/Sigma/Id + data decls:
    over de Bruijn indices; exercises data declarations + Vec/Fin-style indices.
 2. `corpus103/stlc_types.ep` — types (TNat, TArr); simple, checks Pi/Sigma usage.
 3. `corpus103/typing.ep` — the typing judgement as an inductive family
-   `HasType : Ctx -> Tm -> Ty -> Type 0` (exercises indexed families + Id for context
+   `HasType : Ctx -> Tm -> Ty -> Univ` (exercises indexed families + Id for context
    lookups).
 4. `corpus103/metatheory.ep` — 2-3 lemmas (weakening or substitution lemma
    statement + proof skeleton); this is where annotation burden bites.
@@ -64,7 +64,7 @@ up to conversion.
    `examples/ep/corpus103/` directory needs `../../../lib/...` where
    `examples/ep/` files use `../../lib/...`. Authoring repair only.
 3. Indexed families with all indices in the header
-   (`data Lookup : List Ty -> Nat -> Ty -> Type 0`) worked as in Agda; the
+   (`data(Lookup, List Ty -> Nat -> Ty -> Univ)`) worked as in Agda; the
    generated eliminator's motive binds every index plus the family value,
    and non-recursive constructors of *other* families (`p : Lookup ...`
    in `tVar`) correctly get no induction hypothesis.

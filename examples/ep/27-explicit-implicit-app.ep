@@ -8,15 +8,15 @@
 import "../../lib/nat.ep"
 import "../../lib/vec.ep"
 
-proc oneImpl {A : Type 0} (x : A) : A =
+proc oneImpl {A : Univ} (x : A) : A =
   x
 proc use1 (y : Nat) : Nat =
   oneImpl Nat y
-proc use1b : 1 =
-  oneImpl <>
+proc use1b : unitTy =
+  oneImpl unitv
 
 # Multiple leading implicits, all given explicitly (the #201 vec repro).
-proc vappExp (A : Type 0) (m : Nat) (n : Nat) (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =
+proc vappExp (A : Univ) (m : Nat) (n : Nat) (xs : Vec A m) (ys : Vec A n) : Vec A (add m n) =
   vappend A m n xs ys
 
 # Mixed: some implicits explicit, the rest inserted.

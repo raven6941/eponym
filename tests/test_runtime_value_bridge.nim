@@ -8,10 +8,10 @@ import elab
 import eponym_init
 
 const program = """
-postulate Int : Type 0
-proc double : Int -> Int = lam (n : Int). addInt n n
-postulate Nat : Type 0
-proc idNat : Nat -> Nat = lam (n : Nat). n
+postulate(Int, Univ)
+proc double : Int -> Int = lam(n, Int, addInt n n)
+postulate(Nat, Univ)
+proc idNat : Nat -> Nat = lam(n, Nat, n)
 """
 
 proc hostStepNim(value: int): int = value + 7
@@ -1321,8 +1321,8 @@ when isMainModule:
   if not runtimeTypeInferenceCases:
     quit(1)
   let witnessSource = """
-postulate Int : Type 0
-postulate Token : Type 0
+postulate(Int, Univ)
+postulate(Token, Univ)
 proc generatedTokenIdentity (value : Token) : Token = value
 """
   let tokenIdentityValue = callValueFuncDir(baseDir, witnessSource,
@@ -2268,34 +2268,30 @@ proc generatedTokenIdentity (value : Token) : Token = value
   # reference exposed in the returned state.
   const identityProgram = """
 import "tests/fixtures/runtime_host_step.ep"
-postulate Message : Type 0
-postulate routeChannel : Channel -> Message -> Channel
-proc throughHelper : Int -> Int = lam (n : Int). importedHelper n
+postulate(Message, Univ)
+postulate(routeChannel, Channel -> Message -> Channel)
+proc throughHelper : Int -> Int = lam(n, Int, importedHelper n)
 proc opaqueRole : Channel -> Channel =
-  lam (channel : Channel). importedChannelStep channel
+  lam(channel, Channel, importedChannelStep channel)
 proc routeRole : Channel -> Message -> Channel =
-  lam (channel : Channel). lam (message : Message).
-    routeChannel channel message
-postulate RequestId : Type 0
-postulate Phase : Type 0
-postulate PendingResult : Type 0
-postulate Callback : Type 0
-postulate Sample : Type 0
-postulate routeChannelWithId : Channel -> Message -> RequestId -> Channel
+  lam(channel, Channel, lam(message, Message, routeChannel channel message))
+postulate(RequestId, Univ)
+postulate(Phase, Univ)
+postulate(PendingResult, Univ)
+postulate(Callback, Univ)
+postulate(Sample, Univ)
+postulate(routeChannelWithId, Channel -> Message -> RequestId -> Channel)
 proc routeWithIdRole : Channel -> Message -> RequestId -> Channel =
-  lam (channel : Channel). lam (message : Message). lam (requestId : RequestId).
-    routeChannelWithId channel message requestId
-postulate routeChannelWithPhase : Channel -> Message -> RequestId -> Phase -> Channel
+  lam(channel, Channel, lam(message, Message, lam(requestId, RequestId, routeChannelWithId channel message requestId)))
+postulate(routeChannelWithPhase, Channel -> Message -> RequestId -> Phase -> Channel)
 proc routeWithPhaseRole : Channel -> Message -> RequestId -> Phase -> Channel =
-  lam (channel : Channel). lam (message : Message). lam (requestId : RequestId).
-    lam (phase : Phase). routeChannelWithPhase channel message requestId phase
-postulate startFuture : Channel -> PendingResult
+  lam(channel, Channel, lam(message, Message, lam(requestId, RequestId, lam(phase, Phase, routeChannelWithPhase channel message requestId phase))))
+postulate(startFuture, Channel -> PendingResult)
 proc futureRole : Channel -> PendingResult =
-  lam (channel : Channel). startFuture channel
-postulate invokeCallback : Callback -> Sample -> Sample
+  lam(channel, Channel, startFuture channel)
+postulate(invokeCallback, Callback -> Sample -> Sample)
 proc callbackRole : Callback -> Sample -> Sample =
-  lam (callback : Callback). lam (value : Sample).
-    invokeCallback callback value
+  lam(callback, Callback, lam(value, Sample, invokeCallback callback value))
 """
   let checked = elabCheckDirState(identityProgram, baseDir)
   let postulateId = checked.globals["hostStep"].tm.refId

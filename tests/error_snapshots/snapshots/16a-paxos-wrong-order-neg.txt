@@ -1,1 +1,1 @@
-line 37, col 20: inferred type (Chan propProto) does not match expected type (Chan (propAfterPrepare zero)): not convertible (neutral mismatch)
+line 36, col 20: inferred type (Chan propProto) does not match expected type (Chan (propAfterPrepare zero)): not convertible (neutral mismatch)

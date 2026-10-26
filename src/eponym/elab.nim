@@ -298,7 +298,7 @@ proc prettyTerm*(t: Term, ctx: Ctx, refNames: Table[int, string],
     if t.idx < ctx.len and ctx[t.idx].name != "_": ctx[t.idx].name
     else: "V" & $t.idx
   of tC: $t.c
-  of tType: "Type " & $t.lvl  # Issue #52
+  of tType: (if t.lvl == 0: "Univ" else: "Type " & $t.lvl)  # Single syntax: level 0 is Univ
   of tInt: $t.intVal
   of tNatLit: $t.natLitVal
   of tNatSing: $t.natSingVal  # Issue #74

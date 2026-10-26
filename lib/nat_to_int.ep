@@ -7,10 +7,10 @@
 
 import "nat.ep"
 
-postulate Int : Type 0
+postulate(Int, Univ)
 
 proc natToInt (n : Nat) : Int =
-  natElim (lam (u : Nat). Int)
+  natElim (lam(u, Nat, Int))
           0
-          (lam (p : Nat). lam (ih : Int). addInt ih 01)
+          (lam(p, Nat, lam(ih, Int, addInt ih 1)))
           n

@@ -23,31 +23,17 @@ proc exampleLit : HasType (nil Ty) (lit 5) tNat =
 proc lookupAppend (A : Ty) (G : List Ty) (H : List Ty) (i : Nat)
     (p : Lookup G i A) : Lookup (append Ty G H) i A =
   lookupElim
-    (lam (i0 : List Ty). lam (i1 : Nat). lam (i2 : Ty).
-      lam (v : Lookup i0 i1 i2). Lookup (append Ty i0 H) i1 i2)
-    (lam (G2 : List Ty). lam (A2 : Ty). here (append Ty G2 H) A2)
-    (lam (G2 : List Ty). lam (B : Ty). lam (j : Nat). lam (A2 : Ty).
-      lam (p2 : Lookup G2 j A2). lam (ih : Lookup (append Ty G2 H) j A2).
-      there (append Ty G2 H) B j A2 ih)
+    (lam(i0, List Ty, lam(i1, Nat, lam(i2, Ty, lam(v, Lookup i0 i1 i2, Lookup (append Ty i0 H) i1 i2)))))
+    (lam(G2, List Ty, lam(A2, Ty, here (append Ty G2 H) A2)))
+    (lam(G2, List Ty, lam(B, Ty, lam(j, Nat, lam(A2, Ty, lam(p2, Lookup G2 j A2, lam(ih, Lookup (append Ty G2 H) j A2, there (append Ty G2 H) B j A2 ih)))))))
     G i A p
 
 proc weaken (A : Ty) (G : List Ty) (H : List Ty) (e : Tm)
     (p : HasType G e A) : HasType (append Ty G H) e A =
   hasTypeElim
-    (lam (i0 : List Ty). lam (i1 : Tm). lam (i2 : Ty).
-      lam (v : HasType i0 i1 i2). HasType (append Ty i0 H) i1 i2)
-    (lam (G2 : List Ty). lam (n : Nat). tLit (append Ty G2 H) n)
-    (lam (G2 : List Ty). lam (i : Nat). lam (A2 : Ty).
-      lam (p2 : Lookup G2 i A2).
-      tVar (append Ty G2 H) i A2 (lookupAppend A2 G2 H i p2))
-    (lam (G2 : List Ty). lam (f : Tm). lam (x : Tm). lam (a : Ty). lam (b : Ty).
-      lam (p2 : HasType G2 f (tArr a b)).
-      lam (ihP : HasType (append Ty G2 H) f (tArr a b)).
-      lam (q2 : HasType G2 x a).
-      lam (ihQ : HasType (append Ty G2 H) x a).
-      tApp (append Ty G2 H) f x a b ihP ihQ)
-    (lam (G2 : List Ty). lam (b : Tm). lam (a2 : Ty). lam (c : Ty).
-      lam (p2 : HasType (cons Ty a2 G2) b c).
-      lam (ih : HasType (append Ty (cons Ty a2 G2) H) b c).
-      tAbs (append Ty G2 H) b a2 c ih)
+    (lam(i0, List Ty, lam(i1, Tm, lam(i2, Ty, lam(v, HasType i0 i1 i2, HasType (append Ty i0 H) i1 i2)))))
+    (lam(G2, List Ty, lam(n, Nat, tLit (append Ty G2 H) n)))
+    (lam(G2, List Ty, lam(i, Nat, lam(A2, Ty, lam(p2, Lookup G2 i A2, tVar (append Ty G2 H) i A2 (lookupAppend A2 G2 H i p2))))))
+    (lam(G2, List Ty, lam(f, Tm, lam(x, Tm, lam(a, Ty, lam(b, Ty, lam(p2, HasType G2 f (tArr a b), lam(ihP, HasType (append Ty G2 H) f (tArr a b), lam(q2, HasType G2 x a, lam(ihQ, HasType (append Ty G2 H) x a, tApp (append Ty G2 H) f x a b ihP ihQ))))))))))
+    (lam(G2, List Ty, lam(b, Tm, lam(a2, Ty, lam(c, Ty, lam(p2, HasType (cons Ty a2 G2) b c, lam(ih, HasType (append Ty (cons Ty a2 G2) H) b c, tAbs (append Ty G2 H) b a2 c ih)))))))
     G e A p

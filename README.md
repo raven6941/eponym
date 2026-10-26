@@ -94,7 +94,7 @@ eponymBlock:
   pure-Nim-subset experiment are described in the
   [surface-syntax reference](docs/surface-syntax-reference.md) and
   [experiment note](docs/pure-nim-subset-experiment.md).
-- `Univ` maps to `Type 0`; `?` introduces holes and `_` discards; call syntax for declarations
+- `Univ` is the universe; `?n` introduces named holes and `_` a fresh hole or discard; call syntax for declarations
   (`postulate(Int, Univ)`); `proc` not `def`; `=` not `:=` — it reads
   as Nim, and the elaborator typechecks it at compile time.
 - Integer literals overload to `Nat` via `checkTm` (or primitive `Int`).

@@ -37,7 +37,7 @@ eponymBlock:
     natElim(lam(u, Nat, Nat), m, lam(p, Nat, lam(ih, Nat, suc(ih))), n)
   proc zeroAfterStep(n: Nat): BoolD =
     natElim(lam(u, Nat, BoolD), trueD,
-            lam (n: Nat). lam (ih: BoolD). falseD, n)
+            lam(n, Nat, lam(ih, BoolD, falseD)), n)
 
   # --- smoke 14 embedded: tactics ---
   postulate(Int, Univ)

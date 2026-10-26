@@ -1,6 +1,6 @@
 # Issue #103 annotation-burden corpus, file 3/4: the typing judgement.
 #
-# `HasType : Ctx -> Tm -> Ty -> Type 0` as an indexed inductive family, where
+# `HasType : Ctx -> Tm -> Ty -> Univ` as an indexed inductive family, where
 # `Ctx = List Ty`. Variable lookup is its own judgement `Lookup`,
 # reifying de Bruijn context membership (the `here`/`there` pair is the
 # Agda `here`/`there` for `_∈_`).
@@ -12,12 +12,12 @@ import "stlc_syntax.ep"
 import "stlc_types.ep"
 import "../../../lib/list.ep"
 
-data Lookup : List Ty -> Nat -> Ty -> Type 0 where
+data(Lookup, List Ty -> Nat -> Ty -> Univ) where
 | here (G : List Ty) (A : Ty) : Lookup (cons Ty A G) zero A
 | there (G : List Ty) (B : Ty) (i : Nat) (A : Ty) (p : Lookup G i A)
     : Lookup (cons Ty B G) (suc i) A
 
-data HasType : List Ty -> Tm -> Ty -> Type 0 where
+data(HasType, List Ty -> Tm -> Ty -> Univ) where
 | tLit (G : List Ty) (n : Nat) : HasType G (lit n) tNat
 | tVar (G : List Ty) (i : Nat) (A : Ty) (p : Lookup G i A)
     : HasType G (var i) A

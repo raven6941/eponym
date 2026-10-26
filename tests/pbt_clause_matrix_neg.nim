@@ -67,8 +67,8 @@ proc genRows(r: var Rng, ty: string): seq[Row] =
 proc renderRows(rows: seq[Row]): string =
   result = ""
   for row in rows:
-    result &= "| " & renderPat(row.pats[0]) & " = " &
-      (if row.rhsTrue: "true" else: "false") & "\n"
+    result &= "  clause([" & renderPat(row.pats[0]) & "], " &
+      (if row.rhsTrue: "true" else: "false") & ")\n"
 
 proc genDropCase(r: var Rng): NegCase =
   ## Drop one constructor-headed row from an exhaustive matrix: the remaining
@@ -78,11 +78,11 @@ proc genDropCase(r: var Rng): NegCase =
   doAssert rows.len >= 2, "expandPat always partitions into >= 2 rows"
   let drop = r.below(rows.len)
   var src = Prelude
-  src &= "def f : " & ty & " -> Bool\n"
+  src &= "def(f, " & ty & " -> Bool):\n"
   for ri, row in rows:
     if ri != drop:
-      src &= "| " & renderPat(row.pats[0]) & " = " &
-        (if row.rhsTrue: "true" else: "false") & "\n"
+      src &= "  clause([" & renderPat(row.pats[0]) & "], " &
+        (if row.rhsTrue: "true" else: "false") & ")\n"
   NegCase(src: src, frag: "missing case for constructor")
 
 proc genCatchAllCase(r: var Rng): NegCase =
@@ -91,9 +91,9 @@ proc genCatchAllCase(r: var Rng): NegCase =
   let ty = DataTypes[r.below(DataTypes.len)]
   let rows = r.genRows(ty)
   var src = Prelude
-  src &= "def f : " & ty & " -> Bool\n"
+  src &= "def(f, " & ty & " -> Bool):\n"
   src &= renderRows(rows)
-  src &= "| _ = true\n"
+  src &= "  clause([_], true)\n"
   NegCase(src: src, frag: "redundant clause")
 
 proc genDupCase(r: var Rng): NegCase =
@@ -103,10 +103,10 @@ proc genDupCase(r: var Rng): NegCase =
   let rows = r.genRows(ty)
   let dup = rows[r.below(rows.len)]
   var src = Prelude
-  src &= "def f : " & ty & " -> Bool\n"
+  src &= "def(f, " & ty & " -> Bool):\n"
   src &= renderRows(rows)
-  src &= "| " & renderPat(dup.pats[0]) & " = " &
-    (if not dup.rhsTrue: "true" else: "false") & "\n"
+  src &= "  clause([" & renderPat(dup.pats[0]) & "], " &
+    (if not dup.rhsTrue: "true" else: "false") & ")\n"
   NegCase(src: src, frag: "overlapping clauses")
 
 proc genNestedOverlapCase(r: var Rng): NegCase =
@@ -129,9 +129,9 @@ proc genNestedOverlapCase(r: var Rng): NegCase =
     broad = "(lcons _ _)"
     specific = if r.genBool: "(lcons _ lnil)" else: "(lcons _ (lcons _ _))"
   var src = Prelude
-  src &= "def f : " & ty & " -> Bool\n"
-  src &= "| " & broad & " = true\n"
-  src &= "| " & specific & " = false\n"
+  src &= "def(f, " & ty & " -> Bool):\n"
+  src &= "  clause([" & broad & "], true)\n"
+  src &= "  clause([" & specific & "], false)\n"
   NegCase(src: src, frag: "overlapping clauses", shape: shape)
 
 proc classifyOverlap(c: NegCase): seq[string] = @[c.shape]

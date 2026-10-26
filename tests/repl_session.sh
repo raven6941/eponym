@@ -31,7 +31,7 @@ check() { # $1 = grep pattern, $2 = description
   fi
 }
 check "two : Nat" "single-line def elaborates and persists"
-check "constFn : Pi(Type 0, A. Pi(Type 0, B. Pi(A, x. Pi(B, y. A))))" \
+check "constFn : Pi(Univ, A. Pi(Univ, B. Pi(A, x. Pi(B, y. A))))" \
   "multi-line def elaborates and persists"
 check "(suc (suc zero))" ":eval prints weak-head normal form"
 check "(suc (suc (suc zero)))" ":eval reduces add through the eliminator"

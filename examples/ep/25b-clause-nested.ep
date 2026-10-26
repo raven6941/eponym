@@ -5,31 +5,31 @@ import "../../lib/bool.ep"
 import "../../lib/eq.ep"
 
 # nested patterns on the scrutinee
-def isTwo : Nat -> Bool
-| zero = false
-| (suc zero) = false
-| (suc (suc n)) = true
+def(isTwo, Nat -> Bool):
+  clause([zero], false)
+  clause([suc(zero)], false)
+  clause([suc(suc(n))], true)
 
 # nested patterns with a rest argument (incl. a nested recursive call)
-def add3 : Nat -> Nat -> Nat
-| zero m = m
-| (suc n) m = suc (add3 n m)
+def(add3, Nat -> Nat -> Nat):
+  clause([zero, m], m)
+  clause([suc(n), m], suc (add3 n m))
 
 # variable under constructor
-def pred2 : Nat -> Nat
-| zero = zero
-| (suc zero) = zero
-| (suc (suc n)) = n
+def(pred2, Nat -> Nat):
+  clause([zero], zero)
+  clause([suc(zero)], zero)
+  clause([suc(suc(n))], n)
 
 # wildcard nested pattern with a rest argument
-def constF : Nat -> Bool -> Bool
-| zero _ = false
-| (suc n) b = b
+def(constF, Nat -> Bool -> Bool):
+  clause([zero, _], false)
+  clause([suc(n), b], b)
 
 # deep nesting: three levels
-def isThree : Nat -> Bool
-| (suc (suc (suc zero))) = true
-| _ = false
+def(isThree, Nat -> Bool):
+  clause([suc(suc(suc(zero)))], true)
+  clause([_], false)
 
 proc t1 : Bool = isTwo zero
 proc t2 : Bool = isTwo (suc zero)

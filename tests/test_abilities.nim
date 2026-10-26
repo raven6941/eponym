@@ -45,67 +45,67 @@ proc rejects(src: string, frag: string): bool =
 
 const prelude = """
 interface Console
-postulate String : Type 0
-postulate msg : String
-command send : String -> 1 in Console
+postulate(String, Univ)
+postulate(msg, String)
+command send : String -> unitTy in Console
 """
 
 # --- pure programs: zero annotations ---------------------------------------
 check(elaborates("""
-proc id (A : Type 0) (x : A) : A = x
-proc twice (A : Type 0) (f : A -> A) (x : A) : A = f (f x)
-proc constFn (A : Type 0) (B : Type 0) (x : A) (y : B) : A = x
+proc id (A : Univ) (x : A) : A = x
+proc twice (A : Univ) (f : A -> A) (x : A) : A = f (f x)
+proc constFn (A : Univ) (B : Univ) (x : A) (y : B) : A = x
 """), "pure programs elaborate with no ability annotations")
 
 # --- command under a matching peg -------------------------------------------
 check(elaborates(prelude & """
-proc puts : [Console] 1 = send msg
+proc puts : [Console] unitTy = send msg
 """), "command elaborates under a matching peg")
 
 # --- Frank's `bad`: unannotated peg + effectful body -------------------------
 check(rejects(prelude & """
-proc bad : 1 = send msg
+proc bad : unitTy = send msg
 """, "stuck on [?a"), "Frank's `bad` is rejected (stuck on the signature ?aN)")
 
 # --- wrong peg at use ---------------------------------------------------------
 check(rejects(prelude & """
-proc puts : [Console] 1 = send msg
-proc pureUse : 1 = puts
+proc puts : [Console] unitTy = send msg
+proc pureUse : unitTy = puts
 """, "ability mismatch"), "using a [Console] operator in a pure ambient is rejected")
 
 # --- unhandled command ----------------------------------------------------------
 check(rejects(prelude & """
-proc noPeg : 1 = send msg
+proc noPeg : unitTy = send msg
 """, "not yet known"), "command with no interface in the ambient is rejected")
 
 # --- implicit effect polymorphism: pure operator under [Console] ---------------
 check(elaborates(prelude & """
-proc puts : [Console] 1 = send msg
-proc id (A : Type 0) (x : A) : A = x
-proc useBoth : [Console] 1 = id 1 puts
+proc puts : [Console] unitTy = send msg
+proc id (A : Univ) (x : A) : A = x
+proc useBoth : [Console] unitTy = id unitTy puts
 """), "pure operator instantiates under [Console] (per-use freshening)")
 
 # --- explicit [] : pure operator, usable in a [] ambient ----------------------
 check(elaborates(prelude & """
-proc pid : [] 1 -> 1 = lam (x : 1). x
-proc usePure : [] 1 = pid <>
+proc pid : [] unitTy -> unitTy = lam(x, unitTy, x)
+proc usePure : [] unitTy = pid unitv
 """), "explicit [] operator works in a [] ambient")
 
 # --- explicit [] under an open ambient: Frank-strict rejection -------------------
 check(rejects(prelude & """
-proc pid : [] 1 -> 1 = lam (x : 1). x
-proc poly (A : Type 0) (x : A) : A = pid x
+proc pid : [] unitTy -> unitTy = lam(x, unitTy, x)
+proc poly (A : Univ) (x : A) : A = pid x
 """, "ability mismatch"), "[] operator under a polymorphic ambient is rejected (no subeffecting)")
 
 # --- unknown interface in a peg ---------------------------------------------------
 check(rejects("""
 interface Console
-proc p : [Consle] 1 = <>
+proc p : [Consle] unitTy = unitv
 """, "unknown interface"), "unknown interface in a peg is rejected")
 
 # --- command of an undeclared interface -------------------------------------------
 check(rejects("""
-command send : 1 -> 1 in Console
+command send : unitTy -> unitTy in Console
 """, "unknown interface"), "command of an undeclared interface is rejected")
 
 # --- duplicate interface --------------------------------------------------------------
@@ -117,34 +117,34 @@ interface Console
 # --- interface used as a term -----------------------------------------------------------
 check(rejects("""
 interface Console
-proc p : 1 = Console
+proc p : unitTy = Console
 """, "not a term"), "interface used as a term is rejected")
 
 # --- shadowing order: rightmost interface wins membership -------------------------------
 check(elaborates("""
 interface A
 interface B
-postulate msg : 1
-command ca : 1 -> 1 in A
-command cb : 1 -> 1 in B
-proc both : [A, B] 1 = cb (ca <>)
+postulate(msg, unitTy)
+command ca : unitTy -> unitTy in A
+command cb : unitTy -> unitTy in B
+proc both : [A, B] unitTy = cb (ca unitv)
 """), "both interfaces in the peg satisfy membership")
 
 check(rejects("""
 interface A
 interface B
-postulate msg : 1
-command ca : 1 -> 1 in A
-command cb : 1 -> 1 in B
-proc missing : [B] 1 = cb (ca <>)
+postulate(msg, unitTy)
+command ca : unitTy -> unitTy in A
+command cb : unitTy -> unitTy in B
+proc missing : [B] unitTy = cb (ca unitv)
 """, "requires interface 'A'"), "missing interface in the peg is rejected")
 
 # --- data constructors stay usable under any ambient --------------------------------------
 check(elaborates(prelude & """
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-proc puts : [Console] 1 = send msg
+proc puts : [Console] unitTy = send msg
 proc two : [Console] Nat = suc (suc zero)
 """), "constructors elaborate under an effectful ambient")
 

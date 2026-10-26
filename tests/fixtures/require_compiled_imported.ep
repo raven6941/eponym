@@ -1,4 +1,4 @@
-postulate Int : Type 0
-proc importedPlusOne (value : Int) : Int = addInt value 01
+postulate(Int, Univ)
+proc importedPlusOne (value : Int) : Int = addInt value 1
 proc importedPlusTwo (value : Int) : Int =
-  addInt (importedPlusOne value) 01
+  addInt (importedPlusOne value) 1
