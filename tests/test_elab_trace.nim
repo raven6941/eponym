@@ -13,25 +13,25 @@ import elab
 import elab_trace
 
 const srcOk = """
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-proc polyId {A : Type 0} (x : A) : A =
+proc polyId {A : Univ} (x : A) : A =
   x
 proc usePolyId : Nat =
   polyId (suc zero)
-proc useBare : Pi (x : Nat). Nat =
+proc useBare : Pi(x: Nat, Nat) =
   polyId
 proc applyLam : Nat =
-  (lam (x : Nat). x) (suc zero)
+  (lam(x, Nat, x)) (suc zero)
 """
 
 const srcBad = """
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-proc bad : Pi (x : Nat). Nat =
-  lam (x : Type 0). x
+proc bad : Pi(x: Nat, Nat) =
+  lam(x, Univ, x)
 """
 
 proc kindsOf(evs: seq[TraceEvent]): seq[string] =
@@ -127,10 +127,10 @@ check(countKind(bevs, "check.in") == countKind(bevs, "check.out"),
 #    6b. A genuine unification failure still logs unify.fail: the pkLet
 #        result check goes through unifyElab directly.
 const srcBadLet = """
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-proc badLet : Type 0 =
+proc badLet : Univ =
   let x : Nat = zero in x
 """
 setElabTrace(true)
@@ -152,10 +152,10 @@ echo "--- trace groups 1-6 done ---"
 # 7. Conversion fast-fail: a constructor mismatch logs conv.noconfusion
 #    at the failure point (the #80 noConfusion pre-check in defaultConv).
 const srcNoConf = """
-data Bit : Type 0 where
+data(Bit, Univ) where
 | b0 : Bit
 | b1 : Bit
-data Wrap : Bit -> Type 0 where
+data(Wrap, Bit -> Univ) where
 | wrap (b : Bit) : Wrap b
 proc bad : Wrap b1 =
   wrap b0
