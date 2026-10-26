@@ -376,7 +376,7 @@ proc `$`*(d: SurfDef): string =
 when isMainModule:
   let twiceTy = mkPi("A", mkUniv(), mkArrow(mkArrow(mkVar("A"), mkVar("A")),
                                           mkArrow(mkVar("A"), mkVar("A"))))
-  assert $twiceTy == "Pi (A : Type 0). (A -> A) -> A -> A"
+  assert $twiceTy == "Pi(A: Univ, (A -> A) -> A -> A)"
   let p = mkApp(mkVar("f"), mkApp(mkVar("f"), mkVar("x")))
   assert $p == "f (f x)"
   assert mkVar("x") == mkVar("x")
@@ -387,6 +387,6 @@ when isMainModule:
   let d = SurfDef(name: "const", tele: @[(name: "A", ty: mkUniv(), impl: false, erased: false, qty: qOmega),
                                          (name: "x", ty: mkVar("A"), impl: false, erased: false, qty: qOmega)],
                   retTy: mkVar("A"), body: mkVar("x"))
-  assert $d.desugarTy() == "Pi (A : Type 0). Pi (x : A). A"
-  assert $d.desugarTm() == "lam (A : Type 0). lam (x : A). x"
+  assert $d.desugarTy() == "Pi(A: Univ, Pi(x: A, A))"
+  assert $d.desugarTm() == "lam(A, Univ, lam(x, A, x))"
   echo "preterm: all tests passed"
