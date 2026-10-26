@@ -490,10 +490,10 @@ proc ifExprToEponym(n: NimNode): string =
   # Eponym applications are strict, while Nim conditionals evaluate only the
   # selected branch. Pass each branch as a unit thunk so a postulate (or any
   # other runtime-bound operation) in the unselected branch is not evaluated.
-  var fallback = "(lam (_ : 1). " & nimExprToEponym(elseBranch) & ")"
+  var fallback = "lam(_, unitTy, " & nimExprToEponym(elseBranch) & ")"
   for i in countdown(branches.high, 0):
     let (condition, body) = branches[i]
-    let yesBranch = "(lam (_ : 1). " & nimExprToEponym(branchExpr(body)) & ")"
+    let yesBranch = "lam(_, unitTy, " & nimExprToEponym(branchExpr(body)) & ")"
     fallback = "ifThenElse (" & nimExprToEponym(condition) & ") " &
       yesBranch & " (" & fallback & ")"
   "(" & fallback & ") <>"
@@ -553,15 +553,10 @@ proc nimExprToEponym(n: NimNode): string =
   ## Convert a Nim expression AST to Eponym source string.
   case n.kind
   of nnkIdent:
-    var s = $n
-    # Map Nim-safe names to Eponym names
-    if s == "vecnil": s = "nil"
-    if s == "unitv": s = "<>"   # issue #151: `<>` is not valid Nim syntax
-    if s == "unitTy": s = "1"   # issue #151: the unit *type* (QTT)
-    if s == "emptyTy": s = "O"  # issue #151: the empty type
-    if s == "Univ": "Type 0"
-    elif s == "_": "?"
-    else: s
+    # Single syntax: Nim-safe names pass through verbatim — the parser
+    # accepts `vecnil`, `unitv`, `unitTy`, `emptyTy`, `Univ`, and `_`
+    # (hole) directly, so no translation is needed (issue #467/#469).
+    $n
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
     # In eponymBlock, integer literals are passed through verbatim and
     # overloaded by the elaborator (checkTm pkInt: Nat when the expected
@@ -569,12 +564,10 @@ proc nimExprToEponym(n: NimNode): string =
     # as string syntax. This also resolves Issue #8: nested literals in
     # eponymBlock bodies (e.g. cons(Int, 2, a, ...), eConst 3) now elaborate
     # per their expected type instead of always becoming Nat suc-chains.
-    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so use
-    # the parser's unambiguous integer spelling `01`. Expected-type
-    # overloading then selects Nat or Int, just as it does for other literals.
+    # Single syntax: `1` is the integer literal one.
     let v = n.intVal
     if v < 0: error("negative integer literal", n)
-    if v == 1: "01" else: $v
+    $v
   of nnkStmtList:
     # Proc body: convert let-statements to nested let...in, final expr is body
     if n.len == 0: error("eponymBlock: empty proc body", n)
@@ -630,19 +623,19 @@ proc nimExprToEponym(n: NimNode): string =
     # through the type converter.
     nimTypeToEponym(n)
   of nnkCall:
-    # byTac(refl) -> by refl (surface tactic term; smoke test 14, issue #151)
+    # byTac(refl) stays byTac(refl) (single syntax; issue #467/#469).
     if n[0].kind == nnkIdent and $n[0] == "byTac":
       if n.len != 2:
         error("byTac expects (tacticName)", n)
       let t = n[1]
-      if t.kind == nnkIdent: return "by " & $t
-      elif t.kind == nnkStrLit: return "by " & t.strVal
+      if t.kind == nnkIdent: return "byTac(" & $t & ")"
+      elif t.kind == nnkStrLit: return "byTac(\"" & t.strVal & "\")"
       else: error("byTac expects a tactic name (ident or string)", n)
     # Pi/Sig in expression position, positional form Sig(name, Dom, Body):
     # Nim parses it as a call, not an obj-constr. Route to the type converter.
     if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
       return nimTypeToEponym(n)
-    # lam(x, T, body) -> lam (x : T). body (surface lambdas in eponymBlock bodies)
+    # lam(x, T, body) stays lam(x, T, body) (single syntax).
     if n[0].kind == nnkIdent and $n[0] == "lam":
       # Nim cannot parse the canonical Eponym spelling `lam {A : T}. body`
       # as a lambda expression. Accept `lam({A: T}, body)` as its Nim-side
@@ -652,12 +645,12 @@ proc nimExprToEponym(n: NimNode): string =
            n[1][0].len != 2 or n[1][0][0].kind != nnkIdent:
           error("implicit lam expects ({binder: type}, body)", n)
         let binder = n[1][0]
-        return "lam {" & $binder[0] & " : " &
-               nimTypeToEponym(binder[1]) & "}. " & nimExprToEponym(n[2])
+        return "lam({" & $binder[0] & ": " &
+               nimTypeToEponym(binder[1]) & "}, " & nimExprToEponym(n[2]) & ")" 
       if n.len != 4 or n[1].kind notin {nnkIdent, nnkPragmaExpr}:
         error("lam expects (binder, type, body)", n)
-      return "lam (" & qtyPrefix(n[1]) & binderName(n[1]) & " : " &
-             nimTypeToEponym(n[2]) & "). " & nimExprToEponym(n[3])
+      return "lam(" & qtyPrefix(n[1]) & binderName(n[1]) & ", " &
+             nimTypeToEponym(n[2]) & ", " & nimExprToEponym(n[3]) & ")" 
     warnCallStyleExplicitArgs(n)
     # f(a, b) -> f a b (with parens for nested calls to preserve grouping)
     var callArgs: seq[NimNode] = @[]
@@ -676,9 +669,18 @@ proc nimExprToEponym(n: NimNode): string =
     let head = nimExprToEponym(n[0])
     var args: seq[string] = @[]
     for a in callArgs:
-      # Parenthesize if arg is a call or obj-constr (Pi/Sig type args
-      # parse as nnkObjConstr in expression position and need grouping too)
-      if a.kind in {nnkCall, nnkObjConstr, nnkCommand}:
+      var unwrapped = a
+      while unwrapped.kind in {nnkPar, nnkStmtListExpr} and
+          unwrapped.len == 1:
+        unwrapped = unwrapped[0]
+      if unwrapped.kind == nnkTupleConstr and unwrapped.len >= 2:
+        # Issue #467 (Nim call rule): a tuple argument needs double
+        # parens — `f ((a, b))` — since `f (a, b)` is now the
+        # two-argument call, not `f` applied to the pair.
+        args.add("(" & nimExprToEponym(a) & ")")
+      elif a.kind in {nnkCall, nnkObjConstr, nnkCommand}:
+        # Parenthesize if arg is a call or obj-constr (Pi/Sig type args
+        # parse as nnkObjConstr in expression position and need grouping too)
         args.add("(" & nimExprToEponym(a) & ")")
       else:
         args.add(nimExprToEponym(a))
@@ -697,21 +699,17 @@ proc nimExprToEponym(n: NimNode): string =
     for i in 1 ..< n.len:
       let arg = n[i]
       var value: string
-      let headName = if n[0].kind in {nnkIdent, nnkSym}: $n[0] else: ""
-      if headName in legacyCallInfo and
-          i - 1 < legacyCallInfo[headName].applicationParamTypes.len and
-          legacyCallInfo[headName].applicationParamTypes[i - 1] == "Nat" and
-          arg.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
-                       nnkInt64Lit} and arg.intVal == 1:
-        # Eponym surface `1` is the unit type. At a bracket position whose
-        # declared binder is Nat, spell the literal one as its constructor
-        # form; ordinary expression positions keep `01` for expected-type
-        # overloading between Int and Nat.
-        value = "(suc zero)"
-      else:
-        value = nimExprToEponym(arg)
-      if arg.kind in {nnkCall, nnkCommand, nnkObjConstr, nnkBracketExpr,
-                      nnkInfix, nnkPrefix}:
+      value = nimExprToEponym(arg)
+      var unwrappedArg = arg
+      while unwrappedArg.kind in {nnkPar, nnkStmtListExpr} and
+          unwrappedArg.len == 1:
+        unwrappedArg = unwrappedArg[0]
+      if unwrappedArg.kind == nnkTupleConstr and unwrappedArg.len >= 2:
+        # Issue #467 (Nim call rule): a tuple bracket argument needs
+        # double parens, like a tuple call argument.
+        parts.add("(" & value & ")")
+      elif arg.kind in {nnkCall, nnkCommand, nnkObjConstr, nnkBracketExpr,
+                        nnkInfix, nnkPrefix}:
         parts.add("(" & value & ")")
       else:
         parts.add(value)
@@ -760,8 +758,8 @@ proc nimExprToEponym(n: NimNode): string =
 
 proc piSigToEponym(n: NimNode): string
   ## Convert Pi(...)/Sig(...) (nnkCall or nnkObjConstr) to Eponym.
-  ## Pi(x: A, y {.linear.}: B, C) -> Pi (x : A). Pi (1 y : B). C
-  ## Sig(x: A, B) -> Sig (x : A). B ; Sig(A, B) -> Sig (_ : A). B
+  ## Pi(x: A, y {.linear.}: B, C) -> Pi(x: A, Pi(1 y: B, C))
+  ## Sig(x: A, B) -> Sig(x: A, B) ; Sig(A, B) -> Sig(A, B)
   ## Note: Nim parses `Pi(x: A, ...)` with named binders as nnkObjConstr,
   ## not nnkCall, so both shapes must be handled.
 
@@ -769,24 +767,16 @@ proc nimTypeToEponym(n: NimNode): string =
   ## Convert a Nim type AST to Eponym type string.
   case n.kind
   of nnkIdent:
-    var s = $n
-    # Map Nim-safe names to Eponym names (issue #144: same mapping as
-    # expressions -- `nil` is a Nim keyword, so constructor references in
-    # types must go through `vecnil` too)
-    if s == "vecnil": s = "nil"
-    if s == "unitv": s = "<>"   # issue #151: `<>` is not valid Nim syntax
-    if s == "unitTy": s = "1"   # issue #151: the unit *type* (QTT)
-    if s == "emptyTy": s = "O"  # issue #151: the empty type
-    if s == "Univ": "Type 0" else: s
+    # Single syntax: pass through verbatim (see nimExprToEponym).
+    $n
   of nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit:
     # Integer literal in type position: passed through verbatim; the
     # elaborator overloads it against the expected type (Nat or Int),
     # exactly as in string syntax (Issues #8, #115).
-    # Exception: 1 lexes as the *unit type* in surface syntax (QTT), so
-    # the Nat literal one is spelled `suc zero` (as in string syntax).
+    # Single syntax: `1` is the integer literal one.
     let v = n.intVal
     if v < 0: error("negative integer literal in type", n)
-    if v == 1: "(suc zero)" else: $v
+    $v
   of nnkBracketExpr:
     if n.len < 2:
       error("eponymBlock: bracket type application needs explicit arguments", n)
@@ -818,11 +808,11 @@ proc nimTypeToEponym(n: NimNode): string =
                    else: $p[j]
         params.add((name, p[^2]))
     for i in countdown(params.high, 0):
-      resultType = "Pi (" & params[i][0] & " : " &
-        nimTypeToEponym(params[i][1]) & "). " & resultType
+      resultType = "Pi(" & params[i][0] & ": " &
+        nimTypeToEponym(params[i][1]) & ", " & resultType & ")" 
     resultType
   of nnkCall:
-    # Tactic term in type position (issue #151): byTac(refl) -> by refl.
+    # Tactic term in type position (issue #151): byTac(refl) passes through.
     if n[0].kind == nnkIdent and $n[0] == "byTac":
       return nimExprToEponym(n)
     # Vec(Int, three) -> Vec Int three (paren nested calls)
@@ -830,11 +820,11 @@ proc nimTypeToEponym(n: NimNode): string =
     if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
       return piSigToEponym(n)
     if n[0].kind == nnkIdent and $n[0] == "lam":
-      # lam(x, T, body) -> lam (x : T). body (continuations in types)
+      # lam(x, T, body) stays lam(x, T, body) (continuations in types).
       if n.len != 4 or n[1].kind notin {nnkIdent, nnkPragmaExpr}:
         error("lam expects (binder, type, body)", n)
-      return "lam (" & qtyPrefix(n[1]) & binderName(n[1]) & " : " &
-             nimTypeToEponym(n[2]) & "). " & nimTypeToEponym(n[3])
+      return "lam(" & qtyPrefix(n[1]) & binderName(n[1]) & ", " &
+             nimTypeToEponym(n[2]) & ", " & nimTypeToEponym(n[3]) & ")" 
     warnCallStyleTypeArgs(n)
     let head = nimTypeToEponym(n[0])
     if n.len == 1:
@@ -882,37 +872,40 @@ proc piSigToEponym(n: NimNode): string =
   # Sig in Call form (positional args, no colons): Sig(name, Dom, Body).
   if not isPi and n.kind == nnkCall:
     if n.len == 4 and n[1].kind == nnkIdent:
-      return "Sig (" & $n[1] & " : " & nimTypeToEponym(n[2]) & "). " & nimTypeToEponym(n[3])
+      return "Sig(" & $n[1] & ", " & nimTypeToEponym(n[2]) & ", " & nimTypeToEponym(n[3]) & ")"
     elif n.len == 3:
-      return "Sig (_ : " & nimTypeToEponym(n[1]) & "). " & nimTypeToEponym(n[2])
+      return "Sig(" & nimTypeToEponym(n[1]) & ", " & nimTypeToEponym(n[2]) & ")"
     else:
       error("Sig expects (binder, dom, body) or (dom, body)", n)
-  var parts: seq[string] = @[]
-  for i in 1 ..< n.len - 1:
+  # Single syntax: nested call forms, innermost first. A table-constr
+  # binder group becomes one Pi{...} wrapper; a named binder becomes
+  # one Pi(...)/Sig(...) wrapper. Quantity prefixes pass through.
+  var acc = nimTypeToEponym(n[^1])
+  for i in countdown(n.len - 2, 1):
     let b = n[i]
-    var q, nm, dom: string
     if b.kind == nnkTableConstr:
       # {A : T, ...} -> implicit binders (Pi only). Each pair: name : type.
       if not isPi: error("implicit binders only meaningful in Pi", b)
+      var pairs: seq[string] = @[]
       for pair in b:
         if pair.kind != nnkExprColonExpr or pair.len != 2 or pair[0].kind != nnkIdent:
           error("implicit binder must have form {name : type}", b)
-        parts.add("Pi {" & $pair[0] & " : " & nimTypeToEponym(pair[1]) & "}. ")
-      continue
-    if b.kind == nnkExprColonExpr and b.len == 2:
-      q = qtyPrefix(b[0])
-      nm = binderName(b[0])
-      dom = nimTypeToEponym(b[1])
+        pairs.add($pair[0] & ": " & nimTypeToEponym(pair[1]))
+      acc = "Pi{" & pairs.join(", ") & ", " & acc & "}"
+    elif b.kind == nnkExprColonExpr and b.len == 2:
+      let q = qtyPrefix(b[0])
+      let nm = binderName(b[0])
+      let dom = nimTypeToEponym(b[1])
+      if isPi:
+        acc = "Pi(" & q & nm & ": " & dom & ", " & acc & ")"
+      else:
+        acc = "Sig(" & q & nm & ": " & dom & ", " & acc & ")"
     elif not isPi:
-      # Sig(A, B): anonymous binder -> Sig (_ : A). B
-      q = ""; nm = "_"; dom = nimTypeToEponym(b)
+      # Sig(A, B): anonymous binder.
+      acc = "Sig(" & nimTypeToEponym(b) & ", " & acc & ")"
     else:
       error("Pi binder must have form name: type", b)
-    if isPi:
-      parts.add("Pi (" & q & nm & " : " & dom & "). ")
-    else:
-      parts.add("Sig (" & q & nm & " : " & dom & "). ")
-  parts.join("") & nimTypeToEponym(n[^1])
+  acc
 
 proc patToEponym(n: NimNode): string =
   ## Clause patterns are surface *atoms*; constructor applications need
@@ -934,8 +927,8 @@ proc legacyCallInfoFromNimType(ty: NimNode): LegacyCallInfo =
       ty[0].kind == nnkFormalParams:
     result.termParamNames = nimFormalArgNames(ty[0])
     result.termParamDefaults = nimFormalArgDefaults(ty[0])
-  let declarations = parseProgram("postulate __legacyCallable : " &
-    nimTypeToEponym(ty))
+  let declarations = parseProgram("postulate(__legacyCallable, " &
+    nimTypeToEponym(ty) & ")")
   for declaration in declarations:
     if declaration.kind != dkPostulate: continue
     var current = declaration.ty
@@ -967,7 +960,7 @@ proc nilConstructorForType(typeNode: NimNode): string =
     error("eponymBlock: `nil` expression needs a List[...] or Vec[...] " &
       "type", typeNode)
   let elementType = nimTypeToEponym(typeNode[1])
-  "nil (" & elementType & ")"
+  "vecnil (" & elementType & ")"
 
 proc procDefToEponym(n: NimNode): string =
   ## Convert nnkProcDef to "proc name (generic binders) (params) : ret = body".
@@ -988,10 +981,10 @@ proc procDefToEponym(n: NimNode): string =
       let ty = nimTypeToEponym(genericParam[^2])
       for i in 0 ..< genericParam.len - 2:
         genericBinders.add("(" & binderName(genericParam[i]) & " : " & ty & ")")
-        if ty == "Type 0": scopedLegacyTypeNames.incl(binderName(genericParam[i]))
+        if ty == "Univ": scopedLegacyTypeNames.incl(binderName(genericParam[i]))
         if ty == "Nat": scopedNatNames.incl(binderName(genericParam[i]))
   var paramStrs: seq[string] = @[]
-  var retTy = "Type 0"
+  var retTy = "Univ"
   if params.len > 0 and params[0].kind != nnkEmpty:
     retTy = nimTypeToEponym(params[0])
   for i in 1 ..< params.len:
@@ -1000,7 +993,7 @@ proc procDefToEponym(n: NimNode): string =
     for j in 0 ..< p.len - 2:
       let q = qtyPrefix(p[j])
       paramStrs.add("(" & q & binderName(p[j]) & " : " & ty & ")")
-      if ty == "Type 0": scopedLegacyTypeNames.incl(binderName(p[j]))
+      if ty == "Univ": scopedLegacyTypeNames.incl(binderName(p[j]))
       if ty == "Nat": scopedNatNames.incl(binderName(p[j]))
   let priorCallableInfos = toSeq(legacyCallInfo.pairs)
   for i in 1 ..< params.len:
@@ -1034,12 +1027,12 @@ proc defCallToEponym(st: NimNode): string =
   ## def(isZero, Nat -> Bool):
   ##   clause([zero], true)
   ##   clause([suc(n)], false)
-  ## -> def isZero : Nat -> Bool / | zero = true / | (suc n) = false
+  ## -> def(isZero, Nat -> Bool): / clause([zero], true) / ...
   ## (issue #151: clause-style definitions embedded; issue #42: reused
-  ## for defs inside a mutual block).
+  ## for defs inside a mutual block; single syntax: call-form def).
   if st.len < 4 or st[1].kind != nnkIdent:
     error("def expects (name, type) with a block of clause([pats], rhs)", st)
-  result = "def " & $st[1] & " : " & nimTypeToEponym(st[2]) & "\n"
+  result = "def(" & $st[1] & ", " & nimTypeToEponym(st[2]) & "):\n"
   let blk = st[st.len - 1]
   if blk.kind != nnkStmtList:
     error("def expects a block of clause([pats], rhs) statements", st)
@@ -1050,7 +1043,7 @@ proc defCallToEponym(st: NimNode): string =
       error("clause expects ([pattern, ...], rhs)", c)
     var pats: seq[string] = @[]
     for p in c[1]: pats.add(patToEponym(p))
-    result.add("| " & pats.join(" ") & " = " & nimExprToEponym(c[2]) & "\n")
+    result.add("clause([" & pats.join(", ") & "], " & nimExprToEponym(c[2]) & ")\n")
 
 type DiagnosticSourceLoc = tuple[filename: string, line, column: int]
 
@@ -1090,29 +1083,29 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
     of nnkCall:
       let head = $st[0]
       if head == "postulate":
-        # postulate(Int, Univ) -> postulate Int : Type 0
+        # postulate(Int, Univ) stays postulate(Int, Univ) (single syntax).
         if st.len != 3: error("postulate expects (name, type)", st)
-        result.add("postulate " & $st[1] & " : " & nimTypeToEponym(st[2]) & "\n")
+        result.add("postulate(" & $st[1] & ", " & nimTypeToEponym(st[2]) & ")\n")
       elif head == "elim":
-        # elim(boolElim, Pi(C: Bool -> Univ, ...)) -> elim boolElim : Pi ...
+        # elim(boolElim, Pi(C: Bool -> Univ, ...)) stays in call form.
         # (issue #151: smoke tests 07/08 embedded)
         if st.len != 3 or st[1].kind != nnkIdent:
           error("elim expects (name, type)", st)
-        result.add("elim " & $st[1] & " : " & nimTypeToEponym(st[2]) & "\n")
+        result.add("elim(" & $st[1] & ", " & nimTypeToEponym(st[2]) & ")\n")
       elif head == "red":
-        # red(boolElim(C, t, f, true), t) -> red boolElim C t f true = t
+        # red(boolElim(C, t, f, true), t) stays in call form.
         # (issue #151: smoke tests 07/08 embedded)
         if st.len != 3:
           error("red expects (lhs, rhs)", st)
-        result.add("red " & nimExprToEponym(st[1]) & " = " &
-                   nimExprToEponym(st[2]) & "\n")
+        result.add("red(" & nimExprToEponym(st[1]) & ", " &
+                   nimExprToEponym(st[2]) & ")\n")
       elif head == "def":
         result.add(defCallToEponym(st))
       elif head == "mutual":
         # mutual:
         #   def(even, Nat -> Bool): clause([zero], true) ...
         #   def(odd, Nat -> Bool): ...
-        # -> mutual / def even : ... / | ... / def odd : ... / | ...
+        # -> mutual / def(even, ...): / clause(...) / ...
         # (issue #42: mutual blocks embedded)
         if st.len != 2:
           error("mutual expects a block of def(name, type) groups", st)
@@ -1129,8 +1122,8 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
         if ndefs == 0:
           error("mutual needs at least one def group", st)
       elif head == "data":
-        # data(Nat, Univ): block -> data Nat : Type 0 where | ...
-        # data(Vec, [A: Univ], Nat -> Univ): block -> data Vec (A : Type 0) : Nat -> Type 0 where | ...
+        # data(Nat, Univ): block stays data(Nat, Univ) where | ...
+        # data(Vec, [A: Univ], Nat -> Univ): block stays in call form.
         if st.len < 3: error("data expects (name, type) with block", st)
         let name = $st[1]
         # Check if we have params: data(Vec, [A: Univ], kind)
@@ -1145,10 +1138,12 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
           for p in params:
             # p is ExprColonExpr(A, Univ) or IdentDefs?
             if p.kind == nnkExprColonExpr:
-              pStrs.add("(" & $p[0] & " : " & nimTypeToEponym(p[1]) & ")")
+              pStrs.add($p[0] & ": " & nimTypeToEponym(p[1]))
             else:
               error("data params must be [name: type]", p)
-          paramStr = " " & pStrs.join(" ")
+          # An empty parameter list means no parameters (e.g. the
+          # `data(Session, [], Univ)` shape); emit the no-params form.
+          paramStr = if pStrs.len == 0: "" else: ", [" & pStrs.join(", ") & "]"
           tyNode = st[3]
           blkIdx = 4
         else:
@@ -1156,7 +1151,7 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
           tyNode = st[2]
           blkIdx = 3
         let ty = nimTypeToEponym(tyNode)
-        result.add("data " & name & paramStr & " : " & ty & " where\n")
+        result.add("data(" & name & paramStr & ", " & ty & ") where\n")
         # The block is at blkIdx
         let blk = st[blkIdx]
         if blk.kind != nnkStmtList:
@@ -1165,11 +1160,11 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
           if ctor.kind != nnkProcDef:
             error("data block expects proc constructors", ctor)
           var cname = $ctor[0]
-          # Map Nim-safe names to Eponym names (nil is a Nim keyword)
-          if cname == "vecnil": cname = "nil"
+          # Single syntax: `vecnil` is the surface spelling (the parser
+          # maps it to the `nil` constructor); no translation here.
           let cparams = ctor[3]
           var cparamStrs: seq[string] = @[]
-          var cretTy = "?"
+          var cretTy = "_"
           if cparams.len > 0 and cparams[0].kind != nnkEmpty:
             cretTy = nimTypeToEponym(cparams[0])
           for i in 1 ..< cparams.len:
@@ -1180,12 +1175,12 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
               cparamStrs.add("(" & q & binderName(p[j]) & " : " & ty2 & ")")
           result.add("| " & cname & " " & cparamStrs.join(" ") & " : " & cretTy & "\n")
       elif head == "record":
-        # record(Point): block -> record Point: | ...
+        # record(Point): block stays record(Point): | ...
         # block statements are field(name, Type) calls (issue #37)
         if st.len != 3 or st[1].kind != nnkIdent:
           error("record expects (name) with a block of field(name, type)", st)
         let name = $st[1]
-        result.add("record " & name & ":\n")
+        result.add("record(" & name & "):\n")
         let blk = st[2]
         if blk.kind != nnkStmtList:
           error("record expects a block of field(name, type) statements", st)
@@ -3059,7 +3054,7 @@ proc genericRuntimeInfo(decl: NimNode,
           mappedBinder = mapping
           hasMappedBinder = true
           break
-    if binderType notin ["Type 0", "Nat", "Bool", "Int"] and
+    if binderType notin ["Univ", "Nat", "Bool", "Int"] and
         not hasMappedBinder and
         not (allowGenericValues and hasStructuralValueCodec) and
         not allowUnmappedValues:
@@ -3072,7 +3067,7 @@ proc genericRuntimeInfo(decl: NimNode,
       if name in result.genericNames.mapIt($it):
         result.error = "duplicate generic runtime parameter '" & name & "'"
         return
-      if binderType == "Type 0" and decl.len > 6 and not decl[6].isNil and
+      if binderType == "Univ" and decl.len > 6 and not decl[6].isNil and
           mentionsName(decl[6], name):
         result.error = "generic type parameter '" & name &
           "' is used by the runtime body; an explicit runtime type " &
@@ -3086,7 +3081,7 @@ proc genericRuntimeInfo(decl: NimNode,
       result.genericValueTypes.add(nil)
       result.genericValueTypeNames.add("")
       result.genericValueTypeExprs.add(copyNimTree(param[^2]))
-      if binderType == "Type 0":
+      if binderType == "Univ":
         result.typeNames.add(name)
         result.genericParams.add(newIdentDefs(copyNimTree(param[i]),
           newEmptyNode(), newEmptyNode()))

@@ -287,8 +287,8 @@ proc resolveShedPlaceholders*(src: var string, sheds: var seq[ShedInfo]) =
         inc line
         lineStart = k
     sheds[i].holeLine = line
-    sheds[i].holeCol = pos - lineStart  # 1-based column of the `?`
-    src = src[0 ..< pos] & "?" & src[pos + ph.len .. ^1]
+    sheds[i].holeCol = pos - lineStart  # 1-based column of the `_`
+    src = src[0 ..< pos] & "_" & src[pos + ph.len .. ^1]
 
 # --- sidecar JSON: the bridge to the LSP server (issues #134/#135) --------
 

@@ -208,34 +208,34 @@ proc render(p: PreTerm, prec: int): string =
   case p.kind
   of pkVar: p.name
   of pkHole:
-    if p.holeName == "": "?" else: "?" & p.holeName
+    if p.holeName == "": "_" else: "?" & p.holeName
   of pkDiscard: "_"
-  of pkInt:
-    # Issue #158: `1` lexes as the unit *type* (QTT), so a bare `1` would
-    # re-parse as pkUnitTy, not pkInt(1). The integer literal one is written
-    # `01` (the lexer's documented escape hatch); the renderer must honor it
-    # to keep render->parse faithful.
-    if p.intVal == 1: "01" else: $p.intVal
-  of pkBy: "by " & p.name
+  of pkInt: $p.intVal
+  of pkBy: "byTac(" & p.name & ")" 
   of pkUniv: "Univ"
-  of pkUnivN: "Type " & $p.intVal  # Issue #52
-  of pkUnitTy: "1"
-  of pkUnitV: "<>"
-  of pkEmptyTy: "O"
+  of pkUnivN:  # Issue #52
+    if p.intVal == 0: "Univ" else: "Type " & $p.intVal
+  of pkUnitTy: "unitTy"
+  of pkUnitV: "unitv"
+  of pkEmptyTy: "emptyTy"
   of pkPi:
     let s =
       if p.name == "_" and not p.impl: render(p.c1, 2) & " -> " & render(p.c2, 1)
-      elif p.impl: "Pi {" & p.name & " : " & render(p.c1, 0) & "}. " & render(p.c2, 0)
-      else: "Pi (" & p.name & " : " & render(p.c1, 0) & "). " & render(p.c2, 0)
+      elif p.impl: "Pi{" & p.name & ": " & render(p.c1, 0) & ", " & render(p.c2, 0) & "}"
+      else: "Pi(" & p.name & ": " & render(p.c1, 0) & ", " & render(p.c2, 0) & ")"
     if prec > 1: par(s) else: s
   of pkSigma:
-    let s = "Sig (" & p.name & " : " & render(p.c1, 0) & "). " & render(p.c2, 0)
+    let s =
+      if p.name == "_": "Sig(" & render(p.c1, 0) & ", " & render(p.c2, 0) & ")"
+      else: "Sig(" & p.name & ": " & render(p.c1, 0) & ", " & render(p.c2, 0) & ")"
     if prec > 0: par(s) else: s
   of pkLam:
-    let b = if p.c1.isNil: p.name else: p.name & " : " & render(p.c1, 0)
     let s =
-      if p.impl: "lam {" & b & "}. " & render(p.c2, 0)
-      else: "lam (" & b & "). " & render(p.c2, 0)
+      if p.impl:
+        if p.c1.isNil: "lam({" & p.name & "}, " & render(p.c2, 0) & ")"
+        else: "lam({" & p.name & ": " & render(p.c1, 0) & "}, " & render(p.c2, 0) & ")"
+      elif p.c1.isNil: "lam(" & p.name & ", " & render(p.c2, 0) & ")"
+      else: "lam(" & p.name & ", " & render(p.c1, 0) & ", " & render(p.c2, 0) & ")"
     if prec > 0: par(s) else: s
   of pkApp:
     let s = render(p.c1, 2) & " " & render(p.c2, 3)

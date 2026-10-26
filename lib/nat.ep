@@ -8,12 +8,12 @@
 # Canonical definitions: `add` recurses on its first argument (Idris's
 # `plus`: `add zero n` is definitionally `n`); `mul` is defined via `add`.
 
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
 
 proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
+  natElim lam(u, Nat, Nat) n lam(p, Nat, lam(ih, Nat, suc(ih))) m
 
 proc mul (m : Nat) (n : Nat) : Nat =
-  natElim (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). add m ih) n
+  natElim lam(u, Nat, Nat) zero lam(p, Nat, lam(ih, Nat, add m ih)) n

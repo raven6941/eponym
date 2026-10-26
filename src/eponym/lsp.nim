@@ -1177,7 +1177,7 @@ proc introShedPlan*(nimFile, shedName: string, count: int,
                        else: name
       clientPrefixes.add("lam(" & clientName & ", " & domain & ", ")
     ctx = @[CtxEntry(name: name, ty: binder.domain, qty: toQty(binder.qty))] & ctx
-  checkedTerm.add("?")
+  checkedTerm.add("_")
   var plannedSheds: seq[ShedInfo] = @[]
   result = refineShedPlan(nimFile, shedName, checkedTerm, sheds,
                           inputErrMsg, plannedSheds)
@@ -1834,7 +1834,7 @@ proc caseSplitShedDetailedPlan(nimFile, shedName, variable: string,
   epArgs.add(motiveEp)
   var nimArgs: seq[string] = @[motiveNim]
   for ss in subSheds:
-    epArgs.add("?")
+    epArgs.add("_")
     nimArgs.add("![" & ss & "]")
   epArgs.add(indexEp)
   nimArgs.add(indexNim)

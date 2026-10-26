@@ -439,9 +439,18 @@ A bare `?` is a fresh hole. `?0`, `?1`, and so on name holes within one
 definition: occurrences of the same number share one unknown, while different
 numbers are independent. For example, `(?0, ?0)` asks for a pair with the same
 unknown value in both positions; `(?0, ?1)` allows the values to differ.
-`_` is a discard in binder and pattern positions, and is not a term hole.
+`_` is a discard in binder and pattern positions, and a hole in term positions.
 In `eponymBlock`, `Univ` denotes `Type 0`, and Nim `_` in term position
 converts to a fresh `?` hole.
+
+### Application and pairs
+
+Application is juxtaposition (`f x y`), and a parenthesized comma group in
+argument position is a multi-argument call: `f(a, b)` means `f a b`, exactly
+as in Nim. A pair value is `(a, b)` on its own; passing a pair as one
+argument needs double parens, `f((a, b))` — again exactly as in Nim, so an
+`.ep` example reads the same in embedded code. `fst`/`snd` take a single
+atom, so `fst (a, b)` still projects from the pair.
 
 ### Dependent functions: `Pi`
 

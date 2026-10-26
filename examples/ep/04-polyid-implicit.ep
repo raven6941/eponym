@@ -13,4 +13,4 @@ proc useConstI : 1 =
 proc pairSwapI {A : Type 0} {B : Type 0} (p : Sig (u : A). B) : Sig (v : B). A =
   (snd p, fst p)
 proc usePairSwapI : Sig (v : 1). 1 =
-  pairSwapI (<>, <>)
+  pairSwapI ((<>, <>))
