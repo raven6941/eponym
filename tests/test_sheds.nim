@@ -27,9 +27,9 @@ proc check(cond: bool, label: string) =
 # A source with a hole and a prelude import elaborates hole-tolerantly;
 # imports resolve relative to baseDir.
 let srcHoles = """import "../../lib/nat.ep"
-postulate Int : Type 0
+postulate(Int, Univ)
 proc double (x : Int) : Int = x
-proc quad (n : Int) : Int = ?
+proc quad (n : Int) : Int = _
 """
 block:
   let (defs, ms, errLoc, errMsg) =
@@ -42,8 +42,8 @@ block:
 
 # --- Issue #377: semantic hole state, not rendered text ----------------
 block:
-  let semanticSrc = """postulate Int : Type 0
-proc semanticHole (n : Int) : Pi (1 x : Int). Int = ?
+  let semanticSrc = """postulate(Int, Univ)
+proc semanticHole (n : Int) : Pi(1 x: Int, Int) = _
 """
   let (_, ms, _, errMsg) = elabCheckHoles(semanticSrc)
   check(errMsg == "" and ms.holes.len == 1,
@@ -68,8 +68,8 @@ proc semanticHole (n : Int) : Pi (1 x : Int). Int = ?
 
 # --- elabCheckHolesDir: stops at the first non-hole failure -------------
 # The hole before the failure stays queryable (the #58 prefix property).
-let srcBad = """postulate Int : Type 0
-proc quad (n : Int) : Int = ?
+let srcBad = """postulate(Int, Univ)
+proc quad (n : Int) : Int = _
 proc broken (x : Int) : Nat = x
 """
 block:
@@ -135,8 +135,8 @@ block:
 # hole is yellow; filling the hole (as the #58 refine action would) and
 # re-elaborating turns it white; breaking the shed's own declaration so no
 # goal is established turns it brown.
-let srcOneHole = """postulate Int : Type 0
-proc quad (n : Int) : Int = ?
+let srcOneHole = """postulate(Int, Univ)
+proc quad (n : Int) : Int = _
 """
 block:
   var sheds = @[ShedInfo(name: "quadBody", draft: "", nimLine: 7, nimCol: 25,
@@ -145,7 +145,7 @@ block:
   refreshShedStatuses(sheds, srcOneHole, ".")
   check(sheds[0].status == ssYellow and sheds[0].holeIdx == 0,
     "open hole: yellow, matched to hole 0")
-  let filled = srcOneHole.replace("= ?", "= n")
+  let filled = srcOneHole.replace("= _", "= n")
   refreshShedStatuses(sheds, filled, ".")
   check(sheds[0].status == ssWhite and sheds[0].holeIdx == -1,
     "hole filled, clean elaboration: white")
@@ -211,8 +211,8 @@ block:
 
 # --- Issue #191: shed goal/context use the name-resolving pretty-printer --
 block:
-  let src191 = """postulate Int : Type 0
-proc quad (n : Int) : Int = ?
+  let src191 = """postulate(Int, Univ)
+proc quad (n : Int) : Int = _
 """
   let (_, ms191, _, errMsg191) = elabCheckHolesDir(src191, ".")
   check(errMsg191 == "", "name-aware shed goal: no error, got: " & errMsg191)

@@ -10,7 +10,7 @@ nim c --hints:off $P -o:/tmp/eponym-repl-test src/repl.nim
 /tmp/eponym-repl-test > /tmp/repl-session.out <<'EOF'
 :load lib/nat.ep
 proc two : Nat = suc (suc zero)
-proc constFn (A : Type 0) (B : Type 0) (x : A) (y : B) : A =
+proc constFn (A : Univ) (B : Univ) (x : A) (y : B) : A =
   x
 :eval two
 :eval (add (suc zero) two)
@@ -31,7 +31,7 @@ check() { # $1 = grep pattern, $2 = description
   fi
 }
 check "two : Nat" "single-line def elaborates and persists"
-check "constFn : Pi(Type 0, A. Pi(Type 0, B. Pi(A, x. Pi(B, y. A))))" \
+check "constFn : Pi(Univ, A. Pi(Univ, B. Pi(A, x. Pi(B, y. A))))" \
   "multi-line def elaborates and persists"
 check "(suc (suc zero))" ":eval prints weak-head normal form"
 check "(suc (suc (suc zero)))" ":eval reduces add through the eliminator"

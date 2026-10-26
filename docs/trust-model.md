@@ -177,11 +177,11 @@ cumulativity is directional: `Type i` checks against `Type j` for `i <= j`
 at ascription points, while conversion itself stays level-strict (so
 equality-handler extensions never see subtyping as an equality goal).
 
-Surface universe syntax is explicit: `Type l` has type `Type (l+1)`. The old
-surface `?` universe notation has been retired; `?` now introduces an
-elaboration hole, and `_` is used for discarded binders and wildcard
-patterns. In `eponymBlock`, `Univ` maps to `Type 0` because Nim cannot spell
-the universe token directly.
+Surface universe syntax is explicit: `Univ` is the level-0 universe and
+`Type l` has type `Type (l+1)`. The old surface `?` universe notation has
+been retired; `?n` introduces named elaboration holes, `_` a fresh hole in
+term position, and `_` is used for discarded binders and wildcard
+patterns. `Univ` is spelled the same on both sides of the Nim boundary.
 
 ## Host code, postulates, and the phase distinction
 
@@ -198,7 +198,7 @@ time.
   This translation does not run arbitrary Nim expressions or import Nim
   semantics into Eponym. Per #144, the standalone and embedded grammars are
   one grammar after translation.
-- **`postulate` is an axiom.** `postulate Int : Type 0` asserts a type with no
+- **`postulate` is an axiom.** `postulate(Int, Univ)` asserts a type with no
   evidence; machine `Int` and its primops (`tPrim`) are kernel axioms — the
   kernel trusts that the Nim host's binary `Int` operations are what they
   claim to be. If the host lies, every proof that touches `Int` lies too.

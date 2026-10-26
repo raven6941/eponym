@@ -5,4 +5,4 @@
 
 import "nat_to_int.ep"
 
-postulate intToNat : Int -> Nat
+postulate(intToNat, Int -> Nat)

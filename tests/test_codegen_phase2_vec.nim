@@ -10,46 +10,41 @@
 import std/[sequtils, times]
 import codegen_phase2_differential
 
-const prog = """postulate Int : Type 0
-data Nat : Type 0 where
+const prog = """postulate(Int, Univ)
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : Type 0) : Nat -> Type 0 where
+data(Vec, [A : Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc natAdd (m : Nat) (n : Nat) : Nat =
-  natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) m
+  natElim (lam(u, Nat, Nat)) n (lam(p, Nat, lam(ih, Nat, suc ih))) m
 proc vmapDouble (n : Nat) (xs : Vec Int n) : Vec Int n =
-  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Vec Int i)
+  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Vec Int i)))
             (nil Int)
-            (lam (i : Nat). lam (x : Int). lam (xs2 : Vec Int i).
-              lam (ih : Vec Int i). cons Int i (addInt x x) ih)
+            (lam(i, Nat, lam(x, Int, lam(xs2, Vec Int i, lam(ih, Vec Int i, cons Int i (addInt x x) ih)))))
             n xs
 proc vlength (n : Nat) (xs : Vec Int n) : Nat =
-  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Nat)
+  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Nat)))
             zero
-            (lam (i : Nat). lam (x : Int). lam (xs2 : Vec Int i).
-              lam (ih : Nat). suc ih)
+            (lam(i, Nat, lam(x, Int, lam(xs2, Vec Int i, lam(ih, Nat, suc ih)))))
             n xs
 proc vheadOr (n : Nat) (xs : Vec Int n) (d : Int) : Int =
-  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Int)
+  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Int)))
             d
-            (lam (i : Nat). lam (x : Int). lam (xs2 : Vec Int i).
-              lam (ih : Int). x)
+            (lam(i, Nat, lam(x, Int, lam(xs2, Vec Int i, lam(ih, Int, x)))))
             n xs
 proc vappend (m : Nat) (n : Nat) (xs : Vec Int m) (ys : Vec Int n)
     : Vec Int (natAdd m n) =
-  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Vec Int (natAdd i n))
+  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Vec Int (natAdd i n))))
             ys
-            (lam (i : Nat). lam (x : Int). lam (xs2 : Vec Int i).
-              lam (ih : Vec Int (natAdd i n)).
-                cons Int (natAdd i n) x ih)
+            (lam(i, Nat, lam(x, Int, lam(xs2, Vec Int i, lam(ih, Vec Int (natAdd i n), cons Int (natAdd i n) x ih)))))
             m xs
 proc vconsStep (i : Nat) (x : Int) (xs2 : Vec Int i) (ih : Vec Int i)
     : Vec Int (suc i) =
   cons Int i x ih
 proc vmapId (n : Nat) (xs : Vec Int n) : Vec Int n =
-  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Vec Int i)
+  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Vec Int i)))
             (nil Int) vconsStep n xs
 """
 

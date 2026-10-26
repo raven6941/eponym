@@ -161,77 +161,77 @@ macro kindDepError(): untyped =
     result = newLit(e.msg)
 
 const recordSrc = """
-postulate Int : Type 0
-postulate Nat : Type 0
-postulate Point : Sig (x : Int). Sig (y : Nat). Int
+postulate(Int, Univ)
+postulate(Nat, Univ)
+postulate(Point, Sig(x: Int, Sig(y: Nat, Int)))
 """
 
 const variantSrc = """
-postulate Int : Type 0
-data Tree : Type 0 where
+postulate(Int, Univ)
+data(Tree, Univ) where
 | leaf : Tree
 | node (n : Int) (rest : Tree) : Tree
 """
 
 const opaqueDepSrc = """
-postulate Int : Type 0
-postulate Nat : Type 0
-postulate Wrap : Pi (n : Nat). Type 0
-postulate Box : Sig (n : Nat). Wrap n
+postulate(Int, Univ)
+postulate(Nat, Univ)
+postulate(Wrap, Pi(n: Nat, Univ))
+postulate(Box, Sig(n: Nat, Wrap n))
 """
 
 const vecDepSrc = """
-postulate Int : Type 0
-postulate Nat : Type 0
-postulate Vec : Pi (A : Type 0). Pi (n : Nat). Type 0
-postulate Pair2 : Sig (n : Nat). Vec Int n
+postulate(Int, Univ)
+postulate(Nat, Univ)
+postulate(Vec, Pi(A: Univ, Pi(n: Nat, Univ)))
+postulate(Pair2, Sig(n: Nat, Vec Int n))
 """
 
 const higherOrderSrc = """
-postulate Int : Type 0
-postulate Bad : Sig (f : Pi (x : Int). Int). Int
+postulate(Int, Univ)
+postulate(Bad, Sig(f: Pi(x: Int, Int), Int))
 """
 
 const noMappingSrc = """
-postulate Int : Type 0
-postulate Mystery : Type 0
-postulate P : Sig (x : Int). Mystery
+postulate(Int, Univ)
+postulate(Mystery, Univ)
+postulate(P, Sig(x: Int, Mystery))
 """
 
 const indexedSrc = """
-postulate Int : Type 0
-data Nat : Type 0 where
+postulate(Int, Univ)
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data IVec : Pi (A : Type 0). Pi (n : Nat). Type 0 where
-| ivnil (A : Type 0) : IVec A zero
-| ivcons (A : Type 0) (n : Nat) (x : A) (xs : IVec A n) : IVec A (suc n)
+data(IVec, Pi(A: Univ, Pi(n: Nat, Univ))) where
+| ivnil (A : Univ) : IVec A zero
+| ivcons (A : Univ) (n : Nat) (x : A) (xs : IVec A n) : IVec A (suc n)
 """
 
 const vecSrc = """
-postulate Int : Type 0
-data Nat : Type 0 where
+postulate(Int, Univ)
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec : Pi (A : Type 0). Pi (n : Nat). Type 0 where
-| nil (A : Type 0) : Vec A zero
-| cons (A : Type 0) (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-postulate Pair2 : Sig (n : Nat). Vec Int n
+data(Vec, Pi(A: Univ, Pi(n: Nat, Univ))) where
+| nil (A : Univ) : Vec A zero
+| cons (A : Univ) (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
+postulate(Pair2, Sig(n: Nat, Vec Int n))
 """
 
 const opaqueFamSrc = """
-postulate Session : Type 0
-postulate Nat : Type 0
-postulate Chan : Session -> Type 0
-postulate Promise : Type 0
-postulate AcceptMsg : Nat -> Type 0
+postulate(Session, Univ)
+postulate(Nat, Univ)
+postulate(Chan, Session -> Univ)
+postulate(Promise, Univ)
+postulate(AcceptMsg, Nat -> Univ)
 """
 
 const opaqueDefSrc = """
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-postulate f : Nat -> Nat
+postulate(f, Nat -> Nat)
 """
 
 emitCodec(recordSrc, "Point", "point")

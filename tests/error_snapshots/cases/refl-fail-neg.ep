@@ -1,8 +1,8 @@
 # Negative test (issue #34): `refl` on genuinely unequal terms fails with a
 # named noConfusion reason.
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Eq (A : Type 0) (x : A) : A -> Type 0 where
+data(Eq, [A: Univ, x: A], A -> Univ) where
 | refl : Eq A x x
 proc bad : Eq Nat zero (suc zero) = refl Nat zero

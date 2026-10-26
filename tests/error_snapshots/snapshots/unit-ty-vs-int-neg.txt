@@ -1,1 +1,1 @@
-line 2, col 18: inferred type ? does not match expected type Int (expected type written at line 2, col 12): not convertible (mismatch) (note: `1` in surface syntax is the unit type; write `01` for the integer literal one)
+line 7, col 18: inferred type unitTy does not match expected type Int (expected type written at line 7, col 12): not convertible (mismatch)

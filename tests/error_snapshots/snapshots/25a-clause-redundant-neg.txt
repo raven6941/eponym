@@ -1,1 +1,1 @@
-line 7, col 1: overlapping clauses: 'zero' already covered by the clause at 6:1
+line 7, col 3: overlapping clauses: 'zero' already covered by the clause at 6:3

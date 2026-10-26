@@ -143,7 +143,7 @@ block:
   let pi = layoutShed(ShedInfo(name: "constEndoBody", draft: "", nimLine: 1,
                                nimCol: 1, holeLine: 3, holeIdx: 0,
                                goal: "Pi (f : A). Pi (g : A). A",
-                               ctx: @["A : Type 0"],
+                               ctx: @["A : Univ"],
                                goalPi: @["f : A", "g : A", "A"],
                                status: ssYellow))
   let pir = renderBox(pi)

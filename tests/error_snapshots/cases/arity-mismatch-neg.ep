@@ -1,4 +1,4 @@
 # Negative test (issue #34): applying a function to more arguments than its
 # type provides.
-proc id (A : Type 0) (x : A) : A = x
-proc bad (A : Type 0) (x : A) : A = id A x x
+proc id (A : Univ) (x : A) : A = x
+proc bad (A : Univ) (x : A) : A = id A x x

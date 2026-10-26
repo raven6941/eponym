@@ -1,16 +1,16 @@
 # Polymorphic identity with implicit arguments. Tests implicit insertion.
 # Experiment: 04
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Univ` = universe
 
-proc polyId {A : Type 0} (x : A) : A =
+proc polyId {A : Univ} (x : A) : A =
   x
-proc usePolyId : 1 =
-  polyId <>
-proc constI {A : Type 0} {B : Type 0} (x : A) (y : B) : A =
+proc usePolyId : unitTy =
+  polyId unitv
+proc constI {A : Univ} {B : Univ} (x : A) (y : B) : A =
   x
-proc useConstI : 1 =
-  constI <> <>
-proc pairSwapI {A : Type 0} {B : Type 0} (p : Sig (u : A). B) : Sig (v : B). A =
+proc useConstI : unitTy =
+  constI unitv unitv
+proc pairSwapI {A : Univ} {B : Univ} (p : Sig(u: A, B)) : Sig(v: B, A) =
   (snd p, fst p)
-proc usePairSwapI : Sig (v : 1). 1 =
-  pairSwapI (<>, <>)
+proc usePairSwapI : Sig(v: unitTy, unitTy) =
+  pairSwapI ((unitv, unitv))

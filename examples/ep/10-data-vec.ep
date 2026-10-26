@@ -1,16 +1,16 @@
 # Vectors (indexed family). Tests indexed data and eliminator computation.
 # Experiment: 10
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
-# `data T : Type 0 where` defines inductive types; in eponymBlock: `data(T, Univ):` + indented `proc` ctors
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Univ` = universe
+# `data(T, Univ) where` defines inductive types
 import "../../lib/nat.ep"
 
-data Vec (A : Type 0) : Nat -> Type 0 where
+data(Vec, [A: Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc v2 : Vec Nat (suc (suc zero)) =
   cons Nat (suc zero) (suc zero) (cons Nat zero zero (nil Nat))
 proc lenIsTwo : Nat =
-  vecElim Nat (lam (i : Nat). lam (v : Vec Nat i). Nat)
+  vecElim Nat (lam(i, Nat, lam(v, Vec Nat i, Nat)))
             zero
-            (lam (i : Nat). lam (x : Nat). lam (xs : Vec Nat i). lam (ih : Nat). suc ih)
+            (lam(i, Nat, lam(x, Nat, lam(xs, Vec Nat i, lam(ih, Nat, suc ih)))))
             (suc (suc zero)) v2

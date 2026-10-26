@@ -10,39 +10,37 @@
 import std/[sequtils, times]
 import codegen_phase2_differential
 
-const prog = """postulate Int : Type 0
-data Nat : Type 0 where
+const prog = """postulate(Int, Univ)
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data List (A : Type 0) : Type 0 where
+data(List, [A : Univ], Univ) where
 | nil : List A
 | cons (x : A) (xs : List A) : List A
 proc lmapDouble (xs : List Int) : List Int =
-  listElim Int (lam (u : List Int). List Int)
+  listElim Int (lam(u, List Int, List Int))
            (nil Int)
-           (lam (x : Int). lam (tl : List Int). lam (ih : List Int).
-             cons Int (addInt x x) ih)
+           (lam(x, Int, lam(tl, List Int, lam(ih, List Int, cons Int (addInt x x) ih))))
            xs
 proc llength (xs : List Int) : Nat =
-  listElim Int (lam (u : List Int). Nat)
+  listElim Int (lam(u, List Int, Nat))
            zero
-           (lam (x : Int). lam (tl : List Int). lam (ih : Nat). suc ih)
+           (lam(x, Int, lam(tl, List Int, lam(ih, Nat, suc ih))))
            xs
 proc lappend (xs : List Int) (ys : List Int) : List Int =
-  listElim Int (lam (u : List Int). List Int)
+  listElim Int (lam(u, List Int, List Int))
            ys
-           (lam (x : Int). lam (tl : List Int). lam (ih : List Int).
-             cons Int x ih)
+           (lam(x, Int, lam(tl, List Int, lam(ih, List Int, cons Int x ih))))
            xs
 proc lheadOr (xs : List Int) (d : Int) : Int =
-  listElim Int (lam (u : List Int). Int)
+  listElim Int (lam(u, List Int, Int))
            d
-           (lam (x : Int). lam (tl : List Int). lam (ih : Int). x)
+           (lam(x, Int, lam(tl, List Int, lam(ih, Int, x))))
            xs
 proc lconsStep (x : Int) (tl : List Int) (ih : List Int) : List Int =
   cons Int x ih
 proc lmapId (xs : List Int) : List Int =
-  listElim Int (lam (u : List Int). List Int) (nil Int) lconsStep xs
+  listElim Int (lam(u, List Int, List Int)) (nil Int) lconsStep xs
 """
 
 differentialBlockRepr(prog, currentSourcePath(), "Int:int,Nat:int,List:list")

@@ -4,19 +4,19 @@
 # syntactic equality). `eqElim` is the generated eliminator (J).
 # Files under examples/ep/ pull this in with `import "../../lib/eq.ep"` (issue #49).
 
-data Eq (A : Type 0) (x : A) : A -> Type 0 where
+data(Eq, [A: Univ, x: A], A -> Univ) where
 | refl : Eq A x x
 
-proc cong (A : Type 0) (B : Type 0) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
+proc cong (A : Univ) (B : Univ) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
     : Eq B (f x) (f y) =
-  eqElim A x (lam (z : A). lam (q : Eq A x z). Eq B (f x) (f z))
+  eqElim A x (lam(z, A, lam(q, Eq A x z, Eq B (f x) (f z))))
          (refl B (f x)) y p
 
-proc sym (A : Type 0) (x : A) (y : A) (p : Eq A x y) : Eq A y x =
-  eqElim A x (lam (z : A). lam (q : Eq A x z). Eq A z x)
+proc sym (A : Univ) (x : A) (y : A) (p : Eq A x y) : Eq A y x =
+  eqElim A x (lam(z, A, lam(q, Eq A x z, Eq A z x)))
          (refl A x) y p
 
-proc trans (A : Type 0) (x : A) (y : A) (z : A) (p : Eq A x y) (q : Eq A y z)
+proc trans (A : Univ) (x : A) (y : A) (z : A) (p : Eq A x y) (q : Eq A y z)
     : Eq A x z =
-  eqElim A x (lam (w : A). lam (r : Eq A x w). Eq A w z -> Eq A x z)
-         (lam (s : Eq A x z). s) y p q
+  eqElim A x (lam(w, A, lam(r, Eq A x w, Eq A w z -> Eq A x z)))
+         (lam(s, Eq A x z, s)) y p q

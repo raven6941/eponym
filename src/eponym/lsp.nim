@@ -617,7 +617,7 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
     var used: seq[string] = @[]
     for b in h.holeCtx: used.add(b.name)
     var newLines: seq[string] = @[
-      "def " & procDef.name & " : " & $desugarTy(procDef)]
+      "def(" & procDef.name & ", " & $desugarTy(procDef) & "):"]
     for c in ctors:
       var pat = c.name
       if c.tele.len > 0:
@@ -626,10 +626,10 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
           let fresh = freshen(b.name, used)
           used.add(fresh)
           args.add(fresh)
-        pat = "(" & c.name & " " & args.join(" ") & ")"
+        pat = c.name & "(" & args.join(", ") & ")"
       var newPats: seq[string] = @[pat]
       for i in 1 ..< explicitNames.len: newPats.add(explicitNames[i])
-      newLines.add("| " & newPats.join(" ") & " = ?")
+      newLines.add("  clause([" & newPats.join(", ") & "], _)")
     # Replace the whole proc decl: from its first line to the line before
     # the next decl (or end of file).
     let lines = src.splitLines()
@@ -654,6 +654,8 @@ proc caseSplitAt*(src: string, line, col: int, varName: string):
      newLines.join("\n"))
   except ParseError as e:
     (false, "parse error: " & e.msg, 0,0,0,0, "")
+
+proc sourceOffset(src: string, line, col: int): int
 
 proc fillHoleAt*(src: string, line, col: int, term: string,
                 baseDir = ""):
@@ -735,11 +737,12 @@ proc fillHoleAt*(src: string, line, col: int, term: string,
     if x.startLine != y.startLine: cmp(y.startLine, x.startLine)
     else: cmp(y.startChar, x.startChar))
 
-  # Holes introduced by the replacement term are counted per occurrence;
-  # this preserves the refine/give distinction for shared holes.
-  var termHoles = 0
-  for ch in term:
-    if ch == '?': inc termHoles
+  # Holes introduced by the replacement term, counted from the
+  # re-elaborated store inside the inserted regions. Text counting
+  # cannot work here: `_` is a hole in term position but a discard in
+  # binder/pattern position, so only real holes count. The caller uses
+  # this for the give/refine distinction (zero vs nonzero), which is
+  # preserved for shared holes: one shared hole still counts.
   try:
     let (_, ms, errLoc, errMsg) =
       if baseDir == "": elabCheckHoles(newSrc)
@@ -747,9 +750,18 @@ proc fillHoleAt*(src: string, line, col: int, term: string,
     if errMsg != "":
       return (false, errMsg, errLoc.line - 1, errLoc.col - 1,
               0,0,0,0, "", 0, @[])
+    var termHoles = 0
+    var delta = 0
+    for at in offsets:
+      let newStart = at + delta
+      delta += term.len - selected.len
+      for h in ms.holes:
+        let absolute = sourceOffset(newSrc, h.holeLoc.line, h.holeLoc.col)
+        if absolute >= newStart and absolute < newStart + term.len:
+          inc termHoles
     let first = editRanges[^1]
     (true, "", 0, 0, first.startLine, first.startChar,
-     first.endLine, first.endChar, newSrc, termHoles * offsets.len, editRanges)
+     first.endLine, first.endChar, newSrc, termHoles, editRanges)
   except ParseError as e:
     (false, "parse error: " & e.msg, e.loc.line - 1, e.loc.col - 1,
      0,0,0,0, "", 0, @[])
@@ -984,8 +996,10 @@ proc refineShedPlan*(nimFile, shedName, term: string,
     let absolute = sourceOffset(newSrc, h.holeLoc.line, h.holeLoc.col)
     if absolute >= regionStart and absolute < regionEnd:
       let relative = absolute - regionStart
-      # Surface holes are `?`/`?N`; `_` is now a discard wildcard.
-      if relative < term.len and term[relative] == '?':
+      # Surface holes are `_` (anonymous) and `?N` (named). A `_`
+      # in binder/pattern position is a discard and never appears in
+      # checked.holes, so it is already excluded by this loop.
+      if relative < term.len and (term[relative] == '?' or term[relative] == '_'):
         residual.add((relative, hi, h))
   residual.sort(proc(a, b: tuple[offset, holeIdx: int, hole: HoleInfo]): int =
     cmp(a.offset, b.offset))
@@ -1164,12 +1178,12 @@ proc introShedPlan*(nimFile, shedName: string, count: int,
     if binder.qty == q0 or binder.erased: quantity = "0 "
     elif binder.qty == q1: quantity = "1 "
     if binder.implicit:
-      let prefix = "lam {" & name & " : " & domain & "}. "
+      let prefix = "lam({" & name & ": " & domain & "}, "
       checkedTerm.add(prefix)
       checkedPrefixLen += prefix.len
       clientPrefixes.add("lam({" & name & ": " & domain & "}, ")
     else:
-      let prefix = "lam (" & quantity & name & " : " & domain & "). "
+      let prefix = "lam(" & quantity & name & ", " & domain & ", "
       checkedTerm.add(prefix)
       checkedPrefixLen += prefix.len
       let clientName = if quantity == "1 ": name & " {.linear.}"
@@ -1177,13 +1191,19 @@ proc introShedPlan*(nimFile, shedName: string, count: int,
                        else: name
       clientPrefixes.add("lam(" & clientName & ", " & domain & ", ")
     ctx = @[CtxEntry(name: name, ty: binder.domain, qty: toQty(binder.qty))] & ctx
-  checkedTerm.add("?")
+  checkedTerm.add("_")
+  # Call forms close every intro lam; the dot form needed no closes.
+  checkedTerm.add(repeat(")", count))
   var plannedSheds: seq[ShedInfo] = @[]
   result = refineShedPlan(nimFile, shedName, checkedTerm, sheds,
                           inputErrMsg, plannedSheds)
   if result.ok:
     updatedSheds = plannedSheds
-    let residualBody = result.term[checkedPrefixLen .. ^1]
+    var residualBody = result.term[checkedPrefixLen .. ^1]
+    # The rendered term already closes the intro lams; the client term
+    # re-adds those closes after the client prefixes, so drop them here.
+    if residualBody.endsWith(repeat(")", count)):
+      residualBody = residualBody[0 ..< residualBody.len - count]
     result.term = clientPrefixes.join("") & residualBody & repeat(")", count)
 
 proc introShed*(nimFile, shedName: string, count = 1):
@@ -1259,7 +1279,7 @@ proc refineConstructorsShedPlan*(nimFile, shedName: string, selected: string,
       inc arity
       ty = zonk(ms, ty.scope.bdy)
     let name = ms.ctorTable.ctorNames[cid]
-    let candidate = name & repeat(" ?", arity)
+    let candidate = name & repeat(" _", arity)
     let p = sourceOffset(oldSrc, sheds[si].holeLine, sheds[si].holeCol)
     if p < 0: continue
     let (line, col) = sourcePosition(oldSrc, p)
@@ -1360,12 +1380,12 @@ proc refineFromContextShedPlan*(nimFile, shedName: string, selected: string,
     while ty != nil and ty.kind == tPi:
       inc arity
       ty = zonk(ms, ty.scope.bdy)
-    let candidate = b.name & repeat(" ?", arity)
+    let candidate = b.name & repeat(" _", arity)
     let probe = fillHoleAt(oldSrc, line - 1, col - 1,
                            "(" & candidate & ")", baseDir)
     if probe.ok:
       # Expected-type unification can solve some argument holes. Reify those
-      # solutions in the picker term (e.g. `f ?` becomes `f a` when the goal
+      # solutions in the picker term (e.g. `f _` becomes `f a` when the goal
       # forces the dependent argument to the in-scope value `a`).
       var rendered = candidate
       try:
@@ -1373,7 +1393,7 @@ proc refineFromContextShedPlan*(nimFile, shedName: string, selected: string,
         if checked.errMsg == "":
           var placeholderPositions: seq[int] = @[]
           for i, ch in candidate:
-            if ch == '?': placeholderPositions.add(i)
+            if ch == '?' or ch == '_': placeholderPositions.add(i)
           var replacements = initTable[int, string]()
           let candidateStart = p + 1 # skip the probe's opening parenthesis
           for h in checked.ms.holes:
@@ -1529,10 +1549,10 @@ proc refineEqualityShedPlan*(nimFile, shedName: string, selected: string,
         let rewrittenText = prettyTerm(replaced.term, qCtx,
           ms.refNames, ms.recordFields)
         let candidate = "eqElim " & aText & " " & startText &
-          " (lam (" & zName & " : " & aText & "). lam (" & qName & " : " &
-          qTyText & "). (" & rewrittenText & " -> " & goalUnderText & "))" &
-          " (lam (" & pName & " : " & goalText & "). " & pName & ") " &
-          finishText & " " & proofText & " ?"
+          " lam(" & zName & ", " & aText & ", lam(" & qName & ", " &
+          qTyText & ", (" & rewrittenText & " -> " & goalUnderText & "))) " &
+          " lam(" & pName & ", " & goalText & ", " & pName & ") " &
+          finishText & " " & proofText & " _"
         let key = b.name & (if reverse: " reverse" else: " forward") &
           " occurrence " & $(occurrence + 1)
         var nimAText, nimStart, nimFinish, nimX, nimY: string
@@ -1823,18 +1843,18 @@ proc caseSplitShedDetailedPlan(nimFile, shedName, variable: string,
       not nimTypeExpr(generalizedGoal, goalNimCtx, ms, motiveGoalNim):
     return (false, "cannot render the generalized target of datatype '" &
             dataName & "' in Nim shed syntax", "", 0, 0, @[])
-  var motiveEp = "(lam (u : " & familyEp & "). " & motiveGoalEp & ")"
+  var motiveEp = "(lam(u, " & familyEp & ", " & motiveGoalEp & "))"
   var motiveNim = "lam(u, " & familyNim & ", " & motiveGoalNim & ")"
   for j in countdown(indexCount - 1, 0):
-    motiveEp = "(lam (" & indexNames[j] & " : " & indexDomainEp[j] &
-               "). " & motiveEp & ")"
+    motiveEp = "(lam(" & indexNames[j] & ", " & indexDomainEp[j] &
+               ", " & motiveEp & "))"
     motiveNim = "lam(" & indexNames[j] & ", " & indexDomainNim[j] &
                 ", " & motiveNim & ")"
   var epArgs: seq[string] = paramEp
   epArgs.add(motiveEp)
   var nimArgs: seq[string] = @[motiveNim]
   for ss in subSheds:
-    epArgs.add("?")
+    epArgs.add("_")
     nimArgs.add("![" & ss & "]")
   epArgs.add(indexEp)
   nimArgs.add(indexNim)
@@ -2108,7 +2128,7 @@ proc availableShedActions*(server: var LspServer, uri, shedName: string):
       while ctorTy != nil and ctorTy.kind == tPi:
         inc arity
         ctorTy = zonk(ms, ctorTy.scope.bdy)
-      let candidate = ctorName & repeat(" ?", arity)
+      let candidate = ctorName & repeat(" _", arity)
       let probe = fillHoleAt(target.genSrc, target.holeLine - 1,
         target.holeCol - 1, "(" & candidate & ")", parentDir(nimFile))
       if not probe.ok: continue
@@ -2130,7 +2150,7 @@ proc availableShedActions*(server: var LspServer, uri, shedName: string):
       let probe = fillHoleAt(target.genSrc, target.holeLine - 1,
         target.holeCol - 1, "(" & candidate & ")", parentDir(nimFile))
       var goalNames: seq[string] = @[]
-      for i in 0 ..< candidate.count('?'):
+      for i in 0 ..< candidate.splitWhitespace().count("_") + candidate.count('?'):
         goalNames.add("apply_goal" & $i)
       shapeByCandidate[candidate] = if probe.ok:
         checkedSubgoalSnapshots(probe.newSrc, nimFile, target.genSrc,

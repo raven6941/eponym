@@ -246,12 +246,12 @@ proc tZero(): Term = Term(kind: tC, c: cZero)
 proc `$`*(c: Const): string =
   ## Exported (issue #139): elab.prettyTerm's `of tC: $t.c` resolves to the
   ## generic enum `$` ("cStar") when this proc is not exported, so keep it
-  ## exported to render `?` like the Term `$` does.
+  ## exported to render `Univ` like the Term `$` does.
   case c
-  of cStar: "?"
-  of cOne: "1"
+  of cStar: "Univ"
+  of cOne: "unitTy"
   of cVoid: "hi"
-  of cZero: "O"
+  of cZero: "emptyTy"
 
 proc `$`*(t: Term): string  # forward (mutual with Scope)
 

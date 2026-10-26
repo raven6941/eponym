@@ -67,7 +67,7 @@ eponymBlock:
 
 proc main() =
   echo "session_types: protocol + client elaborated at compile time."
-  echo "client : Pi (1 ch : Chan (sendS Nat endS)). Chan endS  -- checks out."
+  echo "client : Pi(1 ch: Chan (sendS Nat endS), Chan endS)  -- checks out."
 
 when isMainModule:
   main()

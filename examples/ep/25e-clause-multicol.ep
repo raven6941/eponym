@@ -1,10 +1,10 @@
 import "../../lib/nat.ep"
 import "../../lib/bool.ep"
 import "../../lib/eq.ep"
-def andb : Bool -> Bool -> Bool
-| true true = true
-| true false = false
-| false y = false
+def(andb, Bool -> Bool -> Bool):
+  clause([true, true], true)
+  clause([true, false], false)
+  clause([false, y], false)
 proc m1 : Eq Bool (andb true true) true = refl Bool true
 proc m2 : Eq Bool (andb true false) false = refl Bool false
 proc m3 : Eq Bool (andb false true) false = refl Bool false

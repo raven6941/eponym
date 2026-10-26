@@ -1,5 +1,5 @@
-# Negative test (issue #186): `by assumption` with no hypothesis matching the
+# Negative test (issue #186): `byTac(assumption)` with no hypothesis matching the
 # goal names the goal so the user can compare it against what is in scope.
-postulate Nat : Type 0
-postulate Bool : Type 0
-proc bad (x : Nat) : Bool = by assumption
+postulate(Nat, Univ)
+postulate(Bool, Univ)
+proc bad (x : Nat) : Bool = byTac(assumption)

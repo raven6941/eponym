@@ -1,17 +1,17 @@
-# Tactics: `by` blocks run Nim tactics against the expected type.
+# Tactics: `byTac(...)` runs Nim tactics against the expected type.
 # Experiment: 6
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
-# `by tac` runs a tactic (e.g. `by refl`); built-ins: `refl`, `assumption`
-# `by refl` proves equalities by reflexivity (up to conversion).
-# `by assumption` finds a matching hypothesis.
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Univ` = universe
+# `byTac(tac)` runs a tactic (e.g. `byTac(refl)`); built-ins: `refl`, `assumption`
+# `byTac(refl)` proves equalities by reflexivity (up to conversion).
+# `byTac(assumption)` finds a matching hypothesis.
 
-postulate Int : Type 0
+postulate(Int, Univ)
 
-data Eq (A : Type 0) (x : A) : A -> Type 0 where
+data(Eq, [A: Univ, x: A], A -> Univ) where
 | refl : Eq A x x
 
-proc pf1 : Eq Int 42 42= by refl
+proc pf1 : Eq Int 42 42= byTac(refl)
 
-proc pf2 : Eq Int (addInt 20 22) 42= by refl
+proc pf2 : Eq Int (addInt 20 22) 42= byTac(refl)
 
-proc id (x : Int) : Int= by assumption
+proc id (x : Int) : Int= byTac(assumption)

@@ -198,7 +198,7 @@ proc parseShedParts*(n: NimNode): tuple[name: string, draft: NimNode,
 
 proc shedPlaceholder*(i: int): string =
   ## Stand-in ident emitted for shed `i` during Nim->Eponym conversion;
-  ## resolveShedPlaceholders replaces it with `?` before parsing.
+  ## resolveShedPlaceholders replaces it with `_` before parsing.
   "__eponym_shed_" & $i & "__"
 
 proc parseLineInfo*(li: string): tuple[line, col: int] =
@@ -270,7 +270,7 @@ proc rewriteSheds*(body: NimNode, sheds: var seq[ShedInfo]) =
   walk(body, sheds)
 
 proc resolveShedPlaceholders*(src: var string, sheds: var seq[ShedInfo]) =
-  ## Replace each placeholder with `?` (a #58 hole), recording the
+  ## Replace each placeholder with `_` (a #58 hole), recording the
   ## 1-based generated-source line *and column* so the macro can match
   ## sheds to MetaStore.holes after elaboration (and so issue #137's
   ## `eponym/refineShed` can target the hole exactly).
@@ -287,8 +287,8 @@ proc resolveShedPlaceholders*(src: var string, sheds: var seq[ShedInfo]) =
         inc line
         lineStart = k
     sheds[i].holeLine = line
-    sheds[i].holeCol = pos - lineStart  # 1-based column of the `?`
-    src = src[0 ..< pos] & "?" & src[pos + ph.len .. ^1]
+    sheds[i].holeCol = pos - lineStart  # 1-based column of the `_`
+    src = src[0 ..< pos] & "_" & src[pos + ph.len .. ^1]
 
 # --- sidecar JSON: the bridge to the LSP server (issues #134/#135) --------
 

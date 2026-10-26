@@ -1,7 +1,7 @@
 # Dependent index telescopes, embedded (Issue #112 / #144).
 #
 # A later index's type may mention an earlier index binder:
-# `data All (A : Type 0) (P : A -> Type 0) : Pi (n : Nat). Vec A n -> Type 0`.
+# `data(All, [A: Univ, P: A -> Univ], Pi(n: Nat, Vec A n -> Univ))`.
 # The generated eliminator renames index binders to i0, i1, ... and must
 # substitute the old names into later index domains; without the #112 fix
 # the motive C is ill-scoped (unbound `n`).
@@ -21,7 +21,7 @@ eponymBlock:
   # from lib/vec.ep.
   import "../../lib/vec.ep"
 
-  # The motivating case: index telescope `Pi (n : Nat). Vec A n -> Type 0` —
+  # The motivating case: index telescope `Pi(n: Nat, Vec A n -> Univ)` —
   # the second index's type mentions the first index binder `n`.
   data(All, [A: Univ, P: A -> Univ], Pi(n: Nat, Vec[A, n] -> Univ)):
     proc allNil(): All[A, P, zero(), vecnil[A]()]
@@ -66,7 +66,7 @@ eponymBlock:
 
 proc main() =
   echo "dependent_indices: dependent index telescopes elaborated at compile time."
-  echo "allLen : Pi (n : Nat) (v : Vec Nat n) (a : All Nat P n v). Nat  -- checks out."
+  echo "allLen : Pi(n: Nat, Pi(v: Vec Nat n, Pi(a: All Nat P n v, Nat)))  -- checks out."
 
 when isMainModule:
   main()

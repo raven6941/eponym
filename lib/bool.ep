@@ -2,23 +2,23 @@
 #
 import "eq.ep"
 
-data Bool : Type 0 where
+data(Bool, Univ) where
 | true : Bool
 | false : Bool
 
 # Pure conditional used by the Nim embedding's `if condition: yes else: no`.
-proc ifThenElse {A : Type 0} (condition : Bool) (yes : A) (no : A) : A =
-  boolElim (lam (u : Bool). A) yes no condition
+proc ifThenElse {A : Univ} (condition : Bool) (yes : A) (no : A) : A =
+  boolElim (lam(u, Bool, A)) yes no condition
 
 proc not (b : Bool) : Bool =
-  boolElim (lam (u : Bool). Bool) false true b
+  boolElim (lam(u, Bool, Bool)) false true b
 
 proc and (a : Bool) (b : Bool) : Bool =
-  boolElim (lam (u : Bool). Bool) b false a
+  boolElim (lam(u, Bool, Bool)) b false a
 
 proc or (a : Bool) (b : Bool) : Bool =
-  boolElim (lam (u : Bool). Bool) true b a
+  boolElim (lam(u, Bool, Bool)) true b a
 
 proc notNot (b : Bool) : Eq Bool (not (not b)) b =
-  boolElim (lam (u : Bool). Eq Bool (not (not u)) u)
+  boolElim (lam(u, Bool, Eq Bool (not (not u)) u))
            (refl Bool true) (refl Bool false) b

@@ -8,30 +8,29 @@
 # (sendD vs recvD head constructors), so conversion fails.
 import "../../lib/nat.ep"
 
-data Session : Type 0 where
-| sendD (A : Type 0) (k : A -> Session) : Session
-| recvD (A : Type 0) (k : A -> Session) : Session
+data(Session, Univ) where
+| sendD (A : Univ) (k : A -> Session) : Session
+| recvD (A : Univ) (k : A -> Session) : Session
 | endS : Session
 
-data Chan : Session -> Type 0 where
+data(Chan, Session -> Univ) where
 | mkChan (s : Session) : Chan s
 
-postulate AcceptMsg : Nat -> Type 0
+postulate(AcceptMsg, Nat -> Univ)
 
 proc propAfterAccept (a : Nat) : Session = endS
-proc propAfterPromise (pr : Sig (v : Nat). AcceptMsg v) : Session =
-  sendD (AcceptMsg (fst pr)) (lam (t : AcceptMsg (fst pr)). recvD Nat propAfterAccept)
+proc propAfterPromise (pr : Sig(v: Nat, AcceptMsg v)) : Session =
+  sendD (AcceptMsg (fst pr)) (lam(t, AcceptMsg (fst pr), recvD Nat propAfterAccept))
 proc propAfterPrepare (n : Nat) : Session =
-  recvD (Sig (v : Nat). AcceptMsg v) propAfterPromise
+  recvD (Sig(v: Nat, AcceptMsg v)) propAfterPromise
 proc propProto : Session =
   sendD Nat propAfterPrepare
 
-postulate sendPrepare : Pi (ch : Chan propProto). Pi (n : Nat). Chan (propAfterPrepare n)
-postulate recvPromise : Pi (n : Nat). Pi (ch : Chan (propAfterPrepare n)).
-  Sig (pr : Sig (v : Nat). AcceptMsg v). Chan (propAfterPromise pr)
+postulate(sendPrepare, Pi(ch: Chan propProto, Pi(n: Nat, Chan (propAfterPrepare n))))
+postulate(recvPromise, Pi(n: Nat, Pi(ch: Chan (propAfterPrepare n), Sig(pr: Sig(v: Nat, AcceptMsg v), Chan (propAfterPromise pr)))))
 
 # Violation: promise received before prepare is sent.
 # Expected error: inferred type (Chan propProto) does not match expected
 # type (Chan (propAfterPrepare n)).
-proc badProposer (ch : Chan propProto) : Sig (pr : Sig (v : Nat). AcceptMsg v). Chan (propAfterPromise pr) =
+proc badProposer (ch : Chan propProto) : Sig(pr: Sig(v: Nat, AcceptMsg v), Chan (propAfterPromise pr)) =
   recvPromise zero ch

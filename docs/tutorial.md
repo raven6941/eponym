@@ -243,7 +243,7 @@ A few notes on the syntax (the full story is in
   and the vector to eliminate. The cons case gets an induction
   hypothesis `ih` for the tail.
 - `{A}`, `{m}`, `{n}` in the prelude are *implicit* binders: a definition
-  declares them with braces (`proc vappend {A : Type 0} {m : Nat} ...`). They
+  declares them with braces (`proc vappend {A : Univ} {m : Nat} ...`). They
   can be inferred or supplied explicitly in brackets, as in `vappend[Nat,m,n]`.
 
 Now ascribe a 2-element vector the type of 1-element vectors:

@@ -3,11 +3,11 @@
 # constructor `mkR`, and named projections `R.field`; `p.field` resolves
 # against the record table at elaboration time.
 
-postulate Nat : Type 0
-postulate zero : Nat
-postulate suc : Nat -> Nat
+postulate(Nat, Univ)
+postulate(zero, Nat)
+postulate(suc, Nat -> Nat)
 
-record Point:
+record(Point):
 | x : Nat
 | y : Nat
 
@@ -24,9 +24,9 @@ proc swap (p : Point) : Point =
   mkPoint p.y p.x
 
 # Dependent fields: later field types may mention earlier ones.
-postulate Vec : Nat -> Type 0 -> Type 0
+postulate(Vec, Nat -> Univ -> Univ)
 
-record DepR:
+record(DepR):
 | n : Nat
 | v : Vec n Nat
 

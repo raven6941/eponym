@@ -75,7 +75,7 @@ proc macroTime(nimFile: string, names: seq[string],
   ## Simulate what `shedsBlock` records: placeholders resolved by the
   ## real `resolveShedPlaceholders` (hole line AND column), `genSrc`
   ## stored per shed (the `sheds_mac` #137 addition).
-  var src = "postulate Int : Type 0\n"
+  var src = "postulate(Int, Univ)\n"
   for i, nm in names:
     src &= "proc p" & $i & " (n : Int) : Int = " & shedPlaceholder(i) & "\n"
   result = @[]
@@ -246,7 +246,7 @@ let boolLib = (getCurrentDir() / "lib/bool.ep").replace("\\", "/")
 var branchSrc = "import \"" & natLib & "\"\n" &
                 "import \"" & boolLib & "\"\n" &
                 "proc isZero (n : Nat) : Bool = " &
-                "natElim (lam (u : Nat). Bool) true " &
+                "natElim (lam(u, Nat, Bool)) true " &
                 shedPlaceholder(0) & " n\n"
 var branchInfo = @[ShedInfo(name: "isZeroBody_suc", draft: "",
                             nimLine: 5, nimCol: 1, status: ssYellow)]
@@ -255,7 +255,7 @@ branchInfo[0].genSrc = branchSrc
 writeShedSidecar(nimFile4, branchInfo)
 let branchResp = refineShedReq(
   server, "file://" & nimFile4, "isZeroBody_suc",
-  "lam p. lam ih. false", 50)
+  "lam(p, lam(ih, false))", 50)
 check("error" notin branchResp,
   "case-split successor shed accepts its two-binder Bool implementation: " &
   (if "error" in branchResp: branchResp["error"]["message"].getStr()
@@ -264,7 +264,7 @@ if "error" notin branchResp:
   check(branchResp["result"]["status"].getStr() == "white",
     "case-split successor shed becomes white after filling")
   let branchAfter = readShedSidecar(sidecarPath(nimFile4))[0]
-  check(branchAfter.genSrc.contains("(lam p. lam ih. false)"),
+  check(branchAfter.genSrc.contains("(lam(p, lam(ih, false)))"),
     "dependent branch fill is parenthesized in the recorded source")
 
 removeDir(dir)

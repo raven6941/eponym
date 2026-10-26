@@ -1,12 +1,12 @@
 # Naturals via data declaration. Tests Experiment 5 desugaring.
 # Experiment: 09
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
-# `data T : Type 0 where` defines inductive types; in eponymBlock: `data(T, Univ):` + indented `proc` ctors
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Univ` = universe
+# `data(T, Univ) where` defines inductive types
 
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
 proc two : Nat= suc (suc zero)
 proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam (u : Nat). Nat) m (lam (p : Nat). lam (ih : Nat). suc ih) n
+  natElim (lam(u, Nat, Nat)) m (lam(p, Nat, lam(ih, Nat, suc ih))) n
 proc four : Nat= add two two

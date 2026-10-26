@@ -87,17 +87,17 @@ sidecar = readShedSidecar(sidecarPath(nimFile))
 check(sidecar[0].status == ssYellow and sidecar[0].genSrc == beforeRejectedRefine,
   "rejected refinement leaves the sidecar unchanged")
 let rejectedGive = refineShed(
-  nimFile, "constEndoBody", "lam f. lam g. ?", requireComplete = true)
+  nimFile, "constEndoBody", "lam(f, lam(g, _))", requireComplete = true)
 check(not rejectedGive.ok and "give rejected" in rejectedGive.why,
   "Give rejects a candidate that leaves a residual hole")
 sidecar = readShedSidecar(sidecarPath(nimFile))
 check(sidecar[0].status == ssYellow and sidecar[0].genSrc == beforeRejectedRefine,
   "rejected Give leaves the sidecar unchanged")
 
-let partial = refineShed(nimFile, "constEndoBody", "lam f. lam g. ?")
+let partial = refineShed(nimFile, "constEndoBody", "lam(f, lam(g, _))")
 check(partial.ok and partial.status == "yellow" and partial.yellowCount == 1,
   "a well-typed partial lambda is accepted with one open goal")
-check(partial.term == "lam f. lam g. shedHole(constEndoBody)",
+check(partial.term == "lam(f, lam(g, shedHole(constEndoBody)))",
   "the returned Nim splice names the residual hole")
 if partial.ok:
   let nimV1 = spliceShed(nimV0, partial.nimLine, partial.nimCol, partial.term)
@@ -130,8 +130,8 @@ if partial.ok:
     check(sidecar.len == 0,
       "a fully refined source no longer emits an open shed")
     try:
-      discard elabCheck("proc constEndo (A : Type 0) : " &
-        "Pi (f : A). Pi (g : A). A = lam f. lam g. f\n")
+      discard elabCheck("proc constEndo (A : Univ) : " &
+        "Pi(f: A, Pi(g: A, A)) = lam(f, lam(g, f))\n")
       check(true, "completed generated Eponym source passes strict checking")
     except CatchableError as e:
       check(false, "completed generated Eponym source checks: " & e.msg)
@@ -189,7 +189,7 @@ compiled = compileFixture(implicitIntroFile, scratch)
 if not compiled.ok: echo compiled.output
 check(compiled.ok, "implicit Intro fixture compiles with an initial shed")
 let implicitIntro = introShed(implicitIntroFile, "implicitIntroBody")
-check(implicitIntro.ok and "lam({A: Type 0}," in implicitIntro.term,
+check(implicitIntro.ok and "lam({A: Univ}," in implicitIntro.term,
   "Intro preserves implicit Pi binders: " &
     (if implicitIntro.ok: implicitIntro.term else: implicitIntro.why))
 if implicitIntro.ok:
@@ -200,7 +200,7 @@ if implicitIntro.ok:
   if not compiled.ok: echo compiled.output
   check(compiled.ok, "implicit Intro splice recompiles through shedsBlock")
   let implicitSheds = readShedSidecar(sidecarPath(implicitIntroFile))
-  check(implicitSheds.len == 1 and "A : Type 0" in implicitSheds[0].ctx and
+  check(implicitSheds.len == 1 and "A : Univ" in implicitSheds[0].ctx and
         implicitSheds[0].goalPi.len == 2 and
         implicitSheds[0].goalPi[0].startsWith("_ : A"),
     "implicit Intro residual retains its binder and function goal")
@@ -218,7 +218,7 @@ if implicitIntro.ok:
     if not compiled.ok: echo compiled.output
     check(compiled.ok, "dependent explicit Intro after implicit binder recompiles")
     let implicitSheds2 = readShedSidecar(sidecarPath(implicitIntroFile))
-    check(implicitSheds2.len == 1 and "A : Type 0" in implicitSheds2[0].ctx and
+    check(implicitSheds2.len == 1 and "A : Univ" in implicitSheds2[0].ctx and
           "intro : A" in implicitSheds2[0].ctx and
           implicitSheds2[0].goal == "A",
       "residual goal keeps the implicit dependency through explicit Intro")
@@ -278,7 +278,7 @@ compiled = compileFixture(natFile, scratch)
 if not compiled.ok: echo compiled.output
 check(compiled.ok, "multiple-hole fixture compiles")
 
-let split = refineShed(natFile, "sumBody", "add ? ?")
+let split = refineShed(natFile, "sumBody", "add _ _")
 check(split.ok and split.status == "yellow" and split.yellowCount == 2,
   "refinement records both residual application goals")
 check(split.term == "add shedHole(sumBody) shedHole(sumBody_1)",
@@ -328,7 +328,7 @@ if not compiled.ok: echo compiled.output
 check(compiled.ok, "same-line sibling fixture compiles")
 let branchBefore = readShedSidecar(sidecarPath(branchFile))
 var branchAfterLeft: seq[ShedInfo] = @[]
-let leftAction = refineShedPlan(branchFile, "branchLeft", "suc(?)",
+let leftAction = refineShedPlan(branchFile, "branchLeft", "suc(_)",
   branchBefore, "", branchAfterLeft)
 check(leftAction.ok and leftAction.status == "yellow" and
       branchAfterLeft.anyIt(it.name == "branchRight" and it.status == ssYellow),
@@ -404,7 +404,7 @@ if cases.ok:
     check(caseSheds.len == 1 and caseSheds[0].name == cases.subSheds[1],
       "sidecar retains only the unfilled successor case")
     let suc = refineShed(
-      caseFile, cases.subSheds[1], "lam p. lam ih. false", true)
+      caseFile, cases.subSheds[1], "lam(p, lam(ih, false))", true)
     check(suc.ok and suc.status == "white" and suc.yellowCount == 0,
       "successor case can be independently completed with its IH in scope")
 
@@ -545,11 +545,11 @@ if applyOptions.ok:
     check(compiled.ok, "dependent context Apply splice recompiles")
 
 let partialOptions = refineFromContextShed(applyFile, "partialBody")
-check(partialOptions.ok and "g a ?" in partialOptions.candidates,
+check(partialOptions.ok and "g a _" in partialOptions.candidates,
   "Apply retains unresolved dependent arguments after inferring earlier ones: " &
     (if partialOptions.ok: $partialOptions.candidates else: partialOptions.why))
 if partialOptions.ok:
-  let partialApply = refineFromContextShed(applyFile, "partialBody", "g a ?")
+  let partialApply = refineFromContextShed(applyFile, "partialBody", "g a _")
   check(partialApply.ok and "shedHole(" in partialApply.term,
     "partial Apply creates a named goal for its remaining argument: " &
       (if partialApply.ok: partialApply.term else: partialApply.why))
@@ -610,7 +610,7 @@ if dependentVecCases.ok:
 # from the registered telescope must substitute the actual local type binder.
 let taggedEp = scratch / "tagged.ep"
 let natEpImport = (RepoRoot / "lib" / "nat.ep").replace("\\", "/")
-writeFile(taggedEp, "import \"" & natEpImport & "\"\n" & """data Tagged (A : Type 0) : Nat -> A -> Type 0 where
+writeFile(taggedEp, "import \"" & natEpImport & "\"\n" & """data(Tagged, [A : Univ], Nat -> A -> Univ) where
 | tag (n : Nat) (x : A) : Tagged A n x
 """)
 let taggedFile = scratch / "parameter_index_case_split.nim"

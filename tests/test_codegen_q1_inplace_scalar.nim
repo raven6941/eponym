@@ -28,7 +28,7 @@
 import std/macros
 import codegen_phase2_differential
 
-const progB = """postulate Int : Type 0
+const progB = """postulate(Int, Univ)
 proc inc (1 acc : Int) (d : Int) : Int = addInt acc d
 proc incTwice (1 acc : Int) (p : Int) (q : Int) : Int =
   let x = inc acc p in inc x q
@@ -48,7 +48,7 @@ proc noLiftIntDup (a : Int) (p1 : Int) : Int =
   let x = inc a p1 in addInt x x
 proc betaChain (a : Int) (p1 : Int) : Int =
   let x = inc a p1 in
-  let y = (lam (u : Int). addInt x u) p1 in
+  let y = (lam(u, Int, addInt x u)) p1 in
   inc y p1
 """
 

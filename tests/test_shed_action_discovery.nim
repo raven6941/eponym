@@ -19,7 +19,7 @@ proc macroSidecar(generatedSource, name, goal: string,
   var holeLine = 0
   var holeCol = 0
   for i, line in lines:
-    let col = line.find('?')
+    let col = line.find('_')
     if col >= 0:
       holeLine = i + 1
       holeCol = col + 1
@@ -73,8 +73,8 @@ let file = dir / "demo.nim"
 let uri = "file://" & file
 let source = "import sheds_mac\nshedsBlock:\n" &
   "  proc identity(n: Int): Int = ![identityBody]\n"
-let generated = "postulate Int : Type 0\n" &
-  "proc identity (n : Int) : Int = ?\n"
+let generated = "postulate(Int, Univ)\n" &
+  "proc identity (n : Int) : Int = _\n"
 writeFile(file, source)
 writeShedSidecar(file, @[macroSidecar(generated, "identityBody", "Int",
                                       @["n : Int"])])
@@ -107,11 +107,11 @@ let introFile = introDir / "intro.nim"
 let introUri = "file://" & introFile
 let introSource = "import sheds_mac\nshedsBlock:\n" &
   "  proc mapper(f: Int): Int = ![mapperBody]\n"
-let introGenerated = "postulate Int : Type 0\n" &
-  "proc mapper (f : Int) : Pi (x : Int). Int = ?\n"
+let introGenerated = "postulate(Int, Univ)\n" &
+  "proc mapper (f : Int) : Pi(x: Int, Int) = _\n"
 writeFile(introFile, introSource)
 writeShedSidecar(introFile, @[macroSidecar(introGenerated,
-  "mapperBody", "Pi(Int, x. Int)", @[])])
+  "mapperBody", "Pi(x: Int, Int)", @[])])
 var introServer = LspServer(documents: initTable[string, string]())
 openDoc(introServer, introUri, introSource)
 let introQuery = discover(introServer, introUri, "mapperBody", 7)
@@ -165,8 +165,8 @@ let vecUri = "file://" & vecFile
 let vecSource = "import sheds_mac\nshedsBlock:\n" &
   "  proc makeVec(n: Nat): Vec[Nat, suc(n)] = ![makeVecBody]\n"
 let vecGenerated = "import \"" & natPath & "\"\nimport \"" & vecPath &
-  "\"\nproc earlier (n : Nat) : Nat = ?\n" &
-  "proc makeVec (n : Nat) : Vec Nat (suc n) = ?\n"
+  "\"\nproc earlier (n : Nat) : Nat = _\n" &
+  "proc makeVec (n : Nat) : Vec Nat (suc n) = _\n"
 writeFile(vecFile, vecSource)
 var vecShed = macroSidecar(vecGenerated, "makeVecBody",
   "Vec Nat (suc n)", @["n : Nat"])
@@ -174,7 +174,7 @@ var generatedLine = 0
 for line in vecGenerated.splitLines():
   if line.startsWith("proc makeVec"):
     vecShed.holeLine = generatedLine + 1
-    vecShed.holeCol = line.find('?') + 1
+    vecShed.holeCol = line.find('_') + 1
   inc generatedLine
 writeShedSidecar(vecFile, @[vecShed])
 var vecServer = LspServer(documents: initTable[string, string]())

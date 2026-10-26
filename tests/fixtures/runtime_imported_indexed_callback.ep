@@ -1,6 +1,6 @@
 import "../../lib/vec.ep"
 
-postulate Int : Type 0
+postulate(Int, Univ)
 proc importedApplyVectorCallback (length : Nat)
     (f : Vec Int length -> Vec Int length)
     (values : Vec Int length) : Vec Int length = f values

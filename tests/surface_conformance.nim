@@ -111,19 +111,19 @@ macro conforms*(src: static string, blk: untyped): untyped =
 # --- corpus ----------------------------------------------------------
 
 # arrows, application, nested calls
-conforms """proc twice (A : Type 0) (f : A -> A) (x : A) : A = f (f x)
-proc constFn (A : Type 0) (B : Type 0) (x : A) (y : B) : A = x
+conforms """proc twice (A : Univ) (f : A -> A) (x : A) : A = f (f x)
+proc constFn (A : Univ) (B : Univ) (x : A) (y : B) : A = x
 """:
   proc twice(A: Univ, f: A -> A, x: A): A = f(f(x))
   proc constFn(A: Univ, B: Univ, x: A, y: B): A = x
 
 # lam, Sig (named and anonymous), pairs, projections
-conforms """proc pairSwap (A : Type 0) (B : Type 0) (p : Sig (u : A). B) : Sig (v : B). A =
+conforms """proc pairSwap (A : Univ) (B : Univ) (p : Sig(u: A, B)) : Sig(v: B, A) =
   (snd p, fst p)
-proc applyLam (A : Type 0) : A -> A =
-  lam (x : A). x
-proc anonSig (A : Type 0) (B : Type 0) : Sig (_ : A). B -> A =
-  lam (p : Sig (_ : A). B). fst p
+proc applyLam (A : Univ) : A -> A =
+  lam(x, A, x)
+proc anonSig (A : Univ) (B : Univ) : Sig(A, B) -> A =
+  lam(p, Sig(A, B), fst p)
 """:
   proc pairSwap(A: Univ, B: Univ, p: Sig(u, A, B)): Sig(v, B, A) =
     (snd(p), fst(p))
@@ -132,10 +132,10 @@ proc anonSig (A : Type 0) (B : Type 0) : Sig (_ : A). B -> A =
     lam(p, Sig(A, B), fst(p))
 
 # Pi with named binders, implicit binders, let..in, holes
-conforms """proc polyId (A : Type 0) (x : A) : A = x
-proc impId : Pi {A : Type 0}. A -> A = lam (x : A). x
-proc withLet (A : Type 0) (x : A) : A = let y = x in y
-proc holeTy : Type 0 = ?
+conforms """proc polyId (A : Univ) (x : A) : A = x
+proc impId : Pi{A: Univ, A -> A} = lam(x, A, x)
+proc withLet (A : Univ) (x : A) : A = let y = x in y
+proc holeTy : Univ = _
 """:
   proc polyId(A: Univ, x: A): A = x
   proc impId(): Pi({A: Univ}, A -> A) = lam(x, A, x)
@@ -145,15 +145,15 @@ proc holeTy : Type 0 = ?
   proc holeTy(): Univ = _
 
 # Pi/Sig as terms (Nim parses named-binder Pi as an object constructor)
-conforms """proc piTy : Type 0 = Pi (x : Nat). Nat
+conforms """proc piTy : Univ = Pi(x: Nat, Nat)
 """:
   proc piTy(): Univ = Pi(x: Nat, Nat)
 
 # data declaration + postulate
-conforms """data Nat : Type 0 where
+conforms """data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-postulate Bool : Type 0
+postulate(Bool, Univ)
 """:
   data(Nat, Univ):
     proc zero(): Nat
@@ -161,7 +161,7 @@ postulate Bool : Type 0
   postulate(Bool, Univ)
 
 # parameterized indexed data (Vec); `vecnil` maps to `nil`
-conforms """data Vec (A : Type 0) : Pi (n : Nat). Vec A n -> Type 0 where
+conforms """data(Vec, [A: Univ], Pi(n: Nat, Vec[A, n] -> Univ)) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 """:
@@ -177,62 +177,62 @@ proc useNat (x : Nat) : Nat = x
   proc useNat(x: Nat): Nat = x
 
 # quantity binders from {.linear.} / {.erased.} pragmas
-conforms """proc useLin (1 ch : Type 0) (x : Type 0) : Type 0 = x
-proc useEra (0 ch : Type 0) (x : Type 0) : Type 0 = x
+conforms """proc useLin (1 ch : Univ) (x : Univ) : Univ = x
+proc useEra (0 ch : Univ) (x : Univ) : Univ = x
 """:
   proc useLin(ch {.linear.}: Univ, x: Univ): Univ = x
   proc useEra(ch {.erased.}: Univ, x: Univ): Univ = x
 
-# Integer literal one uses `01` because `1` is the unit type in surface
-# syntax. Expected-type overloading still selects Nat or Int (issues #8, #115).
+# Single syntax: `1` is the integer literal one. Expected-type overloading
+# still selects Nat or Int (issues #8, #115).
 conforms """proc three : Nat = 3
-proc one : Nat = 01
+proc one : Nat = 1
 """:
   proc three(): Nat = 3
   proc one(): Nat = 1
 
 # elim / red declarations (smoke tests 07/08; issue #151)
-conforms """elim boolElim : Pi (C : Bool -> Type 0). C true -> C false -> Pi (b : Bool). C b
-red boolElim C t f true = t
-red boolElim C t f false = f
+conforms """elim(boolElim, Pi(C: Bool -> Univ, C(true) -> C(false) -> Pi(b: Bool, C(b))))
+red(boolElim C t f true, t)
+red(boolElim C t f false, f)
 """:
   elim(boolElim, Pi(C: Bool -> Univ, C(true) -> C(false) -> Pi(b: Bool, C(b))))
   red(boolElim(C, t, f, true), t)
   red(boolElim(C, t, f, false), f)
 
 # by-tactic terms (smoke test 14; issue #151)
-conforms """proc pf1 : Eq Int 42 42 = by refl
-proc pid (x : Int) : Int = by assumption
+conforms """proc pf1 : Eq Int 42 42 = byTac(refl)
+proc pid (x : Int) : Int = byTac("assumption")
 """:
   proc pf1(): Eq(Int, 42, 42) = byTac(refl)
   proc pid(x: Int): Int = byTac("assumption")
 
 # def clause-style definitions (issue #151)
-conforms """def isZero : Nat -> Bool
-| zero = true
-| (suc n) = false
+conforms """def(isZero, Nat -> Bool):
+  clause([zero], true)
+  clause([suc(n)], false)
 """:
   def(isZero, Nat -> Bool):
     clause([zero], true)
     clause([suc(n)], false)
 
 # quantity-variable binders (issue #151 / #66)
-conforms """proc qid (q x : Type 0) : Type 0 = x
+conforms """proc qid (q x : Univ) : Univ = x
 """:
   proc qid(x {.qvar(q).}: Univ): Univ = x
 
 # unit value, unit type, empty type (issue #151)
-conforms """proc unitVal : 1 = <>
-proc absurd (x : O) : O = x
+conforms """proc unitVal : unitTy = unitv
+proc absurd (x : emptyTy) : emptyTy = x
 """:
   proc unitVal(): unitTy = unitv
   proc absurd(x: emptyTy): emptyTy = x
 
 # term ascription, typed let, quantity-annotated lam (issue #151)
-conforms """proc asc (A : Type 0) (x : A) : A = (x : A)
-proc typedLet (A : Type 0) (x : A) : A =
+conforms """proc asc (A : Univ) (x : A) : A = (x : A)
+proc typedLet (A : Univ) (x : A) : A =
   let y : A = x in y
-proc linLam : Type 0 = lam (1 x : Type 0). x
+proc linLam : Univ = lam(1 x, Univ, x)
 """:
   proc asc(A: Univ, x: A): A = (x: A)
   proc typedLet(A: Univ, x: A): A =
@@ -241,10 +241,10 @@ proc linLam : Type 0 = lam (1 x : Type 0). x
   proc linLam(): Univ = lam(x {.linear.}, Univ, x)
 
 # record declaration + dot projection (issue #37)
-conforms """record Point:
-| x : Type 0
-| y : Type 0
-proc getX (p : Point) : Type 0 = p.x
+conforms """record(Point):
+| x : Univ
+| y : Univ
+proc getX (p : Point) : Univ = p.x
 """:
   record(Point):
     field(x, Univ)
@@ -253,12 +253,12 @@ proc getX (p : Point) : Type 0 = p.x
 
 # mutual block of clause defs (issue #42)
 conforms """mutual
-def even : Nat -> Bool
-| zero = true
-| (suc n) = odd n
-def odd : Nat -> Bool
-| zero = false
-| (suc n) = even n
+def(even, Nat -> Bool):
+  clause([zero], true)
+  clause([suc(n)], odd(n))
+def(odd, Nat -> Bool):
+  clause([zero], false)
+  clause([suc(n)], even(n))
 """:
   mutual:
     def(even, Nat -> Bool):
@@ -267,5 +267,76 @@ def odd : Nat -> Bool
     def(odd, Nat -> Bool):
       clause([zero], false)
       clause([suc(n)], even(n))
+
+# embedded-block forms in .ep text (issue #467)
+conforms """proc unitVal : unitTy = unitv
+proc absurd (x : emptyTy) : emptyTy = x
+proc holeTy : Univ = _
+""":
+  proc unitVal(): unitTy = unitv
+  proc absurd(x: emptyTy): emptyTy = x
+  proc holeTy(): Univ = _
+
+conforms """proc applyLam (A : Univ) : A -> A = lam(x, A, x)
+proc piTy : Univ = Pi(x: Nat, Nat)
+proc sigTy (A : Univ) (B : Univ) : Univ = Sig(A, B)
+proc sigTy2 (A : Univ) (B : Univ) : Univ = Sig(u: A, B)
+proc sigTy3 (A : Univ) (B : Univ) : Univ = Sig(u, A, B)
+proc vecTy (n : Nat) : Univ = Vec[Int, n]
+""":
+  proc applyLam(A: Univ): A -> A = lam(x, A, x)
+  proc piTy(): Univ = Pi(x: Nat, Nat)
+  proc sigTy(A: Univ, B: Univ): Univ = Sig(A, B)
+  proc sigTy2(A: Univ, B: Univ): Univ = Sig(u, A, B)
+  proc sigTy3(A: Univ, B: Univ): Univ = Sig(u, A, B)
+  proc vecTy(n: Nat): Univ = Vec[Int, n]
+
+conforms """postulate(Bool, Univ)
+elim(boolElim, Pi(C: Bool -> Univ, C(true) -> C(false) -> Pi(b: Bool, C(b))))
+red(boolElim C t f true, t)
+""":
+  postulate(Bool, Univ)
+  elim(boolElim, Pi(C: Bool -> Univ, C(true) -> C(false) -> Pi(b: Bool, C(b))))
+  red(boolElim(C, t, f, true), t)
+
+conforms """proc pf1 : Eq Int 42 42 = byTac(refl)
+proc pid (x : Int) : Int = byTac("assumption")
+""":
+  proc pf1(): Eq(Int, 42, 42) = byTac(refl)
+  proc pid(x: Int): Int = byTac("assumption")
+
+conforms """data(Vec2, [A: Univ], Pi(n: Nat, Vec2[A, n] -> Univ)) where
+| nil : Vec2[A, zero]
+| cons2 (n : Nat) (x : A) (xs : Vec2[A, n]) : Vec2[A, suc(n)]
+""":
+  data(Vec2, [A: Univ], Pi(n: Nat, Vec2[A, n] -> Univ)):
+    proc vecnil(): Vec2[A, zero]
+    proc cons2(n: Nat, x: A, xs: Vec2[A, n]): Vec2[A, suc(n)]
+
+conforms """def(isZero3, Nat -> Bool):
+  clause([zero], true)
+  clause([suc(n)], false)
+  clause([_], true)
+""":
+  def(isZero3, Nat -> Bool):
+    clause([zero], true)
+    clause([suc(n)], false)
+    clause([_], true)
+
+conforms """record(Point2):
+| x : Univ
+| y : Univ
+""":
+  record(Point2):
+    field(x, Univ)
+    field(y, Univ)
+
+# Nim call rule (issue #467): f(a, b) is the two-argument call, f((a, b))
+# passes the pair.
+conforms """proc apply2 (A : Univ) (B : Univ) (f : A -> B -> A) (x : A) (y : B) : A = f(x, y)
+proc applyPair (A : Univ) (B : Univ) (f : Sig(A, B) -> A) (p : Sig(A, B)) : A = f((fst p, snd p))
+""":
+  proc apply2(A: Univ, B: Univ, f: A -> B -> A, x: A, y: B): A = f(x, y)
+  proc applyPair(A: Univ, B: Univ, f: Sig(A, B) -> A, p: Sig(A, B)): A = f((fst(p), snd(p)))
 
 echo "surface_conformance: all tests passed"

@@ -3,7 +3,7 @@
 import "../../lib/nat.ep"
 import "../../lib/bool.ep"
 
-def ov : Nat -> Bool
-| (suc x) = true
-| (suc zero) = false
-| zero = false
+def(ov, Nat -> Bool):
+  clause([suc(x)], true)
+  clause([suc(zero)], false)
+  clause([zero], false)

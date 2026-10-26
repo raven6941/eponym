@@ -23,7 +23,7 @@
 ##      cases and focused regressions verify flushDeferred reports leftovers
 ##      as an ambiguity error showing the stuck constraint.
 ##   P6 zonk idempotence: zonk(zonk(t)) == zonk(t), even mid-elaboration.
-##   P7 eta: lam(x). r x =Type 0= r succeeds for neutral r; lam(x). x =/= r fails.
+##   P7 eta: lam(x). r x =Univ= r succeeds for neutral r; lam(x). x =/= r fails.
 ##   P8 noConfusion differential: on ground constructor terms, unify
 ##      succeeds iff the terms are structurally equal; distinct
 ##      constructors of one datatype fail with the named noConfusion error.
@@ -420,7 +420,7 @@ proc neutralR(id: int): Term =
   Term(kind: tR, refId: id, refTyp: nil, refIsDefn: false, refVal: nil)
 
 proc propP7pos(r: var Rng): bool =
-  ## lam(x). r x =Type 0= r for neutral r: the eta rule fires.
+  ## lam(x). r x =Univ= r for neutral r: the eta rule fires.
   ## (No zonk-equality: the sides are convertible, not structurally equal.)
   let r =
     if r.genBool: neutralR(99)
@@ -584,7 +584,7 @@ when isMainModule:
                cover = @[("duplicate-var", 10.0), ("non-var", 10.0),
                          ("escaping-var", 10.0),
                          ("meta-containing-arg", 10.0)]))
-  check("P7 eta-positive: lam(x). r x =Type 0= r",
+  check("P7 eta-positive: lam(x). r x =Univ= r",
         forAll("p7p", r, Cases,
                proc(r: var Rng): int = 0,
                proc(x: int): bool = propP7pos(r)))

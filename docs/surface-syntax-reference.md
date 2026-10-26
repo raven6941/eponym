@@ -10,7 +10,7 @@ the Nim-side mapping for every form is pinned by
 ```
 decl    = proc | def | postulate | elim | red | data | record | import
           | interface | command
-term    = ... Pi | Sig | lam | let | ascription | application | ?[digits] | Nat literals ...
+term    = ... Pi | Sig | lam | let | ascription | application | ?digits | _ | Nat literals ...
 ```
 
 Trust-model note: this document describes the syntax. What each construct
@@ -311,7 +311,7 @@ shedsBlock:
 `editors/vscode/`.
 
 When a refinement leaves a hole inside Nim command syntax (for example,
-inside `lam f. lam g. ?`), Nim cannot parse the usual prefix marker
+inside `lam(f, lam(g, _))`), Nim cannot parse the usual prefix marker
 `![name]` in that position. The editor uses `shedHole(name)` there as a
 source-level encoding of the same named shed. `shedsBlock` records and
 typechecks it like `![name]`, keeping the residual goal available after
@@ -327,7 +327,7 @@ data(NatD, Univ):
   proc sucD(n: NatD): NatD
 ```
 
-The first argument is the index type (`Univ` = `Type 0` for unindexed types;
+The first argument is the index type (`Univ` for unindexed types;
 `Session -> Univ` for a type indexed by a session, as in
 `examples/embedded/session_types.nim`). Constructors are declared with
 `proc` inside the block; indices in the return type must be supplied
@@ -428,30 +428,32 @@ elaboration time only — they never appear in the object program.
 
 ### Universes and holes
 
-Universes are written explicitly: `Type 0 : Type 1 : Type 2 : ...`.
+Universes are written explicitly: `Univ : Type 1 : Type 2 : ...`.
 `Pi`/`Sig` formation takes the maximum of the domain and codomain levels,
 and `Type i` checks against `Type j` when `i <= j` at ascription points.
 `Type` is contextual syntax: it parses as a universe only when followed by
-an integer literal (`Type 0`, `Type 1`, …); bare `Type` remains an ordinary
-identifier.
+an integer literal above zero (`Type 1`, `Type 2`, …); bare `Type` remains an ordinary
+identifier, and `Type 0` is rejected in favor of `Univ`.
 
-A bare `?` is a fresh hole. `?0`, `?1`, and so on name holes within one
+A bare `_` is a fresh hole in term position. `?0`, `?1`, and so on name holes within one
 definition: occurrences of the same number share one unknown, while different
 numbers are independent. For example, `(?0, ?0)` asks for a pair with the same
 unknown value in both positions; `(?0, ?1)` allows the values to differ.
-`_` is a discard in binder and pattern positions, and is not a term hole.
-In `eponymBlock`, `Univ` denotes `Type 0`, and Nim `_` in term position
-converts to a fresh `?` hole.
+`_` is a discard in binder and pattern positions, and a hole in term positions.
+Nim `_` in term position converts to a fresh hole.
+
+### Application and pairs
+
+Application is juxtaposition (`f x y`), and a parenthesized comma group in
+argument position is a multi-argument call: `f(a, b)` means `f a b`, exactly
+as in Nim. A pair value is `(a, b)` on its own; passing a pair as one
+argument needs double parens, `f((a, b))` — again exactly as in Nim, so an
+`.ep` example reads the same in embedded code. `fst`/`snd` take a single
+atom, so `fst (a, b)` still projects from the pair.
 
 ### Dependent functions: `Pi`
 
-Canonical surface (`.ep` files): one binder per `Pi`, dot before the body:
-
-```nim
-Pi {A : Type 0}. Pi (x : A). A
-```
-
-`eponymBlock` (Nim side): call syntax, the final position is the codomain:
+Call syntax, the final position is the codomain:
 
 ```nim
 Pi(x: Nat, ch {.linear.}: Chan(sendS(Nat, endS())), Chan(endS()))
@@ -460,9 +462,7 @@ Pi({A: Univ}, A -> A)
 
 Binders are `(name : Type)`; `{name : Type}` is *implicit* — solved by
 Miller-pattern unification at use sites (issue #201). Non-dependent arrows
-are sugar: `A -> B` is `Pi(_ : A). B`. (The one-grammar rule means both
-spellings parse the same language; the Nim side just uses call syntax
-because `Pi {A : T}. body` is not valid Nim — see `tests/surface_conformance.nim`.)
+are sugar: `A -> B` is `Pi(_ : A). B`. (One grammar: `.ep` files and `eponymBlock` both use call syntax — see `tests/surface_conformance.nim`.)
 
 ### Dependent pairs: `Sig`
 
@@ -475,15 +475,13 @@ postulate(recvNat, Pi(ch {.linear.}: Chan(recvS(Nat, endS())), Sig(x: Nat, Chan(
 
 ### Lambdas: `lam`
 
-Nim side (call syntax): `lam(x: Nat, addInt(x, x))`. Canonical surface:
-`lam (x : A). x` — one binder, dot before the body, as with `Pi`.
-An implicit lambda binder uses `lam({A: Type 0}, body)` on the Nim side;
-the macro lowers it to canonical `lam {A : Type 0}. body`. This is useful
-when introducing an implicit binder into a shed goal.
+Call syntax: `lam(x: Nat, addInt(x, x))`. An implicit lambda binder
+uses `lam({A: Univ}, body)`. This is useful when introducing an implicit
+binder into a shed goal.
 
 ```nim
 lam(_: NatD, NatD)          # the motive in an eliminator call (Nim side)
-lam({A: Type 0}, lam(x, A, x)) # implicit identity (Nim side)
+lam({A: Univ}, lam(x, A, x)) # implicit identity
 ```
 
 ### `let` (typed)
@@ -567,18 +565,17 @@ direction only (`tNatSing(k) <: Nat`; there is no narrowing). When the expected 
 
 ### Tactics: `by`
 
-Canonical surface (`.ep` files): `= by refl`. Nim side: `= byTac(refl)`
-(`by` is not valid Nim in that position):
+Call syntax on both sides: `= byTac(refl)`:
 
 ```nim
-proc pf1 : Eq Int 42 42 = by refl          # canonical
-proc pf1(): Eq(Int, 42, 42) = byTac(refl)  # eponymBlock
+proc pf1 : Eq Int 42 42 = byTac(refl)
+proc pf1(): Eq(Int, 42, 42) = byTac(refl)
 proc idInt(x: Int): Int = byTac(assumption)
 ```
 
-A `by <tactic>` body is discharged by an elaboration-time tactic term.
+A `byTac(<tactic>)` body is discharged by an elaboration-time tactic term.
 Tactic names resolve to registered tactics (`refl`, `assumption`, the
-`natArithHandler` behind `by arith` for linear Nat equations, ...).
+`natArithHandler` behind `byTac(arith)` for linear Nat equations, ...).
 Conversion-handler effects fire at macro expansion/compile time, never in
 the object program; evidence is revalidated LCF-style with handlers
 uninstalled (issue #41, trust model).
@@ -593,9 +590,6 @@ uninstalled (issue #41, trust model).
 - Termination: single-function structural recursion (#36) plus mutual
   recursion via size-change termination (#42); anything beyond that, and
   looping type-level programs in general, are the author's problem.
-- Implicit-binder *lambdas* have no Nim-side spelling (parser note,
-  issue #151): `{x : T}` in expression position would collide with the
-  Pi-implicit table syntax, and no corpus code needs it.
 
 ## Further reading
 

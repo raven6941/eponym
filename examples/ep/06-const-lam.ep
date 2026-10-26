@@ -1,6 +1,6 @@
 # Constant function via lambda. Tests lam elaboration.
 # Experiment: 06
-# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Type 0` = universe (in eponymBlock: `Univ`)
+# Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Univ` = universe
 
-proc constLam : Pi (A : Type 0) . A -> A =
-  lam (A : Type 0) . lam (x : A) . x
+proc constLam : Pi(A: Univ, A -> A) =
+  lam(A, Univ, lam(x, A, x))

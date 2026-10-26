@@ -11,4 +11,4 @@ import "../../lib/borrow.ep"
 
 # Violation: borrow dropped on the floor.
 proc badDrop (1 r : Res) : Nat =
-  withBorrow r (lam (b : Borrow). zero)
+  withBorrow r (lam(b, Borrow, zero))

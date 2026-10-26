@@ -138,7 +138,7 @@ proc whnfEqExt(a, b: Value, bnd: RuntimeBindings, depth: int = 3): bool =
   else:
     whnfEq(a, b)
 
-const prog = """postulate Int : Type 0
+const prog = """postulate(Int, Univ)
 proc fortyTwo : Int = 42
 proc add42 (n : Int) : Int = addInt n fortyTwo
 proc twice (x : Int) : Int = addInt x x
@@ -146,61 +146,59 @@ proc nestedLet (x : Int) : Int =
   let y : Int = addInt x x in addInt y x
 proc higher (f : Int -> Int) (x : Int) : Int = f (f x)
 proc twiceVal : Int -> Int = twice
-proc pairMk (a : Int) (b : Int) : Sig (u : Int). Int = (a, b)
-proc pairFst (p : Sig (u : Int). Int) : Int = fst p
+proc pairMk (a : Int) (b : Int) : Sig(u: Int, Int) = (a, b)
+proc pairFst (p : Sig(u: Int, Int)) : Int = fst p
 proc const42 (x : Int) : Int = subInt (addInt x fortyTwo) x
 proc addTwice (x : Int) : Int = add42 (twice x)
 
-postulate Nat : Type 0
-postulate zero : Nat
-postulate suc : Nat -> Nat
-elim natElim : Pi (C : Nat -> Type 0). C zero -> (Pi (n : Nat). C n -> C (suc n)) -> Pi (m : Nat). C m
-red natElim C z s zero    = z
-red natElim C z s (suc n) = s n (natElim C z s n)
+postulate(Nat, Univ)
+postulate(zero, Nat)
+postulate(suc, Nat -> Nat)
+elim(natElim, Pi(C: Nat -> Univ, C zero -> Pi(n: Nat, C n -> C (suc n)) -> Pi(m: Nat, C m)))
+red(natElim C z s zero   , z)
+red(natElim C z s (suc n), s n (natElim C z s n))
 proc two : Nat = suc (suc zero)
 proc add3 (n : Nat) : Nat =
-  natElim (lam (u : Nat). Nat) (suc (suc (suc zero))) (lam (p : Nat). lam (ih : Nat). suc ih) n
+  natElim (lam(u, Nat, Nat)) (suc (suc (suc zero))) (lam(p, Nat, lam(ih, Nat, suc ih))) n
 proc isZero (n : Nat) : Nat =
-  natElim (lam (u : Nat). Nat) zero (lam (p : Nat). lam (ih : Nat). p) n
-proc natElimPartial (C : Nat -> Type 0) (z : C zero)
-    (s : Pi (n : Nat). C n -> C (suc n)) : Pi (m : Nat). C m =
+  natElim (lam(u, Nat, Nat)) zero (lam(p, Nat, lam(ih, Nat, p))) n
+proc natElimPartial (C : Nat -> Univ) (z : C zero)
+    (s : Pi(n: Nat, C n -> C (suc n))) : Pi(m: Nat, C m) =
   natElim C z s
-proc motiveNatLam : Nat -> Type 0 = lam (u : Nat). Nat
-proc sucStepFn : Pi (p : Nat). Nat -> Nat =
-  lam (p : Nat). lam (ih : Nat). suc ih
-proc applyToTwo (f : Pi (m : Nat). Nat) : Nat = f two
-proc natElimBare : Pi (C : Nat -> Type 0). C zero ->
-    (Pi (n : Nat). C n -> C (suc n)) -> Pi (m : Nat). C m =
+proc motiveNatLam : Nat -> Univ = lam(u, Nat, Nat)
+proc sucStepFn : Pi(p: Nat, Nat -> Nat) =
+  lam(p, Nat, lam(ih, Nat, suc ih))
+proc applyToTwo (f : Pi(m: Nat, Nat)) : Nat = f two
+proc natElimBare : Pi(C: Nat -> Univ, C zero -> Pi(n: Nat, C n -> C (suc n)) -> Pi(m: Nat, C m)) =
   natElim
 
-data Vec (A : Type 0) : Nat -> Type 0 where
+data(Vec, [A : Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-proc cloneVec {A : Type 0} {n : Nat} (xs : Vec A n) : Vec A n =
-  vecElim A (lam (i : Nat). lam (v : Vec A i). Vec A i)
+proc cloneVec {A : Univ} {n : Nat} (xs : Vec A n) : Vec A n =
+  vecElim A (lam(i, Nat, lam(v, Vec A i, Vec A i)))
     (nil A)
-    (lam (i : Nat). lam (x : A). lam (xs2 : Vec A i).
-      lam (ih : Vec A i). cons A i x ih)
+    (lam(i, Nat, lam(x, A, lam(xs2, Vec A i, lam(ih, Vec A i, cons A i x ih)))))
     n xs
 proc nilIntVec : Vec Int zero = nil Int
 proc oneIntVec (x : Int) : Vec Int (suc zero) =
   cons Int zero x (nil Int)
 
-postulate BoolD : Type 0
-postulate trueD : BoolD
-postulate falseD : BoolD
-elim boolElimD : Pi (C : BoolD -> Type 0). C trueD -> C falseD -> Pi (b : BoolD). C b
-red boolElimD C t f trueD  = t
-red boolElimD C t f falseD = f
+postulate(BoolD, Univ)
+postulate(trueD, BoolD)
+postulate(falseD, BoolD)
+elim(boolElimD, Pi(C: BoolD -> Univ, C trueD -> C falseD -> Pi(b: BoolD, C b)))
+red(boolElimD C t f trueD , t)
+red(boolElimD C t f falseD, f)
 proc notFn (b : BoolD) : BoolD =
-  boolElimD (lam (u : BoolD). BoolD) falseD trueD b
+  boolElimD (lam(u, BoolD, BoolD)) falseD trueD b
 
-postulate tick : Int -> Int
+postulate(tick, Int -> Int)
 proc twiceTicked (n : Int) : Int = addInt (tick n) (tick n)
-postulate mystery : Nat
+postulate(mystery, Nat)
 proc stuckAdd (n : Nat) : Nat =
-  natElim (lam (u : Nat). Nat) n (lam (p : Nat). lam (ih : Nat). suc ih) mystery
-postulate boom : Int -> Int
+  natElim (lam(u, Nat, Nat)) n (lam(p, Nat, lam(ih, Nat, suc ih))) mystery
+postulate(boom, Int -> Int)
 proc boomCaller (x : Int) : Int = addInt (boom x) (boom x)
 """
 

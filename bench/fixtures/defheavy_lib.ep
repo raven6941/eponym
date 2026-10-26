@@ -14,29 +14,27 @@
 # Note: elements and results are `Int`, not `Nat`. Nat-*returning* typed
 # wrappers are broken (issue #441: the wrapper's `valueToNat` decode fails
 # at runtime); Int return avoids that unrelated defect.
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-postulate Int : Type 0
-data Vec (A : Type 0) : Nat -> Type 0 where
+postulate(Int, Univ)
+data(Vec, [A: Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc vmapDbl (n : Nat) (xs : Vec Int n) : Vec Int n =
-  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Vec Int i)
+  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Vec Int i)))
             (nil Int)
-            (lam (i : Nat). lam (x : Int). lam (xs2 : Vec Int i).
-              lam (ih : Vec Int i). cons Int i (addInt x x) ih)
+            (lam(i, Nat, lam(x, Int, lam(xs2, Vec Int i, lam(ih, Vec Int i, cons Int i (addInt x x) ih)))))
             n xs
 proc vsum (n : Nat) (xs : Vec Int n) : Int =
-  vecElim Int (lam (i : Nat). lam (v : Vec Int i). Int)
+  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Int)))
             0
-            (lam (i : Nat). lam (x : Int). lam (xs2 : Vec Int i).
-              lam (ih : Int). addInt x ih)
+            (lam(i, Nat, lam(x, Int, lam(xs2, Vec Int i, lam(ih, Int, addInt x ih)))))
             n xs
 proc replicate (n : Nat) (x : Int) : Vec Int n =
-  natElim (lam (u : Nat). Vec Int u)
+  natElim (lam(u, Nat, Vec Int u))
           (nil Int)
-          (lam (p : Nat). lam (ih : Vec Int p). cons Int p x ih)
+          (lam(p, Nat, lam(ih, Vec Int p, cons Int p x ih)))
           n
 proc pipeline (n : Nat) (xs : Vec Int n) : Int =
   addInt (vsum n xs) (vsum n (vmapDbl n xs))

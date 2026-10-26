@@ -790,10 +790,10 @@ when isMainModule:
   var ms = initMetaStore()
   let loc = noLoc
 
-  # ?m0[V0] = 1, then zonk
+  # ?m0[V0] = unitTy, then zonk
   let m0 = freshMeta(ms, tmC(cStar), 1, 0, loc)
   unify(ms, m0, tmC(cOne), loc)
-  assert $zonk(ms, m0) == "1"
+  assert $zonk(ms, m0) == "unitTy"
   echo "ok: solve ?m[V0] = 1"
 
   # occurs check
@@ -835,7 +835,7 @@ when isMainModule:
   unify(msD, m6, vv(1), loc)  # pattern solve; wakes the suspended goal
   assert msD.deferred.len == 0, "woken goal should complete, still pending: " &
     $msD.deferred.len
-  assert $zonk(msD, m5) == "1", $zonk(msD, m5)
+  assert $zonk(msD, m5) == "unitTy", $zonk(msD, m5)
   assert $zonk(msD, m6) == "V1", $zonk(msD, m6)
   echo "ok: deferred goal wakes and solves"
 
@@ -892,7 +892,7 @@ when isMainModule:
   let m4alias = tmMeta(m4.metaId, @[vv(0)])
   unify(ms5, m4, m4alias, loc)  # same meta, same spine: fine
   unify(ms5, m4, tmC(cOne), loc)
-  assert $zonk(ms5, m4alias) == "1"
+  assert $zonk(ms5, m4alias) == "unitTy"
   echo "ok: flex-flex same meta"
 
   # Issue #80: constructor disjointness (noConfusion / noCycle).

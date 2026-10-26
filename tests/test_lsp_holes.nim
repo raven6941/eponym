@@ -8,14 +8,14 @@ import strutils
 import tables
 import lsp
 
-const vecSrc = """data Nat : Type 0 where
+const vecSrc = """data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : Type 0) : Nat -> Type 0 where
+data(Vec, [A : Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-proc headDefault (A : Type 0) (n : Nat) (d : A) (xs : Vec A (suc n)) : A =
-  ?
+proc headDefault (A : Univ) (n : Nat) (d : A) (xs : Vec A (suc n)) : A =
+  _
 """
 
 proc msg(s: string): JsonNode = parseJson(s)
@@ -43,7 +43,7 @@ check(md.contains("goal : A"), "hover goal resolves to `A`")
 check(md.contains("`xs : (Vec A (suc n))`"),
   "hover ctx resolves `Vec` and `suc`")
 check(md.contains("`n : Nat`"), "hover ctx resolves `Nat`")
-check(md.contains("`A : Type 0`"), "hover ctx renders the universe as `Type 0`")
+check(md.contains("`A : Univ`"), "hover ctx renders the universe as `Univ`")
 # No `libpcre` in this VM, so scan for `R<digit>` without the `re` module.
 proc hasRigidRender(s: string): bool =
   var i = 0
@@ -53,11 +53,11 @@ proc hasRigidRender(s: string): bool =
   false
 check(not hasRigidRender(md),
   "hover shows no rigid `R<n>` renderings for globals")
-const natGoalSrc = """data Nat : Type 0 where
+const natGoalSrc = """data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
 proc f : Nat =
-  ?
+  _
 """
 let mdNat = hoverAt(natGoalSrc, 4, 2)
 check(mdNat.contains("goal : Nat"),

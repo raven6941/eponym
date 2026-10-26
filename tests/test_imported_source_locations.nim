@@ -7,7 +7,7 @@ if dirExists(dir): removeDir(dir)
 createDir(dir)
 let imported = dir / "bad.ep"
 let client = dir / "client.ep"
-writeFile(imported, "postulate Nat : Type 0\nproc bad : Nat = missingName\n")
+writeFile(imported, "postulate(Nat, Univ)\nproc bad : Nat = missingName\n")
 writeFile(client, "import \"bad.ep\"\nproc client : Nat = zero\n")
 
 try:
@@ -18,7 +18,7 @@ except ElabError as e:
   doAssert e.loc.source.endsWith("/bad.ep"), e.loc.source
   doAssert "unbound variable 'missingName'" in e.msg, e.msg
 
-writeFile(imported, "postulate Nat : Type 0\nproc bad : Nat =\n")
+writeFile(imported, "postulate(Nat, Univ)\nproc bad : Nat =\n")
 try:
   discard elabCheckFile(client)
   doAssert false, "expected the imported syntax to fail"
