@@ -10,7 +10,7 @@ nim c --hints:off $P -o:/tmp/eponym-repl-test src/repl.nim
 /tmp/eponym-repl-test > /tmp/repl-session.out <<'EOF'
 :load lib/nat.ep
 proc two : Nat = suc (suc zero)
-proc constFn (A : Type 0) (B : Type 0) (x : A) (y : B) : A =
+proc constFn (A : Univ) (B : Univ) (x : A) (y : B) : A =
   x
 :eval two
 :eval (add (suc zero) two)
