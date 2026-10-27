@@ -22,7 +22,7 @@ postulate(AcceptMsg, Nat -> Univ)
 
 proc propAfterAccept (a : Nat) : Session = endS
 proc propAfterPromise (pr : Sig(v: Nat, AcceptMsg v)) : Session =
-  sendD (AcceptMsg (fst pr)) (lam(t, AcceptMsg (fst pr), recvD Nat propAfterAccept))
+  sendD (AcceptMsg (fst pr)) (lam(t: AcceptMsg (fst pr)) => recvD Nat propAfterAccept)
 proc propAfterPrepare (n : Nat) : Session =
   recvD (Sig(v: Nat, AcceptMsg v)) propAfterPromise
 proc propProto : Session =

@@ -6,7 +6,7 @@ data(RuntimeTree, Univ) where
 | treeEmpty : RuntimeTree
 | treeNode (value : Int) (tail : RuntimeTree) : RuntimeTree
 proc treeIdentity : RuntimeTree -> RuntimeTree =
-  lam(tree, RuntimeTree, tree)
+  lam(tree: RuntimeTree) => tree
 data(SizedTree, [length: Nat], Univ) where
 | sizedTree (tree : RuntimeTree) : SizedTree length
 data(SizedVector, [length: Nat], Univ) where

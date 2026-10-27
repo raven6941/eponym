@@ -121,24 +121,48 @@ proc constFn (A : Univ) (B : Univ) (x : A) (y : B) : A = x
 conforms """proc pairSwap (A : Univ) (B : Univ) (p : Sig(u: A, B)) : Sig(v: B, A) =
   (snd p, fst p)
 proc applyLam (A : Univ) : A -> A =
-  lam(x, A, x)
+  lam(x: A) => x
 proc anonSig (A : Univ) (B : Univ) : Sig(A, B) -> A =
-  lam(p, Sig(A, B), fst p)
+  lam(p: Sig(A, B)) => fst p
 """:
   proc pairSwap(A: Univ, B: Univ, p: Sig(u, A, B)): Sig(v, B, A) =
     (snd(p), fst(p))
-  proc applyLam(A: Univ): A -> A = lam(x, A, x)
+  proc applyLam(A: Univ): A -> A = lam(x: A) => x
   proc anonSig(A: Univ, B: Univ): Sig(A, B) -> A =
-    lam(p, Sig(A, B), fst(p))
+    lam(p: Sig(A, B)) => fst(p)
+
+# Lambda groups, greedy bodies, unannotated/implicit binders, and nested use.
+conforms """proc nested (A : Univ) : A -> A = lam(x: A) => lam(y: A) => x
+proc inferred (A : Univ) : A -> A = lam(x) => x
+proc implicitId : Pi{A: Univ, A -> A} = lam({A: Univ}) => lam(x: A) => x
+proc linearId : Nat -> Nat = lam(1 x: Nat) => x
+proc eraseNat : Nat -> unitTy = lam(0 x: Nat) => unitv
+proc underApply (A : Univ) (f : A -> A) (x : A) : A = (lam(y: A) => f y) x
+""":
+  proc nested(A: Univ): A -> A = lam(x: A, y: A) => x
+  proc inferred(A: Univ): A -> A = lam(x) => x
+  proc implicitId(): Pi({A: Univ}, A -> A) =
+    lam({A: Univ}) => lam(x: A) => x
+  proc linearId(): Nat -> Nat = lam(x {.linear.}: Nat) => x
+  proc eraseNat(): Nat -> unitTy =
+    lam(x {.erased.}: Nat) => unitv
+  proc underApply(A: Univ, f: A -> A, x: A): A = (lam(y: A) => f(y))(x)
+
+# Lambda terms nested in type-level bracket arguments retain their boundary.
+conforms """postulate(F, (Nat -> Univ) -> Univ)
+proc useFunctionType : F[lam(x: Nat) => Nat] = _
+""":
+  postulate(F, (Nat -> Univ) -> Univ)
+  proc useFunctionType(): F[lam(x: Nat) => Nat] = _
 
 # Pi with named binders, implicit binders, let..in, holes
 conforms """proc polyId (A : Univ) (x : A) : A = x
-proc impId : Pi{A: Univ, A -> A} = lam(x, A, x)
+proc impId : Pi{A: Univ, A -> A} = lam(x: A) => x
 proc withLet (A : Univ) (x : A) : A = let y = x in y
 proc holeTy : Univ = _
 """:
   proc polyId(A: Univ, x: A): A = x
-  proc impId(): Pi({A: Univ}, A -> A) = lam(x, A, x)
+  proc impId(): Pi({A: Univ}, A -> A) = lam(x: A) => x
   proc withLet(A: Univ, x: A): A =
     let y = x
     y
@@ -232,13 +256,13 @@ proc absurd (x : emptyTy) : emptyTy = x
 conforms """proc asc (A : Univ) (x : A) : A = (x : A)
 proc typedLet (A : Univ) (x : A) : A =
   let y : A = x in y
-proc linLam : Univ = lam(1 x, Univ, x)
+proc linLam : Univ = lam(1 x: Univ) => x
 """:
   proc asc(A: Univ, x: A): A = (x: A)
   proc typedLet(A: Univ, x: A): A =
     let y: A = x
     y
-  proc linLam(): Univ = lam(x {.linear.}, Univ, x)
+  proc linLam(): Univ = lam(x {.linear.}: Univ) => x
 
 # record declaration + dot projection (issue #37)
 conforms """record(Point):
@@ -277,14 +301,14 @@ proc holeTy : Univ = _
   proc absurd(x: emptyTy): emptyTy = x
   proc holeTy(): Univ = _
 
-conforms """proc applyLam (A : Univ) : A -> A = lam(x, A, x)
+conforms """proc applyLam (A : Univ) : A -> A = lam(x: A) => x
 proc piTy : Univ = Pi(x: Nat, Nat)
 proc sigTy (A : Univ) (B : Univ) : Univ = Sig(A, B)
 proc sigTy2 (A : Univ) (B : Univ) : Univ = Sig(u: A, B)
 proc sigTy3 (A : Univ) (B : Univ) : Univ = Sig(u, A, B)
 proc vecTy (n : Nat) : Univ = Vec[Int, n]
 """:
-  proc applyLam(A: Univ): A -> A = lam(x, A, x)
+  proc applyLam(A: Univ): A -> A = lam(x: A) => x
   proc piTy(): Univ = Pi(x: Nat, Nat)
   proc sigTy(A: Univ, B: Univ): Univ = Sig(A, B)
   proc sigTy2(A: Univ, B: Univ): Univ = Sig(u, A, B)

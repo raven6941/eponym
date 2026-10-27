@@ -31,8 +31,7 @@
 #                      multi-argument call, not a pair argument
 #   atom    = "(" term ")" | "(" term "," term ")" | "(" term ":" term ")"
 #            | term "[" term ("," term)* "]"          -- bracket application
-#            | "lam" "(" name "," term "," term ")" | "lam" "(" name "," term ")"
-#            | "lam" "(" "{" name ":" term "}" "," term ")"
+#            | "lam" "(" lambda-binder ("," lambda-binder)* ")" "=>" term
 #            | "Pi" "(" binder-item ("," binder-item)* "," term ")"
 #            | "Pi" "{" binder-item ("," binder-item)* "," term ")"
 #            | "Sig" "(" ... ")"  (same items; also Sig(name, dom, body))
@@ -44,12 +43,13 @@
 #            | integer                                 -- `1` is the integer literal one
 #   binder-item = [qty] name ":" term | term          -- plain term = anonymous binder
 #            -- qty: 0 (erased), 1 (linear), or a quantity variable
+#   lambda-binder = [qty] name (":" term)? | "{" name ":" term ("," name ":" term)* "}"
 # Comments: `--` or `#` to end of line.
 #
 # eponymBlock Nim-AST mapping (eponym_mac.nim `blockToEponym`):
 # Single syntax: the macro emits the grammar above directly. What remains
 # is Nim-AST-to-text translation, not a second syntax:
-#   `lam(x, T, body)` / `Pi(...)` / `Sig(...)` / `postulate` / `elim` /
+#   `lam(x: T) => body` / `Pi(...)` / `Sig(...)` / `postulate` / `elim` /
 #   `red` / `data` / `def` / `record` / `byTac` -> themselves (call forms)
 #   `Univ` / `unitTy` / `unitv` / `emptyTy` / `vecnil` / `_` -> themselves
 #     (the parser maps `vecnil` to the `nil` constructor internally)
@@ -89,7 +89,7 @@ type
     tkLam, tkPi, tkSig, tkLet, tkIn, tkFst, tkSnd,
     tkQuestion,
     tkLParen, tkRParen, tkLBrace, tkRBrace, tkLBracket, tkRBracket,
-    tkColon, tkColonEq, tkDot, tkComma, tkArrow, tkEq, tkPipe
+    tkColon, tkColonEq, tkDot, tkComma, tkArrow, tkFatArrow, tkEq, tkPipe
   Token = object
     kind: TokKind
     lexeme: string
@@ -201,6 +201,9 @@ proc lex(src: string, source = ""): seq[Token] =
     elif c == '.':
       result.add Token(kind: tkDot, lexeme: ".", loc: curLoc())
       inc col; inc i
+    elif c == '=' and i + 1 < src.len and src[i+1] == '>':
+      result.add Token(kind: tkFatArrow, lexeme: "=>", loc: curLoc())
+      col += 2; i += 2
     elif c == '=':
       result.add Token(kind: tkEq, lexeme: "=", loc: curLoc())
       inc col; inc i
@@ -286,9 +289,8 @@ proc groupHasTopComma(p: Parser): bool =
   ## Issue #467: true when the bracket group starting at the current peek
   ## contains a top-level comma before its matching close bracket.
   ## Depth-aware, so commas inside nested groups (e.g. a pair type) do not
-  ## count. Tells call forms (`lam(x, T, body)`, `Pi(x: A, B)`,
-  ## `red(l, r)`) apart from classic binder/paren groups
-  ## (`lam (x : T). body`, `red (f x) = y`).
+  ## count. Tells call forms (`Pi(x: A, B)`, `red(l, r)`) apart from
+  ## binder/paren groups. Lambda has its own annotated binder-group syntax.
   if p.pos > p.toks.high: return false
   if p.toks[p.pos].kind notin {tkLParen, tkLBrace, tkLBracket}: return false
   var depth = 0
@@ -493,72 +495,55 @@ proc parseAtom(p: var Parser): PreTerm =
       mkAnn(e, ty, t.loc)
     else: raise fail(t2.loc, "expected ',', ':', or ')', got '" & t2.lexeme & "'")
   of tkLam:
-    # Single syntax: lam(x, T, body), lam(x, body) (unannotated), and
-    # lam({A: T}, body) (implicit). The dot forms are removed.
-    if p.peek().kind == tkLParen and p.groupHasTopComma():
-      discard p.next()  # '('
-      if p.peek().kind == tkLBrace:
-        # Implicit binder group `lam({A: T}, body)` (single syntax: the
-        # macro's spelling of `lam {A : T}. body`). Each pair gets its
-        # own quantity variable, in source order like the dot form.
+    if p.peek().kind != tkLParen:
+      raise fail(t.loc, "lam needs a binder group: lam(x: T) => body")
+    discard p.next()  # '('
+    var binders: seq[tuple[name: string, ty: PreTerm, impl: bool,
+                           erased: bool, qty: Qty]] = @[]
+    while true:
+      let impl = p.peek().kind == tkLBrace
+      if impl:
         discard p.next()  # '{'
-        var pairs: seq[tuple[name: string, ty: PreTerm, qty: Qty]] = @[]
         while true:
-          let qq = qtyVar("#q" & $p.qvarCount)
+          let qty = qtyVar("#q" & $p.qvarCount)
           inc p.qvarCount
-          let bn = p.expect(tkIdent, "binder name in 'lam({...})'")
+          let bn = p.expect(tkIdent, "implicit lambda binder name")
           discard p.expect(tkColon, "':'")
-          pairs.add (bn.lexeme, p.parseTerm(), qq)
+          let ty = p.parseTerm()
+          binders.add((bn.lexeme, ty, true, false, qty))
           if p.peek().kind == tkComma: discard p.next()
           else: break
         discard p.expect(tkRBrace, "'}'")
-        discard p.expect(tkComma, "','")
-        var body = p.parseTerm()
-        discard p.expect(tkRParen, "')'")
-        for i in countdown(pairs.high, 0):
-          body = mkLam(pairs[i].name, pairs[i].ty, body, t.loc, true,
-                       false, pairs[i].qty)
-        return body
-      # Quantity variable first, matching the dot-form binder order;
-      # an explicit annotation (`1 y`, `0 y`, `q y`) overrides it.
-      var q = qtyVar("#q" & $p.qvarCount)
-      inc p.qvarCount
-      var erased = false
-      var annotated = false
-      let pk = p.peek()
-      if pk.kind == tkInt:
-        let qlex = pk.lexeme
-        if qlex == "0":
+      else:
+        var qty: Qty = qtyVar("#q" & $p.qvarCount)
+        inc p.qvarCount
+        var erased = false
+        let pk = p.peek()
+        if pk.kind == tkInt and pk.lexeme in ["0", "1"]:
           discard p.next()
-          erased = true
-          q = q0
-          annotated = true
-        elif qlex == "1":
+          erased = pk.lexeme == "0"
+          qty = if erased: q0 else: q1
+        elif pk.kind == tkIdent and p.pos + 1 <= p.toks.high and
+             p.toks[p.pos + 1].kind == tkIdent:
+          qty = qtyVar(p.next().lexeme)
+        let bn = p.expect(tkIdent, "lambda binder name")
+        var ty: PreTerm = nil
+        if p.peek().kind == tkColon:
           discard p.next()
-          q = q1
-          annotated = true
-      elif pk.kind == tkIdent and p.pos + 1 <= p.toks.high and
-           p.toks[p.pos + 1].kind == tkIdent:
-        q = qtyVar(pk.lexeme)
-        discard p.next()  # quantity variable name
-        annotated = true
-      let xn = p.expect(tkIdent, "binder name in 'lam(...)'")
-      discard p.expect(tkComma, "','")
-      if p.itemIsLast():
-        # Two-item form lam(x, body): unannotated lambda (the renderer's
-        # spelling of the old `lam x. body`). Without an annotation the
-        # quantity is qOmega, matching the old form's default.
-        let body = p.parseTerm()
-        discard p.expect(tkRParen, "')'")
-        return mkLam(xn.lexeme, nil, body, t.loc, false, erased,
-                     if annotated: q else: qOmega)
-      let ty = p.parseTerm()
-      discard p.expect(tkComma, "','")
-      let body = p.parseTerm()
-      discard p.expect(tkRParen, "')'")
-      mkLam(xn.lexeme, ty, body, t.loc, false, erased, q)
-    else:
-      raise fail(t.loc, "lam needs call form lam(x, T, body) or lam(x, body)")
+          ty = p.parseTerm()
+        let binderQty = if ty.isNil:
+          Qty(isVar: false, q: qOmega)
+        else: qty
+        binders.add((bn.lexeme, ty, false, erased, binderQty))
+      if p.peek().kind == tkComma: discard p.next()
+      else: break
+    discard p.expect(tkRParen, "')'")
+    discard p.expect(tkFatArrow, "'=>'")
+    var body = p.parseTerm()
+    for i in countdown(binders.high, 0):
+      let b = binders[i]
+      body = mkLam(b.name, b.ty, body, t.loc, b.impl, b.erased, b.qty)
+    body
   of tkPi, tkSig:
     # Single syntax: Pi/Sig call forms only (the dot forms are removed).
     if p.peek().kind in {tkLParen, tkLBrace} and p.groupHasTopComma():
@@ -585,7 +570,7 @@ proc parseAtom(p: var Parser): PreTerm =
 
 proc parseProjTail(p: var Parser, e: PreTerm): PreTerm =
   ## Issue #37: postfix dot-projection `e.f` (also chains: `e.f.g`).
-  ## The `lam x. body` / `Pi/Sig (x:T). body` dots are consumed inside
+  ## The `Pi/Sig (x:T). body` dots are consumed inside
   ## parseAtom, so a dot here always starts a projection.
   result = e
   while p.peek().kind == tkDot:
@@ -930,15 +915,15 @@ proc withLet (A : Univ) (x : A) : A =
   assert prog[0].def.name == "twice"
   assert $prog[0].def.desugarTy() == "Pi(A: Univ, Pi(f: A -> A, Pi(x: A, A)))"
   assert $prog[0].def.desugarTm() ==
-    "lam(A, Univ, lam(f, A -> A, lam(x, A, f (f x))))"
+    "lam(A: Univ, f: A -> A, x: A) => f (f x)"
   assert $prog[1].def.desugarTm() ==
-    "lam(A, Univ, lam(B, Univ, lam(x, A, lam(y, B, x))))"
+    "lam(A: Univ, B: Univ, x: A, y: B) => x"
   assert $prog[2].def.desugarTy() ==
     "Pi(A: Univ, Pi(B: Univ, Pi(p: Sig(u: A, B), Sig(v: B, A))))"
   assert $prog[2].def.desugarTm() ==
-    "lam(A, Univ, lam(B, Univ, lam(p, Sig(u: A, B), (snd p, fst p))))"
+    "lam(A: Univ, B: Univ, p: Sig(u: A, B)) => (snd p, fst p)"
   assert $prog[3].def.desugarTm() ==
-    "lam(A, Univ, lam(x, A, let y : A = x in y))"
+    "lam(A: Univ, x: A) => let y : A = x in y"
 
   # locations are tracked (Nim's `"""` strips the leading newline)
   assert prog[0].def.body.loc.line == 2
@@ -961,22 +946,22 @@ proc withLet (A : Univ) (x : A) : A =
 
   # round trip through the renderer
   let rt = parseProgram("proc id (A : Univ) (x : A) : A = x")
-  assert $rt[0].def.desugarTm() == "lam(A, Univ, lam(x, A, x))"
+  assert $rt[0].def.desugarTm() == "lam(A: Univ, x: A) => x"
 
   # implicit binders and holes (Experiment 3)
   let imp = parseProgram("""
 proc polyId {A : Univ} (x : A) : A = x
 proc useHole : unitTy = _
-proc impPi : Pi{A: Univ, A -> A} = lam({A: Univ}, lam(x, A, x))
+proc impPi : Pi{A: Univ, A -> A} = lam({A: Univ}) => lam(x: A) => x
 """)
   assert imp.len == 3
   assert imp[0].def.tele[0].impl
   assert not imp[0].def.tele[1].impl
   assert $imp[0].def.desugarTy() == "Pi{A: Univ, Pi(x: A, A)}"
-  assert $imp[0].def.desugarTm() == "lam({A: Univ}, lam(x, A, x))"
+  assert $imp[0].def.desugarTm() == "lam({A: Univ}) => lam(x: A) => x"
   assert imp[1].def.body.kind == pkHole
   assert $imp[2].def.desugarTy() == "Pi{A: Univ, A -> A}"
-  assert $imp[2].def.desugarTm() == "lam({A: Univ}, lam(x, A, x))"
+  assert $imp[2].def.desugarTm() == "lam({A: Univ}) => lam(x: A) => x"
 
 
   # postulate / elim / red declarations (Experiment 4)
@@ -1008,8 +993,21 @@ red(boolElim C t f false, f)
   let vn = parseTermStr("vecnil")
   assert vn.kind == pkVar and vn.name == "nil"
   assert parseTermStr("_").kind == pkHole
-  let lamCf = parseTermStr("lam(x, A, x)")
+  let lamCf = parseTermStr("lam(x: A) => x")
   assert lamCf.kind == pkLam and lamCf.name == "x"
+  let lamMany = parseTermStr("lam(x: A, y: B) => f x y")
+  assert lamMany.kind == pkLam and lamMany.name == "x" and
+    lamMany.c2.kind == pkLam and lamMany.c2.name == "y"
+  assert lamMany.c2.c2.kind == pkApp and
+    lamMany.c2.c2.c1.kind == pkApp  # lambda body greedily includes `f x y`
+  assert $lamMany == "lam(x: A, y: B) => f x y"
+  let lambdaArg = parseTermStr("apply (lam(x: A) => f x) y")
+  assert lambdaArg.kind == pkApp and lambdaArg.c1.kind == pkApp and
+    lambdaArg.c1.c2.kind == pkLam
+  assert parseTermStr("lam(x) => x").c1.isNil
+  assert parseTermStr("lam({A: Univ}) => lam(x: A) => x").impl
+  assert parseTermStr("lam(1 x: A) => x").qty.q == q1
+  assert parseTermStr("lam(0 x: A) => unitv").erased
   let piCf = parseTermStr("Pi(x: Nat, Nat)")
   assert piCf.kind == pkPi and piCf.name == "x"
   let sigAnon = parseTermStr("Sig(A, B)")
@@ -1083,8 +1081,9 @@ def(isZero4, Nat -> Bool):
   let fstPair = parseTermStr("fst (a, b)")
   assert fstPair.kind == pkFst and fstPair.c1.kind == pkPair
 
-  # Removed forms raise (single syntax, issues #468/#469).
-  for bad in ["lam (x : A). x", "Pi (x : A). B", "Sig (x : A). B",
+  # Removed forms raise (single syntax, issues #468/#469/#475).
+  for bad in ["lam(x, A, x)", "lam(x, x)", "lam({A: Univ}, body)",
+              "lam (x : A). x", "Pi (x : A). B", "Sig (x : A). B",
               "Type 0", "<>", "?", "by refl", "(x : A) -> B"]:
     try:
       discard parseTermStr(bad)

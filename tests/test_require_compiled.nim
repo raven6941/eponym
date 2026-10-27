@@ -13,10 +13,9 @@ eponymBlock:
   proc addOne(value: Int): Int = value + 1
   proc importedAddTwo(value: Int): Int = importedPlusTwo(value)
   proc doubleVector(n: Nat, values: Vec[Int, n]): Vec[Int, n] =
-    vecElim[Int](lam(i, Nat, lam(v, Vec[Int, i], Vec[Int, i])),
+    vecElim[Int](lam(i: Nat) => lam(v: Vec[Int, i]) => Vec[Int, i],
       vecnil[Int](),
-      lam(i, Nat, lam(x, Int, lam(xs, Vec[Int, i],
-        lam(ih, Vec[Int, i], cons[Int, i](addInt(x, x), ih))))), n, values)
+      lam(i: Nat) => lam(x: Int) => lam(xs: Vec[Int, i]) => lam(ih: Vec[Int, i]) => cons[Int, i](addInt(x, x), ih), n, values)
   # Issue #407 slice 3: function types are representable — a higher-order
   # definition compiles at the repr tier and its wrapper takes an
   # ordinary {.closure.} proc.

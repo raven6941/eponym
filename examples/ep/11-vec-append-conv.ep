@@ -13,7 +13,7 @@ proc constNil (A : Univ) (x : A) : Vec A (add zero zero) =
   nil A
 proc append {A : Univ} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
     : Vec A (add m n) =
-  vecElim A (lam(i, Nat, lam(v, Vec A i, Vec A (add i n))))
+  vecElim A (lam(i: Nat) => lam(v: Vec A i) => Vec A (add i n))
             ys
-            (lam(i, Nat, lam(x, A, lam(xs, Vec A i, lam(ih, Vec A (add i n), cons A (add i n) x ih)))))
+            (lam(i: Nat) => lam(x: A) => lam(xs: Vec A i) => lam(ih: Vec A (add i n)) => cons A (add i n) x ih)
             m xs

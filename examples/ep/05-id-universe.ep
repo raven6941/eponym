@@ -3,6 +3,6 @@
 # Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Univ` = universe
 
 proc idU : Pi(A: Univ, A -> A) =
-  lam(A, lam(x, x))
+  lam(A) => lam(x) => x
 proc letU : unitTy =
-  let f = lam(x, x) in f unitv
+  let f = lam(x) => x in f unitv

@@ -460,6 +460,62 @@ proc nimTypeToEponym(n: NimNode): string
 proc isNilLiteralExpr(n: NimNode): bool
 proc nilConstructorForType(typeNode: NimNode): string
 
+proc lambdaBinderToEponym(n: NimNode): string =
+  ## Convert one lambda binder from the Nim AST into the common surface form.
+  var binder = n
+  while binder.kind in {nnkPar, nnkTupleConstr} and binder.len == 1:
+    binder = binder[0]
+  if binder.kind == nnkExprColonExpr and binder.len == 2:
+    let name = binder[0]
+    return qtyPrefix(name) & binderName(name) & ": " &
+           nimTypeToEponym(binder[1])
+  if binder.kind in {nnkIdent, nnkSym, nnkPragmaExpr}:
+    return qtyPrefix(binder) & binderName(binder)
+  error("eponymBlock: lambda binders must be names, optionally annotated " &
+        "with a type", binder)
+
+proc isLambdaArrow(n: NimNode): bool =
+  var node = n
+  while node.kind in {nnkPar, nnkStmtListExpr} and node.len == 1:
+    node = node[0]
+  node.kind == nnkInfix and node.len == 3 and $node[0] == "=>"
+
+proc nimLambdaArrowToEponym(lhs, body: NimNode): string =
+  ## Nim's `=>` is left-associative. Flatten its AST back into the common
+  ## right-associative lambda form before serializing the term.
+  proc appendGroup(group: NimNode, specs: var seq[string]) =
+    if group.kind notin {nnkCall, nnkObjConstr} or group.len == 0 or
+       group[0].kind != nnkIdent or $group[0] != "lam":
+      error("eponymBlock: `=>` is only supported after a lam binder group",
+            group)
+    if group.len == 1:
+      error("eponymBlock: lambda needs at least one binder", group)
+    for i in 1 ..< group.len:
+      let binder = group[i]
+      if binder.kind == nnkTableConstr:
+        var implicitSpecs: seq[string] = @[]
+        for pair in binder:
+          if pair.kind != nnkExprColonExpr or pair.len != 2:
+            error("eponymBlock: implicit lambda binders need names and types",
+                  pair)
+          implicitSpecs.add(binderName(pair[0]) & ": " &
+                            nimTypeToEponym(pair[1]))
+        if implicitSpecs.len == 0:
+          error("eponymBlock: implicit lambda needs at least one binder",
+                binder)
+        specs.add("{" & implicitSpecs.join(", ") & "}")
+      else:
+        specs.add(lambdaBinderToEponym(binder))
+  proc collectChain(node: NimNode, specs: var seq[string]) =
+    if node.kind == nnkInfix and $node[0] == "=>":
+      collectChain(node[1], specs)
+      appendGroup(node[2], specs)
+    else:
+      appendGroup(node, specs)
+  var specs: seq[string] = @[]
+  collectChain(lhs, specs)
+  "lam(" & specs.join(", ") & ") => " & nimExprToEponym(body)
+
 proc ifExprToEponym(n: NimNode): string =
   var branches: seq[(NimNode, NimNode)] = @[]
   var elseBranch: NimNode = nil
@@ -490,16 +546,17 @@ proc ifExprToEponym(n: NimNode): string =
   # Eponym applications are strict, while Nim conditionals evaluate only the
   # selected branch. Pass each branch as a unit thunk so a postulate (or any
   # other runtime-bound operation) in the unselected branch is not evaluated.
-  var fallback = "lam(_, unitTy, " & nimExprToEponym(elseBranch) & ")"
+  var fallback = "(lam(_: unitTy) => " & nimExprToEponym(elseBranch) & ")"
   for i in countdown(branches.high, 0):
     let (condition, body) = branches[i]
-    let yesBranch = "lam(_, unitTy, " & nimExprToEponym(branchExpr(body)) & ")"
+    let yesBranch = "(lam(_: unitTy) => " &
+      nimExprToEponym(branchExpr(body)) & ")"
     fallback = "ifThenElse (" & nimExprToEponym(condition) & ") " &
       yesBranch & " (" & fallback & ")"
   "(" & fallback & ") unitv"
 
 proc nimCommandLamToEponym(n: NimNode): string =
-  ## Convert Nim's command-form untyped lambda (`lam x. body`) to Eponym
+  ## Convert Nim's command-form lambda (`lam x. body`) to Eponym arrow
   ## syntax. Nim represents a nested chain such as `lam x. lam y. body`
   ## as `Command(lam, Command(DotExpr(x, lam), DotExpr(y, body)))`.
   if n.kind != nnkCommand or n.len != 2 or
@@ -507,7 +564,7 @@ proc nimCommandLamToEponym(n: NimNode): string =
     error("eponymBlock: unsupported command-form lambda", n)
   let arg = n[1]
   if arg.kind == nnkDotExpr and arg.len == 2:
-    return "lam " & nimExprToEponym(arg[0]) & ". " &
+    return "lam(" & lambdaBinderToEponym(arg[0]) & ") => " &
            nimExprToEponym(arg[1])
   if arg.kind == nnkCommand and arg.len == 2 and
      arg[0].kind == nnkDotExpr and arg[0].len == 2 and
@@ -518,7 +575,7 @@ proc nimCommandLamToEponym(n: NimNode): string =
     # A command-form typed binder such as `(n : Nat)` is represented as a
     # tuple/colon AST, not an identifier. Reuse the expression converter so
     # typed binders survive in nested command lambdas.
-    return "lam " & nimExprToEponym(arg[0][0]) & ". " &
+    return "lam(" & lambdaBinderToEponym(arg[0][0]) & ") => " &
            nimCommandLamToEponym(nested)
   error("eponymBlock: unsupported command-form lambda", n)
 
@@ -539,7 +596,8 @@ proc nimCommandToEponym(n: NimNode): string =
         appendArg(a[j])
     elif a.kind == nnkCommand:
       args.add("(" & nimCommandLamToEponym(a) & ")")
-    elif a.kind in {nnkCall, nnkObjConstr}:
+    elif a.kind in {nnkCall, nnkObjConstr} or
+         (a.kind == nnkInfix and $a[0] == "=>"):
       args.add("(" & nimExprToEponym(a) & ")")
     else:
       args.add(nimExprToEponym(a))
@@ -635,28 +693,9 @@ proc nimExprToEponym(n: NimNode): string =
     # Nim parses it as a call, not an obj-constr. Route to the type converter.
     if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
       return nimTypeToEponym(n)
-    # lam(x, T, body) stays lam(x, T, body) (single syntax).
     if n[0].kind == nnkIdent and $n[0] == "lam":
-      # Nim cannot parse the canonical Eponym spelling `lam {A : T}. body`
-      # as a lambda expression. Accept `lam({A: T}, body)` as its Nim-side
-      # representation, parallel to `Pi({A: T}, ...)` for implicit binders.
-      if n.len == 3 and n[1].kind == nnkTableConstr:
-        if n[1].len != 1 or n[1][0].kind != nnkExprColonExpr or
-           n[1][0].len != 2 or n[1][0][0].kind != nnkIdent:
-          error("implicit lam expects ({binder: type}, body)", n)
-        let binder = n[1][0]
-        return "lam({" & $binder[0] & ": " &
-               nimTypeToEponym(binder[1]) & "}, " & nimExprToEponym(n[2]) & ")" 
-      if n.len == 3 and n[1].kind in {nnkIdent, nnkPragmaExpr}:
-        # Unannotated 2-item lam(x, body): the parser accepts it in
-        # .ep text, so the macro must accept it in embedded code too
-        # (single syntax; issue #467/#469).
-        return "lam(" & qtyPrefix(n[1]) & binderName(n[1]) & ", " &
-               nimExprToEponym(n[2]) & ")"
-      if n.len != 4 or n[1].kind notin {nnkIdent, nnkPragmaExpr}:
-        error("lam expects (binder, type, body)", n)
-      return "lam(" & qtyPrefix(n[1]) & binderName(n[1]) & ", " &
-             nimTypeToEponym(n[2]) & ", " & nimExprToEponym(n[3]) & ")" 
+      error("eponymBlock: lambda call forms were removed; use " &
+            "`lam(x: T) => body`", n)
     warnCallStyleExplicitArgs(n)
     # f(a, b) -> f a b (with parens for nested calls to preserve grouping)
     var callArgs: seq[NimNode] = @[]
@@ -672,7 +711,8 @@ proc nimExprToEponym(n: NimNode): string =
       callArgs = orderCallArguments(callArgs,
         legacyCallInfo[headName].termParamNames,
         legacyCallInfo[headName].termParamDefaults, n)
-    let head = nimExprToEponym(n[0])
+    var head = nimExprToEponym(n[0])
+    if isLambdaArrow(n[0]): head = "(" & head & ")"
     var args: seq[string] = @[]
     for a in callArgs:
       var unwrapped = a
@@ -684,7 +724,8 @@ proc nimExprToEponym(n: NimNode): string =
         # parens — `f ((a, b))` — since `f (a, b)` is now the
         # two-argument call, not `f` applied to the pair.
         args.add("(" & nimExprToEponym(a) & ")")
-      elif a.kind in {nnkCall, nnkObjConstr, nnkCommand}:
+      elif a.kind in {nnkCall, nnkObjConstr, nnkCommand} or
+           (a.kind == nnkInfix and $a[0] == "=>"):
         # Parenthesize if arg is a call or obj-constr (Pi/Sig type args
         # parse as nnkObjConstr in expression position and need grouping too)
         args.add("(" & nimExprToEponym(a) & ")")
@@ -721,6 +762,8 @@ proc nimExprToEponym(n: NimNode): string =
         parts.add(value)
     parts.join(" ")
   of nnkInfix:
+    if $n[0] == "=>":
+      return nimLambdaArrowToEponym(n[1], n[2])
     let prim = case $n[0]
       of "+": "addInt"
       of "-": "subInt"
@@ -795,7 +838,7 @@ proc nimTypeToEponym(n: NimNode): string =
           {nnkObjConstr, nnkBracketExpr, nnkIfExpr, nnkIfStmt,
            nnkStmtListExpr} or
           a.kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
-                     nnkInt64Lit}:
+                     nnkInt64Lit} or isLambdaArrow(a):
         args.add("(" & nimTypeToEponym(a) & ")")
       else:
         args.add(nimTypeToEponym(a))
@@ -826,14 +869,8 @@ proc nimTypeToEponym(n: NimNode): string =
     if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
       return piSigToEponym(n)
     if n[0].kind == nnkIdent and $n[0] == "lam":
-      # lam(x, T, body) stays lam(x, T, body) (continuations in types).
-      if n.len == 3 and n[1].kind in {nnkIdent, nnkPragmaExpr}:
-        return "lam(" & qtyPrefix(n[1]) & binderName(n[1]) & ", " &
-               nimTypeToEponym(n[2]) & ")"
-      if n.len != 4 or n[1].kind notin {nnkIdent, nnkPragmaExpr}:
-        error("lam expects (binder, type, body)", n)
-      return "lam(" & qtyPrefix(n[1]) & binderName(n[1]) & ", " &
-             nimTypeToEponym(n[2]) & ", " & nimTypeToEponym(n[3]) & ")" 
+      error("eponymBlock: lambda calls are not type expressions; use " &
+            "`lam(x: T) => body` in term position", n)
     warnCallStyleTypeArgs(n)
     let head = nimTypeToEponym(n[0])
     if n.len == 1:
@@ -848,7 +885,8 @@ proc nimTypeToEponym(n: NimNode): string =
         if (a.kind == nnkCall and
             (a.len > 1 or a[0].kind == nnkBracketExpr)) or
             a.kind == nnkObjConstr or a.kind in
-            {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit}:
+            {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit, nnkInt64Lit} or
+            isLambdaArrow(a):
           args.add("(" & nimTypeToEponym(a) & ")")
         else:
           args.add(nimTypeToEponym(a))
@@ -863,6 +901,10 @@ proc nimTypeToEponym(n: NimNode): string =
     # A -> B -> A -> B (right associative, as in Eponym)
     if $n[0] == "->" and n.len == 3:
       nimTypeToEponym(n[1]) & " -> " & nimTypeToEponym(n[2])
+    elif $n[0] == "=>" and n.len == 3:
+      # Lambda terms can appear inside type-level indices, e.g. a predicate
+      # argument `All[Nat, lam(x: Nat) => Nat, ...]`.
+      nimExprToEponym(n)
     else:
       error("eponymBlock: unsupported infix in type: " & $n[0], n)
   of nnkPar:

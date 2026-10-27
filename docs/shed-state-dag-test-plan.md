@@ -217,7 +217,7 @@ layout and verify the source/sidecar boundary on disk.
   client without saving the fixture buffer.
 - [x] In the same rebuilt host, keyboard-opened `caseGoal`, used `c` + `n`, and
   observed the checked successor adopted into the editor as
-  `natElim(lam(u, Nat, Nat), ![caseGoal_zero], ![caseGoal_suc], n)`. Both new
+  `natElim(lam(u: Nat) => Nat, ![caseGoal_zero], ![caseGoal_suc], n)`. Both new
   branch goals appeared in the shed picker and the notification reported two
   open goals.
 - [x] Native Undo immediately restored the pre-split `caseGoal` marker; opening

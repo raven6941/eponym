@@ -1,9 +1,9 @@
 import "../../lib/nat.ep"
 postulate(Int, Univ)
 postulate(hostStep, Int -> Int)
-proc importedHelper : Int -> Int = lam(n, Int, hostStep n)
+proc importedHelper : Int -> Int = lam(n: Int) => hostStep n
 postulate(hostNat, Nat -> Nat)
 postulate(Channel, Univ)
 postulate(rotateChannel, Channel -> Channel)
 proc importedChannelStep : Channel -> Channel =
-  lam(channel, Channel, rotateChannel channel)
+  lam(channel: Channel) => rotateChannel channel

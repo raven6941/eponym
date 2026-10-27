@@ -47,7 +47,7 @@ proc corpus*(): seq[TestCase] =
   # 3. lam(x.x) : Pi(Nat,Nat)
   result.add(TestCase(
     name: "lam(x.x) : Pi(Nat,Nat)",
-    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat -> Nat =\n  lam(x, Nat, x)\n",
+    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat -> Nat =\n  lam(x: Nat) => x\n",
     tm: lamTm(varTm(0)),
     ty: piTy(natTy(), natTy()),
     shouldSucceed: true
@@ -55,7 +55,7 @@ proc corpus*(): seq[TestCase] =
   # 4. (lam x.x) zero : Nat
   result.add(TestCase(
     name: "(lam x.x) zero : Nat",
-    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat =\n  (lam(x, Nat, x)) zero\n",
+    src: "data(Nat, Univ) where\n| zero : Nat\n| suc (n : Nat) : Nat\nproc t : Nat =\n  (lam(x: Nat) => x) zero\n",
     tm: appTm(lamTm(varTm(0)), zeroTm()),
     ty: natTy(),
     shouldSucceed: true

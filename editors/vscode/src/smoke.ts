@@ -145,7 +145,7 @@ async function main() {
   check(blockShedsAtCursor(demoText, 0).length === 0,
     "blockShedsAtCursor: outside any block sees nothing");
   const residualText =
-    "shedsBlock:\n  proc f(A: Univ): A = lam x. shedHole(innerGoal)\n";
+    "shedsBlock:\n  proc f(A: Univ): A = lam(x: A) => shedHole(innerGoal)\n";
   const residualOff = residualText.indexOf("shedHole(innerGoal)");
   check(shedNodeStartingAt(residualText, residualOff)?.name === "innerGoal",
     "shedNodeStartingAt recognizes a residual shedHole marker");

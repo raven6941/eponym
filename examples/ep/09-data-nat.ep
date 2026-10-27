@@ -8,5 +8,5 @@ data(Nat, Univ) where
 | suc (n : Nat) : Nat
 proc two : Nat= suc (suc zero)
 proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) m (lam(p, Nat, lam(ih, Nat, suc ih))) n
+  natElim (lam(u: Nat) => Nat) m (lam(p: Nat) => lam(ih: Nat) => suc ih) n
 proc four : Nat= add two two

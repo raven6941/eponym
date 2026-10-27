@@ -3,4 +3,4 @@ import "../../lib/vec.ep"
 postulate(Int, Univ)
 proc importedVectorIdentity :
   Pi(length: Nat, Pi(values: Vec Int length, Vec Int length)) =
-  lam(length, Nat, lam(values, Vec Int length, values))
+  lam(length: Nat) => lam(values: Vec Int length) => values

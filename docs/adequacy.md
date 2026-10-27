@@ -17,7 +17,7 @@ elaborates when checked against its type. (Inference is intentionally
 partial — see P6.)
 
 **P2 — Compositionality.** Elaboration is a homomorphism on term formers:
-- `elab(lam(x,A,t))` is `tLam` whose domain is `elab(A)` and whose body is
+- `elab(lam(x: A) => t)` is `tLam` whose domain is `elab(A)` and whose body is
   α-equal to `elab(t)` under the context extended with `x`;
 - `elab(app(f,x))` is α-equal to `app(elab(f), elab(x))`;
 - `elab(fst(p))` is α-equal to `fst(elab(p))`.

@@ -15,18 +15,18 @@ data(Option, [A : Univ], Univ) where
 | none : Option A
 | some (value : A) : Option A
 proc optDouble (o : Option Int) : Option Int =
-  optionElim Int (lam(u, Option Int, Option Int))
+  optionElim Int (lam(u: Option Int) => Option Int)
              (none Int)
-             (lam(v, Int, some Int (addInt v v)))
+             (lam(v: Int) => some Int (addInt v v))
              o
 proc optDefault (o : Option Int) (d : Int) : Int =
-  optionElim Int (lam(u, Option Int, Int))
+  optionElim Int (lam(u: Option Int) => Int)
              d
-             (lam(v, Int, v))
+             (lam(v: Int) => v)
              o
 proc osomeStep (v : Int) : Option Int = some Int (addInt v v)
 proc optDoubleFn (o : Option Int) : Option Int =
-  optionElim Int (lam(u, Option Int, Option Int))
+  optionElim Int (lam(u: Option Int) => Option Int)
              (none Int) osomeStep o
 """
 

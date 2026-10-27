@@ -31,16 +31,14 @@ eponymBlock:
     else: countBranchPostulate(value)
   proc chooseOptionalLinear(optionValue: Option[Int],
                             value {.linear.}: Int): Int =
-    (optionElim[Int, lam(u, Option[Int], Pi(unit: unitTy, Int))](
-      lam(unit, unitTy, countBranchPostulate(value)),
-      lam(payload, Int, lam(unit, unitTy, countBranchPostulate(value))),
+    (optionElim[Int, lam(u: Option[Int]) => Pi(unit: unitTy, Int)](
+      lam(unit: unitTy) => countBranchPostulate(value),
+      lam(payload: Int) => lam(unit: unitTy) => countBranchPostulate(value),
       optionValue))(unitv)
   proc chooseChainLinear(values: List[Int], value {.linear.}: Int): Int =
-    listElim[Int, lam(u, List[Int], Int)](
+    listElim[Int, lam(u: List[Int]) => Int](
       countBranchPostulate(value),
-      lam(item, Int,
-        lam(tail, List[Int],
-          lam(ih, Int, ih))),
+      lam(item: Int) => lam(tail: List[Int]) => lam(ih: Int) => ih,
       values)
   proc addOne(value: Int): Int = value + 1
 

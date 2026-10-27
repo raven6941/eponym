@@ -20,7 +20,7 @@
 #
 #   proc plus(x: Nat, y: Nat): Nat = ![ plusBody ]            # named shed
 #   proc quad(n: Nat): Nat = ![ quadBody, double (double n) ] # with draft
-#   proc id(A: Univ): A = lam x. shedHole(inner)              # nested shed
+#   proc id(A: Univ): A = lam(x: A) => shedHole(inner)         # nested shed
 #
 # (A proc whose body is a shed *is* the Epigram shape: the declaration
 # exists with its type, and the shed is the incomplete right-hand side --
@@ -174,7 +174,7 @@ proc isShedNode*(n: NimNode): bool =
 proc isShedHoleCall*(n: NimNode): bool =
   ## `shedHole(name)`: call-form marker for a residual shed nested in
   ## Nim command syntax, where the prefix form `![name]` cannot parse.
-  ## Inside `lam x. ...`, Nim attaches the binder to the call head and
+  ## Inside `lam(x: T) => ...`, Nim attaches the binder to the call head and
   ## parses this as `Call(DotExpr(x, shedHole), name)`.
   if n.kind != nnkCall or n.len != 2 or n[1].kind != nnkIdent:
     return false

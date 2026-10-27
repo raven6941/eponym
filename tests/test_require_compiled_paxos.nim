@@ -145,8 +145,7 @@ eponymBlock:
   proc propAfterAccept(accepted: Nat): Session = endS()
   proc propAfterPromise(promise: Promise): Session =
     sendD(AcceptMsg(promiseValue(promise)),
-      lam(ticket, AcceptMsg(promiseValue(promise)),
-        recvD(Nat, propAfterAccept)))
+      lam(ticket: AcceptMsg(promiseValue(promise))) => recvD(Nat, propAfterAccept))
   proc propAfterPrepare(ballot: Nat): Session =
     recvD(Promise, propAfterPromise)
   proc propProto(): Session = sendD(Nat, propAfterPrepare)
@@ -154,8 +153,7 @@ eponymBlock:
   proc accAfterAccept(accepted: Nat): Session = endS()
   proc accAfterPromise(promise: Promise): Session =
     recvD(AcceptMsg(promiseValue(promise)),
-      lam(ticket, AcceptMsg(promiseValue(promise)),
-        sendD(Nat, accAfterAccept)))
+      lam(ticket: AcceptMsg(promiseValue(promise))) => sendD(Nat, accAfterAccept))
   proc accAfterPrepare(ballot: Nat): Session =
     sendD(Promise, accAfterPromise)
   proc accProto(): Session = recvD(Nat, accAfterPrepare)

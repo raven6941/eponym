@@ -8,16 +8,16 @@ import "nat.ep"
 import "eq.ep"
 
 proc addZeroR (n : Nat) : Eq Nat (add n zero) n =
-  natElim (lam(m, Nat, Eq Nat (add m zero) m))
+  natElim (lam(m: Nat) => Eq Nat (add m zero) m)
           (refl Nat zero)
-          (lam(k, Nat, lam(ih, Eq Nat (add k zero) k, cong Nat Nat (lam(x, Nat, suc x)) (add k zero) k ih)))
+          (lam(k: Nat) => lam(ih: Eq Nat (add k zero) k) => cong Nat Nat (lam(x: Nat) => suc x) (add k zero) k ih)
           n
 
 proc addSucR (n : Nat) (m : Nat) : Eq Nat (add n (suc m)) (suc (add n m)) =
-  natElim (lam(k, Nat, Eq Nat (add k (suc m)) (suc (add k m))))
+  natElim (lam(k: Nat) => Eq Nat (add k (suc m)) (suc (add k m)))
           (refl Nat (suc m))
-          (lam(k, Nat, lam(ih, Eq Nat (add k (suc m)) (suc (add k m)), cong Nat Nat (lam(x, Nat, suc x))
-                 (add k (suc m)) (suc (add k m)) ih)))
+          (lam(k: Nat) => lam(ih: Eq Nat (add k (suc m)) (suc (add k m))) => cong Nat Nat (lam(x: Nat) => suc x)
+                 (add k (suc m)) (suc (add k m)) ih)
           n
 
 proc addComm (n : Nat) (m : Nat) : Eq Nat (add n m) (add m n) =
@@ -28,9 +28,9 @@ proc addAssoc (a : Nat) (b : Nat) (c : Nat)
   byTac(arith)
 
 proc mulZeroR (n : Nat) : Eq Nat (mul n zero) zero =
-  natElim (lam(m, Nat, Eq Nat (mul m zero) zero))
+  natElim (lam(m: Nat) => Eq Nat (mul m zero) zero)
           (refl Nat zero)
-          (lam(k, Nat, lam(ih, Eq Nat (mul k zero) zero, refl Nat zero)))
+          (lam(k: Nat) => lam(ih: Eq Nat (mul k zero) zero) => refl Nat zero)
           n
 
 # Computational check: lemmas evaluate (issue #54 acceptance criterion).

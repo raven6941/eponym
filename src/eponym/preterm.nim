@@ -8,6 +8,8 @@
 # depends on `kind` (documented per constructor). Client code should
 # only use the mk* constructors, never touch c1/c2/c3 directly.
 
+import strutils, sequtils
+
 type
   Loc* = object
     line*: int
@@ -231,12 +233,24 @@ proc render(p: PreTerm, prec: int): string =
       else: "Sig(" & p.name & ": " & render(p.c1, 0) & ", " & render(p.c2, 0) & ")"
     if prec > 0: par(s) else: s
   of pkLam:
-    let s =
-      if p.impl:
-        if p.c1.isNil: "lam({" & p.name & "}, " & render(p.c2, 0) & ")"
-        else: "lam({" & p.name & ": " & render(p.c1, 0) & "}, " & render(p.c2, 0) & ")"
-      elif p.c1.isNil: "lam(" & p.name & ", " & render(p.c2, 0) & ")"
-      else: "lam(" & p.name & ", " & render(p.c1, 0) & ", " & render(p.c2, 0) & ")"
+    var binders: seq[string] = @[]
+    var body = p
+    while body.kind == pkLam and body.impl == p.impl:
+      var prefix = ""
+      if body.impl:
+        prefix = "{" & body.name & ": " & render(body.c1, 0) & "}"
+      else:
+        if body.erased: prefix = "0 "
+        elif not body.qty.isVar and body.qty.q == q1: prefix = "1 "
+        elif body.qty.isVar and not body.qty.vname.startsWith("#q"):
+          prefix = body.qty.vname & " "
+        prefix &= body.name
+        if not body.c1.isNil: prefix &= ": " & render(body.c1, 0)
+      binders.add(prefix)
+      body = body.c2
+    let group = if p.impl: "{" & binders.mapIt(it[1 .. ^2]).join(", ") & "}"
+                else: binders.join(", ")
+    let s = "lam(" & group & ") => " & render(body, 0)
     if prec > 0: par(s) else: s
   of pkApp:
     let s = render(p.c1, 2) & " " & render(p.c2, 3)
@@ -389,5 +403,5 @@ when isMainModule:
                                          (name: "x", ty: mkVar("A"), impl: false, erased: false, qty: qOmega)],
                   retTy: mkVar("A"), body: mkVar("x"))
   assert $d.desugarTy() == "Pi(A: Univ, Pi(x: A, A))"
-  assert $d.desugarTm() == "lam(A, Univ, lam(x, A, x))"
+  assert $d.desugarTm() == "lam(A: Univ, x: A) => x"
   echo "preterm: all tests passed"

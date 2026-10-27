@@ -29,28 +29,24 @@ eponymBlock:
                  pxs: All[A, P, n, xs]): All[A, P, suc(n), cons[A, n](x, xs)]
 
   # A witness: every element of [1, 1] satisfies P (P = fun x => Nat).
-  proc witness(): All[Nat, lam(x, Nat, Nat), suc(suc(zero())),
+  proc witness(): All[Nat, lam(x: Nat) => Nat, suc(suc(zero())),
                       cons[Nat, suc(zero())](suc(zero()),
                            cons[Nat, zero()](zero(), vecnil[Nat]()))] =
-    allCons[Nat, lam(x, Nat, Nat)](suc(zero()), suc(zero()),
+    allCons[Nat, lam(x: Nat) => Nat](suc(zero()), suc(zero()),
             cons[Nat, zero()](zero(), vecnil[Nat]()), suc(zero()),
-            allCons[Nat, lam(x, Nat, Nat)](zero(), zero(), vecnil[Nat](),
-                    zero(), allNil[Nat, lam(x, Nat, Nat)]()))
+            allCons[Nat, lam(x: Nat) => Nat](zero(), zero(), vecnil[Nat](),
+                    zero(), allNil[Nat, lam(x: Nat) => Nat]()))
 
   # Eliminate the witness to compute the vector's length. The motive is
   # `lam (i : Nat). lam (w : Vec Nat i). lam (u : All Nat P i w). Nat`,
   # which is well-scoped only because the #112 fix substitutes the
   # renamed index binders into later index domains.
   proc allLen(n: Nat, v: Vec[Nat, n],
-              a: All[Nat, lam(x, Nat, Nat), n, v]): Nat =
-    allElim[Nat, lam(x, Nat, Nat)](
-            lam(i, Nat, lam(w, Vec[Nat, i],
-                            lam(u, All[Nat, lam(x, Nat, Nat), i, w], Nat))),
+              a: All[Nat, lam(x: Nat) => Nat, n, v]): Nat =
+    allElim[Nat, lam(x: Nat) => Nat](
+            lam(i: Nat) => lam(w: Vec[Nat, i]) => lam(u: All[Nat, lam(x: Nat) => Nat, i, w]) => Nat,
             zero(),
-            lam(i, Nat, lam(x, Nat, lam(xs, Vec[Nat, i],
-                                       lam(px, Nat,
-                                           lam(pxs, All[Nat, lam(x, Nat, Nat), i, xs],
-                                               lam(ih, Nat, suc(ih))))))),
+            lam(i: Nat) => lam(x: Nat) => lam(xs: Vec[Nat, i]) => lam(px: Nat) => lam(pxs: All[Nat, lam(x: Nat) => Nat, i, xs]) => lam(ih: Nat) => suc(ih),
             n, v, a)
 
   # Sanity: the length of the 2-vector is 2.

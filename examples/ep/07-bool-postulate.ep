@@ -9,6 +9,6 @@ elim(boolElim, Pi(C: Bool -> Univ, C true -> C false -> Pi(b: Bool, C b)))
 red(boolElim C t f true, t)
 red(boolElim C t f false, f)
 proc not (b : Bool) : Bool =
-  boolElim (lam(u, Bool, Bool)) false true b
+  boolElim (lam(u: Bool) => Bool) false true b
 proc notTrue : Bool= not true
 proc notFalse : Bool= not false

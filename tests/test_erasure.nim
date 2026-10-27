@@ -97,9 +97,9 @@ discard indexedUsageDrv.elabFile(repoRoot / "lib/vec.ep")
 let indexedUsageDefs = indexedUsageDrv.elabDeclsDir(parseProgram("""
 postulate(Int, Univ)
 proc linearVecElim (n : Nat) (xs : Vec Int n) : Vec Int n =
-  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Vec Int i)))
+  vecElim Int (lam(i: Nat) => lam(v: Vec Int i) => Vec Int i)
     (nil Int)
-    (lam(i, Nat, lam(x, Int, lam(tail, Vec Int i, lam(ih, Vec Int i, cons Int i x ih)))))
+    (lam(i: Nat) => lam(x: Int) => lam(tail: Vec Int i) => lam(ih: Vec Int i) => cons Int i x ih)
     n xs
 """), repoRoot, "<indexed-q1-elimination>")
 var linearVecElimDef: ElabDef
@@ -119,9 +119,9 @@ try:
 postulate(Int, Univ)
 proc indexedBranchCapture (n : Nat) (xs : Vec Int n)
     (1 value : Int) : Int =
-  vecElim Int (lam(i, Nat, lam(v, Vec Int i, Int)))
+  vecElim Int (lam(i: Nat) => lam(v: Vec Int i) => Int)
     value
-    (lam(i, Nat, lam(x, Int, lam(tail, Vec Int i, lam(ih, Int, ih)))))
+    (lam(i: Nat) => lam(x: Int) => lam(tail: Vec Int i) => lam(ih: Int) => ih)
     n xs
 """), repoRoot, "<indexed-q1-branch-capture>")
 except ElabError as e:
@@ -135,7 +135,7 @@ discard branchDrv.elabFile(repoRoot / "lib/bool.ep")
 let branchDefs = branchDrv.elabDeclsDir(parseProgram("""
 postulate(Int, Univ)
 proc branchLinear (flag : Bool) (value : Int) : Int =
-  ifThenElse flag (lam(u, unitTy, value)) (lam(u, unitTy, value)) unitv
+  ifThenElse flag (lam(u: unitTy) => value) (lam(u: unitTy) => value) unitv
 """), repoRoot, "<q1-branch-erasure>")
 var branchLinearDef: ElabDef
 for defn in branchDefs:
@@ -158,10 +158,10 @@ data(Tri, Univ) where
 | second : Tri
 | third : Tri
 proc triLinear (tag : Tri) (value : Int) : Int =
-  triElim (lam(u, Tri, Pi(unit: unitTy, Int)))
-          (lam(unit, unitTy, value))
-          (lam(unit, unitTy, value))
-          (lam(unit, unitTy, value))
+  triElim (lam(u: Tri) => Pi(unit: unitTy, Int))
+          (lam(unit: unitTy) => value)
+          (lam(unit: unitTy) => value)
+          (lam(unit: unitTy) => value)
           tag
           unitv
 """), repoRoot, "<three-way-q1-branch>")
@@ -188,10 +188,10 @@ data(Tri, Univ) where
 | second : Tri
 | third : Tri
 proc triDuplicate (tag : Tri) (1 value : Int) : Int =
-  triElim (lam(u, Tri, Pi(unit: unitTy, Int)))
-          (lam(unit, unitTy, value))
-          (lam(unit, unitTy, value))
-          (lam(unit, unitTy, duplicateInt value value))
+  triElim (lam(u: Tri) => Pi(unit: unitTy, Int))
+          (lam(unit: unitTy) => value)
+          (lam(unit: unitTy) => value)
+          (lam(unit: unitTy) => duplicateInt value value)
           tag
           unitv
 """), repoRoot, "<three-way-q1-duplicate>")
@@ -207,9 +207,9 @@ data(Chain, Univ) where
 | chainEnd (item : Int) : Chain
 | chainNext (item : Int) (tail : Chain) : Chain
 proc linearAtChainEnd (xs : Chain) (value : Int) : Int =
-  chainElim (lam(u, Chain, Int))
-    (lam(item, Int, value))
-    (lam(item, Int, lam(tail, Chain, lam(ih, Int, ih))))
+  chainElim (lam(u: Chain) => Int)
+    (lam(item: Int) => value)
+    (lam(item: Int) => lam(tail: Chain) => lam(ih: Int) => ih)
     xs
 """), repoRoot, "<recursive-q1-branch>")
 var linearAtEndDef: ElabDef
@@ -233,9 +233,9 @@ data(Chain, Univ) where
 | chainEnd (item : Int) : Chain
 | chainNext (item : Int) (tail : Chain) : Chain
 proc duplicateAlongChain (xs : Chain) (1 value : Int) : Int =
-  chainElim (lam(u, Chain, Int))
-    (lam(item, Int, value))
-    (lam(item, Int, lam(tail, Chain, lam(ih, Int, duplicateInt value ih))))
+  chainElim (lam(u: Chain) => Int)
+    (lam(item: Int) => value)
+    (lam(item: Int) => lam(tail: Chain) => lam(ih: Int) => duplicateInt value ih)
     xs
 """), repoRoot, "<recursive-q1-duplicate>")
 except ElabError as e:
@@ -253,9 +253,9 @@ data(Chain, Univ) where
 | chainEnd (item : Int) : Chain
 | chainNext (item : Int) (tail : Chain) : Chain
 proc capturesLinearValue(xs : Chain) (1 value : Int) : Pi(unit: unitTy, Int) =
-  chainElim (lam(u, Chain, Pi(unit: unitTy, Int)))
-    (lam(item, Int, lam(unit, unitTy, value)))
-    (lam(item, Int, lam(tail, Chain, lam(ih, Pi(unit: unitTy, Int), ih))))
+  chainElim (lam(u: Chain) => Pi(unit: unitTy, Int))
+    (lam(item: Int) => lam(unit: unitTy) => value)
+    (lam(item: Int) => lam(tail: Chain) => lam(ih: Pi(unit: unitTy, Int)) => ih)
     xs
     unitv
 """), repoRoot, "<recursive-q1-closure-motive>")
@@ -275,9 +275,9 @@ data(Tree, Univ) where
 | leaf (item : Int) : Tree
 | fork (left : Tree) (right : Tree) : Tree
 proc linearAtLeaf (tree : Tree) (1 value : Int) : Int =
-  treeElim (lam(u, Tree, Int))
-    (lam(item, Int, value))
-    (lam(left, Tree, lam(ihLeft, Int, lam(right, Tree, lam(ihRight, Int, duplicateInt value ihLeft)))))
+  treeElim (lam(u: Tree) => Int)
+    (lam(item: Int) => value)
+    (lam(left: Tree) => lam(ihLeft: Int) => lam(right: Tree) => lam(ihRight: Int) => duplicateInt value ihLeft)
     tree
 """), repoRoot, "<binary-tree-q1-duplicate>")
 except ElabError as e:

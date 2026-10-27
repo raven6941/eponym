@@ -12,11 +12,11 @@ data(Eq, [A: Univ, x: A], A -> Univ) where
 
 proc cong (A : Univ) (B : Univ) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
     : Eq B (f x) (f y) =
-  eqElim A x (lam(z, A, lam(q, Eq A x z, Eq B (f x) (f z))))
+  eqElim A x (lam(z: A) => lam(q: Eq A x z) => Eq B (f x) (f z))
          (refl B (f x)) y p
 
 proc plusReducesZ (n : Nat) : Eq Nat n (add n zero) =
-  natElim (lam(m, Nat, Eq Nat m (add m zero)))
+  natElim (lam(m: Nat) => Eq Nat m (add m zero))
           (refl Nat zero)
-          (lam(k, Nat, lam(ih, Eq Nat k (add k zero), cong Nat Nat (lam(x, Nat, suc x)) k (add k zero) ih)))
+          (lam(k: Nat) => lam(ih: Eq Nat k (add k zero)) => cong Nat Nat (lam(x: Nat) => suc x) k (add k zero) ih)
           n

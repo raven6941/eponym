@@ -28,15 +28,15 @@ eponymBlock:
   # A protocol: receive a Nat, then send a Nat, then done. The continuation
   # after the receive is a function of the received value.
   proc proto(): Session =
-    recvDNat(lam(n, Nat, sendD(Nat, lam(m, Nat, endD()))))
+    recvDNat(lam(n: Nat) => sendD(Nat, lam(m: Nat) => endD()))
 
   # Count the receives in a protocol. The recvDNat method applies its
   # induction hypothesis under the binder (ih zero); the sendD method
   # contributes zero receives.
   proc receives(s: Session): Nat =
-    sessionElim(lam(u, Session, Nat),
-      lam(A, Univ, lam(k, A -> Session, lam(ih, Pi(x: A, Nat), zero()))),
-      lam(k, Nat -> Session, lam(ih, Pi(n: Nat, Nat), suc(ih(zero())))),
+    sessionElim(lam(u: Session) => Nat,
+      lam(A: Univ) => lam(k: A -> Session) => lam(ih: Pi(x: A, Nat)) => zero(),
+      lam(k: Nat -> Session) => lam(ih: Pi(n: Nat, Nat)) => suc(ih(zero())),
       zero(),
       s)
 

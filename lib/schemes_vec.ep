@@ -23,8 +23,8 @@ proc cataVec (A : Univ) (P : Pi(i: Nat, Vec A i -> Univ))
 proc vmapFusion (A : Univ) (B : Univ) (C : Univ) (f : A -> B) (g : B -> C)
     (n : Nat) (xs : Vec A n)
     : Eq (Vec C n) (vmap g (vmap f xs))
-                   (vmap (lam(x, A, g (f x))) xs) =
-  cataVec A (lam(i, Nat, lam(v, Vec A i, Eq (Vec C i) (vmap g (vmap f v)) (vmap (lam(x, A, g (f x))) v))))
+                   (vmap (lam(x: A) => g (f x)) xs) =
+  cataVec A (lam(i: Nat) => lam(v: Vec A i) => Eq (Vec C i) (vmap g (vmap f v)) (vmap (lam(x: A) => g (f x)) v))
           (refl (Vec C zero) (nil C))
-          (lam(i, Nat, lam(x, A, lam(xs2, Vec A i, lam(ih, Eq (Vec C i) (vmap g (vmap f xs2)) (vmap (lam(x, A, g (f x))) xs2), cong (Vec C i) (Vec C (suc i)) (lam(t, Vec C i, cons C i (g (f x)) t)) (vmap g (vmap f xs2)) (vmap (lam(x, A, g (f x))) xs2) ih)))))
+          (lam(i: Nat) => lam(x: A) => lam(xs2: Vec A i) => lam(ih: Eq (Vec C i) (vmap g (vmap f xs2)) (vmap (lam(x: A) => g (f x)) xs2)) => cong (Vec C i) (Vec C (suc i)) (lam(t: Vec C i) => cons C i (g (f x)) t) (vmap g (vmap f xs2)) (vmap (lam(x: A) => g (f x)) xs2) ih)
           n xs

@@ -87,13 +87,13 @@ proc useBoth : [Console] unitTy = id unitTy puts
 
 # --- explicit [] : pure operator, usable in a [] ambient ----------------------
 check(elaborates(prelude & """
-proc pid : [] unitTy -> unitTy = lam(x, unitTy, x)
+proc pid : [] unitTy -> unitTy = lam(x: unitTy) => x
 proc usePure : [] unitTy = pid unitv
 """), "explicit [] operator works in a [] ambient")
 
 # --- explicit [] under an open ambient: Frank-strict rejection -------------------
 check(rejects(prelude & """
-proc pid : [] unitTy -> unitTy = lam(x, unitTy, x)
+proc pid : [] unitTy -> unitTy = lam(x: unitTy) => x
 proc poly (A : Univ) (x : A) : A = pid x
 """, "ability mismatch"), "[] operator under a polymorphic ambient is rejected (no subeffecting)")
 

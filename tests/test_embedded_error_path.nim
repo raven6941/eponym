@@ -56,6 +56,14 @@ for path in ["tests/fixtures/embedded_err_unbound.nim",
     inc failed
 
 for (path, expected) in [
+    ("tests/fixtures/embedded_err_lambda_call.nim",
+     "lambda call forms were removed"),
+    ("tests/fixtures/embedded_err_nonlambda_fatarrow.nim",
+     "`=>` is only supported after a lam binder group")]:
+  if not checkFixture(path, expected):
+    inc failed
+
+for (path, expected) in [
     ("tests/fixtures/embedded_err_q1_if_one_branch.nim",
      "used 0 or 1 time(s)"),
     ("tests/fixtures/embedded_err_q1_if_duplicate_branch.nim",

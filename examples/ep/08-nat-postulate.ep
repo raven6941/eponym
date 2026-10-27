@@ -10,7 +10,7 @@ red(natElim C z s zero, z)
 red(natElim C z s (suc n), s n (natElim C z s n))
 proc two : Nat= suc (suc zero)
 proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) m (lam(p, Nat, lam(ih, Nat, suc ih))) n
+  natElim (lam(u: Nat) => Nat) m (lam(p: Nat) => lam(ih: Nat) => suc ih) n
 proc four : Nat= add two two
 proc stuckTest (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) zero (lam(p, Nat, lam(ih, Nat, p))) n
+  natElim (lam(u: Nat) => Nat) zero (lam(p: Nat) => lam(ih: Nat) => p) n

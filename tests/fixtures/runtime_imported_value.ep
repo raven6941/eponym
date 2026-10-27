@@ -12,4 +12,4 @@ proc importedListMap (A : Univ) (B : Univ) (f : A -> B)
     (values : List A) : List B = map A B f values
 proc importedApply (value : Int) : Int = importedStep value
 proc importedQ0Effect (value : Int) : Int =
-  (lam(0 proof, Int, importedQ0Tick 7)) (importedQ0Tick value)
+  (lam(0 proof: Int) => importedQ0Tick 7) (importedQ0Tick value)

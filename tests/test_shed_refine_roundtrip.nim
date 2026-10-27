@@ -87,17 +87,17 @@ sidecar = readShedSidecar(sidecarPath(nimFile))
 check(sidecar[0].status == ssYellow and sidecar[0].genSrc == beforeRejectedRefine,
   "rejected refinement leaves the sidecar unchanged")
 let rejectedGive = refineShed(
-  nimFile, "constEndoBody", "lam(f, lam(g, _))", requireComplete = true)
+  nimFile, "constEndoBody", "lam(f) => lam(g) => _", requireComplete = true)
 check(not rejectedGive.ok and "give rejected" in rejectedGive.why,
   "Give rejects a candidate that leaves a residual hole")
 sidecar = readShedSidecar(sidecarPath(nimFile))
 check(sidecar[0].status == ssYellow and sidecar[0].genSrc == beforeRejectedRefine,
   "rejected Give leaves the sidecar unchanged")
 
-let partial = refineShed(nimFile, "constEndoBody", "lam(f, lam(g, _))")
+let partial = refineShed(nimFile, "constEndoBody", "lam(f) => lam(g) => _")
 check(partial.ok and partial.status == "yellow" and partial.yellowCount == 1,
   "a well-typed partial lambda is accepted with one open goal")
-check(partial.term == "lam(f, lam(g, shedHole(constEndoBody)))",
+check(partial.term == "lam(f) => lam(g) => shedHole(constEndoBody)",
   "the returned Nim splice names the residual hole")
 if partial.ok:
   let nimV1 = spliceShed(nimV0, partial.nimLine, partial.nimCol, partial.term)
@@ -131,7 +131,7 @@ if partial.ok:
       "a fully refined source no longer emits an open shed")
     try:
       discard elabCheck("proc constEndo (A : Univ) : " &
-        "Pi(f: A, Pi(g: A, A)) = lam(f, lam(g, f))\n")
+        "Pi(f: A, Pi(g: A, A)) = lam(f) => lam(g) => f\n")
       check(true, "completed generated Eponym source passes strict checking")
     except CatchableError as e:
       check(false, "completed generated Eponym source checks: " & e.msg)
@@ -156,8 +156,8 @@ check(readShedSidecar(sidecarPath(introVecFile))[0].genSrc ==
       introVecSidecar0[0].genSrc,
   "rejected Intro leaves the sidecar unchanged")
 let introVec = introShed(introVecFile, "introVecBody", 2)
-check(introVec.ok and "lam(n, Nat," in introVec.term and
-      "lam(xs, (Vec Nat n)," in introVec.term,
+check(introVec.ok and "lam(n: Nat) =>" in introVec.term and
+      "lam(xs: (Vec Nat n)) =>" in introVec.term,
   "Intro emits typed lambdas for dependent binders: " &
     (if introVec.ok: introVec.term else: introVec.why))
 if introVec.ok:
@@ -189,7 +189,7 @@ compiled = compileFixture(implicitIntroFile, scratch)
 if not compiled.ok: echo compiled.output
 check(compiled.ok, "implicit Intro fixture compiles with an initial shed")
 let implicitIntro = introShed(implicitIntroFile, "implicitIntroBody")
-check(implicitIntro.ok and "lam({A: Univ}," in implicitIntro.term,
+check(implicitIntro.ok and "lam({A: Univ}) =>" in implicitIntro.term,
   "Intro preserves implicit Pi binders: " &
     (if implicitIntro.ok: implicitIntro.term else: implicitIntro.why))
 if implicitIntro.ok:
@@ -206,7 +206,7 @@ if implicitIntro.ok:
     "implicit Intro residual retains its binder and function goal")
   let dependentExplicitIntro = introShed(
     implicitIntroFile, "implicitIntroBody")
-  check(dependentExplicitIntro.ok and "lam(intro, A," in
+  check(dependentExplicitIntro.ok and "lam(intro: A) =>" in
         dependentExplicitIntro.term,
     "a later Intro uses the previously introduced implicit type binder")
   if dependentExplicitIntro.ok:
@@ -404,7 +404,7 @@ if cases.ok:
     check(caseSheds.len == 1 and caseSheds[0].name == cases.subSheds[1],
       "sidecar retains only the unfilled successor case")
     let suc = refineShed(
-      caseFile, cases.subSheds[1], "lam(p, lam(ih, false))", true)
+      caseFile, cases.subSheds[1], "lam(p) => lam(ih) => false", true)
     check(suc.ok and suc.status == "white" and suc.yellowCount == 0,
       "successor case can be independently completed with its IH in scope")
 
@@ -425,7 +425,7 @@ let listCases = caseSplitShed(listFile, "listLengthBody", "xs")
 check(listCases.ok and listCases.subSheds.len == 2,
   "case-split accepts a parameterized, non-indexed List")
 check(listCases.term ==
-      "listElim[Nat](lam(u, List[Nat], Nat), " &
+      "listElim[Nat](lam(u: List[Nat]) => Nat, " &
       "![listLengthBody_nil], ![listLengthBody_cons], xs)",
   "case-split replays List's parameter in both eliminator and motive")
 if listCases.ok:
@@ -459,7 +459,7 @@ check(compiled.ok, "generic List fixture compiles with an initial shed")
 let genericListCases = caseSplitShed(
   genericListFile, "inspectListBody", "xs")
 check(genericListCases.ok and genericListCases.term.startsWith(
-        "listElim[A](lam(u, List[A], Nat),"),
+        "listElim[A](lam(u: List[A]) => Nat,"),
   "case-split retains a generic local datatype parameter")
 if genericListCases.ok:
   let genericListV1 = spliceShed(
@@ -567,7 +567,7 @@ if partialOptions.ok:
       "partial Apply goal substitutes the inferred binder into its dependent domain")
 let vecCases = caseSplitShed(vecFile, "vecBody", "xs")
 check(vecCases.ok and vecCases.term.startsWith(
-        "vecElim[Nat](lam(i0, Nat, lam(u, Vec[Nat, i0], Nat)),"),
+        "vecElim[Nat](lam(i0: Nat) => lam(u: Vec[Nat, i0]) => Nat,"),
   "indexed case-split generalizes the Vec index in its motive: " &
     (if vecCases.ok: vecCases.term else: vecCases.why))
 if vecCases.ok:
@@ -625,7 +625,8 @@ compiled = compileFixture(taggedFile, scratch)
 if not compiled.ok: echo compiled.output
 check(compiled.ok, "parameter-dependent index fixture compiles with a shed")
 let taggedCases = caseSplitShed(taggedFile, "taggedBody", "value")
-check(taggedCases.ok and "lam(i0, Nat, lam(i1, A," in taggedCases.term and
+check(taggedCases.ok and "lam(i0: Nat) =>" in taggedCases.term and
+      "lam(i1: A) =>" in taggedCases.term and
       "Tagged[A, i0, i1]" in taggedCases.term and
       ", n, a, value)" in taggedCases.term,
   "case-split handles multiple indices and a parameter-dependent index domain: " &

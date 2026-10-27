@@ -365,7 +365,7 @@ proc unifyHead*(ms: MetaStore, t: Term): Term =
   ## Head-normalize for unification: unfold solved metas (at the head
   ## and in function position) and beta-reduce. No delta-unfolding of
   ## definitions — rigid heads stay rigid. (Experiment 4: eliminator
-  ## motives are lambdas, so `C true` with `C = lam u. Bool` must
+  ## motives are lambdas, so `C true` with `C = lam(u: Bool) => Bool` must
   ## head-reduce before the rigid-rigid comparison.)
   var cur = zonkHead(ms, t)
   while true:

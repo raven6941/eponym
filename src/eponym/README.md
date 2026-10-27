@@ -110,7 +110,7 @@ data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
 proc bad : Pi(x: Nat, Nat) =
-  lam(x, Univ, x)
+  lam(x: Univ) => x
 ```
 
 ```sh

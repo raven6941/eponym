@@ -109,7 +109,7 @@ proc nestedLet (x : Int) : Int =
   let y : Int = addInt x x in addInt y (mulInt x 3)
 proc double (x : Int) : Int = addInt x x
 proc quad (x : Int) : Int = double (double x)
-proc betaRed (x : Int) : Int = (lam(y, Int, addInt y y)) x
+proc betaRed (x : Int) : Int = (lam(y: Int) => addInt y y) x
 proc subThenMul (x : Int) (y : Int) : Int = mulInt (subInt x y) (subInt y x)
 
 postulate(tick, Int -> Int)
@@ -129,7 +129,7 @@ proc natZero : Nat = zero
 # definition as an ordinary `{.closure.}` proc value, and applied there.
 proc applyFn (f : Nat -> Nat) (n : Nat) : Nat = f n
 proc crossDef (n : Nat) : Nat =
-  let add3 = natElim (lam(u, Nat, Nat)) (suc (suc (suc zero))) (lam(p, Nat, lam(ih, Nat, suc ih))) in
+  let add3 = natElim (lam(u: Nat) => Nat) (suc (suc (suc zero))) (lam(p: Nat) => lam(ih: Nat) => suc ih) in
   applyFn add3 n
 # A compiled definition as a function value: the uncurried proc converts
 # to the flattened closure type implicitly.
@@ -155,35 +155,35 @@ proc q0dom (f : Pi(0 p: Nat, Int)) (x : Int) : Int = f 0
 proc natSeven : Nat = 7
 proc natSucc (n : Nat) : Nat = suc n
 proc natAdd (m : Nat) (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) n (lam(p, Nat, lam(ih, Nat, suc ih))) m
+  natElim (lam(u: Nat) => Nat) n (lam(p: Nat) => lam(ih: Nat) => suc ih) m
 proc natMul (m : Nat) (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) zero (lam(p, Nat, lam(ih, Nat, natAdd m ih))) n
+  natElim (lam(u: Nat) => Nat) zero (lam(p: Nat) => lam(ih: Nat) => natAdd m ih) n
 proc natDouble (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) zero (lam(p, Nat, lam(ih, Nat, suc (suc ih)))) n
+  natElim (lam(u: Nat) => Nat) zero (lam(p: Nat) => lam(ih: Nat) => suc (suc ih)) n
 proc isZero (n : Nat) : Bool =
-  natElim (lam(u, Nat, Bool)) true (lam(p, Nat, lam(ih, Bool, false))) n
+  natElim (lam(u: Nat) => Bool) true (lam(p: Nat) => lam(ih: Bool) => false) n
 proc addN3 (n : Nat) : Nat =
-  let add3 = natElim (lam(u, Nat, Nat)) (suc (suc (suc zero))) (lam(p, Nat, lam(ih, Nat, suc ih))) in add3 n
+  let add3 = natElim (lam(u: Nat) => Nat) (suc (suc (suc zero))) (lam(p: Nat) => lam(ih: Nat) => suc ih) in add3 n
 proc chooseOr (a : Bool) (b : Bool) : Nat =
-  let choose = boolElim (lam(u, Bool, Nat)) (suc zero) zero in natAdd (choose a) (choose b)
+  let choose = boolElim (lam(u: Bool) => Nat) (suc zero) zero in natAdd (choose a) (choose b)
 proc notb (b : Bool) : Bool =
-  boolElim (lam(u, Bool, Bool)) false true b
+  boolElim (lam(u: Bool) => Bool) false true b
 proc andb (a : Bool) (b : Bool) : Bool =
-  boolElim (lam(u, Bool, Bool)) b false a
+  boolElim (lam(u: Bool) => Bool) b false a
 proc stepFn (p : Nat) (ih : Nat) : Nat = suc ih
 proc stepFn2 (p : Nat) (ih : Nat) : Nat = natAdd p (suc ih)
 proc addViaFn (m : Nat) (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) n stepFn2 m
+  natElim (lam(u: Nat) => Nat) n stepFn2 m
 proc q0Prefix (0 proof : Nat) (x : Int) : Int = x
 proc q0Call (x : Int) : Int = q0Prefix 0 x
 proc q0Middle (x : Int) (0 proof : Nat) (y : Int) : Int = addInt x y
 proc q0MiddleCall (x : Int) (y : Int) : Int = q0Middle x 0 y
 postulate(inspectQ0, Pi(f: Pi(0 proof: Nat, Int), Int))
 proc q0Capture (x : Int) : Int =
-  inspectQ0 (lam(0 proof, Nat, x))
+  inspectQ0 (lam(0 proof: Nat) => x)
 postulate(tickNat, Nat -> Nat)
 proc q0EffectCall (n : Nat) : Nat =
-  (lam(0 proof, Nat, tickNat 7)) (tickNat n)
+  (lam(0 proof: Nat) => tickNat 7) (tickNat n)
 """
 
 differentialBlockRepr(prog, currentSourcePath())
@@ -743,13 +743,13 @@ data(List, [A : Univ], Univ) where
 | nil : List A
 | cons (x : A) (xs : List A) : List A
 proc closedNat (n : Nat) : Nat =
-  let add3 = natElim (lam(u, Nat, Nat)) (suc (suc (suc zero))) (lam(p, Nat, lam(ih, Nat, suc ih))) in add3 n
+  let add3 = natElim (lam(u: Nat) => Nat) (suc (suc (suc zero))) (lam(p: Nat) => lam(ih: Nat) => suc ih) in add3 n
 proc closedBool (b : Bool) : Nat =
-  let isT = boolElim (lam(u, Bool, Nat)) (suc zero) zero in isT b
+  let isT = boolElim (lam(u: Bool) => Nat) (suc zero) zero in isT b
 proc closedList (xs : List Nat) : Nat =
-  let count = listElim Nat (lam(u, List Nat, Nat)) zero (lam(x, Nat, lam(tl, List Nat, lam(ih, Nat, suc ih)))) in count xs
+  let count = listElim Nat (lam(u: List Nat) => Nat) zero (lam(x: Nat) => lam(tl: List Nat) => lam(ih: Nat) => suc ih) in count xs
 proc missingStep (n : Nat) : Nat =
-  let noStep = natElim (lam(u, Nat, Nat)) zero in noStep (lam(p, Nat, lam(ih, Nat, suc ih))) n
+  let noStep = natElim (lam(u: Nat) => Nat) zero in noStep (lam(p: Nat) => lam(ih: Nat) => suc ih) n
 """
 checkElimClosureTiers(closureSrc)
 echo "all Phase 2 eliminator-closure checks passed"
