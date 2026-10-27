@@ -12,7 +12,7 @@
 ##     `Vec Nat (suc^k zero)` must convert against inferred
 ##     `Vec Nat (add m n)`, costing m fireRed steps + areEqual over
 ##     large unary numerals — the same goal shape recurs per size class;
-##   - `by refl` proofs of large ground add equations (add A B ≡ suc^C),
+##   - `byTac(refl)` proofs of large ground add equations (add A B ≡ suc^C),
 ##     identical goals repeated.
 ## A second "distinct" corpus varies every numeral. In practice it is not
 ## the worst case the name suggests: even with all-distinct numerals,
@@ -54,21 +54,20 @@ proc litVec*(n: int): string =
     result = "(cons Nat " & numLit(i - 1) & " zero " & result & ")"
 
 const Preamble* = """
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Eq (A : Type 0) (x : A) : A -> Type 0 where
+data(Eq, [A: Univ, x: A], A -> Univ) where
 | refl : Eq A x x
-def add : Nat -> Nat -> Nat
-| zero n = n
-| (suc m) n = suc (add m n)
-data Vec (A : Type 0) : Nat -> Type 0 where
+def(add, Nat -> Nat -> Nat):
+  clause([zero, n], n)
+  clause([suc(m), n], suc (add m n))
+data(Vec, [A: Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
-def vappend : Pi {A : Type 0}. Pi {m : Nat}. Pi {n : Nat}. Vec A m -> Vec A n
-  -> Vec A (add m n)
-| nil ys = ys
-| (cons k x xs) ys = cons A (add k n) x (vappend xs ys)
+def(vappend, Pi{A: Univ, Pi{m: Nat, Pi{n: Nat, Vec A m -> Vec A n -> Vec A (add m n)}}}):
+  clause([nil, ys], ys)
+  clause([cons(k, x, xs), ys], cons A (add k n) x (vappend xs ys))
 """
 
 proc buildRepeated*(reps: int): string =
@@ -81,7 +80,7 @@ proc buildRepeated*(reps: int): string =
       result &= &"proc w{k} : Vec Nat ({numLit(m + n)}) = vappend {litVec(m)} {litVec(n)}\n"
       inc k
   for r in 0 ..< reps:
-    result &= &"proc e{r} : Eq Nat (add {numLit(25)} {numLit(25)}) ({numLit(50)}) = by refl\n"
+    result &= &"proc e{r} : Eq Nat (add {numLit(25)} {numLit(25)}) ({numLit(50)}) = byTac(refl)\n"
 
 proc buildDistinct*(reps: int): string =
   ## Every numeral unique: no goal repeats (worst case for the cache).
@@ -94,7 +93,7 @@ proc buildDistinct*(reps: int): string =
     inc k
     let a = 20 + (r mod 11)
     let b = 20 + ((r * 5) mod 11)
-    result &= &"proc e{k} : Eq Nat (add {numLit(a)} {numLit(b)}) ({numLit(a + b)}) = by refl\n"
+    result &= &"proc e{k} : Eq Nat (add {numLit(a)} {numLit(b)}) ({numLit(a + b)}) = byTac(refl)\n"
     inc k
 
 type Counters = ref object

@@ -12,10 +12,10 @@ import elab
 import times
 
 const corpus = """
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : Type 0) : Nat -> Type 0 where
+data(Vec, [A: Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc constNat (x : Nat) (y : Nat) : Nat = x
@@ -25,7 +25,7 @@ proc t2 : Vec Nat (suc zero) =
   cons Nat zero zero (nil Nat)
 proc useConst : Nat =
   constNat (suc zero) (constNat zero (suc zero))
-proc polyId (A : Type 0) (x : A) : A = x
+proc polyId (A : Univ) (x : A) : A = x
 proc usePoly : Nat =
   polyId Nat (polyId Nat (suc zero))
 """

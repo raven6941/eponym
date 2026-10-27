@@ -39,7 +39,7 @@ proc qtyVar*(name: string): Qty =
 type
   PreKind* = enum
     pkVar, pkUniv, pkUnivN,        # x, internal legacy universe, Type l
-    pkUnitTy, pkUnitV, pkEmptyTy,  # 1, <>, O
+    pkUnitTy, pkUnitV, pkEmptyTy,  # unitTy, unitv, emptyTy
     pkPi, pkLam, pkApp,            # Pi, lam, application
     pkSigma, pkPair, pkFst, pkSnd, # Sig, pairs, projections
     pkProj,                       # e.f (issue #37: record projection)
@@ -94,7 +94,8 @@ proc mkVar*(name: string, loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkVar, name: name)
 proc mkUniv*(loc = noLoc): PreTerm =
   ## Compatibility constructor for generated source. Surface universe 0 is
-  ## explicit `Type 0`; preserve this constructor internally during migration.
+  ## spelled `Univ` (`Type 0` is deleted); this constructor is preserved
+  ## internally.
   PreTerm(loc: loc, kind: pkUnivN, intVal: 0)
 proc mkUnivN*(lvl: int, loc = noLoc): PreTerm =
   ## Issue #52: the level-annotated universe `Type l` (surface syntax);

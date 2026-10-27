@@ -307,8 +307,8 @@ proc familyRefIdOf(ctorTy: Term): int =
   ## The data family's refId from a constructor's type: walk the Pi
   ## telescope to the result type, then through the family application
   ## spine to its head; the head refId when atomic, else -1. (Issue
-  ## #330 v3: `nil : Pi (A : Type 0). Vec A zero` and
-  ## `none : Pi (A : Type 0). Option A` have application-headed results.)
+  ## #330 v3: `nil : Pi(A: Univ, Vec A zero)` and
+  ## `none : Pi(A: Univ, Option A)` have application-headed results.)
   var t = ctorTy
   while t != nil and t.kind == tPi:
     t = t.scope.bdy

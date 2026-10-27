@@ -726,7 +726,7 @@ proc parseRed(p: var Parser): SurfDecl =
   raise fail(t.loc, "red needs call form red(lhs, rhs)")
 
 proc parseData(p: var Parser): SurfDecl =
-  ## data Vec (A : Type 0) : Nat -> Type 0 where
+  ## data(Vec, [A: Univ], Nat -> Univ) where
   ## | nil : Vec A zero
   ## | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
   let t = p.expect(tkData, "'data'")

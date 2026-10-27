@@ -104,10 +104,10 @@ proc fmtCell(us: float, note: string): string =
 when isMainModule:
   # --- Setup (mirrors bench_rel_elab.nim / bench_elab_end_to_end.nim) ---------
   let setupSrc = """
-data Nat : Type 0 where
+data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
-data Vec (A : Type 0) : Nat -> Type 0 where
+data(Vec, [A: Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 """
