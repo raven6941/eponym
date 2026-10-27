@@ -1,0 +1,5 @@
+# Negative test (issue #458 follow-up, single syntax): the unit type
+# where an integer is expected is a conversion failure carrying the
+# pkUnitTy hint (the unit type is `unitTy`, not an integer literal).
+postulate(Int, Univ)
+proc f : Int = unitTy
