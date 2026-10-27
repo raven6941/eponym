@@ -10,7 +10,7 @@ data(Vec, [A: Univ], Nat -> Univ) where
 proc v2 : Vec Nat (suc (suc zero)) =
   cons Nat (suc zero) (suc zero) (cons Nat zero zero (nil Nat))
 proc lenIsTwo : Nat =
-  vecElim Nat (lam(i, Nat, lam(v, Vec Nat i, Nat)))
+  vecElim Nat (lam(i: Nat) => lam(v: Vec Nat i) => Nat)
             zero
-            (lam(i, Nat, lam(x, Nat, lam(xs, Vec Nat i, lam(ih, Nat, suc ih)))))
+            (lam(i: Nat) => lam(x: Nat) => lam(xs: Vec Nat i) => lam(ih: Nat) => suc ih)
             (suc (suc zero)) v2

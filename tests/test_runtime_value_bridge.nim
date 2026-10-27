@@ -9,9 +9,9 @@ import eponym_init
 
 const program = """
 postulate(Int, Univ)
-proc double : Int -> Int = lam(n, Int, addInt n n)
+proc double : Int -> Int = lam(n: Int) => addInt n n
 postulate(Nat, Univ)
-proc idNat : Nat -> Nat = lam(n, Nat, n)
+proc idNat : Nat -> Nat = lam(n: Nat) => n
 """
 
 proc hostStepNim(value: int): int = value + 7
@@ -754,7 +754,7 @@ eponymBlock:
       callback: proc(value: Int): Int {.cdecl.}, value: Int): Int =
     callback(value)
   proc generatedAdder(seed: Int): proc(value: Int): Int {.closure.} =
-    lam(value, Int, addInt(seed, value))
+    lam(value: Int) => addInt(seed, value)
   proc generatedApplyTwoArgumentCallback(
       callback: proc(left, right: Int): Int {.closure.},
       left, right: Int): Int =
@@ -763,7 +763,7 @@ eponymBlock:
   runtimeValue(generatedApplyTwoArgumentCallback)
   proc generatedTwoArgumentAdder(seed: Int):
       proc(left, right: Int): Int {.closure.} =
-    lam(left, Int, lam(right, Int, addInt(seed, addInt(left, right))))
+    lam(left: Int) => lam(right: Int) => addInt(seed, addInt(left, right))
 
 eponymBlock:
   postulate(Int, Univ)
@@ -786,7 +786,7 @@ eponymBlock:
       length: Nat, values: Vec[Int, length]): Nat = callback(length, values)
   proc generatedDependentVectorCallback():
       proc(length: Nat, values: Vec[Int, length]): Nat {.closure.} =
-    lam(length, Nat, lam(values, Vec[Int, length], length))
+    lam(length: Nat) => lam(values: Vec[Int, length]) => length
   runtimeValue(generatedApplyDependentVectorCallback)
   runtimeValue(generatedDependentVectorCallback)
 
@@ -1019,8 +1019,7 @@ eponymBlock:
     callback(channel, message)
   proc generatedReturnMappedCallback():
       proc(channel: Channel, message: Message): Channel {.closure.} =
-    lam(channel, Channel, lam(message, Message,
-      routeChannel(channel, message)))
+    lam(channel: Channel) => lam(message: Message) => routeChannel(channel, message)
 
 proc hostIndexedChannelParts(channel: IndexedChannelHandle):
     tuple[index: int, next: IndexedChannelHandle] =
@@ -2270,11 +2269,11 @@ proc generatedTokenIdentity (value : Token) : Token = value
 import "tests/fixtures/runtime_host_step.ep"
 postulate(Message, Univ)
 postulate(routeChannel, Channel -> Message -> Channel)
-proc throughHelper : Int -> Int = lam(n, Int, importedHelper n)
+proc throughHelper : Int -> Int = lam(n: Int) => importedHelper n
 proc opaqueRole : Channel -> Channel =
-  lam(channel, Channel, importedChannelStep channel)
+  lam(channel: Channel) => importedChannelStep channel
 proc routeRole : Channel -> Message -> Channel =
-  lam(channel, Channel, lam(message, Message, routeChannel channel message))
+  lam(channel: Channel) => lam(message: Message) => routeChannel channel message
 postulate(RequestId, Univ)
 postulate(Phase, Univ)
 postulate(PendingResult, Univ)
@@ -2282,16 +2281,16 @@ postulate(Callback, Univ)
 postulate(Sample, Univ)
 postulate(routeChannelWithId, Channel -> Message -> RequestId -> Channel)
 proc routeWithIdRole : Channel -> Message -> RequestId -> Channel =
-  lam(channel, Channel, lam(message, Message, lam(requestId, RequestId, routeChannelWithId channel message requestId)))
+  lam(channel: Channel) => lam(message: Message) => lam(requestId: RequestId) => routeChannelWithId channel message requestId
 postulate(routeChannelWithPhase, Channel -> Message -> RequestId -> Phase -> Channel)
 proc routeWithPhaseRole : Channel -> Message -> RequestId -> Phase -> Channel =
-  lam(channel, Channel, lam(message, Message, lam(requestId, RequestId, lam(phase, Phase, routeChannelWithPhase channel message requestId phase))))
+  lam(channel: Channel) => lam(message: Message) => lam(requestId: RequestId) => lam(phase: Phase) => routeChannelWithPhase channel message requestId phase
 postulate(startFuture, Channel -> PendingResult)
 proc futureRole : Channel -> PendingResult =
-  lam(channel, Channel, startFuture channel)
+  lam(channel: Channel) => startFuture channel
 postulate(invokeCallback, Callback -> Sample -> Sample)
 proc callbackRole : Callback -> Sample -> Sample =
-  lam(callback, Callback, lam(value, Sample, invokeCallback callback value))
+  lam(callback: Callback) => lam(value: Sample) => invokeCallback callback value
 """
   let checked = elabCheckDirState(identityProgram, baseDir)
   let postulateId = checked.globals["hostStep"].tm.refId

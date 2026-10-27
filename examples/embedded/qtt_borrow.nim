@@ -98,14 +98,10 @@ eponymBlock:
   # finish the borrow with the new value. `r` appears in term position
   # exactly once (as withBorrow's argument); every borrow exactly once.
   proc borrowClient(r {.linear.}: Res): Nat =
-    withBorrow(r, lam(b, Borrow,
-      readB(b, lam(v, Nat, lam(b2, Borrow,
-        writeB(b2, suc(v), lam(b3, Borrow,
-          readB(b3, lam(v2, Nat, lam(b4, Borrow,
-            endB(b4, v2)))))))))))
+    withBorrow(r, lam(b: Borrow) => readB(b, lam(v: Nat) => lam(b2: Borrow) => writeB(b2, suc(v), lam(b3: Borrow) => readB(b3, lam(v2: Nat) => lam(b4: Borrow) => endB(b4, v2)))))
 
   proc failingBorrowClient(r {.linear.}: Res): Nat =
-    withBorrow(r, lam(b, Borrow, failBorrow(b)))
+    withBorrow(r, lam(b: Borrow) => failBorrow(b))
 
 proc requireArgs(args: seq[Value], expected: int, operation: string) =
   if args.len != expected:

@@ -48,7 +48,7 @@ proc noLiftIntDup (a : Int) (p1 : Int) : Int =
   let x = inc a p1 in addInt x x
 proc betaChain (a : Int) (p1 : Int) : Int =
   let x = inc a p1 in
-  let y = (lam(u, Int, addInt x u)) p1 in
+  let y = (lam(u: Int) => addInt x u) p1 in
   inc y p1
 """
 

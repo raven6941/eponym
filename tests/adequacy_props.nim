@@ -7,7 +7,7 @@
 ##
 ## The contract (see docs/adequacy.md):
 ##   P1 totality:        every well-scoped surface term elaborates.
-##   P2 compositionality: elab(lam(x,A,t)).body ≡α elab(t) under the extended
+##   P2 compositionality: elab(lam(x: A) => t).body ≡α elab(t) under the extended
 ##                        ctx; elab(app(f,x)) ≡α app(elab(f), elab(x));
 ##                        elab(fst(p)) ≡α fst(elab(p)).
 ##   P3 substitution:    elab(substPre(t,x,u)) ≡α subst(elab(t), 0, elab(u)).

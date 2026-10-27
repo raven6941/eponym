@@ -53,7 +53,7 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `let x = term` in a definition body | Eponym local binding; one or more lets may precede the final term |
 | `left + right`, `left - right`, `left * right`, `-value` | Lowered to checked Eponym `Int` primitives; the Eponym checker enforces operand types |
 | `if condition: yes elif other: maybe else: no` | Pure conditional chain lowered to nested `ifThenElse` calls from `lib/bool.ep`; import that file, use `Bool` conditions, and provide one expression per branch |
-| `addInt(x, y)`, `suc(n)`, `f x`, `lam(x, T, body)` | Eponym applications and lambda forms, translated by the macro |
+| `addInt(x, y)`, `suc(n)`, `f x`, `lam(x: T) => body` | Eponym applications and lambda forms, translated by the macro |
 | `import "nat.ep"` | Eponym module import; relative to the source file first, then the installed package prelude. Absolute paths select an explicit file. |
 | `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported shapes are listed in [known limitations](known-limitations.md) |
 | `bindPostulateMutable(operation, nimProc, ArgumentTypes..., ResultType)` | Trusted adapter that passes decoded locals to Nim `var` parameters and encodes the result; shared-reference mutation may still be visible |
@@ -311,7 +311,7 @@ shedsBlock:
 `editors/vscode/`.
 
 When a refinement leaves a hole inside Nim command syntax (for example,
-inside `lam(f, lam(g, _))`), Nim cannot parse the usual prefix marker
+inside `lam(f) => lam(g) => _`), Nim cannot parse the usual prefix marker
 `![name]` in that position. The editor uses `shedHole(name)` there as a
 source-level encoding of the same named shed. `shedsBlock` records and
 typechecks it like `![name]`, keeping the residual goal available after
@@ -368,7 +368,8 @@ termination of clause definitions are checked (issues #78, #36).
 
 ```nim
 proc addD(x: NatD, y: NatD): NatD =
-  natElim(lam(_: NatD, NatD), x, lam(n: NatD, r: NatD, sucD(r)), y)
+  natElim(lam(_: NatD) => NatD, x,
+          lam(n: NatD, r: NatD) => sucD(r), y)
 ```
 
 `proc name(args): Ret = body`. Bodies are ordinary terms; `by` tactics (below)
@@ -475,14 +476,25 @@ postulate(recvNat, Pi(ch {.linear.}: Chan(recvS(Nat, endS())), Sig(x: Nat, Chan(
 
 ### Lambdas: `lam`
 
-Call syntax: `lam(x: Nat, addInt(x, x))`. An implicit lambda binder
-uses `lam({A: Univ}, body)`. This is useful when introducing an implicit
-binder into a shed goal.
+The common lambda form is `lam(binder: Domain) => body`, in `.ep` files and
+inside `eponymBlock`. The body is a full term, so it extends as far right as
+possible; parentheses delimit a lambda used as an application argument or
+function. Adjacent binders can be grouped, and their types can depend on
+earlier binders. An omitted domain is inferred from the expected function
+type.
 
 ```nim
-lam(_: NatD, NatD)          # the motive in an eliminator call (Nim side)
-lam({A: Univ}, lam(x, A, x)) # implicit identity
+lam(x: Nat, y: Nat) => addInt(x, y)
+apply (lam(x: Nat) => double(x)) n
+lam(x) => x                    # domain inferred from the expected Pi type
+lam({A: Univ}) => lam(x: A) => x  # implicit identity
+lam(1 x: Nat) => x             # quantity annotation in .ep text
+lam(x {.linear.}: Nat) => x    # same binder in embedded Nim
 ```
+
+Unannotated and implicit binders keep their established forms. In a Nim
+block, quantity annotations use Nim pragmas; the macro maps them to the
+same quantity-bearing lambda syntax used by `.ep`.
 
 ### `let` (typed)
 

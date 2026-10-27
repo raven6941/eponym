@@ -32,7 +32,7 @@
 #                  is complete, no holes left behind)
 #   isZeroBody:    click the hole, case-split on `n`; fill the zero method
 #                  with `false` and the successor method with a function
-#   constEndoBody: click the hole, refine with `lam (f : A). lam (g : A). f`;
+#   constEndoBody: click the hole, refine with `lam(f: A, g: A) => f`;
 #                  watch the nested binder boxes collapse as binders discharge
 #   branchLeft:    refine with `add ( ? ) ( ? )`; the residual goals and
 #                  branchRight remain independently addressable in one state
@@ -123,7 +123,7 @@ shedsBlock:
   #     hole with a Nat eliminator and creates a fresh shed for each method.
   #  c. Click the zero-case hole, press `g`, and enter `false`.
   #  d. Click the successor-case hole, press `g`, and enter
-  #     `lam (n : Nat). lam (b : Bool). true`. Nat case-split uses the
+  #     `lam(n: Nat, b: Bool) => true`. Nat case-split uses the
   #     induction eliminator: the successor method receives the predecessor
   #     `n` and the induction result `b : Bool`, so bare `true` does not
   #     inhabit that method goal. The diagnostics should clear after both
@@ -139,17 +139,17 @@ shedsBlock:
   # 1. Step by step:
   #  a. Ctrl+Shift+S to expand the inline shed, then click the innermost hole
   #     to inspect its goal and the `f`/`g` context.
-  #  b. Press `r` for refine and enter `lam (f : A). ?`; this introduces `f`
+  #  b. Press `r` for refine and enter `lam(f: A) => _`; this introduces `f`
   #     and leaves a smaller hole with `g` in context.
-  #  c. Click that hole, press `r` again, and enter `lam (g : A). ?`.
+  #  c. Click that hole, press `r` again, and enter `lam(g: A) => _`.
   #  d. In the resulting hole, refine with `f` or `g` to complete the proof.
   #     `f` ignores `g`, while `g` returns it.
   # 2. All at once:
   #  a. Expand the inline shed as above and press `r` for refine.
-  #  b. Enter `lam(f, lam(g, f))`; the nested binder boxes collapse
+  #  b. Enter `lam(f: A, g: A) => f`; the nested binder boxes collapse
   #     as the proof becomes complete.
   proc constEndo(A: Univ): Pi(f: A, g: A, A) =
-    ![constEndoBody, "lam(f, lam(g, f))"]
+    ![constEndoBody, "lam(f: A, g: A) => f"]
 
   # Two independent goals make branch selection visible in the walkthrough.
   # Refine either marker while preserving its sibling, then select another

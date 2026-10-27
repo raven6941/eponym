@@ -961,7 +961,7 @@ proc refineShedPlan*(nimFile, shedName, term: string,
             "", 0, 0, "", 0)
   # A replacement can sit inside a larger application (for example a
   # natElim branch followed by its scrutinee). Parenthesize it in the
-  # generated source so low-precedence forms such as `lam p. ...` do not
+  # generated source so low-precedence forms such as `lam(p: P) => ...` do not
   # absorb the following application arguments. The client receives a Nim
   # splice, with residual holes converted to nested shed markers below.
   let rejectionLabel = if requireComplete: "give rejected" else: "refine rejected"
@@ -1022,7 +1022,7 @@ proc refineShedPlan*(nimFile, shedName, term: string,
     clientTerm.add(term[termCursor ..< h.offset])
     markerOffsets.add(clientTerm.len)
     # Nim cannot parse prefix `![name]` in every expression position (for
-    # example, after the dot in `lam f. lam g. ...`). Use a call-form
+    # example, after the arrow in `lam(f: F) => lam(g: G) => ...`). Use a
     # residual marker there; shedsBlock and the extension treat it as the
     # same named shed and turn it back into an Eponym hole.
     clientTerm.add("shedHole(" & residualNames[i] & ")")
@@ -1178,33 +1178,27 @@ proc introShedPlan*(nimFile, shedName: string, count: int,
     if binder.qty == q0 or binder.erased: quantity = "0 "
     elif binder.qty == q1: quantity = "1 "
     if binder.implicit:
-      let prefix = "lam({" & name & ": " & domain & "}, "
+      let prefix = "lam({" & name & ": " & domain & "}) => "
       checkedTerm.add(prefix)
       checkedPrefixLen += prefix.len
-      clientPrefixes.add("lam({" & name & ": " & domain & "}, ")
+      clientPrefixes.add("lam({" & name & ": " & domain & "}) => ")
     else:
-      let prefix = "lam(" & quantity & name & ", " & domain & ", "
+      let prefix = "lam(" & quantity & name & ": " & domain & ") => "
       checkedTerm.add(prefix)
       checkedPrefixLen += prefix.len
       let clientName = if quantity == "1 ": name & " {.linear.}"
                        elif quantity == "0 ": name & " {.erased.}"
                        else: name
-      clientPrefixes.add("lam(" & clientName & ", " & domain & ", ")
+      clientPrefixes.add("lam(" & clientName & ": " & domain & ") => ")
     ctx = @[CtxEntry(name: name, ty: binder.domain, qty: toQty(binder.qty))] & ctx
   checkedTerm.add("_")
-  # Call forms close every intro lam; the dot form needed no closes.
-  checkedTerm.add(repeat(")", count))
   var plannedSheds: seq[ShedInfo] = @[]
   result = refineShedPlan(nimFile, shedName, checkedTerm, sheds,
                           inputErrMsg, plannedSheds)
   if result.ok:
     updatedSheds = plannedSheds
-    var residualBody = result.term[checkedPrefixLen .. ^1]
-    # The rendered term already closes the intro lams; the client term
-    # re-adds those closes after the client prefixes, so drop them here.
-    if residualBody.endsWith(repeat(")", count)):
-      residualBody = residualBody[0 ..< residualBody.len - count]
-    result.term = clientPrefixes.join("") & residualBody & repeat(")", count)
+    let residualBody = result.term[checkedPrefixLen .. ^1]
+    result.term = clientPrefixes.join("") & residualBody
 
 proc introShed*(nimFile, shedName: string, count = 1):
     tuple[ok: bool, why: string, term: string, nimLine, nimCol: int,
@@ -1549,9 +1543,9 @@ proc refineEqualityShedPlan*(nimFile, shedName: string, selected: string,
         let rewrittenText = prettyTerm(replaced.term, qCtx,
           ms.refNames, ms.recordFields)
         let candidate = "eqElim " & aText & " " & startText &
-          " lam(" & zName & ", " & aText & ", lam(" & qName & ", " &
-          qTyText & ", (" & rewrittenText & " -> " & goalUnderText & "))) " &
-          " lam(" & pName & ", " & goalText & ", " & pName & ") " &
+          " (lam(" & zName & ": " & aText & ") => lam(" & qName & ": " &
+          qTyText & ") => (" & rewrittenText & " -> " & goalUnderText & ")) " &
+          " (lam(" & pName & ": " & goalText & ") => " & pName & ") " &
           finishText & " " & proofText & " _"
         let key = b.name & (if reverse: " reverse" else: " forward") &
           " occurrence " & $(occurrence + 1)
@@ -1578,10 +1572,10 @@ proc refineEqualityShedPlan*(nimFile, shedName: string, selected: string,
         let nimProof = if reverse:
           "sym[" & nimAText & "](" & nimX & ", " & nimY & ", " & b.name & ")"
         else: b.name
-        let nimMotive = "lam(" & zName & ", " & nimAText & ", lam(" &
-          qName & ", " & nimQTy & ", Pi(" & pName & ": " & nimRewritten &
-          ", " & nimGoalUnder & ")))"
-        let nimBase = "lam(" & pName & ", " & nimGoal & ", " & pName & ")"
+        let nimMotive = "lam(" & zName & ": " & nimAText & ") => lam(" &
+          qName & ": " & nimQTy & ") => Pi(" & pName & ": " & nimRewritten &
+          ", " & nimGoalUnder & ")"
+        let nimBase = "lam(" & pName & ": " & nimGoal & ") => " & pName
         let nimCandidate = "eqElim[" & nimAText & "](" & nimStart & ", " &
           nimMotive & ", " & nimBase & ", " & nimFinish & ", " & nimProof &
           ", shedHole(" & shedName & "))"
@@ -1639,7 +1633,7 @@ proc caseSplitShedDetailedPlan(nimFile, shedName, variable: string,
   ## node (an expression position; a clause-def is not a term and not
   ## valid Nim). Instead, fill the shed's hole with an eliminator
   ## application whose method holes become fresh sub-sheds:
-  ##   `![isZeroBody]` --case-split n--> `natElim(lam(u, Nat, Bool),
+  ##   `![isZeroBody]` --case-split n--> `natElim(lam(u: Nat) => Bool,
   ##    ![isZeroBody_zero], ![isZeroBody_suc], n)`
   ## The returned `term` is nim-syntax text for the client to splice over
   ## the `![shedName]` node; `subSheds` are the fresh sub-shed names.
@@ -1843,13 +1837,13 @@ proc caseSplitShedDetailedPlan(nimFile, shedName, variable: string,
       not nimTypeExpr(generalizedGoal, goalNimCtx, ms, motiveGoalNim):
     return (false, "cannot render the generalized target of datatype '" &
             dataName & "' in Nim shed syntax", "", 0, 0, @[])
-  var motiveEp = "(lam(u, " & familyEp & ", " & motiveGoalEp & "))"
-  var motiveNim = "lam(u, " & familyNim & ", " & motiveGoalNim & ")"
+  var motiveEp = "(lam(u: " & familyEp & ") => " & motiveGoalEp & ")"
+  var motiveNim = "lam(u: " & familyNim & ") => " & motiveGoalNim
   for j in countdown(indexCount - 1, 0):
-    motiveEp = "(lam(" & indexNames[j] & ", " & indexDomainEp[j] &
-               ", " & motiveEp & "))"
-    motiveNim = "lam(" & indexNames[j] & ", " & indexDomainNim[j] &
-                ", " & motiveNim & ")"
+    motiveEp = "(lam(" & indexNames[j] & ": " & indexDomainEp[j] &
+               ") => " & motiveEp & ")"
+    motiveNim = "lam(" & indexNames[j] & ": " & indexDomainNim[j] &
+                ") => " & motiveNim
   var epArgs: seq[string] = paramEp
   epArgs.add(motiveEp)
   var nimArgs: seq[string] = @[motiveNim]

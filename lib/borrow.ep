@@ -18,7 +18,7 @@ postulate(Borrow, Univ)
 # (Issue #66) then fires at every step: a borrow used twice or dropped
 # is an elaboration error (see 21a/21b/21c-*-neg.ep). Unannotated
 # lambdas inherit the quantity from the expected Pi (Idris 2
-# behaviour), so `lam(b2, Borrow, ...)` against
+# behaviour), so `lam(b2: Borrow) => ...` against
 # `Pi(1 b2: Borrow, Nat)` is linear-checked.
 #
 # `Borrow` is deliberately *not* indexed by the resource: the owner

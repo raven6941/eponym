@@ -11,7 +11,7 @@
 ## whose method holes become fresh sub-sheds, returning nim-syntax text
 ## for the client to splice over the `![shedName]` node:
 ##   `![isZeroBody]` --case-split n-->
-##   `natElim(lam(u, Nat, Bool), ![isZeroBody_zero], ![isZeroBody_suc], n)`
+##   `natElim(lam(u: Nat) => Bool, ![isZeroBody_zero], ![isZeroBody_suc], n)`
 ##
 ## The test drives the method through `handleMessage` with a simulated
 ## macro-time sidecar (same pattern as test_shed_refine_method.nim).
@@ -84,7 +84,7 @@ let cs = caseSplitReq(server, nimUri, "isZeroBody", "n", 1)
 check("error" notin cs, "caseSplitShed(n): accepted, got: " & $cs)
 let res = cs["result"]
 check(res["term"].getStr() ==
-      "natElim(lam(u, Nat, Bool), ![isZeroBody_zero], ![isZeroBody_suc], n)",
+      "natElim(lam(u: Nat) => Bool, ![isZeroBody_zero], ![isZeroBody_suc], n)",
   "case-split term is the eliminator application with sub-shed nodes")
 check(res["nimLine"].getInt() == shedLine and
       res["nimCol"].getInt() == shedCol,

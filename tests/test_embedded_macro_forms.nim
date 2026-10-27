@@ -22,7 +22,10 @@ eponymBlock:
   red(boolElimD(C, t, f, trueD), t)
   red(boolElimD(C, t, f, falseD), f)
   proc notFn(b: BoolD): BoolD =
-    boolElimD(lam(u, BoolD, BoolD), falseD, trueD, b)
+    boolElimD(lam(u: BoolD) => BoolD, falseD, trueD, b)
+  # Nim's command-form lambda is translated into the same canonical arrow
+  # syntax before the shared Eponym parser sees it.
+  proc commandIdentity(): BoolD -> BoolD = lam x. x
 
   # --- smoke 08 embedded: Nat via postulate/elim/red ---
   postulate(Nat, Univ)
@@ -34,10 +37,10 @@ eponymBlock:
   red(natElim(C, z, s, suc(n)), s(n, natElim(C, z, s, n)))
   proc two(): Nat = suc(suc(zero))
   proc addN(m: Nat, n: Nat): Nat =
-    natElim(lam(u, Nat, Nat), m, lam(p, Nat, lam(ih, Nat, suc(ih))), n)
+    natElim(lam(u: Nat) => Nat, m, lam(p: Nat) => lam(ih: Nat) => suc(ih), n)
   proc zeroAfterStep(n: Nat): BoolD =
-    natElim(lam(u, Nat, BoolD), trueD,
-            lam(n, Nat, lam(ih, BoolD, falseD)), n)
+    natElim(lam(u: Nat) => BoolD, trueD,
+            lam(n: Nat) => lam(ih: BoolD) => falseD, n)
 
   # --- smoke 14 embedded: tactics ---
   postulate(Int, Univ)

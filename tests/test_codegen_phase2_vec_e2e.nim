@@ -10,7 +10,7 @@
 ##
 ## Call-form lambdas are used: the command-form `lam (v : Vec Int i). ...`
 ## does not survive blockToEponym's command-lambda converter (the established
-## `lam(binder, type, body)` call form comes from test_embedded_macro_forms).
+## `lam(binder: type) => body` call form comes from test_embedded_macro_forms).
 ## `vecnil` is the eponymBlock spelling of the `nil` constructor (`nil` is a
 ## Nim keyword); explicit type/index args use square brackets.
 
@@ -24,7 +24,7 @@ eponymBlock:
   runtimeType(Int, int)
   runtimeType(Nat, int)
   runtimeVector(Vec)
-  proc wVMapDouble(n: Nat, xs: Vec[Int, n]): Vec[Int, n] = vecElim[Int](lam(i, Nat, lam(v, Vec[Int, i], Vec[Int, i])), vecnil[Int](), lam(i, Nat, lam(x, Int, lam(xs2, Vec[Int, i], lam(ih, Vec[Int, i], cons[Int, i](addInt(x, x), ih))))), n, xs)
+  proc wVMapDouble(n: Nat, xs: Vec[Int, n]): Vec[Int, n] = vecElim[Int](lam(i: Nat) => lam(v: Vec[Int, i]) => Vec[Int, i], vecnil[Int](), lam(i: Nat) => lam(x: Int) => lam(xs2: Vec[Int, i]) => lam(ih: Vec[Int, i]) => cons[Int, i](addInt(x, x), ih), n, xs)
 
 proc expect(ok: bool, message: string) =
   if not ok:

@@ -23,7 +23,7 @@ proc usePolyId : Nat =
 proc useBare : Pi(x: Nat, Nat) =
   polyId
 proc applyLam : Nat =
-  (lam(x, Nat, x)) (suc zero)
+  (lam(x: Nat) => x) (suc zero)
 """
 
 const srcBad = """
@@ -31,7 +31,7 @@ data(Nat, Univ) where
 | zero : Nat
 | suc (n : Nat) : Nat
 proc bad : Pi(x: Nat, Nat) =
-  lam(x, Univ, x)
+  lam(x: Univ) => x
 """
 
 proc kindsOf(evs: seq[TraceEvent]): seq[string] =

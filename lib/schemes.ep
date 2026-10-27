@@ -52,24 +52,24 @@ proc cataList (A : Univ) (P : List A -> Univ) (nilC : P (nil A))
 
 proc anaList (A : Univ) (S : Univ) (fuel : Nat) (hd : S -> A) (tl : S -> S)
     (stop : S -> Bool) (s : S) : List A =
-  cataNat (lam(u, Nat, S -> List A))
-          (lam(s0, S, nil A))
-          (lam(p, Nat, lam(ih, S -> List A, lam(s0, S, boolElim (lam(b, Bool, List A)) (nil A) (cons A (hd s0) (ih (tl s0))) (stop s0)))))
+  cataNat (lam(u: Nat) => S -> List A)
+          (lam(s0: S) => nil A)
+          (lam(p: Nat) => lam(ih: S -> List A) => lam(s0: S) => boolElim (lam(b: Bool) => List A) (nil A) (cons A (hd s0) (ih (tl s0))) (stop s0))
           fuel s
 
 # Small Nat observations used by the unfold below (kept here, not in
 # nat.ep, to keep the schemes vocabulary self-contained).
 proc pred (n : Nat) : Nat =
-  cataNat (lam(u, Nat, Nat)) zero (lam(p, Nat, lam(ih, Nat, p))) n
+  cataNat (lam(u: Nat) => Nat) zero (lam(p: Nat) => lam(ih: Nat) => p) n
 
 proc isZero (n : Nat) : Bool =
-  cataNat (lam(u, Nat, Bool)) true (lam(p, Nat, lam(ih, Bool, false))) n
+  cataNat (lam(u: Nat) => Bool) true (lam(p: Nat) => lam(ih: Bool) => false) n
 
 # `replicate n x`: the length-n list of x's, as an anamorphism. Seed and
 # fuel are both n; the coalgebra observes head = x, step = pred, stop =
 # isZero.
 proc replicate (A : Univ) (n : Nat) (x : A) : List A =
-  anaList A Nat n (lam(s, Nat, x)) pred isZero n
+  anaList A Nat n (lam(s: Nat) => x) pred isZero n
 
 # --- laws ---
 
@@ -78,12 +78,12 @@ proc replicate (A : Univ) (n : Nat) (x : A) : List A =
 # definitionally `suc (cataNat P z s p)` (the eliminator's red rule), so
 # `cong` over `suc` lifts the induction hypothesis.
 proc cataNatRefl (n : Nat)
-    : Eq Nat (cataNat (lam(u, Nat, Nat)) zero
-                       (lam(p, Nat, lam(ih, Nat, suc ih))) n)
+    : Eq Nat (cataNat (lam(u: Nat) => Nat) zero
+                       (lam(p: Nat) => lam(ih: Nat) => suc ih) n)
                n =
-  cataNat (lam(u, Nat, Eq Nat (cataNat (lam(w, Nat, Nat)) zero (lam(p, Nat, lam(ih, Nat, suc ih))) u) u))
+  cataNat (lam(u: Nat) => Eq Nat (cataNat (lam(w: Nat) => Nat) zero (lam(p: Nat) => lam(ih: Nat) => suc ih) u) u)
           (refl Nat zero)
-          (lam(p, Nat, lam(ih, Eq Nat (cataNat (lam(w, Nat, Nat)) zero (lam(q, Nat, lam(r, Nat, suc r))) p) p, cong Nat Nat (lam(k, Nat, suc k)) (cataNat (lam(w, Nat, Nat)) zero (lam(q, Nat, lam(r, Nat, suc r))) p) p ih)))
+          (lam(p: Nat) => lam(ih: Eq Nat (cataNat (lam(w: Nat) => Nat) zero (lam(q: Nat) => lam(r: Nat) => suc r) p) p) => cong Nat Nat (lam(k: Nat) => suc k) (cataNat (lam(w: Nat) => Nat) zero (lam(q: Nat) => lam(r: Nat) => suc r) p) p ih)
           n
 
 # Cata-map fusion for List: folding after a map is folding with the
@@ -95,13 +95,13 @@ proc cataMapFusion (A : Univ) (B : Univ) (P : List B -> Univ)
     (g : A -> B) (xs : List A)
     : Eq (P (map A B g xs))
          (cataList B P nilC consC (map A B g xs))
-         (cataList A (lam(u, List A, P (map A B g u)))
+         (cataList A (lam(u: List A) => P (map A B g u))
                    nilC
-                   (lam(x, A, lam(tl, List A, lam(ih, P (map A B g tl), consC (g x) (map A B g tl) ih))))
+                   (lam(x: A) => lam(tl: List A) => lam(ih: P (map A B g tl)) => consC (g x) (map A B g tl) ih)
                    xs) =
-  cataList A (lam(u, List A, Eq (P (map A B g u)) (cataList B P nilC consC (map A B g u)) (cataList A (lam(w, List A, P (map A B g w))) nilC (lam(x, A, lam(tl, List A, lam(ih, P (map A B g tl), consC (g x) (map A B g tl) ih)))) u)))
+  cataList A (lam(u: List A) => Eq (P (map A B g u)) (cataList B P nilC consC (map A B g u)) (cataList A (lam(w: List A) => P (map A B g w)) nilC (lam(x: A) => lam(tl: List A) => lam(ih: P (map A B g tl)) => consC (g x) (map A B g tl) ih) u))
            (refl (P (nil B)) nilC)
-           (lam(x, A, lam(tl, List A, lam(ih, Eq (P (map A B g tl)) (cataList B P nilC consC (map A B g tl)) (cataList A (lam(w, List A, P (map A B g w))) nilC (lam(y, A, lam(tl2, List A, lam(ih2, P (map A B g tl2), consC (g y) (map A B g tl2) ih2)))) tl), cong (P (map A B g tl)) (P (cons B (g x) (map A B g tl))) (lam(t, P (map A B g tl), consC (g x) (map A B g tl) t)) (cataList B P nilC consC (map A B g tl)) (cataList A (lam(w, List A, P (map A B g w))) nilC (lam(y, A, lam(tl2, List A, lam(ih2, P (map A B g tl2), consC (g y) (map A B g tl2) ih2)))) tl) ih))))
+           (lam(x: A) => lam(tl: List A) => lam(ih: Eq (P (map A B g tl)) (cataList B P nilC consC (map A B g tl)) (cataList A (lam(w: List A) => P (map A B g w)) nilC (lam(y: A) => lam(tl2: List A) => lam(ih2: P (map A B g tl2)) => consC (g y) (map A B g tl2) ih2) tl)) => cong (P (map A B g tl)) (P (cons B (g x) (map A B g tl))) (lam(t: P (map A B g tl)) => consC (g x) (map A B g tl) t) (cataList B P nilC consC (map A B g tl)) (cataList A (lam(w: List A) => P (map A B g w)) nilC (lam(y: A) => lam(tl2: List A) => lam(ih2: P (map A B g tl2)) => consC (g y) (map A B g tl2) ih2) tl) ih)
            xs
 
 # Hylo deforestation, concretely: `length (replicate n x) = n`. The
@@ -113,14 +113,14 @@ proc cataMapFusion (A : Univ) (B : Univ) (P : List B -> Univ)
 # and `length` of that is `suc (length (replicate p x))`.
 proc hyloLenRepLaw (A : Univ) (n : Nat) (x : A)
     : Eq Nat (length A (replicate A n x)) n =
-  cataNat (lam(u, Nat, Eq Nat (length A (replicate A u x)) u))
+  cataNat (lam(u: Nat) => Eq Nat (length A (replicate A u x)) u)
           (refl Nat zero)
-          (lam(p, Nat, lam(ih, Eq Nat (length A (replicate A p x)) p, cong Nat Nat (lam(k, Nat, suc k)) (length A (replicate A p x)) p ih)))
+          (lam(p: Nat) => lam(ih: Eq Nat (length A (replicate A p x)) p) => cong Nat Nat (lam(k: Nat) => suc k) (length A (replicate A p x)) p ih)
           n
 
 # The fused program: what `length (replicate n x)` deforests to.
 proc fusedLenRep (n : Nat) : Nat =
-  cataNat (lam(u, Nat, Nat)) zero (lam(p, Nat, lam(ih, Nat, suc ih))) n
+  cataNat (lam(u: Nat) => Nat) zero (lam(p: Nat) => lam(ih: Nat) => suc ih) n
 
 # Fusion lemma connecting fused and unfused: the intermediate list is
 # provably unnecessary. `trans`/`sym` from eq.ep; `cataNatRefl` says the

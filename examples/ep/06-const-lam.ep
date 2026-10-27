@@ -3,4 +3,4 @@
 # Syntax: `proc` (Nim, was `def`), `=` (Nim, was `:=`), `Univ` = universe
 
 proc constLam : Pi(A: Univ, A -> A) =
-  lam(A, Univ, lam(x, A, x))
+  lam(A: Univ) => lam(x: A) => x

@@ -217,8 +217,8 @@ eponymBlock:
 
   # Length of a vector, by induction on the vector.
   proc vlen(A: Univ, n: Nat, v: Vec[A, n]): Nat =
-    vecElim[A](lam(i, Nat, lam(w, Vec[A, i], Nat)), zero(),
-            lam(i, Nat, lam(x, A, lam(xs, Vec[A, i], lam(ih, Nat, suc(ih))))),
+    vecElim[A](lam(i: Nat) => lam(w: Vec[A, i]) => Nat, zero(),
+            lam(i: Nat) => lam(x: A) => lam(xs: Vec[A, i]) => lam(ih: Nat) => suc(ih),
             n, v)
 ```
 
@@ -238,7 +238,7 @@ A few notes on the syntax (the full story is in
   keyword — you write `vecnil` and the macro maps it back.
 - `vecElim` is the induction principle the `data` declaration
   generates: give it a *motive* (what you are proving about every
-  vector — here `lam(i, Nat, lam(w, Vec[A, i], Nat))`, "for every length
+  vector — here `lam(i: Nat) => lam(w: Vec[A, i]) => Nat`, "for every length
   `i` and vector `w`, produce a `Nat`"), the nil case, the cons case,
   and the vector to eliminate. The cons case gets an induction
   hypothesis `ih` for the tail.

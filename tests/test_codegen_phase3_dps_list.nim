@@ -22,41 +22,41 @@ data(List, [A : Univ], Univ) where
 | nil : List A
 | cons (x : A) (xs : List A) : List A
 proc isZero (n : Nat) : Bool =
-  natElim (lam(u, Nat, Bool)) true (lam(p, Nat, lam(ih, Bool, false))) n
+  natElim (lam(u: Nat) => Bool) true (lam(p: Nat) => lam(ih: Bool) => false) n
 proc notb (b : Bool) : Bool =
-  boolElim (lam(u, Bool, Bool)) false true b
+  boolElim (lam(u: Bool) => Bool) false true b
 proc lappendDps (xs : List Int) (ys : List Int) : List Int =
-  listElim Int (lam(u, List Int, List Int))
+  listElim Int (lam(u: List Int) => List Int)
            ys
-           (lam(x, Int, lam(tl, List Int, lam(ih, List Int, cons Int x ih))))
+           (lam(x: Int) => lam(tl: List Int) => lam(ih: List Int) => cons Int x ih)
            xs
 proc lmapDps (xs : List Int) : List Int =
-  listElim Int (lam(u, List Int, List Int))
+  listElim Int (lam(u: List Int) => List Int)
            (nil Int)
-           (lam(x, Int, lam(tl, List Int, lam(ih, List Int, cons Int (addInt x x) ih))))
+           (lam(x: Int) => lam(tl: List Int) => lam(ih: List Int) => cons Int (addInt x x) ih)
            xs
 proc ldoubleCons (xs : List Int) : List Int =
   ## Cons body whose tail is not the accumulator: exercises the fallback
   ## to the allocating fold inside the DPS test module.
-  listElim Int (lam(u, List Int, List Int))
+  listElim Int (lam(u: List Int) => List Int)
            (nil Int)
-           (lam(x, Int, lam(tl, List Int, lam(ih, List Int, cons Int x (cons Int x ih)))))
+           (lam(x: Int) => lam(tl: List Int) => lam(ih: List Int) => cons Int x (cons Int x ih))
            xs
 proc lfilterNonZero (xs : List Nat) : List Nat =
   ## Conditional-cons (filter) shape: `boolElim` with a cons-rebuild true
   ## branch, the accumulator as the false branch, and a condition on `x`.
   ## Compiles to the DPS filter block (write pointer, left-to-right).
-  listElim Nat (lam(u, List Nat, List Nat))
+  listElim Nat (lam(u: List Nat) => List Nat)
            (nil Nat)
-           (lam(x, Nat, lam(tl, List Nat, lam(ih, List Nat, boolElim (lam(u, Bool, List Nat)) (cons Nat x ih) ih (notb (isZero x))))))
+           (lam(x: Nat) => lam(tl: List Nat) => lam(ih: List Nat) => boolElim (lam(u: Bool) => List Nat) (cons Nat x ih) ih (notb (isZero x)))
            xs
 proc lfilterReset (xs : List Nat) : List Nat =
   ## Filter-like body whose false branch is NOT the accumulator (`nil`):
   ## the shape check rejects it and the allocating fold is kept. The
   ## fold still agrees with the interpreter and Phase 1 on values.
-  listElim Nat (lam(u, List Nat, List Nat))
+  listElim Nat (lam(u: List Nat) => List Nat)
            (nil Nat)
-           (lam(x, Nat, lam(tl, List Nat, lam(ih, List Nat, boolElim (lam(u, Bool, List Nat)) (cons Nat x ih) (nil Nat) (notb (isZero x))))))
+           (lam(x: Nat) => lam(tl: List Nat) => lam(ih: List Nat) => boolElim (lam(u: Bool) => List Nat) (cons Nat x ih) (nil Nat) (notb (isZero x)))
            xs
 """
 

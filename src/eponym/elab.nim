@@ -3847,7 +3847,7 @@ proc analyzeColType(ctx: ClauseCtx, col: MatrixCol): tuple[params: seq[PreTerm],
 proc buildNestedMotive(ctx: ClauseCtx, dd: SurfDecl,
                        paramSubstI: seq[(string, PreTerm)],
                        paramsI: seq[PreTerm], tail: TailCtx): PreTerm =
-  ## Motive for a nested split: `lam idxs. lam (_ : D params idxs). BODY`.
+  ## Motive for a nested split: `lam(idxs: I) => lam(_ : D params idxs) => BODY`.
   ## Nested splits are always under a method that already binds the rest
   ## (`tail.restBound`), so BODY is the stripped `tail.retTy`. The body is
   ## constant in the indices (the outer constructor's index refinement is
@@ -5126,9 +5126,9 @@ proc usePairSwapI : Sig(v: unitTy, unitTy) =
   # --- Experiment 3: unannotated lambdas and lets infer ------------------------
   let defs5 = elabCheck("""
 proc idU : Pi(A: Univ, A -> A) =
-  lam(A, lam(x, x))
+  lam(A) => lam(x) => x
 proc letU : unitTy =
-  let f = lam(x, x) in f unitv
+  let f = lam(x) => x in f unitv
 """)
   assert defs5.len == 2
   echo "ok: unannotated lambda and unannotated let infer"
@@ -5155,7 +5155,7 @@ proc letU : unitTy =
     "not convertible")
   expectElabErr("proc bad (A : Univ) : Univ =\n  _\n",
     "unsolved metavariable")
-  expectElabErr("proc bad : Univ =\n  lam(x, x x)\n",
+  expectElabErr("proc bad : Univ =\n  lam(x) => x x\n",
     "expected a function type")
   expectElabErr("proc bad : unitTy =\n  polyIdBad unitv\n",
     "unbound variable 'polyIdBad'")
@@ -5163,18 +5163,18 @@ proc letU : unitTy =
   # --- annotated surface lambdas elaborate; mismatches caught by check --------
   let defs6 = elabCheck("""
 proc constLam : Pi(A: Univ, A -> A) =
-  lam(A, Univ, lam(x, A, x))
+  lam(A: Univ) => lam(x: A) => x
 """)
   assert defs6.len == 1
   echo "ok: annotated surface lambda elaborates"
-  expectElabErr("proc bad : Univ =\n  lam(x, Univ, x)\n",
+  expectElabErr("proc bad : Univ =\n  lam(x: Univ) => x\n",
     "expected a function type")
 
   # --- Issue #65: Pi binders in type annotations are in scope ---------------
   let defs65 = elabCheck("""
 postulate(foo65, Pi(A: Univ, A -> A))
 proc bar65 : Pi(A: Univ, A -> A) =
-  lam(A, Univ, lam(x, A, x))
+  lam(A: Univ) => lam(x: A) => x
 proc useFoo65 : unitTy =
   foo65 unitTy unitv
 """)
@@ -5198,7 +5198,7 @@ elim(boolElim, Pi(C: Bool -> Univ, C(true) -> C(false) -> Pi(b: Bool, C(b))))
 red(boolElim C t f true, t)
 red(boolElim C t f false, f)
 proc not (b : Bool) : Bool =
-  boolElim (lam(u, Bool, Bool)) false true b
+  boolElim (lam(u: Bool) => Bool) false true b
 proc notTrue : Bool = not true
 proc notFalse : Bool = not false
 """)
@@ -5227,10 +5227,10 @@ red(natElim C z s zero, z)
 red(natElim C z s (suc n), s n (natElim C z s n))
 proc two : Nat = suc (suc zero)
 proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) m (lam(p, Nat, lam(ih, Nat, suc(ih)))) n
+  natElim (lam(u: Nat) => Nat) m (lam(p: Nat) => lam(ih: Nat) => suc(ih)) n
 proc four : Nat = add two two
 proc stuckTest (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) zero (lam(p, Nat, lam(ih, Nat, p))) n
+  natElim (lam(u: Nat) => Nat) zero (lam(p: Nat) => lam(ih: Nat) => p) n
 """)
   assert natDefs.len == 4
   let twoTm = natDefs[0].tmTm  # suc (suc zero)
@@ -5275,7 +5275,7 @@ data(Nat, Univ) where
 | suc (n : Nat) : Nat
 proc two : Nat = suc (suc zero)
 proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) m (lam(p, Nat, lam(ih, Nat, suc(ih)))) n
+  natElim (lam(u: Nat) => Nat) m (lam(p: Nat) => lam(ih: Nat) => suc(ih)) n
 proc four : Nat = add two two
 """)
   assert dataNatDefs.len == 3
@@ -5302,9 +5302,9 @@ data(Vec, [A: Univ], Nat -> Univ) where
 proc v2 : Vec Nat (suc (suc zero)) =
   cons Nat (suc zero) (suc zero) (cons Nat zero zero (nil Nat))
 proc lenIsTwo : Nat =
-  vecElim Nat (lam(i, Nat, lam(v, Vec Nat i, Nat)))
+  vecElim Nat (lam(i: Nat) => lam(v: Vec Nat i) => Nat)
             zero
-            (lam(i, Nat, lam(x, Nat, lam(xs, Vec Nat i, lam(ih, Nat, suc(ih))))))
+            (lam(i: Nat) => lam(x: Nat) => lam(xs: Vec Nat i) => lam(ih: Nat) => suc(ih))
             (suc (suc zero)) v2
 """)
   assert dataVecDefs.len == 2
@@ -5323,12 +5323,12 @@ data(HTree, Univ) where
 | hleaf : HTree
 | hnode (k : HNat -> HTree) : HTree
 proc hdepth (t : HTree) : HNat =
-  hTreeElim (lam(u, HTree, HNat))
+  hTreeElim (lam(u: HTree) => HNat)
     hzero
-    (lam(k, HNat -> HTree, lam(ih, Pi(x: HNat, HNat), hsuc (ih hzero))))
+    (lam(k: HNat -> HTree) => lam(ih: Pi(x: HNat, HNat)) => hsuc (ih hzero))
     t
 proc sampleTree : HTree =
-  hnode (lam(x, HNat, hnode(lam(y, HNat, hleaf))))
+  hnode (lam(x: HNat) => hnode(lam(y: HNat) => hleaf))
 proc sampleDepth : HNat = hdepth sampleTree
 proc hone : HNat = hsuc hzero
 proc htwo : HNat = hsuc (hsuc hzero)
@@ -5399,17 +5399,16 @@ data(Vec, [A: Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) n (lam(p, Nat, lam(ih, Nat, suc(ih)))) m
+  natElim (lam(u: Nat) => Nat) n (lam(p: Nat) => lam(ih: Nat) => suc(ih)) m
 proc vnil : Vec Nat (add zero zero) =
   nil Nat
 proc constNil (A : Univ) (x : A) : Vec A (add zero zero) =
   nil A
 proc append {A : Univ} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
     : Vec A (add m n) =
-  vecElim A (lam(i, Nat, lam(v, Vec A i, Vec A (add i n))))
+  vecElim A (lam(i: Nat) => lam(v: Vec A i) => Vec A (add i n))
             ys
-            (lam(i, Nat, lam(x, A, lam(xs, Vec A i,
-              lam(ih, Vec A (add i n), cons A (add i n) x ih)))))
+            (lam(i: Nat) => lam(x: A) => lam(xs: Vec A i) => lam(ih: Vec A (add i n)) => cons A (add i n) x ih)
             m xs
 """)
   assert convDefs.len == 4
@@ -5423,7 +5422,7 @@ data(Vec, [A: Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) n (lam(p, Nat, lam(ih, Nat, suc(ih)))) m
+  natElim (lam(u: Nat) => Nat) n (lam(p: Nat) => lam(ih: Nat) => suc(ih)) m
 proc bad : Vec Nat (add (suc zero) zero) =
   nil Nat
 """, "not convertible")
@@ -5449,19 +5448,18 @@ data(Eq, [A: Univ, x: A], A -> Univ) where
 | refl : Eq A x x
 proc two : Nat = suc (suc zero)
 proc add (m : Nat) (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) n (lam(p, Nat, lam(ih, Nat, suc(ih)))) m
+  natElim (lam(u: Nat) => Nat) n (lam(p: Nat) => lam(ih: Nat) => suc(ih)) m
 proc four : Nat = suc (suc (suc (suc zero)))
 proc r1 : Eq Nat zero zero = refl Nat zero
 proc r2 : Eq Nat (add two two) four = refl Nat (add two two)
 proc cong (A : Univ) (B : Univ) (f : A -> B) (x : A) (y : A) (p : Eq A x y)
     : Eq B (f x) (f y) =
-  eqElim A x (lam(z, A, lam(q, Eq A x z, Eq B (f x) (f z))))
+  eqElim A x (lam(z: A) => lam(q: Eq A x z) => Eq B (f x) (f z))
          (refl B (f x)) y p
 proc plusReducesZ (n : Nat) : Eq Nat n (add n zero) =
-  natElim (lam(m, Nat, Eq Nat m (add m zero)))
+  natElim (lam(m: Nat) => Eq Nat m (add m zero))
           (refl Nat zero)
-          (lam(k, Nat, lam(ih, Eq Nat k (add k zero),
-            cong Nat Nat (lam(x, Nat, suc(x))) k (add k zero) ih)))
+          (lam(k: Nat) => lam(ih: Eq Nat k (add k zero)) => cong Nat Nat (lam(x: Nat) => suc(x)) k (add k zero) ih)
           n
 """)
   assert eqDefs.len == 7
@@ -5529,7 +5527,7 @@ proc bad : Int = byTac(nosuchtac)
   # core Term; full usage checking and codegen erasure are future work.
   let erasedDefs = elabCheck("""
 proc const (0 A : Univ) (x : A) : A = x
-proc id2 (0 A : Univ) : A -> A = lam(x, A, x)
+proc id2 (0 A : Univ) : A -> A = lam(x: A) => x
 """)
   assert erasedDefs.len == 2
   echo "ok: erased binders (0 x : T) elaborate (Experiment 9)"
@@ -5541,21 +5539,21 @@ proc id2 (0 A : Univ) : A -> A = lam(x, A, x)
   # (QTT: types are checked in the all-0 context).
   let qttDefs = elabCheck("""
 proc linId (A : Univ) : Pi(1 x: A, A) =
-  lam(1 x, A, x)
+  lam(1 x: A) => x
 """)
   assert qttDefs.len == 1
   echo "ok: linear binder used exactly once elaborates (#66)"
   expectElabErr("""
 proc linDup (A : Univ) (f : A -> A -> A) : Pi(1 x: A, A) =
-  lam(1 x, A, f x x)
+  lam(1 x: A) => f x x
 """, "used 2 times (expected exactly once)")
   expectElabErr("""
 proc linUnused (A : Univ) (y : A) : Pi(1 x: A, A) =
-  lam(1 x, A, y)
+  lam(1 x: A) => y
 """, "linear variable 'x' not used")
   expectElabErr("""
 proc erasedUse (A : Univ) : Pi(0 x: A, A) =
-  lam(0 x, A, x)
+  lam(0 x: A) => x
 """, "erased variable 'x' used")
   # Pi binders are NOT enforced in-judgment (#66 design): a postulate's
   # linear Pi declares use-site linearity; its codomain need not mention it
@@ -5574,7 +5572,7 @@ proc useBClient (b : B) : B = useB b
   let qttQtyConvOk = elabCheck("""
 postulate(N, Univ)
 postulate(idN0, Pi(0 x: N, N))
-proc sameQty : Pi(1 x: N, N) = lam(1 x, N, x)
+proc sameQty : Pi(1 x: N, N) = lam(1 x: N) => x
 proc sameQty0 : Pi(0 x: N, N) = idN0
 """)
   assert qttQtyConvOk.len == 2
@@ -5633,7 +5631,7 @@ proc badDrop (1 y : N) : N = z0 y
 """, "silently discarded")
   expectElabErr("""
 postulate(N, Univ)
-proc badDrop2 (1 y : N) (z : N) : N = (lam(0 w, N, z)) y
+proc badDrop2 (1 y : N) (z : N) : N = (lam(0 w: N) => z) y
 """, "silently discarded")
   echo "ok: linear var into erased parameter rejected (#66)"
 
@@ -5674,7 +5672,7 @@ proc erasedOnly (q y : N) : N = z0 y
   let qttQVarDirectLambda = elabCheck("""
 postulate(N, Univ)
 postulate(n0, N)
-proc erasedByLambda (q y : N) : N = (lam(x, N, n0)) y
+proc erasedByLambda (q y : N) : N = (lam(x: N) => n0) y
 """)
   assert qttQVarDirectLambda.len == 1 and
     qttQVarDirectLambda[0].tyTm.kind == tPi and
@@ -5700,10 +5698,10 @@ proc okQDrop (q y : N) : N = snd (z0 y, y)
   let qttSubjDefs = elabCheck("""
 postulate(N, Univ)
 postulate(n0, N)
-proc linId : Pi(1 x: N, N) = lam(1 x, N, x)
-proc inheritLin : Pi(1 x: N, N) = lam(x, N, x)
-proc qidLin : Pi(1 x: N, N) = lam(q x, N, x)
-proc inheritErased : Pi(0 x: N, N) = lam(x, N, n0)
+proc linId : Pi(1 x: N, N) = lam(1 x: N) => x
+proc inheritLin : Pi(1 x: N, N) = lam(x: N) => x
+proc qidLin : Pi(1 x: N, N) = lam(q x: N) => x
+proc inheritErased : Pi(0 x: N, N) = lam(x: N) => n0
 """)
   assert qttSubjDefs.len == 4
   echo "ok: checking-mode quantity reconciliation (#66)"
@@ -5711,28 +5709,28 @@ proc inheritErased : Pi(0 x: N, N) = lam(x, N, n0)
   # unrestricted Pi is now rejected (was silently accepted).
   expectElabErr("""
 postulate(N, Univ)
-proc badQtyLam : Pi(x: N, N) = lam(1 x, N, x)
+proc badQtyLam : Pi(x: N, N) = lam(1 x: N) => x
 """, "does not match the expected quantity")
   # An inherited linear binder is still use-once: dropping it is an error.
   expectElabErr("""
 postulate(N, Univ)
 postulate(n0, N)
-proc badInheritDrop : Pi(1 x: N, N) = lam(x, N, n0)
+proc badInheritDrop : Pi(1 x: N, N) = lam(x: N) => n0
 """, "not used")
   expectElabErr("""
 postulate(N, Univ)
-proc badInheritDup : Pi(1 x: N, Sig(u: N, N)) = lam(x, N, (x, x))
+proc badInheritDup : Pi(1 x: N, Sig(u: N, N)) = lam(x: N) => (x, x)
 """, "used 2 times")
   # A quantity variable solved from the expected type is enforced, not
   # re-solved: double use under a linear Pi is an error.
   expectElabErr("""
 postulate(N, Univ)
-proc qbadLinDup : Pi(1 x: N, Sig(u: N, N)) = lam(q x, N, (x, x))
+proc qbadLinDup : Pi(1 x: N, Sig(u: N, N)) = lam(q x: N) => (x, x)
 """, "used 2 times")
   # An inherited erased binder must not be used in term position.
   expectElabErr("""
 postulate(N, Univ)
-proc badInheritErased : Pi(0 x: N, N) = lam(x, N, x)
+proc badInheritErased : Pi(0 x: N, N) = lam(x: N) => x
 """, "erased variable 'x' used")
   # A variable shared by two binders must also agree with the expected
   # types it is checked against.
@@ -5740,8 +5738,8 @@ proc badInheritErased : Pi(0 x: N, N) = lam(x, N, x)
 postulate(N, Univ)
 postulate(n0, N)
 proc qconfTy : N =
-  let f : Pi(1 x: N, N) = lam(q x, N, x) in
-  let g : Pi(x: N, N) = lam(q x, N, x) in
+  let f : Pi(1 x: N, N) = lam(q x: N) => x in
+  let g : Pi(x: N, N) = lam(q x: N) => x in
   f (g n0)
 """, "requires quantity")
   echo "ok: checking-mode quantity mismatches rejected (#66)"
@@ -5756,7 +5754,7 @@ proc qconfTy : N =
   let q84Pos = elabCheck("""
 postulate(N, Univ)
 postulate(n0, N)
-proc p (A : Univ) : Pi(x: A, N) = lam(x, A, n0)
+proc p (A : Univ) : Pi(x: A, N) = lam(x: A) => n0
 """)
   let pTy = q84Pos[^1].tyTm
   assert pTy.kind == tPi and pTy.scope.bdy.kind == tPi
@@ -5767,7 +5765,7 @@ proc p (A : Univ) : Pi(x: A, N) = lam(x, A, n0)
   discard elabCheck("""
 postulate(N, Univ)
 postulate(n0, N)
-proc w (A : Univ) : N -> N = lam(x, N, n0)
+proc w (A : Univ) : N -> N = lam(x: N) => n0
 """)
   echo "ok: inferred q0 widens to ascribed qOmega (#84)"
   # Plain inference: unused binders infer q0, exactly-once binders q1,
@@ -5789,20 +5787,20 @@ proc u (A : Univ) (x : A) : A = x
   # naming the binder and the usage sites that forced the inference.
   expectElabErr("""
 postulate(N, Univ)
-proc h2 (A : Univ) : Pi(0 x: A, A) = lam(x, A, x)
+proc h2 (A : Univ) : Pi(0 x: A, A) = lam(x: A) => x
 """, "quantity mismatch for binder 'x'")
   expectElabErr("""
 postulate(N, Univ)
-proc h2 (A : Univ) : Pi(0 x: A, A) = lam(x, A, x)
+proc h2 (A : Univ) : Pi(0 x: A, A) = lam(x: A) => x
 """, "the body uses 'x' 1 time(s) at line 2")
   expectElabErr("""
 postulate(N, Univ)
 postulate(n0, N)
-proc g2 (A : Univ) : Pi(1 x: A, N) = lam(x, A, n0)
+proc g2 (A : Univ) : Pi(1 x: A, N) = lam(x: A) => n0
 """, "the body never uses 'x', inferring quantity q0")
   discard elabCheck("""
 postulate(N, Univ)
-proc g (A : Univ) : Pi(1 x: A, A) = lam(x, A, x)
+proc g (A : Univ) : Pi(1 x: A, A) = lam(x: A) => x
 """)
   echo "ok: explicit quantity conflicts name the binder and use sites (#84)"
 

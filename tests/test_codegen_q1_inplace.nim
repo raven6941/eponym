@@ -36,9 +36,9 @@ proc chainAcross (xs : List Int) (p1 : Int) (q1 : Int) (q2 : Int) : List Int =
   let b = ladd2 a q1 q2 in
   lcons1 b p1
 proc lappendPure (xs : List Int) (ys : List Int) : List Int =
-  listElim Int (lam(u, List Int, List Int))
+  listElim Int (lam(u: List Int) => List Int)
            ys
-           (lam(x, Int, lam(tl, List Int, lam(ih, List Int, cons Int x ih))))
+           (lam(x: Int) => lam(tl: List Int) => lam(ih: List Int) => cons Int x ih)
            xs
 proc noLiftDup (xs : List Int) (p1 : Int) : List Int =
   let a = lcons1 xs p1 in
@@ -48,7 +48,7 @@ proc noLiftAlias (1 xs : List Int) (p1 : Int) : List Int =
   lcons1 a p1
 proc betaChainSeq (xs : List Int) (p1 : Int) : List Int =
   let a = lcons1 xs p1 in
-  let b = (lam(u, Int, lcons1 a u)) p1 in
+  let b = (lam(u: Int) => lcons1 a u) p1 in
   lcons1 b p1
 """
 

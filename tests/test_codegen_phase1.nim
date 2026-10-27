@@ -159,15 +159,15 @@ red(natElim C z s zero   , z)
 red(natElim C z s (suc n), s n (natElim C z s n))
 proc two : Nat = suc (suc zero)
 proc add3 (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) (suc (suc (suc zero))) (lam(p, Nat, lam(ih, Nat, suc ih))) n
+  natElim (lam(u: Nat) => Nat) (suc (suc (suc zero))) (lam(p: Nat) => lam(ih: Nat) => suc ih) n
 proc isZero (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) zero (lam(p, Nat, lam(ih, Nat, p))) n
+  natElim (lam(u: Nat) => Nat) zero (lam(p: Nat) => lam(ih: Nat) => p) n
 proc natElimPartial (C : Nat -> Univ) (z : C zero)
     (s : Pi(n: Nat, C n -> C (suc n))) : Pi(m: Nat, C m) =
   natElim C z s
-proc motiveNatLam : Nat -> Univ = lam(u, Nat, Nat)
+proc motiveNatLam : Nat -> Univ = lam(u: Nat) => Nat
 proc sucStepFn : Pi(p: Nat, Nat -> Nat) =
-  lam(p, Nat, lam(ih, Nat, suc ih))
+  lam(p: Nat) => lam(ih: Nat) => suc ih
 proc applyToTwo (f : Pi(m: Nat, Nat)) : Nat = f two
 proc natElimBare : Pi(C: Nat -> Univ, C zero -> Pi(n: Nat, C n -> C (suc n)) -> Pi(m: Nat, C m)) =
   natElim
@@ -176,9 +176,9 @@ data(Vec, [A : Univ], Nat -> Univ) where
 | nil : Vec A zero
 | cons (n : Nat) (x : A) (xs : Vec A n) : Vec A (suc n)
 proc cloneVec {A : Univ} {n : Nat} (xs : Vec A n) : Vec A n =
-  vecElim A (lam(i, Nat, lam(v, Vec A i, Vec A i)))
+  vecElim A (lam(i: Nat) => lam(v: Vec A i) => Vec A i)
     (nil A)
-    (lam(i, Nat, lam(x, A, lam(xs2, Vec A i, lam(ih, Vec A i, cons A i x ih)))))
+    (lam(i: Nat) => lam(x: A) => lam(xs2: Vec A i) => lam(ih: Vec A i) => cons A i x ih)
     n xs
 proc nilIntVec : Vec Int zero = nil Int
 proc oneIntVec (x : Int) : Vec Int (suc zero) =
@@ -191,13 +191,13 @@ elim(boolElimD, Pi(C: BoolD -> Univ, C trueD -> C falseD -> Pi(b: BoolD, C b)))
 red(boolElimD C t f trueD , t)
 red(boolElimD C t f falseD, f)
 proc notFn (b : BoolD) : BoolD =
-  boolElimD (lam(u, BoolD, BoolD)) falseD trueD b
+  boolElimD (lam(u: BoolD) => BoolD) falseD trueD b
 
 postulate(tick, Int -> Int)
 proc twiceTicked (n : Int) : Int = addInt (tick n) (tick n)
 postulate(mystery, Nat)
 proc stuckAdd (n : Nat) : Nat =
-  natElim (lam(u, Nat, Nat)) n (lam(p, Nat, lam(ih, Nat, suc ih))) mystery
+  natElim (lam(u: Nat) => Nat) n (lam(p: Nat) => lam(ih: Nat) => suc ih) mystery
 postulate(boom, Int -> Int)
 proc boomCaller (x : Int) : Int = addInt (boom x) (boom x)
 """

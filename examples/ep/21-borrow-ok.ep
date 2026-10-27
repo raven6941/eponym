@@ -17,4 +17,4 @@ import "../../lib/borrow.ep"
 # cannot escape: `k` returns `Nat`, so there is no channel by which the
 # borrow could outlive the scope.
 proc borrowClient (1 r : Res) : Nat =
-  withBorrow r (lam(b, Borrow, readB b (lam(v, Nat, lam(b2, Borrow, writeB b2 (suc v) (lam(b3, Borrow, readB b3 (lam(v2, Nat, lam(b4, Borrow, endB b4 v2))))))))))
+  withBorrow r (lam(b: Borrow) => readB b (lam(v: Nat) => lam(b2: Borrow) => writeB b2 (suc v) (lam(b3: Borrow) => readB b3 (lam(v2: Nat) => lam(b4: Borrow) => endB b4 v2))))

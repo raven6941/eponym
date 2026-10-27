@@ -9,15 +9,15 @@ data(Vec, [A: Univ], Nat -> Univ) where
 
 proc vappend {A : Univ} {m : Nat} {n : Nat} (xs : Vec A m) (ys : Vec A n)
     : Vec A (add m n) =
-  vecElim A (lam(i, Nat, lam(v, Vec A i, Vec A (add i n))))
+  vecElim A (lam(i: Nat) => lam(v: Vec A i) => Vec A (add i n))
             ys
-            (lam(i, Nat, lam(x, A, lam(xs2, Vec A i, lam(ih, Vec A (add i n), cons A (add i n) x ih)))))
+            (lam(i: Nat) => lam(x: A) => lam(xs2: Vec A i) => lam(ih: Vec A (add i n)) => cons A (add i n) x ih)
             m xs
 
 proc vmap {A : Univ} {B : Univ} {n : Nat} (f : A -> B) (xs : Vec A n) : Vec B n =
-  vecElim A (lam(i, Nat, lam(v, Vec A i, Vec B i)))
+  vecElim A (lam(i: Nat) => lam(v: Vec A i) => Vec B i)
             (nil B)
-            (lam(i, Nat, lam(x, A, lam(xs2, Vec A i, lam(ih, Vec B i, cons B i (f x) ih)))))
+            (lam(i: Nat) => lam(x: A) => lam(xs2: Vec A i) => lam(ih: Vec B i) => cons B i (f x) ih)
             n xs
 
 proc myid (A : Univ) (x : A) : A = x
@@ -32,7 +32,7 @@ proc myid (A : Univ) (x : A) : A = x
 # defined proc `vmap` with `{n} := i`.)
 proc vmapId {A : Univ} {n : Nat} (xs : Vec A n)
     : Eq (Vec A n) (vmap (myid A) xs) xs =
-  vecElim A (lam(i, Nat, lam(v, Vec A i, Eq (Vec A i) (vmap (myid A) v) v)))
+  vecElim A (lam(i: Nat) => lam(v: Vec A i) => Eq (Vec A i) (vmap (myid A) v) v)
             (refl (Vec A zero) (nil A))
-            (lam(i, Nat, lam(x, A, lam(xs2, Vec A i, lam(ih, Eq (Vec A i) (vmap (myid A) xs2) xs2, cong (Vec A i) (Vec A (suc i)) (lam(t, Vec A i, cons A i x t)) (vmap (myid A) xs2) xs2 ih)))))
+            (lam(i: Nat) => lam(x: A) => lam(xs2: Vec A i) => lam(ih: Eq (Vec A i) (vmap (myid A) xs2) xs2) => cong (Vec A i) (Vec A (suc i)) (lam(t: Vec A i) => cons A i x t) (vmap (myid A) xs2) xs2 ih)
             n xs

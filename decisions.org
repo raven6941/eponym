@@ -8,6 +8,29 @@
   =exp-NN-short-name= branches, merged to =main= when the experiment
   concludes with a decision recorded here.
 
+* 2026-10-26 — Lambda syntax uses annotated arrow binders (issue #475)
+
+  Context: issue #471 changed lambdas to call forms such as =lam(x, T, body)=
+  to make macro parsing predictable. That created a second lambda spelling
+  alongside the dot syntax in .ep files, and the walkthrough comments no
+  longer matched embedded code. The call form also differed from Nim's
+  ordinary anonymous procedure shape.
+  Options considered: restore =lam(x: T). body= (the previous .ep spelling),
+  keep the call form, or use an annotated binder followed by an arrow.
+  Decision: =lam(x: T) => body= is canonical in both .ep and embedded Nim.
+  Consecutive binders may be grouped (=lam(x: T, y: U) => body=); implicit
+  binders use braces (=lam({A: Univ}) => body=); omitted domain annotations
+  remain available when the expected type determines them (=lam(x) => body=).
+  A fresh ==>= token distinguishes the lambda body from Nim's block and
+  expression syntax. The arrow body is greedy; parentheses delimit a lambda
+  used as an application argument. This keeps the same grammar in both
+  surfaces and gives binders explicit domains while leaving result types
+  inferred from the body and expected type.
+  Consequences: old call forms and dot lambdas are rejected by the canonical
+  parser; renderer, macro conversion, generated shed refinements, examples,
+  and conformance fixtures all use the arrow spelling. Supersedes the lambda
+  syntax portion of the 2026-10-25 issue #471 decision.
+
 * 2026-10-13 — Integer literal 1: renderer emits `01`; `1` stays the unit type (issue #158)
 
   Context: `1` lexes as the unit *type* (QTT) in surface syntax, so the

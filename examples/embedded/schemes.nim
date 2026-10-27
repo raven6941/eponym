@@ -42,8 +42,8 @@ eponymBlock:
   # so mapping then measuring is measuring directly.
   proc mapThenLength(xs: List[Nat]): Eq[Nat, length[Nat](map[Nat, Nat](suc, xs)),
       length[Nat](xs)] =
-    cataMapFusion[Nat, Nat](lam(u, List[Nat], Nat), zero(), lam(x, Nat, lam(tl, List[
-        Nat], lam(ih, Nat, suc(ih)))), suc, xs)
+    cataMapFusion[Nat, Nat](lam(u: List[Nat]) => Nat, zero(), lam(x: Nat) => lam(tl: List[
+        Nat]) => lam(ih: Nat) => suc(ih), suc, xs)
 
 # --- Normal Nim program ------------------------------------------------
 # Plain Nim from here: IO, config, orchestration. The deforestation

@@ -39,7 +39,7 @@ The view is a proof state, read from top to bottom:
   such as `?0 : Bool` means the open hole has type `Bool`.
 - For a function goal, nested boxes show the arguments you can introduce.
   For `Pi(f: A, g: A, A)`, the view shows `f : A`, then `g : A`, and finally
-  the remaining goal `A`. A term such as `lam f. lam g. f` supplies those
+  the remaining goal `A`. A term such as `lam(f: A, g: A) => f` supplies those
   arguments and returns the first one.
 - `?n` is an internal hole ID printed by the view. It is not a variable to
   type into the editor or a source marker name. Each remaining goal has a
@@ -68,7 +68,7 @@ available after the source is saved and recompiled.
 For example, with goal `Pi(f: A, g: A, A)`, refine with:
 
 ```text
-lam f. lam g. ?
+lam(f: A, g: A) => ?
 ```
 
 This introduces both arguments and leaves a goal of type `A` in the context
