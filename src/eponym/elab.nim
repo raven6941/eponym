@@ -1916,6 +1916,7 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
 proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
              ms: var MetaStore, supply: var Supply, expTy: Term,
              ab: Ability, expLoc: Loc = noLoc): Term
+proc mkNatLit(n: int, loc: Loc): Term
 
 proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
               ms: var MetaStore, supply: var Supply,
@@ -1969,11 +1970,13 @@ proc inferTm*(pre: PreTerm, ctx: Ctx, globals: Globals,
       of pkDiscard:
         raise elabErr(pre.loc, "'_' is a discard pattern/binder, not a term; use '?' for a hole")
       of pkInt:
-        # Experiment 11: integer literal; type is the postulated Int
-        if "Int" notin globals:
-          raise elabErr(pre.loc, "integer literal requires 'postulate Int : Univ'")
-        let intTy = globals["Int"].tm  # the R node for Int
-        (tmInt(pre.intVal), intTy)
+        # Issue #470: integer literal with unknown expected type defaults
+        # to Nat (one default; check mode already tries Nat first and
+        # widens eagerly to Nat against unsolved metas). Requires 'Nat'
+        # in scope; mkNatLit rejects negative literals.
+        if "Nat" notin globals:
+          raise elabErr(pre.loc, "integer literal requires 'data Nat'")
+        (mkNatLit(pre.intVal, pre.loc), globals["Nat"].tm)
       of pkPi:
         let d = checkTm(pre.c1, ctx, globals, ms, supply, tmC(cStar), ab)
         let c = checkTm(pre.c2, ctx.ext(pre.name, d, pre.qty), globals, ms, supply, tmC(cStar), ab)

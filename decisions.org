@@ -3918,3 +3918,24 @@
   Consequences: literal default for unknown expected types is tracked
   separately (#470, Nat-leaning, unresolved); quantity `0` has no analogous
   collision (quantity slots are syntactically delimited).
+
+* 2026-10-26 — Literal default unified on Nat; no implicit Nat-to-Int widening (issue #470)
+
+  Context: two defaults existed: inference gave Int (inferTm's pkInt
+  case required a postulated Int), while checking against an unsolved
+  meta widened eagerly to Nat (the #74 eager-widening branch). Aaron's
+  lean: unify on Nat (Agda precedent; checkTm already tries Nat first).
+  Decision: inference of a bare literal yields (tNatLit, Nat), requiring
+  Nat in scope; no Int fallback. Adequacy P6 rewritten to pin the new
+  behavior (it used to pin the old partiality, and anticipated this
+  change). Coercion decision (a): accept the residual — a Nat-typed term
+  where Int is expected still fails; annotate or write natToInt
+  explicitly (lib/nat_to_int.ep). Rejected (b), an elaborator rule
+  inserting natToInt on conversion failure: it would contradict the
+  documented explicit-conversions principle, raise coherence questions
+  (when does insertion fire, how do errors read), and open a codegen
+  question (identity on the repr path where both are host int) — for a
+  case the explicit hatch already covers.
+  Consequences: let-bound (and other annotation-less) literals now infer
+  Nat instead of Int; Int-only programs using inferred literals must add
+  Nat to scope or annotate. Checking-mode overloading is unchanged.

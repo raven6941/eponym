@@ -529,8 +529,9 @@ analyze, so annotate their quantity when the API requires linear use.
 
 Integer literals are overloaded by the expected type. In checking mode
 against `Nat` they become the primitive `tNatLit` (O(1) — not a `suc`
-chain); against the postulated `Int` they are primitive integers; in
-inference mode a literal requires `Int` in scope. `1` is the integer
+chain); against the postulated `Int` they are primitive integers. With
+no expected type (inference mode) a literal defaults to `Nat` — one
+default (issue #470), requiring `Nat` in scope. `1` is the integer
 literal one. The unit type is `unitTy` and the unit value is `unitv`
 (the renderer emits `unitTy`/`unitv`, so render→parse stays faithful).
 `01` still parses as integer one, as a tolerated spelling.
@@ -542,6 +543,12 @@ To convert in the other direction, import `lib/int_to_nat.ep`, bind
 Int, Nat)`, and call it explicitly. Negative inputs raise `ValueError`.
 For `requireCompiled()`, map `Int` and `Nat` to Nim `int` with `runtimeType`.
 Conversions are explicit; the elaborator does not insert them for you.
+
+A term already typed as `Nat` (e.g. a let-bound literal with no
+annotation, which infers `Nat`) used where `Int` is expected still
+fails: the elaborator does not insert `natToInt` for you (accepted
+residual, issue #470). Annotate the literal, or write `natToInt`
+explicitly.
 
 Inside `eponymBlock`, ordinary Nim integer literals can also be used for Nat
 indices and bracketed arguments whose Eponym binder is `Nat`: for example,

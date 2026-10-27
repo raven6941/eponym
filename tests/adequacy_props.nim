@@ -146,12 +146,13 @@ proc elabI(pre: PreTerm): Term =
 
 # --- generators: well-scoped PreTerms by construction ------------------------
 #
-# Mode discipline: integer literals are checking-only constructs (like
-# `by` tactics): inferTm's pkInt case requires a postulated `Int`, while
-# checkTm's pkInt case overloads against the expected type (Nat here).
-# Application infers its function, so anything in function position must
-# be literal-free *transitively*. genArr (function-position terms) is
-# therefore literal-free; genNat keeps literals for checked positions.
+# Mode discipline: integer literals default to Nat in inference mode
+# (#470), while checkTm's pkInt case overloads against the expected type
+# (Nat here, Int when Int is expected). Application infers its function,
+# so a literal in function position would infer Nat regardless of the
+# expected type; genArr (function-position terms) stays literal-free so
+# mode-agreement properties are unaffected by the default. genNat keeps
+# literals for checked positions.
 
 var genQvarCount = 0
 proc genQtyVar(): Qty =
@@ -351,15 +352,16 @@ block:
                   "P5: numerals " & $i & " and " & $j & " are α-equal")
   echo "ok: P5 numeral injectivity"
 
-# P6: intentional partiality — literals need an expected type.
+# P6: one default — literals in inference position default to Nat (#470).
 #
-# Integer literals are checking-only (like `by` tactics): a literal in
-# inference position is *rejected* ("integer literal requires ..."), not
-# silently defaulted. This pins the intended partiality so a future
-# change that defaults literals in inference mode trips the suite.
+# Integer literals with no expected type elaborate as Nat (when Nat is in
+# scope). This replaces the old partiality (inference required a
+# postulated Int) that this property used to pin. A literal in inference
+# position with Nat absent is still rejected ("integer literal requires
+# ..."), and there is no Int fallback: one default.
 block:
   var r = initRng(Seed + 6)
-  var rejected = 0
+  var defaulted = 0
   for i in 0 ..< 100:
     # Literal in a lambda body; the lambda is applied, so the body is
     # inferred and the literal has no expected type.
@@ -368,13 +370,27 @@ block:
     var ms = initMetaStore(); var supply = Supply()
     try:
       discard checkTermElab(mkApp(f, x), @[], globals, ms, supply, natTm)
-      checkProp(false, "P6 case " & $i & ": literal in inference position " &
-                "elaborated (expected rejection)")
+      inc defaulted
     except ElabError as e:
-      if "integer literal requires" in e.msg: inc rejected
-      else: checkProp(false, "P6 case " & $i & ": wrong error: " & e.msg)
-  checkProp(rejected == 100, "P6: only " & $rejected & "/100 rejected")
-  echo "ok: P6 literal inference partiality (", rejected, "/100 rejected)"
+      checkProp(false, "P6 case " & $i & ": unexpected error: " & e.msg)
+  checkProp(defaulted == 100, "P6: only " & $defaulted & "/100 defaulted")
+  # Direct pin: inference of a bare literal yields type Nat, not a
+  # singleton and not Int.
+  for i in 0 ..< 10:
+    var ms = initMetaStore(); var supply = Supply()
+    let res = inferTm(mkInt(i), @[], globals, ms, supply, nil)
+    checkProp(alphaEq(zonk(ms, res.ty), natTm),
+              "P6: inferred type of " & $i & " is not Nat")
+  # Rejection when Nat is absent (Int-only globals: no Int fallback).
+  let (intGlobals, _, _) = elabPrelude("postulate(Int, Univ)\n")
+  var ms2 = initMetaStore(); var supply2 = Supply()
+  try:
+    discard inferTm(mkInt(3), @[], intGlobals, ms2, supply2, nil)
+    checkProp(false, "P6: literal inferred without Nat in scope (expected rejection)")
+  except ElabError as e:
+    checkProp("integer literal requires" in e.msg,
+              "P6: wrong error without Nat: " & e.msg)
+  echo "ok: P6 literal inference defaults to Nat (", defaulted, "/100 defaulted)"
 
 # P7: integer-one surface contract (single syntax, #467/#469).
 #
