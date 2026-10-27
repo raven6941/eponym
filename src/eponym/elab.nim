@@ -2323,8 +2323,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         else: raise elabErr(pre.loc, "unknown tactic '" & pre.name &
           "'; known tactics: refl, assumption, arith")
       of pkUnitTy:
-        # Issue #458: the surface `1` is the unit type, not the integer
-        # literal one (spelled `01`). Checked against a value type it
+        # Issue #458: a `unitTy` term checked against a value type
         # fails conversion, and the generic message renders the unit
         # type's type (the legacy universe) as `?`, which reads as an
         # unsolved metavariable and hides the real mistake. The success
@@ -2345,7 +2344,7 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
           # Append to the caught message rather than re-wrapping: elabErr
           # prefixes the location, and re-wrapping would double it.
           e.msg = e.msg &
-            " (note: `1` in surface syntax is the unit type; write `01` for the integer literal one)"
+            " (note: `unitTy` is the unit type, not an integer; write `1` for the integer literal one)"
           raise e
         t
       else:
