@@ -1,0 +1,13 @@
+# Negative test for single-use handles (issue #482): dropped handle.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+#
+# The linear handle is never used: a well-typed client must thread it
+# through its lifecycle to close.
+# Expected error: linear variable 'j' not used.
+import "../../lib/nat.ep"
+import "../../lib/linear.ep"
+
+# Violation: handle dropped on the floor.
+proc badDrop (1 j : Job freshP) : Nat =
+  zero

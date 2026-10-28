@@ -1,0 +1,16 @@
+# Negative test for single-use handles (issue #482): phase violation.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+#
+# sendJ requires Job freshP; the handle here is already Job closedP.
+# Expected error: inferred type (Job closedP) does not match expected
+# type (Job freshP): noConfusion, distinct constructors.
+import "../../lib/nat.ep"
+import "../../lib/linear.ep"
+
+# Violation: send after close.
+proc badSendAfterClose (1 j : Job freshP) : Job sentP =
+  let s = sendJ zero j in
+  let p = ackJ s in
+  let c = closeJ (snd p) in
+  sendJ zero c
