@@ -24,6 +24,7 @@ import {
   sidecarPathFor,
   sidecarFresh,
   readSidecarShedNames,
+  readSidecarShedStatuses,
 } from "./sidecar";
 import { discoverEponymSource } from "./serverSetup";
 import * as path from "path";
@@ -182,6 +183,7 @@ async function main() {
     // expansion decoration would show it in the editor region.
     const wtUri = "file://" + wt;
     const keyHints = "r: refine  c: case-split  g: give  (Esc: collapse)";
+    const wtStatuses = readSidecarShedStatuses(sidecarPathFor(wt));
     for (const name of wtNames) {
       const wl = await client.shedLayout(wtUri, name);
       check(!!wl && !!wl.box,
@@ -196,6 +198,16 @@ async function main() {
         for (const c of b.children ?? []) walk(c);
       };
       walk(wl.box);
+      // Issue #478: a white shed's draft filled at compile time, so its box
+      // tree legitimately carries no hole goal; only open sheds have one.
+      if (wtStatuses[name] === "white") {
+        check(goals.length === 0,
+          `box tree for filled shed ${name} carries no hole goal`);
+        const view = renderInlineShed(name, wl.box, { showButtons: true, keyHints });
+        check(view.includes(name),
+          `inline view for filled shed ${name} shows the shed name`);
+        continue;
+      }
       check(goals.length > 0,
         `box tree for ${name} carries at least one hole goal`);
       const view = renderInlineShed(name, wl.box, { showButtons: true, keyHints });

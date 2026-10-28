@@ -217,6 +217,22 @@ export function readSidecarShedNames(sidecarPath: string): string[] {
   }
 }
 
+/** Shed name → status straight from the sidecar JSON (white = draft filled). */
+export function readSidecarShedStatuses(sidecarPath: string): Record<string, string> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(sidecarPath, "utf8"));
+    const sheds: any[] = Array.isArray(raw?.sheds) ? raw.sheds : [];
+    const out: Record<string, string> = {};
+    for (const s of sheds) {
+      const name = String(s?.name ?? "");
+      if (name.length > 0) out[name] = String(s?.status ?? "");
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export function generateSidecar(
   nimBin: string,
   repoRoot: string,
