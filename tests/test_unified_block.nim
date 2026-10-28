@@ -112,6 +112,28 @@ echo f(7)
   check(okTy, "type-position shed filled: compiles and runs, got: " & outTy)
   check("7" in outTy.splitLines(), "type-position shed filled: f(7) = 7")
 
+  # --- Positive: open type-position shed unused is use-gated ------------
+  let tyOpen = writeSrc(dir, "ty_open.nim", """eponymBlock:
+  postulate(Int, Univ)
+  proc unused(x: Int): ![returnType] = x
+proc ordinary(x: int): int = x
+echo ordinary(4)
+""")
+  let (okTyOpen, outTyOpen) = compileSrc(tyOpen, true)
+  check(okTyOpen, "type-position shed unused: compiles and runs, got: " & outTyOpen)
+  check("4" in outTyOpen.splitLines(), "type-position shed unused: ordinary code runs")
+
+  # --- Negative: use of an open type-position shed names the gate --------
+  let tyUsed = writeSrc(dir, "ty_used.nim", """eponymBlock:
+  postulate(Int, Univ)
+  proc incomplete(x: Int): ![returnType] = x
+echo incomplete(4)
+""")
+  let (okTyUsed, outTyUsed) = compileSrc(tyUsed, false)
+  check(not okTyUsed, "type-position shed used: compilation fails")
+  check("returnType" in outTyUsed and "incomplete" in outTyUsed,
+    "type-position shed used: error names the shed, got: " & outTyUsed)
+
   # --- Positive (issue #479): generic callee through a compiled caller -
   let generic = writeSrc(dir, "generic.nim", """eponymBlock:
   postulate(Int, Univ)
