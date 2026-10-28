@@ -514,20 +514,28 @@ proc cgAppChain(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
   # Issue #479 (pre-existing; surfaced by #478's sheds_demo migration):
   # a compiled def proc consumes its q0 Pi binders internally (unit
   # witnesses from q0Args), so a caller folding onto it must NOT pass
-  # q0-position arguments again: double consumption shifts every later
+  # those arguments again: double consumption shifts every later
   # argument and sticks the application (a generic identity called at
   # a type argument applied the type as the value, then stuck applying
   # the value as a function). The slow path is different: the
   # interpreter closure keeps all binders, so its fold passes every
-  # argument. Only the compiled-callee fold skips q0 positions; a
-  # partial application past a non-leading q0 binder is still out of
-  # scope (the returned closure cannot skip that binder — same as today).
+  # argument.
+  # Only the LEADING q0 run is skipped, not every q0 position: the
+  # proc is called with empty args here, and its Pi loop applies q0
+  # witnesses only while canBind holds — i.e. until the first ω
+  # binder, which sets canBind false. A non-leading q0 binder is never
+  # consumed by the proc, so the fold must still pass it; skipping it
+  # misbinds every later argument (regression caught by
+  # convex_opt_vec, whose callees interleave runtime and q0 binders).
   var skipQ0: seq[bool] = @[]
   if head.kind == tR and head.refId in ctx.refs:
     let r = ctx.refs[head.refId]
     if r.kind == cgkDefn and r.compiledProc.len > 0:
+      var leading = true
       for i in 0 ..< appArgs.len:
-        skipQ0.add(i < r.piQuantities.len and r.piQuantities[i] == q0)
+        let isQ0 = i < r.piQuantities.len and r.piQuantities[i] == q0
+        skipQ0.add(leading and isQ0)
+        if not isQ0: leading = false
   var acc = cg(ctx, head, env, bnd)
   for i, a in appArgs:
     if i < skipQ0.len and skipQ0[i]: continue
