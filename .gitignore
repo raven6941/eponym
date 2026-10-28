@@ -28,7 +28,7 @@ examples/**
 !examples/**/*.nim
 !examples/**/*.ep
 !examples/**/*.md
-# Shed metadata sidecars (issue #133): written by the shedsBlock macro
+# Shed metadata sidecars (issue #133): written by the eponymBlock macro
 # next to the calling Nim file for the LSP server; regenerated on compile.
 *.sheds.json
 
