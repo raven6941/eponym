@@ -2,7 +2,7 @@
 ##
 ## A shed with two holes (two sheds in one block, each one hole on its own
 ## line), driven through the real LSP server (`handleMessage`):
-##   1. The `shedsBlock` macro wrote the sidecar -> both sheds yellow.
+##   1. The `eponymBlock` macro wrote the sidecar -> both sheds yellow.
 ##      (Macro time is simulated by writing the sidecar exactly as the
 ##      macro would: `writeShedSidecar` with macro-assigned statuses. The
 ##      macro -> sidecar path itself is covered by `sheds_demo.nim`.)
@@ -107,7 +107,7 @@ proc diagsOf(resp: JsonNode): JsonNode =
 
 # --- the loop -------------------------------------------------------------
 
-# The generated Eponym source the shedsBlock macro feeds the elaborator
+# The generated Eponym source the eponymBlock macro feeds the elaborator
 # (same shape as test_sheds' srcOneHole, two sheds on separate lines so
 # single-line fills keep the line matching exact -- the #134 limitation).
 const genSrcV0 = """postulate(Int, Univ)

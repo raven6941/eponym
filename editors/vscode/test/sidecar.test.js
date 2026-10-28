@@ -6,7 +6,7 @@ const path = require("path");
 const { shedAtCursor, sidecarCompileArgsForSource } = require("../out/sidecar");
 
 const source = [
-  "shedsBlock:",
+  "eponymBlock:",
   "  proc branchDemo(n: Nat): Nat = add ( ![branchLeft] ) ( ![branchRight] )",
 ].join("\n");
 const left = source.indexOf("![branchLeft]");

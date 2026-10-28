@@ -63,7 +63,7 @@ async function main() {
 
   // Issue #153: sidecar generation -- the exact path the extension uses.
   check(hasShedBlocks(fs.readFileSync(demo, "utf8")),
-    "hasShedBlocks detects shedsBlock in the demo");
+    "hasShedBlocks detects eponymBlock sheds in the demo");
   check(!hasShedBlocks("proc f(x: int): int = x + 1\n"),
     "hasShedBlocks rejects a shed-free file");
   const maybeRoot = eponymRepoRoot(path.dirname(demo));
@@ -129,7 +129,7 @@ async function main() {
   const blocks = shedBlocks(demoText);
   check(blocks.length === 1 && blocks[0].sheds.length === 1 &&
         blocks[0].sheds[0].name === "quadBody",
-    "shedBlocks finds the one shedsBlock with its quadBody node");
+    "shedBlocks finds the one eponymBlock with its quadBody node");
   const nodeOff = demoText.indexOf("![ quadBody");
   check(nodeOff >= 0 && shedAtCursor(demoText, nodeOff + 4)?.name === "quadBody",
     "shedAtCursor: cursor inside the node resolves quadBody");
@@ -145,7 +145,7 @@ async function main() {
   check(blockShedsAtCursor(demoText, 0).length === 0,
     "blockShedsAtCursor: outside any block sees nothing");
   const residualText =
-    "shedsBlock:\n  proc f(A: Univ): A = lam(x: A) => shedHole(innerGoal)\n";
+    "eponymBlock:\n  proc f(A: Univ): A = lam(x: A) => shedHole(innerGoal)\n";
   const residualOff = residualText.indexOf("shedHole(innerGoal)");
   check(shedNodeStartingAt(residualText, residualOff)?.name === "innerGoal",
     "shedNodeStartingAt recognizes a residual shedHole marker");
@@ -274,7 +274,7 @@ async function main() {
   check(err.includes("no layout"), "unknown shed yields an error, not a hang: " + err);
 
   // Issue #137: drive eponym/refineShed against the real server binary
-  // with a fixture sidecar (macro-time state, as shedsBlock would write
+  // with a fixture sidecar (macro-time state, as eponymBlock writes
   // it, including the recorded generated source).
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "shed-smoke-"));
   const nimFile = path.join(tmp, "demo.nim");

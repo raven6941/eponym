@@ -106,7 +106,7 @@ value-indexed ticket types and the linear channel threading.
 
 ## Stage 3 — Interactive refinement (holes/sheds)
 
-Modules: `src/eponym/sheds.nim`, `src/eponym/sheds_mac.nim`,
+Modules: `src/eponym/sheds.nim`, `src/eponym/eponym_mac.nim`,
 `src/eponym/shed_layout.nim`, `src/eponym/lsp.nim`.
 
 This remains the least structured leg, but issue #377 adds an in-process

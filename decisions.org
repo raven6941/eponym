@@ -3962,3 +3962,45 @@
   Consequences: let-bound (and other annotation-less) literals now infer
   Nat instead of Int; Int-only programs using inferred literals must add
   Nat to scope or annotate. Checking-mode overloading is unchanged.
+
+* 2026-10-27 — One block type: eponymBlock with use-gated sheds; shedsBlock removed (issue #478)
+
+  Context: two block macros shared the term language but not the block
+  contract: eponymBlock was hole-strict, shedsBlock hole-tolerant with
+  int-only interpreter wrappers. Aaron (2026-10-27): one block type —
+  sheds usable in interactive editing; if compiled, the draft string is
+  used and it errors if it doesn't work; projects compile with sheds
+  incomplete as long as they aren't used on a path relevant to what's
+  being built. Release-blocking (Aaron's decision, 2026-10-27): unifying
+  after release would break shedsBlock users; pre-release is the only
+  clean moment to remove a macro.
+  Decision: shedsBlock removed outright, not a deprecated alias (one
+  block type is the point; matches the single-syntax hard-removal
+  precedent). Strictness becomes a property of use, via Nim's
+  use-gated `{.error.}`: an incomplete def gets a typed wrapper whose
+  body raises and whose pragma names the shed; calling it — directly
+  or transitively through a compiled caller — is a compile error.
+  Gating covers holes generally, not sheds only (a plain `_` hole in
+  an unused def compiles; the strict `.ep` entry point is unchanged).
+  Drafts are filled at macro time (converted leniently, checked against
+  the hole goal, unified with the hole meta); a filled def is
+  knot-tied into the globals so compiled callers see its value, and a
+  filled type-position shed also substitutes its draft into the
+  declaration AST so the wrapper reads the filled signature. A file
+  whose sheds were all filled gets its stale sidecar cleared on the
+  next compile (a shed-free expansion writes an empty sidecar only
+  when one already exists). `requireCompiled` plus any gated def is a
+  hard macro error: the opt-in strict guarantee must not silently
+  weaken. The VSCode extension detects sheds by marker presence in
+  eponymBlock bodies, and recompiles on save when a sidecar exists
+  even if the markers are gone (the all-filled case).
+  Consequences: sheds_demo's generic-identity example exposed a
+  pre-existing Value-backend bug, fixed in the same PR and filed as
+  #479: a compiled caller double-consumed q0 Pi binders of a compiled
+  callee (the proc applies q0 witnesses internally while the caller
+  fold passed them again). The same PR fixed a pre-existing converter
+  bug the draft path surfaced: parenthesized applications used as
+  arguments lost their parens (`f (g x)` became `f g x` = `(f g) x`,
+  since Eponym juxtaposition is left-associative). Partial application
+  past a non-leading q0 binder remains out of scope for #479 (same as
+  before, not worse).

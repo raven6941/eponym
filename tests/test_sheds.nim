@@ -2,7 +2,7 @@
 ##
 ## Headless tests (no editor): elabCheckHolesDir (the #58 hole-tolerant
 ## semantics combined with #131 import resolution, as used by the
-## shedsBlock macro) and the sidecar JSON round-trip the LSP server
+## eponymBlock macro, issue #478) and the sidecar JSON round-trip the LSP server
 ## (issues #134/#135) will read. The macro itself is exercised by
 ## examples/embedded/sheds_demo.nim (compile + run).
 import os
@@ -11,7 +11,6 @@ import json  # JsonNode indexing in status assertions
 import tables  # initTable (issue #134: LSP server in tests)
 import elab
 import sheds
-import sheds_mac  # issue #191: shedGoalAndCtx
 import eponym_init  # issue #191: Term/tR for the R<n>-fallback test
 import preterm  # q0/q1 quantity constructors (issue #377)
 import lsp  # issue #134: shed diagnostics via handleMessage

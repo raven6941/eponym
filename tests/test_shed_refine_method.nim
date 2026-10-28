@@ -12,7 +12,7 @@
 ## term over the `![...]` node -> didChange re-reads the sidecar ->
 ## shedLayout shows the done box. Macro time is simulated with the real
 ## `resolveShedPlaceholders` (hole line/col) plus the `genSrc` recording
-## `sheds_mac.shedsBlock` performs.
+## `eponym_mac.eponymBlock` performs.
 import json
 import os
 import strutils
@@ -72,9 +72,9 @@ proc spliceShed(nimText: string, line1, col1: int, term: string): string =
 
 proc macroTime(nimFile: string, names: seq[string],
                nimLines, nimCols: seq[int]): seq[ShedInfo] =
-  ## Simulate what `shedsBlock` records: placeholders resolved by the
+  ## Simulate what `eponymBlock` records: placeholders resolved by the
   ## real `resolveShedPlaceholders` (hole line AND column), `genSrc`
-  ## stored per shed (the `sheds_mac` #137 addition).
+  ## stored per shed (the #137 addition).
   var src = "postulate(Int, Univ)\n"
   for i, nm in names:
     src &= "proc p" & $i & " (n : Int) : Int = " & shedPlaceholder(i) & "\n"
@@ -91,8 +91,8 @@ proc macroTime(nimFile: string, names: seq[string],
 let dir = getTempDir() / "shed_refine_method_test"
 createDir(dir)
 let nimFile = dir / "demo.nim"
-let nimV0 = """import sheds_mac
-shedsBlock:
+let nimV0 = """import eponym_mac
+eponymBlock:
   postulate(Int, Univ)
   proc doubleIt(n: Int): Int = ![ shedA ]
   proc tripleIt(n: Int): Int = ![ shedB ]

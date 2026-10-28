@@ -1,7 +1,7 @@
 # Working with sheds in VS Code
 
 This guide covers the Eponym Sheds extension for Nim files that use
-`shedsBlock`. A shed is a named incomplete expression, written in source as
+`eponymBlock` with shed markers. A shed is a named incomplete expression, written in source as
 `![name]` (or `![name, draft]`). The declaration around it supplies the type
 the shed must eventually prove.
 
@@ -15,7 +15,7 @@ is temporarily inserted below the marker so it can display the 2D box and
 accept keyboard actions. Collapse it with **Escape**; the extension also
 removes it before saving the Nim file.
 
-The extension compiles a `shedsBlock` file with Nim to generate or refresh
+The extension compiles an `eponymBlock` file with Nim to generate or refresh
 its `.sheds.json` sidecar. This is how it learns the current goals and
 contexts. If the editor has unsaved changes, Eponym saves them first because
 Nim compiles the file on disk. Compilation errors appear in the **Eponym** Output channel and in
@@ -187,13 +187,13 @@ use the state-addressed methods.
 Intro, Apply, Construct, Rewrite, Refine, Give, and Case-split splice the
 selected successor projection into the editor. The transition is checked in
 memory and does not write the source file or sidecar. Save the document to
-persist the source; the extension recompiles the `shedsBlock`, refreshing the
+persist the source; the extension recompiles the `eponymBlock`, refreshing the
 sidecar and CodeLens goals. A remaining open goal stays yellow and gets its
 own marker; a completed shed is white and has no open goal. If a newly
 created marker does not appear in the extension, check the **Eponym** Output
 channel for a Nim compile error and make sure the installed extension was
 rebuilt from the current source.
 
-The CodeLens and `shedsBlock` source marker are the durable navigation
+The CodeLens and `eponymBlock` source marker are the durable navigation
 points. The inline 2D view is temporary preview text, not proof source. The
 extension removes it on collapse and before manual or automatic saves.

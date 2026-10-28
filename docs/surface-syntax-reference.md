@@ -285,13 +285,13 @@ they represent, while any remaining index correspondence is trusted.
 Dependent `Sig` values still require the separate `runtimePairTrusted`
 definition opt-in.
 
-## Sheds: `shedsBlock` (hole-driven development)
+## Sheds: use-gated holes in `eponymBlock` (hole-driven development)
 
 ```nim
-import sheds_mac
+import eponym_mac
 import sheds
 
-shedsBlock:
+eponymBlock:
   import "../../lib/nat.ep"
 
   postulate(Int, Univ)
@@ -305,15 +305,22 @@ shedsBlock:
   proc quad(n: Int): Int = ![ quadBody, n ++++ n ]
 ```
 
-`shedsBlock:` accepts the same declarations as `eponymBlock:`; the
-`![name, body]` forms are holes, not elaborated. See
+Sheds live in `eponymBlock:` (issue #478; the old `shedsBlock` macro
+was removed). A shed is a hole with editor state: its draft, when
+present, is used at compile time. A draft that checks fills the shed
+(the def becomes an ordinary compiled def); a missing or failing draft
+leaves the def *use-gated* — it elaborates, but calling it is a
+compile error naming the shed, and the error propagates to callers.
+Shed-free defs in the same block are unaffected, and the sidecar is
+written whenever sheds are present (a file whose sheds were all filled
+gets its stale sidecar cleared instead). See
 `examples/embedded/sheds_walkthrough.nim` and the VS Code extension in
 `editors/vscode/`.
 
 When a refinement leaves a hole inside Nim command syntax (for example,
 inside `lam(f) => lam(g) => _`), Nim cannot parse the usual prefix marker
 `![name]` in that position. The editor uses `shedHole(name)` there as a
-source-level encoding of the same named shed. `shedsBlock` records and
+source-level encoding of the same named shed. `eponymBlock` records and
 typechecks it like `![name]`, keeping the residual goal available after
 the file recompiles. Ordinary user-created sheds remain `![name]`.
 

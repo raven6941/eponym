@@ -1,6 +1,6 @@
-import sheds_mac
+import eponym_mac
 
-shedsBlock:
+eponymBlock:
   import "../../lib/nat.ep"
   postulate(Int, Univ)
   proc double(x: Int): Int = addInt(x, x)

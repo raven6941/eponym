@@ -60,7 +60,7 @@ proc fixtureDir(name: string): string =
 let dir = fixtureDir("refine")
 let nimFile = dir / "demo.nim"
 let uri = "file://" & nimFile
-let source0 = "import sheds_mac\nshedsBlock:\n  proc identity(n: Int): Int = ![identityBody]\n"
+let source0 = "import eponym_mac\neponymBlock:\n  proc identity(n: Int): Int = ![identityBody]\n"
 let generated0 = "postulate(Int, Univ)\nproc identity (n : Int) : Int = _\n"
 writeFile(nimFile, source0)
 writeShedSidecar(nimFile, @[macroSidecar(nimFile, generated0,
@@ -152,7 +152,7 @@ check(not staleHistory["canUndo"].getBool(),
 let giveDir = fixtureDir("give")
 let giveFile = giveDir / "demo.nim"
 let giveUri = "file://" & giveFile
-let giveSource = "import sheds_mac\nshedsBlock:\n  proc identity(n: Int): Int = ![giveBody]\n"
+let giveSource = "import eponym_mac\neponymBlock:\n  proc identity(n: Int): Int = ![giveBody]\n"
 let giveGenerated = "postulate(Int, Univ)\nproc identity (n : Int) : Int = _\n"
 writeFile(giveFile, giveSource)
 writeShedSidecar(giveFile, @[macroSidecar(giveFile, giveGenerated,
@@ -171,7 +171,7 @@ let splitFile = splitDir / "demo.nim"
 let splitUri = "file://" & splitFile
 let natPath = (getCurrentDir() / "lib/nat.ep").replace("\\", "/")
 let boolPath = (getCurrentDir() / "lib/bool.ep").replace("\\", "/")
-let splitSource = "import sheds_mac\nshedsBlock:\n  proc isZero(n: Nat): Bool = ![isZeroBody]\n"
+let splitSource = "import eponym_mac\neponymBlock:\n  proc isZero(n: Nat): Bool = ![isZeroBody]\n"
 let splitGenerated = "import \"" & natPath & "\"\nimport \"" & boolPath &
   "\"\nproc isZero (n : Nat) : Bool = _\n"
 writeFile(splitFile, splitSource)

@@ -3,7 +3,7 @@
 ## Result
 
 The prototype passed the narrow two-goal refine scenario from #450. The
-fixture has two single-line open sheds in one `shedsBlock`. `refineShedPlan`
+fixture has two single-line open sheds in one `eponymBlock`. `refineShedPlan`
 checks `double ( ? )` against the real Eponym checker and returns a state with
 one residual goal. The sibling remains yellow and retains the same stable goal
 ID. The residual goal ID is derived from the parent root, action, target goal
@@ -52,7 +52,7 @@ successor root, and the fixture and sidecar were byte-identical before and
 after the requests. The probe continued from a Refine successor containing
 residual `shedHole(name)` markers while retaining its parent root. It also
 exercises node recovery through the actual LSP request path. The walkthrough
-fixture compiles with two independent open goals in one `shedsBlock`.
+fixture compiles with two independent open goals in one `eponymBlock`.
 
 Reproduce the action probe after compiling its fixture:
 

@@ -511,8 +511,26 @@ proc cgAppChain(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
       return call
   # Uniform fold: evaluate the head, then each argument left to right,
   # applying as we go — exactly the interpreter's order.
+  # Issue #479 (pre-existing; surfaced by #478's sheds_demo migration):
+  # a compiled def proc consumes its q0 Pi binders internally (unit
+  # witnesses from q0Args), so a caller folding onto it must NOT pass
+  # q0-position arguments again: double consumption shifts every later
+  # argument and sticks the application (a generic identity called at
+  # a type argument applied the type as the value, then stuck applying
+  # the value as a function). The slow path is different: the
+  # interpreter closure keeps all binders, so its fold passes every
+  # argument. Only the compiled-callee fold skips q0 positions; a
+  # partial application past a non-leading q0 binder is still out of
+  # scope (the returned closure cannot skip that binder — same as today).
+  var skipQ0: seq[bool] = @[]
+  if head.kind == tR and head.refId in ctx.refs:
+    let r = ctx.refs[head.refId]
+    if r.kind == cgkDefn and r.compiledProc.len > 0:
+      for i in 0 ..< appArgs.len:
+        skipQ0.add(i < r.piQuantities.len and r.piQuantities[i] == q0)
   var acc = cg(ctx, head, env, bnd)
-  for a in appArgs:
+  for i, a in appArgs:
+    if i < skipQ0.len and skipQ0[i]: continue
     acc = newCall(bindSym"vCompiledAppWithBindings", acc, cg(ctx, a, env, bnd), bnd)
   acc
 

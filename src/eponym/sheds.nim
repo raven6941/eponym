@@ -5,7 +5,7 @@
 # yellow (stuck: open holes, constraints not yet solvable but possibly
 # later), brown (definitely bad: elaboration failed before a goal was
 # established). The status is computed by `assignShedStatuses` (shared by
-# the shedsBlock macro at macro time and by `refreshShedStatuses` for the
+# the eponymBlock macro at macro time and by `refreshShedStatuses` for the
 # LSP/editor loop, e.g. after holes are filled via the #58 refine/give
 # actions) and serialized in the sidecar JSON, which the LSP server
 # (lsp.nim) turns into diagnostics: yellow -> Warning, brown -> Error,
@@ -15,8 +15,8 @@
 #
 # A *shed* is an Epigram-style unchecked region: "the typechecker is
 # forbidden to tread" there (Altenkirch, McBride & McKinna 2005). In the
-# linearized Nim-friendly syntax accepted by the shedsBlock macro
-# (sheds_mac.nim), a shed is written:
+# linearized Nim-friendly syntax accepted by the eponymBlock macro
+# (issue #478: sheds live in eponymBlock now), a shed is written:
 #
 #   proc plus(x: Nat, y: Nat): Nat = ![ plusBody ]            # named shed
 #   proc quad(n: Nat): Nat = ![ quadBody, double (double n) ] # with draft
@@ -120,6 +120,13 @@ proc renderShedGoalCtx*(ms: MetaStore, state: ShedSemanticState):
     result.goalPi.add(prettyTerm(state.residualGoal, pc,
       ms.refNames, ms.recordFields))
 
+proc shedGoalAndCtx*(ms: MetaStore, h: HoleInfo): tuple[goal: string, ctx: seq[string], goalPi: seq[string]] =
+  ## Keep the legacy sidecar fields as a display projection of the
+  ## elaborator-backed semantic state. See #377 and docs/shed-semantic-model.md.
+  ## (Moved here from sheds_mac.nim in #478: the unified eponymBlock
+  ## needs it too.)
+  renderShedGoalCtx(ms, semanticShedState(ms, h))
+
 proc renderShedHover*(ms: MetaStore, state: ShedSemanticState): string =
   ## LSP hover projection. Keeping this over the semantic state prevents a
   ## second, subtly different interpretation of hole contexts and goals.
@@ -147,6 +154,10 @@ type
     name*: string      # shed name, from `![ name ... ]`
     draft*: string     # user-owned scratch text (`repr` of the draft node);
                        # the elaborator never sees this
+                       # (No NimNode field: a NimNode in this runtime-visible
+                       # type would poison runtime use of the module — e.g.
+                       # readShedSidecar — with a ".compileTime proc" error.
+                       # Draft ASTs travel in rewriteSheds' parallel result.)
     nimLine*: int      # 1-based line of `![...]` in the calling Nim file
     nimCol*: int       # 1-based column of `![...]` in the calling Nim file
     holeLine*: int     # 1-based line of the `?` in the generated Eponym source
@@ -193,7 +204,7 @@ proc parseShedParts*(n: NimNode): tuple[name: string, draft: NimNode,
     return ($br[0], nil, false)
   if br.len == 2 and br[0].kind == nnkIdent:
     return ($br[0], br[1], true)
-  error("shedsBlock: shed expects `![ name ]` or `![ name, draft ]` " &
+  error("shed expects `![ name ]` or `![ name, draft ]` " &
     "(name first, optional draft after a comma)", n)
 
 proc shedPlaceholder*(i: int): string =
@@ -216,15 +227,18 @@ proc callerFileOf*(body: NimNode): string =
   let li = lineInfo(body)
   let p = li.rfind('(')
   if p < 0:
-    error("shedsBlock: cannot determine calling file", body)
+    error("cannot determine calling file", body)
   li[0 ..< p]
 
-proc rewriteSheds*(body: NimNode, sheds: var seq[ShedInfo]) =
+proc rewriteSheds*(body: NimNode, sheds: var seq[ShedInfo]): seq[NimNode] =
   ## In-place rewrite of the macro argument: every `![...]` or
   ## `shedHole(name)` marker becomes a
   ## placeholder ident (`shedPlaceholder i`), and `sheds` accumulates the
   ## metadata. Shed contents are never descended into -- the typechecker
   ## is forbidden to tread there, and neither is the converter.
+  ## Returns the draft AST per shed, parallel to `sheds` (nil = no
+  ## draft), for macro-time draft filling (issue #478). The nodes live
+  ## here, not in ShedInfo, so the sidecar type stays runtime-safe.
   ##
   ## A shed marker at top level (outside any proc body) is an error: write a
   ## proc whose body is the shed instead -- that is the Epigram shape
@@ -232,10 +246,10 @@ proc rewriteSheds*(body: NimNode, sheds: var seq[ShedInfo]) =
   if body.kind == nnkStmtList:
     for i in 0 ..< body.len:
       if isShedNode(body[i]) or isShedHoleCall(body[i]):
-        error("shedsBlock: a shed must sit inside a proc body, e.g. " &
+        error("a shed must sit inside a proc body, e.g. " &
           "proc plus(x: Nat, y: Nat): Nat = ![ plusBody ] -- " &
           "a bare top-level ![...] has no expected type to check against.", body[i])
-  proc walk(n: NimNode, acc: var seq[ShedInfo]) =
+  proc walk(n: NimNode, acc: var seq[ShedInfo], nodes: var seq[NimNode]) =
     for i in 0 ..< n.len:
       let c = n[i]
       if isShedNode(c) or isShedHoleCall(c):
@@ -263,11 +277,12 @@ proc rewriteSheds*(body: NimNode, sheds: var seq[ShedInfo]) =
                          nimLine: ln, nimCol: co,
                          holeLine: 0, holeIdx: -1,
                          status: ssYellow))  # issue #134: not yet elaborated
+        nodes.add(if hasDraft: draft else: nil)
         copyLineInfo(replacement, c)
         n[i] = replacement
       else:
-        walk(c, acc)
-  walk(body, sheds)
+        walk(c, acc, nodes)
+  walk(body, sheds, result)
 
 proc resolveShedPlaceholders*(src: var string, sheds: var seq[ShedInfo]) =
   ## Replace each placeholder with `_` (a #58 hole), recording the
@@ -348,7 +363,7 @@ proc sidecarPath*(nimFile: string): string =
 # `isZeroBody_zero` surviving after the source went back to `isZeroBody`,
 # or suffixed duplicates like `isZeroBody_zero1`).
 #
-# Reset rule: the first `shedsBlock` expansion for a given file in a
+# Reset rule: the first `eponymBlock` expansion for a given file in a
 # compilation starts fresh, ignoring any stale sidecar on disk; later
 # expansions for the same file in the SAME compilation merge by name.
 # Tracked in a {.compileTime.} var: it persists across macro expansions
@@ -357,10 +372,30 @@ proc sidecarPath*(nimFile: string): string =
 # run in the Nim VM at macro-expansion time (regression: it crashed every
 # `nim c` of a sheds file once a sidecar existed).
 #
-# Multiple `shedsBlock` expansions in one file still accumulate within a
+# Multiple `eponymBlock` expansions in one file still accumulate within a
 # compilation; each fresh `nim c` after an edit starts clean.
 
 var sidecarResetDone {.compileTime.}: seq[string] = @[]
+
+proc writeShedSidecar*(nimFile: string, sheds: seq[ShedInfo],
+                       errMsg = "")
+
+proc clearStaleSidecar*(nimFile: string) =
+  ## Issue #478: a file whose sheds were all filled (or removed) must
+  ## not keep a stale sidecar: the LSP would keep showing a yellow
+  ## shed for source that no longer has one. Called by eponymBlock
+  ## expansions with no sheds, but only on the first expansion for the
+  ## file in this compilation (a later expansion must not wipe sheds
+  ## an earlier expansion wrote), and only when a sidecar actually
+  ## exists on disk — so shed-free files never gain a sidecar.
+  ## Existence uses fileExists, which works in the Nim VM (verified):
+  ## readFile on a missing file aborts the VM with an uncatchable
+  ## IOError instead of raising, and getLastModificationTime cannot
+  ## run in the VM at all (regression #231).
+  let path = sidecarPath(nimFile)
+  if path in sidecarResetDone: return
+  if not fileExists(path): return
+  writeShedSidecar(nimFile, @[])
 
 proc writeShedSidecar*(nimFile: string, sheds: seq[ShedInfo],
                        errMsg = "") =
@@ -370,7 +405,7 @@ proc writeShedSidecar*(nimFile: string, sheds: seq[ShedInfo],
   let path = sidecarPath(nimFile)
   var old: seq[ShedInfo] = @[]
   if path in sidecarResetDone:
-    # Later shedsBlock expansion for this file in the same compilation:
+    # Later eponymBlock expansion for this file in the same compilation:
     # merge with what earlier expansions wrote.
     try:
       let j = parseJson(readFile(path))
@@ -416,7 +451,7 @@ proc readShedSidecar*(path: string): seq[ShedInfo] =
 
 proc assignShedStatuses*(sheds: var seq[ShedInfo], errMsg: string,
                          onlyGenSrc = "") =
-  ## The #134 status rule, shared by the shedsBlock macro (macro-time) and
+  ## The #134 status rule, shared by the eponymBlock macro (macro-time) and
   ## refreshShedStatuses (LSP/editor-loop time). `holeIdx >= 0` means the
   ## shed was matched to an open hole in MetaStore.holes:
   ## - matched to an open hole -> yellow (stuck, possibly solvable later);
@@ -426,7 +461,7 @@ proc assignShedStatuses*(sheds: var seq[ShedInfo], errMsg: string,
   ## - no open hole after a clean elaboration -> white (done).
   ## `onlyGenSrc` (issue #137): when non-empty, only sheds whose recorded
   ## generated source equals it are re-assigned -- a sidecar can hold
-  ## sheds from several shedsBlock expansions, and re-elaborating one
+  ## sheds from several eponymBlock expansions, and re-elaborating one
   ## block's source must not touch another block's sheds.
   for i in 0 ..< sheds.len:
     if onlyGenSrc != "" and sheds[i].genSrc != onlyGenSrc: continue
@@ -484,7 +519,8 @@ macro runShedSmoke(): untyped =
   let blk = quote do:
     proc plus(x: int, y: int): int = ![ plusBody ]
     proc quad(n: int): int = ![ quadBody, n + n ]
-  rewriteSheds(blk, sheds)
+  let nodes = rewriteSheds(blk, sheds)
+  doAssert nodes.len == 2 and nodes[0].isNil and not nodes[1].isNil
   doAssert sheds.len == 2
   doAssert sheds[0].name == "plusBody" and sheds[0].draft == ""
   doAssert sheds[1].name == "quadBody" and sheds[1].draft.len > 0

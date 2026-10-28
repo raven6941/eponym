@@ -137,10 +137,19 @@ proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
   ## resolve relative to `baseDir` (via elabCheckDir). Used by eponymBlock
   ## wrappers so the one-time runtime elaboration sees the same modules as
   ## compile-time elaboration.
+  ## Issue #478: elaboration here is hole-tolerant, raising on the
+  ## first non-hole failure, so a block containing an unused hole def
+  ## no longer crashes every wrapper at runtime. Hole-free sources
+  ## elaborate identically to the strict path, and a genuine error
+  ## still raises ElabError.
   let key = cacheKey(baseDir, src)
   if key in defCache:
     return defCache[key].defs
-  let checked = elabCheckDirStateAll(src, baseDir)
+  let checked = elabCheckDirStateAllHoles(src, baseDir)
+  if checked.errMsg.len > 0:
+    let e = newException(ElabError, checked.errMsg)
+    e.loc = checked.errLoc
+    raise e
   defCache[key] = CheckedRuntime(defs: checked.allDefs,
                                  globals: checked.globals)
   checked.allDefs
@@ -1909,25 +1918,3 @@ proc callIntFuncDir*(baseDir, src: string, name: string,
   valueToInt(callDefValueWithBindings(d, values, bindings,
                                      getGlobalsDir(baseDir, src)))
 
-proc getDefsHolesDir*(baseDir, src: string): seq[ElabDef] =
-  ## Issue #133: like getDefsDir, but hole-tolerant (elabCheckHolesDir):
-  ## embedded sources containing shed holes (`?`) elaborate without
-  ## failing on unsolved metas. Used by shedsBlock wrappers so a block
-  ## mixing complete defs and shed holes still runs its complete defs.
-  let key = cacheKey(baseDir, src) & "\x1eholes"
-  if key in holeDefCache:
-    return holeDefCache[key]
-  let (defs, _, errLoc, errMsg) = elabCheckHolesDir(src, baseDir)
-  if errMsg != "":
-    raise newException(ValueError,
-      "shedsBlock runtime elaboration failed at " &
-      $errLoc.line & ":" & $errLoc.col & ": " & errMsg)
-  holeDefCache[key] = defs
-  defs
-
-proc callIntFuncHolesDir*(baseDir, src: string, name: string,
-                          args: seq[int]): int =
-  ## Issue #133: like callIntFuncDir, but `src` may contain shed holes.
-  let defs = getDefsHolesDir(baseDir, src)
-  let d = findDef(defs, name)
-  callDefInt(d, args)

@@ -950,7 +950,7 @@ implementations.
 - [x] Audit the VS Code extension against bracketed Eponym syntax. It delegates
   parsing/checking to the Nim macro and Eponym LSP, contributes no Eponym
   grammar or snippets, and already pairs square brackets. The headless smoke
-  test compiles a bracketed-generic `shedsBlock` and exercises its sidecar
+  test compiles a bracketed-generic `eponymBlock` and exercises its sidecar
   through the real LSP; no extension version bump is needed because its UI and
   protocol did not change.
 - [x] Resolve the compiled LSP binary from the nearest repository root when
