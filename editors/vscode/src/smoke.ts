@@ -165,7 +165,12 @@ async function main() {
     const wtText = fs.readFileSync(wt, "utf8");
     const wtBlocks = shedBlocks(wtText);
     const wtNames = wtBlocks.flatMap((b) => b.sheds.map((s) => s.name));
-    const sidecarNames = readSidecarShedNames(sidecarPathFor(wt));
+    const wtSidecarPath = sidecarPathFor(wt);
+    const sidecarNames = readSidecarShedNames(wtSidecarPath);
+    const sidecar = JSON.parse(fs.readFileSync(wtSidecarPath, "utf8"));
+    const statusByName = new Map<string, string>(
+      (sidecar.sheds ?? []).map((s: any) => [String(s.name), String(s.status ?? "yellow")])
+    );
     check(wtBlocks.length === 1 && wtNames.length > 0 &&
           wtNames.join(",") === sidecarNames.join(","),
       "walkthrough source markers match its generated sidecar: " + wtNames.join(","));
@@ -196,6 +201,17 @@ async function main() {
         for (const c of b.children ?? []) walk(c);
       };
       walk(wl.box);
+      const status = statusByName.get(name) ?? "yellow";
+      if (status === "white") {
+        // Issue #478: valid drafts are filled by the macro at compile time,
+        // so a completed shed has a layout but no remaining hole goal.
+        check(goals.length === 0,
+          `completed walkthrough shed ${name} has no remaining hole goal`);
+        const view = renderInlineShed(name, wl.box, { showButtons: true, keyHints });
+        check(view.includes(name) && view.includes(keyHints),
+          `inline view for completed shed ${name} remains renderable`);
+        continue;
+      }
       check(goals.length > 0,
         `box tree for ${name} carries at least one hole goal`);
       const view = renderInlineShed(name, wl.box, { showButtons: true, keyHints });
