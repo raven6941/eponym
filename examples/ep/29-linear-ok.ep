@@ -1,0 +1,18 @@
+# Positive case for single-use handles (issue #482): a one-shot acked
+# job threaded through its lifecycle, plus the bracket client. The
+# reusable library is lib/linear.ep.
+import "../../lib/nat.ep"
+import "../../lib/linear.ep"
+
+# Happy path: send, ack, close. Each step's result feeds the next; the
+# index on Job advances with the lifecycle.
+proc jobSession (1 j : Job freshP) : Job closedP =
+  let s = sendJ zero j in
+  let p = ackJ s in
+  closeJ (snd p)
+
+# Bracket path: the callback threads the handle and returns the receipt.
+# The closed handle is bound and dropped: it is inert (no operation
+# accepts Job closedP), and the receipt is the only value returned.
+proc jobViaBracket : Nat =
+  withJob (lam(j: Job freshP) => let s = sendJ (suc zero) j in let p = ackJ s in let c = closeJ (snd p) in fst p)

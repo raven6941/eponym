@@ -1,0 +1,113 @@
+# Eponym common library: single-use handles / affine-linear types (issue #482).
+#
+# A one-shot acked job. The protocol, in order, exactly once each:
+# fresh --sendJ--> sent --ackJ--> acked --closeJ--> closed. A handle
+# is a q1 (linear) value: inside checked code, an ANNOTATED binder
+# for it cannot be used twice and cannot be dropped silently
+# (Issue #66). QUALIFICATION, found while building this example
+# (probes, not speculation): a LET-bound intermediate derived from a
+# q1 value escapes that checking entirely — `let s = sendJ zero j in
+# zero` (drop) and `let s = sendJ zero j in (ackJ s, ackJ s)`
+# (double use) both elaborate cleanly, because the unannotated let
+# binder is omega-inferred rather than inheriting the value's
+# quantity. So the single-use guarantee, as implemented, covers
+# directly threaded annotated binders, not let-bound intermediates.
+# Threaded clients that use each intermediate exactly once are fine;
+# misuse through a let is currently unchecked. Filed as #484
+# (see the watchlist in examples/embedded/linear_handles.nim).
+# The phases are what Nim
+# alone cannot enforce: a destructor gives exactly-once destruction,
+# but it cannot enforce send-before-ack, ack-before-close, or
+# exactly-once send. That ordering-plus-completion obligation is what
+# the q1 checking earns its keep on; a handle with only a
+# "close exactly once" obligation would be vacuous, since Nim alone
+# suffices for that.
+#
+# Honest boundary (see docs/known-limitations.md, "Static checks do not
+# manage Nim resources"): quantities apply inside checked terms. They
+# do not inspect aliases or ownership in surrounding Nim code. ORC's
+# deterministic drop is trusted runtime glue, not something the checker
+# verifies. This library demonstrates checking at the eponym API
+# boundary; it does not claim end-to-end resource management.
+#
+# Typed boundary: Nim code is an omega context. Only omega values cross
+# to Nim; a live q1 handle crosses only through an explicit conversion.
+# For this handle there is deliberately NO copy-to-omega method, and
+# each variant fails for a stated reason:
+# - Consuming copy (move), (q1 x : R) -> omega S: the "copy" would be a
+#   second handle onto the same backend job, so Nim could re-send or
+#   close through the alias. Transferring ownership does not help: the
+#   omega value is freely reusable by design, so the protocol is lost.
+# - Non-consuming deep copy: sound only for genuinely independent
+#   values (no shared mutable state). A job handle fronts shared
+#   backend state (the queue entry), so an independent copy does not
+#   exist; copying the handle value would alias that state.
+# - Relabeling: the same pointer with an omega tag is unsound, full
+#   stop; it is the caveat with a nicer name.
+# The sound boundary for a live protocol handle is therefore the
+# bracket, not a copy: withJob takes an eponym-checked callback, runs it
+# with a fresh handle, and only the callback's omega result (a Nat
+# receipt) crosses back to Nim. Copy-to-omega is the simplest case of
+# that encapsulation, and it is what the completed receipt is: an
+# immutable value, not a handle. Copy-to-omega does NOT buy Nim-side
+# single use: if a use case needs Nim to use something exactly once (a
+# non-replayable capability), do not expose the value at all; expose
+# operations that run inside eponym, as withJob does.
+#
+# Bracket shape, stated exactly: withJob fixes the callback's result
+# type to Nat, as withBorrow does (lib/borrow.ep). With the result type
+# fixed to a value type, there is no channel by which the handle could
+# outlive the bracket. The generic-result variant
+#   Pi(A: Univ, Pi(k: Pi(1 j: Job freshP, A), A))
+# was considered and NOT shipped: the caller instantiates A, so nothing
+# stops A := Job freshP and the callback returning the handle, which
+# escapes. That is the runST gap: runST's soundness comes from the
+# state parameter being quantified INSIDE the bracket's argument type
+# (forall s. ST s a), so the callback is polymorphic in s and its
+# result type a, fixed outside, cannot mention s. This fragment has no
+# such higher-rank quantification over the handle, and protocol
+# operations need concrete phase indices, so a rank-2 callback could
+# not call them anyway. The Nat-fixed bracket is the sound shape
+# available here; the generic bracket is a watchlist item, not a
+# shipped method.
+#
+# Representation verdict (see examples/embedded/linear_handles.nim for
+# the measurement): NEGATIVE for this handle shape. Phase indices erase
+# at runtime (every Job phase maps to the same Nim ref type) and
+# quantities never reach codegen, so the q1 handle and the omega handle
+# are the same runtime value moved the same way. Linearity here is
+# checking-only. A linearity-exploiting representation (a q1 handle
+# compiled to a non-refcounted owned pointer, or a q1 argument compiled
+# to a sink move) would require codegen to map q1 to ownership, which
+# it does not do today; that is #413's move-semantics territory.
+import "nat.ep"
+
+# Phases of a one-shot job's lifecycle.
+data(JobPhase, Univ) where
+| freshP : JobPhase
+| sentP : JobPhase
+| ackedP : JobPhase
+| closedP : JobPhase
+
+# A job handle indexed by its current phase.
+data(Job, JobPhase -> Univ) where
+| mkJob (p : JobPhase) : Job p
+
+# Lifecycle operations. Each consumes the handle in its required phase
+# and delivers it in the next phase; the index change is the transition.
+# sendJ takes the payload first, as sendH does in lib/typestate.ep.
+postulate(sendJ, Pi(x: Nat, Pi(1 j: Job freshP, Job sentP)))
+postulate(ackJ, Pi(1 j: Job sentP, Sig(a: Nat, Job ackedP)))
+postulate(closeJ, Pi(1 j: Job ackedP, Job closedP))
+
+# Bracket: the callback is an eponym-checked term taking a fresh linear
+# handle and computing a Nat receipt; the handle never becomes a value
+# Nim code can name. The callback must be written in eponym: a plain
+# Nim proc callback would receive the handle as an ordinary Nim value
+# and could stash it, double-use it, or drop it unchecked. A Nim func
+# callback cannot do the job either: it cannot perform the side-effect
+# operations at all, and confinement is not linearity (it does not
+# enforce exactly-once use). The backend creates the handle, runs the
+# callback, and requires the protocol to have completed (closed) when
+# the callback returns; anything else is a backend error.
+postulate(withJob, Pi(k: Pi(1 j: Job freshP, Nat), Nat))

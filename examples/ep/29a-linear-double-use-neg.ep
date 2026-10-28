@@ -1,0 +1,13 @@
+# Negative test for single-use handles (issue #482): double use.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+#
+# `j` is consumed by the first sendJ and then used again by the second.
+# Expected error: linear variable 'j' used 2 times (expected exactly
+# once), from the in-judgment quantity enforcement (Issue #66).
+import "../../lib/nat.ep"
+import "../../lib/linear.ep"
+
+# Violation: double use of the linear handle j.
+proc badDoubleSend (1 j : Job freshP) : Sig(x: Job sentP, Job sentP) =
+  (sendJ zero j, sendJ (suc zero) j)
