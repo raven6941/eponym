@@ -2,7 +2,7 @@
 // Thin client: the Nim LSP server is the backend; this extension spawns it
 // over stdio, forwards `eponym/shedLayout`, and applies codeAction edits.
 //
-// Issue #153: the extension owns sidecar generation. The `shedsBlock`
+// Issue #153: the extension owns sidecar generation. The `eponymBlock`
 // macro writes `<file>.sheds.json` at macro-expansion time, so opening a
 // shed file or saving it (re)compiles it with Nim -- no terminal needed.
 // The LSP server is kept pure: it never shells out to a toolchain.
@@ -423,12 +423,15 @@ export function activate(ctx: vscode.ExtensionContext) {
     })
   );
 
-  // Recompile every saved shedsBlock file so new or changed markers always
-  // have fresh goals and source positions. Ordinary Nim files are untouched.
+  // Recompile every saved file with sheds so new or changed markers always
+  // have fresh goals and source positions. A file with a stale sidecar
+  // (all sheds filled since the last compile) recompiles too, so the
+  // macro clears it. Ordinary Nim files are untouched.
   ctx.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(async (doc) => {
       if (doc.languageId !== "nim" && !doc.fileName.endsWith(".nim")) return;
-      if (!hasShedBlocks(doc.getText())) return;
+      if (!hasShedBlocks(doc.getText()) &&
+          !fs.existsSync(sidecarPathFor(doc.uri.fsPath))) return;
       const docUri = doc.uri.toString();
       layoutCache.delete(docUri);
       const entry = openPanels.get(docUri);
@@ -502,7 +505,7 @@ export function activate(ctx: vscode.ExtensionContext) {
 
       if (!hasShedBlocks(editor.document.getText())) {
         vscode.window.showErrorMessage(
-          "Eponym: no shedsBlock in this file -- nothing to render"
+          "Eponym: no sheds in this file -- nothing to render"
         );
         return;
       }
@@ -543,13 +546,13 @@ export function activate(ctx: vscode.ExtensionContext) {
       if (!shedName) {
         if (shedNames.length > 0) {
           const picked = await vscode.window.showQuickPick(shedNames, {
-            placeHolder: "Shed (from shedsBlock)",
+            placeHolder: "Shed (from sidecar)",
           });
           if (!picked) return;
           shedName = picked;
         } else {
           const typed = await vscode.window.showInputBox({
-            prompt: "Shed name (from shedsBlock)",
+            prompt: "Shed name (from sidecar)",
             placeHolder: "e.g. quadBody",
           });
           if (!typed) return;

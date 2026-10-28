@@ -12,13 +12,13 @@
 # but if the elaborator ever looked inside the shed, this file would not
 # compile. The shed is scratch; only the signature is checked.
 
-import sheds_mac
+import eponym_mac
 import sheds
 import shed_layout  # Issue #135: 2D deduction-style layout of shed proof states
 import os  # currentSourcePath, absolutePath
 import strutils  # `in` on strings
 
-shedsBlock:
+eponymBlock:
   # Prelude import (issue #131) composes with sheds.
   import "../../lib/nat.ep"
 

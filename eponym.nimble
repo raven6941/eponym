@@ -32,7 +32,7 @@ installDirs   = @["lib"]
 # Production modules: list explicitly -- nimble does not install srcDir's
 # .nim files by default. installFiles resolves relative to srcDir, so these
 # are the bare module names. The set must be the full import closure of the
-# public entry points (eponym_mac, eponym_embed, sheds_mac, lsp): missing
+# public entry points (eponym_mac, eponym_embed, lsp): missing
 # one breaks `import eponym_mac` for users (2026-10-14: abilities,
 # elab_prof, usage_check were missing).
 # (Experimental probes in src/experimental/ are deliberately excluded:
@@ -58,7 +58,6 @@ installFiles  = @["abilities.nim",
                   "eponym_embed.nim",
                   "kernel_check.nim",
                   "sheds.nim",
-                  "sheds_mac.nim",
                   "shed_layout.nim",
                   "shed_state.nim",
                   "mutual_termination.nim"]
@@ -77,7 +76,7 @@ task test, "Run the full CI matrix (same matrix GitHub CI runs)":
 # by a custom task -- `nimble build` runs the built-in and reports
 # "Nothing to build" for a library with no `bin`.)
 task buildall, "Build all production modules":
-  for f in ["abilities", "codegen", "derive_repr", "eponym_init", "erasure", "preterm", "parse_surf", "sha256", "shed_state_dag", "elab", "elab_prof", "unify", "usage_check", "eponym_mac", "lsp", "egraph", "eponym_embed", "kernel_check", "sheds", "sheds_mac", "shed_layout", "shed_state", "mutual_termination"]:
+  for f in ["abilities", "codegen", "derive_repr", "eponym_init", "erasure", "preterm", "parse_surf", "sha256", "shed_state_dag", "elab", "elab_prof", "unify", "usage_check", "eponym_mac", "lsp", "egraph", "eponym_embed", "kernel_check", "sheds", "shed_layout", "shed_state", "mutual_termination"]:
     echo "=== build " & f & " ==="
     exec "nim c --hints:off --path:src --path:src/eponym src/eponym/" & f & ".nim"
   echo "=== build repl (issue #50) ==="

@@ -1,7 +1,7 @@
 // Sidecar generation for the Eponym sheds webview (issue #153).
 // vscode-free: usable from extension.ts and from the node smoke test.
 //
-// The `shedsBlock` macro writes `<file>.sheds.json` at macro-expansion
+// The `eponymBlock` macro writes `<file>.sheds.json` at macro-expansion
 // time, so the sidecar only exists after the file has been compiled with
 // Nim. Rather than asking the user to run `nim c` by hand, the extension
 // compiles the file itself whenever it sees shed blocks. The LSP server
@@ -15,8 +15,13 @@ import type { EponymSource } from "./serverSetup";
 
 const NIM_PATH_FLAGS = ["src", "src/eponym"];
 
+// Issue #478: a file has sheds when an `eponymBlock:` body contains a
+// shed marker. Shed-free blocks do not count: the extension must not
+// recompile plain eponymBlock files on every save. (The save handler
+// additionally recompiles when a sidecar exists, so a file whose sheds
+// were all filled still gets its stale sidecar cleared.)
 export function hasShedBlocks(text: string): boolean {
-  return /\bshedsBlock\b/.test(text);
+  return shedBlocks(text).some((b) => b.sheds.length > 0);
 }
 
 export function eponymRepoRoot(startDir: string): string | null {
@@ -64,8 +69,9 @@ export interface GenerateResult {
 
 // Issue #190: cursor-aware shed detection. A *shed node* is one `![ name ]`,
 // `![ name, draft ]`, or residual `shedHole(name)` occurrence; a shed block
-// is a top-level `shedsBlock:` statement plus its indented body. Offsets are absolute
-// character offsets into the document text.
+// is a top-level `eponymBlock:` statement plus its indented body (issue #478:
+// sheds live in eponymBlock now; blocks without markers yield no sheds).
+// Offsets are absolute character offsets into the document text.
 
 export interface ShedNode {
   name: string;
@@ -74,13 +80,13 @@ export interface ShedNode {
 }
 
 export interface ShedBlock {
-  start: number; // offset of the `shedsBlock:` line start
+  start: number; // offset of the `eponymBlock:` line start
   end: number; // offset of the first line past the indented body
   sheds: ShedNode[];
 }
 
 const SHED_NODE_RE = /!\[\s*([A-Za-z_][\w']*)(?:\s*,[^\]]*)?\]|shedHole\(\s*([A-Za-z_][\w']*)\s*\)/g;
-const SHED_BLOCK_RE = /^([ \t]*)shedsBlock\s*:/;
+const SHED_BLOCK_RE = /^([ \t]*)eponymBlock\s*:/;
 
 function lineStartOffsets(text: string): number[] {
   const offs = [0];
@@ -102,7 +108,7 @@ export function shedBlocks(text: string): ShedBlock[] {
     if (!m) continue;
     const headIndent = m[1].length;
     // The body is the run of lines strictly more indented than the
-    // `shedsBlock:` line (blank lines ride along).
+    // `eponymBlock:` line (blank lines ride along).
     let j = i + 1;
     while (j < lines.length && (lines[j].trim() === "" || indentOf(lines[j]) > headIndent)) j++;
     const blockStart = offs[i];
@@ -167,7 +173,7 @@ export function shedAtCursor(text: string, offset: number): ShedNode | null {
     .sort((a, b) => Math.abs(a.start - offset) - Math.abs(b.start - offset))[0] ?? null;
 }
 
-/** The sheds of the `shedsBlock:` block containing the cursor, or []. */
+/** The sheds of the `eponymBlock:` block containing the cursor, or []. */
 export function blockShedsAtCursor(text: string, offset: number): ShedNode[] {
   for (const b of shedBlocks(text)) {
     if (b.start <= offset && offset < b.end) return b.sheds;
@@ -175,7 +181,7 @@ export function blockShedsAtCursor(text: string, offset: number): ShedNode[] {
   return [];
 }
 
-/** `<file>.sheds.json`, the sidecar the shedsBlock macro writes. */
+/** `<file>.sheds.json`, the sidecar the eponymBlock macro writes. */
 export function sidecarPathFor(nimFile: string): string {
   return nimFile.replace(/\.nim$/, ".sheds.json");
 }

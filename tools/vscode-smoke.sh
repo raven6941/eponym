@@ -43,10 +43,10 @@ LSP=src/eponym/lsp \
 # against that flat package, then start the installed-source LSP.
 NIMBLE_DIR="$NIMBLE_TEST_DIR/nimble" nimble --offline install --accept
 cat > "$NIMBLE_TEST_DIR/project/sheds_user.nim" <<'EOF'
-import sheds_mac
+import eponym_mac
 import sheds
 
-shedsBlock:
+eponymBlock:
   import "nat.ep"
   proc installedUserGoal(n: Nat): Nat = ![installedBody]
 EOF

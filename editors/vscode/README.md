@@ -40,7 +40,7 @@ the elaborator accepts for the goal, then opens the constructor's fields as
 ordinary sheds. This is goal-directed refinement; case-split remains the
 separate action for eliminating a value already in scope.
 
-In brief: open a Nim file with a `shedsBlock`, place the cursor on a `![name]`
+In brief: open a Nim file with an `eponymBlock` shed, place the cursor on a `![name]`
 marker, and run **Eponym: Expand inline shed view** (default shortcut
 **Ctrl+Shift+S**). A CodeLens above each marker opens that specific shed.
 The extension compiles the file with Nim to generate the sidecar; progress
@@ -60,7 +60,7 @@ separate Eponym grammar, snippets, or syntax diagnostics; Eponym parsing and
 checking remain in the Nim macro and language-server backend. The extension's
 Nim language configuration pairs square brackets, including the explicit
 parameter syntax used by current Eponym programs. Its headless smoke test
-checks that configuration and compiles a representative `shedsBlock` using
+checks that configuration and compiles a representative `eponymBlock` using
 bracketed generic declarations and calls before exercising its sidecar with
 the real Eponym language server.
 

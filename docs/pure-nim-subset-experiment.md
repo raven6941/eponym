@@ -61,8 +61,8 @@ runtime behavior already exist or can be added with separate soundness review.
 - What is the smallest Boolean type / eliminator setup required?
 - Which integer operators are already present as checked primitives, and
   how are overflow and division semantics specified?
-- Should pure expression syntax be identical in `eponymBlock`, `shedsBlock`,
-  and standalone `.ep` files, or remain a Nim embedding convenience?
+- Should pure expression syntax be identical in `eponymBlock` and standalone
+  `.ep` files, or remain a Nim embedding convenience?
 - How should the site and editor communicate which syntax is Eponym-checked?
 
 ## Acceptance bar

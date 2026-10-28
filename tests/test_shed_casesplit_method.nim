@@ -38,7 +38,7 @@ proc caseSplitReq(server: var LspServer, uri, shedName, variable: string,
 
 proc macroTime(nimFile: string, name: string,
                nimLine, nimCol: int): ShedInfo =
-  ## Simulate `shedsBlock` for a single Nat->Bool shed: the generated
+  ## Simulate `eponymBlock` for a single Nat->Bool shed: the generated
   ## source has one hole; resolveShedPlaceholders records its line/col.
   var src = "import \"lib/nat.ep\"\nimport \"lib/bool.ep\"\n" &
             "proc isZero (n : Nat) : Bool = " & shedPlaceholder(0) & "\n"
@@ -54,8 +54,8 @@ createDir(dir)
 let nimFile = dir / "demo.nim"
 # The nim file content only matters for the splice position; the server
 # works from the sidecar + recorded genSrc.
-let nimV0 = """import sheds_mac
-shedsBlock:
+let nimV0 = """import eponym_mac
+eponymBlock:
   import "lib/nat.ep"
   import "lib/bool.ep"
   proc isZero(n: Nat): Bool = ![isZeroBody]

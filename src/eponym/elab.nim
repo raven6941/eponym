@@ -4947,7 +4947,8 @@ proc elabCheckHolesDir*(src: string, baseDir: string,
     tuple[defs: seq[ElabDef], ms: MetaStore, errLoc: Loc, errMsg: string] =
   ## Issue #133: hole-tolerant elaboration (issue #58 semantics) with
   ## `import` support (issue #131 semantics): `import "path.ep"` resolves
-  ## relative to `baseDir`. Used by the shedsBlock macro: each shed becomes
+  ## relative to `baseDir`. Used by the eponymBlock macro (issue #478) and
+  ## the LSP refine paths: each shed becomes
   ## a hole, so the surrounding program must elaborate hole-tolerantly
   ## while still resolving prelude imports. Raises ParseError as usual.
   profilePhase(epOther):
@@ -4955,7 +4956,7 @@ proc elabCheckHolesDir*(src: string, baseDir: string,
     var drv = initModuleDriver(handlers)
     drv.ms.allowHoles = true
     let (defs, errLoc, errMsg) =
-      drv.elabDeclsDirInner(decls, baseDir, "<shedsBlock>", true)
+      drv.elabDeclsDirInner(decls, baseDir, "<eponymBlock>", true)
     (defs, drv.ms, errLoc, errMsg)
 
 proc elabFile*(drv: var ModuleDriver, path: string,
@@ -5032,6 +5033,29 @@ proc elabCheckDirStateAll*(src: string, baseDir: string,
   for _, definition in drv.allDefs:
     allDefs.add(definition)
   (defs, drv.globals, allDefs)
+
+proc elabCheckDirStateAllHoles*(src: string, baseDir: string,
+                        handlers: seq[ConvHandler] = @[]):
+    tuple[defs: seq[ElabDef], globals: Globals, allDefs: seq[ElabDef],
+          ms: MetaStore, supply: Supply, errLoc: Loc, errMsg: string] =
+  ## Issue #478: hole-tolerant variant of elabCheckDirStateAll for the
+  ## unified eponymBlock macro. Like elabCheckHolesDir it elaborates
+  ## decl-by-decl and reports the first *non-hole* failure via
+  ## errLoc/errMsg instead of raising, while holes from the successful
+  ## prefix stay queryable in ms; unlike elabCheckHolesDir it also returns
+  ## globals, allDefs, and the driver's supply, which the macro needs for
+  ## wrapper generation, codegen, and macro-time draft checking.
+  ## Raises ParseError as usual.
+  profilePhase(epOther):
+    let decls = parseProgram(src)  # ParseError propagates
+    var drv = initModuleDriver(handlers)
+    drv.ms.allowHoles = true
+    let (defs, errLoc, errMsg) =
+      drv.elabDeclsDirInner(decls, baseDir, "<eponymBlock>", true)
+    var allDefs: seq[ElabDef] = @[]
+    for _, definition in drv.allDefs:
+      allDefs.add(definition)
+    (defs, drv.globals, allDefs, drv.ms, drv.supply, errLoc, errMsg)
 
 proc elabCheckDirState*(src: string, baseDir: string,
                         handlers: seq[ConvHandler] = @[]):

@@ -362,9 +362,13 @@ The LSP can inspect a hole as a typed metavariable with a zonked goal,
 structured binder context, and Pi binders. Hover uses this state. The
 `.sheds.json` sidecar still stores rendered goal and context strings for the
 cross-process presentation path; those strings are not parsed back into
-terms. Refinement edits generated source and re-elaborates it. Draft text is
-user-owned scratch and is not checked by Eponym. A persisted semantic editing
-session would need a versioned structural term codec and is not implemented.
+terms. Refinement edits generated source and re-elaborates it. Draft text
+in an `eponymBlock` shed is checked at macro time (issue #478): a draft
+that checks fills the shed and the definition becomes ordinary; a
+missing or failing draft leaves the definition use-gated — it elaborates,
+but calling it (directly or through another compiled definition) is a
+compile error naming the shed. A persisted semantic editing session
+would need a versioned structural term codec and is not implemented.
 Goal-directed Intro is available for leading Pi binders; it introduces one
 binder per action.
 

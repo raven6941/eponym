@@ -8,7 +8,7 @@ reference, comparison, and future work, but excluded from release packaging.
 
 Code lives here **until a production entry point imports it**. The production
 entry points are: `eponym_mac`, `eponym_embed` (the `eponymBlock` macro),
-`lsp` (the language server), `repl`, `sheds_mac`, and `kernel_check`.
+`lsp` (the language server), `repl`, and `kernel_check`.
 
 When experimental code gets used by a real path, it **graduates**: move it to
 `src/eponym/` in a commit whose message notes the graduation (e.g.

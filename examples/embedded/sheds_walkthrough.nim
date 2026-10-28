@@ -44,13 +44,13 @@
 # checked; `double` below is complete (white, no shed) and callable from
 # normal Nim code.
 
-import sheds_mac
+import eponym_mac
 import sheds
 import shed_layout  # 2D deduction-style layout of shed proof states
 import os  # currentSourcePath, absolutePath
 import strutils  # `in` on strings
 
-shedsBlock:
+eponymBlock:
   # Prelude import composes with sheds (issue #131).
   import "../../lib/nat.ep"
   import "../../lib/bool.ep"
@@ -177,8 +177,15 @@ proc main() =
     echo "    goal: ", sh.goal
     echo "    ctx:  ", sh.ctx
     echo "    draft: ", sh.draft
-    echo "    status: ", sh.status, " (yellow = stuck, refinable)"
-    doAssert sh.status == ssYellow, "expected yellow, got " & $sh.status
+    echo "    status: ", sh.status, " (yellow = stuck, refinable; white = filled)"
+    # Issue #478: a valid draft fills its shed at compile time, so
+    # constABody (draft `x`, the complete proof) is white; the rest
+    # stay yellow — addThreeBody's draft is ill-typed (Int `double`
+    # for a Nat goal), constEndoBody's is a string note, and the
+    # others have no draft.
+    let want = if sh.name == "constABody": ssWhite else: ssYellow
+    doAssert sh.status == want, "shed '" & sh.name & "': expected " &
+      $want & ", got " & $sh.status
   # The deep-nesting shed (issue #192): the hole's Pi goal renders one box
   # per binder around the hole.
   doAssert ss[5].name == "constEndoBody"

@@ -12,7 +12,7 @@
 ##   1. compile a sheds file               -> sidecar has [alpha]
 ##   2. compile it AGAIN (sidecar exists)  -> must succeed (was the crash)
 ##   3. edit the source (alpha -> beta)    -> sidecar [beta], no alpha ghost
-##   4. two shedsBlocks in one file        -> sidecar [gamma, delta] (merge)
+##   4. two eponymBlocks in one file        -> sidecar [gamma, delta] (merge)
 ##
 ## Run: nim c -r --hints:off --path:src --path:src/eponym tests/test_shed_sidecar_reset.nim
 import os
@@ -42,7 +42,7 @@ proc sidecarNames(nimFile: string): seq[string] =
 
 proc writeSrc(dir, name, body: string): string =
   result = dir / name
-  writeFile(result, "import sheds_mac\n\n" & body)
+  writeFile(result, "import eponym_mac\n\n" & body)
 
 proc check(cond: bool, msg: string) =
   if not cond:
@@ -56,7 +56,7 @@ when isMainModule:
   createDir(dir)
 
   # 1. First compile: sidecar has [alpha].
-  let f1 = writeSrc(dir, "twice.nim", """shedsBlock:
+  let f1 = writeSrc(dir, "twice.nim", """eponymBlock:
   postulate(Int, Univ)
   proc constA(A: Univ, x: A): A = ![alpha, x]
 """)
@@ -72,7 +72,7 @@ when isMainModule:
   check(sidecarNames(f1) == @["alpha"], "second compile sidecar still [alpha]")
 
   # 3. Edit the source: the new compilation resets, no ghost of alpha.
-  let f3 = writeSrc(dir, "twice.nim", """shedsBlock:
+  let f3 = writeSrc(dir, "twice.nim", """eponymBlock:
   postulate(Int, Univ)
   proc constB(A: Univ, x: A): A = ![beta, x]
 """)
@@ -81,12 +81,12 @@ when isMainModule:
   if not r.ok: echo r.output
   check(sidecarNames(f3) == @["beta"], "edited source resets: sidecar = [beta], no ghost")
 
-  # 4. Two shedsBlocks in one compilation merge.
-  let f4 = writeSrc(dir, "twoblocks.nim", """shedsBlock:
+  # 4. Two eponymBlocks in one compilation merge.
+  let f4 = writeSrc(dir, "twoblocks.nim", """eponymBlock:
   postulate(Int, Univ)
   proc constA(A: Univ, x: A): A = ![gamma, x]
 
-shedsBlock:
+eponymBlock:
   postulate(Bool, Univ)
   proc constB(A: Univ, x: A): A = ![delta, x]
 """)
@@ -95,7 +95,7 @@ shedsBlock:
   if not r.ok: echo r.output
   let names4 = sidecarNames(f4)
   check(names4.len == 2 and "gamma" in names4 and "delta" in names4,
-    "two shedsBlocks in one compilation merge: " & names4.join(","))
+    "two eponymBlocks in one compilation merge: " & names4.join(","))
 
   removeDir(dir)
   echo "ALL SIDECAR RESET CHECKS PASSED"

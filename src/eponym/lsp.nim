@@ -3,7 +3,7 @@
 # Exposes the elaborator via the Language Server Protocol:
 # - Diagnostics: parse and elaboration errors at surface locations
 # - Shed status (issue #134): white/yellow/brown per shed, read from the
-#   `<nimfile>.sheds.json` sidecar the shedsBlock macro writes; published
+#   `<nimfile>.sheds.json` sidecar the eponymBlock macro writes; published
 #   as diagnostics (yellow -> Warning, brown -> Error, white -> none)
 # - Hover (issue #58): goal type + context at `?` holes
 # - Code actions (issue #58): refine, case-split, give at holes
@@ -35,7 +35,6 @@ import preterm
 import eponym_init  # `$` for Term (issue #58)
 import parse_surf
 import unify  # HoleInfo, zonk (issue #58)
-import sheds_mac  # shedGoalAndCtx for residual refinement holes
 import sheds  # ShedInfo, semanticShedState, renderShedHover, sidecar IO
 import shed_layout  # Box, layoutShed, boxToJson (issue #135)
 import shed_state
@@ -208,7 +207,7 @@ proc publishDiagnostics(server: var LspServer, uri: string): JsonNode =
   if uri notin server.documents:
     return nil
   # Issue #134: `.nim` documents carry Epigram-style sheds; their status
-  # comes from the sidecar the shedsBlock macro wrote at compile time,
+  # comes from the sidecar the eponymBlock macro wrote at compile time,
   # re-read on every didOpen/didChange so the editor tracks status as the
   # Nim compiler re-runs the macro. (A `.nim` file is not Eponym source,
   # so elaborating its text directly would only yield a parse error.)
@@ -914,7 +913,7 @@ proc refineShedPlan*(nimFile, shedName, term: string,
   ## document or sidecar. The caller owns persistence/adoption. This pure
   ## planning boundary is used by the state-DAG experiment (#450).
   ##
-  ## Sheds from other shedsBlock expansions in the same file are
+  ## Sheds from other eponymBlock expansions in the same file are
   ## identified by sharing the block's `genSrc` string: their sources are
   ## updated to the filled source and their generated-source hole
   ## positions shifted, while sheds from other blocks are untouched.
@@ -979,7 +978,7 @@ proc refineShedPlan*(nimFile, shedName, term: string,
 
   # Re-elaborate to discover every residual hole created by this term.
   # Each one must become a named Nim shed in the splice, or the next
-  # shedsBlock compilation would silently drop it from the sidecar.
+  # eponymBlock compilation would silently drop it from the sidecar.
   var checked: MetaStore
   try:
     let r = elabCheckHolesDir(newSrc, baseDir)
@@ -1023,7 +1022,7 @@ proc refineShedPlan*(nimFile, shedName, term: string,
     markerOffsets.add(clientTerm.len)
     # Nim cannot parse prefix `![name]` in every expression position (for
     # example, after the arrow in `lam(f: F) => lam(g: G) => ...`). Use a
-    # residual marker there; shedsBlock and the extension treat it as the
+    # residual marker there; eponymBlock and the extension treat it as the
     # same named shed and turn it back into an Eponym hole.
     clientTerm.add("shedHole(" & residualNames[i] & ")")
     # Preserve the whole source token: `?` is anonymous and `?N` is a
@@ -1102,7 +1101,7 @@ proc refineShed*(nimFile, shedName, term: string,
   let sc = sidecarPath(nimFile)
   if not fileExists(sc):
     return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)",
+            " (compile the file with eponymBlock first)",
             "", 0, 0, "", 0)
   let (sheds, errMsg) = readShedSidecarEx(sc)
   var updated: seq[ShedInfo] = @[]
@@ -1206,7 +1205,7 @@ proc introShed*(nimFile, shedName: string, count = 1):
   let sc = sidecarPath(nimFile)
   if not fileExists(sc):
     return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)", "", 0, 0, "", 0)
+            " (compile the file with eponymBlock first)", "", 0, 0, "", 0)
   let (sheds, errMsg) = readShedSidecarEx(sc)
   var updated: seq[ShedInfo] = @[]
   result = introShedPlan(nimFile, shedName, count, sheds, errMsg, updated)
@@ -1306,7 +1305,7 @@ proc refineConstructorsShed*(nimFile, shedName: string, selected = ""):
   let sc = sidecarPath(nimFile)
   if not fileExists(sc):
     return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
+            " (compile the file with eponymBlock first)", @[], "", 0, 0, "", 0)
   let (sheds, errMsg) = readShedSidecarEx(sc)
   var updated: seq[ShedInfo] = @[]
   result = refineConstructorsShedPlan(nimFile, shedName, selected, sheds, errMsg, updated)
@@ -1432,7 +1431,7 @@ proc refineFromContextShed*(nimFile, shedName: string, selected = ""):
   let sc = sidecarPath(nimFile)
   if not fileExists(sc):
     return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
+            " (compile the file with eponymBlock first)", @[], "", 0, 0, "", 0)
   let (sheds, errMsg) = readShedSidecarEx(sc)
   var updated: seq[ShedInfo] = @[]
   result = refineFromContextShedPlan(nimFile, shedName, selected, sheds, errMsg, updated)
@@ -1614,7 +1613,7 @@ proc refineEqualityShed*(nimFile, shedName: string, selected = ""):
   let sc = sidecarPath(nimFile)
   if not fileExists(sc):
     return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)", @[], "", 0, 0, "", 0)
+            " (compile the file with eponymBlock first)", @[], "", 0, 0, "", 0)
   let (sheds, errMsg) = readShedSidecarEx(sc)
   var updated: seq[ShedInfo] = @[]
   result = refineEqualityShedPlan(nimFile, shedName, selected, sheds, errMsg, updated)
@@ -1935,7 +1934,7 @@ proc caseSplitShedDetailed(nimFile, shedName, variable: string,
   let sc = sidecarPath(nimFile)
   if not fileExists(sc):
     return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)", "", 0, 0, @[])
+            " (compile the file with eponymBlock first)", "", 0, 0, @[])
   let (sheds, _) = readShedSidecarEx(sc)
   var updated: seq[ShedInfo] = @[]
   caseSplitShedDetailedPlan(nimFile, shedName, variable, sheds,
@@ -1948,7 +1947,7 @@ proc caseSplitShed*(nimFile, shedName, variable: string):
   let sc = sidecarPath(nimFile)
   if not fileExists(sc):
     return (false, "no sheds sidecar for " & nimFile &
-            " (compile the file with shedsBlock first)", "", 0, 0, @[])
+            " (compile the file with eponymBlock first)", "", 0, 0, @[])
   let (sheds, errMsg) = readShedSidecarEx(sc)
   var generated = ""
   var updated: seq[ShedInfo] = @[]
@@ -2756,7 +2755,7 @@ proc shedEnvironmentFingerprint(nimFile: string, sheds: seq[ShedInfo]): string =
     "\nNIMFLAGS=" & getEnv("NIMFLAGS") & "\n"
   let sourceDir = parentDir(currentSourcePath())
   for name in ["elab.nim", "unify.nim", "parse_surf.nim", "eponym_init.nim",
-               "sheds.nim", "sheds_mac.nim", "shed_state.nim", "lsp.nim"]:
+               "sheds.nim", "shed_state.nim", "lsp.nim"]:
     let path = sourceDir / name
     if fileExists(path):
       material.add("checker-file:" & name & "\n" & sha256Hex(readFile(path)) & "\n")

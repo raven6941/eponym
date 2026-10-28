@@ -14,6 +14,9 @@ import codegen     # issue #329: naive Value-level backend
 import preterm
 import parse_surf
 import derive_repr  # issue #402: runtimeDerive block form
+import sheds       # issue #478: shed rewriting, sidecar, semantic state
+import usage_check # issue #478: hasUnresolvedMetas, checkUsage
+import unify       # issue #478: zonk, unify for macro-time draft filling
 import os  # issue #131: parentDir of the eponymBlock call site
 import strutils
 import sequtils
@@ -455,7 +458,7 @@ proc qtyPrefix(n: NimNode): string =
     return ""
   return ""
 
-proc nimExprToEponym(n: NimNode): string
+proc nimExprToEponym(n: NimNode, strict = true): string
 proc nimTypeToEponym(n: NimNode): string
 proc isNilLiteralExpr(n: NimNode): bool
 proc nilConstructorForType(typeNode: NimNode): string
@@ -555,17 +558,28 @@ proc ifExprToEponym(n: NimNode): string =
       yesBranch & " (" & fallback & ")"
   "(" & fallback & ") unitv"
 
-proc nimCommandLamToEponym(n: NimNode): string =
+template convFail(msg: string, n: NimNode, strict: bool) =
+  ## Issue #478: converter failure. Strict (proc bodies, the default):
+  ## abort the block like a parse error. Lenient (shed drafts):
+  ## raise ValueError so the filling loop can gate the def instead of
+  ## failing the whole block — a scratch draft may contain anything,
+  ## including operators the converter does not know.
+  if strict:
+    error(msg, n)
+  else:
+    raise newException(ValueError, msg)
+
+proc nimCommandLamToEponym(n: NimNode, strict = true): string =
   ## Convert Nim's command-form lambda (`lam x. body`) to Eponym arrow
   ## syntax. Nim represents a nested chain such as `lam x. lam y. body`
   ## as `Command(lam, Command(DotExpr(x, lam), DotExpr(y, body)))`.
   if n.kind != nnkCommand or n.len != 2 or
      n[0].kind != nnkIdent or $n[0] != "lam":
-    error("eponymBlock: unsupported command-form lambda", n)
+    convFail("eponymBlock: unsupported command-form lambda", n, strict)
   let arg = n[1]
   if arg.kind == nnkDotExpr and arg.len == 2:
     return "lam(" & lambdaBinderToEponym(arg[0]) & ") => " &
-           nimExprToEponym(arg[1])
+           nimExprToEponym(arg[1], strict)
   if arg.kind == nnkCommand and arg.len == 2 and
      arg[0].kind == nnkDotExpr and arg[0].len == 2 and
      arg[0][1].kind == nnkIdent and $arg[0][1] == "lam":
@@ -576,17 +590,17 @@ proc nimCommandLamToEponym(n: NimNode): string =
     # tuple/colon AST, not an identifier. Reuse the expression converter so
     # typed binders survive in nested command lambdas.
     return "lam(" & lambdaBinderToEponym(arg[0][0]) & ") => " &
-           nimCommandLamToEponym(nested)
-  error("eponymBlock: unsupported command-form lambda", n)
+           nimCommandLamToEponym(nested, strict)
+  convFail("eponymBlock: unsupported command-form lambda", n, strict)
 
-proc nimCommandToEponym(n: NimNode): string =
+proc nimCommandToEponym(n: NimNode, strict = true): string =
   ## Nim's command-call syntax (`suc n`) is also nnkCommand. Treat ordinary
   ## commands as applications and reserve the special parser for `lam`.
   ## Nim nests whitespace-separated command arguments in child Command
   ## nodes; flatten those arguments instead of grouping them as one term.
-  if n.len == 0: error("eponymBlock: empty command expression", n)
+  if n.len == 0: convFail("eponymBlock: empty command expression", n, strict)
   if n[0].kind == nnkIdent and $n[0] == "lam":
-    return nimCommandLamToEponym(n)
+    return nimCommandLamToEponym(n, strict)
   var args: seq[string] = @[]
   proc appendArg(a: NimNode) =
     if a.kind == nnkCommand and a.len > 0 and
@@ -595,20 +609,30 @@ proc nimCommandToEponym(n: NimNode): string =
       for j in 1 ..< a.len:
         appendArg(a[j])
     elif a.kind == nnkCommand:
-      args.add("(" & nimCommandLamToEponym(a) & ")")
+      args.add("(" & nimCommandLamToEponym(a, strict) & ")")
+    elif a.kind == nnkPar and a.len == 1 and
+         (a[0].kind in {nnkCall, nnkCommand, nnkObjConstr} or
+          (a[0].kind == nnkInfix and $a[0][0] == "=>")):
+      # A parenthesized application used as an argument must KEEP its
+      # parens: Eponym juxtaposition is left-associative, so stripping
+      # them turns `f (g x)` into `f g x` = `(f g) x` (pre-existing
+      # bug, surfaced by #478 draft filling).
+      args.add("(" & nimExprToEponym(a[0], strict) & ")")
     elif a.kind in {nnkCall, nnkObjConstr} or
          (a.kind == nnkInfix and $a[0] == "=>"):
-      args.add("(" & nimExprToEponym(a) & ")")
+      args.add("(" & nimExprToEponym(a, strict) & ")")
     else:
-      args.add(nimExprToEponym(a))
+      args.add(nimExprToEponym(a, strict))
   for i in 1 ..< n.len:
     appendArg(n[i])
-  nimExprToEponym(n[0]) & " " & args.join(" ")
+  nimExprToEponym(n[0], strict) & " " & args.join(" ")
 
 proc legacyCallInfoFromNimType(ty: NimNode): LegacyCallInfo
 
-proc nimExprToEponym(n: NimNode): string =
+proc nimExprToEponym(n: NimNode, strict = true): string =
   ## Convert a Nim expression AST to Eponym source string.
+  ## `strict=false` (shed drafts only) turns converter failures into
+  ## catchable ValueErrors instead of aborting the block.
   case n.kind
   of nnkIdent:
     # Single syntax: Nim-safe names pass through verbatim — the parser
@@ -624,11 +648,11 @@ proc nimExprToEponym(n: NimNode): string =
     # per their expected type instead of always becoming Nat suc-chains.
     # Single syntax: `1` is the integer literal one.
     let v = n.intVal
-    if v < 0: error("negative integer literal", n)
+    if v < 0: convFail("negative integer literal", n, strict)
     $v
   of nnkStmtList:
     # Proc body: convert let-statements to nested let...in, final expr is body
-    if n.len == 0: error("eponymBlock: empty proc body", n)
+    if n.len == 0: convFail("eponymBlock: empty proc body", n, strict)
     # Collect lets and final expression
     var lets: seq[(string, string, string)] = @[]  # (name, type-or-"", value)
     var finalExpr = newEmptyNode()
@@ -646,10 +670,10 @@ proc nimExprToEponym(n: NimNode): string =
             isNatBinding = declaredType == "Nat"
           let val = if isNilLiteralExpr(def[2]):
             if def[1].kind == nnkEmpty:
-              error("eponymBlock: `nil` in a let binding needs an explicit " &
-                "List[...] or Vec[...] type", def[2])
+              convFail("eponymBlock: `nil` in a let binding needs an explicit " &
+                "List[...] or Vec[...] type", def[2], strict)
             nilConstructorForType(def[1])
-            else: nimExprToEponym(def[2])
+            else: nimExprToEponym(def[2], strict)
           let callInfoSource = if def[2].kind in {nnkIdent, nnkSym}:
             $def[2] else: ""
           if callInfoSource in legacyCallInfo and
@@ -665,11 +689,11 @@ proc nimExprToEponym(n: NimNode): string =
       else:
         # Final expression (or single expression)
         if finalExpr.kind != nnkEmpty:
-          error("eponymBlock: proc body must be lets followed by single expr", n)
+          convFail("eponymBlock: proc body must be lets followed by single expr", n, strict)
         finalExpr = stmt
     if finalExpr.kind == nnkEmpty:
-      error("eponymBlock: proc body must end with expression", n)
-    var res = nimExprToEponym(finalExpr)
+      convFail("eponymBlock: proc body must end with expression", n, strict)
+    var res = nimExprToEponym(finalExpr, strict)
     # Wrap in let...in (innermost first, so reverse)
     for i in countdown(lets.len - 1, 0):
       let (nm, ty, vl) = lets[i]
@@ -684,18 +708,18 @@ proc nimExprToEponym(n: NimNode): string =
     # byTac(refl) stays byTac(refl) (single syntax; issue #467/#469).
     if n[0].kind == nnkIdent and $n[0] == "byTac":
       if n.len != 2:
-        error("byTac expects (tacticName)", n)
+        convFail("byTac expects (tacticName)", n, strict)
       let t = n[1]
       if t.kind == nnkIdent: return "byTac(" & $t & ")"
       elif t.kind == nnkStrLit: return "byTac(\"" & t.strVal & "\")"
-      else: error("byTac expects a tactic name (ident or string)", n)
+      else: convFail("byTac expects a tactic name (ident or string)", n, strict)
     # Pi/Sig in expression position, positional form Sig(name, Dom, Body):
     # Nim parses it as a call, not an obj-constr. Route to the type converter.
     if n[0].kind == nnkIdent and $n[0] in ["Pi", "Sig"]:
       return nimTypeToEponym(n)
     if n[0].kind == nnkIdent and $n[0] == "lam":
-      error("eponymBlock: lambda call forms were removed; use " &
-            "`lam(x: T) => body`", n)
+      convFail("eponymBlock: lambda call forms were removed; use " &
+            "`lam(x: T) => body`", n, strict)
     warnCallStyleExplicitArgs(n)
     # f(a, b) -> f a b (with parens for nested calls to preserve grouping)
     var callArgs: seq[NimNode] = @[]
@@ -703,7 +727,7 @@ proc nimExprToEponym(n: NimNode): string =
     let headName = if n[0].kind in {nnkIdent, nnkSym}: $n[0] else: ""
     if callArgs.anyIt(namedArgumentName(it).len > 0):
       if headName.len == 0 or headName notin legacyCallInfo:
-        error("eponymBlock: named arguments need a known callable signature", n)
+        convFail("eponymBlock: named arguments need a known callable signature", n, strict)
       callArgs = orderCallArguments(callArgs,
         legacyCallInfo[headName].termParamNames,
         legacyCallInfo[headName].termParamDefaults, n)
@@ -711,7 +735,7 @@ proc nimExprToEponym(n: NimNode): string =
       callArgs = orderCallArguments(callArgs,
         legacyCallInfo[headName].termParamNames,
         legacyCallInfo[headName].termParamDefaults, n)
-    var head = nimExprToEponym(n[0])
+    var head = nimExprToEponym(n[0], strict)
     if isLambdaArrow(n[0]): head = "(" & head & ")"
     var args: seq[string] = @[]
     for a in callArgs:
@@ -723,30 +747,36 @@ proc nimExprToEponym(n: NimNode): string =
         # Issue #467 (Nim call rule): a tuple argument needs double
         # parens — `f ((a, b))` — since `f (a, b)` is now the
         # two-argument call, not `f` applied to the pair.
-        args.add("(" & nimExprToEponym(a) & ")")
+        args.add("(" & nimExprToEponym(a, strict) & ")")
+      elif a.kind == nnkPar and a.len == 1 and
+           (a[0].kind in {nnkCall, nnkCommand, nnkObjConstr} or
+            (a[0].kind == nnkInfix and $a[0][0] == "=>")):
+        # Same paren-preservation as the command path below: stripping
+        # turns `f (g x)` into `f g x` = `(f g) x`.
+        args.add("(" & nimExprToEponym(a[0], strict) & ")")
       elif a.kind in {nnkCall, nnkObjConstr, nnkCommand} or
            (a.kind == nnkInfix and $a[0] == "=>"):
         # Parenthesize if arg is a call or obj-constr (Pi/Sig type args
         # parse as nnkObjConstr in expression position and need grouping too)
-        args.add("(" & nimExprToEponym(a) & ")")
+        args.add("(" & nimExprToEponym(a, strict) & ")")
       else:
-        args.add(nimExprToEponym(a))
+        args.add(nimExprToEponym(a, strict))
     if args.len == 0: head
     else: head & " " & args.join(" ")
   of nnkPar:
     # (x) -> x (parenthesized)
-    if n.len == 1: nimExprToEponym(n[0])
-    else: "(" & n.mapIt(nimExprToEponym(it)).join(", ") & ")"
+    if n.len == 1: nimExprToEponym(n[0], strict)
+    else: "(" & n.mapIt(nimExprToEponym(it, strict)).join(", ") & ")"
   of nnkCommand:
-    nimCommandToEponym(n)
+    nimCommandToEponym(n, strict)
   of nnkBracketExpr:
     if n.len < 2:
-      error("eponymBlock: bracket application needs explicit arguments", n)
-    var parts = @[nimExprToEponym(n[0])]
+      convFail("eponymBlock: bracket application needs explicit arguments", n, strict)
+    var parts = @[nimExprToEponym(n[0], strict)]
     for i in 1 ..< n.len:
       let arg = n[i]
       var value: string
-      value = nimExprToEponym(arg)
+      value = nimExprToEponym(arg, strict)
       var unwrappedArg = arg
       while unwrappedArg.kind in {nnkPar, nnkStmtListExpr} and
           unwrappedArg.len == 1:
@@ -769,41 +799,41 @@ proc nimExprToEponym(n: NimNode): string =
       of "-": "subInt"
       of "*": "mulInt"
       of "and", "or": $n[0]
-      else: error("eponymBlock: unsupported pure operator '" & $n[0] & "'",
-                  n[0])
-    prim & " (" & nimExprToEponym(n[1]) & ") (" &
-      nimExprToEponym(n[2]) & ")"
+      else: convFail("eponymBlock: unsupported pure operator '" & $n[0] & "'",
+                  n[0], strict)
+    prim & " (" & nimExprToEponym(n[1], strict) & ") (" &
+      nimExprToEponym(n[2], strict) & ")"
   of nnkPrefix:
     if $n[0] == "-":
-      "subInt 0 (" & nimExprToEponym(n[1]) & ")"
+      "subInt 0 (" & nimExprToEponym(n[1], strict) & ")"
     elif $n[0] == "not":
-      "not (" & nimExprToEponym(n[1]) & ")"
+      "not (" & nimExprToEponym(n[1], strict) & ")"
     else:
-      error("eponymBlock: unsupported pure prefix operator '" & $n[0] & "'",
-            n[0])
+      convFail("eponymBlock: unsupported pure prefix operator '" & $n[0] & "'",
+            n[0], strict)
   of nnkIfExpr, nnkIfStmt:
     ifExprToEponym(n)
   of nnkStmtListExpr:
-    if n.len == 1: nimExprToEponym(n[0])
-    else: error("eponymBlock: expected one expression in type index", n)
+    if n.len == 1: nimExprToEponym(n[0], strict)
+    else: convFail("eponymBlock: expected one expression in type index", n, strict)
   of nnkDotExpr:
     # p.x -> (p).x (record projection, issue #37; the surface parser
     # resolves it against the record table at elaboration time).
     # The LHS is parenthesized: in `mkPt(x, y).x` the dot must not
     # rebind to `y`.
-    "(" & nimExprToEponym(n[0]) & ")." & nimExprToEponym(n[1])
+    "(" & nimExprToEponym(n[0], strict) & ")." & nimExprToEponym(n[1], strict)
   of nnkTupleConstr:
     # (t : T) ascription (Nim parses it as a 1-tuple of ExprColonExpr);
     # (a, b) -> (a, b) [Eponym pair syntax]
     if n.len == 1 and n[0].kind == nnkExprColonExpr and n[0].len == 2:
-      "(" & nimExprToEponym(n[0][0]) & " : " & nimTypeToEponym(n[0][1]) & ")"
+      "(" & nimExprToEponym(n[0][0], strict) & " : " & nimTypeToEponym(n[0][1]) & ")"
     else:
-      "(" & n.mapIt(nimExprToEponym(it)).join(", ") & ")"
+      "(" & n.mapIt(nimExprToEponym(it, strict)).join(", ") & ")"
   else:
-    error("eponymBlock: unsupported Nim expression shape '" & $n.kind &
+    convFail("eponymBlock: unsupported Nim expression shape '" & $n.kind &
       "'; express the operation in supported Eponym syntax, or move the Nim " &
       "expression outside the block and expose it through a bound postulate",
-      n)
+      n, strict)
 
 proc piSigToEponym(n: NimNode): string
   ## Convert Pi(...)/Sig(...) (nnkCall or nnkObjConstr) to Eponym.
@@ -3455,7 +3485,8 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
 proc unsupportedRuntimeWrapper(decl: NimNode, defName: string,
                                mappings: seq[HostRuntimeType],
                                records: seq[HostRecord],
-                               allowDependentSigma = false): NimNode =
+                               allowDependentSigma = false,
+                               gateMessage = ""): NimNode =
   let params = decl[3]
   var reason = "unsupported generic or higher-order signature"
   if decl[2].kind != nnkEmpty:
@@ -3481,15 +3512,21 @@ proc unsupportedRuntimeWrapper(decl: NimNode, defName: string,
         reason = "no runtime codec for Eponym parameter type '" & repr(p[^2]) & "'"
         break
   let name = ident(defName)
-  let message = newLit("eponymBlock wrapper '" & defName & "': " & reason &
+  # Issue #478: a gated def that cannot get a typed wrapper still reports
+  # the gating reason, not the wrapper-support reason.
+  let message = if gateMessage.len > 0: newLit(gateMessage)
+    else: newLit("eponymBlock wrapper '" & defName & "': " & reason &
     "; add runtimeType for an opaque postulated type or use a supported primitive")
   result = quote do:
     template `name`*(args: varargs[untyped]): untyped =
       {.error: `message`.}
 
-proc unreconstructableRuntimeWrapper(defName: string): NimNode =
+proc unreconstructableRuntimeWrapper(defName: string,
+                                     gateMessage = ""): NimNode =
   let name = ident(defName)
-  let message = newLit("eponymBlock wrapper '" & defName &
+  # Issue #478: see unsupportedRuntimeWrapper's gateMessage.
+  let message = if gateMessage.len > 0: newLit(gateMessage)
+    else: newLit("eponymBlock wrapper '" & defName &
     "': cannot reconstruct a supported Nim signature from the checked " &
     "Eponym type; add an explicit Nim proc signature or use runtimeValue(" &
     defName & ")")
@@ -4202,6 +4239,140 @@ var postulateAdapterBlockSeq409 {.compileTime.} = 0
   ## Issue #409: per-`eponymBlock`-expansion counter so emitted typed
   ## adapter proc names are unique across blocks in one compilation.
 
+# --- Issue #478: unified block — use-gated sheds ---------------------------
+
+proc allTermNodes(tm: Term): seq[Term] =
+  ## All nodes of a checked term, depth-first (mirrors hasUnresolvedMetas'
+  ## case structure in usage_check). The accumulator is threaded as a
+  ## parameter rather than captured, since a closure may not capture a
+  ## `var` parameter.
+  proc go(t: Term, acc: var seq[Term]) =
+    if t.isNil: return
+    acc.add(t)
+    case t.kind
+    of tMeta, tV, tR, tC, tType, tInt, tNatLit, tNatSing: discard
+    of tLam, tPi, tSi: go(t.dom, acc); go(t.scope.bdy, acc)
+    of tApp: go(t.fn, acc); go(t.arg, acc)
+    of tPair: go(t.pFst, acc); go(t.pSnd, acc); go(t.pScope.bdy, acc)
+    of tFst, tSnd, tAbsurd: go(t.sub, acc)
+    of tLet: go(t.letVal, acc); go(t.letTy, acc); go(t.letScope.bdy, acc)
+    of tPrim: go(t.primTy, acc)
+  result = @[]
+  go(tm, result)
+
+proc collectTermMetaIds(tm: Term, acc: var HashSet[int]) =
+  for t in allTermNodes(tm):
+    if t.kind == tMeta: acc.incl(t.metaId)
+
+proc lineColOffset(src: string, line, col: int): int =
+  ## Issue #478: 1-based (line, col) in `src` to 0-based byte offset,
+  ## or -1 when the position is out of range. Used to splice filled
+  ## draft text at a shed hole's recorded position.
+  var cur = 1
+  var lineStart = 0
+  var i = 0
+  while i < src.len:
+    if src[i] == '\n':
+      if cur == line: break
+      inc cur
+      lineStart = i + 1
+    inc i
+  if cur != line: return -1
+  let off = lineStart + col - 1
+  if off > src.len: -1 else: off
+
+proc collectTermRefIds(tm: Term, acc: var HashSet[int]) =
+  for t in allTermNodes(tm):
+    if t.kind == tR: acc.incl(t.refId)
+
+proc gateWrapperProc(tw: NimNode, message: string): NimNode =
+  ## Issue #478: turn a typed wrapper proc into a use-gated one. The
+  ## declared signature is kept; a {.error.} pragma makes any use a
+  ## compile error, and the body becomes a bare raise, which typechecks
+  ## for any result type since it never returns (this sidesteps the
+  ## default(T) inhabitation problem for abstract/uninhabited results).
+  ## tw is freshly built by typedRuntimeWrapper, so mutating it is safe.
+  ## ProcDef layout (verified): [0] name, [1] pattern, [2] generics,
+  ## [3] formals, [4] pragmas, [5] exceptions, [6] body.
+  result = tw
+  let msgLit = newLit(message)
+  result[4] = newTree(nnkPragma,
+    newTree(nnkExprColonExpr, ident"error", msgLit))
+  result[6] = quote do:
+    raise newException(CatchableError, `msgLit`)
+
+proc computeGated(defs: seq[ElabDef], checkedGlobals: Globals,
+                  ms: MetaStore, sheds: seq[ShedInfo],
+                  draftErrors: Table[string, string],
+                  forceGated: Table[string, string]):
+    tuple[gated: HashSet[string], reasons: Table[string, string]] =
+  ## Issue #478: which defs must not be compiled or normally wrapped.
+  ## Seeds: defs whose (zonked) term or type still mentions a tMeta, plus
+  ## force-gated defs (e.g. post-fill usage failures). Closure: any def
+  ## whose body references a gated def is gated too, since its compiled
+  ## proc would otherwise call a callee excluded from codegen.
+  var refToName = initTable[int, string]()
+  for name, g in checkedGlobals:
+    if not g.tm.isNil and g.tm.kind == tR:
+      refToName[g.tm.refId] = name
+  var defNames = initHashSet[string]()
+  for d in defs: defNames.incl(d.name)
+  var callers = initTable[string, seq[string]]()
+  var metaToShed = initTable[int, string]()
+  for s in sheds:
+    if s.holeIdx >= 0 and s.holeIdx < ms.holes.len:
+      metaToShed[ms.holes[s.holeIdx].holeTerm.metaId] = s.name
+  var seeds = initHashSet[string]()
+  var reasons = initTable[string, string]()
+  for d in defs:
+    var refs: HashSet[int]
+    collectTermRefIds(d.tmTm, refs)
+    for r in refs:
+      if r in refToName and refToName[r] in defNames:
+        callers.mgetOrPut(refToName[r], @[]).add(d.name)
+    var parts: seq[string] = @[]
+    var mids: HashSet[int]
+    collectTermMetaIds(d.tmTm, mids)
+    collectTermMetaIds(d.tyTm, mids)
+    for mid in mids:
+      if mid in metaToShed:
+        let sn = metaToShed[mid]
+        var p = "shed '" & sn & "' is incomplete"
+        if sn in draftErrors: p &= " (draft failed: " & draftErrors[sn] & ")"
+        parts.add(p)
+      else:
+        parts.add("unresolved hole")
+    if d.name in forceGated:
+      parts.add(forceGated[d.name])
+    if parts.len > 0:
+      seeds.incl(d.name)
+      reasons[d.name] = "eponymBlock: '" & d.name & "' is incomplete (" &
+        parts.join("; ") &
+        "); it cannot be called until its sheds are filled"
+  var gated = seeds
+  var queue = toSeq(seeds)
+  while queue.len > 0:
+    let cur = queue.pop()
+    for caller in callers.getOrDefault(cur, @[]):
+      if caller notin gated:
+        gated.incl(caller)
+        queue.add(caller)
+  for name in gated:
+    if name in reasons: continue
+    var callee = ""
+    for d in defs:
+      if d.name != name: continue
+      var refs: HashSet[int]
+      collectTermRefIds(d.tmTm, refs)
+      for r in refs:
+        if r in refToName and refToName[r] in gated:
+          callee = refToName[r]
+          break
+      break
+    reasons[name] = "eponymBlock: '" & name & "' calls gated '" & callee &
+      "' and is itself gated; it cannot be called until that shed is filled"
+  (gated, reasons)
+
 macro eponymBlock*(body: untyped): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
@@ -4230,6 +4401,11 @@ macro eponymBlock*(body: untyped): untyped =
   ## explicitly mapped opaque postulated types. Unsupported legacy shapes
   ## retain the varargs[int] compatibility wrapper.
   let baseDir = callerDir(body)
+  # Issue #478: sheds are rewritten to placeholders before conversion, so
+  # eponymBlock accepts shed markers. For
+  # shed-free blocks this walk is a no-op.
+  var sheds: seq[ShedInfo] = @[]
+  let draftNodes = rewriteSheds(body, sheds)
   var requireCompiled = false
   for st in body:
     if st.kind == nnkCall and st.len == 1 and st[0].kind == nnkIdent and
@@ -4241,10 +4417,13 @@ macro eponymBlock*(body: untyped): untyped =
     if st.kind == nnkImportStmt:
       hasEponymImport = true
       break
-  let src = if hasEponymImport:
+  var src = if hasEponymImport:
     blockToEponym(body, baseDir)
   else:
     blockToEponymInternal(body, baseDir, sourceLineMap, true)
+  # Issue #478: placeholders become `_` holes (recording generated-source
+  # positions for shed↔hole matching).
+  resolveShedPlaceholders(src, sheds)
   var runtimeValueNames = initHashSet[string]()
   for st in body:
     if st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
@@ -4260,19 +4439,253 @@ macro eponymBlock*(body: untyped): untyped =
   var defs: seq[ElabDef]
   var allDefs: seq[ElabDef]
   var checkedGlobals: Globals
+  var ms: MetaStore
+  var supply: Supply
+  var elabErrMsg = ""
+  var elabErrLoc = noLoc
   try:
-    let checked = elabCheckDirStateAll(src, baseDir)
+    let checked = elabCheckDirStateAllHoles(src, baseDir)
     defs = checked.defs
     allDefs = checked.allDefs
     checkedGlobals = checked.globals
-  except ElabError as e:
-    let detail = if hasEponymImport: e.msg else:
-      sourceMappedDiagnostic(e.msg, e.loc, sourceLineMap)
-    error("eponymBlock elaboration error: " & detail, body)
+    ms = checked.ms
+    supply = checked.supply
+    elabErrMsg = checked.errMsg
+    elabErrLoc = checked.errLoc
   except ParseError as e:
     let detail = if hasEponymImport: e.msg else:
       sourceMappedDiagnostic(e.msg, e.loc, sourceLineMap)
     error("eponymBlock parse error: " & detail, body)
+
+  # Issue #478: shed matching, macro-time draft filling, sidecar.
+  # On elaboration failure the sidecar is written before the error (as
+  # as before) so the editor can show brown; on success the sidecar
+  # reflects filled (white) vs still-open (yellow) sheds.
+  # Issue #478: always resolved, so a shed-free expansion can clear a
+  # stale sidecar (see clearStaleSidecar below).
+  let nimFile = callerFileOf(body)
+  if sheds.len > 0:
+    for i in 0 ..< sheds.len:
+      sheds[i].genSrc = src
+    for i in 0 ..< sheds.len:
+      var best = -1
+      for j in 0 ..< ms.holes.len:
+        if ms.holes[j].holeLoc.line != sheds[i].holeLine: continue
+        if best < 0: best = j
+        if sheds[i].holeCol > 0 and ms.holes[j].holeLoc.col == sheds[i].holeCol:
+          best = j
+          break
+      if best >= 0:
+        sheds[i].holeIdx = best
+        let (g, c, pi) = shedGoalAndCtx(ms, ms.holes[best])
+        sheds[i].goal = g
+        sheds[i].ctx = c
+        sheds[i].goalPi = pi
+  if elabErrMsg != "":
+    if sheds.len > 0:
+      assignShedStatuses(sheds, elabErrMsg)
+      writeShedSidecar(nimFile, sheds, elabErrMsg)
+    let detail = if hasEponymImport: elabErrMsg else:
+      sourceMappedDiagnostic(elabErrMsg, elabErrLoc, sourceLineMap)
+    error("eponymBlock elaboration error: " & detail, body)
+  # Issue #478: fill shed drafts at macro time. Each draft is converted
+  # to Eponym source, parsed, checked against its hole's goal in the
+  # hole's context, and unified with the hole meta. A draft that fails
+  # any step leaves its hole open; the containing def is gated with the
+  # draft error as its reason. Converter failures gate too (strict=false
+  # turns them into ValueErrors) — a scratch draft may be nonsense, and
+  # that must not fail the whole block.
+  var draftErrors = initTable[string, string]()
+  var filledMetaIds = initHashSet[int]()
+  var filledShedIdx = initHashSet[int]()
+  # Issue #478: filled drafts, for the runtime-wrapper source (filledSrc)
+  # and for knot-tying. extBeforeFill mirrors the elaborator's
+  # extDischarges branch choice when promoting a filled def.
+  var filledSplices: seq[tuple[line, col: int, text: string]] = @[]
+  let extBeforeFill = ms.extDischarges
+  for i in 0 ..< sheds.len:
+    if draftNodes[i].isNil: continue
+    if sheds[i].holeIdx < 0: continue
+    let h = ms.holes[sheds[i].holeIdx]
+    try:
+      let draftSrc = nimExprToEponym(draftNodes[i], strict = false)
+      let pre = parseTermStr(draftSrc)
+      let state = semanticShedState(ms, h)
+      let ctx = semanticContext(state)
+      let checked = checkTermElab(pre, ctx, checkedGlobals, ms, supply,
+                                  state.goal, h.holeAb)
+      unify(ms, h.holeTerm, checked, h.holeLoc)
+      filledMetaIds.incl(h.holeTerm.metaId)
+      filledShedIdx.incl(i)
+      filledSplices.add((sheds[i].holeLine, sheds[i].holeCol, draftSrc))
+      sheds[i].holeIdx = -1  # filled: no open hole remains
+    except CatchableError as e:
+      # Only expected draft failures gate the shed; anything else
+      # (a Defect, i.e. an implementation bug) propagates.
+      if e of ElabError or e of ParseError or e of UnifyError or
+          e of ValueError:
+        draftErrors[sheds[i].name] = e.msg
+      else:
+        raise e
+  # Re-zonk def terms AND types so filled holes read as their draft
+  # terms downstream (codegen, wrappers, gating). A filled type-position
+  # shed lives in tyTm, not tmTm: without the tyTm zonk the solved meta
+  # lingers there and the def gates as "unresolved hole". Imported defs
+  # cannot mention this block's metas, so only block defs are replaced
+  # in allDefs.
+  var defsWithFilled = initHashSet[string]()
+  var preZonkMetasByDef = initTable[string, HashSet[int]]()
+  for d in defs:
+    var mids: HashSet[int]
+    collectTermMetaIds(d.tmTm, mids)
+    collectTermMetaIds(d.tyTm, mids)  # a filled type-position shed counts too
+    preZonkMetasByDef[d.name] = mids
+    for fid in filledMetaIds:
+      if fid in mids:
+        defsWithFilled.incl(d.name)
+        break
+  for d in defs.mitems:
+    d.tmTm = zonk(ms, d.tmTm)
+    d.tyTm = zonk(ms, d.tyTm)
+  # Issue #478: a filled TYPE-position shed also leaves its placeholder
+  # ident in the declaration AST, which the wrapper loop reads for the
+  # signature — without substitution it reports "no runtime codec for
+  # '__eponym_shed_N__'". Replace filled placeholders with the draft
+  # nodes. Term-position placeholders are inert (the body is never
+  # re-converted after filling), so substitute uniformly.
+  if filledShedIdx.len > 0:
+    var filledDrafts = initTable[string, NimNode]()
+    for i in filledShedIdx:
+      filledDrafts[shedPlaceholder(i)] = draftNodes[i]
+    proc substPlaceholders(n: NimNode) =
+      for i in 0 ..< n.len:
+        if n[i].kind == nnkIdent and n[i].strVal in filledDrafts:
+          n[i] = copyNimTree(filledDrafts[n[i].strVal])
+        else:
+          substPlaceholders(n[i])
+    substPlaceholders(body)
+  var filledByName = initTable[string, ElabDef]()
+  for d in defs: filledByName[d.name] = d
+  for d in allDefs.mitems:
+    if d.name in filledByName: d = filledByName[d.name]
+  # A filled def must still satisfy usage checking strictly: the
+  # hole-tolerant pass hid uses through the hole, so a draft that
+  # duplicates a linear variable (or otherwise violates usage) surfaces
+  # only now. Such a def is force-gated with the usage error; the solved
+  # meta lingers but the def is never compiled or normally wrapped.
+  # Only filled defs are re-checked: every other def already passed
+  # strict usage checking during elaboration (tolerant mode excuses
+  # holes alone, never other violations).
+  var forceGated = initTable[string, string]()
+  var unfilledShedMetas = initTable[int, string]()
+  for s in sheds:
+    if s.holeIdx >= 0 and s.holeIdx < ms.holes.len:
+      unfilledShedMetas[ms.holes[s.holeIdx].holeTerm.metaId] = s.name
+  # An unfilled type-position hole can be solved indirectly while checking
+  # its containing definition (for example, the return expression may
+  # determine the missing result type). The source still contains an open
+  # shed, so retain the use gate even after zonking removes that meta.
+  for d in defs:
+    var zonkedMetas: HashSet[int]
+    collectTermMetaIds(d.tmTm, zonkedMetas)
+    collectTermMetaIds(d.tyTm, zonkedMetas)
+    for mid in preZonkMetasByDef.getOrDefault(d.name):
+      if mid in unfilledShedMetas and mid notin zonkedMetas:
+        forceGated[d.name] = "shed '" & unfilledShedMetas[mid] &
+          "' is incomplete"
+        break
+  for d in defs:
+    if d.name notin defsWithFilled: continue
+    try:
+      checkUsage(d.tmTm, allowOpenHoles = false)
+    except UsageError as e:
+      forceGated[d.name] = "usage error after filling shed draft: " & e.msg
+  # Issue #478: tie the knot for fully filled defs. Hole-tolerant
+  # elaboration registers a hole def postulate-style (refIsDefn=false,
+  # no value) when its type is meta-free, or not at all when its type
+  # mentions a hole — so codegen would classify a filled def as a
+  # postulate and crash assigning its compiled proc. Promote a fully
+  # filled def to a real definition, mirroring elabDefDecl step 3: the
+  # kernel re-check (or eval, when a domain handler discharged a goal
+  # during filling, exactly the elaborator's branch choice). A def
+  # that still mentions an open hole, or whose re-check fails, is left
+  # unpromoted and stays gated. For a def already in globals the
+  # postulate ref is mutated in place, so references elaborated while
+  # it was a postulate (same refId) see the filled value; a def that
+  # was never registered has no referrers, so fresh registration with
+  # a nil peg is safe (its peg is only read for callers).
+  for d in defs:
+    if d.name notin defsWithFilled: continue
+    if d.name in forceGated: continue
+    var rem: HashSet[int]
+    collectTermMetaIds(d.tmTm, rem)
+    collectTermMetaIds(d.tyTm, rem)
+    if rem.len > 0: continue
+    # A registered def's entry is a postulate ref (tR); anything else
+    # (nil, non-ref) falls through to fresh registration below rather
+    # than crashing the compiler on a variant-field access.
+    let hasPostulateEntry = d.name in checkedGlobals and
+      not checkedGlobals[d.name].tm.isNil and
+      checkedGlobals[d.name].tm.kind == tR
+    try:
+      let tyV =
+        if hasPostulateEntry:
+          checkedGlobals[d.name].tm.refTyp
+        else:
+          check(supply, vStar(), d.tyTm, qtySubsumption = true)
+      let tmV =
+        if ms.extDischarges != extBeforeFill:
+          eval(d.tmTm, @[])
+        else:
+          check(supply, tyV, d.tmTm, qtySubsumption = true)
+      if hasPostulateEntry:
+        let rNode = checkedGlobals[d.name].tm
+        rNode.refIsDefn = true
+        rNode.refVal = tmV
+      else:
+        let dtm = newDefRef(supply, tyV, tmV)
+        checkedGlobals[d.name] = GEntry(tm: dtm, ty: d.tyTm, peg: nil)
+        ms.refNames[dtm.refId] = d.name
+    except ValueError as e:
+      forceGated[d.name] =
+        "kernel re-check after filling shed draft failed: " &
+        sanitizeKernelMsg(e.msg)
+  # Issue #478: filled source for runtime wrappers. A filled def that
+  # misses codegen still runs through the interpreter path, which
+  # re-elaborates the wrapper's source at runtime — with the holey
+  # source that re-elaboration would see the hole again and crash.
+  # Splice each filled draft's Eponym text, parenthesized, at its
+  # hole position, last-to-first so earlier offsets stay valid. A
+  # position that does not land on '_' is an internal inconsistency
+  # and fails the block loudly rather than emitting broken wrappers.
+  # filledSrc feeds wrappers only: codegen keeps the holey src (it
+  # never evaluates hole defs) and the sidecar keeps holey genSrc
+  # (the LSP matches holes by position in it).
+  var filledSrc = ""
+  if filledSplices.len > 0:
+    filledSrc = src
+    var splices = filledSplices
+    splices.sort(proc(a, b: tuple[line, col: int, text: string]): int =
+      if a.line != b.line: cmp(a.line, b.line)
+      elif a.col != b.col: cmp(a.col, b.col)
+      else: 0)
+    for k in countdown(splices.high, 0):
+      let s = splices[k]
+      let off = lineColOffset(filledSrc, s.line, s.col)
+      if off < 0 or off >= filledSrc.len or filledSrc[off] != '_':
+        error("eponymBlock internal error: filled shed at line " & $s.line &
+          ", col " & $s.col & " does not land on a hole in the generated source",
+          body)
+      let tail = if off + 1 < filledSrc.len: filledSrc[off + 1 .. ^1] else: ""
+      filledSrc = filledSrc[0 ..< off] & "(" & s.text & ")" & tail
+  if sheds.len > 0:
+    assignShedStatuses(sheds, "")
+    writeShedSidecar(nimFile, sheds)
+  else:
+    # No sheds in this block: clear a stale sidecar from a previous
+    # compilation (e.g. all sheds filled), but write nothing when no
+    # stale sidecar exists, so shed-free files stay sidecar-free.
+    clearStaleSidecar(nimFile)
 
   for requested in runtimeValueNames:
     var found = false
@@ -4508,6 +4921,18 @@ macro eponymBlock*(body: untyped): untyped =
   # definitions with representable types and follows runtime references
   # through erased bodies; the compile-time-only set is excluded from
   # compilation and wrapper generation alike.
+  # Issue #478: gate incomplete defs (and their callers) before codegen:
+  # a gated def's compiled proc must not exist for callers to reference.
+  let (gatedNames, gatedReasons) = computeGated(defs, checkedGlobals, ms,
+    sheds, draftErrors, forceGated)
+  if requireCompiled and gatedNames.len > 0:
+    var names: seq[string] = @[]
+    for d in defs:
+      if d.name in gatedNames: names.add(d.name)
+    error("eponymBlock requireCompiled: incomplete definition(s) " &
+      names.join(", ") &
+      " cannot be compiled; requireCompiled does not admit incomplete definitions",
+      body)
   var compileTimeOnlyDefs = initTable[string, string]()
   let codegenDefs = if requireCompiled:
     let closureCtx = buildCodegenCtx(checkedGlobals, baseDir, src,
@@ -4516,7 +4941,8 @@ macro eponymBlock*(body: untyped): untyped =
       checkedGlobals)
     compileTimeOnlyDefs = closure.compileTimeOnly
     closure.runtimeDefs
-  else: defs
+  else:
+    defs.filterIt(it.name notin gatedNames)
   # Issue #401: host-bound postulates whose types are fully within the
   # representation fragment get direct-call forwarders, so repr-tier
   # bodies never route postulate calls through the interpreter.
@@ -4791,6 +5217,10 @@ macro eponymBlock*(body: untyped): untyped =
         (p.kind == nnkProcDef and p[0].kind == nnkPostfix and
          ($p[0][1]).startsWith("eponymCompiledRepr_")):
       result.add(p)
+  # Issue #478: wrappers re-elaborate at runtime from their source
+  # literal, so they get the filled source (holey src when nothing
+  # was filled). Codegen above keeps the holey src.
+  let wrapperSrc = if filledSrc.len > 0: filledSrc else: src
   for d in defs:
     if d.name in compileTimeOnlyDefs:
       # Issue #401: type-level definitions have no runtime denotation —
@@ -4798,7 +5228,7 @@ macro eponymBlock*(body: untyped): untyped =
       # wrapper is emitted. Referencing one from Nim is a compile error,
       # which is honest: there is nothing to call.
       continue
-    let srcLit = newLit(src)
+    let srcLit = newLit(wrapperSrc)
     let nameLit = newLit(d.name)
     var procDecl: NimNode = nil
     for st in body:
@@ -4813,6 +5243,25 @@ macro eponymBlock*(body: untyped): untyped =
     if requireCompiled and procDecl.isNil:
       error("eponymBlock requireCompiled: cannot generate a typed Nim wrapper " &
         "for '" & d.name & "'", body)
+    # Issue #478: a gated def gets exactly one surface — a use-gated
+    # wrapper carrying its declared signature — and no other wrapper
+    # (typed, dynamic, or runtimeValue), so no callable path bypasses
+    # the gate.
+    if d.name in gatedNames:
+      let reason = gatedReasons.getOrDefault(d.name, "incomplete")
+      if procDecl.isNil:
+        result.add(unreconstructableRuntimeWrapper(d.name, reason))
+      else:
+        let tw = typedRuntimeWrapper(procDecl, baseDir, wrapperSrc, d.name,
+          bindings, runtimeTypes, checkedGlobals, records,
+          d.name in trustedRuntimePairs,
+          cgBlock.compiled, cgBlock.compiledRepr, cgBlock.reprTypes, false)
+        if not tw.isNil:
+          result.add(gateWrapperProc(tw, reason))
+        else:
+          result.add(unsupportedRuntimeWrapper(procDecl, d.name, runtimeTypes,
+            records, d.name in trustedRuntimePairs, reason))
+      continue
     if not procDecl.isNil:
       if d.name in runtimeValueNames:
         let params = procDecl[3]
@@ -4830,7 +5279,7 @@ macro eponymBlock*(body: untyped): untyped =
           let bindingsSym = genSym(nskVar, "runtimeBindings")
           let nameLit = newLit(d.name)
           let dirLit = newLit(baseDir)
-          let srcLit = newLit(src)
+          let srcLit = newLit(wrapperSrc)
           let genericArity = newLit(block:
             var arity = 0
             for param in procDecl[2]:
@@ -4953,12 +5402,12 @@ macro eponymBlock*(body: untyped): untyped =
         else:
           let allowDependentSigma = d.name in trustedRuntimePairs
           let typedValueWrapper = typedRuntimeValueWrapper(procDecl,
-            baseDir, src, d.name, bindings, runtimeTypes, checkedGlobals,
+            baseDir, wrapperSrc, d.name, bindings, runtimeTypes, checkedGlobals,
             records, allowDependentSigma, cgBlock.compiled)
           if not typedValueWrapper.isNil:
             result.add(typedValueWrapper)
       let allowDependentSigma = d.name in trustedRuntimePairs
-      let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, src, d.name,
+      let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, wrapperSrc, d.name,
         bindings, runtimeTypes, checkedGlobals, records, allowDependentSigma,
         cgBlock.compiled, cgBlock.compiledRepr, cgBlock.reprTypes,
         requireCompiled)
@@ -4980,14 +5429,14 @@ macro eponymBlock*(body: untyped): untyped =
         hasCodecBackedDynamicValueBinder(procDecl, runtimeTypes, records)
       if addTypedDynamicGenericValueOverloads:
         let typedDynamicGenericValueWrapper = dynamicGenericRuntimeWrapper(
-          procDecl, baseDir, src, d.name, bindings, runtimeTypes,
+          procDecl, baseDir, wrapperSrc, d.name, bindings, runtimeTypes,
           checkedGlobals, records, allowDependentSigma = true,
           allowGenericFunctionValues = true)
         if not typedDynamicGenericValueWrapper.isNil:
           result.add(typedDynamicGenericValueWrapper)
       if d.name in runtimeValueNames:
         let dynamicRuntimeValueWrapper = dynamicGenericRuntimeWrapper(procDecl,
-          baseDir, src, d.name, bindings, runtimeTypes, checkedGlobals,
+          baseDir, wrapperSrc, d.name, bindings, runtimeTypes, checkedGlobals,
           records, allowDependentSigma, returnRuntimeValue = true)
         if not dynamicRuntimeValueWrapper.isNil:
           result.add(dynamicRuntimeValueWrapper)
@@ -4999,7 +5448,7 @@ macro eponymBlock*(body: untyped): untyped =
               generic.error, procDecl)
         if addTypedDynamicGenericValueOverloads:
           let typedDynamicGenericValueRuntimeValueWrapper =
-            dynamicGenericRuntimeWrapper(procDecl, baseDir, src, d.name,
+            dynamicGenericRuntimeWrapper(procDecl, baseDir, wrapperSrc, d.name,
               bindings, runtimeTypes, checkedGlobals, records,
               allowDependentSigma = true, returnRuntimeValue = true,
               allowGenericFunctionValues = true)
@@ -5007,7 +5456,7 @@ macro eponymBlock*(body: untyped): untyped =
             result.add(typedDynamicGenericValueRuntimeValueWrapper)
       continue
     if d.name in runtimeValueNames:
-      result.add(rawRuntimeValueWrapper(baseDir, src, d.name,
+      result.add(rawRuntimeValueWrapper(baseDir, wrapperSrc, d.name,
         checkedLambdaArity(d), bindings,
         runtimeTypes, records, checkedGlobals))
     result.add(unreconstructableRuntimeWrapper(d.name))
@@ -5028,16 +5477,16 @@ macro eponymBlock*(body: untyped): untyped =
           checkedGlobals)
         if not importedDecl.isNil:
           let typedImportedWrapper = typedRuntimeWrapper(importedDecl,
-            baseDir, src, requested, bindings, runtimeTypes, checkedGlobals,
+            baseDir, wrapperSrc, requested, bindings, runtimeTypes, checkedGlobals,
             records, false, initTable[string, string]())
           if not typedImportedWrapper.isNil:
             result.add(typedImportedWrapper)
           let typedImportedValueWrapper = typedRuntimeValueWrapper(
-            importedDecl, baseDir, src, requested, bindings, runtimeTypes,
+            importedDecl, baseDir, wrapperSrc, requested, bindings, runtimeTypes,
             checkedGlobals, records, false, initTable[string, string]())
           if not typedImportedValueWrapper.isNil:
             result.add(typedImportedValueWrapper)
-        result.add(rawRuntimeValueWrapper(baseDir, src, requested,
+        result.add(rawRuntimeValueWrapper(baseDir, wrapperSrc, requested,
           checkedLambdaArity(importedDef), bindings, runtimeTypes, records,
           checkedGlobals,
           if not importedDecl.isNil and

@@ -1,8 +1,8 @@
 ## The shed-edit contract across the real Nim macro boundary.
 ##
 ## A partial refinement must survive the entire editor loop:
-## compile shedsBlock -> perform goal-directed or term-directed edits ->
-## splice the returned Nim term -> compile shedsBlock again -> address the
+## compile eponymBlock -> perform goal-directed or term-directed edits ->
+## splice the returned Nim term -> compile eponymBlock again -> address the
 ## residual goal by its shed name -> finish the proof -> compile strictly.
 ##
 ## Run: nim c -r --hints:off --path:src --path:src/eponym \
@@ -61,9 +61,9 @@ let scratch = getTempDir() / "eponym_shed_refine_roundtrip"
 removeDir(scratch)
 createDir(scratch)
 let nimFile = scratch / "const_endo.nim"
-let nimV0 = """import sheds_mac
+let nimV0 = """import eponym_mac
 
-shedsBlock:
+eponymBlock:
   proc constEndo(A: Univ): Pi(f: A, g: A, A) = ![constEndoBody]
 """
 writeFile(nimFile, nimV0)
@@ -140,7 +140,7 @@ if partial.ok:
 # domains in both the generated lambda and the residual shed context.
 let introVecFile = scratch / "intro_dependent_vec.nim"
 let vecImportForIntro = (RepoRoot / "lib" / "vec.ep").replace("\\", "/")
-let introVecV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let introVecV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & vecImportForIntro & "\"\n" &
   "  proc identityVec: Pi(n: Nat, Pi(xs: Vec[Nat, n], Vec[Nat, n])) = " &
   "![introVecBody]\n"
@@ -166,7 +166,7 @@ if introVec.ok:
   writeFile(introVecFile, introVecV1)
   compiled = compileFixture(introVecFile, scratch)
   if not compiled.ok: echo compiled.output
-  check(compiled.ok, "dependent Intro splice recompiles through shedsBlock")
+  check(compiled.ok, "dependent Intro splice recompiles through eponymBlock")
   let introVecSidecar1 = readShedSidecar(sidecarPath(introVecFile))
   check(introVecSidecar1.len == 1 and
         "n : Nat" in introVecSidecar1[0].ctx and
@@ -182,7 +182,7 @@ if introVec.ok:
     "rejected non-function Intro leaves the sidecar unchanged")
 
 let implicitIntroFile = scratch / "intro_implicit.nim"
-let implicitIntroV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let implicitIntroV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  proc implicitId(): Pi({A: Univ}, A -> A) = ![implicitIntroBody]\n"
 writeFile(implicitIntroFile, implicitIntroV0)
 compiled = compileFixture(implicitIntroFile, scratch)
@@ -198,7 +198,7 @@ if implicitIntro.ok:
   writeFile(implicitIntroFile, implicitIntroV1)
   compiled = compileFixture(implicitIntroFile, scratch)
   if not compiled.ok: echo compiled.output
-  check(compiled.ok, "implicit Intro splice recompiles through shedsBlock")
+  check(compiled.ok, "implicit Intro splice recompiles through eponymBlock")
   let implicitSheds = readShedSidecar(sidecarPath(implicitIntroFile))
   check(implicitSheds.len == 1 and "A : Univ" in implicitSheds[0].ctx and
         implicitSheds[0].goalPi.len == 2 and
@@ -225,7 +225,7 @@ if implicitIntro.ok:
 
 let quantityIntroFile = scratch / "intro_quantities.nim"
 let natImportForQuantity = (RepoRoot / "lib" / "nat.ep").replace("\\", "/")
-let quantityIntroV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let quantityIntroV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & natImportForQuantity & "\"\n" &
   "  proc quantityGoal(): Pi(x {.linear.}: Nat, " &
   "Pi(proof {.erased.}: Nat, Nat)) = ![quantityIntroBody]\n"
@@ -244,7 +244,7 @@ if quantityIntro.ok:
   writeFile(quantityIntroFile, quantityIntroV1)
   compiled = compileFixture(quantityIntroFile, scratch)
   if not compiled.ok: echo compiled.output
-  check(compiled.ok, "quantity Intro splice recompiles through shedsBlock")
+  check(compiled.ok, "quantity Intro splice recompiles through eponymBlock")
   let quantitySidecar = readShedSidecar(sidecarPath(quantityIntroFile))
   check(quantitySidecar.len == 1 and "x : Nat" in quantitySidecar[0].ctx and
         "proof : Nat" in quantitySidecar[0].ctx,
@@ -270,7 +270,7 @@ if quantityIntro.ok:
 # positions. Filling either child must not accidentally fill its sibling.
 let natFile = scratch / "two_holes.nim"
 let natImport = (RepoRoot / "lib" / "nat.ep").replace("\\", "/")
-let natV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let natV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & natImport & "\"\n" &
   "  proc addPair(n: Nat): Nat = ![sumBody]\n"
 writeFile(natFile, natV0)
@@ -319,7 +319,7 @@ if split.ok:
 # mirrors branchDemo: refine the left side to `suc(?)`, then give the right
 # side the nullary constructor using valid Eponym term syntax (`zero`).
 let branchFile = scratch / "same_line_sibling_action.nim"
-let branchV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let branchV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & natImport & "\"\n" &
   "  proc branchDemo(n: Nat): Nat = add ( ![branchLeft] ) ( ![branchRight] )\n"
 writeFile(branchFile, branchV0)
@@ -357,7 +357,7 @@ if leftAction.ok:
 # goal/context/layout, then each child can be completed through refineShed.
 let caseFile = scratch / "case_split.nim"
 let boolImport = (RepoRoot / "lib" / "bool.ep").replace("\\", "/")
-let caseV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let caseV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & natImport & "\"\n" &
   "  import \"" & boolImport & "\"\n" &
   "  proc isZero(n: Nat): Bool = ![isZeroBody]\n"
@@ -413,7 +413,7 @@ if cases.ok:
 # recompilation, not only the LSP's generated text.
 let listFile = scratch / "list_case_split.nim"
 let listImport = (RepoRoot / "lib" / "list.ep").replace("\\", "/")
-let listV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let listV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & listImport & "\"\n" &
   "  proc listLength(xs: List[Nat]): Nat = ![listLengthBody]\n"
 writeFile(listFile, listV0)
@@ -449,7 +449,7 @@ if listCases.ok:
 # A parameter supplied by a generic Eponym binder must retain its local name
 # when the generated type argument is spliced back into Nim syntax.
 let genericListFile = scratch / "generic_list_case_split.nim"
-let genericListV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let genericListV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & listImport & "\"\n" &
   "  proc inspectList[A: Univ](xs: List[A]): Nat = ![inspectListBody]\n"
 writeFile(genericListFile, genericListV0)
@@ -474,7 +474,7 @@ if genericListCases.ok:
 # target and a target which depends directly on the index variable.
 let vecFile = scratch / "indexed_case_split.nim"
 let vecImport = (RepoRoot / "lib" / "vec.ep").replace("\\", "/")
-let vecV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let vecV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
   "  proc vectorLength(n: Nat, xs: Vec[Nat, n]): Nat = ![vecBody]\n"
 writeFile(vecFile, vecV0)
@@ -482,7 +482,7 @@ compiled = compileFixture(vecFile, scratch)
 if not compiled.ok: echo compiled.output
 check(compiled.ok, "indexed Vec fixture compiles with an initial shed")
 let vecGoalFile = scratch / "goal_constructor_vec.nim"
-let vecGoalV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let vecGoalV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
   "  proc makeNonempty(n : Nat) : Vec[Nat, suc(n)] = ![makeVecBody]\n"
 writeFile(vecGoalFile, vecGoalV0)
@@ -518,7 +518,7 @@ if vecOptions.ok:
       "constructor field sheds preserve the index substitutions in their goals")
 
 let applyFile = scratch / "dependent_apply_context.nim"
-let applyV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let applyV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  proc applyAt(A : Univ, B : A -> Univ, C : A -> Univ, " &
   "f : Pi(x : A, B(x)), " &
   "g : Pi(x : A, Pi(y : B(x), C(x))), a : A) : B(a) = ![applyBody]\n" &
@@ -583,7 +583,7 @@ if vecCases.ok:
     "indexed case children retain open goals after recompilation")
 
 let dependentVecFile = scratch / "dependent_index_case_split.nim"
-let dependentVecV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let dependentVecV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
   "  proc identityVector(n: Nat, xs: Vec[Nat, n]): Vec[Nat, n] = " &
   "![identityVectorBody]\n"
@@ -615,7 +615,7 @@ writeFile(taggedEp, "import \"" & natEpImport & "\"\n" & """data(Tagged, [A : Un
 """)
 let taggedFile = scratch / "parameter_index_case_split.nim"
 let taggedEpImport = taggedEp.replace("\\", "/")
-let taggedV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let taggedV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & taggedEpImport & "\"\n" &
   "  proc inspectTagged[A: Univ](n: Nat, a: A, " &
   "value: Tagged[A, n, a]): A = " &
@@ -643,7 +643,7 @@ if taggedCases.ok:
 # Exact compound index occurrences can be abstracted safely; the resulting
 # motive is still validated by re-elaboration before a splice is returned.
 let compoundVecFile = scratch / "compound_index_case_split.nim"
-let compoundVecV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let compoundVecV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
   "  proc identitySuccessor(n: Nat, xs: Vec[Nat, suc(n)]): " &
   "Vec[Nat, suc(n)] = ![compoundIndexBody]\n"
@@ -669,7 +669,7 @@ if compoundVecCases.ok:
 # If the target depends on `n` independently of the actual index `suc(n)`, it
 # remains tied to the outer context instead of being accidentally rewritten.
 let unrelatedIndexFile = scratch / "unrelated_compound_index_case_split.nim"
-let unrelatedIndexV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let unrelatedIndexV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
   "  proc preserveContext(n: Nat, xs: Vec[Nat, suc(n)]): " &
   "Vec[Nat, n] = ![unrelatedIndexBody]\n"
@@ -689,7 +689,7 @@ check(unrelatedIndexCases.ok and "Vec[Nat, n]" in unrelatedIndexCases.term and
 # transport a rewritten goal back to the original target.
 let equalityRewriteFile = scratch / "equality_rewrite.nim"
 let equalityLib = (RepoRoot / "lib" / "eq.ep").replace("\\", "/")
-let equalityRewriteV0 = "import sheds_mac\n\nshedsBlock:\n" &
+let equalityRewriteV0 = "import eponym_mac\n\neponymBlock:\n" &
   "  import \"" & equalityLib & "\"\n" &
   "  proc rewriteForward(A: Univ, P: A -> Univ, x: A, y: A, " &
   "e: Eq[A, x, y]) : P(x) = ![forwardBody]\n" &
