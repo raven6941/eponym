@@ -1,0 +1,12 @@
+# Negative test for typestate (issue #481): double close.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+# The inner closeH delivers Sock closedP; the outer closeH requires
+# Sock connP.
+import "../../lib/nat.ep"
+import "../../lib/typestate.ep"
+
+# Expected error: inferred type (Sock closedP) does not match expected
+# type (Sock connP): noConfusion, distinct constructors.
+proc badDoubleClose (1 s : Sock unconnP) : Sock closedP =
+  closeH (closeH (connectH s))
