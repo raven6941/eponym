@@ -1,0 +1,23 @@
+# Typestate for handles, positive case (issue #481).
+# A socket's phase is carried in its type; the clients below thread one
+# handle through its lifecycle. The reusable library is lib/typestate.ep.
+import "../../lib/nat.ep"
+import "../../lib/typestate.ep"
+
+# Happy path: connect, send, receive, close.
+proc socketSession (s : Sock unconnP) : Sock closedP =
+  let c = connectH s in
+  let c2 = sendH zero c in
+  let p = recvH c2 in
+  closeH (snd p)
+
+# Round trip: receive a value, send it back, close.
+proc echoRoundTrip (s : Sock unconnP) : Sock closedP =
+  let c = connectH s in
+  let p = recvH c in
+  let c2 = sendH (fst p) (snd p) in
+  closeH c2
+
+# Chained sends before closing.
+proc sendTwice (s : Sock unconnP) : Sock closedP =
+  closeH (sendH (suc zero) (sendH zero (connectH s)))

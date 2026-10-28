@@ -1,0 +1,14 @@
+# Negative test for typestate (issue #481): use after close.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+# closeH delivers Sock closedP; sendH requires Sock connP, so sending on
+# the closed handle is a phase mismatch, not merely a linearity slip.
+import "../../lib/nat.ep"
+import "../../lib/typestate.ep"
+
+# Expected error: inferred type (Sock closedP) does not match expected
+# type (Sock connP): noConfusion, distinct constructors.
+proc badUseAfterClose (1 s : Sock unconnP) : Sock closedP =
+  let c = connectH s in
+  let d = closeH c in
+  sendH zero d

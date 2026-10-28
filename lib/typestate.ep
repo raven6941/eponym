@@ -1,0 +1,36 @@
+# Eponym common library: phase-indexed handles / typestate (issue #481).
+#
+# A handle indexed by its phase: the type of a socket records which phase
+# it is in, and every operation's type states the phase it requires and
+# the phase it delivers. Misuse is a type error, not a runtime failure:
+# send-before-connect, use-after-close, and double-close are all rejected
+# at elaboration time (see examples/ep/28*-neg.ep).
+#
+# The operations are postulates (mock socket ops); a real library would
+# bind them to socket code. Linear (1) binders ensure each handle is used
+# exactly once along a path (Issue #66), so a handle cannot be dropped
+# silently or used twice within checked code.
+#
+# Honest boundary (see docs/known-limitations.md, "Static checks do not
+# manage Nim resources"): Eponym checks phase ordering inside checked
+# terms. It cannot see Nim-side aliasing: two Nim references to the same
+# socket are invisible to it. This library demonstrates checking at the
+# eponym API boundary; it does not claim end-to-end resource management.
+import "nat.ep"
+
+# Phases of a socket's lifecycle.
+data(Phase, Univ) where
+| unconnP : Phase
+| connP : Phase
+| closedP : Phase
+
+# A socket indexed by its current phase.
+data(Sock, Phase -> Univ) where
+| mkSock (p : Phase) : Sock p
+
+# Lifecycle operations. Each consumes the handle in its required phase
+# and delivers it in the next phase; the index change is the transition.
+postulate(connectH, Pi(1 s: Sock unconnP, Sock connP))
+postulate(sendH, Pi(x: Nat, Pi(1 s: Sock connP, Sock connP)))
+postulate(recvH, Pi(1 s: Sock connP, Sig(x: Nat, Sock connP)))
+postulate(closeH, Pi(1 s: Sock connP, Sock closedP))

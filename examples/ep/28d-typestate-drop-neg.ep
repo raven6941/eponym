@@ -1,0 +1,11 @@
+# Negative test for typestate (issue #481): dropped handle.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+# The linear handle is never used: a well-typed client must thread it
+# through its lifecycle to close.
+import "../../lib/nat.ep"
+import "../../lib/typestate.ep"
+
+# Expected error: linear variable 's' not used.
+proc badDrop (1 s : Sock unconnP) : Nat =
+  zero
