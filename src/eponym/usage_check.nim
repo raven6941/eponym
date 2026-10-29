@@ -381,45 +381,42 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
 # the innermost binder. The in-judgment check uses correct depth tracking;
 # the post-pass stays as a backstop.)
 
-proc termContainsVarAt(t: Term, target: int, depth: int): bool =
-  ## Term-position occurrence of de Bruijn index `target + depth`,
-  ## skipping type positions (binder domains, let annotations).
+proc collectProjectedVarPaths(t: Term, target, depth: int, path: string,
+                              counts: var Table[string, int]) =
+  ## Count occurrences of a variable by the direct fst/snd path through
+  ## which it is projected. Distinct paths are independent components of a
+  ## pair-valued let; repeating one path consumes that component repeatedly.
+  ## Other term constructors end a projection path.
   case t.kind
-  of tV: t.idx == target + depth
-  of tLam, tPi, tSi: termContainsVarAt(t.scope.bdy, target, depth + 1)
-  of tApp: termContainsVarAt(t.fn, target, depth) or
-           termContainsVarAt(t.arg, target, depth)
-  of tPair: termContainsVarAt(t.pFst, target, depth) or
-            termContainsVarAt(t.pSnd, target, depth) or
-            termContainsVarAt(t.pScope.bdy, target, depth + 1)
-  of tFst, tSnd, tAbsurd: termContainsVarAt(t.sub, target, depth)
-  of tLet: termContainsVarAt(t.letVal, target, depth) or
-           termContainsVarAt(t.letScope.bdy, target, depth + 1)
-  of tPrim, tR, tC, tType, tMeta, tInt, tNatLit, tNatSing: false
-
-proc occursUnderProjAt(t: Term, target: int, depth: int): bool =
-  ## True if index `target + depth` occurs under an fst/snd projection
-  ## in a *surviving* position of `t`: occurrences inside the value of
-  ## a let whose variable is itself unused do not survive (the value
-  ## is dropped with the let under substitution counting), so they do
-  ## not count as projection uses. Used by the let-factor rule below.
-  case t.kind
-  of tV: false
-  of tLam, tPi, tSi: occursUnderProjAt(t.scope.bdy, target, depth + 1)
-  of tApp: occursUnderProjAt(t.fn, target, depth) or
-           occursUnderProjAt(t.arg, target, depth)
-  of tPair: occursUnderProjAt(t.pFst, target, depth) or
-            occursUnderProjAt(t.pSnd, target, depth) or
-            occursUnderProjAt(t.pScope.bdy, target, depth + 1)
-  of tFst, tSnd: termContainsVarAt(t.sub, target, depth)
-  of tAbsurd: occursUnderProjAt(t.sub, target, depth)
+  of tV:
+    if t.idx == target + depth:
+      counts[path] = counts.getOrDefault(path) + 1
+  of tFst:
+    collectProjectedVarPaths(t.sub, target, depth, path & ".fst", counts)
+  of tSnd:
+    collectProjectedVarPaths(t.sub, target, depth, path & ".snd", counts)
+  of tLam, tPi, tSi:
+    collectProjectedVarPaths(t.scope.bdy, target, depth + 1, "", counts)
+  of tApp:
+    collectProjectedVarPaths(t.fn, target, depth, "", counts)
+    collectProjectedVarPaths(t.arg, target, depth, "", counts)
+  of tPair:
+    collectProjectedVarPaths(t.pFst, target, depth, "", counts)
+    collectProjectedVarPaths(t.pSnd, target, depth, "", counts)
+    collectProjectedVarPaths(t.pScope.bdy, target, depth + 1, "", counts)
+  of tAbsurd:
+    collectProjectedVarPaths(t.sub, target, depth, "", counts)
   of tLet:
-    if termContainsVarAt(t.letScope.bdy, 0, 0):
-      occursUnderProjAt(t.letVal, target, depth) or
-        occursUnderProjAt(t.letScope.bdy, target, depth + 1)
-    else:
-      occursUnderProjAt(t.letScope.bdy, target, depth + 1)
-  of tPrim, tR, tC, tType, tMeta, tInt, tNatLit, tNatSing: false
+    collectProjectedVarPaths(t.letVal, target, depth, "", counts)
+    collectProjectedVarPaths(t.letScope.bdy, target, depth + 1, "", counts)
+  of tPrim, tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
+    discard
+
+proc hasRepeatedProjectedPath(t: Term, target, depth: int): bool =
+  var counts = initTable[string, int]()
+  collectProjectedVarPaths(t, target, depth, "", counts)
+  for count in counts.values:
+    if count > 1: return true
 
 proc varUsageProfile*(tm: Term): UsageProfile =
   ## Possible saturated free-use counts for de Bruijn index 0 in term
@@ -525,8 +522,8 @@ proc varUsageProfile*(tm: Term): UsageProfile =
       # either count, and an exactly-once-threaded let makes both counts
       # agree, so threaded clients (29-linear-ok) are unchanged. The
       # bound variable's use count feeding the scaled count is itself
-      # a substitution count (scaledOnly walk), with projection-only
-      # uses collapsed to one (see below): a pair-valued intermediate
+      # a substitution count (scaledOnly walk), with distinct projection
+      # paths collapsed to one (see below): a pair-valued intermediate
       # used once per component must not multiply the value's uses,
       # even though its strict count is two or more.
       let valSummary = go(t.letVal, depth, scaledOnly, skipProj)
@@ -539,14 +536,9 @@ proc varUsageProfile*(tm: Term): UsageProfile =
       # A pair-valued intermediate used only via projections (the
       # Paxos/typestate pattern: fst for a reusable component, snd
       # once for the channel) counts once: projections split a pair
-      # into components, so their total must not multiply the value's
-      # uses. KNOWN LIMIT: this treats a pair atomically through lets,
-      # so double-projection of the SAME component through a let
-      # (e.g. (fst p, fst p) with p a pair holding a linear value)
-      # counts once here; the strict count still rejects it when the
-      # value itself mentions the binder twice, but a single-use pair
-      # literal projected twice through a let is not caught. Tracking
-      # that needs per-component paths, which this walk does not have.
+      # into components, so distinct paths must not multiply the value's
+      # uses. Repeated uses of the same component path do multiply it;
+      # the path check below preserves that count.
       var totalSummary = go(t.letScope.bdy, 0, true, false)
       var nonProjSummary = go(t.letScope.bdy, 0, true, true)
       var letVarProfile: UsageProfile
@@ -556,8 +548,12 @@ proc varUsageProfile*(tm: Term): UsageProfile =
           letVarProfile = {ucZero, ucOnce, ucMany}
       else:
         if nonProjSummary.profile == {ucZero}:
-          letVarProfile = if containsVarAt(t.letScope.bdy, 0, 0): {ucOnce}
-                          else: {ucZero}
+          if totalSummary.profile.contains(ucMany) and
+              hasRepeatedProjectedPath(t.letScope.bdy, 0, 0):
+            letVarProfile = totalSummary.profile
+          else:
+            letVarProfile = if containsVarAt(t.letScope.bdy, 0, 0): {ucOnce}
+                            else: {ucZero}
         else:
           letVarProfile = totalSummary.profile
         if totalSummary.hasErasedUse:

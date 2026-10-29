@@ -5566,6 +5566,21 @@ proc linId (A : Univ) : Pi(1 x: A, A) =
 """)
   assert qttDefs.len == 1
   echo "ok: linear binder used exactly once elaborates (#66)"
+  let qttDistinctPairProjections = elabCheck("""
+postulate(N, Univ)
+postulate(n0, N)
+proc distinctProjection (1 j : N) : Sig(u: N, N) =
+  let p = (j, n0) in (fst p, snd p)
+""")
+  assert qttDistinctPairProjections.len == 1
+  echo "ok: distinct projections through a let preserve component usage (#487)"
+  expectElabErr("""
+postulate(N, Univ)
+postulate(n0, N)
+proc duplicateProjection (1 j : N) : Sig(u: N, N) =
+  let p = (j, n0) in (fst p, fst p)
+""", "expected exactly once")
+  echo "ok: repeating one projected component through a let is rejected (#487)"
   expectElabErr("""
 proc linDup (A : Univ) (f : A -> A -> A) : Pi(1 x: A, A) =
   lam(1 x: A) => f x x

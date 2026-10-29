@@ -578,7 +578,10 @@ use on every path. A `let`-bound intermediate is checked under both counts
 (#484): its value evaluates once, so the value's uses count unconditionally,
 and the value's context is also scaled by the bound variable's use count in
 the body — so dropping or double-using a let-bound linear-derived value is
-an error, as is passing it to a `q0` parameter. Known global and primitive call signatures distinguish
+an error, as is passing it to a `q0` parameter. Pair components projected
+through a let are tracked by projection path: using `fst p` and `snd p` is
+one substitution use of the pair, while using `fst p` twice counts as two
+uses of that component. Known global and primitive call signatures distinguish
 type arguments and erased (`q0`) arguments from runtime values. If a value is
 also used at runtime and passed to a `q0` argument, inference stays
 unrestricted so it cannot be silently discarded as linear.
