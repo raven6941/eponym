@@ -4,16 +4,19 @@
 # fresh --sendJ--> sent --ackJ--> acked --closeJ--> closed. A handle
 # is a q1 (linear) value: inside checked code, an ANNOTATED binder
 # for it cannot be used twice and cannot be dropped silently
-# (Issue #66). QUALIFICATION, found while building this example
-# (probes, not speculation): a LET-bound intermediate derived from a
-# q1 value escapes that checking entirely — `let s = sendJ zero j in
-# zero` (drop) and `let s = sendJ zero j in (ackJ s, ackJ s)`
-# (double use) both elaborate cleanly, because the unannotated let
-# binder is omega-inferred rather than inheriting the value's
-# quantity. So the single-use guarantee, as implemented, covers
-# directly threaded annotated binders, not let-bound intermediates.
-# Threaded clients that use each intermediate exactly once are fine;
-# misuse through a let is currently unchecked. Filed as #484
+# (Issue #66). The same holds through LET-bound intermediates (Issue
+# #484, resolved): a let is checked under both counts — the value
+# evaluates once, so its uses count unconditionally, and the value's
+# context is also scaled by the bound variable's use count in the
+# body — so `let s = sendJ zero j in zero` (drop) and
+# `let s = sendJ zero j in (ackJ s, ackJ s)` (double use) are both
+# compile-time errors (examples/ep/29d, 29e), as is passing a
+# let-bound linear-derived value to a q0 parameter. No annotated-let
+# form or new syntax was needed: the answer to #484's open question is
+# the conjunction of the strict evaluation count with the QTT let
+# rule, and lets over pure values are unaffected.
+# So the single-use guarantee covers threaded clients in their normal
+# let-bound style, not only directly threaded annotated binders.
 # (see the watchlist in examples/embedded/linear_handles.nim).
 # The phases are what Nim
 # alone cannot enforce: a destructor gives exactly-once destruction,

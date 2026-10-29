@@ -1,0 +1,13 @@
+# Negative test for #484: double use through a let.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+#
+# The linear handle j is consumed by sendJ, but the resulting sent
+# handle s is acked twice: the body uses s two times.
+# Expected error: linear variable 'j' used 2 times (expected exactly once).
+import "../../lib/nat.ep"
+import "../../lib/linear.ep"
+
+proc probeLetDouble (1 j : Job freshP) : Sig(x: Sig(a: Nat, Job ackedP), Sig(a: Nat, Job ackedP)) =
+  let s = sendJ zero j in
+  (ackJ s, ackJ s)

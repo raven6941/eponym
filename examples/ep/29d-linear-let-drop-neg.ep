@@ -1,0 +1,13 @@
+# Negative test for #484: drop through a let.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+#
+# The linear handle j is consumed by sendJ, but the resulting sent
+# handle s is dropped: the body never uses s.
+# Expected error: linear variable 'j' not used (expected exactly once).
+import "../../lib/nat.ep"
+import "../../lib/linear.ep"
+
+proc probeLetDrop (1 j : Job freshP) : Nat =
+  let s = sendJ zero j in
+  zero

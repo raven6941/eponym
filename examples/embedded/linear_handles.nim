@@ -12,16 +12,12 @@
 #   annotated binders are compile-time errors (examples/ep/29a, 29b);
 #   a phase violation is a compile-time error (29c). The bracket
 #   client shows the sound boundary: the handle never becomes a value
-#   Nim code can name.
-# - KNOWN GAP (watchlist, found by probe while building): a LET-bound
-#   intermediate derived from a q1 value is NOT checked — dropping it
-#   or using it twice elaborates cleanly, because the unannotated let
-#   binder is omega-inferred instead of inheriting the value's
-#   quantity. The single-use guarantee therefore covers directly
-#   threaded annotated binders, not let-bound intermediates. Whether
-#   let binders should inherit quantity (or require annotation) is
-#   filed as #484; until it is resolved, do not read
-#   "single-use" as covering let-bound handles.
+#   Nim code can name. The same checking extends through LET-bound
+#   intermediates (#484, resolved): a let's value counts once by
+#   evaluation and is also scaled by the bound variable's use count,
+#   so dropping or double-using a let-bound handle is a
+#   compile-time error (examples/ep/29d, 29e). "Single-use" therefore
+#   covers threaded clients in their normal let-bound style.
 # - Not checked: Nim-side aliasing. Two Nim references to the same
 #   JobHandle are invisible to the checker (see
 #   docs/known-limitations.md, "Static checks do not manage Nim
@@ -67,10 +63,10 @@
 # guarantee.
 #
 # Watchlist (part of the deliverable; observations from building this):
-# - Let-linearity gap (above): let-bound intermediates escape q1
-#   checking entirely, for both drop and double use. Filed as a
-#   follow-up issue (#484). This qualifies every "single-use" claim in this
-#   example and in #481-style threaded clients.
+# - Let-linearity gap (above) RESOLVED by #484: let-bound intermediates
+#   are quantity-checked (see lib/linear.ep). The watchlist item is
+#   closed with the issue; the "single-use" claims in this example no
+#   longer carry that qualification.
 # - Generic-result bracket NOT shipped (see lib/linear.ep): with A
 #   caller-instantiated, A := Job freshP lets the handle escape through
 #   the result, so the Nat-fixed bracket is the sound shape here. A
