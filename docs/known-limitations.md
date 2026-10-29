@@ -574,7 +574,11 @@ result motive, usage profiles cover all finite recursive shapes. Each
 generated case rule is checked against its constructor fields and recursive
 calls before the analysis treats its cases as alternatives. Unannotated
 binders infer quantity `1` only when the analysis proves exactly one runtime
-use on every path. Known global and primitive call signatures distinguish
+use on every path. A `let`-bound intermediate is checked under both counts
+(#484): its value evaluates once, so the value's uses count unconditionally,
+and the value's context is also scaled by the bound variable's use count in
+the body — so dropping or double-using a let-bound linear-derived value is
+an error, as is passing it to a `q0` parameter. Known global and primitive call signatures distinguish
 type arguments and erased (`q0`) arguments from runtime values. If a value is
 also used at runtime and passed to a `q0` argument, inference stays
 unrestricted so it cannot be silently discarded as linear.

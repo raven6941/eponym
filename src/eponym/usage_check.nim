@@ -381,40 +381,80 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
 # the innermost binder. The in-judgment check uses correct depth tracking;
 # the post-pass stays as a backstop.)
 
+proc termContainsVarAt(t: Term, target: int, depth: int): bool =
+  ## Term-position occurrence of de Bruijn index `target + depth`,
+  ## skipping type positions (binder domains, let annotations).
+  case t.kind
+  of tV: t.idx == target + depth
+  of tLam, tPi, tSi: termContainsVarAt(t.scope.bdy, target, depth + 1)
+  of tApp: termContainsVarAt(t.fn, target, depth) or
+           termContainsVarAt(t.arg, target, depth)
+  of tPair: termContainsVarAt(t.pFst, target, depth) or
+            termContainsVarAt(t.pSnd, target, depth) or
+            termContainsVarAt(t.pScope.bdy, target, depth + 1)
+  of tFst, tSnd, tAbsurd: termContainsVarAt(t.sub, target, depth)
+  of tLet: termContainsVarAt(t.letVal, target, depth) or
+           termContainsVarAt(t.letScope.bdy, target, depth + 1)
+  of tPrim, tR, tC, tType, tMeta, tInt, tNatLit, tNatSing: false
+
+proc occursUnderProjAt(t: Term, target: int, depth: int): bool =
+  ## True if index `target + depth` occurs under an fst/snd projection
+  ## in a *surviving* position of `t`: occurrences inside the value of
+  ## a let whose variable is itself unused do not survive (the value
+  ## is dropped with the let under substitution counting), so they do
+  ## not count as projection uses. Used by the let-factor rule below.
+  case t.kind
+  of tV: false
+  of tLam, tPi, tSi: occursUnderProjAt(t.scope.bdy, target, depth + 1)
+  of tApp: occursUnderProjAt(t.fn, target, depth) or
+           occursUnderProjAt(t.arg, target, depth)
+  of tPair: occursUnderProjAt(t.pFst, target, depth) or
+            occursUnderProjAt(t.pSnd, target, depth) or
+            occursUnderProjAt(t.pScope.bdy, target, depth + 1)
+  of tFst, tSnd: termContainsVarAt(t.sub, target, depth)
+  of tAbsurd: occursUnderProjAt(t.sub, target, depth)
+  of tLet:
+    if termContainsVarAt(t.letScope.bdy, 0, 0):
+      occursUnderProjAt(t.letVal, target, depth) or
+        occursUnderProjAt(t.letScope.bdy, target, depth + 1)
+    else:
+      occursUnderProjAt(t.letScope.bdy, target, depth + 1)
+  of tPrim, tR, tC, tType, tMeta, tInt, tNatLit, tNatSing: false
+
 proc varUsageProfile*(tm: Term): UsageProfile =
   ## Possible saturated free-use counts for de Bruijn index 0 in term
   ## positions. `tm` is the body of a lambda; index 0 denotes that binder.
   ## Carry erased-argument use through the same walk so inference does not
   ## need to traverse the term a second time.
-  proc go(t: Term, depth: int): UsageSummary =
+  proc go(t: Term, depth: int, scaledOnly, skipProj: bool): UsageSummary =
     case t.kind
     of tV:
       result.profile = if t.idx == depth: {ucOnce} else: {ucZero}
     of tLam, tPi, tSi:
       # dom is a type annotation: not a term position, skip it
-      result = go(t.scope.bdy, depth + 1)
+      result = go(t.scope.bdy, depth + 1, scaledOnly, skipProj)
     of tApp:
       let choice = expandBranchEliminator(t)
       if choice.found:
         var strictUsage = UsageSummary(profile: {ucZero})
         for arg in choice.strictArgs:
-          strictUsage = usageThen(strictUsage, go(arg, depth))
+          strictUsage = usageThen(strictUsage, go(arg, depth, scaledOnly, skipProj))
         var branchProfiles: seq[UsageProfile] = @[]
         var branchHasErasedUse = false
         for branch in choice.branches:
           if branch.isNil:
             branchProfiles.add({ucZero})
           else:
-            let branchUsage = go(branch, depth)
+            let branchUsage = go(branch, depth, scaledOnly, skipProj)
             branchProfiles.add(branchUsage.profile)
             branchHasErasedUse = branchHasErasedUse or
               branchUsage.hasErasedUse
         let caseProfile = recursiveUsageChoice(branchProfiles,
           choice.recursiveCounts)
         if caseProfile == {}:
-          result = usageThen(go(t.fn, depth), go(t.arg, depth))
+          result = usageThen(go(t.fn, depth, scaledOnly, skipProj), go(t.arg, depth, scaledOnly, skipProj))
         else:
-          let conditionUsage = go(choice.condition, depth)
+          let conditionUsage = go(choice.condition, depth, scaledOnly, skipProj)
           result.profile = usageThen(
             usageThen(strictUsage.profile, conditionUsage.profile), caseProfile)
           result.hasErasedUse = strictUsage.hasErasedUse or
@@ -424,13 +464,13 @@ proc varUsageProfile*(tm: Term): UsageProfile =
         # definition, whose two value arguments are lambda thunks. Applying
         # the selected thunk evaluates exactly one branch; analyze those
         # alternatives as a choice, not as two sequential argument uses.
-        let left = go(t.fn.scope.bdy, depth + 1)
-        let right = go(t.arg.scope.bdy, depth + 1)
+        let left = go(t.fn.scope.bdy, depth + 1, scaledOnly, skipProj)
+        let right = go(t.arg.scope.bdy, depth + 1, scaledOnly, skipProj)
         result.profile = usageChoice([left.profile, right.profile])
         result.hasErasedUse = left.hasErasedUse or right.hasErasedUse
       elif choice.unsupportedChoice:
         if not choice.condition.isNil:
-          result = go(choice.condition, depth)
+          result = go(choice.condition, depth, scaledOnly, skipProj)
           var capturedByUnknownCase = false
           for arg in choice.strictArgs:
             if containsVarAt(arg, 0, depth):
@@ -449,28 +489,115 @@ proc varUsageProfile*(tm: Term): UsageProfile =
           # The flattened spine's function head and all value arguments
           # contribute; universe-domain arguments are erased type positions.
           let (head, args) = flattenApps(t)
-          result = usageThen(result, go(head, depth))
+          result = usageThen(result, go(head, depth, scaledOnly, skipProj))
           for i, arg in args:
             if i >= useKinds.len or useKinds[i] == aukRuntime:
-              result = usageThen(result, go(arg, depth))
+              result = usageThen(result, go(arg, depth, scaledOnly, skipProj))
             elif useKinds[i] == aukErased and containsVarAt(arg, 0, depth):
               result.hasErasedUse = true
         else:
-          result = usageThen(go(t.fn, depth), go(t.arg, depth))
+          result = usageThen(go(t.fn, depth, scaledOnly, skipProj), go(t.arg, depth, scaledOnly, skipProj))
     of tPair:
-      result = usageThen(usageThen(go(t.pFst, depth), go(t.pSnd, depth)),
-        go(t.pScope.bdy, depth + 1))
+      result = usageThen(usageThen(go(t.pFst, depth, scaledOnly, skipProj), go(t.pSnd, depth, scaledOnly, skipProj)),
+        go(t.pScope.bdy, depth + 1, scaledOnly, skipProj))
     of tFst, tSnd, tAbsurd:
-      result = go(t.sub, depth)
+      # In a projection-skipping factor walk, uses under a projection
+      # are not counted here: they are handled by the projection-only
+      # rule in the tLet case below.
+      if skipProj and t.kind != tAbsurd:
+        result.profile = {ucZero}
+      else:
+        result = go(t.sub, depth, scaledOnly, skipProj)
     of tLet:
-      # letTy is a type annotation: skip; val and body are term positions
-      result = usageThen(go(t.letVal, depth), go(t.letScope.bdy, depth + 1))
+      # letTy is a type annotation: skip; val and body are term positions.
+      # Issue #484: a let is checked under BOTH counts, and the binder
+      # passes only if both are exactly once (their union is {ucOnce}):
+      # - Strict count (the old composition): the value evaluates once,
+      #   so its uses count unconditionally. This keeps the session
+      #   tests (15b/15e) rejecting: two lets each consuming the channel
+      #   count twice even when one result is dropped.
+      # - Scaled count (the QTT let rule): the value's context is scaled
+      #   by the bound variable's use count in the body. This rejects
+      #   drop and double use through a single let (29d/29e), which the
+      #   strict count alone misses: the value's single use would
+      #   otherwise mask the misuse of the bound intermediate.
+      # A pure value (profile {ucZero} for the target) is unaffected by
+      # either count, and an exactly-once-threaded let makes both counts
+      # agree, so threaded clients (29-linear-ok) are unchanged. The
+      # bound variable's use count feeding the scaled count is itself
+      # a substitution count (scaledOnly walk), with projection-only
+      # uses collapsed to one (see below): a pair-valued intermediate
+      # used once per component must not multiply the value's uses,
+      # even though its strict count is two or more.
+      let valSummary = go(t.letVal, depth, scaledOnly, skipProj)
+      let bodySummary = go(t.letScope.bdy, depth + 1, scaledOnly, skipProj)
+      let strictProfile = usageThen(valSummary.profile,
+        bodySummary.profile)
+      # Bound-variable factor for the scaled count: two substitution
+      # walks over the body. The total walk counts every use; the
+      # projection-skipping walk counts only uses not under fst/snd.
+      # A pair-valued intermediate used only via projections (the
+      # Paxos/typestate pattern: fst for a reusable component, snd
+      # once for the channel) counts once: projections split a pair
+      # into components, so their total must not multiply the value's
+      # uses. KNOWN LIMIT: this treats a pair atomically through lets,
+      # so double-projection of the SAME component through a let
+      # (e.g. (fst p, fst p) with p a pair holding a linear value)
+      # counts once here; the strict count still rejects it when the
+      # value itself mentions the binder twice, but a single-use pair
+      # literal projected twice through a let is not caught. Tracking
+      # that needs per-component paths, which this walk does not have.
+      var totalSummary = go(t.letScope.bdy, 0, true, false)
+      var nonProjSummary = go(t.letScope.bdy, 0, true, true)
+      var letVarProfile: UsageProfile
+      if skipProj:
+        letVarProfile = nonProjSummary.profile
+        if nonProjSummary.hasErasedUse:
+          letVarProfile = {ucZero, ucOnce, ucMany}
+      else:
+        if nonProjSummary.profile == {ucZero}:
+          letVarProfile = if containsVarAt(t.letScope.bdy, 0, 0): {ucOnce}
+                          else: {ucZero}
+        else:
+          letVarProfile = totalSummary.profile
+        if totalSummary.hasErasedUse:
+          # An erased-argument use of the let variable is a discard, not
+          # a non-use: the value is handed to a q0 parameter (the
+          # checkErasedArg rule, which cannot see through the let
+          # alias). Expanding here keeps the discard from masking a
+          # second direct use of the same linear value, and keeps a
+          # lone erased use from passing as "used once". Pure values
+          # are unaffected: scaling a {ucZero} value profile by any
+          # count stays {ucZero}.
+          letVarProfile = {ucZero, ucOnce, ucMany}
+      var scaled: UsageProfile = {}
+      for k in letVarProfile:
+        for m in valSummary.profile:
+          scaled.incl UsageCount(min(2, ord(k) * ord(m)))
+      let scaledProfile = usageThen(scaled, bodySummary.profile)
+      # Enforcement (a binder check) needs both counts; the let-variable
+      # factor walk above is itself a substitution count, so in scaled
+      # mode the scaled profile alone is the result. Using the union
+      # as the factor would overcount pair-valued intermediates, whose
+      # two projections are legitimately two strict uses of one value
+      # (the 29-linear-ok bracket: p via snd for close and fst for the
+      # receipt is one substitution use, not two).
+      if scaledOnly:
+        result.profile = scaledProfile
+      else:
+        result.profile = strictProfile + scaledProfile
+      # The let-variable walk's erased flag is about the let variable,
+      # not the target: it is already accounted for by the expansion
+      # above. Propagating it here would flag the target for an erased
+      # use of an unrelated (e.g. pure) let-bound value.
+      result.hasErasedUse = valSummary.hasErasedUse or
+        bodySummary.hasErasedUse
     of tPrim:
       result.profile = {ucZero}  # annotation only; primOp carries no terms
     of tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
       result.profile = {ucZero}
   if tm.isNil: return {ucZero}
-  let summary = go(tm, 0)
+  let summary = go(tm, 0, false, false)
   result = summary.profile
   if result != {ucZero} and summary.hasErasedUse:
     # Keep inference conservative across nested applications and pairs. The
@@ -586,7 +713,7 @@ proc checkUsage*(tm: Term, allowOpenHoles = false): void =
         # rechecks the binder after the hole is filled.
         if allowOpenHoles and hasUnresolvedMetas(t.scope.bdy): return
         let profile = varUsageProfile(t.scope.bdy)
-        let n = countVarUses(t.scope.bdy)
+        let n = usageCountSummary(profile)
         case t.qty
         of q1:
           if profile == {ucZero}:

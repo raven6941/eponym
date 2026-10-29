@@ -1,0 +1,16 @@
+# Negative test for #484: let-bound linear-derived value passed to a q0 parameter.
+# Negative tests (files named *-neg.ep) are expected to raise ElabError;
+# tests/run_examples.nim verifies the rejection.
+#
+# The linear handle j is consumed by sendJ, but the resulting sent
+# handle s is handed to a q0 parameter, which discards it at runtime.
+# Expected error: linear variable 'j' not used exactly once.
+import "../../lib/nat.ep"
+import "../../lib/linear.ep"
+
+proc takeErased (0 x : Job sentP) : Nat =
+  zero
+
+proc probeLetErased (1 j : Job freshP) : Nat =
+  let s = sendJ zero j in
+  takeErased s

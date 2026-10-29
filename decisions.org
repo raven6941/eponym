@@ -4009,3 +4009,32 @@
   since Eponym juxtaposition is left-associative). Partial application
   past a non-leading q0 binder remains out of scope for #479 (same as
   before, not worse).
+
+* 2026-10-28 — Let-bound intermediates are quantity-checked (issue #484)
+
+  Context: while building #482, probes showed a let-bound intermediate
+  derived from a q1 value escaped quantity checking in both directions:
+  dropping it and using it twice both elaborated cleanly, because an
+  unannotated let binder is omega-inferred rather than inheriting the
+  bound value's quantity. The issue left open whether let binders should
+  inherit quantity, require explicit annotation, or keep omega-inference
+  as deliberately scoped semantics.
+  Options considered: (a) let binders inherit the bound value's quantity;
+  (b) a documented annotated-let form; (c) keep omega-inference, with the
+  guarantee deliberately scoped to annotated binders.
+  Decision: neither a new form nor bare inheritance — a let is checked
+  under BOTH counts, and the binder passes only if both are exactly once:
+  the strict count (the value evaluates once, so its uses count
+  unconditionally) and the scaled count (the QTT let rule: the value's
+  context scaled by the bound variable's use count in the body). No new
+  syntax was needed. Pair-valued intermediates used only via projections
+  count once, since projections split a pair into components.
+  Consequences: drop, double use, and passing a let-bound linear-derived
+  value to a q0 parameter are all compile-time errors (examples/ep/29d,
+  29e, 29f); exactly-once-threaded lets and lets over pure values are
+  unchanged. The #482 qualification is removed: "single-use" now covers
+  threaded clients in their normal let-bound style. Known limit: a
+  single-use pair literal projected twice through a let for the SAME
+  component is not caught by the scaled walk (per-component paths would
+  be needed); the strict count still rejects it when the value itself
+  mentions the binder twice.
