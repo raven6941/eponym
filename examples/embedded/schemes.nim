@@ -16,10 +16,20 @@
 # compile time by the elaborator; the running layer is plain Nim.
 
 import eponym_mac
-import eponym_embed
 
 eponymBlock:
   import "../../lib/schemes.ep"
+  runtimeType(Nat, int)
+  runtimeType(Bool, int)
+  runtimeList(List)
+
+  # These are proof and normalization examples. The Nim driver describes
+  # their elaboration but does not expose list values at runtime.
+  compileTimeOnly(two)
+  compileTimeOnly(unfused)
+  compileTimeOnly(fused)
+  compileTimeOnly(deforestDemo)
+  compileTimeOnly(mapThenLength)
 
   proc two(): Nat =
     suc(suc(zero()))

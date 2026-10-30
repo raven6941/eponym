@@ -17,6 +17,7 @@ eponymBlock:
   postulate(BoolD, Univ)
   postulate(trueD, BoolD)
   postulate(falseD, BoolD)
+  compileTimeOnly(notFn)
   elim(boolElimD, Pi(C: BoolD -> Univ,
     C(trueD) -> C(falseD) -> Pi(b: BoolD, C(b))))
   red(boolElimD(C, t, f, trueD), t)
@@ -25,6 +26,7 @@ eponymBlock:
     boolElimD(lam(u: BoolD) => BoolD, falseD, trueD, b)
   # Nim's command-form lambda is translated into the same canonical arrow
   # syntax before the shared Eponym parser sees it.
+  compileTimeOnly(commandIdentity)
   proc commandIdentity(): BoolD -> BoolD = lam x. x
 
   # --- smoke 08 embedded: Nat via postulate/elim/red ---
@@ -35,9 +37,12 @@ eponymBlock:
                    C(zero) -> (Pi(n: Nat, C(n) -> C(suc(n)))) -> Pi(m: Nat, C(m))))
   red(natElim(C, z, s, zero), z)
   red(natElim(C, z, s, suc(n)), s(n, natElim(C, z, s, n)))
+  compileTimeOnly(two)
   proc two(): Nat = suc(suc(zero))
+  compileTimeOnly(addN)
   proc addN(m: Nat, n: Nat): Nat =
     natElim(lam(u: Nat) => Nat, m, lam(p: Nat) => lam(ih: Nat) => suc(ih), n)
+  compileTimeOnly(zeroAfterStep)
   proc zeroAfterStep(n: Nat): BoolD =
     natElim(lam(u: Nat) => BoolD, trueD,
             lam(n: Nat) => lam(ih: BoolD) => falseD, n)
@@ -46,8 +51,11 @@ eponymBlock:
   postulate(Int, Univ)
   data(Eq, [A: Univ, x: A], A -> Univ):
     proc refl(): Eq[A, x, x]
+  compileTimeOnly(pf1)
   proc pf1(): Eq[Int, 42, 42] = byTac(refl)
+  compileTimeOnly(pf2)
   proc pf2(): Eq[Int, addInt(20, 22), 42] = byTac(refl)
+  compileTimeOnly(idInt)
   proc idInt(x: Int): Int = byTac(assumption)
 
 eponymBlock:
@@ -55,15 +63,19 @@ eponymBlock:
   data(NatD, Univ):
     proc zeroD(): NatD
     proc sucD(n: NatD): NatD
+  compileTimeOnly(isZeroD)
   def(isZeroD, NatD -> NatD):
     clause([zeroD], zeroD)
     clause([sucD(n)], zeroD)
 
   # --- quantity-variable binder (issue #66 / #151) ---
+  compileTimeOnly(qid)
   proc qid(x {.qvar(q).}: Univ): Univ = x
 
   # --- unit value / unit type / empty type (issue #151) ---
+  compileTimeOnly(unitVal)
   proc unitVal(): unitTy = unitv
+  compileTimeOnly(absurd)
   proc absurd(x: emptyTy): emptyTy = x
 
 when isMainModule:

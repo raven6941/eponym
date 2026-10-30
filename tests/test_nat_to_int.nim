@@ -6,7 +6,7 @@ import eponym_embed
 
 proc hostPlusSeven(value: int): int = value + 7
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat_to_int.ep"
   postulate(addHostOffset, Int -> Int)
   bindPostulate(addHostOffset, hostPlusSeven)

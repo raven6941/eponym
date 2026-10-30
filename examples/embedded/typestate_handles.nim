@@ -48,7 +48,6 @@
 
 import eponym_mac
 import eponym_embed
-import eponym_init
 
 type
   SockPhaseB = enum unconnB, connB, closedB
@@ -93,6 +92,7 @@ proc hostCloseH(sock: SockHandle): SockHandle =
 eponymBlock:
   import "../../lib/typestate.ep"
 
+  runtimeType(Nat, int)
   runtimeType(Sock, SockHandle)
   bindPostulate(connectH, hostConnectH, Sock, Sock)
   bindPostulate(sendH, hostSendH, Nat, Sock, Sock)

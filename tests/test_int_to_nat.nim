@@ -4,7 +4,7 @@ import falsify
 import eponym_mac
 import eponym_embed
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/int_to_nat.ep"
   bindPostulate(intToNat, intToNatHost, Int, Nat)
 
@@ -16,7 +16,7 @@ eponymBlock:
   runtimeValue(intRoundTrip)
   runtimeValue(natRoundTrip)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   requireCompiled()
   import "../lib/int_to_nat.ep"
   runtimeType(Int, int)
@@ -25,7 +25,7 @@ eponymBlock:
 
   proc compiledIntToNat(value: Int): Nat = intToNat(value)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat.ep"
   runtimeType(Nat, int)
   proc entryP(n: Nat): Nat = add(n, n)

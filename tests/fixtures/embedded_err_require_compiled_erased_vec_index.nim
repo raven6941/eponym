@@ -1,7 +1,6 @@
 import eponym_mac
 
 eponymBlock:
-  requireCompiled()
   import "../../lib/vec.ep"
   postulate(Int, Univ)
   runtimeType(Int, int)

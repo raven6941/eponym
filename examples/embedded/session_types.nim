@@ -15,7 +15,6 @@
 # bind them to socket code. Linearity is enforced at use sites (clients).
 
 import eponym_mac
-import eponym_embed
 
 eponymBlock:
   # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
@@ -37,6 +36,12 @@ eponymBlock:
   postulate(sendNat, Pi(x: Nat, ch {.linear.}: Chan[sendS[Nat](endS())], Chan[endS()]))
   postulate(recvNat, Pi(ch {.linear.}: Chan[recvS[Nat](endS())], Sig(x: Nat, Chan[endS()])))
   postulate(closeOp, Pi(ch {.linear.}: Chan[endS()], Nat))
+
+  # Mock protocol operations are checked here but have no host bindings;
+  # the Nim side reports the checked protocol without executing it.
+  compileTimeOnly(proto)
+  compileTimeOnly(client)
+  compileTimeOnly(server)
 
   # The protocol, stated once as a type: send a Nat, then done.
   proc proto(): Session =

@@ -16,10 +16,11 @@ proc addToToken(amount: int, token: Token): Token =
 proc tagToken(amount: int, token: Token): TaggedToken =
   TaggedToken(value: token.value + amount)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Nat, Univ)
   postulate(zero, Nat)
   postulate(suc, Nat -> Nat)
+  runtimeType(Nat, int)
   postulate(Token, Univ)
   postulate(TaggedToken, Univ)
   runtimeType(Token, Token)

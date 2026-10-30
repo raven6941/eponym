@@ -52,6 +52,7 @@ when isMainModule:
   # --- Positive: filled shed is an ordinary compiled def ---------------
   let filled = writeSrc(dir, "filled.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc double(x: Int): Int = addInt(x, x)
   proc quad(n: Int): Int = ![quadBody, double (double n)]
 echo quad(3)
@@ -65,6 +66,7 @@ echo double(21)
   # --- Positive: open shed unused, complete defs callable; sidecar ----
   let openUnused = writeSrc(dir, "open_unused.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc double(x: Int): Int = addInt(x, x)
   proc quad(n: Int): Int = ![quadBody, n ++++ n]
   proc quadOpen(n: Int): Int = ![quadOpenBody]
@@ -80,6 +82,7 @@ echo double(21)
   # --- Positive: filled + open sidecar statuses ------------------------
   let mixed = writeSrc(dir, "mixed.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc double(x: Int): Int = addInt(x, x)
   proc quad(n: Int): Int = ![quadBody, double (double n)]
   proc quadOpen(n: Int): Int = ![quadOpenBody]
@@ -95,6 +98,7 @@ echo double(21)
   # --- Positive: plain hole unused (not just sheds) is use-gated too ---
   let plainHole = writeSrc(dir, "plain_hole.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc double(x: Int): Int = addInt(x, x)
   proc mystery(n: Int): Int = _
 echo double(21)
@@ -105,6 +109,7 @@ echo double(21)
   # --- Positive: type-position shed, filled, is callable ---------------
   let tyFilled = writeSrc(dir, "ty_filled.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc f(n: Int): ![tyBody, Int] = n
 echo f(7)
 """)
@@ -115,6 +120,7 @@ echo f(7)
   # --- Positive: open type-position shed unused is use-gated ------------
   let tyOpen = writeSrc(dir, "ty_open.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc unused(x: Int): ![returnType] = x
 proc ordinary(x: int): int = x
 echo ordinary(4)
@@ -126,6 +132,7 @@ echo ordinary(4)
   # --- Negative: use of an open type-position shed names the gate --------
   let tyUsed = writeSrc(dir, "ty_used.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc incomplete(x: Int): ![returnType] = x
 echo incomplete(4)
 """)
@@ -137,6 +144,7 @@ echo incomplete(4)
   # --- Positive (issue #479): generic callee through a compiled caller -
   let generic = writeSrc(dir, "generic.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc checkedIdentity[A: Univ](value: A): A = value
   proc useGeneric(v: Int): Int = checkedIdentity[Int](v)
 echo useGeneric(17)
@@ -145,9 +153,39 @@ echo useGeneric(17)
   check(okGen, "generic callee: compiles and runs, got: " & outGen)
   check("17" in outGen.splitLines(), "generic callee: useGeneric(17) = 17")
 
+  # --- Explicit type-only definition ----------------------------------
+  let typeOnly = writeSrc(dir, "type_only.nim", """eponymBlock:
+  postulate(Int, Univ)
+  runtimeType(Int, int)
+  compileTimeOnly(identityPoly)
+  proc identityPoly[A: Univ](value: A): A = value
+doAssert not compiles(identityPoly(1))
+echo "type-only definition checked"
+""")
+  let (okTypeOnly, outTypeOnly) = compileSrc(typeOnly, true)
+  check(okTypeOnly, "explicit type-only definition: checked, no runtime wrapper: " &
+    outTypeOnly)
+  check("type-only definition checked" in outTypeOnly.splitLines(),
+    "explicit type-only definition: surrounding Nim code runs")
+
+  # --- A type-only definition cannot leak into runtime code ------------
+  let typeOnlyUsed = writeSrc(dir, "type_only_used.nim", """eponymBlock:
+  postulate(Int, Univ)
+  runtimeType(Int, int)
+  compileTimeOnly(identityPoly)
+  proc identityPoly[A: Univ](value: A): A = value
+  proc useIdentity(value: Int): Int = identityPoly[Int](value)
+echo useIdentity(17)
+""")
+  let (okTypeOnlyUsed, outTypeOnlyUsed) = compileSrc(typeOnlyUsed, false)
+  check(not okTypeOnlyUsed, "type-only runtime dependency: compilation fails")
+  check("compileTimeOnly definition 'identityPoly' is referenced by runtime definition 'useIdentity'" in
+    outTypeOnlyUsed, "type-only runtime dependency: error names the caller")
+
   # --- Negative: calling an open-shed def is a compile error ----------
   let callOpen = writeSrc(dir, "call_open.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc quad(n: Int): Int = ![quadBody, n ++++ n]
 echo quad(3)
 """)
@@ -159,6 +197,7 @@ echo quad(3)
   # --- Negative: transitive gating through a compiled caller -----------
   let transit = writeSrc(dir, "transit.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc quad(n: Int): Int = ![quadBody]
   proc useQuad(n: Int): Int = quad(n)
 echo useQuad(3)
@@ -171,6 +210,7 @@ echo useQuad(3)
   # --- Negative: bad draft, used ---------------------------------------
   let badDraft = writeSrc(dir, "bad_draft_use.nim", """eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc quad(n: Int): Int = ![quadBody, n ++++ n]
 echo quad(3)
 """)
@@ -179,16 +219,14 @@ echo quad(3)
   check("draft failed" in outBad,
     "bad draft used: error reports the draft failure, got: " & outBad)
 
-  # --- Negative: requireCompiled + open shed is a hard macro error -----
+  # --- Open sheds stay available to editor tooling --------------------
   let reqComp = writeSrc(dir, "reqcomp.nim", """eponymBlock:
-  requireCompiled()
   postulate(Int, Univ)
+  runtimeType(Int, int)
   proc quad(n: Int): Int = ![quadBody]
 """)
-  let (okReq, outReq) = compileSrc(reqComp, false)
-  check(not okReq, "requireCompiled + open shed: compilation fails")
-  check("requireCompiled" in outReq and "incomplete" in outReq,
-    "requireCompiled + open shed: error names the guarantee, got: " & outReq)
+  let (okReq, outReq) = compileSrc(reqComp, true)
+  check(okReq, "open shed block compiles when no incomplete wrapper is used: " & outReq)
 
   if failures > 0:
     echo "FAILURES: ", failures

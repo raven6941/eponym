@@ -7,7 +7,7 @@
 ## witness is observationally equivalent there. A later backend can lower
 ## that preserved shape to an ABI with the q0 binder removed entirely.
 
-import std/[sequtils, tables]
+import std/[sequtils, tables, sets]
 import eponym_init
 import preterm # Quantity
 import usage_check
@@ -57,7 +57,8 @@ proc reserveTermRefIds(supply: var Supply, term: Term,
   of tV, tC, tInt, tNatLit, tNatSing, tType:
     discard
 
-proc eraseQ0Arguments*(tm: Term): Term =
+proc eraseQ0ArgumentsPreserving*(tm: Term,
+                                preserveQ0Apps: HashSet[int]): Term =
   ## Erase checked, closed core terms. This operation is intended after
   ## elaboration/zonking and quantity checking. It preserves runtime binder
   ## arity, but replaces every q0 application argument with unit, so the
@@ -93,7 +94,15 @@ proc eraseQ0Arguments*(tm: Term): Term =
       if fnTy.whnf.kind != wPi:
         raise newException(ValueError,
           "cannot erase application whose checked function type is not Pi")
-      let arg = if fnTy.whnfPiQty == q0: tmC(cVoid) else: walk(t.arg, env)
+      var head = t.fn
+      while head.kind == tApp: head = head.fn
+      let headRefId = if head.kind == tR: head.refId else: -1
+      let preserveTypeArgument = fnTy.whnfPiQty == q0 and
+        headRefId in preserveQ0Apps
+      let arg = if fnTy.whnfPiQty == q0 and not preserveTypeArgument:
+        tmC(cVoid)
+      else:
+        walk(t.arg, env)
       tmApp(f, arg)
     of tPair:
       let a = walk(t.pFst, env)
@@ -110,3 +119,6 @@ proc eraseQ0Arguments*(tm: Term): Term =
         walk(t.letScope.bdy, @[x] & env))
 
   walk(tm, @[])
+
+proc eraseQ0Arguments*(tm: Term): Term =
+  eraseQ0ArgumentsPreserving(tm, initHashSet[int]())
