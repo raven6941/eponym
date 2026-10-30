@@ -22,8 +22,30 @@ proc lengthDim : Vec Int 3 =
 proc timeDim : Vec Int 3 =
   cons Int 2 0 (cons Int 1 0 (cons Int 0 1 (nil Int)))
 
-postulate(addDim, Pi(d1: Vec Int 3, Pi(d2: Vec Int 3, Vec Int 3)))
-postulate(subDim, Pi(d1: Vec Int 3, Pi(d2: Vec Int 3, Vec Int 3)))
+proc zeroInt : Int = 0
+proc zeroTriple : Sig(a: Int, Sig(b: Int, Int)) = (zeroInt, (zeroInt, zeroInt))
+
+proc unpackDim3 (xs : Vec Int 3) : Sig(a: Int, Sig(b: Int, Int)) =
+  vecElim Int
+    (lam(i: Nat) => lam(ys: Vec Int i) => Sig(a: Int, Sig(b: Int, Int)))
+    zeroTriple
+    (lam(i: Nat) => lam(x: Int) => lam(tail: Vec Int i) =>
+      lam(ih: Sig(a: Int, Sig(b: Int, Int))) => (x, (fst ih, fst (snd ih))))
+    3 xs
+
+proc addDim (d1 : Vec Int 3) (d2 : Vec Int 3) : Vec Int 3 =
+  let p = unpackDim3 d1 in
+  let q = unpackDim3 d2 in
+  cons Int 2 (addInt (fst p) (fst q))
+    (cons Int 1 (addInt (fst (snd p)) (fst (snd q)))
+      (cons Int 0 (addInt (snd (snd p)) (snd (snd q))) (nil Int)))
+
+proc subDim (d1 : Vec Int 3) (d2 : Vec Int 3) : Vec Int 3 =
+  let p = unpackDim3 d1 in
+  let q = unpackDim3 d2 in
+  cons Int 2 (subInt (fst p) (fst q))
+    (cons Int 1 (subInt (fst (snd p)) (fst (snd q)))
+      (cons Int 0 (subInt (snd (snd p)) (snd (snd q))) (nil Int)))
 
 postulate(addQ,
   Pi(d: Vec Int 3, Pi(x: Qty d, Pi(y: Qty d, Qty d))))
