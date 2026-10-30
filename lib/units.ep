@@ -1,0 +1,81 @@
+# Unit-aware quantities with runtime dimension values (issue #493).
+#
+# A unit value carries its dimension and a magnitude normalized to SI by the
+# host parser. Qty's representation is Float for every dimension; dimensions
+# stay explicit runtime Vec values and remain in checked Eponym indices.
+
+import "nat_to_int.ep"
+import "vec.ep"
+import "float.ep"
+import "text.ep"
+
+# Keep Qty nominal: defining Qty(d) = Float would reduce every indexed
+# quantity to Float and make incompatible dimensions convertible.
+postulate(Qty, Vec Int 3 -> Univ)
+
+proc scaleDim (n : Int) (d : Vec Int 3) : Vec Int 3 =
+  vmap Int Int 3 (lam(x: Int) => mulInt n x) d
+
+proc lengthDim : Vec Int 3 =
+  cons Int 2 0 (cons Int 1 1 (cons Int 0 0 (nil Int)))
+
+proc timeDim : Vec Int 3 =
+  cons Int 2 0 (cons Int 1 0 (cons Int 0 1 (nil Int)))
+
+proc zeroInt : Int = 0
+proc zeroTriple : Sig(a: Int, Sig(b: Int, Int)) = (zeroInt, (zeroInt, zeroInt))
+
+proc unpackDim3 (xs : Vec Int 3) : Sig(a: Int, Sig(b: Int, Int)) =
+  vecElim Int
+    (lam(i: Nat) => lam(ys: Vec Int i) => Sig(a: Int, Sig(b: Int, Int)))
+    zeroTriple
+    (lam(i: Nat) => lam(x: Int) => lam(tail: Vec Int i) =>
+      lam(ih: Sig(a: Int, Sig(b: Int, Int))) => (x, (fst ih, fst (snd ih))))
+    3 xs
+
+proc addDim (d1 : Vec Int 3) (d2 : Vec Int 3) : Vec Int 3 =
+  let p = unpackDim3 d1 in
+  let q = unpackDim3 d2 in
+  cons Int 2 (addInt (fst p) (fst q))
+    (cons Int 1 (addInt (fst (snd p)) (fst (snd q)))
+      (cons Int 0 (addInt (snd (snd p)) (snd (snd q))) (nil Int)))
+
+proc subDim (d1 : Vec Int 3) (d2 : Vec Int 3) : Vec Int 3 =
+  let p = unpackDim3 d1 in
+  let q = unpackDim3 d2 in
+  cons Int 2 (subInt (fst p) (fst q))
+    (cons Int 1 (subInt (fst (snd p)) (fst (snd q)))
+      (cons Int 0 (subInt (snd (snd p)) (snd (snd q))) (nil Int)))
+
+postulate(addQ,
+  Pi(d: Vec Int 3, Pi(x: Qty d, Pi(y: Qty d, Qty d))))
+postulate(mulQ,
+  Pi(d1: Vec Int 3, Pi(d2: Vec Int 3,
+    Pi(x: Qty d1, Pi(y: Qty d2, Qty (addDim d1 d2))))))
+postulate(divQ,
+  Pi(d1: Vec Int 3, Pi(d2: Vec Int 3,
+    Pi(x: Qty d1, Pi(y: Qty d2, Qty (subDim d1 d2))))))
+postulate(powQ,
+  Pi(n: Int, Pi(d: Vec Int 3,
+    Pi(x: Qty d, Qty (scaleDim n d)))))
+
+postulate(parseUnit,
+  Pi(text: String, Sig(dd: Vec Int 3, Qty dd)))
+postulate(kilometers, Pi(value: Float, Qty lengthDim))
+
+# Warm-up static fragment: this fixed-dimension constructor and operation
+# need no first-class dimension values; the dynamic signatures below do.
+proc kilometersOf (value : Float) : Qty lengthDim =
+  kilometers value
+
+proc addLengths (x : Qty lengthDim) (y : Qty lengthDim) : Qty lengthDim =
+  addQ lengthDim x y
+
+proc parseUnitChecked (text : String) : Sig(dd: Vec Int 3, Qty dd) =
+  parseUnit text
+
+proc dimensionSum (d1 : Vec Int 3) (d2 : Vec Int 3) : Vec Int 3 =
+  addDim d1 d2
+
+proc dimensionDifference (d1 : Vec Int 3) (d2 : Vec Int 3) : Vec Int 3 =
+  subDim d1 d2

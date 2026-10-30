@@ -226,6 +226,24 @@ index-dependence erased, which is sound precisely for index-independent
 mappings. A `Vec` length index mentioning the bound Sigma value is rejected
 rather than silently erased.
 
+An index may be erased beneath a plain opaque family mapping when its host
+representation is index-independent. For example, a nominal family
+`Qty : Vec Int 3 -> Univ` can keep dimensions in checked types while
+`runtimeType(Qty, float64)` gives every quantity the same host representation.
+A dependent `Sig(d: Vec Int 3, Qty d)` can then cross the boundary as a pair
+of a dimension sequence and a `float64`. The checker preserves and compares
+the Eponym indices; it cannot prove that the host magnitude corresponds to
+the dimension returned beside it. `bindPostulatePair` makes that adapter
+contract trusted, as it is for other opaque indexed families.
+
+In the units example, parsing and scalar quantity arithmetic are host
+bindings. Their Eponym signatures are checked, but the parser and numeric
+callbacks must honor those signatures. Pointwise dimension
+addition/subtraction and `scaleDim` are checked Eponym Vec code; representation
+codegen compiles Sigma pairs used to unpack the fixed three-coordinate vectors.
+The runtime power result shares the input quantity's opaque `float64`
+representation.
+
 Postulates bound with `bindPostulate` / `bindPostulatePair[Trusted]` whose
 types are fully representable get direct-call forwarders, so compiled bodies
 never route postulate calls through the interpreter. Definitions referenced

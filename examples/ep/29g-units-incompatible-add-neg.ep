@@ -1,0 +1,7 @@
+import "../../lib/units.ep"
+
+postulate(lengthValue, Qty lengthDim)
+postulate(timeValue, Qty timeDim)
+
+proc addMetersAndSeconds : Qty lengthDim =
+  addQ lengthDim lengthValue timeValue

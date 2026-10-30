@@ -24,13 +24,14 @@ quality fail CI like any other regression.
 4. The message matches the blessed snapshot byte-for-byte, so any
    wording change fails CI until deliberately re-blessed.
 
-## Failure modes covered (32 cases)
+## Failure modes covered (35 cases)
 
 | Area | Modes |
 |---|---|
 | Scope | unbound variable |
 | Application | too many arguments; `refl` on unequal terms |
 | Conversion | dimension/constructor confusion (`noConfusion`), neutral mismatch, DCP, session-type, vector/matrix; ascription mismatch names both program points (issue #46: the inferred term's site plus "expected type written at ...") |
+| Units | adding different dimensions; returning area as length; wrong result dimension |
 | Metavariables | unsolved hole |
 | `red` rules | unknown eliminator in pattern |
 | `data` | constructor return not the family; non-strictly-positive domain; family named `C` (reserved for the motive; issue #213) |
