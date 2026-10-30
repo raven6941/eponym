@@ -1363,16 +1363,23 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
         if st.len != 1:
           error("requireCompiled expects no arguments", st)
       elif head == "stratified":
-        # Universe-discipline directive for eponymBlock: `stratified(false)`
-        # opts this block out of the stratified hierarchy (Issue #52), so
-        # surface `Univ` elaborates to the legacy `Univ : Univ` constant
-        # (Type-in-Type) instead of `Type 0`, enabling large elimination
-        # (types computed by recursion on values) in the Epigram `SET :
-        # SET` style. The marker is consumed by eponymBlock.
-        if st.len != 2 or st[1].kind != nnkIdent or $st[1] notin ["true", "false"]:
-          error("stratified expects one argument: true or false", st)
+        # The universe-discipline directive is a block pragma now, not a
+        # call: write {.stratified: false.} as the first statement.
+        error("stratified is a block pragma: {.stratified: false.} as the first statement", st)
       else:
         error("eponymBlock: unsupported call: " & head, st)
+    of nnkPragma:
+      # Block-level configuration pragmas, consumed by eponymBlock (which
+      # reads them before conversion). Currently only {.stratified:
+      # true|false.}; anything else is rejected here.
+      for p in st:
+        if p.kind == nnkExprColonExpr and p[0].kind == nnkIdent and
+            $p[0] == "stratified":
+          if p[1].kind != nnkIdent or $p[1] notin ["true", "false"]:
+            error("{.stratified.} expects true or false, e.g. {.stratified: false.}", p)
+          # Consumed: emits no Eponym source.
+        else:
+          error("eponymBlock: unsupported pragma: " & p.repr, p)
     else:
       error("eponymBlock: unsupported statement: " & $st.kind, st)
     if captureSourceMap:
@@ -4403,9 +4410,10 @@ macro eponymBlock*(body: untyped): untyped =
   ## `x {.qvar(q).}` (Issue #151): quantity-variable binder `(q x : T)`.
   ## `requireCompiled()` restricts a block to representation-compiled
   ## definitions with direct typed wrappers; unsupported paths fail here.
-  ## `stratified(false)` opts this block out of the stratified universe
-  ## hierarchy: surface `Univ` is the legacy `Univ : Univ` constant
-  ## (Type-in-Type) instead of `Type 0`, enabling large elimination.
+  ## `{.stratified: false.}` (first statement) opts this block out of the
+  ## stratified universe hierarchy: surface `Univ` is the legacy
+  ## `Univ : Univ` constant (Type-in-Type) instead of `Type 0`, enabling
+  ## large elimination.
   ## Nim-safe name mapping: `vecnil` -> `nil` (`nil` is a Nim keyword,
   ## so embedded code spells the constructor `vecnil`). `unitv`,
   ## `unitTy`, and `emptyTy` are spelled as-is (single syntax).
@@ -4424,13 +4432,22 @@ macro eponymBlock*(body: untyped): untyped =
         $st[0] == "requireCompiled":
       requireCompiled = true
   var stratified = true
-  for st in body:
-    if st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
-        $st[0] == "stratified":
-      # Argument shape is validated by blockToEponymInternal; anything but
-      # `true` selects the legacy universe (a malformed argument errors
-      # during conversion).
-      stratified = $st[1] == "true"
+  var seenStratifiedPragma = false
+  for i in 0 ..< body.len:
+    let st = body[i]
+    if st.kind == nnkPragma:
+      for p in st:
+        if p.kind == nnkExprColonExpr and p[0].kind == nnkIdent and
+            $p[0] == "stratified":
+          # Block configuration, not a statement: at most one, first.
+          if seenStratifiedPragma:
+            error("duplicate {.stratified.} pragma in eponymBlock", st)
+          if i != 0:
+            error("{.stratified.} must be the first statement in the eponymBlock", st)
+          if p[1].kind != nnkIdent or $p[1] notin ["true", "false"]:
+            error("{.stratified.} expects true or false, e.g. {.stratified: false.}", p)
+          stratified = $p[1] == "true"
+          seenStratifiedPragma = true
   var sourceLineMap: seq[DiagnosticSourceLoc]
   var hasEponymImport = false
   for st in body:
