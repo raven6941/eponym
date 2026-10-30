@@ -2,8 +2,9 @@
 ##
 ## Watch: `Qty d` is nominal during Eponym checking but maps to float64 at
 ## runtime; Vec dimensions remain ordinary runtime values. Parsing and pure
-## scalar/vector arithmetic cross explicit Nim bindings, whose behavior is
-## trusted. `parseUnitChecked` returns the dimension beside a magnitude
+## scalar quantity arithmetic cross explicit Nim bindings, whose behavior is
+## trusted. Pointwise dimension addition/subtraction uses Eponym Vec code.
+## `parseUnitChecked` returns the dimension beside a magnitude
 ## normalized to SI, so dynamic callers compare dimensions before `addQ`.
 
 import std/math
@@ -13,16 +14,6 @@ proc hostAddQ(d: seq[int], a, b: float64): float64 = a + b
 proc hostMulQ(d1, d2: seq[int], a, b: float64): float64 = a * b
 proc hostDivQ(d1, d2: seq[int], a, b: float64): float64 = a / b
 proc hostPowQ(n: int, d: seq[int], x: float64): float64 = pow(x, float64(n))
-
-proc hostAddDim(a, b: seq[int]): seq[int] =
-  if a.len != 3 or b.len != 3:
-    raise newException(ValueError, "dimension vectors must have length 3")
-  for i in 0 ..< 3: result.add(a[i] + b[i])
-
-proc hostSubDim(a, b: seq[int]): seq[int] =
-  if a.len != 3 or b.len != 3:
-    raise newException(ValueError, "dimension vectors must have length 3")
-  for i in 0 ..< 3: result.add(a[i] - b[i])
 
 proc hostParseUnit(text: string): tuple[dimensions: seq[int], scale: float64] =
   case text
@@ -42,8 +33,6 @@ eponymBlock:
   runtimeVector(Vec)
 
   bindPostulatePair(parseUnit, hostParseUnit, String, Vec, Qty)
-  bindPostulate(addDim, hostAddDim, Vec, Vec, Vec)
-  bindPostulate(subDim, hostSubDim, Vec, Vec, Vec)
   bindPostulate(addQ, hostAddQ, Vec, Qty, Qty, Qty)
   bindPostulate(mulQ, hostMulQ, Vec, Vec, Qty, Qty, Qty)
   bindPostulate(divQ, hostDivQ, Vec, Vec, Qty, Qty, Qty)

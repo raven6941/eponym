@@ -1,1 +1,1 @@
-line 6, col 3: inferred type (Qty (addDim lengthDim lengthDim)) does not match expected type (Qty lengthDim) (expected type written at line 5, col 29): not convertible (neutral mismatch)
+line 6, col 3: inferred type (Qty (addDim lengthDim lengthDim)) does not match expected type (Qty lengthDim) (expected type written at line 5, col 29): not convertible (integer mismatch)

@@ -236,11 +236,13 @@ the Eponym indices; it cannot prove that the host magnitude corresponds to
 the dimension returned beside it. `bindPostulatePair` makes that adapter
 contract trusted, as it is for other opaque indexed families.
 
-In the units example, parsing, quantity arithmetic, and pointwise dimension
-addition/subtraction are pure host bindings. Their Eponym signatures are
-checked, but the parser and numeric/vector callbacks must honor those
-signatures. `scaleDim` is defined in Eponym using `vmap`; the runtime power
-result shares the input quantity's opaque `float64` representation.
+In the units example, parsing and scalar quantity arithmetic are host
+bindings. Their Eponym signatures are checked, but the parser and numeric
+callbacks must honor those signatures. Pointwise dimension
+addition/subtraction and `scaleDim` are checked Eponym Vec code; representation
+codegen compiles Sigma pairs used to unpack the fixed three-coordinate vectors.
+The runtime power result shares the input quantity's opaque `float64`
+representation.
 
 Postulates bound with `bindPostulate` / `bindPostulatePair[Trusted]` whose
 types are fully representable get direct-call forwarders, so compiled bodies
