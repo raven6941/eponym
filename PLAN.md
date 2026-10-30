@@ -403,6 +403,13 @@ implementations.
    Eponym signature is preserved, while matching a host field to its index
    remains explicitly trusted. A 200-case indexed-family property exercises
    this path; the ordinary pair adapter still rejects the same shape.
+- [x] Permit a typed `bindPostulatePair` result whose second field is a
+  nominal indexed family with a plain `runtimeType` mapping and whose only
+  dependency on the first field is that erased index. The pair's host
+  representation is index-independent, so the checked Eponym relation stays
+  intact while the host adapter's value/index correspondence is trusted.
+  Issue #493 exercises `Sig(Vec Int 3, Qty dimension)` with `Qty` mapped to
+  `float64`; negative examples pin incompatible dimensions at compile time.
 - [x] Generate typed wrappers for dependent Sigma results only when the
    definition opts in with `runtimePairTrusted(definition)`. The fields use
    their recursive runtime codecs, and the host relationship between values
@@ -737,7 +744,8 @@ implementations.
   `runtimeValue(name)` exposes a checked definition's Value for a host-side
   interpreter, including raw Value arguments with arity checking. It does not
   type-check those raw arguments or generate a Nim data type. Dependent pairs
-  still lack general codecs and generated typed wrappers. The remaining
+  still lack general codecs; `bindPostulatePair` supports the explicit
+  index-erasing opaque-family case documented under issue #493. The remaining
   implementation is tracked in the
    preceding ABI/codec items.
 
