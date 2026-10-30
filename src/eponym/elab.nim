@@ -5035,7 +5035,8 @@ proc elabCheckDirStateAll*(src: string, baseDir: string,
   (defs, drv.globals, allDefs)
 
 proc elabCheckDirStateAllHoles*(src: string, baseDir: string,
-                        handlers: seq[ConvHandler] = @[]):
+                        handlers: seq[ConvHandler] = @[],
+                        stratified: bool = true):
     tuple[defs: seq[ElabDef], globals: Globals, allDefs: seq[ElabDef],
           ms: MetaStore, supply: Supply, errLoc: Loc, errMsg: string] =
   ## Issue #478: hole-tolerant variant of elabCheckDirStateAll for the
@@ -5047,7 +5048,7 @@ proc elabCheckDirStateAllHoles*(src: string, baseDir: string,
   ## wrapper generation, codegen, and macro-time draft checking.
   ## Raises ParseError as usual.
   profilePhase(epOther):
-    let decls = parseProgram(src)  # ParseError propagates
+    let decls = parseProgram(src, stratified = stratified)  # ParseError propagates
     var drv = initModuleDriver(handlers)
     drv.ms.allowHoles = true
     let (defs, errLoc, errMsg) =

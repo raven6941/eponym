@@ -1362,6 +1362,15 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
         # compiled fragment. The marker is consumed by eponymBlock.
         if st.len != 1:
           error("requireCompiled expects no arguments", st)
+      elif head == "stratified":
+        # Universe-discipline directive for eponymBlock: `stratified(false)`
+        # opts this block out of the stratified hierarchy (Issue #52), so
+        # surface `Univ` elaborates to the legacy `Univ : Univ` constant
+        # (Type-in-Type) instead of `Type 0`, enabling large elimination
+        # (types computed by recursion on values) in the Epigram `SET :
+        # SET` style. The marker is consumed by eponymBlock.
+        if st.len != 2 or st[1].kind != nnkIdent or $st[1] notin ["true", "false"]:
+          error("stratified expects one argument: true or false", st)
       else:
         error("eponymBlock: unsupported call: " & head, st)
     else:
@@ -4394,6 +4403,9 @@ macro eponymBlock*(body: untyped): untyped =
   ## `x {.qvar(q).}` (Issue #151): quantity-variable binder `(q x : T)`.
   ## `requireCompiled()` restricts a block to representation-compiled
   ## definitions with direct typed wrappers; unsupported paths fail here.
+  ## `stratified(false)` opts this block out of the stratified universe
+  ## hierarchy: surface `Univ` is the legacy `Univ : Univ` constant
+  ## (Type-in-Type) instead of `Type 0`, enabling large elimination.
   ## Nim-safe name mapping: `vecnil` -> `nil` (`nil` is a Nim keyword,
   ## so embedded code spells the constructor `vecnil`). `unitv`,
   ## `unitTy`, and `emptyTy` are spelled as-is (single syntax).
@@ -4411,6 +4423,14 @@ macro eponymBlock*(body: untyped): untyped =
     if st.kind == nnkCall and st.len == 1 and st[0].kind == nnkIdent and
         $st[0] == "requireCompiled":
       requireCompiled = true
+  var stratified = true
+  for st in body:
+    if st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
+        $st[0] == "stratified":
+      # Argument shape is validated by blockToEponymInternal; anything but
+      # `true` selects the legacy universe (a malformed argument errors
+      # during conversion).
+      stratified = $st[1] == "true"
   var sourceLineMap: seq[DiagnosticSourceLoc]
   var hasEponymImport = false
   for st in body:
@@ -4444,7 +4464,7 @@ macro eponymBlock*(body: untyped): untyped =
   var elabErrMsg = ""
   var elabErrLoc = noLoc
   try:
-    let checked = elabCheckDirStateAllHoles(src, baseDir)
+    let checked = elabCheckDirStateAllHoles(src, baseDir, @[], stratified)
     defs = checked.defs
     allDefs = checked.allDefs
     checkedGlobals = checked.globals

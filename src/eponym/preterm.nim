@@ -103,6 +103,13 @@ proc mkUnivN*(lvl: int, loc = noLoc): PreTerm =
   ## Issue #52: the level-annotated universe `Type l` (surface syntax);
   ## the level rides in `intVal` like pkInt's literal.
   PreTerm(loc: loc, kind: pkUnivN, intVal: lvl)
+proc mkLegacyUniv*(loc = noLoc): PreTerm =
+  ## The non-stratified universe constant (`Univ : Univ`, Type-in-Type),
+  ## selected by the parser's `stratified = false` mode (used by
+  ## `eponymBlock(stratified = false)`). Elaborates to `tmC(cStar)`; the
+  ## kernel retains the legacy `infer(cStar) = cStar` rule. Enables large
+  ## elimination in the Epigram `SET : SET` style.
+  PreTerm(loc: loc, kind: pkUniv)
 proc mkUnitTy*(loc = noLoc): PreTerm =
   PreTerm(loc: loc, kind: pkUnitTy)
 proc mkUnitV*(loc = noLoc): PreTerm =

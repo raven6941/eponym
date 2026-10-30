@@ -101,6 +101,10 @@ type
                     # unannotated binders (default is inference, not qOmega)
     inPattern: bool  # Issue #467: true while parsing clause patterns, so
                      # `_` stays a discard there (in terms it is a hole)
+    stratified: bool  # Universe discipline: true (default) maps surface
+                      # `Univ` to `Type 0` (Issue #52 hierarchy); false maps
+                      # it to the legacy `Univ : Univ` constant, enabling
+                      # large elimination (Epigram `SET : SET` style).
   ParseError* = object of CatchableError
     loc*: Loc
 
@@ -452,7 +456,8 @@ proc parseAtom(p: var Parser): PreTerm =
     elif t.lexeme == "unitTy": mkUnitTy(t.loc)
     elif t.lexeme == "unitv": mkUnitV(t.loc)
     elif t.lexeme == "emptyTy": mkEmptyTy(t.loc)
-    elif t.lexeme == "Univ": mkUnivN(0, t.loc)
+    elif t.lexeme == "Univ":
+      if p.stratified: mkUnivN(0, t.loc) else: mkLegacyUniv(t.loc)
     elif t.lexeme == "vecnil": mkVar("nil", t.loc)
     elif t.lexeme == "byTac" and p.peek().kind == tkLParen:
       # Issue #467: byTac(tac) call form (tactic name or string).
@@ -879,17 +884,17 @@ proc parseDecl(p: var Parser): SurfDecl =
   of tkCommand: p.parseCommand()
   else: raise fail(p.peek().loc, "expected 'proc', 'def', 'postulate', 'elim', 'red', 'data', 'record', 'mutual', 'import', 'interface' or 'command'")
 
-proc parseProgram*(src: string, source = ""): seq[SurfDecl] =
+proc parseProgram*(src: string, source = "", stratified = true): seq[SurfDecl] =
   profilePhase(epParse):
       ## Parse a whole program; raises ParseError with source location.
-      var p = Parser(toks: lex(src, source), pos: 0)
+      var p = Parser(toks: lex(src, source), pos: 0, stratified: stratified)
       while p.peek().kind != tkEof:
         result.add p.parseDecl()
 
 proc parseTermStr*(src: string): PreTerm =
   ## Issue #50: parse a single surface term (for the REPL's `:type`/`:eval`).
   ## Raises ParseError with source location; trailing tokens are an error.
-  var p = Parser(toks: lex(src), pos: 0)
+  var p = Parser(toks: lex(src), pos: 0, stratified: true)
   result = p.parseTerm()
   if p.peek().kind != tkEof:
     raise fail(p.peek().loc, "expected end of input after term")
