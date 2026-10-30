@@ -112,5 +112,7 @@ surface `proc PrintfType(f: Format): Univ` from Eponym source.
   interpreter dependency.
 - Measure compile-time growth and runtime cost on codec-factory inputs before
   choosing eager residualization versus a staged cache.
-- Decide how this interacts with the stratified-universe experiment and
-  whether that experiment is ready to merge independently.
+- Keep the stratified-universe flag experiment separate for this release;
+  issue #492 records why its elaboration-only behavior is not yet sufficient
+  under strict wrappers. Revisit integration after staged runtime injection
+  and a separate universe-policy soundness review.
