@@ -1363,23 +1363,11 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
         if st.len != 1:
           error("requireCompiled expects no arguments", st)
       elif head == "stratified":
-        # The universe-discipline directive is a block pragma now, not a
-        # call: write {.stratified: false.} as the first statement.
-        error("stratified is a block pragma: {.stratified: false.} as the first statement", st)
+        # The universe-discipline directive is a macro parameter, not a
+        # call: write eponymBlock(stratified = false): instead.
+        error("stratified is a macro parameter: eponymBlock(stratified = false):", st)
       else:
         error("eponymBlock: unsupported call: " & head, st)
-    of nnkPragma:
-      # Block-level configuration pragmas, consumed by eponymBlock (which
-      # reads them before conversion). Currently only {.stratified:
-      # true|false.}; anything else is rejected here.
-      for p in st:
-        if p.kind == nnkExprColonExpr and p[0].kind == nnkIdent and
-            $p[0] == "stratified":
-          if p[1].kind != nnkIdent or $p[1] notin ["true", "false"]:
-            error("{.stratified.} expects true or false, e.g. {.stratified: false.}", p)
-          # Consumed: emits no Eponym source.
-        else:
-          error("eponymBlock: unsupported pragma: " & p.repr, p)
     else:
       error("eponymBlock: unsupported statement: " & $st.kind, st)
     if captureSourceMap:
@@ -4389,7 +4377,7 @@ proc computeGated(defs: seq[ElabDef], checkedGlobals: Globals,
       "' and is itself gated; it cannot be called until that shed is filled"
   (gated, reasons)
 
-macro eponymBlock*(body: untyped): untyped =
+macro eponymBlock*(args: varargs[untyped]): untyped =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
   ## data(N, Univ): block.
@@ -4410,7 +4398,7 @@ macro eponymBlock*(body: untyped): untyped =
   ## `x {.qvar(q).}` (Issue #151): quantity-variable binder `(q x : T)`.
   ## `requireCompiled()` restricts a block to representation-compiled
   ## definitions with direct typed wrappers; unsupported paths fail here.
-  ## `{.stratified: false.}` (first statement) opts this block out of the
+  ## `eponymBlock(stratified = false):` opts the block out of the
   ## stratified universe hierarchy: surface `Univ` is the legacy
   ## `Univ : Univ` constant (Type-in-Type) instead of `Type 0`, enabling
   ## large elimination.
@@ -4420,6 +4408,24 @@ macro eponymBlock*(body: untyped): untyped =
   ## Generates callable fixed-arity wrappers for primitive Int/Nat and
   ## explicitly mapped opaque postulated types. Unsupported legacy shapes
   ## retain the varargs[int] compatibility wrapper.
+  # Universe discipline (Issue #52) arrives as an optional parameter:
+  # eponymBlock(stratified = false):. A single varargs parameter keeps
+  # both this and the bare eponymBlock: form working: a second overload
+  # breaks overload resolution on blocks containing imports (fatal
+  # module-loading side effect), and defaulted leading params don't
+  # resolve under `:` command syntax.
+  var stratified = true
+  var body: NimNode
+  if args.len == 1 and args[0].kind != nnkExprEqExpr:
+    body = args[0]
+  elif args.len == 2 and args[0].kind == nnkExprEqExpr and
+      args[0][0].kind == nnkIdent and $args[0][0] == "stratified" and
+      args[0][1].kind == nnkIdent and $args[0][1] in ["true", "false"]:
+    stratified = $args[0][1] == "true"
+    body = args[1]
+  else:
+    error("eponymBlock: expected `eponymBlock:` or " &
+      "`eponymBlock(stratified = true|false):`", args)
   let baseDir = callerDir(body)
   # Issue #478: sheds are rewritten to placeholders before conversion, so
   # eponymBlock accepts shed markers. For
@@ -4431,23 +4437,6 @@ macro eponymBlock*(body: untyped): untyped =
     if st.kind == nnkCall and st.len == 1 and st[0].kind == nnkIdent and
         $st[0] == "requireCompiled":
       requireCompiled = true
-  var stratified = true
-  var seenStratifiedPragma = false
-  for i in 0 ..< body.len:
-    let st = body[i]
-    if st.kind == nnkPragma:
-      for p in st:
-        if p.kind == nnkExprColonExpr and p[0].kind == nnkIdent and
-            $p[0] == "stratified":
-          # Block configuration, not a statement: at most one, first.
-          if seenStratifiedPragma:
-            error("duplicate {.stratified.} pragma in eponymBlock", st)
-          if i != 0:
-            error("{.stratified.} must be the first statement in the eponymBlock", st)
-          if p[1].kind != nnkIdent or $p[1] notin ["true", "false"]:
-            error("{.stratified.} expects true or false, e.g. {.stratified: false.}", p)
-          stratified = $p[1] == "true"
-          seenStratifiedPragma = true
   var sourceLineMap: seq[DiagnosticSourceLoc]
   var hasEponymImport = false
   for st in body:
