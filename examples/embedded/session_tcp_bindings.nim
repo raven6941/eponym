@@ -72,6 +72,7 @@ eponymBlock:
   postulate(Chan, Session -> Univ)
   postulate(SendOutcome, Univ)
   postulate(ReceiveOutcome, Univ)
+  runtimeType(Nat, int)
   runtimeType(Chan, TcpChannelHandle)
   runtimeType(SendOutcome, TransportResult[TcpChannelHandle])
   runtimeType(ReceiveOutcome, TransportResult[int])

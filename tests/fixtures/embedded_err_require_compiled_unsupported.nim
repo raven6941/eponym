@@ -1,7 +1,6 @@
 import eponym_mac
 
 eponymBlock:
-  requireCompiled()
   postulate(Int, Univ)
   postulate(Nat, Univ)
   runtimeType(Int, int)

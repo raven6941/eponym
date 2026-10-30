@@ -21,11 +21,21 @@
 # out of scope — see issue #74.
 
 import eponym_mac
-import eponym_embed
 
 eponymBlock:
   # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep.
   import "../../lib/nat.ep"
+  runtimeType(Nat, int)
+
+  # This example demonstrates singleton checking and widening. Its Nim
+  # driver does not expose these proof examples as runtime functions.
+  compileTimeOnly(divBy2)
+  compileTimeOnly(six)
+  compileTimeOnly(useIt)
+  compileTimeOnly(widenPi)
+  compileTimeOnly(widenSig)
+  compileTimeOnly(idNat)
+  compileTimeOnly(seven)
 
   # The divisor must be exactly the literal 2.
   proc divBy2(n: Nat, d: 2): Nat = n

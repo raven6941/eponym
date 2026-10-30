@@ -3153,7 +3153,7 @@ proc elabDataDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
             elif ctor.name == "suc": supply.natSucRefId = ctm.refId
 
 proc elabRecordDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
-                    ms: var MetaStore) =
+                    ms: var MetaStore): seq[ElabDef] =
   profilePhase(epData):
       ## Issue #37: desugar `record R:` with `| f : T` fields to:
       ##   def R : Type 0 = Sig (f0:T0). ... . 1          (transparent Sigma)
@@ -3170,9 +3170,9 @@ proc elabRecordDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
       for i in countdown(d.fields.high, 0):
         sigTy = mkSigma(d.fields[i].name, d.fields[i].ty, sigTy,
                         d.fields[i].floc)
-      discard elabDefDecl(SurfDef(name: rname, tele: @[], retTy: mkUniv(loc),
-                                  body: sigTy, loc: loc),
-                          globals, supply, ms)
+      result.add(elabDefDecl(SurfDef(name: rname, tele: @[], retTy: mkUniv(loc),
+                                     body: sigTy, loc: loc),
+                             globals, supply, ms))
       # positional constructor
       var ctorBody: PreTerm = mkUnitV(loc)
       for i in countdown(d.fields.high, 0):
@@ -3182,10 +3182,10 @@ proc elabRecordDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
                            qty: Qty]] = @[]
       for f in d.fields:
         tele.add((f.name, f.ty, false, false, toQty(qOmega)))
-      discard elabDefDecl(SurfDef(name: "mk" & rname, tele: tele,
-                                  retTy: mkVar(rname, loc), body: ctorBody,
-                                  loc: loc),
-                          globals, supply, ms)
+      result.add(elabDefDecl(SurfDef(name: "mk" & rname, tele: tele,
+                                     retTy: mkVar(rname, loc), body: ctorBody,
+                                     loc: loc),
+                             globals, supply, ms))
       # named projections; earlier field types are substituted with their
       # projections of `p` so dependent fields get dependent types.
       # The record is registered before the projections elaborate: a
@@ -3207,9 +3207,9 @@ proc elabRecordDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
         let ptele: seq[tuple[name: string, ty: PreTerm, impl: bool,
                               erased: bool, qty: Qty]] =
           @[("p", mkVar(rname, loc), false, false, toQty(qOmega))]
-        discard elabDefDecl(SurfDef(name: pname, tele: ptele, retTy: retTy,
-                                    body: acc, loc: f.floc),
-                            globals, supply, ms)
+        result.add(elabDefDecl(SurfDef(name: pname, tele: ptele, retTy: retTy,
+                                       body: acc, loc: f.floc),
+                               globals, supply, ms))
 
 # --- Capture-avoiding PreTerm substitution ----------------------------------
 # Needed by issue #32 (indexed clause defs): instantiating the motive and
@@ -4749,7 +4749,7 @@ proc elabDecl(d: SurfDecl, globals: var Globals, supply: var Supply,
   of dkData:
     elabDataDecl(d, globals, supply, ms, dataInfos)
   of dkRecord:
-    elabRecordDecl(d, globals, supply, ms)
+    result = elabRecordDecl(d, globals, supply, ms)
   of dkClauses:
     result.add(elabClausesDecl(d.clausesDef, globals, supply, ms, dataInfos))
   of dkMutual:
@@ -4912,7 +4912,12 @@ proc elabDeclsDirInner(drv: var ModuleDriver, decls: seq[SurfDecl],
             checkUsage(ed.tmTm, allowOpenHoles = holeTolerant)
           except UsageError as e:
             raise elabErr(ed.loc, "usage error in '" & ed.name & "': " & e.msg)
-          defs.add(ed)
+          # Record declarations elaborate to internal type, constructor, and
+          # projection definitions. Keep those available to codegen and the
+          # audit kernel, but don't expose extra Nim wrappers: only the
+          # explicit surface definitions form the block's host API.
+          if d.kind != dkRecord:
+            defs.add(ed)
           drv.allDefs[ed.name] = ed  # issue #62: log imported defs too
     except ElabError as e:
       if not holeTolerant:

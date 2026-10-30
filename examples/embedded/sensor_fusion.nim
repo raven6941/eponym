@@ -25,7 +25,6 @@
 # The surrounding Nim program handles IO and orchestration.
 
 import eponym_mac
-import eponym_embed
 
 # eponymBlock: takes a Nim AST block (not a string). No """ delimiter.
 # Each proc/data/postulate is converted to Eponym source at compile time,
@@ -39,6 +38,9 @@ eponymBlock:
   # postulate(Int, Univ): declares primitive Int type.
   # Call syntax is the single syntax on both sides of the Nim boundary.
   postulate(Int, Univ)
+  runtimeType(Int, int)
+  runtimeType(Nat, int)
+  runtimeVector(Vec)
 
   # `proc` not `def`; `=` not `:=` — matches Nim.
   # Integer literals for Nat: write `3`, not `suc(suc(suc(zero())))`.

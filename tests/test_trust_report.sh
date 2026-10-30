@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 
 task_tmp="$(mktemp -d)"
 trap 'rm -rf "$task_tmp"' EXIT HUP INT TERM
-nim c -d:eponymTrustReport --hints:off \
+nim c -d:eponymRuntimeBridgeTests -d:eponymTrustReport --hints:off \
   --nimcache:"$task_tmp/nimcache" \
   --out:"$task_tmp/test_runtime_value_bridge" \
   --path:src --path:src/eponym \

@@ -3,7 +3,6 @@
 ## indexed Chan value maps to the same trusted Nim ChannelHandle.
 
 import eponym_mac
-import eponym_embed
 
 type ChannelHandle* = ref object
   messages: seq[seq[byte]]
@@ -63,6 +62,7 @@ eponymBlock:
     proc endS(): Session
 
   # Chan is abstract at runtime; Eponym still checks its session index.
+  runtimeType(Nat, int)
   postulate(Chan, Session -> Univ)
   runtimeType(Chan, ChannelHandle)
 

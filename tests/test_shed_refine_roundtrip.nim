@@ -27,7 +27,7 @@ proc check(cond: bool, label: string) =
 proc compileFixture(path, scratch: string): tuple[ok: bool, output: string] =
   let nim = findExe("nim")
   if nim.len == 0: return (false, "nim not on PATH")
-  let cmd = quoteShell(nim) & " c --hints:off" &
+  let cmd = quoteShell(nim) & " c --hints:off -d:eponymRuntimeBridgeTests" &
     " --nimcache:" & quoteShell(scratch / "nimcache") &
     " --path:" & quoteShell(RepoRoot / "src") &
     " --path:" & quoteShell(RepoRoot / "src" / "eponym") &
@@ -63,7 +63,7 @@ createDir(scratch)
 let nimFile = scratch / "const_endo.nim"
 let nimV0 = """import eponym_mac
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   proc constEndo(A: Univ): Pi(f: A, g: A, A) = ![constEndoBody]
 """
 writeFile(nimFile, nimV0)
@@ -140,7 +140,7 @@ if partial.ok:
 # domains in both the generated lambda and the residual shed context.
 let introVecFile = scratch / "intro_dependent_vec.nim"
 let vecImportForIntro = (RepoRoot / "lib" / "vec.ep").replace("\\", "/")
-let introVecV0 = "import eponym_mac\n\neponymBlock:\n" &
+let introVecV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & vecImportForIntro & "\"\n" &
   "  proc identityVec: Pi(n: Nat, Pi(xs: Vec[Nat, n], Vec[Nat, n])) = " &
   "![introVecBody]\n"
@@ -182,7 +182,7 @@ if introVec.ok:
     "rejected non-function Intro leaves the sidecar unchanged")
 
 let implicitIntroFile = scratch / "intro_implicit.nim"
-let implicitIntroV0 = "import eponym_mac\n\neponymBlock:\n" &
+let implicitIntroV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  proc implicitId(): Pi({A: Univ}, A -> A) = ![implicitIntroBody]\n"
 writeFile(implicitIntroFile, implicitIntroV0)
 compiled = compileFixture(implicitIntroFile, scratch)
@@ -225,7 +225,7 @@ if implicitIntro.ok:
 
 let quantityIntroFile = scratch / "intro_quantities.nim"
 let natImportForQuantity = (RepoRoot / "lib" / "nat.ep").replace("\\", "/")
-let quantityIntroV0 = "import eponym_mac\n\neponymBlock:\n" &
+let quantityIntroV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & natImportForQuantity & "\"\n" &
   "  proc quantityGoal(): Pi(x {.linear.}: Nat, " &
   "Pi(proof {.erased.}: Nat, Nat)) = ![quantityIntroBody]\n"
@@ -270,7 +270,7 @@ if quantityIntro.ok:
 # positions. Filling either child must not accidentally fill its sibling.
 let natFile = scratch / "two_holes.nim"
 let natImport = (RepoRoot / "lib" / "nat.ep").replace("\\", "/")
-let natV0 = "import eponym_mac\n\neponymBlock:\n" &
+let natV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & natImport & "\"\n" &
   "  proc addPair(n: Nat): Nat = ![sumBody]\n"
 writeFile(natFile, natV0)
@@ -319,7 +319,7 @@ if split.ok:
 # mirrors branchDemo: refine the left side to `suc(?)`, then give the right
 # side the nullary constructor using valid Eponym term syntax (`zero`).
 let branchFile = scratch / "same_line_sibling_action.nim"
-let branchV0 = "import eponym_mac\n\neponymBlock:\n" &
+let branchV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & natImport & "\"\n" &
   "  proc branchDemo(n: Nat): Nat = add ( ![branchLeft] ) ( ![branchRight] )\n"
 writeFile(branchFile, branchV0)
@@ -357,7 +357,7 @@ if leftAction.ok:
 # goal/context/layout, then each child can be completed through refineShed.
 let caseFile = scratch / "case_split.nim"
 let boolImport = (RepoRoot / "lib" / "bool.ep").replace("\\", "/")
-let caseV0 = "import eponym_mac\n\neponymBlock:\n" &
+let caseV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & natImport & "\"\n" &
   "  import \"" & boolImport & "\"\n" &
   "  proc isZero(n: Nat): Bool = ![isZeroBody]\n"
@@ -413,7 +413,7 @@ if cases.ok:
 # recompilation, not only the LSP's generated text.
 let listFile = scratch / "list_case_split.nim"
 let listImport = (RepoRoot / "lib" / "list.ep").replace("\\", "/")
-let listV0 = "import eponym_mac\n\neponymBlock:\n" &
+let listV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & listImport & "\"\n" &
   "  proc listLength(xs: List[Nat]): Nat = ![listLengthBody]\n"
 writeFile(listFile, listV0)
@@ -449,7 +449,7 @@ if listCases.ok:
 # A parameter supplied by a generic Eponym binder must retain its local name
 # when the generated type argument is spliced back into Nim syntax.
 let genericListFile = scratch / "generic_list_case_split.nim"
-let genericListV0 = "import eponym_mac\n\neponymBlock:\n" &
+let genericListV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & listImport & "\"\n" &
   "  proc inspectList[A: Univ](xs: List[A]): Nat = ![inspectListBody]\n"
 writeFile(genericListFile, genericListV0)
@@ -474,7 +474,7 @@ if genericListCases.ok:
 # target and a target which depends directly on the index variable.
 let vecFile = scratch / "indexed_case_split.nim"
 let vecImport = (RepoRoot / "lib" / "vec.ep").replace("\\", "/")
-let vecV0 = "import eponym_mac\n\neponymBlock:\n" &
+let vecV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
   "  proc vectorLength(n: Nat, xs: Vec[Nat, n]): Nat = ![vecBody]\n"
 writeFile(vecFile, vecV0)
@@ -482,7 +482,7 @@ compiled = compileFixture(vecFile, scratch)
 if not compiled.ok: echo compiled.output
 check(compiled.ok, "indexed Vec fixture compiles with an initial shed")
 let vecGoalFile = scratch / "goal_constructor_vec.nim"
-let vecGoalV0 = "import eponym_mac\n\neponymBlock:\n" &
+let vecGoalV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
   "  proc makeNonempty(n : Nat) : Vec[Nat, suc(n)] = ![makeVecBody]\n"
 writeFile(vecGoalFile, vecGoalV0)
@@ -518,7 +518,7 @@ if vecOptions.ok:
       "constructor field sheds preserve the index substitutions in their goals")
 
 let applyFile = scratch / "dependent_apply_context.nim"
-let applyV0 = "import eponym_mac\n\neponymBlock:\n" &
+let applyV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  proc applyAt(A : Univ, B : A -> Univ, C : A -> Univ, " &
   "f : Pi(x : A, B(x)), " &
   "g : Pi(x : A, Pi(y : B(x), C(x))), a : A) : B(a) = ![applyBody]\n" &
@@ -583,7 +583,7 @@ if vecCases.ok:
     "indexed case children retain open goals after recompilation")
 
 let dependentVecFile = scratch / "dependent_index_case_split.nim"
-let dependentVecV0 = "import eponym_mac\n\neponymBlock:\n" &
+let dependentVecV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
   "  proc identityVector(n: Nat, xs: Vec[Nat, n]): Vec[Nat, n] = " &
   "![identityVectorBody]\n"
@@ -615,7 +615,7 @@ writeFile(taggedEp, "import \"" & natEpImport & "\"\n" & """data(Tagged, [A : Un
 """)
 let taggedFile = scratch / "parameter_index_case_split.nim"
 let taggedEpImport = taggedEp.replace("\\", "/")
-let taggedV0 = "import eponym_mac\n\neponymBlock:\n" &
+let taggedV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & taggedEpImport & "\"\n" &
   "  proc inspectTagged[A: Univ](n: Nat, a: A, " &
   "value: Tagged[A, n, a]): A = " &
@@ -643,7 +643,7 @@ if taggedCases.ok:
 # Exact compound index occurrences can be abstracted safely; the resulting
 # motive is still validated by re-elaboration before a splice is returned.
 let compoundVecFile = scratch / "compound_index_case_split.nim"
-let compoundVecV0 = "import eponym_mac\n\neponymBlock:\n" &
+let compoundVecV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
   "  proc identitySuccessor(n: Nat, xs: Vec[Nat, suc(n)]): " &
   "Vec[Nat, suc(n)] = ![compoundIndexBody]\n"
@@ -669,7 +669,7 @@ if compoundVecCases.ok:
 # If the target depends on `n` independently of the actual index `suc(n)`, it
 # remains tied to the outer context instead of being accidentally rewritten.
 let unrelatedIndexFile = scratch / "unrelated_compound_index_case_split.nim"
-let unrelatedIndexV0 = "import eponym_mac\n\neponymBlock:\n" &
+let unrelatedIndexV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & vecImport & "\"\n" &
   "  proc preserveContext(n: Nat, xs: Vec[Nat, suc(n)]): " &
   "Vec[Nat, n] = ![unrelatedIndexBody]\n"
@@ -689,7 +689,7 @@ check(unrelatedIndexCases.ok and "Vec[Nat, n]" in unrelatedIndexCases.term and
 # transport a rewritten goal back to the original target.
 let equalityRewriteFile = scratch / "equality_rewrite.nim"
 let equalityLib = (RepoRoot / "lib" / "eq.ep").replace("\\", "/")
-let equalityRewriteV0 = "import eponym_mac\n\neponymBlock:\n" &
+let equalityRewriteV0 = "import eponym_mac\n\neponymRuntimeBridgeTestBlock:\n" &
   "  import \"" & equalityLib & "\"\n" &
   "  proc rewriteForward(A: Univ, P: A -> Univ, x: A, y: A, " &
   "e: Eq[A, x, y]) : P(x) = ![forwardBody]\n" &

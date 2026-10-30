@@ -5,7 +5,10 @@ import eponym_mac
 eponymBlock:
   import "../lib/nat.ep"
   import "../lib/bool.ep"
+  runtimeType(Nat, int)
+  runtimeType(Bool, bool)
 
+  compileTimeOnly(chooseThree)
   proc chooseThree(first: Bool, second: Bool): Nat =
     if first:
       zero()

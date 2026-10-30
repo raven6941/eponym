@@ -8,14 +8,15 @@
 # this file IS the typecheck (a bad projection is a compile error).
 
 import eponym_mac
-import eponym_embed
 
 eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
 
   record(Pt):
     field(x, Int)
     field(y, Int)
+  runtimeType(Pt, tuple[x: int, y: int])
 
   # Sum of coordinates: constructor + both projections, evaluated.
   proc normSum(x: Int, y: Int): Int =

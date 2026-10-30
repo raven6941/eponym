@@ -56,6 +56,14 @@ eponymBlock:
   import "../../lib/bool.ep"
 
   postulate(Int, Univ)
+  runtimeType(Int, int)
+  runtimeType(Nat, int)
+  runtimeType(Bool, int)
+
+  # Polymorphic proof examples are intentionally available only to the
+  # elaborator; the walkthrough exposes `double` to Nim as its runtime API.
+  compileTimeOnly(constA)
+  compileTimeOnly(constEndo)
 
   # Complete definition: elaborates fully, gets a callable wrapper.
   # No shed here -- this one is white from the start.

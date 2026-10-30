@@ -22,9 +22,10 @@
 # analysis at solve() time and raise DCPError on violations; here a
 # violation stops compilation of this file.
 #
-# Note the two-layer shape (cf. paxos_session.nim): the proof layer is
-# checked at compile time by the elaborator; the running layer is plain
-# Nim. The `vafMatVec` rule is a postulate, not a `data` constructor,
+# The DCP and dimension proofs run at compile time. Runtime evaluation of
+# the custom expression tree is compile-time-only until the representation
+# backend can lower it to host variants; this strict block never interprets
+# Values. The `vafMatVec` rule is a postulate, not a `data` constructor,
 # for a principled reason: constructors of a parameterized family must
 # target the family at the *same* params (`Vec`'s `cons` targets
 # `Vec A`, never `Vec B`), but matvec changes the dimension from `n`
@@ -36,16 +37,7 @@
 # lemma-axiom -- the same "typed API over untrusted backend" pattern
 # as paxos_session.nim's postulated transport ops.
 
-import std/math
-import std/sequtils
-import std/tables
 import eponym_mac
-import eponym_embed
-import eponym_init
-import elab
-
-type FVec* = seq[float]
-type FMat* = seq[seq[float]]
 
 eponymBlock:
   # Prelude import (issue #131): Nat, zero, suc, add, mul from lib/nat.ep
@@ -57,8 +49,6 @@ eponymBlock:
   # Matrices: values abstract, dimensions in the type.
   postulate(Mat, Nat -> Nat -> Univ)
   postulate(VectorData, Nat -> Univ)
-  runtimeType(Mat, FMat)
-  runtimeType(VectorData, FVec)
   # PSD-ness: the DCP side condition for quadForm. DCP tools check it
   # numerically at solve time; here it is an explicit assumption.
   postulate(PSD, Pi(n: Nat, Mat[n, n] -> Univ))
@@ -159,7 +149,6 @@ eponymBlock:
 
   proc lrProb(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]): CExpr =
     minimize(lrTerm(m, n, A, b), lrCert(m, n, A, b))
-  runtimeValue(lrProb)
 
   proc shiftedLrTerm(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]):
       CExpr = ePlus(lrTerm(m, n, A, b), eConst(5))
@@ -170,7 +159,6 @@ eponymBlock:
   proc shiftedLrProb(m: Nat, n: Nat, A: Mat[m, n], b: VectorData[m]):
       CExpr = minimize(shiftedLrTerm(m, n, A, b),
                        shiftedLrCert(m, n, A, b))
-  runtimeValue(shiftedLrProb)
 
   # Two variables of *different* dimensions in one objective: logistic
   # loss on x (dim n) plus an l1 penalty on y (dim m). Both check, and
@@ -205,130 +193,22 @@ eponymBlock:
 
   proc qfProb(): CExpr = minimize(qfTerm(), qfCert())
 
-# --- Normal Nim program: logistic-regression driver -----------------------
-# The Eponym layer certified `lrTerm` convex with all dimensions lined
-# up. The driver interprets the exact checked `lrProb` expression tree and
-# derives its gradient by finite differences. The optimizer remains trusted.
-# CVXPY would run its DCP check at solve() time; here the check ran when
-# this file was compiled.
-
-proc matVec(A: FMat, x: FVec): FVec =
-  result = newSeq[float](A.len)
-  for i in 0 ..< A.len:
-    var s = 0.0
-    for j in 0 ..< x.len: s += A[i][j] * x[j]
-    result[i] = s
-
-proc softplus(t: float): float =
-  # log(1 + e^t), stable for large t.
-  if t > 20.0: t else: ln(1.0 + exp(t))
-
-type CheckedObjective* = tuple[value: Value, globals: Globals]
-
-proc cexprArg(value: Value, index, arity: int): Value =
-  if value.whnfKind != wRef or value.whnfSpineLen != arity or index < 0 or
-      index >= arity or value.whnfSpineKind(index) != eApp:
-    raise newException(ValueError, "malformed checked optimization expression")
-  value.whnfSpineArg(index)
-
-proc constructorId(globals: Globals, name: string): int =
-  if name notin globals:
-    raise newException(ValueError, "checked expression constructor missing: " & name)
-  globals[name].tm.refId
-
-proc checkedLogisticObjective*(A: FMat, b: FVec): CheckedObjective =
-  if A.len == 0 or A.len != b.len or A[0].len == 0:
-    raise newException(ValueError, "logistic data must have matching nonempty rows")
-  let columns = A[0].len
-  for row in A:
-    if row.len != columns:
-      raise newException(ValueError, "logistic matrix rows have inconsistent widths")
-  result = lrProbRuntimeValue(A.len, columns, A, b)
-
-proc evalVectorExpr(expr: Value, weights: FVec,
-                    checked: CheckedObjective): FVec =
-  let globals = checked.globals
-  let id = expr.whnfRefId
-  if id == constructorId(globals, "vVar"):
-    return weights
-  if id == constructorId(globals, "vData"):
-    return valueToHost[FVec](cexprArg(expr, 1, 2))
-  if id == constructorId(globals, "vMinus"):
-    let left = evalVectorExpr(cexprArg(expr, 1, 3), weights, checked)
-    let right = evalVectorExpr(cexprArg(expr, 2, 3), weights, checked)
-    if left.len != right.len:
-      raise newException(ValueError, "checked vector subtraction dimension mismatch")
-    result = newSeq[float](left.len)
-    for i in 0 ..< result.len: result[i] = left[i] - right[i]
-    return
-  if id == constructorId(globals, "vMatVec"):
-    let matrix = valueToHost[FMat](cexprArg(expr, 2, 4))
-    let vector = evalVectorExpr(cexprArg(expr, 3, 4), weights, checked)
-    if matrix.anyIt(it.len != vector.len):
-      raise newException(ValueError, "checked matrix-vector dimensions do not match")
-    return matVec(matrix, vector)
-  raise newException(ValueError, "unsupported checked vector constructor")
-
-proc evalScalarExpr(expr: Value, weights: FVec,
-                    checked: CheckedObjective): float =
-  let globals = checked.globals
-  let id = expr.whnfRefId
-  if id == constructorId(globals, "vLogSum"):
-    let residual = evalVectorExpr(cexprArg(expr, 1, 2), weights, checked)
-    for item in residual: result += softplus(item)
-    return
-  if id == constructorId(globals, "ePlus"):
-    return evalScalarExpr(cexprArg(expr, 0, 2), weights, checked) +
-      evalScalarExpr(cexprArg(expr, 1, 2), weights, checked)
-  if id == constructorId(globals, "eConst"):
-    let payload = cexprArg(expr, 0, 1)
-    if payload.whnfKind != wInt:
-      raise newException(ValueError, "checked eConst payload is not an Int")
-    return float(payload.whnfIntVal)
-  raise newException(ValueError, "unsupported checked scalar constructor")
-
-proc objectiveValue(checked: CheckedObjective, weights: FVec): float =
-  evalScalarExpr(checked.value, weights, checked)
-
-proc evalCheckedLogistic*(A: FMat, b, weights: FVec): float =
-  let checked = checkedLogisticObjective(A, b)
-  if weights.len != A[0].len:
-    raise newException(ValueError, "weight dimension does not match checked objective")
-  objectiveValue(checked, weights)
-
-proc evalCheckedShiftedLogistic*(A: FMat, b, weights: FVec): float =
-  discard checkedLogisticObjective(A, b)
-  if weights.len != A[0].len:
-    raise newException(ValueError, "weight dimension does not match checked objective")
-  let checked = shiftedLrProbRuntimeValue(A.len, weights.len, A, b)
-  objectiveValue(checked, weights)
-
-proc loss(checked: CheckedObjective, weights: FVec): float =
-  objectiveValue(checked, weights)
-
-proc gradLoss(checked: CheckedObjective, weights: FVec): FVec =
-  ## Numerical derivative of the checked objective; the formula is not
-  ## separately restated as a Nim gradient.
-  const delta = 1.0e-5
-  result = newSeq[float](weights.len)
-  for j in 0 ..< weights.len:
-    var plus = newSeq[float](weights.len)
-    var minus = newSeq[float](weights.len)
-    for i in 0 ..< weights.len:
-      plus[i] = weights[i]
-      minus[i] = weights[i]
-    plus[j] += delta
-    minus[j] -= delta
-    result[j] = (objectiveValue(checked, plus) -
-                 objectiveValue(checked, minus)) / (2.0 * delta)
-
-proc evalCheckedGradient*(A: FMat, b, weights: FVec): FVec =
-  let checked = checkedLogisticObjective(A, b)
-  if weights.len != A[0].len:
-    raise newException(ValueError, "weight dimension does not match checked objective")
-  gradLoss(checked, weights)
-
-proc gradNorm(g: FVec): float = sqrt(g.mapIt(it * it).sum())
+  # These checked objectives build custom expression trees. Until the
+  # representation backend can lower those trees to host variants, keep
+  # the certified terms compile-time-only rather than interpreting Values.
+  compileTimeOnly(minimize)
+  compileTimeOnly(lrTerm)
+  compileTimeOnly(lrCert)
+  compileTimeOnly(lrProb)
+  compileTimeOnly(shiftedLrTerm)
+  compileTimeOnly(shiftedLrCert)
+  compileTimeOnly(shiftedLrProb)
+  compileTimeOnly(twoVarTerm)
+  compileTimeOnly(twoVarCert)
+  compileTimeOnly(twoVarProb)
+  compileTimeOnly(qfTerm)
+  compileTimeOnly(qfCert)
+  compileTimeOnly(qfProb)
 
 proc main() =
   echo "convex_opt_vec: DCP-checked logistic regression, embedded."
@@ -337,26 +217,8 @@ proc main() =
   echo "  `minimize` accepted it at compile time. Dimension mismatches"
   echo "  (vDot, quadForm) and non-DCP vector products (vMul) are"
   echo "  compile-time errors (examples/ep/18a,18b,18c-*-neg.ep)."
-  # 4 samples, 2 features. Analytic optimum: w* = (0.5, 0.5)
-  # (d/dw0 = sig(w0-1) - sig(-w0) = 0 -> w0 = 0.5, likewise w1).
-  let A: FMat = @[@[1.0, 0.0], @[-1.0, 0.0], @[0.0, 1.0], @[0.0, -1.0]]
-  let b: FVec = @[1.0, 0.0, 0.5, -0.5]
-  let checkedObjective = checkedLogisticObjective(A, b)
-  var w: FVec = @[0.0, 0.0]
-  let l0 = loss(checkedObjective, w)
-  echo "  gradient descent from w = ", w, ": loss = ", l0
-  for k in 1 .. 2000:
-    let g = gradLoss(checkedObjective, w)
-    for j in 0 ..< w.len: w[j] -= 1.0 * g[j]
-  let l1 = loss(checkedObjective, w)
-  let gn = gradNorm(gradLoss(checkedObjective, w))
-  echo "  after 2000 steps: w = ", w, ", loss = ", l1, ", |grad| = ", gn
-  echo "  (convexity certifies this stationary point is the global minimum;"
-  echo "   analytic optimum w* = (0.5, 0.5))"
-  assert l1 < l0, "loss did not decrease"
-  assert gn < 1e-6, "gradient did not vanish"
-  assert abs(w[0] - 0.5) < 1e-3 and abs(w[1] - 0.5) < 1e-3,
-    "did not reach the analytic optimum"
+  echo "  objective evaluation is deferred until expression trees have a"
+  echo "  representation-compiled host layout; no Value interpreter is used."
 
 when isMainModule:
   main()

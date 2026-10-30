@@ -5,6 +5,7 @@ import eponym_embed
 
 eponymBlock:
   import "schemes.ep"
+  runtimeType(Nat, int)
   proc installedPreludeZero(): Nat = 0
 
 when isMainModule:

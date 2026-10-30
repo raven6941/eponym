@@ -21,7 +21,7 @@ proc expect(ok: bool, message: string) =
 
 # ---------------------------------------------------------------------------
 # 1. Record: the derived product codec replaces a hand-written mapping.
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat.ep"
   postulate(Int, Univ)
   record(DPoint):
@@ -42,7 +42,7 @@ when isMainModule:
 
 # ---------------------------------------------------------------------------
 # 2. Variant: derived `isRuntimeVariant` matches hand-written `runtimeVariant`.
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   data(DTreeA, Univ):
     proc leafA(): DTreeA
@@ -50,7 +50,7 @@ eponymBlock:
   runtimeVariant(DTreeA)
   proc dtreeAMk(): DTreeA = nodeA(37, leafA())
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   data(DTreeB, Univ):
     proc leafB(): DTreeB
@@ -76,7 +76,7 @@ when isMainModule:
 
 # ---------------------------------------------------------------------------
 # 3. Dependent product: the codec factory behind `isRuntimeCodec` adapters.
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat.ep"
   import "../lib/vec.ep"
   postulate(Int, Univ)

@@ -14,7 +14,7 @@ proc captureDebugEcho(args: seq[RuntimeValue],
   debugTrace.add(runtimeValueDebugString(args[1], globals))
   args[1]
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   import "../lib/debug.ep"
   bindPostulateValue(debugEcho, captureDebugEcho)

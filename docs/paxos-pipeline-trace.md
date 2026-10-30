@@ -342,14 +342,12 @@ Exactly what `compileBlockProcs` takes today, with the fragment contract
 tightened: **closed, zonked, erased core `Term`s (`ElabDef`s) + `Globals`
 (refId/name/eliminator tables) + the block's `runtimeType` codec mapping**,
 with QTT quantities carried on the binders (erasure preserves `t.qty`; #331
-needs them). The tightening is #358's program, not a new IR: fragment total
-over closed zonked terms (fail loudly at macro time instead of silent
-interpreter fallback), per-block compilation of the transitive closure from
-exported entry points (killing the `defnValue` slow path), and removing live
-`syn` dependencies from the compiled path. The trace shows the current
-per-definition tiering is *sound-by-fallback* (anything unsupported keeps
-the interpreter wrapper) but *fragile-by-assumption* (baked refIds,
-approximate `syn`) — #358 converts the assumptions into checked contracts.
+needs them). The strict default now fails at macro time when a runtime
+definition or call is outside the representation fragment; it does not
+retain an interpreter wrapper. Explicit `compileTimeOnly(name)` declarations
+identify checked definitions that intentionally have no runtime API. The
+trace's older per-definition fallback descriptions are historical; current
+accepted blocks have a complete representation-compiled runtime closure.
 
 ### 3. Semantic preservation (Phase 2)
 
@@ -426,9 +424,9 @@ code, trusted for nothing else:
   so the unit substitution is observationally equivalent; it is a runtime
   transformation. Generated wrapper ABIs omit q0 computation arguments;
   dependent witnesses remain separate from those arguments.
-- `src/eponym/codegen.nim` (Phase 1 + Phase 2): "compiled ≡ interpreted" is
-  a tested claim with documented deviations and interpreter fallback, not
-  a trusted axiom.
+- `src/eponym/codegen.nim` (Phase 2): supported representation-compiled
+  programs are tested; unsupported runtime forms are rejected at macro time
+  rather than delegated to the interpreter.
 - Conversion/e-graph caches and the `RedRule` registry: performance
   machinery; the kernel consults none of it.
 - Everything under `src/experimental/` (relational/staged): not in the

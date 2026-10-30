@@ -65,7 +65,7 @@ extractTutorialSnippet() {
 
 extractTutorialSnippet hello "$eponymTmpDir/project/hello.nim"
 extractTutorialSnippet vecs "$eponymTmpDir/project/vecs.nim"
-extractTutorialSnippet dynamic-vec "$eponymTmpDir/project/dynamic_vec.nim"
+extractTutorialSnippet runtime-vec "$eponymTmpDir/project/runtime_vec.nim"
 cat > "$eponymTmpDir/project/lists.nim" <<'EOF'
 import eponym_mac
 import eponym_embed
@@ -73,6 +73,7 @@ import eponym_embed
 eponymBlock:
   import "lib/list.ep"
   postulate(Int, Univ)
+  runtimeType(Int, int)
   runtimeList(List)
   proc keepList(values: List[Int]): List[Int] = values
   proc emptyList(): List[Int] = (nil)
@@ -88,25 +89,12 @@ import eponym_embed
 eponymBlock:
   import "lib/option.ep"
   runtimeOption(Option)
-  proc keepOption[A: Univ](value: Option[A]): Option[A] = value
+  postulate(Int, Univ)
+  runtimeType(Int, int)
+  proc keepOption(value: Option[Int]): Option[Int] = value
 
-doAssert keepOption[int](some(7)) == some(7)
-doAssert keepOption[int](none(int)).isNone
-EOF
-cat > "$eponymTmpDir/project/nat_to_int.nim" <<'EOF'
-import eponym_mac
-import eponym_embed
-
-proc addHostOffset(value: int): int = value + 7
-
-eponymBlock:
-  import "lib/nat_to_int.ep"
-  postulate(addHostOffsetPostulate, Int -> Int)
-  bindPostulate(addHostOffsetPostulate, addHostOffset)
-  proc convertNatThenCallHost(value: Nat): Int =
-    addHostOffsetPostulate(natToInt(value))
-
-doAssert convertNatThenCallHost(5) == 12
+doAssert keepOption(some(7)) == some(7)
+doAssert keepOption(none(int)).isNone
 EOF
 cat > "$eponymTmpDir/project/scalars.nim" <<'EOF'
 import eponym_mac
@@ -126,19 +114,6 @@ doAssert keepFloat(1.25) == 1.25
 doAssert keepString("hello") == "hello"
 doAssert keepChar('x') == 'x'
 EOF
-cat > "$eponymTmpDir/project/debug.nim" <<'EOF'
-import eponym_mac
-import eponym_embed
-
-eponymBlock:
-  postulate(Int, Univ)
-  import "lib/debug.ep"
-  bindPostulateValue(debugEcho, debugEchoRuntimeValue)
-  proc checkedDebugEcho(value: Int): Int = debugEcho[Int](value)
-
-doAssert checkedDebugEcho(42) == 42
-EOF
-
 cd "$eponymTmpDir/project"
 nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/nimcache" \
@@ -150,20 +125,14 @@ nim c --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/vecs-cache" \
   --out:"$eponymTmpDir/vecs" vecs.nim
 nim c -r --path:"$eponymPackageDir" \
-  --nimcache:"$eponymTmpDir/dynamic-vec-cache" \
-  --out:"$eponymTmpDir/dynamic_vec" dynamic_vec.nim
+  --nimcache:"$eponymTmpDir/runtime-vec-cache" \
+  --out:"$eponymTmpDir/runtime_vec" runtime_vec.nim
 nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/lists-cache" \
   --out:"$eponymTmpDir/lists" lists.nim
 nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/options-cache" \
   --out:"$eponymTmpDir/options" options.nim
-nim c -r --path:"$eponymPackageDir" \
-  --nimcache:"$eponymTmpDir/nat-to-int-cache" \
-  --out:"$eponymTmpDir/nat_to_int" nat_to_int.nim
-nim c -r --path:"$eponymPackageDir" \
-  --nimcache:"$eponymTmpDir/debug-cache" \
-  --out:"$eponymTmpDir/debug" debug.nim
 nim c -r --path:"$eponymPackageDir" \
   --nimcache:"$eponymTmpDir/scalars-cache" \
   --out:"$eponymTmpDir/scalars" scalars.nim
