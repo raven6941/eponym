@@ -3563,6 +3563,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
                          mappings: seq[HostRuntimeType],
                          checkedGlobals: Globals,
                          records: seq[HostRecord],
+                         stratified: bool,
                          allowDependentSigma = false,
                          compiled: Table[string, string],
                          compiledRepr: Table[string, string] =
@@ -3619,7 +3620,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   var wrapperBody = newStmtList()
   let globalsSym = genSym(nskLet, "checkedGlobals")
   wrapperBody.add(newLetStmt(globalsSym,
-    newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+    newCall(bindSym"getGlobalsDir", dirLit, srcLit, newLit(stratified))))
   var bindingSym: NimNode = nil
   if bindings.len > 0:
     bindingSym = genSym(nskVar, "runtimeBindings")
@@ -3658,6 +3659,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   let q0ValuesSeq = newTree(nnkPrefix, ident("@"), q0Values)
   var callArgs = @[dirLit, srcLit, nameLit, valuesSeq]
   if not bindingSym.isNil: callArgs.add(bindingSym)
+  callArgs.add(newLit(stratified))
   let runtimeValue = genSym(nskLet, "runtimeValue")
   var compiledName = compiled.getOrDefault(defName, "")
   let compiledReprName = compiledRepr.getOrDefault(defName, "")
@@ -3867,7 +3869,7 @@ proc runtimeTypeValueExpr(n: NimNode, globals: NimNode,
 proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     defName: string, bindings: seq[HostPostulateBinding],
     mappings: seq[HostRuntimeType], checkedGlobals: Globals,
-    records: seq[HostRecord],
+    records: seq[HostRecord], stratified: bool,
     allowDependentSigma = false,
     returnRuntimeValue = false,
     allowGenericFunctionValues = false): NimNode =
@@ -3951,7 +3953,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
   let nameLit = newLit(defName)
   var body = newStmtList()
   body.add(newLetStmt(globalsSym,
-    newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+    newCall(bindSym"getGlobalsDir", dirLit, srcLit, newLit(stratified))))
   var typeIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   var genericIndexOverrides: seq[tuple[name: string, value: NimNode]] = @[]
   for i, genericSym in genericSyms:
@@ -4011,7 +4013,7 @@ proc dynamicGenericRuntimeWrapper(decl: NimNode, baseDir, src,
     typeIndexOverrides.add(($generic.genericNames[i], encodedGeneric))
     genericIndexOverrides.add(($generic.genericNames[i], genericSym))
   body.add(newLetStmt(defsSym,
-    newCall(bindSym"getDefsDir", dirLit, srcLit)))
+    newCall(bindSym"getDefsDir", dirLit, srcLit, newLit(stratified))))
   body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))
   for binding in bindings:
     body.add(bindingCall(binding, bindingsSym, globalsSym,
@@ -4074,7 +4076,7 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
                               bindings: seq[HostPostulateBinding],
                               mappings: seq[HostRuntimeType],
                               checkedGlobals: Globals,
-                              records: seq[HostRecord],
+                              records: seq[HostRecord], stratified: bool,
                               allowDependentSigma = false,
                               compiled: Table[string, string]): NimNode =
   ## Emit a typed host-argument overload that returns the checked result as a
@@ -4137,9 +4139,9 @@ proc typedRuntimeValueWrapper(decl: NimNode, baseDir, src, defName: string,
   let runtimeValueSym = genSym(nskLet, "runtimeValue")
   var body = newStmtList()
   body.add(newLetStmt(globalsSym,
-    newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+    newCall(bindSym"getGlobalsDir", dirLit, srcLit, newLit(stratified))))
   body.add(newLetStmt(defsSym,
-    newCall(bindSym"getDefsDir", dirLit, srcLit)))
+    newCall(bindSym"getDefsDir", dirLit, srcLit, newLit(stratified))))
   var bindingSym: NimNode = nil
   bindingSym = genSym(nskVar, "runtimeBindings")
   body.add(newVarStmt(bindingSym, newCall(bindSym"initRuntimeBindings")))
@@ -4194,7 +4196,7 @@ proc checkedLambdaArity(definition: ElabDef): int =
 proc rawRuntimeValueWrapper(baseDir, src, defName: string,
     expectedArity: int,
     bindings: seq[HostPostulateBinding], mappings: seq[HostRuntimeType],
-    records: seq[HostRecord], checkedGlobals: Globals,
+    records: seq[HostRecord], checkedGlobals: Globals, stratified: bool,
     wrapperSuffix = "RuntimeValue"): NimNode =
   ## Expose an imported checked definition when no local Nim signature is
   ## available. Callers explicitly pass its arguments as Eponym Values.
@@ -4213,9 +4215,9 @@ proc rawRuntimeValueWrapper(baseDir, src, defName: string,
       raise newException(ValueError,
         "runtimeValue argument count mismatch for " & `nameLit`)
   body.add(newLetStmt(globalsSym,
-    newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+    newCall(bindSym"getGlobalsDir", dirLit, srcLit, newLit(stratified))))
   body.add(newLetStmt(defsSym,
-    newCall(bindSym"getDefsDir", dirLit, srcLit)))
+    newCall(bindSym"getDefsDir", dirLit, srcLit, newLit(stratified))))
   body.add(newVarStmt(bindingsSym, newCall(bindSym"initRuntimeBindings")))
   for binding in bindings:
     body.add(bindingCall(binding, bindingsSym, globalsSym, mappings, records,
@@ -5279,7 +5281,7 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
         result.add(unreconstructableRuntimeWrapper(d.name, reason))
       else:
         let tw = typedRuntimeWrapper(procDecl, baseDir, wrapperSrc, d.name,
-          bindings, runtimeTypes, checkedGlobals, records,
+          bindings, runtimeTypes, checkedGlobals, records, stratified,
           d.name in trustedRuntimePairs,
           cgBlock.compiled, cgBlock.compiledRepr, cgBlock.reprTypes, false)
         if not tw.isNil:
@@ -5325,9 +5327,9 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
               raise newException(ValueError,
                 "runtimeValue argument count mismatch for " & `nameLit`)
           rawBody.add(newLetStmt(globalsSym,
-            newCall(bindSym"getGlobalsDir", dirLit, srcLit)))
+            newCall(bindSym"getGlobalsDir", dirLit, srcLit, newLit(stratified))))
           rawBody.add(newLetStmt(defsSym,
-            newCall(bindSym"getDefsDir", dirLit, srcLit)))
+            newCall(bindSym"getDefsDir", dirLit, srcLit, newLit(stratified))))
           rawBody.add(newVarStmt(bindingsSym,
             newCall(bindSym"initRuntimeBindings")))
           for binding in bindings:
@@ -5377,13 +5379,14 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
                                             runtimeTypes, records,
                                             checkedGlobals))
         var rawBody = newStmtList()
+        let stratLit = newLit(stratified)
         rawBody.add quote do:
           if `argsSym`.len != `expectedArity`:
             raise newException(ValueError,
               "runtimeValue argument count mismatch for " & `nameLit`)
         rawBody.add quote do:
-            let `globalsSym` = getGlobalsDir(`dirLit`, `srcLit`)
-            let `defsSym` = getDefsDir(`dirLit`, `srcLit`)
+            let `globalsSym` = getGlobalsDir(`dirLit`, `srcLit`, `stratLit`)
+            let `defsSym` = getDefsDir(`dirLit`, `srcLit`, `stratLit`)
             var `bindingsSym` = initRuntimeBindings()
         rawBody.add(bindingStatements)
         rawBody.add quote do:
@@ -5429,12 +5432,13 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
           let allowDependentSigma = d.name in trustedRuntimePairs
           let typedValueWrapper = typedRuntimeValueWrapper(procDecl,
             baseDir, wrapperSrc, d.name, bindings, runtimeTypes, checkedGlobals,
-            records, allowDependentSigma, cgBlock.compiled)
+            records, stratified, allowDependentSigma, cgBlock.compiled)
           if not typedValueWrapper.isNil:
             result.add(typedValueWrapper)
       let allowDependentSigma = d.name in trustedRuntimePairs
       let typedWrapper = typedRuntimeWrapper(procDecl, baseDir, wrapperSrc, d.name,
-        bindings, runtimeTypes, checkedGlobals, records, allowDependentSigma,
+        bindings, runtimeTypes, checkedGlobals, records, stratified,
+        allowDependentSigma,
         cgBlock.compiled, cgBlock.compiledRepr, cgBlock.reprTypes,
         requireCompiled)
       if not typedWrapper.isNil:
@@ -5447,7 +5451,7 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
           records, allowDependentSigma))
       let dynamicWrapper = dynamicGenericRuntimeWrapper(procDecl, baseDir,
         src, d.name, bindings, runtimeTypes, checkedGlobals, records,
-        allowDependentSigma)
+        stratified, allowDependentSigma)
       if not dynamicWrapper.isNil and not requireCompiled:
         result.add(dynamicWrapper)
       let addTypedDynamicGenericValueOverloads =
@@ -5456,14 +5460,14 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
       if addTypedDynamicGenericValueOverloads:
         let typedDynamicGenericValueWrapper = dynamicGenericRuntimeWrapper(
           procDecl, baseDir, wrapperSrc, d.name, bindings, runtimeTypes,
-          checkedGlobals, records, allowDependentSigma = true,
+          checkedGlobals, records, stratified, allowDependentSigma = true,
           allowGenericFunctionValues = true)
         if not typedDynamicGenericValueWrapper.isNil:
           result.add(typedDynamicGenericValueWrapper)
       if d.name in runtimeValueNames:
         let dynamicRuntimeValueWrapper = dynamicGenericRuntimeWrapper(procDecl,
           baseDir, wrapperSrc, d.name, bindings, runtimeTypes, checkedGlobals,
-          records, allowDependentSigma, returnRuntimeValue = true)
+          records, stratified, allowDependentSigma, returnRuntimeValue = true)
         if not dynamicRuntimeValueWrapper.isNil:
           result.add(dynamicRuntimeValueWrapper)
         else:
@@ -5476,7 +5480,7 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
           let typedDynamicGenericValueRuntimeValueWrapper =
             dynamicGenericRuntimeWrapper(procDecl, baseDir, wrapperSrc, d.name,
               bindings, runtimeTypes, checkedGlobals, records,
-              allowDependentSigma = true, returnRuntimeValue = true,
+              stratified, allowDependentSigma = true, returnRuntimeValue = true,
               allowGenericFunctionValues = true)
           if not typedDynamicGenericValueRuntimeValueWrapper.isNil:
             result.add(typedDynamicGenericValueRuntimeValueWrapper)
@@ -5484,7 +5488,7 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
     if d.name in runtimeValueNames:
       result.add(rawRuntimeValueWrapper(baseDir, wrapperSrc, d.name,
         checkedLambdaArity(d), bindings,
-        runtimeTypes, records, checkedGlobals))
+        runtimeTypes, records, checkedGlobals, stratified))
     result.add(unreconstructableRuntimeWrapper(d.name))
   for requested in runtimeValueNames:
     var localDef = false
@@ -5504,17 +5508,17 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
         if not importedDecl.isNil:
           let typedImportedWrapper = typedRuntimeWrapper(importedDecl,
             baseDir, wrapperSrc, requested, bindings, runtimeTypes, checkedGlobals,
-            records, false, initTable[string, string]())
+            records, stratified, false, initTable[string, string]())
           if not typedImportedWrapper.isNil:
             result.add(typedImportedWrapper)
           let typedImportedValueWrapper = typedRuntimeValueWrapper(
             importedDecl, baseDir, wrapperSrc, requested, bindings, runtimeTypes,
-            checkedGlobals, records, false, initTable[string, string]())
+            checkedGlobals, records, stratified, false, initTable[string, string]())
           if not typedImportedValueWrapper.isNil:
             result.add(typedImportedValueWrapper)
         result.add(rawRuntimeValueWrapper(baseDir, wrapperSrc, requested,
           checkedLambdaArity(importedDef), bindings, runtimeTypes, records,
-          checkedGlobals,
+          checkedGlobals, stratified,
           if not importedDecl.isNil and
               importedDecl[2].kind != nnkEmpty: "RuntimeValueRaw"
           else: "RuntimeValue"))

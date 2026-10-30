@@ -115,8 +115,8 @@ proc initRuntimeBindings*(): RuntimeBindings =
   ## Create an empty environment for explicit host postulate bindings.
   initTable[int, Value]()
 
-proc cacheKey(baseDir, src: string): string =
-  baseDir & "\x1f" & src
+proc cacheKey(baseDir, src: string, stratified: bool): string =
+  baseDir & "\x1f" & $stratified & "\x1f" & src
 
 proc getDefs*(src: string): seq[ElabDef] =
   ## Get elaborated defs for source, using cache.
@@ -132,7 +132,7 @@ proc getGlobals*(src: string): Globals =
   discard getDefs(src)
   defCache[src].globals
 
-proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
+proc getDefsDir*(baseDir, src: string, stratified = true): seq[ElabDef] =
   ## Issue #131: like getDefs, but `import "path.ep"` declarations in `src`
   ## resolve relative to `baseDir` (via elabCheckDir). Used by eponymBlock
   ## wrappers so the one-time runtime elaboration sees the same modules as
@@ -142,10 +142,10 @@ proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
   ## no longer crashes every wrapper at runtime. Hole-free sources
   ## elaborate identically to the strict path, and a genuine error
   ## still raises ElabError.
-  let key = cacheKey(baseDir, src)
+  let key = cacheKey(baseDir, src, stratified)
   if key in defCache:
     return defCache[key].defs
-  let checked = elabCheckDirStateAllHoles(src, baseDir)
+  let checked = elabCheckDirStateAllHoles(src, baseDir, @[], stratified)
   if checked.errMsg.len > 0:
     let e = newException(ElabError, checked.errMsg)
     e.loc = checked.errLoc
@@ -154,11 +154,11 @@ proc getDefsDir*(baseDir, src: string): seq[ElabDef] =
                                  globals: checked.globals)
   checked.allDefs
 
-proc getGlobalsDir*(baseDir, src: string): Globals =
+proc getGlobalsDir*(baseDir, src: string, stratified = true): Globals =
   ## Retrieve the checked globals associated with the same runtime module
   ## state as getDefsDir, including postulates from imported modules.
-  discard getDefsDir(baseDir, src) # populate cache on first use
-  defCache[cacheKey(baseDir, src)].globals
+  discard getDefsDir(baseDir, src, stratified) # populate cache on first use
+  defCache[cacheKey(baseDir, src, stratified)].globals
 
 proc bindHostValue*(bindings: var RuntimeBindings, globals: Globals,
                     postulateName: string, implementation: Value) =
@@ -1874,17 +1874,17 @@ proc defnValue*(baseDir, src: string, refId: int,
     "codegen: unknown definition refId " & $refId & " in " & src)
 
 proc callValueFuncDir*(baseDir, src: string, name: string,
-                       args: openArray[Value]): Value =
+                       args: openArray[Value], stratified = true): Value =
   ## Directory-aware low-level runtime entry point over ETT values.
-  callDefValueWithBindings(findDef(getDefsDir(baseDir, src), name), args,
-                           initRuntimeBindings(), getGlobalsDir(baseDir, src))
+  callDefValueWithBindings(findDef(getDefsDir(baseDir, src, stratified), name), args,
+                           initRuntimeBindings(), getGlobalsDir(baseDir, src, stratified))
 
 proc callValueFuncDir*(baseDir, src: string, name: string,
                        args: openArray[Value],
-                       bindings: RuntimeBindings): Value =
+                       bindings: RuntimeBindings, stratified = true): Value =
   ## Directory-aware Value call with block-local host postulate bindings.
-  callDefValueWithBindings(findDef(getDefsDir(baseDir, src), name), args,
-                           bindings, getGlobalsDir(baseDir, src))
+  callDefValueWithBindings(findDef(getDefsDir(baseDir, src, stratified), name), args,
+                           bindings, getGlobalsDir(baseDir, src, stratified))
 
 proc callDefInt(d: ElabDef, args: seq[int]): int =
   ## Compatibility bridge for `Int -> ... -> Int` generated wrappers.
