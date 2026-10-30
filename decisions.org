@@ -8,6 +8,28 @@
   =exp-NN-short-name= branches, merged to =main= when the experiment
   concludes with a decision recorded here.
 
+* 2026-10-30 — Keep the stratified-universe flag experiment out of the release (issue #492)
+
+  Context: the =univ-stratified-flag= branch adds opt-in
+  =eponymBlock(stratified = false):= and demonstrates large elimination with
+  =PrintfType=. The branch documents that runtime execution of the
+  type-computing eliminator is not supported. Issue #490 makes the production
+  =eponymBlock= strict, and issue #491 is still a design/prototype for
+  residualizing runtime type structure.
+  Options considered: merge the flag now, keep it as an experiment, or
+  abandon the branch.
+  Decision: keep it as an experiment. The elaboration result is useful, but
+  release inclusion before interpreter-free runtime support would either
+  fail the demo under #490 or rely on behavior #490 explicitly removes. The
+  branch also lacks the release-facing positive/negative flag tests,
+  documentation, and soundness review needed for a new Type-in-Type mode.
+  Do not merge its commits into main in this release.
+  Consequences: leave =univ-stratified-flag= available for further work. Revisit
+  after #491 has a production path from checked definitions to residual
+  TypeRep code, and after the large-elimination/universe policy has an
+  independent soundness review. #490 remains strict; the #491 prototype does
+  not change universe checking.
+
 * 2026-10-26 — Lambda syntax uses annotated arrow binders (issue #475)
 
   Context: issue #471 changed lambdas to call forms such as =lam(x, T, body)=
