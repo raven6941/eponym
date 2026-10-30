@@ -39,17 +39,65 @@
 #     in the embedded file itself (they would fail compilation), so the
 #     example necessarily splits into embedded positives + .ep negatives.
 #     A newcomer may find that split surprising; it is documented here.
-#   - Mock-postulate limit, same as session_types: the happy path has no
-#     runtime behaviour to assert. A runnable socket backend is a separate
-#     step and is not claimed here.
+#   - Runtime checking stays at the eponym API boundary: the Nim backend
+#     asserts each phase transition as defence in depth, but cannot detect
+#     Nim-side aliasing of a handle (see the limitation above).
 #   - Repo nit, not language friction: session_types.nim imports
-#     eponym_embed unused and warns; this file imports only eponym_mac
-#     and is warning-clean. Left untouched to keep this change focused.
+#     eponym_embed unused and warns; this example imports eponym_embed
+#     and eponym_init for runtime bindings and remains warning-clean.
 
 import eponym_mac
+import eponym_embed
+import eponym_init
+
+type
+  SockPhaseB = enum unconnB, connB, closedB
+
+  SockHandle = ref object
+    phase: SockPhaseB
+    incoming: int
+    lastReceived: int
+    lastSent: int
+    connects: int
+    sends: int
+    receives: int
+    closes: int
+
+proc newSockHandle(incoming = 41): SockHandle =
+  SockHandle(phase: unconnB, incoming: incoming)
+
+proc hostConnectH(sock: SockHandle): SockHandle =
+  doAssert sock.phase == unconnB, "connectH requires an unconnected socket"
+  sock.phase = connB
+  inc sock.connects
+  sock
+
+proc hostSendH(payload: int, sock: SockHandle): SockHandle =
+  doAssert sock.phase == connB, "sendH requires a connected socket"
+  sock.lastSent = payload
+  inc sock.sends
+  sock
+
+proc hostRecvH(sock: SockHandle): tuple[value: int, sock: SockHandle] =
+  doAssert sock.phase == connB, "recvH requires a connected socket"
+  sock.lastReceived = sock.incoming
+  inc sock.receives
+  (sock.incoming, sock)
+
+proc hostCloseH(sock: SockHandle): SockHandle =
+  doAssert sock.phase == connB, "closeH requires a connected socket"
+  sock.phase = closedB
+  inc sock.closes
+  sock
 
 eponymBlock:
   import "../../lib/typestate.ep"
+
+  runtimeType(Sock, SockHandle)
+  bindPostulate(connectH, hostConnectH, Sock, Sock)
+  bindPostulate(sendH, hostSendH, Nat, Sock, Sock)
+  bindPostulatePair(recvH, hostRecvH, Sock, Nat, Sock)
+  bindPostulate(closeH, hostCloseH, Sock, Sock)
 
   # Happy path: connect, send a Nat, receive one, close. Each step's
   # result feeds the next; the index on Sock advances with the lifecycle.
@@ -73,16 +121,38 @@ eponymBlock:
     closeH(sendH(suc(zero()), sendH(zero(), connectH(s))))
 
 # --- Normal Nim program ------------------------------------------------
-# Plain Nim from here: the clients above were checked at compile time.
-# The operations are mock postulates, so there is no socket to run
-# against; like examples/embedded/session_types.nim, this module's runtime
-# behaviour is just a description of what elaborated.
+# Plain Nim from here: the clients above were checked at compile time and
+# bound to a phase-checking mock backend for executable happy paths.
 
 proc main() =
   echo "typestate_handles: phase-indexed sockets, embedded (Issue #481)."
-  echo "  socketSession : Sock unconnP -> Sock closedP (connect/send/recv/close)"
-  echo "  echoRoundTrip : Sock unconnP -> Sock closedP (connect/recv/send/close)"
-  echo "  sendTwice     : Sock unconnP -> Sock closedP (connect/send/send/close)"
+  let session = newSockHandle()
+  discard socketSession(session)
+  doAssert session.phase == closedB
+  doAssert (session.connects, session.sends, session.receives,
+    session.closes) == (1, 1, 1, 1)
+  doAssert session.lastReceived == 41, "socketSession must receive its payload"
+  doAssert session.lastSent == 0
+  echo "  socketSession trace connect/send/recv/close: ", session.connects,
+    "/", session.sends, "/", session.receives, "/", session.closes
+
+  let echoSock = newSockHandle(incoming = 73)
+  discard echoRoundTrip(echoSock)
+  doAssert echoSock.phase == closedB
+  doAssert (echoSock.connects, echoSock.sends, echoSock.receives,
+    echoSock.closes) == (1, 1, 1, 1)
+  doAssert echoSock.lastReceived == 73
+  doAssert echoSock.lastSent == 73, "echoRoundTrip must send the received value"
+  echo "  echoRoundTrip echoed: ", echoSock.lastSent
+
+  let twice = newSockHandle()
+  discard sendTwice(twice)
+  doAssert twice.phase == closedB
+  doAssert (twice.connects, twice.sends, twice.receives,
+    twice.closes) == (1, 2, 0, 1)
+  doAssert twice.lastSent == 1, "sendTwice must finish with suc(zero())"
+  echo "  sendTwice trace connect/send/recv/close: ", twice.connects,
+    "/", twice.sends, "/", twice.receives, "/", twice.closes
   echo "  misuse (send-before-connect, use-after-close, double-close,"
   echo "  dropped handle) is rejected at elaboration; see examples/ep/28*.ep."
 
