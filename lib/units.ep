@@ -1,0 +1,59 @@
+# Unit-aware quantities with runtime dimension values (issue #493).
+#
+# A unit value carries its dimension and a magnitude normalized to SI by the
+# host parser. Qty's representation is Float for every dimension; dimensions
+# stay explicit runtime Vec values and remain in checked Eponym indices.
+
+import "nat_to_int.ep"
+import "vec.ep"
+import "float.ep"
+import "text.ep"
+
+# Keep Qty nominal: defining Qty(d) = Float would reduce every indexed
+# quantity to Float and make incompatible dimensions convertible.
+postulate(Qty, Vec Int 3 -> Univ)
+
+proc scaleDim (n : Int) (d : Vec Int 3) : Vec Int 3 =
+  vmap Int Int 3 (lam(x: Int) => mulInt n x) d
+
+proc lengthDim : Vec Int 3 =
+  cons Int 2 0 (cons Int 1 1 (cons Int 0 0 (nil Int)))
+
+proc timeDim : Vec Int 3 =
+  cons Int 2 0 (cons Int 1 0 (cons Int 0 1 (nil Int)))
+
+postulate(addDim, Pi(d1: Vec Int 3, Pi(d2: Vec Int 3, Vec Int 3)))
+postulate(subDim, Pi(d1: Vec Int 3, Pi(d2: Vec Int 3, Vec Int 3)))
+
+postulate(addQ,
+  Pi(d: Vec Int 3, Pi(x: Qty d, Pi(y: Qty d, Qty d))))
+postulate(mulQ,
+  Pi(d1: Vec Int 3, Pi(d2: Vec Int 3,
+    Pi(x: Qty d1, Pi(y: Qty d2, Qty (addDim d1 d2))))))
+postulate(divQ,
+  Pi(d1: Vec Int 3, Pi(d2: Vec Int 3,
+    Pi(x: Qty d1, Pi(y: Qty d2, Qty (subDim d1 d2))))))
+postulate(powQ,
+  Pi(n: Int, Pi(d: Vec Int 3,
+    Pi(x: Qty d, Qty (scaleDim n d)))))
+
+postulate(parseUnit,
+  Pi(text: String, Sig(dd: Vec Int 3, Qty dd)))
+postulate(kilometers, Pi(value: Float, Qty lengthDim))
+
+# Warm-up static fragment: this fixed-dimension constructor and operation
+# need no first-class dimension values; the dynamic signatures below do.
+proc kilometersOf (value : Float) : Qty lengthDim =
+  kilometers value
+
+proc addLengths (x : Qty lengthDim) (y : Qty lengthDim) : Qty lengthDim =
+  addQ lengthDim x y
+
+proc parseUnitChecked (text : String) : Sig(dd: Vec Int 3, Qty dd) =
+  parseUnit text
+
+proc dimensionSum (d1 : Vec Int 3) (d2 : Vec Int 3) : Vec Int 3 =
+  addDim d1 d2
+
+proc dimensionDifference (d1 : Vec Int 3) (d2 : Vec Int 3) : Vec Int 3 =
+  subDim d1 d2

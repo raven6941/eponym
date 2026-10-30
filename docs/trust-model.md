@@ -279,6 +279,14 @@ dependent `Sig` compiled to a host tuple is sound exactly when its component
 mappings are index-independent in this sense; a `Vec` length index mentioning
 the bound Sigma value is honestly rejected instead of silently erased.
 
+The runtime units example uses this rule for a nominal indexed family
+`Qty : Vec Int 3 -> Univ`, mapped to `float64` for every dimension. Eponym
+still checks dimension equality in `Qty d`; the runtime mapping erases `d`.
+For `Sig(d: Vec Int 3, Qty d)`, the vector and magnitude cross as a sequence
+and `float64`, but the host parser's claim that the magnitude matches `d` is
+trusted. The same applies to the bound arithmetic callbacks: their signatures
+are checked, while their numeric behavior is implemented in Nim.
+
 `bindPostulateMutable` is retained with decoded-local/result-out semantics:
 the adapter receives decoded local variables, and its encoded result returns
 to Eponym. It does not receive the caller's Nim variable as a `var` alias, and
