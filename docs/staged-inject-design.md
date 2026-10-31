@@ -1,8 +1,12 @@
 # Staged `inject` for runtime type structure
 
-Status: Phase 2 bounded residual-emitter slice for issue #499. The generic
-family API is evaluator-free and strict, but automatic block wiring and codec
-factory integration remain future work.
+Status: Phase 3 production wiring for issue #499. The generic family API is
+evaluator-free and strict, and `{.runtimeType.}` definitions in an embedded
+block now emit an exported `<name>RuntimeType` residual proc. The landed E2E
+uses a static `Nat -> String`-shaped descriptor in the closed v1 slice.
+Dynamic-eliminator surface E2E remains out of scope until issue #500 supplies
+the required large-elimination/universe policy; those eliminators are tested
+at the `stageFamily` level.
 
 ## Problem and boundary
 
@@ -101,10 +105,10 @@ surface `proc PrintfType(f: Format): Univ` from Eponym source.
 
 - Expose the checked Eponym definitions and eliminator metadata to the stager
   without re-parsing source or trusting unchecked Nim AST.
-- Thread host representation declarations from the wrapper backend into
-  `stageFamily`, and wire marked block definitions to the generated residual
-  proc. The current API residualizes beta/let terms, Nat eliminator splits,
-  static Nat/String/Arrow descriptors, and recursive calls in that slice.
+- Connect the emitted residuals to a real runtime consumer such as
+  `runtimeDerive` codec factories. The current API residualizes beta/let
+  terms, Nat eliminator splits, static Nat/String/Arrow descriptors, and
+  recursive calls in that slice.
 - Generate and validate family-specific `TypeRep` constructors, and connect
   the result to a real consumer such as `runtimeDerive` codec factories.
 - Define cache keys for residuals and ensure source changes, bindings, and

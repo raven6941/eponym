@@ -14,6 +14,7 @@ import codegen     # issue #329: naive Value-level backend
 import preterm
 import parse_surf
 import derive_repr  # issue #402: runtimeDerive block form
+import staged_inject  # issue #499: evaluator-free runtime type residuals
 import sheds       # issue #478: shed rewriting, sidecar, semantic state
 import usage_check # issue #478: hasUnresolvedMetas, checkUsage
 import unify       # issue #478: zonk, unify for macro-time draft filling
@@ -4808,6 +4809,44 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
     if runtimeTypes[i].eponymName in trustedRuntimeRecords:
       runtimeTypes[i].hasRecordCodec = true
   let records = hostRecords(body, trustedRuntimeRecords)
+
+  # Issue #499 phase 3: residualize marked definitions as an independent
+  # artifact. The ordinary wrapper/codegen path below remains responsible
+  # for the checked definition itself; this is the evaluator-free descriptor
+  # entry point for runtime consumers.
+  var stagedResiduals: seq[NimNode] = @[]
+  for d in defs:
+    if not d.runtimeType: continue
+    var declaration: NimNode = nil
+    for st in body:
+      if st.kind == nnkProcDef and $st[0] == d.name:
+        declaration = st
+        break
+    if declaration.isNil:
+      error("eponymBlock runtimeType: no Nim declaration for '" & d.name & "'",
+        body)
+    var params: seq[(NimNode, NimNode)] = @[]
+    let formal = declaration[3]
+    for i in 1 ..< formal.len:
+      let binder = formal[i]
+      if binder.kind != nnkIdentDefs:
+        error("eponymBlock runtimeType: unsupported binder in '" & d.name & "'",
+          declaration)
+      let hostType = runtimeNimType(binder[^2], runtimeTypes, records)
+      if hostType.isNil:
+        error("eponymBlock runtimeType '" & d.name & "': cannot determine " &
+          "host type for parameter '" & $binder[0] & "'", binder)
+      for j in 0 ..< binder.len - 2:
+        params.add((ident(binderName(binder[j])), copyNimTree(hostType)))
+    try:
+      let staged = stageFamily(d.tmTm, checkedGlobals, d.name, params, d.loc,
+        d.name & "RuntimeType")
+      # stageFamily also returns a call for macro-local tests; production
+      # wiring needs only the declaration so consumers call it directly.
+      stagedResiduals.add(staged[0])
+    except StagedInjectError as e:
+      error("eponymBlock runtimeType staging error: " & e.msg, declaration)
+
   for requested in trustedRuntimeRecords:
     let recordIndex = findHostRecord(records, requested)
     if recordIndex < 0 or records[recordIndex].isVariant:
@@ -5006,7 +5045,7 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
   let (gatedNames, gatedReasons) = computeGated(defs, checkedGlobals, ms,
     sheds, draftErrors, forceGated)
   var compileTimeOnlyDefs = initTable[string, string]()
-  let codegenDefs = if requireCompiled:
+  var codegenDefs = if requireCompiled:
     let closureCtx = buildCodegenCtx(checkedGlobals, baseDir, src,
       runtimeTypes, allDefs)
     # Incomplete definitions stay available to editor tooling and produce
@@ -5026,6 +5065,16 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
     closure.runtimeDefs
   else:
     defs.filterIt(it.name notin gatedNames)
+  # A runtimeType root is a type-level descriptor family. Its ordinary
+  # definition has no value-tier host ABI; the residual proc above is the
+  # independent runtime artifact. Exclude these roots from strict backend
+  # compilation while retaining the normal wrapper loop's honest absence of
+  # a callable value wrapper.
+  for d in defs:
+    if d.runtimeType:
+      compileTimeOnlyDefs[d.name] =
+        "runtimeType descriptor residual emitted separately"
+  codegenDefs = codegenDefs.filterIt(it.name notin compileTimeOnlyDefs)
   # Issue #401: host-bound postulates whose types are fully within the
   # representation fragment get direct-call forwarders, so repr-tier
   # bodies never route postulate calls through the interpreter.
@@ -5295,6 +5344,8 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
   # reference them.
   for emittedProc in emittedDerivedCodecs:
     result.add(emittedProc)
+  for residual in stagedResiduals:
+    result.add(residual)
   for p in cgBlock.procs:
     if not requireCompiled or
         (p.kind == nnkProcDef and p[0].kind == nnkPostfix and

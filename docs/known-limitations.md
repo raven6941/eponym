@@ -3,14 +3,20 @@
 ## Staged runtime type injection (#499)
 
 The `{.runtimeType.}` annotation is recognized on embedded checked
-definitions and retained in compile-time metadata. Phase 2 now provides the
-strict evaluator-free `stageFamily` residual emitter for the closed
-`Nat`/`String`/`Arrow` descriptor slice, including beta/let reduction and the
-static portion of complete Nat eliminators. The generated code contains only
-descriptor constructors, host control flow, and residual calls. Automatic
-codec-factory wiring and general host-signature discovery remain outstanding;
-annotated definitions therefore still use the ordinary strict wrapper path
-unless a family-specific emitter supplies its host parameter declarations.
+definitions and retained in compile-time metadata. Phase 3 wires marked local
+definitions through the strict evaluator-free `stageFamily` emitter and emits
+an exported `<name>RuntimeType` residual proc alongside the ordinary block
+output. The landed E2E covers the closed `Nat`/`String`/`Arrow` descriptor
+slice, including beta/let reduction and static fragments of complete Nat
+eliminators. Host parameter types come from the block's existing runtime
+representation mappings; an unknown host type is a compile error.
+
+Dynamic-eliminator E2E through the Eponym surface is intentionally not landed:
+a family such as `PrintfType` needs large elimination (`Univ` as its motive),
+which awaits issue #500 and the separate `univ-stratified-flag` work. Dynamic
+eliminators remain covered at the `stageFamily` level. Codec-factory consumers,
+residual caching, and a generated family-specific descriptor algebra remain
+future work.
 
 <!-- Maintainer note (#372, 2026-10-21): a codegen or interop merge must update
 this page in the same PR when it changes runtime behavior, tiering, or

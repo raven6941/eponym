@@ -119,7 +119,7 @@ proc spine(t: Term): tuple[head: Term, args: seq[Term]] =
 
 proc stageFamily*(term: Term, globals: Globals, familyName: string,
                   params: openArray[(NimNode, NimNode)],
-                  loc: Loc = noLoc): NimNode =
+                  loc: Loc = noLoc, residualName = ""): NimNode =
   ## Residualize a checked family.  `params` supplies host names/types for
   ## dynamic binders, since that information intentionally is not stored in
   ## the kernel Term.  The generated procedure only mentions TypeRep
@@ -131,7 +131,8 @@ proc stageFamily*(term: Term, globals: Globals, familyName: string,
   var hostParams: seq[StageBinding] = @[]
   for p in params:
     hostParams.add(StageBinding(name: p[0], hostType: p[1]))
-  let procName = genSym(nskProc, familyName & "Residual")
+  let procName = if residualName.len > 0: ident(residualName)
+                 else: genSym(nskProc, familyName & "Residual")
   var activeDefs = initHashSet[int]()
 
   proc emit(t: Term, env: seq[NimNode]): NimNode
@@ -222,13 +223,23 @@ proc stageFamily*(term: Term, globals: Globals, familyName: string,
   var initialEnv: seq[NimNode] = @[]
   for i in countdown(hostParams.len - 1, 0):
     initialEnv.add(hostParams[i].name)
-  var body = emit(term, initialEnv)
+  # Checked definitions store their explicit parameters as outer lambdas.
+  # The generated residual proc supplies those binders directly, so consume
+  # exactly that lambda telescope before emitting the body.
+  var root = term
+  for _ in 0 ..< hostParams.len:
+    if root.isNil or root.kind != tLam:
+      raise stageError(familyName, "checked parameter telescope mismatch", loc)
+    root = root.scope.bdy
+  var body = emit(root, initialEnv)
   var decl = newNimNode(nnkProcDef)
-  decl.add(procName)
+  decl.add(if residualName.len > 0:
+    newTree(nnkPostfix, ident"*", procName)
+    else: procName)
   decl.add(newEmptyNode())
   decl.add(newEmptyNode())
   var formal = newNimNode(nnkFormalParams)
-  formal.add(ident"TypeRep")
+  formal.add(bindSym"TypeRep")
   for p in hostParams:
     formal.add(newIdentDefs(p.name, p.hostType, newEmptyNode()))
   decl.add(formal)
