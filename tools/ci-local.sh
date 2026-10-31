@@ -102,6 +102,7 @@ echo "### Build: experimental (issue #189: kept building, clearly labeled)"
 for f in eponym mac_surf heap qtt_proto; do
   run_step nim c $NC --hints:off $XP "src/experimental/$f.nim"
 done
+run_step nim c -r $NC --hints:off $XP "tests/test_staged_printf_inject.nim"
 
 echo "### Test: module suites"
 for f in eponym_init preterm parse_surf elab unify eponym_mac egraph eponym_embed kernel_check; do
