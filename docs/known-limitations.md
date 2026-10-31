@@ -1,5 +1,14 @@
 # Known limitations
 
+## Staged runtime type injection (#499)
+
+The `{.runtimeType.}` annotation is recognized on embedded checked
+definitions and retained in compile-time metadata. The production dynamic
+residual emitter and codec-factory integration are not yet enabled; annotated
+definitions therefore continue through the ordinary strict compiled-wrapper
+path. No evaluator-free `TypeRep` residual is promised until that integration
+lands.
+
 <!-- Maintainer note (#372, 2026-10-21): a codegen or interop merge must update
 this page in the same PR when it changes runtime behavior, tiering, or
 wrapper/codec coverage. Re-sync passes are not deferred "for later". -->

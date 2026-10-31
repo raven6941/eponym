@@ -2362,6 +2362,10 @@ type
     tyTm*: Term
     tmTm*: Term
     loc*: Loc
+    ## Issue #499: the Nim-side `{.runtimeType.}` marker is retained on the
+    ## checked definition.  It is deliberately metadata, not an Eponym term:
+    ## elaboration and kernel checking remain unchanged.
+    runtimeType*: bool
 
 proc elabDefDecl(d: SurfDef, globals: var Globals, supply: var Supply,
                ms: var MetaStore): ElabDef =

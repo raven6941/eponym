@@ -1106,6 +1106,17 @@ proc procDefToEponym(n: NimNode): string =
   "proc " & name & genericStr & " " & paramStrs.join(" ") & " : " & retTy &
     " = " & body & "\n"
 
+proc hasRuntimeTypePragma(n: NimNode): bool =
+  ## `{.runtimeType.}` is a host-side staging annotation.  It must be read
+  ## before procDefToEponym serializes the declaration because pragmas are not
+  ## part of the Eponym surface grammar.
+  if n.kind != nnkProcDef or n.len <= 4 or n[4].kind != nnkPragma:
+    return false
+  for pragma in n[4]:
+    if pragma.kind in {nnkIdent, nnkSym} and $pragma == "runtimeType":
+      return true
+  false
+
 proc defCallToEponym(st: NimNode): string =
   ## def(isZero, Nat -> Bool):
   ##   clause([zero], true)
@@ -4496,6 +4507,21 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
     let detail = if hasEponymImport: e.msg else:
       sourceMappedDiagnostic(e.msg, e.loc, sourceLineMap)
     error("eponymBlock parse error: " & detail, body)
+
+  # Preserve the host annotation on the checked definition.  This is done
+  # after elaboration, so the marker cannot affect name resolution, conversion
+  # or kernel checking.  It also intentionally only scans declarations in this
+  # block: imported/unrelated definitions are not made staging roots.
+  var runtimeTypeNames = initHashSet[string]()
+  for st in body:
+    if st.kind == nnkProcDef and hasRuntimeTypePragma(st):
+      runtimeTypeNames.incl($st[0])
+  for i in 0 ..< defs.len:
+    if defs[i].name in runtimeTypeNames:
+      defs[i].runtimeType = true
+  for i in 0 ..< allDefs.len:
+    if allDefs[i].name in runtimeTypeNames:
+      allDefs[i].runtimeType = true
 
   # Issue #478: shed matching, macro-time draft filling, sidecar.
   # On elaboration failure the sidecar is written before the error (as
