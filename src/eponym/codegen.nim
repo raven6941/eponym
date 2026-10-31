@@ -1556,6 +1556,13 @@ proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
   ## and follows runtime references through erased bodies, skipping type
   ## positions. Erasure failures fall back to the unerased body
   ## (conservative: every reference counts as a runtime reference).
+  # With no block-local definitions there is no runtime root and no local
+  # definition to mark compile-time-only. The closure is empty regardless of
+  # the imported definitions, so avoid erasing every imported body just to
+  # discover that fact (large proof-heavy libraries make this especially
+  # expensive).
+  if localDefs.len == 0 and explicitCompileTimeOnly.len == 0:
+    return (runtimeDefs: @[], compileTimeOnly: initTable[string, string]())
   var defsByRefId = initTable[int, ElabDef]()
   for d in allDefs:
     if d.name in globals and not globals[d.name].tm.isNil and
