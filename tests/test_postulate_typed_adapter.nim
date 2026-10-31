@@ -32,7 +32,7 @@ proc recordingDebugEcho(args: seq[RuntimeValue],
   adapterPrinted.add(runtimeValueDebugString(args[1], globals))
   args[1]
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   runtimeType(Int, int)
   import "../lib/debug.ep"

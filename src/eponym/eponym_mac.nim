@@ -1356,6 +1356,11 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
         # codecs still enforce any structural constraints they represent.
         if st.len != 2 or st[1].kind != nnkIdent:
           error("runtimeRecordTrusted expects (RecordType)", st)
+      elif head == "compileTimeOnly":
+        # Explicitly type-check a definition that has no runtime API. The
+        # marker is consumed by eponymBlock; runtime callers are rejected.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("compileTimeOnly expects (checkedDefinition)", st)
       elif head == "requireCompiled":
         # Opt in to compile-time failure if any checked definition falls back
         # to interpretation or calls a definition outside this block's
@@ -4373,7 +4378,7 @@ proc computeGated(defs: seq[ElabDef], checkedGlobals: Globals,
       "' and is itself gated; it cannot be called until that shed is filled"
   (gated, reasons)
 
-macro eponymBlock*(body: untyped): untyped =
+proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
   ## data(N, Univ): block.
@@ -4392,8 +4397,9 @@ macro eponymBlock*(body: untyped): untyped =
   ## parenthesized automatically.
   ## `byTac(name)` (Issue #151): tactic term (`by refl`, smoke test 14).
   ## `x {.qvar(q).}` (Issue #151): quantity-variable binder `(q x : T)`.
-  ## `requireCompiled()` restricts a block to representation-compiled
-  ## definitions with direct typed wrappers; unsupported paths fail here.
+  ## Runtime definitions in every eponymBlock require representation
+  ## code and direct typed wrappers; unsupported paths fail at expansion.
+  ## `requireCompiled()` remains as a redundant compatibility marker.
   ## Nim-safe name mapping: `vecnil` -> `nil` (`nil` is a Nim keyword,
   ## so embedded code spells the constructor `vecnil`). `unitv`,
   ## `unitTy`, and `emptyTy` are spelled as-is (single syntax).
@@ -4406,11 +4412,22 @@ macro eponymBlock*(body: untyped): untyped =
   # shed-free blocks this walk is a no-op.
   var sheds: seq[ShedInfo] = @[]
   let draftNodes = rewriteSheds(body, sheds)
-  var requireCompiled = false
+  # Issue #490: runtime code must always use the representation-compiled
+  # backend. Keep the marker accepted as a source-compatible no-op while
+  # making its former strict behavior the default for every block.
+  var requireCompiled = strictRuntime
   for st in body:
     if st.kind == nnkCall and st.len == 1 and st[0].kind == nnkIdent and
         $st[0] == "requireCompiled":
       requireCompiled = true
+  var compileTimeOnlyNames = initHashSet[string]()
+  for st in body:
+    if st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
+        $st[0] == "compileTimeOnly":
+      let name = $st[1]
+      if name in compileTimeOnlyNames:
+        error("duplicate compileTimeOnly request for '" & name & "'", st)
+      compileTimeOnlyNames.incl(name)
   var sourceLineMap: seq[DiagnosticSourceLoc]
   var hasEponymImport = false
   for st in body:
@@ -4488,6 +4505,14 @@ macro eponymBlock*(body: untyped): untyped =
     let detail = if hasEponymImport: elabErrMsg else:
       sourceMappedDiagnostic(elabErrMsg, elabErrLoc, sourceLineMap)
     error("eponymBlock elaboration error: " & detail, body)
+  for requested in compileTimeOnlyNames:
+    if not defs.anyIt(it.name == requested):
+      error("compileTimeOnly names no checked definition: " & requested,
+        body)
+  for requested in compileTimeOnlyNames:
+    if not defs.anyIt(it.name == requested):
+      error("compileTimeOnly names no checked definition: " & requested,
+        body)
   # Issue #478: fill shed drafts at macro time. Each draft is converted
   # to Eponym source, parsed, checked against its hole's goal in the
   # hole's context, and unified with the hole meta. A draft that fails
@@ -4925,20 +4950,23 @@ macro eponymBlock*(body: untyped): untyped =
   # a gated def's compiled proc must not exist for callers to reference.
   let (gatedNames, gatedReasons) = computeGated(defs, checkedGlobals, ms,
     sheds, draftErrors, forceGated)
-  if requireCompiled and gatedNames.len > 0:
-    var names: seq[string] = @[]
-    for d in defs:
-      if d.name in gatedNames: names.add(d.name)
-    error("eponymBlock requireCompiled: incomplete definition(s) " &
-      names.join(", ") &
-      " cannot be compiled; requireCompiled does not admit incomplete definitions",
-      body)
   var compileTimeOnlyDefs = initTable[string, string]()
   let codegenDefs = if requireCompiled:
     let closureCtx = buildCodegenCtx(checkedGlobals, baseDir, src,
-      runtimeTypes)
-    let closure = classifyRuntimeClosure(closureCtx, defs, allDefs,
-      checkedGlobals)
+      runtimeTypes, allDefs)
+    # Incomplete definitions stay available to editor tooling and produce
+    # use-gated compile errors at the Nim boundary. They are excluded from
+    # executable code generation, along with their callers, so no generated
+    # program path can reach the interpreter through a shed.
+    let runtimeSeeds = defs.filterIt(it.name notin gatedNames)
+    let runtimeAllDefs = allDefs.filterIt(it.name notin gatedNames)
+    var closure: tuple[runtimeDefs: seq[ElabDef],
+                       compileTimeOnly: Table[string, string]]
+    try:
+      closure = classifyRuntimeClosure(closureCtx, runtimeSeeds,
+        runtimeAllDefs, checkedGlobals, compileTimeOnlyNames)
+    except CgUnsupported as e:
+      error("eponymBlock requireCompiled: " & e.msg, body)
     compileTimeOnlyDefs = closure.compileTimeOnly
     closure.runtimeDefs
   else:
@@ -5227,6 +5255,10 @@ macro eponymBlock*(body: untyped): untyped =
       # no Nim proc takes or returns their unrepresentable types — so no
       # wrapper is emitted. Referencing one from Nim is a compile error,
       # which is honest: there is nothing to call.
+      if d.name in compileTimeOnlyNames:
+        result.add(unreconstructableRuntimeWrapper(d.name,
+          "eponymBlock definition '" & d.name &
+          "' is marked compileTimeOnly and has no runtime wrapper"))
       continue
     let srcLit = newLit(wrapperSrc)
     let nameLit = newLit(d.name)
@@ -5492,6 +5524,15 @@ macro eponymBlock*(body: untyped): untyped =
           if not importedDecl.isNil and
               importedDecl[2].kind != nnkEmpty: "RuntimeValueRaw"
           else: "RuntimeValue"))
+
+macro eponymBlock*(body: untyped): untyped =
+  eponymBlockExpansion(body, true)
+
+when defined(eponymRuntimeBridgeTests):
+  # Test-only harness for legacy Value bridge unit coverage. It is excluded
+  # from normal package builds; user-facing `eponymBlock` is always strict.
+  macro eponymRuntimeBridgeTestBlock*(body: untyped): untyped =
+    eponymBlockExpansion(body, false)
 
 macro eponym*(src: string): untyped =
   ## Elaborate and typecheck a surface program at compile time.

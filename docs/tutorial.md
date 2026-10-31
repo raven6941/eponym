@@ -49,6 +49,7 @@ import eponym_embed
 
 eponymBlock:
   postulate(Int, Univ)
+  runtimeType(Int, int)
 
   proc double(x: Int): Int =
     addInt(x, x)
@@ -117,10 +118,17 @@ its Nat index and encodes the checked `nil`/`cons` constructors:
 ```nim
 eponymBlock:
   import "lib/vec.ep"
+  postulate(Int, Univ)
+  runtimeType(Int, int)
+  runtimeType(Nat, int)
   runtimeVector(Vec)
-  proc keepVector[A: Univ, n: Nat](values: Vec[A, n]): Vec[A, n] = values
+  proc doubleVector(n: Nat, values: Vec[Int, n]): Vec[Int, n] =
+    vecElim[Int](lam(i: Nat) => lam(v: Vec[Int, i]) => Vec[Int, i],
+      vecnil[Int](),
+      lam(i: Nat) => lam(x: Int) => lam(xs: Vec[Int, i]) => lam(ih: Vec[Int, i]) =>
+        cons[Int, i](addInt(x, x), ih), n, values)
 
-doAssert keepVector[int, 3](@[2, 3, 5]) == @[2, 3, 5]
+doAssert doubleVector(3, @[2, 3, 5]) == @[4, 6, 10]
 ```
 
 Vector elements use their own runtime codec, including opaque Nim values
@@ -128,36 +136,40 @@ passed through a generic type parameter; nested vectors map to nested Nim
 sequences. Nat length expressions support indices, `zero`, `suc`, `add`, and
 `mul`.
 
-When the length is known only at runtime, use the generated `Dynamic` sibling
-instead of the `static[int]` generic wrapper. It takes the length as a Nim
-`int`, keeps the vector argument as `seq[int]`, and checks their agreement
-before running the checked definition:
+Pass a runtime length as an ordinary checked `Nat` parameter. Strict
+representation code checks it against the sequence length before running the
+definition. A length supplied only as an erased type parameter would require a
+runtime-computed type index; that shape has no representation-compiled wrapper
+yet, and `runtimeValue` is rejected in `eponymBlock`:
 
-<!-- tutorial-smoke: dynamic-vec -->
+<!-- tutorial-smoke: runtime-vec -->
 ```nim
 import eponym_mac
-import eponym_embed
 
 eponymBlock:
   import "lib/vec.ep"
   postulate(Int, Univ)
+  runtimeType(Int, int)
+  runtimeType(Nat, int)
   runtimeVector(Vec)
-  proc keepDynamicVector[n: Nat](values: Vec[Int, n]): Vec[Int, n] = values
-  runtimeValue(keepDynamicVector)
+  proc doubleVector(n: Nat, values: Vec[Int, n]): Vec[Int, n] =
+    vecElim[Int](lam(i: Nat) => lam(v: Vec[Int, i]) => Vec[Int, i],
+      vecnil[Int](),
+      lam(i: Nat) => lam(x: Int) => lam(xs: Vec[Int, i]) => lam(ih: Vec[Int, i]) =>
+        cons[Int, i](addInt(x, x), ih), n, values)
 
 let length = 3
-doAssert keepDynamicVectorDynamic(length, @[2, 3, 5]) == @[2, 3, 5]
+doAssert doubleVector(length, @[2, 3, 5]) == @[4, 6, 10]
 var rejectedWrongLength = false
 try:
-  discard keepDynamicVectorDynamic(length, @[2, 3])
+  discard doubleVector(length, @[2, 3])
 except ValueError:
   rejectedWrongLength = true
 doAssert rejectedWrongLength
 ```
 
 A sequence whose length differs from `length` raises `ValueError` at the
-runtime boundary. The raw `RuntimeValue` dynamic overload remains available
-when an input type has no Nim codec.
+runtime boundary.
 
 For an unindexed collection, `runtimeList(List)` maps the standard `List[A]`
 family to `seq[A]` and applies the element codec recursively:
@@ -202,20 +214,25 @@ import eponym_embed
 
 eponymBlock:
   import "lib/vec.ep"
+  runtimeType(Nat, int)
+  runtimeVector(Vec)
 
   # A 2-vector, with its length in the type.
   proc twoNats(x: Nat, y: Nat): Vec[Nat, 2] =
     cons[Nat, 1](x, cons[Nat, 0](y, vecnil[Nat]()))
 
   # Generic Eponym binders and type applications use Nim's square brackets.
+  compileTimeOnly(myAppend)
   proc myAppend[A: Univ, n: Nat](x: A, xs: Vec[A, n]): Vec[A, suc(n)] =
     cons[A, n](x, xs)
 
   # Explicitly supply the prelude's implicit binders when desired.
+  compileTimeOnly(appendTwo)
   proc appendTwo(xs: Vec[Nat, 1], ys: Vec[Nat, 1]): Vec[Nat, add(1, 1)] =
     vappend[Nat, 1, 1](xs, ys)
 
   # Length of a vector, by induction on the vector.
+  compileTimeOnly(vlen)
   proc vlen(A: Univ, n: Nat, v: Vec[A, n]): Nat =
     vecElim[A](lam(i: Nat) => lam(w: Vec[A, i]) => Nat, zero(),
             lam(i: Nat) => lam(x: A) => lam(xs: Vec[A, i]) => lam(ih: Nat) => suc(ih),

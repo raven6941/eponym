@@ -23,6 +23,8 @@ eponymBlock:
   import "../../lib/nat.ep"
 
   postulate(Int, Univ)
+  runtimeType(Int, int)
+  runtimeType(Nat, int)
 
   # Complete definition over primitive Int: callable from normal Nim code.
   proc double(x: Int): Int = addInt(x, x)

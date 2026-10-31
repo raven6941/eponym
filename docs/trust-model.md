@@ -205,8 +205,8 @@ time.
 - **Runtime re-elaboration.** Ordinary wrappers may re-run the elaborator on
   first runtime use (cached by source and base directory;
   `eponym_embed.nim`) to obtain terms with runtime closures. Subsequent calls
-  use the cache. `requireCompiled()` wrappers use direct representation code
-  and do not take this path. Compile-time elaboration is the checking. A
+  use the cache. `eponymBlock` runtime wrappers use direct representation
+  code and do not take this path. Compile-time elaboration is the checking. A
   definition whose ordinary runtime re-elaboration fails was still checked at
   compile time; the runtime path cannot introduce an unchecked term.
 - **Runtime value codecs.** First-order generated wrappers convert primitive
