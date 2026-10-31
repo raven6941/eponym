@@ -438,7 +438,8 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
 proc qtyPrefix(n: NimNode): string =
   ## Eponym quantity prefix from a Nim param pragma:
   ## `ch {.linear.}` -> "1 ", `ch {.erased.}` -> "0 ",
-  ## `ch {.qvar(q).}` -> "q " (quantity *variable* binder, issue #151/#66).
+  ## `ch {.unrestricted.}` -> "2 ", and `ch {.qvar(q).}` -> "q "
+  ## (quantity *variable* binder, issue #151/#66).
   if n.kind == nnkPragmaExpr and n.len == 2 and n[1].kind == nnkPragma:
     for pr in n[1]:
       case pr.kind
@@ -446,13 +447,14 @@ proc qtyPrefix(n: NimNode): string =
         case $pr
         of "linear": return "1 "
         of "erased": return "0 "
+        of "unrestricted": return "2 "
         else: error("eponymBlock: unknown quantity pragma: " & $pr &
-                    " (want linear/erased or qvar(q))", pr)
+                    " (want linear/erased/unrestricted or qvar(q))", pr)
       of nnkCall:
         if pr[0].kind == nnkIdent and $pr[0] == "qvar" and pr.len == 2 and
            pr[1].kind == nnkIdent:
           return $pr[1] & " "
-        error("eponymBlock: unsupported param pragma (want linear/erased or qvar(q))", pr)
+        error("eponymBlock: unsupported param pragma (want linear/erased/unrestricted or qvar(q))", pr)
       else:
         error("eponymBlock: unsupported param pragma", pr)
     return ""
@@ -2193,6 +2195,25 @@ proc runtimeIndexDependencyCodecSupports(n: NimNode, binder: string,
       mappings)
   false
 
+proc runtimeOpaqueIndexDependencyOnly(n: NimNode, binder: string,
+    mappings: seq[HostRuntimeType]): bool =
+  ## A non-Nat Sigma index may occur in a result type only beneath a plain
+  ## opaque mapping, whose host representation explicitly drops all indices.
+  if not mentionsName(n, binder): return true
+  let head = runtimeTypeHead(n)
+  if head.kind == nnkIdent:
+    for mapping in mappings:
+      if mapping.eponymName == $head and
+          not mapping.isRuntimeVector and not mapping.isRuntimeList and
+          not mapping.isRuntimeOption and not mapping.isRuntimeVariant and
+          not mapping.isRuntimeCodec and not mapping.hasRecordCodec:
+        return true
+  let sigma = runtimeSigmaComponents(n, allowDependent = true)
+  if not sigma.first.isNil:
+    return runtimeOpaqueIndexDependencyOnly(sigma.first, binder, mappings) and
+      runtimeOpaqueIndexDependencyOnly(sigma.second, binder, mappings)
+  false
+
 proc runtimeSigmaComponentsForCodec(n: NimNode,
     mappings: seq[HostRuntimeType], allowDependentSigma: bool):
     tuple[first, second: NimNode, binder: string] =
@@ -2204,11 +2225,13 @@ proc runtimeSigmaComponentsForCodec(n: NimNode,
   if not result.first.isNil or allowDependentSigma:
     return
   let dependent = runtimeSigmaComponents(n, allowDependent = true)
-  if dependent.first.isNil or dependent.binder.len == 0 or
-      simpleRuntimeCodec(dependent.first) != "nat":
+  if dependent.first.isNil or dependent.binder.len == 0:
     return
-  if runtimeIndexDependencyCodecSupports(dependent.second, dependent.binder,
-      mappings):
+  if (simpleRuntimeCodec(dependent.first) == "nat" and
+      runtimeIndexDependencyCodecSupports(dependent.second, dependent.binder,
+        mappings)) or
+      runtimeOpaqueIndexDependencyOnly(dependent.second, dependent.binder,
+        mappings):
     return dependent
 
 proc runtimeRecordDependenciesCodecSupported(record: HostRecord,
@@ -4833,11 +4856,17 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
         continue
       if binding.pairResult:
         let pairArgs = binding.eponymTypes[0 ..< binding.pairArgCount]
+        let secondTypeName = binding.eponymTypes[binding.pairArgCount + 1]
+        let secondTypeHasOpaqueRuntimeMapping =
+          runtimeTypes.anyIt(it.eponymName == secondTypeName and
+            not it.isRuntimeVector and not it.isRuntimeList and
+            not it.isRuntimeOption and not it.isRuntimeVariant and
+            not it.isRuntimeCodec and not it.hasRecordCodec)
         validateHostSigmaAdapterType(checkedGlobals,
           binding.postulateName, pairArgs,
           binding.eponymTypes[binding.pairArgCount],
-          binding.eponymTypes[binding.pairArgCount + 1],
-          binding.trustedPairIndex)
+          secondTypeName, binding.trustedPairIndex or
+            secondTypeHasOpaqueRuntimeMapping)
         continue
       var usesCustomCodec = false
       for typeName in binding.eponymTypes:

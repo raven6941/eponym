@@ -3001,6 +3001,13 @@ proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
     # Issue #93: Nat literals are definitionally suc^n(zero); on the int
     # representation they are just int literals.
     newLit(t.natLitVal)
+  of tPair:
+    # Issue #493: Sigma values over representation-supported components are
+    # host tuples. `fst`/`snd` already project those tuples; compile the
+    # matching pair constructor so Eponym Vec folds can accumulate tuples.
+    let first = cgRepr(ctx, t.pFst, env)
+    let second = cgRepr(ctx, t.pSnd, env)
+    newTree(nnkTupleConstr, first, second)
   of tLet:
     # Issue #413: a straight-line chain of linear lets over seq or int
     # reprs becomes one mutable buffer/accumulator; anything else keeps

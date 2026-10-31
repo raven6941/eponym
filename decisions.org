@@ -30,6 +30,29 @@
   independent soundness review. #490 remains strict; the #491 prototype does
   not change universe checking.
 
+* 2026-10-30 — Runtime quantities keep nominal dimensions (issue #493)
+
+  Context: the proposed definition =Qty(d: Vec Int 3): Univ = Float= is
+  reducible, so every =Qty d= converts to =Float=. The checker then accepts
+  adding length and time, or returning area from a length-valued function;
+  the runtime representation mapping cannot restore a distinction erased
+  during type checking.
+  Options considered: retain the defined family and rely on example
+  discipline; use a nominal family with a runtime mapping; or model a
+  structural quantity record.
+  Decision: declare =Qty= as a postulated indexed family
+  (=Qty : Vec Int 3 -> Univ=) and map every family instance to =float64= at
+  the explicit runtime boundary. Eponym retains and compares the dimensions;
+  the host adapter's claim that a magnitude corresponds to its dimension is
+  trusted. The runtime parser therefore returns the dimension beside the
+  normalized magnitude, and callers compare those dimension values before
+  using the dimension-polymorphic addition operation. `unrestricted` binders
+  keep runtime dimension and exponent values available when they appear in
+  dependent result types.
+  Consequences: incompatible-dimension `.ep` examples reject statically, but
+  Nim-side parsing and numeric/vector callbacks remain trusted. A reducible
+  alias to `Float` is unsuitable for value-indexed quantities.
+
 * 2026-10-26 — Lambda syntax uses annotated arrow binders (issue #475)
 
   Context: issue #471 changed lambdas to call forms such as =lam(x, T, body)=

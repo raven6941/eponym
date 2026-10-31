@@ -38,7 +38,11 @@ show a few useful patterns:
   transport and codec failures as explicit result values.
 - **Dimensions and shapes** — index vectors and matrices by their dimensions
   so operations like dot product and matrix-vector multiplication require
-  compatible sizes. See [`convex_opt_vec.nim`](examples/embedded/convex_opt_vec.nim).
+  compatible sizes. [`units_measure.nim`](examples/embedded/units_measure.nim)
+  also demonstrates runtime-parsed unit dimensions, normalization to a
+  common unit, and dimension-checked quantity operations.
+  See [`convex_opt_vec.nim`](examples/embedded/convex_opt_vec.nim) for checked
+  vector and matrix algorithms.
 - **Mathematical certificates** — require a proof that an expression follows
   convexity rules before passing it to an optimizer. See
   [`convex_opt.nim`](examples/embedded/convex_opt.nim) and

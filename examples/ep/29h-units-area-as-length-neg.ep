@@ -1,0 +1,6 @@
+import "../../lib/units.ep"
+
+postulate(lengthValue, Qty lengthDim)
+
+proc areaReturnedAsLength : Qty lengthDim =
+  mulQ lengthDim lengthDim lengthValue lengthValue

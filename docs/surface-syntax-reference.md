@@ -526,6 +526,10 @@ linear variable zero or two-plus times. Types are checked in the all-0
 context, so a type-level mention of a linear variable does not consume it.
 In canonical surface text the spellings are `(1 x : T)` (linear),
 `(0 x : T)` (erased), `(q x : T)` (quantity variable, issue #66).
+Write `(2 x : T)` for an explicit unrestricted binder in `.ep`; numeric
+quantities greater than two have the same unrestricted meaning. Embedded Nim
+uses `x {.unrestricted.}: T` for the same annotation. This is useful when a
+runtime index must remain an ordinary value while appearing in later types.
 
 **Inference (issues #84/#371).** An unannotated binder gets its quantity
 inferred from usage: zero relevant uses becomes erased (`0`); exactly one
