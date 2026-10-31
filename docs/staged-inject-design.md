@@ -1,7 +1,8 @@
 # Staged `inject` for runtime type structure
 
-Status: design and family-specific prototype for issue #491. This is not a
-production Eponym feature.
+Status: Phase 2 bounded residual-emitter slice for issue #499. The generic
+family API is evaluator-free and strict, but automatic block wiring and codec
+factory integration remain future work.
 
 ## Problem and boundary
 
@@ -100,9 +101,10 @@ surface `proc PrintfType(f: Format): Univ` from Eponym source.
 
 - Expose the checked Eponym definitions and eliminator metadata to the stager
   without re-parsing source or trusting unchecked Nim AST.
-- Residualize the core term language used by those definitions, including
-  dynamic eliminator branches, recursive calls, and the selected universe
-  policy.
+- Thread host representation declarations from the wrapper backend into
+  `stageFamily`, and wire marked block definitions to the generated residual
+  proc. The current API residualizes beta/let terms, Nat eliminator splits,
+  static Nat/String/Arrow descriptors, and recursive calls in that slice.
 - Generate and validate family-specific `TypeRep` constructors, and connect
   the result to a real consumer such as `runtimeDerive` codec factories.
 - Define cache keys for residuals and ensure source changes, bindings, and
