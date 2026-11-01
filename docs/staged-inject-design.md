@@ -1,8 +1,8 @@
 # Staged `inject` for runtime type structure
 
 Status: Phase 3 production wiring for issue #499. The generic family API is
-evaluator-free and strict, and `{.runtimeType.}` definitions in an embedded
-block now emit an exported `<name>RuntimeType` residual proc. The landed E2E
+evaluator-free and strict, and `{.stagedType.}` definitions in an embedded
+block now emit an exported `<name>StagedType` residual proc. The landed E2E
 uses a static `Nat -> String`-shaped descriptor in the closed v1 slice.
 Dynamic-eliminator surface E2E remains out of scope until issue #500 supplies
 the required large-elimination/universe policy; those eliminators are tested
@@ -38,8 +38,11 @@ At a call site that opts into injection:
    static branch work is reduced before it is emitted.
 5. Return the residual function with a family-specific `TypeRep` result.
 
-The initial trigger should be explicit on the *type-level family* (the issue
-uses `{.runtimeType.}` as a candidate spelling). An unannotated definition
+The initial trigger should be explicit on the *type-level family*; the landed
+trigger is `{.stagedType.}` (issue #499 shipped it as `{.runtimeType.}`, a
+spelling from the #491 design that issue #524 renamed because it collides
+with the `runtimeType(EponymType, NimType)` representation-mapping call).
+An unannotated definition
 keeps current erasure behavior. The trigger is transitive over calls from the
 annotated family, but does not mark unrelated definitions for residualization.
 No supported-subset promise is needed: the stager either residualizes the

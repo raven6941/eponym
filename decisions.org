@@ -4083,3 +4083,26 @@
   component is not caught by the scaled walk (per-component paths would
   be needed); the strict count still rejects it when the value itself
   mentions the binder twice.
+
+* 2026-11-01 — `{.stagedType.}` renames the #499 staging pragma (issue #524)
+
+  Context: issue #499's staged-inject pragma shipped as `{.runtimeType.}`,
+  colliding with the long-established `runtimeType(EponymType, NimType)`
+  representation-mapping call. One is a host-side pragma that residualizes a
+  type-level Eponym computation into runtime `TypeRep` code; the other maps
+  an Eponym type to a Nim host type for codegen. Related but conceptually
+  different operations sharing one user-facing name, flagged by the
+  Nim-programmer surprise audit before release.
+  Options considered: (a) rename the pragma, keep the mapping form (the
+  mapping is the established surface; the pragma is one day old);
+  (b) rename the mapping form; (c) keep both with documented disambiguation.
+  Decision: (a) — the pragma is now `{.stagedType.}`, a hard rename with no
+  alias (single-syntax principle; the old spelling was never released). A
+  bare `{.runtimeType.}` pragma on a definition is a compile error with a
+  migration hint. The generated residual proc is renamed `<name>RuntimeType`
+  to `<name>StagedType`, and the `ElabDef` metadata field moves from
+  `runtimeType` to `stagedType` for consistency.
+  Consequences: the user-facing `runtimeType` name now refers to exactly one
+  thing (the representation mapping); staged-inject diagnostics say
+  `stagedType`. Old-spelling pragmas fail loudly with the new name rather
+  than silently dropping the staging marker.

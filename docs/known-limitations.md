@@ -2,10 +2,10 @@
 
 ## Staged runtime type injection (#499)
 
-The `{.runtimeType.}` annotation is recognized on embedded checked
+The `{.stagedType.}` annotation is recognized on embedded checked
 definitions and retained in compile-time metadata. Phase 3 wires marked local
 definitions through the strict evaluator-free `stageFamily` emitter and emits
-an exported `<name>RuntimeType` residual proc alongside the ordinary block
+an exported `<name>StagedType` residual proc alongside the ordinary block
 output. The landed E2E covers the closed `Nat`/`String`/`Arrow` descriptor
 slice, including beta/let reduction and static fragments of complete Nat
 eliminators. Host parameter types come from the block's existing runtime

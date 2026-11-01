@@ -1,4 +1,7 @@
 ## Issue #499 phase 3: production pragma-to-residual end-to-end coverage.
+## Issue #524: the staging pragma is `{.stagedType.}` (renamed from
+## `{.runtimeType.}`); the `runtimeType(EponymType, NimType)` mapping form
+## keeps its name.
 import eponym_mac
 import staged_inject
 import std/[osproc, os, strutils]
@@ -8,11 +11,11 @@ eponymBlock:
   import "../lib/text.ep"
   runtimeType(Nat, int)
   runtimeType(String, string)
-  proc myArrow: Univ {.runtimeType.} = Pi(n: Nat, String)
-  proc myParameterizedArrow(n: Nat): Univ {.runtimeType.} = Pi(x: Nat, String)
+  proc myArrow: Univ {.stagedType.} = Pi(n: Nat, String)
+  proc myParameterizedArrow(n: Nat): Univ {.stagedType.} = Pi(x: Nat, String)
 
-doAssert myArrowRuntimeType() == arrowRep(natRep(), stringRep())
-doAssert myParameterizedArrowRuntimeType(7) == arrowRep(natRep(), stringRep())
+doAssert myArrowStagedType() == arrowRep(natRep(), stringRep())
+doAssert myParameterizedArrowStagedType(7) == arrowRep(natRep(), stringRep())
 
 let (symbols, status) = execCmdEx("nm " & quoteShell(getAppFilename()))
 doAssert status == 0
@@ -21,4 +24,4 @@ for interpreterSymbol in ["evalWhnf", "evalWithBindings", "callValueFuncDir",
   doAssert interpreterSymbol notin symbols,
     "production residual binary references interpreter symbol " & interpreterSymbol
 
-echo "test_runtime_type_e2e: passed"
+echo "test_staged_type_e2e: passed"
