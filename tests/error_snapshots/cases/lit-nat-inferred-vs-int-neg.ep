@@ -1,0 +1,5 @@
+# Negative test (issue #514): a bare literal elaborated in inference mode
+# defaults to Nat; meeting an expected Int must explain the conceptual
+# mistake (literal defaulting) and suggest natToInt, in one diagnostic.
+import "../../lib/nat_to_int.ep"
+proc y : Int = let three = 3 in three

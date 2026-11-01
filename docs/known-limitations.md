@@ -88,6 +88,11 @@ runtime-compiled block, declare `runtimeType(Int, int)` and
 `runtimeType(Nat, int)` to select those representations. Large conversions
 through the legacy Value path therefore take linear time and space.
 
+Bare integer literals are inferred as `Nat` when no expected type is available.
+When a later expected type is `Int`, the elaborator reports that defaulting and
+suggests `natToInt(n)`; provide an `Int` context instead when the literal should
+be an `Int` directly.
+
 For typed runtime wrappers, `runtimeType(Int, int)`,
 `runtimeType(Nat, int)`, and `runtimeType(Bool, bool)` select the Nim boundary
 types while preserving each built-in Eponym value encoding. For example,

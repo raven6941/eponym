@@ -61,6 +61,7 @@ const cases: seq[Case] = @[
   ("tests/error_snapshots/cases/refl-fail-neg.ep", "tactic: refl on unequal terms"),
   ("tests/error_snapshots/cases/unit-ty-vs-int-neg.ep", "literals: unit value where an integer is expected (issue #458, single-syntax spelling)"),
   ("tests/error_snapshots/cases/unit-type-vs-int-neg.ep", "literals: unit type where an integer is expected (issue #458 follow-up, pkUnitTy note)"),
+  ("tests/error_snapshots/cases/lit-nat-inferred-vs-int-neg.ep", "literals: inferred-Nat literal vs expected Int suggests natToInt (issue #514)"),
 ]
 
 const snapDir = "tests/error_snapshots/snapshots"

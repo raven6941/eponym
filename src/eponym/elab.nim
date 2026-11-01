@@ -393,6 +393,49 @@ proc containsNatLit(t: Term): bool =
   of tLet: containsNatLit(t.letVal) or containsNatLit(t.letTy) or
              containsNatLit(t.letScope.bdy)
 
+proc findNatLit(t: Term): tuple[found: bool, val: int] =
+  ## Return the first primitive Nat literal mentioned by t, if any.
+  if t.isNil: return (false, 0)
+  case t.kind
+  of tNatLit: (true, t.natLitVal)
+  of tR, tV, tC, tType, tInt, tPrim, tMeta, tNatSing: (false, 0)
+  of tPi, tSi, tLam:
+    let inDom = findNatLit(t.dom)
+    if inDom.found: inDom else: findNatLit(t.scope.bdy)
+  of tPair:
+    let inFst = findNatLit(t.pFst)
+    if inFst.found: inFst
+    else:
+      let inSnd = findNatLit(t.pSnd)
+      if inSnd.found: inSnd else: findNatLit(t.pScope.bdy)
+  of tApp:
+    let inFn = findNatLit(t.fn)
+    if inFn.found: inFn else: findNatLit(t.arg)
+  of tFst, tSnd, tAbsurd: findNatLit(t.sub)
+  of tLet:
+    let inVal = findNatLit(t.letVal)
+    if inVal.found: inVal
+    else:
+      let inTy = findNatLit(t.letTy)
+      if inTy.found: inTy else: findNatLit(t.letScope.bdy)
+
+proc litNatVsIntNote(ms: var MetaStore, globals: Globals, t, infTy,
+                     expTy: Term): string =
+  if "Int" notin globals or "Nat" notin globals: return ""
+  if globals["Int"].tm.kind != tR or globals["Nat"].tm.kind != tR:
+    return ""
+  let expZ = zonk(ms, expTy)
+  let infZ = zonk(ms, infTy)
+  if expZ.kind != tR or expZ.refId != globals["Int"].tm.refId:
+    return ""
+  if infZ.kind != tR or infZ.refId != globals["Nat"].tm.refId:
+    return ""
+  let lit = findNatLit(t)
+  if not lit.found: return ""
+  " (note: `" & $lit.val & "` inferred as `Nat`; expected `Int`. Use " &
+    "natToInt(" & $lit.val & ") (import `lib/nat_to_int.ep`) or provide " &
+    "an `Int` context)"
+
 proc expandNatLit(t: Term, zeroTm, sucTm: Term): Term =
   ## Issue #93: rewrite every tNatLit(k) to the suc^k(zero) chain.
   ## Used only as a conversion fallback (see defaultConv): the elaborator's
@@ -2324,7 +2367,12 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         if pre.c1.isNil:
           let (v, vty) = inferTm(pre.c2, ctx, globals, ms, supply, ab)
           let (b, bty) = inferTm(pre.c3, ctx.ext(pre.name, vty), globals, ms, supply, ab)
-          unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
+          try:
+            unifyElab(ms, subst(bty, 0, v), expTy, pre.loc)
+          except ElabError as e:
+            let note = litNatVsIntNote(ms, globals, v, vty, expTy)
+            if note != "": e.msg = e.msg & note
+            raise e
           tmLet(v, vty, pre.name, b)
         elif sharesQtyVar(pre.c1, pre.c2):
           # Issue #66/#84: quantity variables shared with the annotation
@@ -2405,7 +2453,12 @@ proc checkTm(pre: PreTerm, ctx: Ctx, globals: Globals,
         # at the infer-then-convert boundary, so check-mode uses of bare
         # implicits-headed variables keep their old behaviour.
         (t, ty) = insertImplicits(pre, t, ty, ctx.len, ms)
-        discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
+        try:
+          discard convElab(ms, supply, ty, expTy, pre.loc, ctx, globals, tmC(cStar), expLoc)
+        except ElabError as e:
+          let note = litNatVsIntNote(ms, globals, t, ty, expTy)
+          if note != "": e.msg = e.msg & note
+          raise e
         t
 
 type
