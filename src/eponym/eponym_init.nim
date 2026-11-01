@@ -1115,6 +1115,43 @@ proc valueToHost*[T](value: Value): T =
     raise newException(ValueError, "opaque Nim value box type mismatch")
   cast[HostBox[T]](value.whnf.hostPayload).value
 
+proc validatePostulateValueShape*(value: Value, postulateName: string,
+                                  argumentIndex: int, expectedShape: string,
+                                  functionExpected = false,
+                                  expectedHostType = "") =
+  ## Named, macro-emitted checks for the raw Value postulate boundary.
+  ## These are deliberately descriptive assertions, not type-indexed boxes:
+  ## the Value representation remains universal while the generated adapter
+  ## records the checked binder shape at its boundary.
+  if functionExpected:
+    if value.isNil or value.whnf.kind notin {wLam, wLam0, wHost}:
+      raise newException(ValueError, "bindPostulateValue '" & postulateName &
+        "' argument " & $argumentIndex &
+        " shape mismatch: expected function (" & expectedShape & ")")
+    return
+  if expectedHostType.len > 0:
+    if value.isNil or value.whnf.kind != wHost or
+        value.whnf.hostTypeName != expectedHostType:
+      let actual = if value.isNil: "nil"
+        elif value.whnf.kind == wHost: value.whnf.hostTypeName
+        else: $value.whnf.kind
+      raise newException(ValueError, "bindPostulateValue '" & postulateName &
+        "' argument " & $argumentIndex & " shape mismatch: expected opaque " &
+        expectedHostType & ", got " & actual)
+  elif expectedShape.len > 0 and (value.isNil or
+      ((expectedShape == "Int") and value.whnf.kind notin {wInt, wRef}) or
+      ((expectedShape == "Nat") and
+       value.whnf.kind notin {wNatLit, wNatSing, wRef}) or
+      ((expectedShape == "Bool") and
+       value.whnf.kind notin {wConst, wRef})):
+    # Neutrals (wRef) are never rejected: an unreduced value is not provably
+    # wrong-shaped, and the elaborator already type-checked the program.
+    # This check is defense-in-depth against host-author and representation
+    # mistakes, so it only fires on definite mismatches.
+    raise newException(ValueError, "bindPostulateValue '" & postulateName &
+      "' argument " & $argumentIndex &
+      " shape mismatch: expected " & expectedShape)
+
 proc vPrim*(op: PrimOp, ty: Term): Value =
   ## A primitive Int operation, accumulating args (Experiment 11).
   Value(syn: tmPrim(op, ty), whnf: Whnf(kind: wPrim, op: op, pargs: @[]))

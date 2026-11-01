@@ -1722,6 +1722,41 @@ proc flattenFuncType(rt: ReprType): tuple[doms: seq[ReprType], cod: ReprType] =
     cur = cur.funcCod[]
   result.cod = cur
 
+proc cgReprClosure(ctx: var CodegenCtx, t: Term,
+                   env: seq[NimNode], expected: ReprType): NimNode =
+  ## Representation closure for a checked lambda passed as a function value.
+  ## The callback's q1 binders have the same host representation as ordinary
+  ## binders; quantity is enforced by the checked term and does not require a
+  ## second runtime representation.
+  var cur = t
+  let flattened = flattenFuncType(expected)
+  let resultRt = flattened.cod
+  var formal: seq[NimNode] = @[nimReprType(resultRt)]
+  var innerEnv = env
+  while not cur.isNil and cur.kind == tLam:
+    if cur.qty == q0:
+      innerEnv = @[newLit(0)] & innerEnv
+    else:
+      if cur.dom.isNil:
+        raise newException(CgUnsupported, "nil closure lambda domain")
+      let rt = ctx.reprTypeOf(cur.dom)
+      let psym = genSym(nskParam, "cgClosureArg")
+      formal.add(newIdentDefs(psym, nimReprType(rt), newEmptyNode()))
+      innerEnv = @[psym] & innerEnv
+    cur = cur.scope.bdy
+  if cur.isNil:
+    raise newException(CgUnsupported, "nil closure body")
+  result = newProc(params = formal,
+    body = newStmtList(newTree(nnkReturnStmt, cgRepr(ctx, cur, innerEnv))))
+
+proc cgReprArg(ctx: var CodegenCtx, t: Term,
+               env: seq[NimNode]): NimNode =
+  if not t.isNil and t.kind == tLam:
+    raise newException(CgUnsupported,
+      "lambda argument needs an expected representation closure type")
+  else:
+    cgRepr(ctx, t, env)
+
 proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   ## Compile a `tApp` chain in the repr tier. Primitive Int ops become direct
   ## Nim arithmetic (the interpreter fires them as `x + y` etc. on machine
@@ -1784,7 +1819,7 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
         var call = newCall(ident(adapter.procName))
         for i in 0 ..< appArgs.len:
           if not adapter.isTypeBinder[i]:
-            call.add(cgRepr(ctx, appArgs[i], env))
+            call.add(cgReprArg(ctx, appArgs[i], env))
         return call
     if rh.kind in {cgkDefn, cgkPostulate} and head.refId in ctx.reprProcs:
       # Issue #401: a bound postulate with an emitted forwarder (see
@@ -1829,7 +1864,11 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
                   ctx.refs[argTm.refId].name &
                   "' as a function value needs eta-expansion (outside the " &
                   "representation fragment)")
-          args.add(cgRepr(ctx, appArgs[argIdx], env))
+          if appArgs[argIdx].kind == tLam and sigPos < calleeSig.len - 1:
+            args.add(cgReprClosure(ctx, appArgs[argIdx], env,
+              calleeSig[sigPos]))
+          else:
+            args.add(cgReprArg(ctx, appArgs[argIdx], env))
           inc sigPos
         inc argIdx
       if argIdx != appArgs.len:
@@ -1890,7 +1929,7 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       except CgUnsupported:
         raise newException(CgUnsupported, "non-atomic binder domain")
       let psym = genSym(nskLet, "cgReprBeta")
-      preStmts.add(newLetStmt(psym, cgRepr(ctx, appArgs[argIdx], env)))
+      preStmts.add(newLetStmt(psym, cgReprArg(ctx, appArgs[argIdx], env)))
       curEnv = @[psym] & curEnv
     head = head.scope.bdy
     inc argIdx
@@ -1904,7 +1943,7 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
   if argIdx < appArgs.len:
     var call = newCall(h)
     for i in argIdx ..< appArgs.len:
-      call.add(cgRepr(ctx, appArgs[i], curEnv))
+      call.add(cgReprArg(ctx, appArgs[i], curEnv))
     final = call
   else:
     # All arguments were consumed by beta-reduced lambdas: the head is the
@@ -3540,6 +3579,13 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     var formal = newNimNode(nnkFormalParams)
     formal.add(bindSym"Value")
     formal.add(newIdentDefs(bndSym, bindSym"RuntimeBindings", newEmptyNode()))
+    var boundaryDomains: seq[Term] = @[]
+    var boundaryBinders: seq[bool] = @[]
+    try:
+      discard substTypeBinders409(entry.ty, spec.typeArgNames, globals,
+        boundaryDomains, boundaryBinders)
+    except CgUnsupported:
+      boundaryDomains = @[]
     var valueParams: seq[NimNode] = @[]
     var paramIdx = 0
     for isTy in isTypeBinder:
@@ -3555,6 +3601,32 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     let globalsCall = newCall(bindSym"getGlobalsDir",
       newLit(baseDir), newLit(src))
     var adapterBody = newStmtList()
+    var boundaryIndex = 0
+    for i, domain in boundaryDomains:
+      if i >= valueParams.len: break
+      var shape = ""
+      var functionExpected = false
+      var hostType = ""
+      if domain.kind == tPi:
+        shape = "Pi"
+        functionExpected = true
+      elif domain.kind == tR:
+        for gname, gentry in globals:
+          if not gentry.tm.isNil and gentry.tm.kind == tR and
+              gentry.tm.refId == domain.refId:
+            shape = gname
+            break
+        if shape notin ["Int", "Nat", "Bool"]:
+          for mapping in runtimeTypes:
+            if mapping.eponymName == shape:
+              hostType = mapping.nimType.repr
+              break
+      if shape.len > 0:
+        adapterBody.add(newCall(bindSym"validatePostulateValueShape",
+          valueParams[boundaryIndex], newLit(spec.postulateName),
+          newLit(boundaryIndex), newLit(shape), newLit(functionExpected),
+          newLit(hostType)))
+      inc boundaryIndex
     adapterBody.add(newCall(copyNimTree(spec.implementation), argsSeq,
       globalsCall))
     var procNode = newNimNode(nnkProcDef)

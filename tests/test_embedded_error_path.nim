@@ -46,6 +46,23 @@ proc checkFixture(path: string,
   echo "ok (clean compile error): ", path
   return true
 
+proc checkRuntimeFixture(path, expected: string): bool =
+  let name = path.splitFile().name
+  let bin = tmpDir / name
+  let (cOut, cCode) = execCmdEx("nim c --hints:off -d:eponymRuntimeBridgeTests " & pathFlags &
+    " --out:" & quoteShell(bin) & " " & quoteShell(path))
+  if cCode != 0:
+    echo "FAIL (runtime fixture did not compile): ", path
+    echo cOut
+    return false
+  let (rOut, rCode) = execCmdEx(quoteShell(bin))
+  if rCode == 0 or expected notin rOut:
+    echo "FAIL (missing named runtime shape error): ", path
+    echo rOut
+    return false
+  echo "ok (named runtime shape error): ", path
+  true
+
 var failed = 0
 for path in ["tests/fixtures/embedded_err_unbound.nim",
              "tests/fixtures/embedded_err_mismatch.nim",
@@ -61,6 +78,14 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_nonlambda_fatarrow.nim",
      "`=>` is only supported after a lam binder group")]:
   if not checkFixture(path, expected):
+    inc failed
+
+for (path, expected) in [
+    ("tests/fixtures/typed_adapter_err_shape_scalar.nim",
+     "bindPostulateValue 'debugEcho' argument 0 shape mismatch: expected Int"),
+    ("tests/fixtures/typed_adapter_err_shape_function.nim",
+     "bindPostulateValue 'applyCallback' argument 0 shape mismatch: expected function (Pi)")]:
+  if not checkRuntimeFixture(path, expected):
     inc failed
 
 for (path, expected) in [

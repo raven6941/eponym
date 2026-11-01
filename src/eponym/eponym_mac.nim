@@ -1678,7 +1678,7 @@ proc runtimeTermTypeAst(term: Term, ctx: seq[string],
       var current = term
       var argumentIndex = 0
       while not current.isNil and current.kind == tPi:
-        if current.impl or current.qty != qOmega or current.dom.isNil or
+        if current.impl or current.qty == q0 or current.dom.isNil or
             current.dom.kind == tType:
           return nil
         var name = if current.scope.adv.len > 0 and
@@ -3341,6 +3341,40 @@ proc bindingCall(binding: HostPostulateBinding, bindingsSym, globalsSym: NimNode
       isCheckedNatType(checkedGlobals, binding.eponymTypes[1]):
     return newCall(bindSym"bindHostIntToNat", bindingsSym, globalsSym,
                    nameLit, binding.implementation)
+  # A dependent callback can have a quantity-1 handle binder while its
+  # host representation is the ordinary closure type.  The typed binding
+  # names remain useful for the representation forwarder, but the fallback
+  # Value binding must derive its codecs from the postulate's actual Pi
+  # domain rather than treating the callback as an opaque atom.
+  if binding.eponymTypes.len == 2 and binding.postulateName in checkedGlobals:
+    let entry = checkedGlobals[binding.postulateName]
+    if not entry.ty.isNil and entry.ty.kind == tPi and
+        not entry.ty.dom.isNil and entry.ty.dom.kind == tPi:
+      var refNames = initTable[int, string]()
+      for gname, gentry in checkedGlobals:
+        if not gentry.tm.isNil and gentry.tm.kind == tR:
+          refNames[gentry.tm.refId] = gname
+      let callbackType = runtimeTermTypeAst(entry.ty.dom, @[], refNames)
+      let resultType = runtimeTermTypeAst(entry.ty.scope.bdy, @[], refNames)
+      let callbackNimType = if callbackType.isNil: nil else:
+        runtimeNimType(callbackType, mappings, records)
+      let resultNimType = if resultType.isNil: nil else:
+        runtimeNimType(resultType, mappings, records)
+      if not callbackNimType.isNil and not resultNimType.isNil:
+        let runtimeArg = ident"runtimeCallbackArgument"
+        let decoded = runtimeValueConversionExpr(callbackType,
+          callbackNimType, runtimeArg, false, mappings, records,
+          ident"runtimeGlobals")
+        if not decoded.isNil:
+          let hostResult = newCall(binding.implementation, decoded)
+          let encoded = runtimeValueConversionExpr(resultType, resultNimType,
+            hostResult, true, mappings, records, ident"runtimeGlobals")
+          if not encoded.isNil:
+            let adapter = newProc(params = @[bindSym"RuntimeValue",
+              newIdentDefs(runtimeArg, bindSym"RuntimeValue", newEmptyNode())],
+              body = newStmtList(encoded))
+            return newCall(bindSym"bindHostValue", bindingsSym, globalsSym,
+              nameLit, newCall(bindSym"vHostFunc", adapter))
   if binding.pairResult:
     let bindingForm = if binding.trustedPairIndex:
       "bindPostulatePairTrusted"
@@ -4945,6 +4979,14 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
         validateHostMappedNaryType(checkedGlobals, binding.postulateName,
                                    adapterTypes)
         continue
+      # A Pi-valued callback is validated from the checked postulate type;
+      # its representation is a closure, not an opaque Eponym atom.
+      if binding.eponymTypes.len == 2 and
+          binding.postulateName in checkedGlobals:
+        let entry = checkedGlobals[binding.postulateName]
+        if not entry.ty.isNil and entry.ty.kind == tPi and
+            not entry.ty.dom.isNil and entry.ty.dom.kind == tPi:
+          continue
       case binding.eponymTypes.len
       of 0:
         validateHostIntUnaryType(checkedGlobals, binding.postulateName)
@@ -5106,6 +5148,8 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
     var sanitized = ""
     for c in key:
       sanitized.add(if c.isAlphaNumeric: c else: '_')
+    if sanitized.endsWith("_"):
+      sanitized = sanitized[0 ..< sanitized.len - 1]
     prefix & sanitized & "_" & $seqNum
   inc postulateAdapterBlockSeq409
   let adapterBlockSeq = postulateAdapterBlockSeq409
