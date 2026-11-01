@@ -3540,6 +3540,13 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     var formal = newNimNode(nnkFormalParams)
     formal.add(bindSym"Value")
     formal.add(newIdentDefs(bndSym, bindSym"RuntimeBindings", newEmptyNode()))
+    var boundaryDomains: seq[Term] = @[]
+    var boundaryBinders: seq[bool] = @[]
+    try:
+      discard substTypeBinders409(entry.ty, spec.typeArgNames, globals,
+        boundaryDomains, boundaryBinders)
+    except CgUnsupported:
+      boundaryDomains = @[]
     var valueParams: seq[NimNode] = @[]
     var paramIdx = 0
     for isTy in isTypeBinder:
@@ -3555,6 +3562,32 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     let globalsCall = newCall(bindSym"getGlobalsDir",
       newLit(baseDir), newLit(src))
     var adapterBody = newStmtList()
+    var boundaryIndex = 0
+    for i, domain in boundaryDomains:
+      if i >= valueParams.len: break
+      var shape = ""
+      var functionExpected = false
+      var hostType = ""
+      if domain.kind == tPi:
+        shape = "Pi"
+        functionExpected = true
+      elif domain.kind == tR:
+        for gname, gentry in globals:
+          if not gentry.tm.isNil and gentry.tm.kind == tR and
+              gentry.tm.refId == domain.refId:
+            shape = gname
+            break
+        if shape notin ["Int", "Nat", "Bool"]:
+          for mapping in runtimeTypes:
+            if mapping.eponymName == shape:
+              hostType = mapping.nimType.repr
+              break
+      if shape.len > 0:
+        adapterBody.add(newCall(bindSym"validatePostulateValueShape",
+          valueParams[boundaryIndex], newLit(spec.postulateName),
+          newLit(boundaryIndex), newLit(shape), newLit(functionExpected),
+          newLit(hostType)))
+      inc boundaryIndex
     adapterBody.add(newCall(copyNimTree(spec.implementation), argsSeq,
       globalsCall))
     var procNode = newNimNode(nnkProcDef)
