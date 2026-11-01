@@ -30,6 +30,37 @@
   independent soundness review. #490 remains strict; the #491 prototype does
   not change universe checking.
 
+* 2026-11-01 — #500 revisit: keep =univ-stratified-flag= unmerged (keep-waiting)
+
+  Context: #492's decision kept the stratified-universe flag experiment out
+  of the release, with a revisit once (a) #499 gives a production path from
+  checked definitions to residual =TypeRep= code and (b) the
+  large-elimination/universe policy (Type-in-Type under the flag) has an
+  independent soundness review. #499 has since merged (#504): the
+  ={.runtimeType.}= pragma flows through the evaluator-free stageFamily
+  residual emitter to macro wiring, end to end — precondition (a) is met.
+  The branch was merged up with main, adapted to #490's strict default
+  (the =printf= skeleton elaborates but has no runtime representation, so
+  it fails loudly instead of falling back), and now carries the
+  release-facing pieces #492 named as missing: a strengthened positive
+  demo (=PrintfType= is =compileTimeOnly=; =exampleComputed= is declared at
+  the computed type =PrintfType (Number (End ()))= as a compile-time
+  definitional check), two negative fixtures
+  (=embedded_err_stratified_off=, universe mismatch without the flag;
+  =embedded_err_stratified_strict=, loud strict failure with the flag),
+  green in the full local matrix (102 steps, exit 0), plus a
+  =docs/surface-syntax-reference.md= section on when to use
+  =stratified = false=, what it enables, and its limits.
+  Options considered: merge the branch now via PR, or keep waiting.
+  Decision: keep waiting. Precondition (b) — the independent soundness
+  review of the Type-in-Type universe policy — is not recorded, and the
+  worker that did the merge-prep cannot supply an independent review. The
+  branch is merge-ready mechanically; the merge itself is Aaron's call
+  once the review exists.
+  Consequences: #500's merge-prep is complete and this claim is released.
+  Leave =univ-stratified-flag= on its branch; do not merge without the
+  soundness review.
+
 * 2026-10-30 — Runtime quantities keep nominal dimensions (issue #493)
 
   Context: the proposed definition =Qty(d: Vec Int 3): Univ = Float= is
