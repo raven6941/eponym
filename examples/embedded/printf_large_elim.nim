@@ -10,8 +10,11 @@
 # - `PrintfType : Format -> Univ` defined by large elimination (recursion
 #   on a Format value computing a type). This FAILS without the flag
 #   (universe level mismatch: the motive `Format -> Univ` is `Type 1`).
-# - Terms at computed types check definitionally: `example` has type
-#   `PrintfType (Number End)` which IS `Nat -> String`, and runs.
+# - Terms at computed types check definitionally: `exampleComputed` is
+#   declared at the computed type `PrintfType (Number (End ()))`, which
+#   IS `Nat -> String`, so the body checks. It is `compileTimeOnly` --
+#   a family-typed definition has no runtime wrapper -- while `example`
+#   at the concrete type `String` runs.
 #
 # Current limitation: a `printf` skeleton whose RESULT TYPE is computed
 # by large elimination (`Pi(f: Format, PrintfType(f))`) elaborates fine
@@ -66,6 +69,15 @@ eponymBlock(stratified = false):
   # definitionally to Nat -> String, so this checks.
   proc example(n: Nat): String =
     (lam(n: Nat) => emptyString(zero()))(n)
+
+  # A term whose DECLARED type is computed by large elimination:
+  # PrintfType (Number (End ())) is definitionally Nat -> String, so the
+  # lambda body checks against it. Family-typed definitions have no
+  # runtime wrapper, hence compileTimeOnly; the elaboration -- the
+  # actual large elimination -- is the check.
+  compileTimeOnly(exampleComputed)
+  proc exampleComputed(n: Nat): PrintfType(Number(End())) =
+    lam(m: Nat) => emptyString(m)
 
 when isMainModule:
   # The runnable part: a term at a computed type.
