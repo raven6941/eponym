@@ -141,6 +141,22 @@ echo incomplete(4)
   check("returnType" in outTyUsed and "incomplete" in outTyUsed,
     "type-position shed used: error names the shed, got: " & outTyUsed)
 
+  # --- Negative (issue #505): param-position shed names the gate -------
+  # A telescope `_` is elaborated twice under quantity-first (body Lam
+  # domain, then type Pi domain); the shed must match the live hole so
+  # the use gate names the shed instead of missing it.
+  let tyParamUsed = writeSrc(dir, "ty_param_used.nim", """eponymBlock:
+  postulate(Int, Univ)
+  runtimeType(Int, int)
+  proc incomplete(x: ![paramType]): Int = x
+echo incomplete(4)
+""")
+  let (okTyParamUsed, outTyParamUsed) = compileSrc(tyParamUsed, false)
+  check(not okTyParamUsed, "param-position shed used: compilation fails")
+  check("paramType" in outTyParamUsed and "incomplete" in outTyParamUsed and
+        "__eponym_shed" notin outTyParamUsed,
+    "param-position shed used: error names the shed, got: " & outTyParamUsed)
+
   # --- Positive (issue #479): generic callee through a compiled caller -
   let generic = writeSrc(dir, "generic.nim", """eponymBlock:
   postulate(Int, Univ)
