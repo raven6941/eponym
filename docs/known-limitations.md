@@ -741,9 +741,9 @@ the definition; typed wrapper eligibility can impose an additional boundary.
 
 The session and Paxos examples call checked roles through representation-tier
 bound Nim adapters. `linear_handles.nim` keeps its direct and omega runtime
-clients; the bracket callback is checked but explicitly compile-time-only
-because host postulate adapters cannot yet accept representation-compiled
-closures. `qtt_borrow.nim` is also a compile-time checking example: its former
+clients; its `withJob` bracket now crosses a typed host postulate as a
+representation-compiled closure, with no Value interpreter in that strict
+call path. `qtt_borrow.nim` is also a compile-time checking example: its former
 raw callback adapter invoked the Value interpreter, so its runtime buffer
 backend is deferred until strict codegen supports compiled closures. The
 convex examples still elaborate and check their DCP certificates, but their

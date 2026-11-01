@@ -31,9 +31,8 @@
 #   cannot perform the side-effect operations at all, and confinement
 #   is not linearity (it does not enforce exactly-once use). That
 #   adoption cost is real: the Nim programmer writes the use in eponym.
-#   The callback client remains type-checked but has no runtime wrapper
-#   until strict codegen can pass representation-compiled closures to
-#   host postulates without the Value interpreter.
+#   The callback client is representation-compiled and crosses the host
+#   postulate boundary as a closure; the host adapter invokes it directly.
 # - Copy-to-omega: deliberately absent for live handles; see
 #   lib/linear.ep for the per-variant reasons. Only the completed
 #   receipt (an immutable Nat) crosses to Nim.
@@ -95,6 +94,7 @@
 
 import eponym_mac
 import eponym_embed
+import std/[os, osproc, strutils]
 
 type
   JobPhaseB = enum freshB, sentB, ackedB, closedB
@@ -131,6 +131,13 @@ proc hostCloseJ(handle: JobHandle): JobHandle =
   inc handle.closes
   handle
 
+type JobCallback = proc(handle: JobHandle): int {.closure.}
+
+proc hostWithJob(callback: JobCallback): int =
+  let handle = newJobHandle()
+  result = callback(handle)
+  doAssert handle.phase == closedB, "withJob callback must close its job"
+
 # --- omega backend: no phase asserts, so double use succeeds at runtime.
 proc hostSendW(payload: int, handle: JobHandle): JobHandle =
   handle.payload = payload
@@ -153,13 +160,16 @@ eponymBlock:
   runtimeType(Nat, int)
   runtimeType(Job, JobHandle)
 
+  # The callback's checked Pi type is represented as a Nim closure by the
+  # representation tier.  The named witness supplies the host binding's
+  # ordinary signature; it is not a Value-level callback adapter.
+  postulate(JobCallback, Univ)
+  runtimeType(JobCallback, JobCallback)
+
   bindPostulate(sendJ, hostSendJ, Nat, Job, Job)
   bindPostulatePair(ackJ, hostAckJ, Job, Nat, Job)
   bindPostulate(closeJ, hostCloseJ, Job, Job)
-  # This callback shape is checked but currently has no representation-tier
-  # host adapter. Keep it out of runtime code rather than routing it through
-  # the Value interpreter.
-  compileTimeOnly(jobViaBracket)
+  bindPostulate(withJob, hostWithJob, JobCallback, Nat)
 
   # Omega variants of the same operations: same backend state shape,
   # no linearity, no phase asserts. Declared here, not in the library:
@@ -211,8 +221,7 @@ eponymBlock:
 
 proc main() =
   echo "linear_handles: single-use acked jobs, embedded (Issue #482)."
-  echo "  bracket client: typechecked; compile-time-only until its callback"
-  echo "    has a representation-tier host adapter"
+  echo "  bracket client: representation-compiled host callback"
 
   # Direct q1 path over a fresh handle.
   let directHandle = newJobHandle()
@@ -224,6 +233,19 @@ proc main() =
   doAssert directHandle.phase == closedB, "direct job must end closed"
   doAssert (directHandle.sends, directHandle.acks,
     directHandle.closes) == (1, 1, 1), "q1 trace must be exactly 1/1/1"
+
+  # Representation-compiled bracket path: the callback reaches the host
+  # postulate as a Nim closure, with no Value interpreter in the call path.
+  let bracketReceipt = jobViaBracket()
+  echo "  bracket receipt: ", bracketReceipt
+  doAssert bracketReceipt == 2, "bracket receipt must be suc(suc(zero()))"
+
+  let (symbols, nmStatus) = execCmdEx("nm " & quoteShell(getAppFilename()))
+  doAssert nmStatus == 0, "could not inspect the strict bracket artifact"
+  for interpreterSymbol in ["evalWhnf", "evalWithBindings", "callValueFuncDir",
+      "getGlobalsDir", "elabCheckDirStateAll"]:
+    doAssert interpreterSymbol notin symbols,
+      "strict bracket artifact linked interpreter symbol " & interpreterSymbol
 
   # Omega happy path: identical trace to the q1 path (the verdict's
   # measurement: same value, same moves, same cost).
