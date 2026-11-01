@@ -11,7 +11,7 @@ checked dependent type to one motivating example of why dependent types
 earn their keep. Every snippet below compiles as shown (each was
 machine-checked while writing this document).
 
-You will need Nim 2.2 (tested with 2.2.12 via
+You will need Nim 2.4 (tested with 2.4.0 via
 [choosenim](https://github.com/dom96/choosenim)) and `nimble`. Older
 2.x versions may work but are untested.
 

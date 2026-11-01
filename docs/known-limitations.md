@@ -754,7 +754,7 @@ links to each example and summarizes these boundaries.
 
 ## Platform support
 
-Eponym is developed and CI-tested on Linux (Ubuntu) with Nim 2.2.12.
+Eponym is developed and CI-tested on Linux (Ubuntu) with Nim 2.4.0.
 Windows and macOS are untested: the toolchain route (building the LSP
 from nimble-installed sources on first use) should work wherever Nim
 and nimble run, but no Windows or macOS testing has been done. If you
