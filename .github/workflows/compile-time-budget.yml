@@ -28,7 +28,7 @@ jobs:
           curl -sSf https://nim-lang.org/choosenim/init.sh | sh -s -- -y
           echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
       - name: Select Nim version
-        run: choosenim 2.2.12
+        run: choosenim 2.4.0
       - name: Select baseline commit
         id: baseline
         env:

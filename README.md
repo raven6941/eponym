@@ -126,7 +126,7 @@ eponymBlock:
 
 ## Installation
 
-Prerequisites: Nim 2.2 (tested with 2.2.12 via
+Prerequisites: Nim 2.4 (tested with 2.4.0 via
 [choosenim](https://github.com/dom96/choosenim)) and nimble. Older
 2.x versions may work but are untested.
 
@@ -168,7 +168,7 @@ not needed to install or use Eponym; the CI script installs it separately.
 
 ## Building
 
-Requires Nim 2.x (built with 2.2.12 via
+Requires Nim 2.x (built with 2.4.0 via
 [choosenim](https://github.com/dom96/choosenim)).
 
 ```sh

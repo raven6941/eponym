@@ -10,7 +10,7 @@ jobs:
           curl -sSf https://nim-lang.org/choosenim/init.sh | sh -s -- -y
           echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
       - name: Select Nim version
-        run: choosenim 2.2.12
+        run: choosenim 2.4.0
       - name: Build LSP server
         run: nim c src/eponym/lsp.nim
       - name: Restore VS Code test archive
@@ -50,7 +50,7 @@ jobs:
           curl -sSf https://nim-lang.org/choosenim/init.sh | sh -s -- -y
           echo "$HOME/.nimble/bin" >> $GITHUB_PATH
       - name: Select Nim version
-        run: choosenim 2.2.12
+        run: choosenim 2.4.0
       # Persist the shared nimcache: every GitHub run used to start with an
       # empty one and recompile the whole elaborator closure per driver.
       # Keyed per shard (each runner writes its own cache) with restore-key
@@ -60,10 +60,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/eponym-ci-nimcache
-          key: nimcache-ubuntu-nim2.2.12-shard${{ matrix.shard }}-${{ github.sha }}
+          key: nimcache-ubuntu-nim2.4.0-shard${{ matrix.shard }}-${{ github.sha }}
           restore-keys: |
-            nimcache-ubuntu-nim2.2.12-shard${{ matrix.shard }}-
-            nimcache-ubuntu-nim2.2.12-
+            nimcache-ubuntu-nim2.4.0-shard${{ matrix.shard }}-
+            nimcache-ubuntu-nim2.4.0-
       # Persist the nimble package dir so the falsify install in
       # tools/ci-local.sh is a no-op on warm runners. Key rotates when the
       # script changes (e.g. the falsify install line); upstream falsify

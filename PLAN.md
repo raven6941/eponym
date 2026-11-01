@@ -1201,7 +1201,7 @@ not imply that unsupported host Nim is executable inside `eponymBlock`.
 
 ## Building
 
-Requires Nim 2.x (built with 2.2.12 via choosenim):
+Requires Nim 2.x (built with 2.4.0 via choosenim):
 
 ```sh
 export PATH=$HOME/.nimble/bin:$PATH

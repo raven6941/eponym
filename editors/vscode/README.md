@@ -96,7 +96,7 @@ compile runs with a progress notification; details are available from the
 Eponym output channel if setup fails. That first build compiles the whole
 elaborator closure, so it is not instant: allow time for it to finish
 before expecting sheds to appear. A fresh user profile therefore needs
-Nim 2.2 (tested with 2.2.12) and an installed Eponym package, but does not need this repository checkout
+Nim 2.4 (tested with 2.4.0) and an installed Eponym package, but does not need this repository checkout
 or a manually built server binary. The same source discovery also drives
 sidecar compilation: in a Nimble user project, the extension adds the installed
 package root to Nim's module path and runs the compile from the project folder.
