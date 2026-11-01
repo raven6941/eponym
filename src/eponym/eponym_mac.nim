@@ -4568,14 +4568,29 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
   if sheds.len > 0:
     for i in 0 ..< sheds.len:
       sheds[i].genSrc = src
+    # Issue #505: quantity-first elaboration elaborates a telescope `_`
+    # twice (body Lam domain, then type Pi domain), leaving a stale hole
+    # solved to the live one at the same source position. Prefer the hole
+    # whose meta survives in the elaborated defs, so use-gating sees the
+    # shed instead of missing it.
+    var liveMetas = initHashSet[int]()
+    for d in defs:
+      collectTermMetaIds(d.tmTm, liveMetas)
+      collectTermMetaIds(d.tyTm, liveMetas)
     for i in 0 ..< sheds.len:
       var best = -1
-      for j in 0 ..< ms.holes.len:
-        if ms.holes[j].holeLoc.line != sheds[i].holeLine: continue
-        if best < 0: best = j
-        if sheds[i].holeCol > 0 and ms.holes[j].holeLoc.col == sheds[i].holeCol:
-          best = j
-          break
+      # Prefer exact (line, col) matches; fall back to line-only.
+      for useCol in [true, false]:
+        if best >= 0: break
+        if useCol and sheds[i].holeCol <= 0: continue
+        for j in 0 ..< ms.holes.len:
+          if ms.holes[j].holeLoc.line != sheds[i].holeLine: continue
+          if useCol and ms.holes[j].holeLoc.col != sheds[i].holeCol: continue
+          if best < 0:
+            best = j
+          elif ms.holes[j].holeTerm.metaId in liveMetas and
+               ms.holes[best].holeTerm.metaId notin liveMetas:
+            best = j
       if best >= 0:
         sheds[i].holeIdx = best
         let (g, c, pi) = shedGoalAndCtx(ms, ms.holes[best])
