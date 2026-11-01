@@ -102,6 +102,7 @@ echo "### Build: experimental (issue #189: kept building, clearly labeled)"
 for f in eponym mac_surf heap qtt_proto; do
   run_step nim c $NC --hints:off $XP "src/experimental/$f.nim"
 done
+run_step nim c -r $NC --hints:off $XP "tests/test_staged_printf_inject.nim"
 
 echo "### Test: module suites"
 for f in eponym_init preterm parse_surf elab unify eponym_mac egraph eponym_embed kernel_check; do
@@ -129,24 +130,24 @@ run_step nim c -r $NC --hints:off $P "tests/test_embedded_macro_forms.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_embedded_explicit_params.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_embedded_legacy_syntax.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_embedded_chained_if.nim"
-run_step nim c -r $NC --hints:off $P "tests/test_embedded_if_effects.nim"
-run_step nim c -r $NC --hints:off $P "tests/test_runtime_value_bridge.nim"
+run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_embedded_if_effects.nim"
+run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_runtime_value_bridge.nim"
 # Per-block trust boundary report (#374)
 run_step sh tests/test_trust_report.sh
 run_step nim c -r $NC --hints:off $P "tests/test_convex_opt_runtime.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_convex_opt_vec_runtime.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_paxos_session_runtime.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_borrow_runtime.nim"
-run_step nim c -r $NC --hints:off $P "tests/test_nat_binding_identity.nim"
-run_step nim c -r $NC --hints:off $P "tests/test_nat_to_int.nim"
-run_step nim c -r $NC --hints:off $P "tests/test_int_to_nat.nim"
-run_step nim c -r $NC --hints:off $P "tests/test_debug_echo.nim"
+run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_nat_binding_identity.nim"
+run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_nat_to_int.nim"
+run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_int_to_nat.nim"
+run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_debug_echo.nim"
 # Typed postulate adapters for bindPostulateValue (issue #409)
-run_step nim c -r $NC --hints:off $P "tests/test_postulate_typed_adapter.nim"
+run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_postulate_typed_adapter.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_scalar_runtime_codecs.nim"
 # Representation derivation from checked type structure (issue #402)
 run_step nim c -r $NC --hints:off $P "tests/test_derive_repr.nim"
-run_step nim c -r $NC --hints:off $P "tests/test_runtime_derive_block.nim"
+run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_runtime_derive_block.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_session_tcp_bindings.nim"
 # Embedded error paths (issue #199)
 run_step nim c -r $NC --hints:off $P "tests/test_embedded_error_path.nim"

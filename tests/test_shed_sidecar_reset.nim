@@ -28,8 +28,10 @@ proc nimCmd(): string =
   n
 
 proc compileSheds(src: string): tuple[ok: bool, output: string] =
+  let cachePath = src.changeFileExt("") & "-nimcache"
   let cmd = nimCmd() & " c --hints:off --path:\"" & RepoRoot / "src" &
     "\" --path:\"" & RepoRoot / "src" / "eponym" &
+    "\" --nimcache:\"" & cachePath &
     "\" -o:\"" & src.changeFileExt("") & "\" \"" & src & "\""
   let (outp, code) = execCmdEx(cmd)
   (code == 0, outp)
@@ -58,41 +60,45 @@ when isMainModule:
   # 1. First compile: sidecar has [alpha].
   let f1 = writeSrc(dir, "twice.nim", """eponymBlock:
   postulate(Int, Univ)
+  compileTimeOnly(constA)
   proc constA(A: Univ, x: A): A = ![alpha, x]
 """)
   var r = compileSheds(f1)
-  check(r.ok, "first compile succeeds")
   if not r.ok: echo r.output
+  check(r.ok, "first compile succeeds")
   check(sidecarNames(f1) == @["alpha"], "first compile sidecar = [alpha]")
 
   # 2. Second compile with the sidecar present: must not crash in the VM.
   r = compileSheds(f1)
-  check(r.ok, "second compile (sidecar exists) succeeds")
   if not r.ok: echo r.output
+  check(r.ok, "second compile (sidecar exists) succeeds")
   check(sidecarNames(f1) == @["alpha"], "second compile sidecar still [alpha]")
 
   # 3. Edit the source: the new compilation resets, no ghost of alpha.
   let f3 = writeSrc(dir, "twice.nim", """eponymBlock:
   postulate(Int, Univ)
+  compileTimeOnly(constB)
   proc constB(A: Univ, x: A): A = ![beta, x]
 """)
   r = compileSheds(f3)
-  check(r.ok, "recompile after edit succeeds")
   if not r.ok: echo r.output
+  check(r.ok, "recompile after edit succeeds")
   check(sidecarNames(f3) == @["beta"], "edited source resets: sidecar = [beta], no ghost")
 
   # 4. Two eponymBlocks in one compilation merge.
   let f4 = writeSrc(dir, "twoblocks.nim", """eponymBlock:
   postulate(Int, Univ)
+  compileTimeOnly(constA)
   proc constA(A: Univ, x: A): A = ![gamma, x]
 
 eponymBlock:
   postulate(Bool, Univ)
+  compileTimeOnly(constB)
   proc constB(A: Univ, x: A): A = ![delta, x]
 """)
   r = compileSheds(f4)
-  check(r.ok, "two-block compile succeeds")
   if not r.ok: echo r.output
+  check(r.ok, "two-block compile succeeds")
   let names4 = sidecarNames(f4)
   check(names4.len == 2 and "gamma" in names4 and "delta" in names4,
     "two eponymBlocks in one compilation merge: " & names4.join(","))

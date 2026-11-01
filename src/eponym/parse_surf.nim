@@ -260,7 +260,7 @@ proc parseBinder(p: var Parser): tuple[name: string, ty: PreTerm, impl: bool, er
   # Issue #84: an unannotated binder defaults to quantity *inference* (a
   # fresh quantity variable, solved from the bound variable's uses:
   # 0 -> q0, 1 -> q1, 2+ -> qOmega), not to concrete qOmega. Explicit
-  # annotations (`0` / `1` / a named quantity variable) override. The `#`
+  # annotations (`0` / `1` / `2+` / a named quantity variable) override. The `#`
   # prefix is not a legal identifier character (see isIdentChar), so a
   # generated name can never collide with a user-written quantity variable.
   var qty: Qty = qtyVar("#q" & $p.qvarCount)
@@ -275,6 +275,9 @@ proc parseBinder(p: var Parser): tuple[name: string, ty: PreTerm, impl: bool, er
     elif qlex == "1":
       discard p.next()  # consume the 1
       qty = q1
+    elif parseInt(qlex) >= 2:
+      discard p.next()  # consume an unrestricted quantity (2+)
+      qty = qOmega
     # else: not a quantity, leave it (will fail as binder name)
   elif not impl and pk.kind == tkIdent and p.pos + 1 <= p.toks.high and
        p.toks[p.pos + 1].kind == tkIdent:
@@ -528,6 +531,9 @@ proc parseAtom(p: var Parser): PreTerm =
           discard p.next()
           erased = pk.lexeme == "0"
           qty = if erased: q0 else: q1
+        elif pk.kind == tkInt and parseInt(pk.lexeme) >= 2:
+          discard p.next()
+          qty = qOmega
         elif pk.kind == tkIdent and p.pos + 1 <= p.toks.high and
              p.toks[p.pos + 1].kind == tkIdent:
           qty = qtyVar(p.next().lexeme)

@@ -58,8 +58,9 @@ Eponym source, then the Eponym parser and checker decide their meaning.
 | `bindPostulate(operation, nimProc)` | Explicit runtime binding; supported shapes are listed in [known limitations](known-limitations.md) |
 | `bindPostulateMutable(operation, nimProc, ArgumentTypes..., ResultType)` | Trusted adapter that passes decoded locals to Nim `var` parameters and encodes the result; shared-reference mutation may still be visible |
 | `runtimeCodec(Tree, NimType, encode, decode)` | Register typed Nim encoders/decoders for a named Eponym type or family; the codec implementation is trusted |
-| `runtimeValue(checkedDefinition)` | Expose checked values and globals; imported definitions without a local Nim signature use the raw `Value` ABI |
-| `requireCompiled()` | Require the representation backend and direct typed wrappers for the local and transitive imported definitions; currently limited to plain `int` mappings, with unsupported shapes rejected at compile time |
+| `runtimeValue(checkedDefinition)` | Rejected in strict `eponymBlock`; interpreter-backed runtime wrappers are not emitted |
+| `compileTimeOnly(checkedDefinition)` | Explicitly type-check a definition with no runtime API; runtime callers are rejected and Nim calls produce a compile-time error |
+| `requireCompiled()` | Redundant compatibility marker; all `eponymBlock`s already require representation-compiled runtime definitions and direct typed wrappers |
 | `debugEcho[A](value)` | Opt-in runtime trace from `lib/debug.ep`; bind `debugEcho` with `debugEchoRuntimeValue` or a custom raw adapter. Type arguments must be statically known: each distinct instantiation gets a generated typed adapter, and int-fragment instantiations additionally get a representation-tier adapter with no `RuntimeValue` in its signature |
 | `echo`, `for`, `var`, effectful Nim control flow, Nim library calls | Not supported as host Nim statements/expressions in the block |
 
@@ -107,10 +108,10 @@ binder appears only in the checked signature. Nat binders `[n: Nat]` map to
 Nim `static[int]`; Bool binders `[b: Bool]` map to `static[bool]` and require
 `bool.ep`; Int binders `[i: Int]` also map to `static[int]` and cross as Eponym
 integer values. All three value binder kinds can appear in checked signatures
-and bodies. `runtimeValue(definition)` also emits a typed `definitionDynamic`
-sibling for supported runtime-valued generic indices; it takes those indices
-as ordinary Nim arguments and checks indexed values against them. A binder
-over an explicitly mapped type can also use a Nim static generic value,
+and bodies. `runtimeValue(definition)` previously emitted typed dynamic
+siblings, but strict `eponymBlock` rejects that interpreter-backed surface.
+Pass a runtime index as an ordinary checked function argument instead. A
+binder over an explicitly mapped type can also use a Nim static generic value,
 encoded through the mapping's runtime codec. Other Eponym
 signatures need an explicit opaque mapping as shown below or one of the
 supported structural codecs. Multi-argument Nim proc types with supported leaf
@@ -525,6 +526,10 @@ linear variable zero or two-plus times. Types are checked in the all-0
 context, so a type-level mention of a linear variable does not consume it.
 In canonical surface text the spellings are `(1 x : T)` (linear),
 `(0 x : T)` (erased), `(q x : T)` (quantity variable, issue #66).
+Write `(2 x : T)` for an explicit unrestricted binder in `.ep`; numeric
+quantities greater than two have the same unrestricted meaning. Embedded Nim
+uses `x {.unrestricted.}: T` for the same annotation. This is useful when a
+runtime index must remain an ordinary value while appearing in later types.
 
 **Inference (issues #84/#371).** An unannotated binder gets its quantity
 inferred from usage: zero relevant uses becomes erased (`0`); exactly one
@@ -560,7 +565,8 @@ an Int-taking operation, import `lib/nat_to_int.ep` and write `natToInt(n)`.
 To convert in the other direction, import `lib/int_to_nat.ep`, bind
 `intToNat` to `intToNatHost` with `bindPostulate(intToNat, intToNatHost,
 Int, Nat)`, and call it explicitly. Negative inputs raise `ValueError`.
-For `requireCompiled()`, map `Int` and `Nat` to Nim `int` with `runtimeType`.
+For representation-compiled runtime wrappers, map `Int` and `Nat` to Nim
+`int` with `runtimeType`.
 Conversions are explicit; the elaborator does not insert them for you.
 
 A term already typed as `Nat` (e.g. a let-bound literal with no

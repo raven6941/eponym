@@ -129,6 +129,7 @@ eponymBlock:
   postulate(Promise, Univ)
   postulate(AcceptMsg, Nat -> Univ)
   runtimeType(Chan, PaxosChannel)
+  runtimeType(Nat, int)
   runtimeType(Promise, PaxosPromise)
   runtimeType(AcceptMsg, PaxosTicket)
 

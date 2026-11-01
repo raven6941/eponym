@@ -188,7 +188,7 @@ static:
   doAssert compiles(hostOpaqueBinary[NimIntCallback, int, int](
     hostInvokeCallback))
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/bool.ep"
   postulate(Int, Univ)
   postulate(Nat, Univ)
@@ -222,7 +222,7 @@ eponymBlock:
   proc generatedChooseFalse(): Int =
     if false: addInt(19, 0) else: addInt(17, 0)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "fixtures/runtime_imported_value.ep"
   bindPostulate(importedStep, hostStepNim)
   bindPostulate(importedQ0Tick, hostImportedQ0Tick)
@@ -236,22 +236,22 @@ eponymBlock:
   runtimeValue(importedApply)
   runtimeValue(generatedImportedQ0Effect)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "fixtures/runtime_imported_indexed_callback.ep"
   runtimeVector(Vec)
   runtimeValue(importedApplyVectorCallback)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "fixtures/runtime_imported_dependent_callback.ep"
   runtimeVector(Vec)
   runtimeValue(importedDependentVectorCallback)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "fixtures/runtime_imported_vec.ep"
   runtimeVector(Vec)
   runtimeValue(importedVectorIdentity)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "fixtures/runtime_variant.ep"
   import "../lib/bool.ep"
   runtimeVariant(RuntimeTree)
@@ -266,7 +266,7 @@ eponymBlock:
       SizedTree[if b: n else: m] = tree
   runtimeValue(genericConditionalIndexedTreeProjection)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "fixtures/runtime_variant.ep"
   import "../lib/bool.ep"
   proc genericUnmappedTreeSeed(): RuntimeTree = treeEmpty
@@ -276,7 +276,7 @@ eponymBlock:
       SizedTree[if b: n else: m] = tree
   runtimeValue(genericConditionalRawTreeProjection)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   data(RuntimeToken, Univ):
     proc runtimeTokenValue(): RuntimeToken
@@ -286,7 +286,7 @@ eponymBlock:
       RuntimeToken = token
   runtimeValue(genericRuntimeTokenProjection)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Nat, Univ)
   data(Tree, Univ):
     proc leaf(): Tree
@@ -296,23 +296,23 @@ eponymBlock:
   runtimeValue(sampleTree)
   runtimeValue(sampleTreeWith)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   postulate(hostPlusSeven, Int -> Int)
   bindPostulate(hostPlusSeven, hostStepNim)
   proc runtimeResult(): Int = hostPlusSeven(35)
   runtimeValue(runtimeResult)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/bool.ep"
   proc generatedBoolNot(value: Bool): Bool =
     if value: false else: true
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   proc generatedGenericIdentity[A: Univ](value: A): A = value
   runtimeValue(generatedGenericIdentity)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   postulate(Token, Univ)
   proc generatedTokenIdentity(value: Token): Token = value
@@ -321,7 +321,7 @@ eponymBlock:
       callback: Pi(value: Token, Token)](ignored: Int): Int = ignored
   runtimeValue(generatedGenericPiWitnessProbe)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   postulate(Nat, Univ)
   postulate(Token, Univ)
@@ -333,7 +333,7 @@ eponymBlock:
     ignored
   runtimeValue(generatedGenericNestedSigmaWitnessProbe)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat.ep"
   import "../lib/vec.ep"
   postulate(Int, Univ)
@@ -347,21 +347,21 @@ eponymBlock:
       pair: Sig(length: Nat, Vec[Int, length])](ignored: Int): Int = ignored
   runtimeValue(generatedRawDependentSigmaGenericProbe)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat.ep"
   def(checkedNatIdentity, Nat -> Nat):
     clause([zero], zero)
     clause([suc(n)], suc(n))
   runtimeValue(checkedNatIdentity)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat.ep"
   def(checkedNatAdd, Nat -> Nat -> Nat):
     clause([zero, m], m)
     clause([suc(n), m], suc(checkedNatAdd(n, m)))
   runtimeValue(checkedNatAdd)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Channel, Univ)
   runtimeType(Channel, ChannelHandle)
   proc generatedGenericMappedCallback[A: Univ](
@@ -369,7 +369,7 @@ eponymBlock:
     callback(value)
   runtimeValue(generatedGenericMappedCallback)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/vec.ep"
   postulate(Channel, Univ)
   runtimeType(Channel, ChannelHandle)
@@ -379,7 +379,7 @@ eponymBlock:
       Vec[A, 2] = vmap(callback, values)
   runtimeValue(generatedGenericCallbackOverVector)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat.ep"
   postulate(Int, Univ)
   postulate(Channel, Nat -> Univ)
@@ -390,7 +390,7 @@ eponymBlock:
   proc generatedGenericNatValue[n: Nat](ignored: Int): Nat = n
   runtimeValue(generatedGenericNatValue)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat.ep"
   import "../lib/bool.ep"
   import "../lib/vec.ep"
@@ -509,7 +509,7 @@ eponymBlock:
       ignored: Int): CheckedSizedVec = value
   runtimeValue(generatedValidatedDependentRecordValue)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Channel, Univ)
   runtimeType(Channel, ChannelHandle)
   proc generatedMappedGenericPiCallbackBinder[
@@ -517,7 +517,7 @@ eponymBlock:
     callback(value)
   runtimeValue(generatedMappedGenericPiCallbackBinder)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat.ep"
   import "../lib/vec.ep"
   postulate(Int, Univ)
@@ -530,7 +530,7 @@ eponymBlock:
   proc generatedDependentPairEnvelopeIdentity(
       value: DependentPairEnvelope): DependentPairEnvelope = value
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/list.ep"
   postulate(Int, Univ)
   runtimeList(List)
@@ -548,7 +548,7 @@ eponymBlock:
       ignored: Int): List[Int] = values
   runtimeValue(generatedGenericListValueBinder)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/option.ep"
   postulate(Int, Univ)
   runtimeOption(Option)
@@ -562,7 +562,7 @@ eponymBlock:
       ignored: Int): Option[Int] = value
   runtimeValue(generatedGenericOptionValueBinder)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/bool.ep"
   postulate(Int, Univ)
   proc generatedGenericBoolValue[b: Bool](ignored: Int): Bool = b
@@ -570,7 +570,7 @@ eponymBlock:
   proc generatedGenericIntValue[index: Int](ignored: Int): Int = index
   runtimeValue(generatedGenericIntValue)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   postulate(Channel, Univ)
   runtimeType(Channel, ChannelHandle)
@@ -578,7 +578,7 @@ eponymBlock:
       Channel = channel
   runtimeValue(generatedGenericChannelValue)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Nat, Univ)
   proc generatedGenericNatProjection[n: Nat](): Nat = n
   runtimeValue(generatedGenericNatProjection)
@@ -680,7 +680,7 @@ proc decodeRuntimeSizedTree(value: Value, globals: Globals): seq[int] =
   if result.len != length:
     raise newException(ValueError, "SizedTree index does not match payload")
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/vec.ep"
   postulate(Int, Univ)
   data(Tree, Univ):
@@ -700,7 +700,7 @@ eponymBlock:
   proc generatedGenericTreeValueBinder[tree: Tree](ignored: Int): Tree = tree
   runtimeValue(generatedGenericTreeValueBinder)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "fixtures/runtime_variant.ep"
   runtimeCodec(SizedTree, seq[int], encodeRuntimeSizedTree,
     decodeRuntimeSizedTree)
@@ -718,7 +718,7 @@ eponymBlock:
       Sig(length: Nat, SizedTree[length]) = pair
   runtimeValue(generatedValidatedCustomDependentSigmaBinder)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   postulate(Cell, Univ)
   runtimeType(Cell, MutableCell)
@@ -732,7 +732,7 @@ eponymBlock:
   runtimeValue(generatedMutableCellUpdate)
   runtimeValue(generatedValueCellRead)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   postulate(CellRef, Univ)
   runtimeType(CellRef, MutableCellRef)
@@ -742,7 +742,7 @@ eponymBlock:
   proc generatedMutableCellRefUpdate(cell: CellRef, delta: Int): CellRef =
     mutateCellRef(cell, delta)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   proc generatedApplyNimCallback(
       callback: proc(value: Int): Int {.closure.}, value: Int): Int =
@@ -765,7 +765,7 @@ eponymBlock:
       proc(left, right: Int): Int {.closure.} =
     lam(left: Int) => lam(right: Int) => addInt(seed, addInt(left, right))
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   postulate(Token, Univ)
   proc generatedRawTokenCallbackEcho(
@@ -773,7 +773,7 @@ eponymBlock:
       proc(value: Token): Token {.closure, rawValue.} = callback
   runtimeValue(generatedRawTokenCallbackEcho)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/vec.ep"
   postulate(Int, Univ)
   runtimeVector(Vec)
@@ -790,14 +790,14 @@ eponymBlock:
   runtimeValue(generatedApplyDependentVectorCallback)
   runtimeValue(generatedDependentVectorCallback)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   postulate(sumSix, Int -> Int -> Int -> Int -> Int -> Int -> Int)
   bindPostulate(sumSix, hostSumSix, Int, Int, Int, Int, Int, Int, Int)
   proc generatedSumSix(a, b, c, d, e, f: Int): Int =
     sumSix(a, b, c, d, e, f)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   data(Signal, Univ):
     proc signalStop(): Signal
@@ -917,13 +917,13 @@ static:
   doAssert not compiles(generatedSignalIdentity(1))
   doAssert compiles(generatedGenericSignalValue[signalGo](1))
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Int, Univ)
   postulate(hostFailure, Int -> Int)
   bindPostulate(hostFailure, hostFailureNim)
   proc generatedFailureRole(value: Int): Int = hostFailure(value)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(Nat, Univ)
   postulate(Channel, Univ)
   postulate(Message, Univ)
@@ -1047,7 +1047,7 @@ proc hostMakeVectorForIndex(index, seed: int):
     if result.values.len > 0: result.values.setLen(result.values.len - 1)
     else: result.values.add(seed)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/nat.ep"
   postulate(Channel, Nat -> Univ)
   runtimeType(Channel, IndexedChannelHandle)
@@ -1070,7 +1070,7 @@ eponymBlock:
       Sig(first: Channel(index), Channel(index)) =
     repeatIndexedChannel(index, channel)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/vec.ep"
   postulate(Int, Univ)
   runtimeVector(Vec)
@@ -1082,7 +1082,7 @@ eponymBlock:
       Sig(count: Nat, Vec[Int, count]) = makeIndexedVector(seed)
   runtimePairTrusted(generatedMakeIndexedVector)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/vec.ep"
   postulate(Int, Univ)
   runtimeVector(Vec)
@@ -1097,7 +1097,7 @@ eponymBlock:
       Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(index, seed)
   runtimePairTrusted(generatedVectorForIndex)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "fixtures/runtime_pair_postulate.ep"
   runtimeVector(Vec)
   bindPostulatePairTrusted(makeVectorForIndex, hostMakeVectorForIndex,
@@ -1106,12 +1106,12 @@ eponymBlock:
       Sig(marker: Int, Vec[Int, index]) = makeVectorForIndex(index, seed)
   runtimePairTrusted(generatedImportedVectorForIndex)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "fixtures/runtime_imported_named.ep"
   proc generatedImportedNamed(left, right: Int): Int =
     importedPick(right = right, left = left)
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   postulate(BaseHandle, Univ)
   postulate(DerivedHandle, Univ)
   runtimeType(BaseHandle, BaseRuntimeHandle)

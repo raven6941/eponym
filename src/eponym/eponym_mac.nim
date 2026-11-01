@@ -14,6 +14,7 @@ import codegen     # issue #329: naive Value-level backend
 import preterm
 import parse_surf
 import derive_repr  # issue #402: runtimeDerive block form
+import staged_inject  # issue #499: evaluator-free runtime type residuals
 import sheds       # issue #478: shed rewriting, sidecar, semantic state
 import usage_check # issue #478: hasUnresolvedMetas, checkUsage
 import unify       # issue #478: zonk, unify for macro-time draft filling
@@ -438,7 +439,8 @@ proc registerNimLegacyInfo(body: NimNode, sourceDir: string) =
 proc qtyPrefix(n: NimNode): string =
   ## Eponym quantity prefix from a Nim param pragma:
   ## `ch {.linear.}` -> "1 ", `ch {.erased.}` -> "0 ",
-  ## `ch {.qvar(q).}` -> "q " (quantity *variable* binder, issue #151/#66).
+  ## `ch {.unrestricted.}` -> "2 ", and `ch {.qvar(q).}` -> "q "
+  ## (quantity *variable* binder, issue #151/#66).
   if n.kind == nnkPragmaExpr and n.len == 2 and n[1].kind == nnkPragma:
     for pr in n[1]:
       case pr.kind
@@ -446,13 +448,14 @@ proc qtyPrefix(n: NimNode): string =
         case $pr
         of "linear": return "1 "
         of "erased": return "0 "
+        of "unrestricted": return "2 "
         else: error("eponymBlock: unknown quantity pragma: " & $pr &
-                    " (want linear/erased or qvar(q))", pr)
+                    " (want linear/erased/unrestricted or qvar(q))", pr)
       of nnkCall:
         if pr[0].kind == nnkIdent and $pr[0] == "qvar" and pr.len == 2 and
            pr[1].kind == nnkIdent:
           return $pr[1] & " "
-        error("eponymBlock: unsupported param pragma (want linear/erased or qvar(q))", pr)
+        error("eponymBlock: unsupported param pragma (want linear/erased/unrestricted or qvar(q))", pr)
       else:
         error("eponymBlock: unsupported param pragma", pr)
     return ""
@@ -1104,6 +1107,17 @@ proc procDefToEponym(n: NimNode): string =
   "proc " & name & genericStr & " " & paramStrs.join(" ") & " : " & retTy &
     " = " & body & "\n"
 
+proc hasRuntimeTypePragma(n: NimNode): bool =
+  ## `{.runtimeType.}` is a host-side staging annotation.  It must be read
+  ## before procDefToEponym serializes the declaration because pragmas are not
+  ## part of the Eponym surface grammar.
+  if n.kind != nnkProcDef or n.len <= 4 or n[4].kind != nnkPragma:
+    return false
+  for pragma in n[4]:
+    if pragma.kind in {nnkIdent, nnkSym} and $pragma == "runtimeType":
+      return true
+  false
+
 proc defCallToEponym(st: NimNode): string =
   ## def(isZero, Nat -> Bool):
   ##   clause([zero], true)
@@ -1356,6 +1370,11 @@ proc blockToEponymInternal(body: NimNode, sourceDir: string,
         # codecs still enforce any structural constraints they represent.
         if st.len != 2 or st[1].kind != nnkIdent:
           error("runtimeRecordTrusted expects (RecordType)", st)
+      elif head == "compileTimeOnly":
+        # Explicitly type-check a definition that has no runtime API. The
+        # marker is consumed by eponymBlock; runtime callers are rejected.
+        if st.len != 2 or st[1].kind != nnkIdent:
+          error("compileTimeOnly expects (checkedDefinition)", st)
       elif head == "requireCompiled":
         # Opt in to compile-time failure if any checked definition falls back
         # to interpretation or calls a definition outside this block's
@@ -2192,6 +2211,25 @@ proc runtimeIndexDependencyCodecSupports(n: NimNode, binder: string,
       mappings)
   false
 
+proc runtimeOpaqueIndexDependencyOnly(n: NimNode, binder: string,
+    mappings: seq[HostRuntimeType]): bool =
+  ## A non-Nat Sigma index may occur in a result type only beneath a plain
+  ## opaque mapping, whose host representation explicitly drops all indices.
+  if not mentionsName(n, binder): return true
+  let head = runtimeTypeHead(n)
+  if head.kind == nnkIdent:
+    for mapping in mappings:
+      if mapping.eponymName == $head and
+          not mapping.isRuntimeVector and not mapping.isRuntimeList and
+          not mapping.isRuntimeOption and not mapping.isRuntimeVariant and
+          not mapping.isRuntimeCodec and not mapping.hasRecordCodec:
+        return true
+  let sigma = runtimeSigmaComponents(n, allowDependent = true)
+  if not sigma.first.isNil:
+    return runtimeOpaqueIndexDependencyOnly(sigma.first, binder, mappings) and
+      runtimeOpaqueIndexDependencyOnly(sigma.second, binder, mappings)
+  false
+
 proc runtimeSigmaComponentsForCodec(n: NimNode,
     mappings: seq[HostRuntimeType], allowDependentSigma: bool):
     tuple[first, second: NimNode, binder: string] =
@@ -2203,11 +2241,13 @@ proc runtimeSigmaComponentsForCodec(n: NimNode,
   if not result.first.isNil or allowDependentSigma:
     return
   let dependent = runtimeSigmaComponents(n, allowDependent = true)
-  if dependent.first.isNil or dependent.binder.len == 0 or
-      simpleRuntimeCodec(dependent.first) != "nat":
+  if dependent.first.isNil or dependent.binder.len == 0:
     return
-  if runtimeIndexDependencyCodecSupports(dependent.second, dependent.binder,
-      mappings):
+  if (simpleRuntimeCodec(dependent.first) == "nat" and
+      runtimeIndexDependencyCodecSupports(dependent.second, dependent.binder,
+        mappings)) or
+      runtimeOpaqueIndexDependencyOnly(dependent.second, dependent.binder,
+        mappings):
     return dependent
 
 proc runtimeRecordDependenciesCodecSupported(record: HostRecord,
@@ -4379,7 +4419,8 @@ proc computeGated(defs: seq[ElabDef], checkedGlobals: Globals,
       "' and is itself gated; it cannot be called until that shed is filled"
   (gated, reasons)
 
-macro eponymBlock*(args: varargs[untyped]): untyped =
+proc eponymBlockExpansion(body: NimNode, strictRuntime: bool,
+                          stratified: bool = true): NimNode =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
   ## data(N, Univ): block.
@@ -4398,8 +4439,9 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
   ## parenthesized automatically.
   ## `byTac(name)` (Issue #151): tactic term (`by refl`, smoke test 14).
   ## `x {.qvar(q).}` (Issue #151): quantity-variable binder `(q x : T)`.
-  ## `requireCompiled()` restricts a block to representation-compiled
-  ## definitions with direct typed wrappers; unsupported paths fail here.
+  ## Runtime definitions in every eponymBlock require representation
+  ## code and direct typed wrappers; unsupported paths fail at expansion.
+  ## `requireCompiled()` remains as a redundant compatibility marker.
   ## `eponymBlock(stratified = false):` opts the block out of the
   ## stratified universe hierarchy: surface `Univ` is the legacy
   ## `Univ : Univ` constant (Type-in-Type) instead of `Type 0`, enabling
@@ -4410,35 +4452,28 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
   ## Generates callable fixed-arity wrappers for primitive Int/Nat and
   ## explicitly mapped opaque postulated types. Unsupported legacy shapes
   ## retain the varargs[int] compatibility wrapper.
-  # Universe discipline (Issue #52) arrives as an optional parameter:
-  # eponymBlock(stratified = false):. A single varargs parameter keeps
-  # both this and the bare eponymBlock: form working: a second overload
-  # breaks overload resolution on blocks containing imports (fatal
-  # module-loading side effect), and defaulted leading params don't
-  # resolve under `:` command syntax.
-  var stratified = true
-  var body: NimNode
-  if args.len == 1 and args[0].kind != nnkExprEqExpr:
-    body = args[0]
-  elif args.len == 2 and args[0].kind == nnkExprEqExpr and
-      args[0][0].kind == nnkIdent and $args[0][0] == "stratified" and
-      args[0][1].kind == nnkIdent and $args[0][1] in ["true", "false"]:
-    stratified = $args[0][1] == "true"
-    body = args[1]
-  else:
-    error("eponymBlock: expected `eponymBlock:` or " &
-      "`eponymBlock(stratified = true|false):`", args)
   let baseDir = callerDir(body)
   # Issue #478: sheds are rewritten to placeholders before conversion, so
   # eponymBlock accepts shed markers. For
   # shed-free blocks this walk is a no-op.
   var sheds: seq[ShedInfo] = @[]
   let draftNodes = rewriteSheds(body, sheds)
-  var requireCompiled = false
+  # Issue #490: runtime code must always use the representation-compiled
+  # backend. Keep the marker accepted as a source-compatible no-op while
+  # making its former strict behavior the default for every block.
+  var requireCompiled = strictRuntime
   for st in body:
     if st.kind == nnkCall and st.len == 1 and st[0].kind == nnkIdent and
         $st[0] == "requireCompiled":
       requireCompiled = true
+  var compileTimeOnlyNames = initHashSet[string]()
+  for st in body:
+    if st.kind == nnkCall and st.len == 2 and st[0].kind == nnkIdent and
+        $st[0] == "compileTimeOnly":
+      let name = $st[1]
+      if name in compileTimeOnlyNames:
+        error("duplicate compileTimeOnly request for '" & name & "'", st)
+      compileTimeOnlyNames.incl(name)
   var sourceLineMap: seq[DiagnosticSourceLoc]
   var hasEponymImport = false
   for st in body:
@@ -4485,6 +4520,21 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
       sourceMappedDiagnostic(e.msg, e.loc, sourceLineMap)
     error("eponymBlock parse error: " & detail, body)
 
+  # Preserve the host annotation on the checked definition.  This is done
+  # after elaboration, so the marker cannot affect name resolution, conversion
+  # or kernel checking.  It also intentionally only scans declarations in this
+  # block: imported/unrelated definitions are not made staging roots.
+  var runtimeTypeNames = initHashSet[string]()
+  for st in body:
+    if st.kind == nnkProcDef and hasRuntimeTypePragma(st):
+      runtimeTypeNames.incl($st[0])
+  for i in 0 ..< defs.len:
+    if defs[i].name in runtimeTypeNames:
+      defs[i].runtimeType = true
+  for i in 0 ..< allDefs.len:
+    if allDefs[i].name in runtimeTypeNames:
+      allDefs[i].runtimeType = true
+
   # Issue #478: shed matching, macro-time draft filling, sidecar.
   # On elaboration failure the sidecar is written before the error (as
   # as before) so the editor can show brown; on success the sidecar
@@ -4516,6 +4566,14 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
     let detail = if hasEponymImport: elabErrMsg else:
       sourceMappedDiagnostic(elabErrMsg, elabErrLoc, sourceLineMap)
     error("eponymBlock elaboration error: " & detail, body)
+  for requested in compileTimeOnlyNames:
+    if not defs.anyIt(it.name == requested):
+      error("compileTimeOnly names no checked definition: " & requested,
+        body)
+  for requested in compileTimeOnlyNames:
+    if not defs.anyIt(it.name == requested):
+      error("compileTimeOnly names no checked definition: " & requested,
+        body)
   # Issue #478: fill shed drafts at macro time. Each draft is converted
   # to Eponym source, parsed, checked against its hole's goal in the
   # hole's context, and unified with the hole meta. A draft that fails
@@ -4762,6 +4820,44 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
     if runtimeTypes[i].eponymName in trustedRuntimeRecords:
       runtimeTypes[i].hasRecordCodec = true
   let records = hostRecords(body, trustedRuntimeRecords)
+
+  # Issue #499 phase 3: residualize marked definitions as an independent
+  # artifact. The ordinary wrapper/codegen path below remains responsible
+  # for the checked definition itself; this is the evaluator-free descriptor
+  # entry point for runtime consumers.
+  var stagedResiduals: seq[NimNode] = @[]
+  for d in defs:
+    if not d.runtimeType: continue
+    var declaration: NimNode = nil
+    for st in body:
+      if st.kind == nnkProcDef and $st[0] == d.name:
+        declaration = st
+        break
+    if declaration.isNil:
+      error("eponymBlock runtimeType: no Nim declaration for '" & d.name & "'",
+        body)
+    var params: seq[(NimNode, NimNode)] = @[]
+    let formal = declaration[3]
+    for i in 1 ..< formal.len:
+      let binder = formal[i]
+      if binder.kind != nnkIdentDefs:
+        error("eponymBlock runtimeType: unsupported binder in '" & d.name & "'",
+          declaration)
+      let hostType = runtimeNimType(binder[^2], runtimeTypes, records)
+      if hostType.isNil:
+        error("eponymBlock runtimeType '" & d.name & "': cannot determine " &
+          "host type for parameter '" & $binder[0] & "'", binder)
+      for j in 0 ..< binder.len - 2:
+        params.add((ident(binderName(binder[j])), copyNimTree(hostType)))
+    try:
+      let staged = stageFamily(d.tmTm, checkedGlobals, d.name, params, d.loc,
+        d.name & "RuntimeType")
+      # stageFamily also returns a call for macro-local tests; production
+      # wiring needs only the declaration so consumers call it directly.
+      stagedResiduals.add(staged[0])
+    except StagedInjectError as e:
+      error("eponymBlock runtimeType staging error: " & e.msg, declaration)
+
   for requested in trustedRuntimeRecords:
     let recordIndex = findHostRecord(records, requested)
     if recordIndex < 0 or records[recordIndex].isVariant:
@@ -4836,11 +4932,17 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
         continue
       if binding.pairResult:
         let pairArgs = binding.eponymTypes[0 ..< binding.pairArgCount]
+        let secondTypeName = binding.eponymTypes[binding.pairArgCount + 1]
+        let secondTypeHasOpaqueRuntimeMapping =
+          runtimeTypes.anyIt(it.eponymName == secondTypeName and
+            not it.isRuntimeVector and not it.isRuntimeList and
+            not it.isRuntimeOption and not it.isRuntimeVariant and
+            not it.isRuntimeCodec and not it.hasRecordCodec)
         validateHostSigmaAdapterType(checkedGlobals,
           binding.postulateName, pairArgs,
           binding.eponymTypes[binding.pairArgCount],
-          binding.eponymTypes[binding.pairArgCount + 1],
-          binding.trustedPairIndex)
+          secondTypeName, binding.trustedPairIndex or
+            secondTypeHasOpaqueRuntimeMapping)
         continue
       var usesCustomCodec = false
       for typeName in binding.eponymTypes:
@@ -4953,24 +5055,37 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
   # a gated def's compiled proc must not exist for callers to reference.
   let (gatedNames, gatedReasons) = computeGated(defs, checkedGlobals, ms,
     sheds, draftErrors, forceGated)
-  if requireCompiled and gatedNames.len > 0:
-    var names: seq[string] = @[]
-    for d in defs:
-      if d.name in gatedNames: names.add(d.name)
-    error("eponymBlock requireCompiled: incomplete definition(s) " &
-      names.join(", ") &
-      " cannot be compiled; requireCompiled does not admit incomplete definitions",
-      body)
   var compileTimeOnlyDefs = initTable[string, string]()
-  let codegenDefs = if requireCompiled:
+  var codegenDefs = if requireCompiled:
     let closureCtx = buildCodegenCtx(checkedGlobals, baseDir, src,
-      runtimeTypes)
-    let closure = classifyRuntimeClosure(closureCtx, defs, allDefs,
-      checkedGlobals)
+      runtimeTypes, allDefs)
+    # Incomplete definitions stay available to editor tooling and produce
+    # use-gated compile errors at the Nim boundary. They are excluded from
+    # executable code generation, along with their callers, so no generated
+    # program path can reach the interpreter through a shed.
+    let runtimeSeeds = defs.filterIt(it.name notin gatedNames)
+    let runtimeAllDefs = allDefs.filterIt(it.name notin gatedNames)
+    var closure: tuple[runtimeDefs: seq[ElabDef],
+                       compileTimeOnly: Table[string, string]]
+    try:
+      closure = classifyRuntimeClosure(closureCtx, runtimeSeeds,
+        runtimeAllDefs, checkedGlobals, compileTimeOnlyNames)
+    except CgUnsupported as e:
+      error("eponymBlock requireCompiled: " & e.msg, body)
     compileTimeOnlyDefs = closure.compileTimeOnly
     closure.runtimeDefs
   else:
     defs.filterIt(it.name notin gatedNames)
+  # A runtimeType root is a type-level descriptor family. Its ordinary
+  # definition has no value-tier host ABI; the residual proc above is the
+  # independent runtime artifact. Exclude these roots from strict backend
+  # compilation while retaining the normal wrapper loop's honest absence of
+  # a callable value wrapper.
+  for d in defs:
+    if d.runtimeType:
+      compileTimeOnlyDefs[d.name] =
+        "runtimeType descriptor residual emitted separately"
+  codegenDefs = codegenDefs.filterIt(it.name notin compileTimeOnlyDefs)
   # Issue #401: host-bound postulates whose types are fully within the
   # representation fragment get direct-call forwarders, so repr-tier
   # bodies never route postulate calls through the interpreter.
@@ -5240,6 +5355,8 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
   # reference them.
   for emittedProc in emittedDerivedCodecs:
     result.add(emittedProc)
+  for residual in stagedResiduals:
+    result.add(residual)
   for p in cgBlock.procs:
     if not requireCompiled or
         (p.kind == nnkProcDef and p[0].kind == nnkPostfix and
@@ -5255,6 +5372,10 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
       # no Nim proc takes or returns their unrepresentable types — so no
       # wrapper is emitted. Referencing one from Nim is a compile error,
       # which is honest: there is nothing to call.
+      if d.name in compileTimeOnlyNames:
+        result.add(unreconstructableRuntimeWrapper(d.name,
+          "eponymBlock definition '" & d.name &
+          "' is marked compileTimeOnly and has no runtime wrapper"))
       continue
     let srcLit = newLit(wrapperSrc)
     let nameLit = newLit(d.name)
@@ -5522,6 +5643,33 @@ macro eponymBlock*(args: varargs[untyped]): untyped =
           if not importedDecl.isNil and
               importedDecl[2].kind != nnkEmpty: "RuntimeValueRaw"
           else: "RuntimeValue"))
+
+macro eponymBlock*(args: varargs[untyped]): untyped =
+  # Universe discipline (Issue #52) arrives as an optional parameter:
+  # eponymBlock(stratified = false):. A single varargs parameter keeps
+  # both this and the bare eponymBlock: form working: a second overload
+  # breaks overload resolution on blocks containing imports (fatal
+  # module-loading side effect), and defaulted leading params don't
+  # resolve under `:` command syntax (see AGENTS.md).
+  var stratified = true
+  var body: NimNode
+  if args.len == 1 and args[0].kind != nnkExprEqExpr:
+    body = args[0]
+  elif args.len == 2 and args[0].kind == nnkExprEqExpr and
+      args[0][0].kind == nnkIdent and $args[0][0] == "stratified" and
+      args[0][1].kind == nnkIdent and $args[0][1] in ["true", "false"]:
+    stratified = $args[0][1] == "true"
+    body = args[1]
+  else:
+    error("eponymBlock: expected `eponymBlock:` or " &
+      "`eponymBlock(stratified = true|false):`", args)
+  eponymBlockExpansion(body, true, stratified)
+
+when defined(eponymRuntimeBridgeTests):
+  # Test-only harness for legacy Value bridge unit coverage. It is excluded
+  # from normal package builds; user-facing `eponymBlock` is always strict.
+  macro eponymRuntimeBridgeTestBlock*(body: untyped): untyped =
+    eponymBlockExpansion(body, false)
 
 macro eponym*(src: string): untyped =
   ## Elaborate and typecheck a surface program at compile time.

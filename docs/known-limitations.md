@@ -1,5 +1,23 @@
 # Known limitations
 
+## Staged runtime type injection (#499)
+
+The `{.runtimeType.}` annotation is recognized on embedded checked
+definitions and retained in compile-time metadata. Phase 3 wires marked local
+definitions through the strict evaluator-free `stageFamily` emitter and emits
+an exported `<name>RuntimeType` residual proc alongside the ordinary block
+output. The landed E2E covers the closed `Nat`/`String`/`Arrow` descriptor
+slice, including beta/let reduction and static fragments of complete Nat
+eliminators. Host parameter types come from the block's existing runtime
+representation mappings; an unknown host type is a compile error.
+
+Dynamic-eliminator E2E through the Eponym surface is intentionally not landed:
+a family such as `PrintfType` needs large elimination (`Univ` as its motive),
+which awaits issue #500 and the separate `univ-stratified-flag` work. Dynamic
+eliminators remain covered at the `stageFamily` level. Codec-factory consumers,
+residual caching, and a generated family-specific descriptor algebra remain
+future work.
+
 <!-- Maintainer note (#372, 2026-10-21): a codegen or interop merge must update
 this page in the same PR when it changes runtime behavior, tiering, or
 wrapper/codec coverage. Re-sync passes are not deferred "for later". -->
@@ -63,12 +81,12 @@ eponymBlock:
 
 The adapter raises `ValueError("cannot convert negative Int to Nat")` for a
 negative input. Conversion stays explicit because postulates can hide host
-effects that their Eponym type does not prove absent. The Value runtime builds
-the imported `zero`/`suc` constructor chain; the representation backend uses
-the existing host `int` representation after the negativity check. In a
-`requireCompiled()` block, declare `runtimeType(Int, int)` and
+effects that their Eponym type does not prove absent. Legacy Value-bridge
+tests build the imported `zero`/`suc` constructor chain; strict representation
+code uses the existing host `int` after the negativity check. In a
+runtime-compiled block, declare `runtimeType(Int, int)` and
 `runtimeType(Nat, int)` to select those representations. Large conversions
-through the Value path therefore take linear time and space.
+through the legacy Value path therefore take linear time and space.
 
 For typed runtime wrappers, `runtimeType(Int, int)`,
 `runtimeType(Nat, int)`, and `runtimeType(Bool, bool)` select the Nim boundary
@@ -139,30 +157,27 @@ that the sequence length matches `n`. Nested vectors and vectors of mapped
 opaque values work when their element type has a codec. Dynamic generic value
 binders also support `Vec`, non-dependent `Sig`, `List`, and `Option` when the
 corresponding codecs are registered.
-For a Nat index known only at runtime, `runtimeValue(definition)` also emits a
-typed `definitionDynamic(index, value)` sibling when its codecs support the
-signature. It takes indices as Nim `int`, checks indexed values against them,
-and returns a typed Nim result. Use the raw `definitionRuntimeValueDynamic`
-overload when the value has no Nim codec; the tutorial shows a Vec example.
-Dependent Sigma binders can also be passed as raw `RuntimeValue`s and checked
-against generated witnesses. When the field codecs can reconstruct and check
-the generated Sigma witness, Eponym also generates a typed Nim tuple wrapper
-without `runtimePairTrusted`; it rejects a tuple whose Vec field disagrees
-with its Nat field. Other dependent tuple shapes still need the explicit trust
-opt-in and codecs that can check their fields. Generic dependent Sigma binders
-can use `runtimePairTrusted(definition)` to enable typed dynamic wrappers; the
-opt-in trusts correspondence with the dependent index while available codecs
-still check their fields. Without that opt-in, Eponym accepts a dependency only
-when every occurrence is inside a registered structural codec that checks it,
-including nested Vec length constraints. Other dependent shapes remain
-unsupported without the explicit opt-in.
+For a Nat index known at runtime, pass it as an ordinary function argument
+(`proc get(n: Nat, values: Vec[Int, n]): ...`). The representation backend
+checks the sequence length against that argument. An erased generic index
+requires runtime-computed type structure, which strict codegen does not
+support. `runtimeValue`-generated dynamic siblings and raw `RuntimeValue`
+wrappers are rejected inside `eponymBlock`.
 
-Other types can still be checked by Eponym but may have no typed Nim wrapper.
-Use `runtimeValue(name)` for the lower-level `Value` interface, or register a
-`runtimeCodec`. Some dependent records and pairs need explicit opt-ins such as
-`runtimeRecordTrusted` or `runtimePairTrusted`; these check field
-representations but trust relationships the selected field codecs cannot
-check. Generic binders over dependent records need no opt-in when earlier
+Dependent Sigma binders and results are supported only when their components
+have representations the backend can select while erasing the dependent
+index; when no direct representation exists, the containing runtime
+definition is a compile-time error. A checked but intentionally non-runtime
+proof can use `compileTimeOnly(name)`. That marker does not make a runtime
+codec or Value wrapper available.
+
+Other types can still be checked by Eponym but may have no representation-tier
+runtime form. A runtime definition using one is rejected; use a supported
+`runtimeType` mapping or mark a proof-only definition with
+`compileTimeOnly(name)`. Some dependent records and pairs need explicit
+opt-ins such as `runtimeRecordTrusted` or `runtimePairTrusted`; these check
+field representations but trust relationships the selected field codecs
+cannot check. Generic binders over dependent records need no opt-in when earlier
 fields are `Nat` and every use in later fields is checked by a structural codec,
 such as a Vec length check. Other dependent record shapes can use
 `runtimeRecordTrusted(Record)` to enable typed dynamic wrappers; registered
@@ -192,17 +207,17 @@ expression are not supported by generated codecs.
 
 ### Interpreter-free generated wrappers
 
-By default, a runtime wrapper can interpret a checked definition when it has
-no compiled body or calls a checked definition outside its block. Add
-`requireCompiled()` to opt into the representation backend: macro expansion
-fails unless every local definition and call is compiled to direct Nim
-representation code and its typed wrapper is direct too. The backend supports
+Every `eponymBlock` requires the representation backend for its runtime
+closure: macro expansion fails unless each runtime definition and call is
+compiled to direct Nim representation code and its typed wrapper is direct
+too. Unsupported definitions never fall back to the interpreter or `Value`
+runtime. `requireCompiled()` remains accepted as a redundant compatibility
+marker. The backend supports
 `int`, `seq[int]` (`Vec`/`List`), and `Option[int]` representations, plus —
 since #401 — opaque identity representations and dependent `Sig` tuples:
 
 ```nim
 eponymBlock:
-  requireCompiled()
   import "lib/vec.ep"
   postulate(Int, Univ)
   runtimeType(Int, int)
@@ -216,8 +231,8 @@ identity representation: the compiled proc takes and returns the declared
 host type directly, with no conversion. (A mapping for a type with a
 `runtimeCodec` or `runtimeRecordTrusted` codec is excluded: the codec
 defines the boundary semantics, including dependent-index checks, so the
-type keeps the codec-checked Value path instead of an unchecked
-identity.) An applied family with such a mapping
+type is outside the representation fragment until the backend can emit the
+codec conversion directly.) An applied family with such a mapping
 (`Chan s`, `AcceptMsg n`) denotes the one declared host type for every index
 tuple — the indices are dropped from the host signature, exactly as
 `Vec A n` maps to one `seq[int]`. Declaring one host type for a whole family
@@ -229,25 +244,46 @@ index-dependence erased, which is sound precisely for index-independent
 mappings. A `Vec` length index mentioning the bound Sigma value is rejected
 rather than silently erased.
 
+An index may be erased beneath a plain opaque family mapping when its host
+representation is index-independent. For example, a nominal family
+`Qty : Vec Int 3 -> Univ` can keep dimensions in checked types while
+`runtimeType(Qty, float64)` gives every quantity the same host representation.
+A dependent `Sig(d: Vec Int 3, Qty d)` can then cross the boundary as a pair
+of a dimension sequence and a `float64`. The checker preserves and compares
+the Eponym indices; it cannot prove that the host magnitude corresponds to
+the dimension returned beside it. `bindPostulatePair` makes that adapter
+contract trusted, as it is for other opaque indexed families.
+
+In the units example, parsing and scalar quantity arithmetic are host
+bindings. Their Eponym signatures are checked, but the parser and numeric
+callbacks must honor those signatures. Pointwise dimension
+addition/subtraction and `scaleDim` are checked Eponym Vec code; representation
+codegen compiles Sigma pairs used to unpack the fixed three-coordinate vectors.
+The runtime power result shares the input quantity's opaque `float64`
+representation.
+
 Postulates bound with `bindPostulate` / `bindPostulatePair[Trusted]` whose
 types are fully representable get direct-call forwarders, so compiled bodies
 never route postulate calls through the interpreter. Definitions referenced
 only from type positions — for example `Session`-valued protocol constructors
 consumed solely as `Chan` indices — are classified compile-time-only and
-excluded from the `requireCompiled` runtime closure; they get no Nim wrapper,
-since no Nim proc could take or return their unrepresentable types. An
-unrepresentable definition that is *not* type-level in this sense (for
-example a higher-order `Int -> Int` parameter, or a definition referenced
-from nowhere) stays in the closure and `requireCompiled` rejects it with the
-real representation reason instead of silently dropping it. The tier
+excluded from the runtime closure; they get no Nim wrapper, since no Nim proc
+could take or return their unrepresentable types. `compileTimeOnly(name)`
+explicitly marks a checked definition intended only for elaboration or proof
+normalization. Such definitions get an error wrapper at the Nim boundary, and
+the macro rejects any runtime definition that calls one. An unrepresentable
+definition that is neither type-level nor explicitly marked compile-time-only
+(for example a higher-order runtime argument or a definition referenced from
+nowhere) is rejected with its representation reason instead of being silently
+dropped. The tier
 report (`-d:eponymCodegenReport`) names the new kinds and says why each
 definition did or did not reach them.
 
 The strict wrapper uses no `Value` runtime and rejects dynamic `runtimeValue`
 entrypoints. A regression inspects the compiled artifact and confirms it has
-no `evalWhnf` symbol. This guarantee applies only to blocks accepted by
-`requireCompiled()`. Runtime startup for ordinary wrappers can still elaborate
-globals; generated `Value`s retain approximate syntax trees. Imported `.ep`
+no interpreter symbols. This guarantee applies to every `eponymBlock`.
+Runtime startup can still elaborate globals; generated `Value`s retain
+approximate syntax trees. Imported `.ep`
 definitions are included through their transitive call closure when the
 representation backend can compile them; unsupported imported code is rejected.
 For an indexed `Vec`, an index that exists only in an erased binder cannot be
@@ -293,8 +329,8 @@ host type derivation cannot invent — derivation verifies the family is
 genuinely opaque (no data constructors, not a record, type `Univ` or a
 Pi-chain over `Univ`; a derivable structure is a compile error directing
 at the one-arg form) and registers exactly what the hand-written
-`runtimeType(EponymType, HostType)` produces. The Paxos `requireCompiled()`
-block's `Chan`/`Promise`/`AcceptMsg` mappings are derived this way. The
+`runtimeType(EponymType, HostType)` produces. The Paxos block's
+`Chan`/`Promise`/`AcceptMsg` mappings are derived this way. The
 block form runs the same
 derivation inside `eponymBlock`, registers the mapping alongside the manual
 declarations, and emits the generated encoder/decoder procs with the block's
@@ -682,15 +718,14 @@ repr tier. Dependency of a codomain on the bound value is erased: a live
 index position (a `Vec` length) mentioning it is honestly rejected, as is a
 quantity-0 function domain (its argument is erased at every call site).
 Passing a compiled definition whose host arity does not match the flattened
-formal — e.g. after quantity inference erases an unused parameter — is an
-honest Phase-1 fallback ("needs eta-expansion"), not a hard Nim type error;
-a `let`-bound definition reference flowing into an incompatible curried
-formal is a current limitation (the general application path does not track
-the formal's expected shape there). Nested collections, non-`int` elements, and indices
-mentioning quantity-0-erased binders fall back to the Phase 1 `Value` backend,
-as do definitions whose declared wrapper types disagree with the compiled repr
-signature. Definitions outside the compiled
-fragments keep the interpreter as a per-definition fallback. See the
+formal — e.g. after quantity inference erases an unused parameter — is
+rejected with a representation error (`needs eta-expansion`). A `let`-bound
+definition reference flowing into an incompatible curried formal is also
+rejected; the general application path does not track the formal's expected
+shape there. Nested collections, non-`int` elements, indices mentioning
+quantity-0-erased binders, and declared wrapper types that disagree with the
+compiled representation are likewise compile-time errors. No accepted
+`eponymBlock` call falls back to Phase 1 or the interpreter. See the
 [pipeline trace](paxos-pipeline-trace.md) for the stage layout. Ordinary Nim
 code remains the place to choose data structures and performance strategies
 the compiler does not yet exploit.
@@ -704,14 +739,18 @@ the definition; typed wrapper eligibility can impose an additional boundary.
 
 ## Some demos still have host-side parts
 
-The session and Paxos examples call checked roles through bound Nim adapters.
-`qtt_borrow.nim` calls the checked `borrowClient` through bound postulates;
-the Nim buffer adapter remains responsible for aliasing and lifetime. The
-convex examples pass the exact checked objective through `runtimeValue` and
-interpret its Value tree in Nim before running a host-side solver. The
-interpreters, buffer adapter, solver, and numerical behavior remain trusted
-host responsibilities. The [README](../README.md#use-cases) links to each
-example and summarizes these boundaries.
+The session and Paxos examples call checked roles through representation-tier
+bound Nim adapters. `linear_handles.nim` keeps its direct and omega runtime
+clients; the bracket callback is checked but explicitly compile-time-only
+because host postulate adapters cannot yet accept representation-compiled
+closures. `qtt_borrow.nim` is also a compile-time checking example: its former
+raw callback adapter invoked the Value interpreter, so its runtime buffer
+backend is deferred until strict codegen supports compiled closures. The
+convex examples still elaborate and check their DCP certificates, but their
+custom expression trees are compile-time-only until the backend can lower
+them to host variants; the Nim solver examples were removed rather than
+interpreting a Value tree at runtime. The [README](../README.md#use-cases)
+links to each example and summarizes these boundaries.
 
 ## Platform support
 

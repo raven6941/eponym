@@ -13,11 +13,16 @@
 # compile time by the elaborator; the running layer is plain Nim.
 
 import eponym_mac
-import eponym_embed
 
 eponymBlock:
   # Prelude import (issue #131): Nat (+ zero, suc) from lib/nat.ep.
   import "../../lib/nat.ep"
+
+  # Protocol descriptions are normalized and checked during elaboration;
+  # this demo does not expose a runtime Session value.
+  compileTimeOnly(proto)
+  compileTimeOnly(receives)
+  compileTimeOnly(protoReceives)
 
   # Session protocol descriptions with dependent continuations.
   data(Session, [], Univ):

@@ -205,8 +205,8 @@ time.
 - **Runtime re-elaboration.** Ordinary wrappers may re-run the elaborator on
   first runtime use (cached by source and base directory;
   `eponym_embed.nim`) to obtain terms with runtime closures. Subsequent calls
-  use the cache. `requireCompiled()` wrappers use direct representation code
-  and do not take this path. Compile-time elaboration is the checking. A
+  use the cache. `eponymBlock` runtime wrappers use direct representation
+  code and do not take this path. Compile-time elaboration is the checking. A
   definition whose ordinary runtime re-elaboration fails was still checked at
   compile time; the runtime path cannot introduce an unchecked term.
 - **Runtime value codecs.** First-order generated wrappers convert primitive
@@ -278,6 +278,14 @@ the block author, in the same family as `bindPostulatePairTrusted`. The
 dependent `Sig` compiled to a host tuple is sound exactly when its component
 mappings are index-independent in this sense; a `Vec` length index mentioning
 the bound Sigma value is honestly rejected instead of silently erased.
+
+The runtime units example uses this rule for a nominal indexed family
+`Qty : Vec Int 3 -> Univ`, mapped to `float64` for every dimension. Eponym
+still checks dimension equality in `Qty d`; the runtime mapping erases `d`.
+For `Sig(d: Vec Int 3, Qty d)`, the vector and magnitude cross as a sequence
+and `float64`, but the host parser's claim that the magnitude matches `d` is
+trusted. Pointwise dimension arithmetic is defined in Eponym using Vec
+elimination and Sigma pairs; scalar quantity arithmetic remains host-bound.
 
 `bindPostulateMutable` is retained with decoded-local/result-out semantics:
 the adapter receives decoded local variables, and its encoded result returns

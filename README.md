@@ -38,7 +38,11 @@ show a few useful patterns:
   transport and codec failures as explicit result values.
 - **Dimensions and shapes** — index vectors and matrices by their dimensions
   so operations like dot product and matrix-vector multiplication require
-  compatible sizes. See [`convex_opt_vec.nim`](examples/embedded/convex_opt_vec.nim).
+  compatible sizes. [`units_measure.nim`](examples/embedded/units_measure.nim)
+  also demonstrates runtime-parsed unit dimensions, normalization to a
+  common unit, and dimension-checked quantity operations.
+  See [`convex_opt_vec.nim`](examples/embedded/convex_opt_vec.nim) for checked
+  vector and matrix algorithms.
 - **Mathematical certificates** — require a proof that an expression follows
   convexity rules before passing it to an optimizer. See
   [`convex_opt.nim`](examples/embedded/convex_opt.nim) and
@@ -51,19 +55,17 @@ show a few useful patterns:
   [shed walkthrough](examples/embedded/sheds_walkthrough.nim).
 
 Most examples show compile-time checking of Eponym models. The runtime bridge
-generates typed Nim wrappers across the codec coverage documented on the
-[known limitations](docs/known-limitations.md) page: primitive `Int`, `Nat`,
-and `Bool`, explicitly mapped opaque postulated types, non-dependent `Sig`
-pairs, named records, the standard `Vec`, `List`, and `Option` types, and —
-with codecs registered — nested and indexed structures, dynamic values, and
-callbacks. The new session runtime demo connects checked roles to Nim
-adapters, and `paxos_session.nim` runs its checked proposer and acceptor
-through bound TCP adapters. `qtt_borrow.nim` calls the checked
-`borrowClient(Buffer)` through bound Nim postulates; the adapter still owns
-buffer aliasing and lifetime. The convex optimization examples interpret the
-exact checked objective through the runtime Value bridge, then use a
-host-side solver. The buffer adapter, objective interpreters, solver, and
-numerical behavior remain trusted Nim responsibilities. The
+generates typed Nim wrappers for the representation fragment documented on
+the [known limitations](docs/known-limitations.md) page: primitive `Int`,
+`Nat`, and `Bool`, explicitly mapped opaque types, supported `Sig` pairs and
+records, `Vec`/`List`/`Option`, and compiled closure forms. The session runtime
+demo connects checked roles to Nim adapters, and `paxos_session.nim` runs its
+checked proposer and acceptor through bound TCP adapters. The bracketed
+callback in `linear_handles.nim`, the QTT borrow callbacks, and the convex
+expression trees remain checked at compile time but are marked
+`compileTimeOnly`, because their runtime paths previously used the Value
+interpreter. The [known limitations](docs/known-limitations.md) page records
+these boundaries and the missing representation support.
 [known limitations](docs/known-limitations.md) page summarizes what Eponym
 checks, which definitions have generated runtime wrappers, and which parts
 of the Nim boundary remain trusted or disconnected.
@@ -107,11 +109,12 @@ eponymBlock:
   representation mapping applies (`Int`/`Nat`/`Bool` as `int`,
   `Vec`/`List` as `seq[int]`, `Option` as `Option[int]`, with
   destination-passing folds for sequence eliminators). Definitions
-  outside the fragment keep an interpreter fallback.
-  `-d:eponymCodegenReport` names each definition's backend and why it
-  did not reach a higher one, and `requireCompiled()` makes a block
-  fail at macro time unless every local definition and call compiles
-  without the interpreter or the `Value` layer. The
+  outside the representation fragment fail compilation; they never fall
+  back to the interpreter or `Value` runtime. `compileTimeOnly(name)` is
+  the explicit opt-out for a checked definition with no runtime API.
+  `requireCompiled()` remains accepted as a redundant compatibility marker.
+  `-d:eponymCodegenReport` names each definition's backend and why it did
+  not reach a higher one. The
   [known limitations](docs/known-limitations.md) page carries the
   current backend coverage and the trust boundary.
 - The headline demos in `examples/embedded/` are built this way:

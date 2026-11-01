@@ -224,6 +224,7 @@ type
 
   CodegenCtx* = object
     refs*: Table[int, CgRef]
+    inlineGenericDefs*: Table[int, ElabDef]
     baseDir*: string
     src*: string
     badElims*: Table[int, bool]   # elim refIds unusable (cycles, bad templates)
@@ -316,13 +317,30 @@ proc familyRefIdOf(ctorTy: Term): int =
     t = t.fn
   if t != nil and t.kind == tR: t.refId else: -1
 
+proc isInlineGenericDef(ctx: CodegenCtx, d: ElabDef): bool =
+  ## A universe binder is a compile-time type parameter. Definitions
+  ## with one are specialized by beta-reducing their body at compiled call
+  ## sites, so they need no standalone runtime representation or wrapper.
+  var ty = d.tyTm
+  var body = d.tmTm
+  while not ty.isNil and ty.kind == tPi and not body.isNil and
+      body.kind == tLam:
+    if not ty.dom.isNil and (ty.dom.kind == tType or
+        (ty.dom.kind == tR and ty.dom.refId in ctx.refs and
+         ctx.refs[ty.dom.refId].name == "Univ")):
+      return true
+    ty = ty.scope.bdy
+    body = body.scope.bdy
+
 proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
-                     runtimeTypes: seq[HostRuntimeType] = @[]): CodegenCtx =
+                     runtimeTypes: seq[HostRuntimeType] = @[],
+                     definitions: seq[ElabDef] = @[]): CodegenCtx =
   ## Resolve every global reference to its codegen treatment. `runtimeTypes`
   ## is the block's codec mapping (issue #330 representation spec); each
   ## named Eponym type/family resolves to its refId for emitter lookup.
   result = CodegenCtx(refs: initTable[int, CgRef](), baseDir: baseDir,
     src: src, badElims: initTable[int, bool](),
+    inlineGenericDefs: initTable[int, ElabDef](),
     usedElims: initTable[int, bool](),
     reps: initTable[int, HostRuntimeType](),
     reprProcs: initTable[int, tuple[name: string, arity: int, sig: seq[ReprType]]](),
@@ -364,6 +382,10 @@ proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
         compiledProc: "", piQuantities: piQuantities(e.ty))
     else:
       result.refs[refId] = CgRef(name: name, kind: cgkPostulate)
+  for d in definitions:
+    if d.name in globals and not globals[d.name].tm.isNil and
+        globals[d.name].tm.kind == tR and result.isInlineGenericDef(d):
+      result.inlineGenericDefs[globals[d.name].tm.refId] = d
 
 proc constLit(c: Const): NimNode =
   ## Enum field (not `$c`, which renders display strings like "?").
@@ -1360,7 +1382,12 @@ proc nimTypeName*(n: NimNode): string =
     nimTypeName(n[0]) & "[" &
       n[1 .. ^1].mapIt(nimTypeName(it)).join(", ") & "]"
   of nnkTupleTy:
-    "(" & toSeq(n.children).mapIt(nimTypeName(it)).join(", ") & ")"
+    "(" & toSeq(n.children).mapIt(
+      if it.kind == nnkIdentDefs and it.len >= 2:
+        toSeq(it[0 ..< it.len - 2]).mapIt(nimTypeName(it)).join("/") &
+          ": " & nimTypeName(it[^2])
+      else:
+        nimTypeName(it)).join(", ") & ")"
   else:
     try: $n
     except: "?"
@@ -1500,7 +1527,8 @@ proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprType] =
   ctx.reprSigOfType(d.tyTm)
 
 proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
-                             globals: Globals):
+                             globals: Globals,
+                             explicitCompileTimeOnly: HashSet[string]):
     tuple[runtimeDefs: seq[ElabDef],
           compileTimeOnly: Table[string, string]] =
   ## Issue #401: split the `requireCompiled` definition closure into the
@@ -1509,16 +1537,18 @@ proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
   ## definitions (type-level computation never evaluated at runtime, e.g.
   ## the `Session`-valued protocol constructors).
   ##
-  ## A local definition is compile-time-only exactly when its type is
+  ## A local definition is compile-time-only when its type is
   ## outside the representation fragment AND it is actually referenced
   ## AND every reference is type-level: from a type position (a binder
   ## domain, result type, or `let` annotation of some definition) or from
   ## the body of a type-level definition (a definition whose own type is
   ## unrepresentable, e.g. a `Session`-building body). In particular an
   ## unrepresentable definition referenced from nowhere — or from a
-  ## runtime term position — is NOT compile-time-only: it stays in the
-  ## runtime closure so `requireCompiled` rejects it with the real
-  ## `CgUnsupported` reason instead of silently excluding it.
+  ## runtime term position — is NOT automatically compile-time-only: it
+  ## stays in the runtime closure so strict codegen rejects it with the real
+  ## `CgUnsupported` reason instead of silently excluding it. An explicit
+  ## `compileTimeOnly` marker is a checked opt-out, but runtime callers are
+  ## rejected.
   ##
   ## The runtime closure seeds from local definitions with representable
   ## types — only those can a runtime caller (compiled code or a Nim
@@ -1526,6 +1556,13 @@ proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
   ## and follows runtime references through erased bodies, skipping type
   ## positions. Erasure failures fall back to the unerased body
   ## (conservative: every reference counts as a runtime reference).
+  # With no block-local definitions there is no runtime root and no local
+  # definition to mark compile-time-only. The closure is empty regardless of
+  # the imported definitions, so avoid erasing every imported body just to
+  # discover that fact (large proof-heavy libraries make this especially
+  # expensive).
+  if localDefs.len == 0 and explicitCompileTimeOnly.len == 0:
+    return (runtimeDefs: @[], compileTimeOnly: initTable[string, string]())
   var defsByRefId = initTable[int, ElabDef]()
   for d in allDefs:
     if d.name in globals and not globals[d.name].tm.isNil and
@@ -1561,6 +1598,31 @@ proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
       referencers.mgetOrPut(refId, @[]).add((d.name, false))
   var compileTimeOnly = initTable[string, string]()
   for d in localDefs:
+    if d.name in explicitCompileTimeOnly:
+      compileTimeOnly[d.name] = "explicitly marked compileTimeOnly"
+  for name in explicitCompileTimeOnly:
+    if name notin globals or globals[name].tm.isNil or
+        globals[name].tm.kind != tR:
+      raise newException(CgUnsupported,
+        "compileTimeOnly names no checked definition: " & name)
+  for d in localDefs:
+    if d.name in explicitCompileTimeOnly: continue
+    if ctx.isInlineGenericDef(d):
+      # An abstract generic helper can disappear only when a representable
+      # caller gives the compiler a concrete call site to specialize. An
+      # unused/unreferenced generic definition remains a strict-mode error.
+      let refId = globals[d.name].tm.refId
+      let refs = referencers.getOrDefault(refId, @[])
+      var hasRuntimeCaller = false
+      for (rName, fromType) in refs:
+        if not fromType and rName != d.name and
+            not typeUnrep.hasKey(rName):
+          hasRuntimeCaller = true
+          break
+      if hasRuntimeCaller:
+        compileTimeOnly[d.name] =
+          "generic helper is specialized at compiled call sites"
+        continue
     let reason = typeUnrep.getOrDefault(d.name, "")
     if reason == "": continue  # representable: a runtime seed candidate
     let refId = globals[d.name].tm.refId
@@ -1574,6 +1636,16 @@ proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
       break
     if allTypeLevel:
       compileTimeOnly[d.name] = reason
+  # An explicit opt-out may be referenced by another type-only definition,
+  # but never by a definition whose body belongs to the runtime closure.
+  for name in explicitCompileTimeOnly:
+    let refId = globals[name].tm.refId
+    for (referencer, fromType) in referencers.getOrDefault(refId, @[]):
+      if fromType or referencer in compileTimeOnly:
+        continue
+      raise newException(CgUnsupported,
+        "compileTimeOnly definition '" & name &
+        "' is referenced by runtime definition '" & referencer & "'")
   var included = initTable[int, bool]()
   var pending: seq[int] = @[]
   for d in localDefs:
@@ -1583,7 +1655,7 @@ proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
       # Representable definitions are runtime seeds; unrepresentable
       # non-compile-time-only definitions are included so `requireCompiled`
       # rejects them with the real reason instead of dropping them.
-      if not typeUnrep.hasKey(d.name) or d.name notin compileTimeOnly:
+      if d.name notin compileTimeOnly:
         if not included.getOrDefault(refId, false):
           included[refId] = true
           pending.add(refId)
@@ -1601,6 +1673,7 @@ proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
     collectRuntimeRefIds(body, acc)
     for dependencyId in acc.keys:
       if dependencyId in defsByRefId and
+          defsByRefId[dependencyId].name notin compileTimeOnly and
           not included.getOrDefault(dependencyId, false):
         included[dependencyId] = true
         pending.add(dependencyId)
@@ -1765,6 +1838,32 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       var call = newCall(ident(ctx.reprProcs[head.refId].name))
       for arg in args: call.add(arg)
       return call
+    if rh.kind == cgkDefn and head.refId in ctx.inlineGenericDefs:
+      # Specialize leading universe binders with the static type arguments,
+      # then beta-reduce the remaining lambda spine in the caller's repr.
+      let genericDef = ctx.inlineGenericDefs[head.refId]
+      var genericTy = genericDef.tyTm
+      var genericBody = genericDef.tmTm
+      var specializedArgs = appArgs
+      while not genericTy.isNil and genericTy.kind == tPi and
+          not genericTy.dom.isNil and
+          (genericTy.dom.kind == tType or
+           (genericTy.dom.kind == tR and
+            genericTy.dom.refId in ctx.refs and
+            ctx.refs[genericTy.dom.refId].name == "Univ")):
+        if genericBody.isNil or genericBody.kind != tLam or
+            specializedArgs.len == 0:
+          raise newException(CgUnsupported,
+            "generic helper '" & rh.name & "' has an incomplete type application")
+        genericBody = subst(genericBody.scope.bdy, 0, specializedArgs[0])
+        specializedArgs.delete(0)
+        genericTy = genericTy.scope.bdy
+      try:
+        head = eraseQ0Arguments(genericBody)
+      except ValueError as e:
+        raise newException(CgUnsupported,
+          "generic helper '" & rh.name & "' cannot be inlined: " & e.msg)
+      appArgs = specializedArgs
   # Beta-reduce immediately-applied lambdas. A lambda in this fragment has
   # an int type only when fully applied (a bare lambda has a Pi type, which
   # the signature check rejects, and the only int-typed positions are
@@ -2902,6 +3001,13 @@ proc cgRepr(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
     # Issue #93: Nat literals are definitionally suc^n(zero); on the int
     # representation they are just int literals.
     newLit(t.natLitVal)
+  of tPair:
+    # Issue #493: Sigma values over representation-supported components are
+    # host tuples. `fst`/`snd` already project those tuples; compile the
+    # matching pair constructor so Eponym Vec folds can accumulate tuples.
+    let first = cgRepr(ctx, t.pFst, env)
+    let second = cgRepr(ctx, t.pSnd, env)
+    newTree(nnkTupleConstr, first, second)
   of tLet:
     # Issue #413: a straight-line chain of linear lets over seq or int
     # reprs becomes one mutable buffer/accumulator; anything else keeps
@@ -2972,6 +3078,60 @@ proc reprTypeHasLiveVector(rt: ReprType): bool =
     reprTypeHasLiveVector(rt.funcDom[]) or reprTypeHasLiveVector(rt.funcCod[])
   else: false
 
+proc reprTupleFieldCount(n: NimNode): int =
+  if n.kind != nnkTupleTy: return -1
+  for field in n:
+    if field.kind == nnkIdentDefs:
+      result += field.len - 2
+    else:
+      inc result
+
+proc cgReprRecordTuple(ctx: var CodegenCtx, t: Term, env: seq[NimNode],
+                       expected: ReprType): NimNode =
+  ## Record declarations lower to an iterated Sigma ending in unit, while
+  ## an explicit runtimeType mapping may expose the record as a flat Nim
+  ## tuple. Flatten only that canonical pair chain at the mapped record
+  ## constructor boundary; ordinary Sigma values keep their nested form.
+  if expected.kind != repOpaque or expected.hostType.kind != nnkTupleTy or
+      t.kind != tPair:
+    return nil
+  var fields: seq[Term] = @[]
+  var tail = t
+  while tail.kind == tPair:
+    fields.add(tail.pFst)
+    tail = tail.pSnd
+  if tail.kind != tC or tail.c != cVoid or
+      fields.len != reprTupleFieldCount(expected.hostType):
+    return nil
+  var tupleNode = newNimNode(nnkTupleConstr)
+  for field in fields:
+    tupleNode.add(cgRepr(ctx, field, env))
+  tupleNode
+
+proc cgReprRecordProjection(defName: string, env: seq[NimNode],
+                            sig: seq[ReprType]): NimNode =
+  ## A named record projection over a flat tuple mapping must use its
+  ## declared field position, since the elaborated Sigma projections are
+  ## nested while the mapped host tuple is flat.
+  if sig.len != 2 or sig[0].kind != repOpaque or
+      sig[0].hostType.kind != nnkTupleTy:
+    return nil
+  let dot = defName.rfind('.')
+  if dot <= 0 or dot == defName.high: return nil
+  let fieldName = defName[dot + 1 .. ^1]
+  var fieldIndex = 0
+  for field in sig[0].hostType:
+    if field.kind == nnkIdentDefs:
+      for i in 0 ..< field.len - 2:
+        if $field[i] == fieldName:
+          return newTree(nnkBracketExpr, env[0], newLit(fieldIndex + i))
+      fieldIndex += field.len - 2
+    else:
+      if $field == fieldName:
+        return newTree(nnkBracketExpr, env[0], newLit(fieldIndex))
+      inc fieldIndex
+  nil
+
 proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
                         locFile: string, locLine: int,
                         failureReason: var string): NimNode =
@@ -2996,7 +3156,11 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
       failureReason = e.msg
       return nil
   let erased =
-    try: eraseQ0Arguments(d.tmTm)
+    try:
+      var preserveQ0Apps = initHashSet[int]()
+      for refId in ctx.inlineGenericDefs.keys:
+        preserveQ0Apps.incl(refId)
+      eraseQ0ArgumentsPreserving(d.tmTm, preserveQ0Apps)
     except ValueError as e:
       failureReason = "quantity erasure failed: " & e.msg
       return nil
@@ -3094,7 +3258,13 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
         newStmtList(newTree(nnkRaiseStmt,
           newCall(ident"newException", ident"ValueError", msg))))))
   let bodyCode =
-    try: cgRepr(ctx, body, env)
+    try:
+      let recordProjection = cgReprRecordProjection(d.name, env, sig)
+      if not recordProjection.isNil:
+        recordProjection
+      else:
+        let recordTuple = cgReprRecordTuple(ctx, body, env, sig[^1])
+        if recordTuple.isNil: cgRepr(ctx, body, env) else: recordTuple
     except CgUnsupported as e:
       failureReason = e.msg
       return nil
@@ -3263,7 +3433,7 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   ## keyed by `loc.source & "\x00" & name`. An import-origin definition
   ## with a registry hit is reused via direct calls — no local emission —
   ## and published in `exportInfo` for the macro to register.
-  var ctx = buildCodegenCtx(globals, baseDir, src, runtimeTypes)
+  var ctx = buildCodegenCtx(globals, baseDir, src, runtimeTypes, allDefs)
   # Issue #408: resolve cross-block reuse before any emission. A registry
   # hit pre-assigns the emitted proc names on the callee's ref, so callers
   # compiled below emit direct calls; the definition itself is marked
@@ -3684,6 +3854,8 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       for refId in ids.keys:
         if refId notin ctx.refs or ctx.refs[refId].kind != cgkDefn:
           continue
+        if refId in ctx.inlineGenericDefs:
+          continue  # direct call sites beta-reduce this helper into repr code
         let calleeSlow =
           if entry.tier == cgtRepr: refId notin ctx.reprProcs
           else: ctx.refs[refId].compiledProc.len == 0

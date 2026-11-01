@@ -14,12 +14,17 @@
 # compile time by the elaborator; the running layer is plain Nim.
 
 import eponym_mac
-import eponym_embed
 
 eponymBlock:
   # Prelude import (issue #131): Nat, Vec (+ zero, suc, nil, cons, ...)
   # from lib/vec.ep.
   import "../../lib/vec.ep"
+
+  # These definitions demonstrate type-level elaboration; the Nim program
+  # below does not expose a runtime Vec/All representation.
+  compileTimeOnly(witness)
+  compileTimeOnly(allLen)
+  compileTimeOnly(lenIsTwo)
 
   # The motivating case: index telescope `Pi(n: Nat, Vec A n -> Univ)` —
   # the second index's type mentions the first index binder `n`.

@@ -20,6 +20,10 @@ one application (and the staged relational elaborator is one case of that).
 - `modes.nim` — mode analysis for the relational client: determines which
   arguments are ground vs. logic variables at staging time, guiding
   specialization.
+- `printf_inject.nim` — issue #491 family-specific `inject` spike. A literal
+  PrintfType prefix is evaluated by a macro and the dynamic suffix is handled
+  by residual Nim code returning a closed TypeRep. This is a boundary demo,
+  not yet extraction from Eponym core definitions.
 
 ## Design notes
 

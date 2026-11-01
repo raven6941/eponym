@@ -30,8 +30,10 @@
 #   could stash, double-use, or drop it unchecked; a Nim func callback
 #   cannot perform the side-effect operations at all, and confinement
 #   is not linearity (it does not enforce exactly-once use). That
-#   adoption cost is real: the Nim programmer writes the use in eponym
-#   and calls withJob from Nim.
+#   adoption cost is real: the Nim programmer writes the use in eponym.
+#   The callback client remains type-checked but has no runtime wrapper
+#   until strict codegen can pass representation-compiled closures to
+#   host postulates without the Value interpreter.
 # - Copy-to-omega: deliberately absent for live handles; see
 #   lib/linear.ep for the per-variant reasons. Only the completed
 #   receipt (an immutable Nat) crosses to Nim.
@@ -73,8 +75,8 @@
 #   higher-rank bracket is a language-design follow-up, not a library
 #   method today.
 # - No new language friction otherwise: the lib-import + runtimeType
-#   on a data family + mixed bindPostulate / bindPostulatePair /
-#   bindPostulateValue bindings all worked first try, and the
+#   on a data family + mixed bindPostulate / bindPostulatePair bindings
+#   work, and the
 #   phase-indexed + q1 pattern fell directly out of #481's machinery.
 # - Unused let-bound closed handles do not error (the `c` bindings in
 #   jobSession/finishJob): consistent with the let-inference reading,
@@ -93,8 +95,6 @@
 
 import eponym_mac
 import eponym_embed
-import eponym_init
-import elab
 
 type
   JobPhaseB = enum freshB, sentB, ackedB, closedB
@@ -146,27 +146,20 @@ proc hostCloseW(handle: JobHandle): JobHandle =
   inc handle.closes
   handle
 
-# --- bracket backend (raw Value route: the callback is a checked term).
-proc hostWithJob(args: seq[Value], globals: Globals): Value =
-  if args.len != 1:
-    raise newException(ValueError, "withJob expects 1 runtime argument")
-  let handle = newJobHandle()
-  let outcome = callRuntimeValue(args[0], [toHostValue(handle)])
-  if handle.phase != closedB:
-    raise newException(IOError,
-      "withJob callback returned without closing the job")
-  result = outcome
-
 eponymBlock:
   import "../../lib/linear.ep"
 
   # Every Job phase erases to the same Nim ref type at runtime.
+  runtimeType(Nat, int)
   runtimeType(Job, JobHandle)
 
   bindPostulate(sendJ, hostSendJ, Nat, Job, Job)
   bindPostulatePair(ackJ, hostAckJ, Job, Nat, Job)
   bindPostulate(closeJ, hostCloseJ, Job, Job)
-  bindPostulateValue(withJob, hostWithJob)
+  # This callback shape is checked but currently has no representation-tier
+  # host adapter. Keep it out of runtime code rather than routing it through
+  # the Value interpreter.
+  compileTimeOnly(jobViaBracket)
 
   # Omega variants of the same operations: same backend state shape,
   # no linearity, no phase asserts. Declared here, not in the library:
@@ -218,11 +211,8 @@ eponymBlock:
 
 proc main() =
   echo "linear_handles: single-use acked jobs, embedded (Issue #482)."
-  # Bracket path: fresh handle created inside withJob; callback sends
-  # suc(zero()) = 1, ack receipt is payload + 1 = 2.
-  let bracketReceipt = jobViaBracket()
-  echo "  bracket receipt: ", bracketReceipt
-  doAssert bracketReceipt == 2, "bracket receipt must be payload + 1"
+  echo "  bracket client: typechecked; compile-time-only until its callback"
+  echo "    has a representation-tier host adapter"
 
   # Direct q1 path over a fresh handle.
   let directHandle = newJobHandle()

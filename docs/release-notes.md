@@ -14,8 +14,11 @@ describe what is in the tree.
   where a representation mapping applies (`Int`/`Nat`/`Bool` as
   `int`, `Vec`/`List` as `seq[int]`, `Option` as `Option[int]`),
   with destination-passing folds for sequence eliminators.
-  `requireCompiled()` is the opt-in guarantee that no definition
-  falls back to the interpreter or the Value layer, and
+  representation-compiled runtime code is now the default: unsupported
+  definitions fail compilation instead of falling back to the interpreter
+  or Value runtime. `compileTimeOnly(name)` explicitly marks checked
+  definitions with no runtime API. `requireCompiled()` remains a redundant
+  compatibility marker, and
   `-d:eponymCodegenReport` names each definition's backend.
 - Interactive sheds in VS Code: seven actions (Intro, Construct,
   Apply, Rewrite, Refine, Give, Case-split) over client-selected,
@@ -35,6 +38,6 @@ describe what is in the tree.
 ### Known limitations
 
 See [known-limitations.md](known-limitations.md) for the current
-boundary: which definitions get wrappers, which shapes
-`requireCompiled()` admits, and which parts of the Nim boundary stay
+boundary: which definitions get wrappers, which shapes the representation
+backend admits, and which parts of the Nim boundary stay
 trusted.

@@ -1,10 +1,9 @@
-## Explicitly require typed wrappers backed by generated code.
+## Verify that eponymBlock defaults to typed wrappers backed by generated code.
 
 import eponym_mac
 import std/[osproc, os, strutils]
 
 eponymBlock:
-  requireCompiled()
   import "fixtures/require_compiled_imported.ep"
   import "../lib/vec.ep"
   runtimeType(Int, int)

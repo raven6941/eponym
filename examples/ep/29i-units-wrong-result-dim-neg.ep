@@ -1,0 +1,3 @@
+import "../../lib/units.ep"
+
+proc wrongDimension (value : Qty lengthDim) : Qty timeDim = value

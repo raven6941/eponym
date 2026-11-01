@@ -9,7 +9,7 @@ proc countBranch(value: int): int =
   inc branchCalls
   value
 
-eponymBlock:
+eponymRuntimeBridgeTestBlock:
   import "../lib/bool.ep"
   import "../lib/option.ep"
   import "../lib/list.ep"
