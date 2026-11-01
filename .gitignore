@@ -31,8 +31,15 @@ examples/**
 # Shed metadata sidecars (issue #133): written by the eponymBlock macro
 # next to the calling Nim file for the LSP server; regenerated on compile.
 *.sheds.json
+# Exception (issue #502): the integration-test shed fixture ships its
+# pre-generated sidecar so the tests never compile fixtures.
+!editors/vscode/test/integration/fixtures/*.sheds.json
 
 # VSCode extension build (issue #136)
 editors/vscode/node_modules/
 editors/vscode/out/
 editors/vscode/*.vsix
+# VS Code integration-test cache (issue #502): downloaded desktop build.
+editors/vscode/.vscode-test/
+editors/vscode/test/integration/.vscode-test-user-data/
+editors/vscode/test/integration/.vscode-test-extensions/

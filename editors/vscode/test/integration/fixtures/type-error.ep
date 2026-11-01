@@ -1,0 +1,2 @@
+postulate(Int, Nat, Univ)
+proc deliberateTypeError(x: Int): Nat = x
