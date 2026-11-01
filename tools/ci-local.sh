@@ -22,6 +22,14 @@
 # nimcache produce link failures with undefined references (diagnosed on
 # issue #404). Parallel local shard runs must each set their own
 # EPONYM_NIMCACHE (e.g. ~/.cache/eponym-ci-nimcache-shard0).
+#
+# Resumability: every run checkpoints completed steps to
+# ~/.cache/eponym-ci-checkpoint-shard<I>-of-<N> (override with
+# EPONYM_CI_CHECKPOINT). If the run is killed, re-run with
+# EPONYM_CI_RESUME=1 to skip the steps already done. The checkpoint is
+# invalidated by any source change (commit, dirty tree, script edit, or
+# toolchain change), so it can never mask a changed tree. A finished run
+# deletes its checkpoint.
 
 set -e
 cd "$(dirname "$0")/.."
@@ -55,6 +63,46 @@ if [ -n "${EPONYM_CI_SHARD:-}" ]; then
 fi
 
 STEP_N=0
+
+# --- Resumable checkpoints (incremental results) -----------------------------
+# A killed matrix run restarts from scratch by default. Every real (non-list)
+# run records each completed step in a checkpoint file; re-running with
+# EPONYM_CI_RESUME=1 skips the steps already recorded, so a runtime restart
+# (or a Ctrl-C) resumes where the run stopped instead of redoing the matrix.
+#
+# The checkpoint is keyed by a fingerprint: git HEAD, working-tree status,
+# this script's checksum, nim version, and shard. Any source change
+# invalidates it and the run starts fresh — a stale checkpoint can never
+# silently stand in for a changed tree. The default path is per-shard;
+# override with EPONYM_CI_CHECKPOINT (e.g. for parallel shard runs sharing
+# one cache dir, give each its own file). As with the nimcache, never run
+# two instances concurrently against the same checkpoint file.
+CKPT_FILE=""
+CKPT_FP=""
+CKPT_RESUME=0
+CKPT_SKIPPED=0
+if [ "${EPONYM_LIST_STEPS:-}" != "1" ]; then
+  CKPT_FILE="${EPONYM_CI_CHECKPOINT:-$HOME/.cache/eponym-ci-checkpoint-shard$SHARD_INDEX-of-$SHARD_COUNT}"
+  _ckpt_head=$(git rev-parse HEAD 2>/dev/null || echo "nogit")
+  _ckpt_status=$(git status --porcelain 2>/dev/null | cksum | cut -d' ' -f1)
+  _ckpt_script=$(cksum tools/ci-local.sh 2>/dev/null | cut -d' ' -f1)
+  _ckpt_nim=$(nim --version 2>/dev/null | head -n 1)
+  CKPT_FP="head=$_ckpt_head status=$_ckpt_status script=$_ckpt_script shard=$SHARD_INDEX/$SHARD_COUNT nim=$_ckpt_nim"
+  if [ -f "$CKPT_FILE" ] && [ "$(head -n 1 "$CKPT_FILE" 2>/dev/null)" = "FP:$CKPT_FP" ]; then
+    if [ "${EPONYM_CI_RESUME:-}" = "1" ]; then
+      CKPT_RESUME=1
+      echo "checkpoint: resuming from $CKPT_FILE"
+    else
+      echo "checkpoint: previous checkpoint superseded by this fresh run"
+      rm -f "$CKPT_FILE"
+    fi
+  elif [ -f "$CKPT_FILE" ]; then
+    echo "checkpoint: fingerprint changed (new commit, dirty tree, or different toolchain) — starting fresh"
+    rm -f "$CKPT_FILE"
+  fi
+  unset _ckpt_head _ckpt_status _ckpt_script _ckpt_nim
+fi
+
 if [ "${EPONYM_LIST_STEPS:-}" = "1" ]; then
   # List mode (issue #405): print each step's full command, one per line,
   # instead of running the matrix. tools/test-affected.sh enumerates the
@@ -68,8 +116,17 @@ else
       echo "=== skip step $STEP_N (shard $SHARD_INDEX/$SHARD_COUNT): $* ==="
       return 0
     fi
+    if [ "$CKPT_RESUME" = "1" ] && grep -qxF -- "STEP:$STEP_N:$*" "$CKPT_FILE" 2>/dev/null; then
+      CKPT_SKIPPED=$((CKPT_SKIPPED + 1))
+      echo "=== resume: skip step $STEP_N (checkpointed): $* ==="
+      return 0
+    fi
     echo "=== step $STEP_N: $* ==="
     "$@" || { _rc=$?; echo "step $STEP_N FAILED (exit $_rc): $*" >&2; exit $_rc; }
+    if [ ! -f "$CKPT_FILE" ]; then
+      printf 'FP:%s\n' "$CKPT_FP" > "$CKPT_FILE"
+    fi
+    printf 'STEP:%s:%s\n' "$STEP_N" "$*" >> "$CKPT_FILE"
   }
 fi
 
@@ -217,5 +274,12 @@ run_step sh tools/vscode-smoke.sh
 # Note: bench/ contains expensive benchmarks, not run in CI.
 
 if [ "${EPONYM_LIST_STEPS:-}" != "1" ]; then
+# A completed run leaves no checkpoint: a later EPONYM_CI_RESUME=1 must
+# never no-op against a finished matrix.
+rm -f "$CKPT_FILE"
+if [ "$CKPT_SKIPPED" -gt 0 ]; then
+echo "### CI PASSED (shard $SHARD_INDEX/$SHARD_COUNT, $STEP_N steps total, $CKPT_SKIPPED resumed from checkpoint)"
+else
 echo "### CI PASSED (shard $SHARD_INDEX/$SHARD_COUNT, $STEP_N steps total)"
+fi
 fi
