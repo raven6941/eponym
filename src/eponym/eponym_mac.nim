@@ -4529,8 +4529,18 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
   var supply: Supply
   var elabErrMsg = ""
   var elabErrLoc = noLoc
+  # Issue #519: collect host-bound postulate names before elaboration so
+  # the elaborator can warn when one appears inside an erased (quantity-0)
+  # argument. (Was computed after elaboration; validating bindings first
+  # only changes which user error is reported first when a block has both
+  # a malformed binding and an elaboration error.)
+  var bindings = hostPostulateBindings(body)
+  var hostPostulateNames = initHashSet[string]()
+  for binding in bindings:
+    hostPostulateNames.incl(binding.postulateName)
   try:
-    let checked = elabCheckDirStateAllHoles(src, baseDir)
+    let checked = elabCheckDirStateAllHoles(src, baseDir,
+      hostPostulates = hostPostulateNames)
     defs = checked.defs
     allDefs = checked.allDefs
     checkedGlobals = checked.globals
@@ -4604,6 +4614,21 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
     let detail = if hasEponymImport: elabErrMsg else:
       sourceMappedDiagnostic(elabErrMsg, elabErrLoc, sourceLineMap)
     error("eponymBlock elaboration error: " & detail, body)
+  # Issue #519: surface erased-argument host-boundary warnings loudly as
+  # compiler warnings (elaboration succeeded; these are not errors).
+  # Unlike ElabError text, warning messages carry no "line L, col C: "
+  # prefix (the Loc travels separately), so sourceMappedDiagnostic's
+  # prefix-stripping would eat the message's first clause — map the
+  # location directly instead.
+  for w in ms.elabWarnings:
+    var detail = w.msg
+    if not hasEponymImport and w.loc.line > 0 and
+        w.loc.line <= sourceLineMap.len:
+      let sl = sourceLineMap[w.loc.line - 1]
+      if sl.filename.len > 0 and sl.line > 0:
+        detail = sl.filename & "(" & $sl.line & ", " & $sl.column &
+          "): " & w.msg
+    warning("eponymBlock: " & detail, body)
   for requested in compileTimeOnlyNames:
     if not defs.anyIt(it.name == requested):
       error("compileTimeOnly names no checked definition: " & requested,
@@ -4832,7 +4857,6 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
         error("runtimeValue supports ordinary fixed-arity parameters: " & requested,
           declaration)
 
-  var bindings = hostPostulateBindings(body)
   for binding in bindings.mitems:
     if binding.pairResult and binding.pairResultType.isNil and
         binding.postulateName in checkedGlobals:

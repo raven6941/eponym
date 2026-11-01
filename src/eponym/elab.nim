@@ -25,6 +25,7 @@ import tables
 import sequtils
 import strutils
 import sets
+import algorithm  # Issue #519: sorted() for deterministic warning text
 import os        # issue #49: module file loading
 import hashes    # issue #49: content-hash module cache
 import preterm
@@ -1677,6 +1678,41 @@ proc checkErasedArgWalk(t: Term, depth: int, ctx: Ctx, loc: Loc,
   of tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
     discard
 
+proc checkErasedArgHostWalk(t: Term, ms: MetaStore, seen: var HashSet[string]) =
+  ## Issue #519: collect host-bound postulates mentioned in an erased
+  ## argument. Postulate references are tR nodes with refIsDefn == false
+  ## (newPostulateRef); defs and eliminators have refIsDefn == true.
+  ## ms.refNames maps refId -> surface name (populated at registration).
+  case t.kind
+  of tR:
+    if not t.refIsDefn and t.refId in ms.refNames:
+      let nm = ms.refNames[t.refId]
+      if nm in ms.hostPostulates: seen.incl(nm)
+  of tV:
+    discard
+  of tLam, tPi, tSi:
+    # Unlike the #66 variable-use walk (domains are types, checked in the
+    # all-0 context), a host-boundary mention anywhere in the argument —
+    # including a domain annotation — counts.
+    checkErasedArgHostWalk(t.dom, ms, seen)
+    checkErasedArgHostWalk(t.scope.bdy, ms, seen)
+  of tApp:
+    checkErasedArgHostWalk(t.fn, ms, seen)
+    checkErasedArgHostWalk(t.arg, ms, seen)
+  of tPair:
+    checkErasedArgHostWalk(t.pFst, ms, seen)
+    checkErasedArgHostWalk(t.pSnd, ms, seen)
+    checkErasedArgHostWalk(t.pScope.bdy, ms, seen)
+  of tFst, tSnd, tAbsurd:
+    checkErasedArgHostWalk(t.sub, ms, seen)
+  of tLet:
+    checkErasedArgHostWalk(t.letVal, ms, seen)
+    checkErasedArgHostWalk(t.letScope.bdy, ms, seen)
+  of tPrim:
+    discard
+  of tC, tType, tMeta, tInt, tNatLit, tNatSing:
+    discard
+
 proc checkErasedArg(arg: Term, ctx: Ctx, loc: Loc, ms: var MetaStore) =
   ## Issue #66: application-site quantity enforcement. When the Pi binder
   ## being applied has quantity q0, the argument is checked for free uses
@@ -1694,6 +1730,22 @@ proc checkErasedArg(arg: Term, ctx: Ctx, loc: Loc, ms: var MetaStore) =
   checkErasedArgWalk(za, 0, ctx, loc, ms, pending)
   for p in pending:
     ms.qvarPending.mgetOrPut(p.vname, @[]).add((p.varName, p.loc))
+  # Issue #519: warn loudly when the erased argument mentions a host-bound
+  # postulate — the argument is erased at compile time, so the host call
+  # never runs. Semantically legal, but almost certainly not what a Nim
+  # programmer meant ("I called something here; why didn't it happen?").
+  if ms.hostPostulates.len > 0:
+    var seen = initHashSet[string]()
+    checkErasedArgHostWalk(za, ms, seen)
+    if seen.len > 0:
+      let names = sorted(toSeq(seen)).mapIt("'" & it & "'").join(", ")
+      let w = (loc, "host-bound postulate " & names &
+        " used inside an erased (quantity-0) argument: the argument is " &
+        "erased at compile time, so this host call will NEVER run. If the " &
+        "effect must happen, evaluate the call outside the erased position " &
+        "first (e.g. bind it with `let`), or change the parameter to " &
+        "quantity 1/\u03c9.")
+      if w notin ms.elabWarnings: ms.elabWarnings.add(w)
 
 proc resolveVar(ctx: Ctx, globals: Globals, name: string,
                 loc: Loc, ab: Ability,
@@ -5044,7 +5096,8 @@ proc elabCheckDirStateAll*(src: string, baseDir: string,
   (defs, drv.globals, allDefs)
 
 proc elabCheckDirStateAllHoles*(src: string, baseDir: string,
-                        handlers: seq[ConvHandler] = @[]):
+                        handlers: seq[ConvHandler] = @[],
+                        hostPostulates: HashSet[string] = initHashSet[string]()):
     tuple[defs: seq[ElabDef], globals: Globals, allDefs: seq[ElabDef],
           ms: MetaStore, supply: Supply, errLoc: Loc, errMsg: string] =
   ## Issue #478: hole-tolerant variant of elabCheckDirStateAll for the
@@ -5054,11 +5107,15 @@ proc elabCheckDirStateAllHoles*(src: string, baseDir: string,
   ## prefix stay queryable in ms; unlike elabCheckHolesDir it also returns
   ## globals, allDefs, and the driver's supply, which the macro needs for
   ## wrapper generation, codegen, and macro-time draft checking.
+  ## Issue #519: hostPostulates names postulates bound to host values
+  ## (the block's `bindPostulate*` statements); checkErasedArg warns when
+  ## one appears inside an erased argument. Empty for `.ep` sources.
   ## Raises ParseError as usual.
   profilePhase(epOther):
     let decls = parseProgram(src)  # ParseError propagates
     var drv = initModuleDriver(handlers)
     drv.ms.allowHoles = true
+    drv.ms.hostPostulates = hostPostulates
     let (defs, errLoc, errMsg) =
       drv.elabDeclsDirInner(decls, baseDir, "<eponymBlock>", true)
     var allDefs: seq[ElabDef] = @[]

@@ -63,6 +63,25 @@ proc checkRuntimeFixture(path, expected: string): bool =
   echo "ok (named runtime shape error): ", path
   true
 
+proc checkWarningFixture(path, expected: string): bool =
+  ## Issue #519: the fixture must COMPILE (the warned-about program is
+  ## semantically legal) but the compiler output must contain the loud
+  ## warning explaining the erased host call.
+  let name = path.splitFile().name
+  let bin = tmpDir / name
+  let (cOut, cCode) = execCmdEx("nim c --hints:off " & pathFlags &
+    " --out:" & quoteShell(bin) & " " & quoteShell(path))
+  if cCode != 0:
+    echo "FAIL (warning fixture did not compile): ", path
+    echo cOut
+    return false
+  if expected notin cOut:
+    echo "FAIL (missing expected warning '", expected, "'): ", path
+    echo cOut
+    return false
+  echo "ok (compiled with warning): ", path
+  return true
+
 var failed = 0
 for path in ["tests/fixtures/embedded_err_unbound.nim",
              "tests/fixtures/embedded_err_mismatch.nim",
@@ -178,6 +197,15 @@ for (path, expected) in [
     ("tests/fixtures/typed_adapter_err_nonstatic.nim",
      "bindPostulateValue 'debugEcho' applied at a non-static type")]:
   if not checkFixture(path, expected):
+    inc failed
+
+# Issue #519: warning fixtures must compile AND warn.
+for (path, expected) in [
+    ("tests/fixtures/embedded_warn_q0_host_postulate.nim",
+     "host-bound postulate 'traceIt' used inside an erased (quantity-0) argument"),
+    ("tests/fixtures/embedded_warn_q0_host_postulate.nim",
+     "will NEVER run")]:
+  if not checkWarningFixture(path, expected):
     inc failed
 
 if failed > 0:
