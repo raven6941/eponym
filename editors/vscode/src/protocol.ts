@@ -3,6 +3,13 @@
 
 import { spawn, ChildProcess } from "child_process";
 
+/** A server diagnostic in plain JSON — vscode-free so the smoke test can use this module. */
+export interface ServerDiagnostic {
+  range: { start: { line: number; character: number }; end: { line: number; character: number } };
+  severity: 1 | 2 | 3 | 4; // 1 Error, 2 Warning, 3 Information, 4 Hint (LSP)
+  message: string;
+}
+
 export interface BoxJson {
   // All fields optional: older server binaries may omit empty arrays, and
   // the renderers must not crash on a partial box (defensive ?? []/"" at
@@ -118,8 +125,13 @@ export class LspClient {
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private stateNodeStore = new Map<string, StateNodeWire>();
+  private onDiagnostics: ((uri: string, diagnostics: ServerDiagnostic[]) => void) | null;
 
-  constructor(serverPath: string) {
+  constructor(
+    serverPath: string,
+    onDiagnostics?: (uri: string, diagnostics: ServerDiagnostic[]) => void,
+  ) {
+    this.onDiagnostics = onDiagnostics ?? null;
     this.proc = spawn(serverPath, [], { stdio: ["pipe", "pipe", "inherit"] });
     this.proc.stdout!.on("data", (d: Buffer) => this.onData(d));
     this.proc.on("exit", () => {
@@ -147,7 +159,24 @@ export class LspClient {
         if (msg.error) p.reject(new Error(String(msg.error.message ?? msg.error)));
         else p.resolve(msg.result);
       }
-      // notifications (e.g. publishDiagnostics) are ignored here
+      if (msg.method === "textDocument/publishDiagnostics") {
+        const params = msg.params ?? {};
+        const uri = String(params.uri ?? "");
+        const diagnostics: ServerDiagnostic[] = (params.diagnostics ?? []).map((d: any) => {
+          const start = d.range?.start ?? { line: 0, character: 0 };
+          const end = d.range?.end ?? start;
+          const sev = Number(d.severity);
+          return {
+            range: {
+              start: { line: start.line ?? 0, character: start.character ?? 0 },
+              end: { line: end.line ?? 0, character: end.character ?? 0 },
+            },
+            severity: (sev >= 1 && sev <= 4 ? sev : 1) as 1 | 2 | 3 | 4,
+            message: String(d.message ?? "Eponym diagnostic"),
+          };
+        });
+        this.onDiagnostics?.(uri, diagnostics);
+      }
     }
   }
 

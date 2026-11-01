@@ -1,0 +1,22 @@
+{
+  "file": "/home/hatch/workspace/eponym-502-integration-tests/editors/vscode/test/integration/fixtures/shed_basic.nim",
+  "errMsg": "",
+  "sheds": [
+    {
+      "name": "basic",
+      "draft": "",
+      "nimLine": 10,
+      "nimCol": 32,
+      "holeLine": 2,
+      "holeIdx": 0,
+      "holeCol": 33,
+      "genSrc": "postulate(Nat, Univ)\nproc identity (x : Nat) : Nat = _\n",
+      "goal": "Nat",
+      "ctx": [
+        "x : Nat"
+      ],
+      "goalPi": [],
+      "status": "yellow"
+    }
+  ]
+}

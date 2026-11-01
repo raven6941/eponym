@@ -10,7 +10,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
-import { LspClient, ShedStateGoal, ShedStateTransition } from "./protocol";
+import { LspClient, ServerDiagnostic, ShedStateGoal, ShedStateTransition } from "./protocol";
 import { ensureServerBinary } from "./serverPath";
 import { initLog, log } from "./log";
 import { pageHtml } from "./render";
@@ -408,6 +408,48 @@ export function activate(ctx: vscode.ExtensionContext) {
   out = vscode.window.createOutputChannel("Eponym");
   initLog(out);
   log("[eponym] extension v0.1.20 activated");
+
+  // Issue #502: forward the server's textDocument/publishDiagnostics into
+  // the editor. protocol.ts stays vscode-free; the mapping lives here.
+  const eponymDiagnostics = vscode.languages.createDiagnosticCollection("eponym");
+  ctx.subscriptions.push(eponymDiagnostics);
+  const sevMap = {
+    1: vscode.DiagnosticSeverity.Error,
+    2: vscode.DiagnosticSeverity.Warning,
+    3: vscode.DiagnosticSeverity.Information,
+    4: vscode.DiagnosticSeverity.Hint,
+  } as const;
+  function forwardDiagnostics(uri: string, ds: ServerDiagnostic[]): void {
+    eponymDiagnostics.set(
+      vscode.Uri.parse(uri),
+      ds.map(
+        (d) =>
+          new vscode.Diagnostic(
+            new vscode.Range(
+              d.range.start.line, d.range.start.character,
+              d.range.end.line, d.range.end.character,
+            ),
+            d.message,
+            sevMap[d.severity],
+          ),
+      ),
+    );
+  }
+
+  // Issue #502: .ep files are Eponym documents without shed blocks, so the
+  // prefetch path above never covers them. Give them an LSP client on open
+  // (standard language-server behavior) so the server's publishDiagnostics
+  // reach the editor; inlineClient dedupes via documentClients.
+  function maybeStartEpClient(doc: vscode.TextDocument): void {
+    if (!doc.fileName.endsWith(".ep")) return;
+    inlineClient(doc).catch((e) =>
+      out.appendLine(`[eponym] .ep client failed: ${String(e)}`)
+    );
+  }
+  ctx.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((doc) => maybeStartEpClient(doc))
+  );
+  for (const doc of vscode.workspace.textDocuments) maybeStartEpClient(doc);
 
   // Issue #190: eager pre-render. When a shed file is opened and its
   // sidecar is already fresh, fetch the shed layouts in the background so
@@ -888,7 +930,7 @@ export function activate(ctx: vscode.ExtensionContext) {
       out,
     );
     if (!sp) return null;
-    const c = new LspClient(sp);
+    const c = new LspClient(sp, forwardDiagnostics);
     await c.initialize(path.dirname(doc.uri.fsPath));
     c.didOpen(docUri, sourceTextWithoutExpandedView(doc));
     documentClients.set(docUri, c);
