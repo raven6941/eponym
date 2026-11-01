@@ -538,6 +538,11 @@ the Nim implementation behaves as promised, or that an opaque host value
 satisfies a dependent index. Codecs, mappings, adapters, and their behavior
 are trusted at that boundary.
 
+Since issue #511, using a bare host identifier inside `eponymBlock` produces a
+diagnostic naming this phase boundary instead of only a bare "unbound variable"
+error. Declare a postulate and use `bindPostulate` to make the host procedure
+available to checked Eponym code.
+
 Ordinary `bindPostulate` bindings expect Nim value parameters. When an
 existing Nim adapter accepts a `var` parameter, use the explicit
 `bindPostulateMutable` form. It decodes each argument into a mutable local,

@@ -4632,7 +4632,37 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
       writeShedSidecar(nimFile, sheds, elabErrMsg)
     let detail = if hasEponymImport: elabErrMsg else:
       sourceMappedDiagnostic(elabErrMsg, elabErrLoc, sourceLineMap)
-    error("eponymBlock elaboration error: " & detail, body)
+    let plainMsg = "eponymBlock elaboration error: " & detail
+    # Issue #511: an unbound Eponym name may nevertheless resolve as a Nim
+    # identifier at the call site. Probe that scope in emitted code: bindSym
+    # here would resolve in this macro's definition scope instead.
+    let unboundMarker = "unbound variable '"
+    let unboundStart = elabErrMsg.find(unboundMarker)
+    if unboundStart >= 0:
+      let nameStart = unboundStart + unboundMarker.len
+      let nameEnd = elabErrMsg.find('\'', nameStart)
+      if nameEnd >= nameStart and nameEnd + 1 == elabErrMsg.len:
+        let unboundName = elabErrMsg[nameStart ..< nameEnd]
+        let hostMsg = plainMsg & "\n" &
+          "note: '" & unboundName & "' resolves as a host Nim identifier, " &
+          "but eponymBlock bodies are\n" &
+          "Eponym terms, not Nim code: host identifiers are not in scope " &
+          "inside the block. To call host code, declare a postulate for it " &
+          "and bind it to the Nim procedure, e.g.\n" &
+          "  postulate(hostOp, Int -> Int)\n" &
+          "  bindPostulate(hostOp, " & unboundName & ", Int, Int)"
+        let errorPragma = proc(msg: string): NimNode =
+          newTree(nnkPragma,
+            newTree(nnkExprColonExpr, ident"error", newLit(msg)))
+        let probe = newTree(nnkStaticStmt,
+          newStmtList(newTree(nnkWhenStmt,
+            newTree(nnkElifBranch,
+              newCall(ident"compiles", newIdentNode(unboundName)),
+              newStmtList(errorPragma(hostMsg))),
+            newTree(nnkElse, newStmtList(errorPragma(plainMsg))))))
+        copyLineInfo(probe, body)
+        return probe
+    error(plainMsg, body)
   # Issue #519: surface erased-argument host-boundary warnings loudly as
   # compiler warnings (elaboration succeeded; these are not errors).
   # Unlike ElabError text, warning messages carry no "line L, col C: "
