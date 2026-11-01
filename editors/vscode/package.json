@@ -127,12 +127,14 @@
   "scripts": {
     "build": "tsc -p .",
     "smoke": "node out/smoke.js",
-    "test:headless": "node test/inline-shed.test.js && node test/state-history.test.js && node test/sidecar.test.js && node test/server-setup.test.js"
+    "test:headless": "node test/inline-shed.test.js && node test/state-history.test.js && node test/sidecar.test.js && node test/server-setup.test.js",
+    "test:integration": "node test/integration/runTest.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "@vscode/test-electron": "^3.1.0"
   },
   "repository": {
     "type": "git",

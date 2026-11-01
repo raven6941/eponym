@@ -1,0 +1,6 @@
+# Minimal fixture for integration scenario 01-activation: opening this file
+# as the nim language must activate the extension (onLanguage:nim).
+import eponym
+
+eponymBlock:
+  def hello: Nat = 1
