@@ -181,6 +181,16 @@ type
     # pure-code overhead for an instantiation nothing ever observed.
     abNext*: int
     deferred*: seq[DeferredGoal]  # Issue #56: suspended pre-unification goals
+    # Issue #519: postulates bound to host values (the `bindPostulate*`
+    # statements of an embedded block). A q0 argument mentioning one is
+    # erased at compile time, so the host call never runs — checkErasedArg
+    # records a loud warning (see elabWarnings). Empty for `.ep` files,
+    # which have no host boundary.
+    hostPostulates*: HashSet[string]
+    # Issue #519: non-fatal elaboration diagnostics, in source order.
+    # The eponymBlock macro surfaces them as compiler warnings; `.ep`
+    # drivers leave them unread.
+    elabWarnings*: seq[tuple[loc: Loc, msg: string]]
 
   QtySolKind* = enum qsUnknown, qsSolved
   QtySol* = object

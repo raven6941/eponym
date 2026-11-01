@@ -74,7 +74,9 @@ Public generated and interpreted runtime entrypoints both erase q0 arguments,
 so effects hidden in those arguments do not run. Raw `evalWithBindings`
 remains a lower-level evaluator of the unerased core and can run them. The
 type system does not track host effects or enforce purity; put any operation
-that must execute in a qω or q1 position. Generated typed and compiled
+that must execute in a qω or q1 position. As a backstop for the common
+mistake, elaboration warns loudly (issue #519) when a q0 argument mentions
+a host-bound postulate: the call is erased, so it will never run. Generated typed and compiled
 wrappers omit q0 values from computational argument vectors; a separate
 witness vector may still carry them to validate dependent runtime types.
 Generated higher-order `Value` code uses nullary closures for q0 lambdas,
