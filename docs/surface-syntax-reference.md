@@ -37,6 +37,46 @@ wrapper procs. Elaboration failures become Nim compiler errors. Standalone
 `.ep` files skip the macro and go straight to the parser; the syntax is
 identical.
 
+### Experimental: `eponymBlock(stratified = false):`
+
+> Branch-only (`univ-stratified-flag`, issue #500). Not part of the
+> release surface; the universe discipline below is the default.
+
+```nim
+eponymBlock(stratified = false):
+  proc PrintfType(f: Format): Univ =
+    formatElim(lam(u: Format) => Univ, ...)
+```
+
+By default, surface `Univ` is the stratified `Type 0`: a motive like
+`Format -> Univ` is `Type 1` and is rejected with a universe-level
+mismatch. Passing `stratified = false` opts the block into the legacy
+`Univ : Univ` constant (Type-in-Type) instead, which enables **large
+elimination** -- computing a *type* by recursion on a *value*, e.g. the
+`PrintfType` family of `examples/embedded/printf_large_elim.nim`.
+
+When to use it: only when a definition genuinely computes types from
+values (large elimination). Ordinary indexed families, vectors, and
+matrices do not need it -- their indices erase (#340).
+
+What it enables and its limits:
+- Elaboration of large eliminations type-checks; terms at computed
+  *concrete* types (e.g. `Nat -> String`) still compile and run.
+- A type family itself has no runtime representation: mark it
+  `compileTimeOnly(PrintfType)` -- checked at compile time, no runtime
+  API emitted (#401's compile-time-only classification).
+- Definitions whose types are *computed* (e.g. a `printf` skeleton of
+  type `Pi(f: Format, PrintfType(f))`) elaborate but fail loudly under
+  the strict default ("no representation-compiled body") -- there is no
+  silent interpreter fallback (#490). Runtime execution of large
+  eliminators is future work (staged `inject`, #491/#499, is the planned
+  production path).
+- Soundness: Type-in-Type is unsound in general (Girard's paradox); the
+  flag is opt-in per block precisely so the unsoundness stays fenced.
+  An independent soundness review of the large-elimination/universe
+  policy is still owed before any release inclusion (issue #492
+  decision, recorded in `decisions.org`).
+
 ### The Nim boundary
 
 Nim syntax is the *surface notation* for Eponym declarations inside the

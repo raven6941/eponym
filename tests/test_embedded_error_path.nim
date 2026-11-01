@@ -151,7 +151,11 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_named_argument_missing.nim",
      "missing required argument for 'right'"),
     ("tests/fixtures/typed_adapter_err_nonstatic.nim",
-     "bindPostulateValue 'debugEcho' applied at a non-static type")]:
+     "bindPostulateValue 'debugEcho' applied at a non-static type"),
+    ("tests/fixtures/embedded_err_stratified_off.nim",
+     "universe level mismatch: Type 1 vs Type 0"),
+    ("tests/fixtures/embedded_err_stratified_strict.nim",
+     "no representation-compiled body")]:
   if not checkFixture(path, expected):
     inc failed
 
