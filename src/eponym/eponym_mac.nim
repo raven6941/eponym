@@ -1107,10 +1107,22 @@ proc procDefToEponym(n: NimNode): string =
   "proc " & name & genericStr & " " & paramStrs.join(" ") & " : " & retTy &
     " = " & body & "\n"
 
-proc hasRuntimeTypePragma(n: NimNode): bool =
-  ## `{.runtimeType.}` is a host-side staging annotation.  It must be read
+proc hasStagedTypePragma(n: NimNode): bool =
+  ## `{.stagedType.}` is a host-side staging annotation (issue #524 renamed
+  ## the #499 `{.runtimeType.}` pragma; the `runtimeType(EponymType, NimType)`
+  ## representation-mapping call form is unchanged).  It must be read
   ## before procDefToEponym serializes the declaration because pragmas are not
   ## part of the Eponym surface grammar.
+  if n.kind != nnkProcDef or n.len <= 4 or n[4].kind != nnkPragma:
+    return false
+  for pragma in n[4]:
+    if pragma.kind in {nnkIdent, nnkSym} and $pragma == "stagedType":
+      return true
+  false
+
+proc hasOldRuntimeTypePragma(n: NimNode): bool =
+  ## Detect the pre-#524 `{.runtimeType.}` pragma spelling so users get a
+  ## migration error instead of silently losing the staging marker.
   if n.kind != nnkProcDef or n.len <= 4 or n[4].kind != nnkPragma:
     return false
   for pragma in n[4]:
@@ -4557,16 +4569,23 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
   # after elaboration, so the marker cannot affect name resolution, conversion
   # or kernel checking.  It also intentionally only scans declarations in this
   # block: imported/unrelated definitions are not made staging roots.
-  var runtimeTypeNames = initHashSet[string]()
+  # Issue #524: the pre-#524 `{.runtimeType.}` pragma spelling is a hard
+  # error with a migration hint, not a silent no-op.
+  var stagedTypeNames = initHashSet[string]()
   for st in body:
-    if st.kind == nnkProcDef and hasRuntimeTypePragma(st):
-      runtimeTypeNames.incl($st[0])
+    if st.kind == nnkProcDef:
+      if hasOldRuntimeTypePragma(st):
+        error("the {.runtimeType.} staging pragma was renamed to {.stagedType.} " &
+          "(issue #524); the runtimeType(EponymType, NimType) representation " &
+          "mapping is unchanged", st[4])
+      if hasStagedTypePragma(st):
+        stagedTypeNames.incl($st[0])
   for i in 0 ..< defs.len:
-    if defs[i].name in runtimeTypeNames:
-      defs[i].runtimeType = true
+    if defs[i].name in stagedTypeNames:
+      defs[i].stagedType = true
   for i in 0 ..< allDefs.len:
-    if allDefs[i].name in runtimeTypeNames:
-      allDefs[i].runtimeType = true
+    if allDefs[i].name in stagedTypeNames:
+      allDefs[i].stagedType = true
 
   # Issue #478: shed matching, macro-time draft filling, sidecar.
   # On elaboration failure the sidecar is written before the error (as
@@ -4889,36 +4908,36 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
   # entry point for runtime consumers.
   var stagedResiduals: seq[NimNode] = @[]
   for d in defs:
-    if not d.runtimeType: continue
+    if not d.stagedType: continue
     var declaration: NimNode = nil
     for st in body:
       if st.kind == nnkProcDef and $st[0] == d.name:
         declaration = st
         break
     if declaration.isNil:
-      error("eponymBlock runtimeType: no Nim declaration for '" & d.name & "'",
+      error("eponymBlock stagedType: no Nim declaration for '" & d.name & "'",
         body)
     var params: seq[(NimNode, NimNode)] = @[]
     let formal = declaration[3]
     for i in 1 ..< formal.len:
       let binder = formal[i]
       if binder.kind != nnkIdentDefs:
-        error("eponymBlock runtimeType: unsupported binder in '" & d.name & "'",
+        error("eponymBlock stagedType: unsupported binder in '" & d.name & "'",
           declaration)
       let hostType = runtimeNimType(binder[^2], runtimeTypes, records)
       if hostType.isNil:
-        error("eponymBlock runtimeType '" & d.name & "': cannot determine " &
+        error("eponymBlock stagedType '" & d.name & "': cannot determine " &
           "host type for parameter '" & $binder[0] & "'", binder)
       for j in 0 ..< binder.len - 2:
         params.add((ident(binderName(binder[j])), copyNimTree(hostType)))
     try:
       let staged = stageFamily(d.tmTm, checkedGlobals, d.name, params, d.loc,
-        d.name & "RuntimeType")
+        d.name & "StagedType")
       # stageFamily also returns a call for macro-local tests; production
       # wiring needs only the declaration so consumers call it directly.
       stagedResiduals.add(staged[0])
     except StagedInjectError as e:
-      error("eponymBlock runtimeType staging error: " & e.msg, declaration)
+      error("eponymBlock stagedType staging error: " & e.msg, declaration)
 
   for requested in trustedRuntimeRecords:
     let recordIndex = findHostRecord(records, requested)
@@ -5146,15 +5165,15 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
     closure.runtimeDefs
   else:
     defs.filterIt(it.name notin gatedNames)
-  # A runtimeType root is a type-level descriptor family. Its ordinary
+  # A stagedType root is a type-level descriptor family. Its ordinary
   # definition has no value-tier host ABI; the residual proc above is the
   # independent runtime artifact. Exclude these roots from strict backend
   # compilation while retaining the normal wrapper loop's honest absence of
   # a callable value wrapper.
   for d in defs:
-    if d.runtimeType:
+    if d.stagedType:
       compileTimeOnlyDefs[d.name] =
-        "runtimeType descriptor residual emitted separately"
+        "stagedType descriptor residual emitted separately"
   codegenDefs = codegenDefs.filterIt(it.name notin compileTimeOnlyDefs)
   # Issue #401: host-bound postulates whose types are fully within the
   # representation fragment get direct-call forwarders, so repr-tier

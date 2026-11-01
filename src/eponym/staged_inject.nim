@@ -44,7 +44,7 @@ proc `$`*(rep: TypeRep): string =
   of trString: "String"
   of trArrow: "(" & $rep.domain & " -> " & $rep.codomain & ")"
 
-proc stageStaticTerm*(term: Term, familyName = "runtimeType"): NimNode =
+proc stageStaticTerm*(term: Term, familyName = "stagedType"): NimNode =
   ## Emit a descriptor for the static fragment of a checked term.  This is a
   ## deliberately small, closed v1 algebra: the only atoms are Nat and String
   ## and the only structural operation is Arrow.  Dynamic eliminators are not
@@ -75,7 +75,7 @@ proc stageStaticTerm*(term: Term, familyName = "runtimeType"): NimNode =
     raise newException(StagedInjectError,
       familyName & ": unsupported static operation " & $term.kind)
 
-proc emitAtomRep*(atomName: string, familyName = "runtimeType"): NimNode =
+proc emitAtomRep*(atomName: string, familyName = "stagedType"): NimNode =
   ## Emit one closed descriptor atom.  This is used by family generators after
   ## resolving a checked reference through Globals; no unchecked Nim type AST
   ## enters the generated code.
