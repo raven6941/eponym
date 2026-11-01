@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "measurement": {
-    "compiler": "Nim 2.2.12",
+    "compiler": "Nim 2.4.0",
     "command": "nim check",
     "baseline": "PR target commit measured on the same GitHub Actions runner",
     "referenceSnapshot": "bench/compile_time_reference.json",
