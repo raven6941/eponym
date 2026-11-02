@@ -1526,6 +1526,143 @@ proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprType] =
   ## outside the fragment.
   ctx.reprSigOfType(d.tyTm)
 
+proc boundaryTerm(t: Term, ctx: Ctx, refNames: Table[int, string],
+                  records: Table[string, seq[string]],
+                  fallbackNames: seq[string] = @[], depth: int = 0): string =
+  ## Stable, user-facing spelling for the preview.  This deliberately has a
+  ## small surface vocabulary instead of exposing the kernel printer.
+  if t.isNil: return "<nil>"
+  proc usableBinderName(s: string): bool =
+    s.len > 0 and s.strip() != "_" and s.allIt(it.isAlphaNumeric or it == '_')
+  case t.kind
+  of tC:
+    if t.c == cOne: "unitTy" else: $t.c
+  of tR:
+    refNames.getOrDefault(t.refId, "<opaque>")
+  of tV:
+    if t.idx < ctx.len and ctx[t.idx].name != "_": ctx[t.idx].name
+    else: "_"
+  of tType:
+    if t.lvl == 0: "Univ" else: "Type " & $t.lvl
+  of tInt: $t.intVal
+  of tNatLit: $t.natLitVal
+  of tNatSing: $t.natSingVal
+  of tPi:
+    let n = if not usableBinderName(t.scope.adv):
+      if depth < fallbackNames.len: fallbackNames[depth] else: "arg" & $ctx.len
+    else: t.scope.adv
+    # The recursive results are bound before the string chain is built: a
+    # string `&`-chain in tail position with a nested seq-`&` inside an
+    # operand call miscompiles on Nim 2.4.0 (the binder name is silently
+    # dropped from the result). Hoisting into `let`s avoids the hazard.
+    let domStr = boundaryTerm(t.dom, ctx, refNames, records)
+    let bdyStr = boundaryTerm(t.scope.bdy,
+      @[CtxEntry(name: n, ty: t.dom, qty: t.qty)] & ctx,
+      refNames, records, fallbackNames, depth + 1)
+    "(" & n & " : " & domStr & ") -> " & bdyStr
+  of tLam:
+    let n = if not usableBinderName(t.scope.adv):
+      if depth < fallbackNames.len: fallbackNames[depth] else: "arg" & $ctx.len
+    else: t.scope.adv
+    # Same tail-position `&`-chain hazard as the tPi branch above.
+    let domStr = boundaryTerm(t.dom, ctx, refNames, records)
+    let bdyStr = boundaryTerm(t.scope.bdy,
+      @[CtxEntry(name: n, ty: t.dom, qty: t.qty)] & ctx,
+      refNames, records, fallbackNames, depth + 1)
+    "lam(" & n & ": " & domStr & ") => " & bdyStr
+  of tApp:
+    var args: seq[Term] = @[]
+    var h = t
+    while h.kind == tApp:
+      args.add(h.arg)
+      h = h.fn
+    args.reverse()
+    let head = boundaryTerm(h, ctx, refNames, records)
+    if args.len == 2 and h.kind == tR and head notin ["Vec", "Sig"]:
+      head & "(" & args.mapIt(boundaryTerm(it, ctx, refNames, records)).join(", ") & ")"
+    else:
+      var parts = @[head]
+      for a in args: parts.add(boundaryTerm(a, ctx, refNames, records))
+      parts.join(" ")
+  of tSi:
+    # Same tail-position `&`-chain hazard as the tPi branch: bind the
+    # recursive results before concatenating.
+    let domStr = boundaryTerm(t.dom, ctx, refNames, records)
+    let bdyStr = boundaryTerm(t.scope.bdy,
+      @[CtxEntry(name: t.scope.adv, ty: t.dom, qty: t.qty)] & ctx,
+      refNames, records)
+    "Sig(" & domStr & ", " & bdyStr & ")"
+  of tPair: "(" & boundaryTerm(t.pFst, ctx, refNames, records) & ", " &
+    boundaryTerm(t.pSnd, ctx, refNames, records) & ")"
+  else: prettyTerm(t, ctx, refNames, records)
+
+proc boundaryPreviewReport*(d: ElabDef, globals: Globals, baseDir, src: string,
+                            runtimeTypes: seq[HostRuntimeType], tier: CodegenTier,
+                            reason: string, allDefs: seq[ElabDef] = @[]): string =
+  ## Compute the diagnostic from the same representation classifier used by
+  ## emission.  In particular, checks are only listed for top-level Vec
+  ## parameters, matching compileDefProcRepr's vecChecks prologue.
+  var names = initTable[int, string]()
+  for n, g in globals:
+    if not g.tm.isNil and g.tm.kind == tR: names[g.tm.refId] = n
+  let ctx = buildCodegenCtx(globals, baseDir, src, runtimeTypes, allDefs)
+  var fallbackNames: seq[string] = @[]
+  var lam = d.tmTm
+  while not lam.isNil and lam.kind == tLam:
+    if lam.scope.adv.strip() notin ["", "_"]: fallbackNames.add(lam.scope.adv)
+    else: fallbackNames.add("arg" & $fallbackNames.len)
+    lam = lam.scope.bdy
+  var reportText = "Definition " & d.name & "\n"
+  reportText.add("Eponym:\n  " & boundaryTerm(d.tyTm, @[], names,
+    initTable[string, seq[string]](), fallbackNames) & "\n")
+  let tierName = case tier
+    of cgtRepr: "representation"
+    of cgtValue: "Value"
+    of cgtInterpreter: "interpreter"
+  reportText.add("Nim boundary:\n")
+  var sig: seq[ReprType] = @[]
+  var representable = true
+  try: sig = ctx.reprSig(d)
+  except CgUnsupported: representable = false
+  if tier == cgtRepr and representable:
+    var formal: seq[string] = @[]
+    var ty = d.tyTm
+    var si = 0
+    while ty.kind == tPi:
+      if ty.qty != q0:
+        formal.add((if ty.scope.adv == "_": "arg" & $formal.len else: ty.scope.adv) &
+          ": " & reprTypeName(sig[si]))
+        inc si
+      ty = ty.scope.bdy
+    reportText.add("  proc " & d.name & "(" & formal.join(", ") & "): " &
+      reprTypeName(sig[^1]) & "\n")
+  else:
+    reportText.add("  unavailable (" & tierName & " tier; " & reason & ")\n")
+  reportText.add("runtime checks:\n")
+  var checks: seq[string] = @[]
+  if tier == cgtRepr and representable:
+    var ty = d.tyTm
+    var si = 0
+    var prior: Ctx = @[]
+    while ty.kind == tPi:
+      if ty.qty != q0:
+        let rt = sig[si]
+        if rt.kind == repSeq and rt.isVector:
+          let pn = if ty.scope.adv == "_": "arg" & $si else: ty.scope.adv
+          checks.add("  " & pn & ".len == " & boundaryTerm(rt.index, prior,
+            names, initTable[string, seq[string]]()))
+        prior = @[CtxEntry(name: ty.scope.adv, ty: ty.dom, qty: ty.qty)] & prior
+        inc si
+      ty = ty.scope.bdy
+  if checks.len == 0: reportText.add("  none (no additional generated entry checks)\n")
+  else: reportText.add(checks.join("\n") & "\n")
+  reportText.add("notes:\n")
+  reportText.add("  q0 binders are erased and have no Nim formal.\n")
+  reportText.add("  Nat uses int; Vec A n uses seq[int] and an O(1) entry length check.\n")
+  reportText.add("  Sig maps to a host tuple; opaque families use their declared host type.\n")
+  reportText.add("  compilation tier: " & tierName & " (" & reason & ").\n")
+  reportText
+
 proc classifyRuntimeClosure*(ctx: CodegenCtx, localDefs, allDefs: seq[ElabDef],
                              globals: Globals,
                              explicitCompileTimeOnly: HashSet[string]):

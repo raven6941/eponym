@@ -1,0 +1,3 @@
+postulate(Int, Univ)
+postulate(Mystery, Univ)
+proc fallback (x: Mystery) : Mystery = x

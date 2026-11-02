@@ -619,6 +619,15 @@ uninstalled (issue #41, trust model).
 
 ## What's deliberately missing
 
+### Boundary preview
+
+Inside an `eponymBlock`, add `{.boundaryPreview.}` to a proc declaration
+(after the return type, as in `proc f(n: Nat): Nat {.boundaryPreview.} = ...`,
+the same position as `{.stagedType.}`) to print its generated Nim boundary,
+emitted Vec entry checks, and the selected Value/interpreter or representation
+tier at macro-expansion time. The pragma is diagnostic-only and does not alter
+generated code.
+
 - Termination: single-function structural recursion (#36) plus mutual
   recursion via size-change termination (#42); anything beyond that, and
   looping type-level programs in general, are the author's problem.

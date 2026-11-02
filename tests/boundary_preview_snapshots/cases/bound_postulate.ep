@@ -1,0 +1,3 @@
+postulate(Nat, Univ)
+postulate(step, Nat -> Nat)
+proc use (n: Nat) : Nat = step n
