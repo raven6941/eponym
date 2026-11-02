@@ -222,6 +222,24 @@ echo useQuad(3)
   check(not okTransit, "transitive caller: compilation fails")
   check("calls gated" in outTransit and "quad" in outTransit,
     "transitive caller: error names the gated callee, got: " & outTransit)
+  # --- Negative (issue #520): transitive gate names the shed ------------
+  check("quadBody" in outTransit and "root cause: shed 'quadBody' is incomplete" in
+        outTransit and "directly or through another definition" in outTransit,
+    "transitive caller: error names the root shed and explains use-gating, got: " & outTransit)
+
+  # --- Negative (issue #520): two-level chain names the root shed -------
+  let transit2 = writeSrc(dir, "transit2.nim", """eponymBlock:
+  postulate(Int, Univ)
+  runtimeType(Int, int)
+  proc base(n: Int): Int = ![baseShed]
+  proc mid(n: Int): Int = base(n)
+  proc top(n: Int): Int = mid(n)
+echo top(3)
+""")
+  let (okTransit2, outTransit2) = compileSrc(transit2, false)
+  check(not okTransit2, "two-level transitive caller: compilation fails")
+  check("baseShed" in outTransit2 and "fill shed 'baseShed'" in outTransit2,
+    "two-level: error names the root shed with a fill remedy, got: " & outTransit2)
 
   # --- Negative: bad draft, used ---------------------------------------
   let badDraft = writeSrc(dir, "bad_draft_use.nim", """eponymBlock:

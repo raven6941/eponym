@@ -4498,6 +4498,9 @@ proc computeGated(defs: seq[ElabDef], checkedGlobals: Globals,
       metaToShed[ms.holes[s.holeIdx].holeTerm.metaId] = s.name
   var seeds = initHashSet[string]()
   var reasons = initTable[string, string]()
+  # Issue #520: root-cause shed names per seed def, propagated to transitive
+  # callers so the closure diagnostic can name the shed.
+  var seedSheds = initTable[string, seq[string]]()
   for d in defs:
     var refs: HashSet[int]
     collectTermRefIds(d.tmTm, refs)
@@ -4511,6 +4514,8 @@ proc computeGated(defs: seq[ElabDef], checkedGlobals: Globals,
     for mid in mids:
       if mid in metaToShed:
         let sn = metaToShed[mid]
+        if sn notin seedSheds.getOrDefault(d.name, @[]):
+          seedSheds.mgetOrPut(d.name, @[]).add(sn)
         var p = "shed '" & sn & "' is incomplete"
         if sn in draftErrors: p &= " (draft failed: " & draftErrors[sn] & ")"
         parts.add(p)
@@ -4525,12 +4530,27 @@ proc computeGated(defs: seq[ElabDef], checkedGlobals: Globals,
         "); it cannot be called until its sheds are filled"
   var gated = seeds
   var queue = toSeq(seeds)
+  # Issue #520: each gated def's root-cause sheds — the incomplete sheds that
+  # ultimately gate it. Seeds carry their own; closure defs inherit the union
+  # of their gated callees' root sheds, propagated to a fixpoint (re-queue on
+  # newly learned roots; sets only grow, so this terminates).
+  var rootSheds = initTable[string, seq[string]]()
+  for d in defs:
+    if d.name in seeds:
+      rootSheds[d.name] = seedSheds.getOrDefault(d.name, @[])
   while queue.len > 0:
     let cur = queue.pop()
     for caller in callers.getOrDefault(cur, @[]):
+      var merged = false
+      for s in rootSheds.getOrDefault(cur, @[]):
+        if s notin rootSheds.getOrDefault(caller, @[]):
+          rootSheds.mgetOrPut(caller, @[]).add(s)
+          merged = true
       if caller notin gated:
         gated.incl(caller)
         queue.add(caller)
+      elif merged:
+        queue.add(caller)  # new root sheds learned; propagate onward
   for name in gated:
     if name in reasons: continue
     var callee = ""
@@ -4543,8 +4563,30 @@ proc computeGated(defs: seq[ElabDef], checkedGlobals: Globals,
           callee = refToName[r]
           break
       break
+    # Issue #520: the transitive diagnostic must name the shed and explain
+    # use-gating — "the block compiled" is not "all declarations are usable".
+    let roots = sorted(rootSheds.getOrDefault(name, @[]))
+    var cause, expl, remedy: string
+    if roots.len == 1:
+      cause = "root cause: shed '" & roots[0] & "' is incomplete"
+      remedy = "fill shed '" & roots[0] & "' to make '" & name & "' callable"
+      expl = "sheds let an incomplete definition elaborate alongside working " &
+        "code, but any use of it — directly or through another definition — " &
+        "is a compile error"
+    elif roots.len > 1:
+      let shedList = roots.mapIt("'" & it & "'").join(", ")
+      cause = "root causes: sheds " & shedList & " are incomplete"
+      remedy = "fill sheds " & shedList & " to make '" & name & "' callable"
+      expl = "sheds let an incomplete definition elaborate alongside working " &
+        "code, but any use of it — directly or through another definition — " &
+        "is a compile error"
+    else:
+      cause = "root cause: '" & callee & "' is incomplete"
+      remedy = "complete '" & callee & "' to make '" & name & "' callable"
+      expl = "a definition with an unfilled hole elaborates but is use-gated: " &
+        "calling it, directly or transitively, is a compile error"
     reasons[name] = "eponymBlock: '" & name & "' calls gated '" & callee &
-      "' and is itself gated; it cannot be called until that shed is filled"
+      "' and is itself gated (" & cause & "); " & expl & "; " & remedy
   (gated, reasons)
 
 proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
