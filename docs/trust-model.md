@@ -245,7 +245,14 @@ time.
   not add a proof obligation or make the host implementation verified. When
   reviewing a checked role, inspect the block's bindings as part of the trust
   boundary. Imported `.ep` definitions use the binding supplied by the block
-  that instantiates them.
+  that instantiates them. A representation-tier forwarder bakes its block's
+  host implementation, so it is never shared across blocks: when two
+  `eponymBlock`s in one module bind the same postulate (for example an
+  imported one) to different host procedures, each block emits its own
+  forwarder, compiled definitions that (transitively) use the postulate are
+  compiled fresh per block rather than reused from the cross-block
+  registry, and the compiler warns, naming the postulate and both host
+  procedures. Moving the blocks changes what the registry can reuse.
 - **Host evaluation inside types.** There is no general splice of arbitrary
   Nim code into types; the trust boundary is that *you* are the compiler
   plugin. Any Nim computation you run to produce or check an Eponym program

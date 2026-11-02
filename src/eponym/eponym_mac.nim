@@ -53,6 +53,40 @@ var scopedNatNames {.compileTime.} = initHashSet[string]()
 # compilation, and macro expansions run in source order.
 var crossBlockExports {.compileTime.} = initTable[string, CrossBlockExport]()
 
+# Issue #522: postulate forwarder emission log. Maps a postulate name to
+# one entry per eponymBlock in this compilation that emitted a
+# representation-tier forwarder for it: the block sequence number, the
+# `repr` of the bound host implementation, and the forwarder proc name
+# used. A forwarder bakes its block's host implementation, so unlike
+# definition procs it is never shared cross-block: the first emitting
+# block keeps `eponymCompiledRepr_<name>`, later blocks get a
+# block-disambiguated name (no redefinition error), and a differing host
+# implementation triggers the #522 warning explaining the reuse
+# restriction. Compile-time state, same lifetime as crossBlockExports.
+var postulateForwarderBlocks {.compileTime.} =
+  initTable[string, seq[tuple[blockSeq: int, hostRepr: string,
+                              forwarderName: string]]]()
+
+# Issue #522: `eponymCompiledRepr_<name>` proc names an earlier eponymBlock
+# in this compilation emitted for an import-origin definition but withheld
+# from the cross-block registry (the definition's transitive closure
+# references a postulate bound in that block, so the compiled code cannot
+# be shared). A later block compiling the same definition locally
+# disambiguates instead of colliding on the deterministic name.
+# Compile-time state, same lifetime as crossBlockExports.
+var withheldReprNames522 {.compileTime.} = initHashSet[string]()
+
+proc postulateForwarderName522(postulateName: string,
+                               blockSeq: int): string =
+  ## Issue #522: forwarder proc name for this block's binding of
+  ## `postulateName`. The first block in a compilation to emit a forwarder
+  ## for the postulate keeps the plain `eponymCompiledRepr_<name>`; once
+  ## that name is taken, later blocks disambiguate with their block
+  ## sequence number.
+  let base = "eponymCompiledRepr_" & postulateName
+  if postulateName in postulateForwarderBlocks: base & "_" & $blockSeq
+  else: base
+
 proc isLegacyTypeName(n: NimNode): bool =
   n.kind in {nnkIdent, nnkSym} and
     ($n in legacyTypeNames or $n in scopedLegacyTypeNames)
@@ -5441,6 +5475,14 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
     prefix & sanitized & "_" & $seqNum
   inc postulateAdapterBlockSeq409
   let adapterBlockSeq = postulateAdapterBlockSeq409
+  # Issue #522: name this block's postulate forwarders. A forwarder bakes
+  # the block's host implementation, so it is block-scoped: the first
+  # block in the compilation to emit one for a postulate keeps the plain
+  # name, later blocks disambiguate instead of colliding on it.
+  for i in 0 ..< postulateReprs.len:
+    postulateReprs[i].forwarderName =
+      postulateForwarderName522(postulateReprs[i].postulateName,
+                                adapterBlockSeq)
   var rawValueInstantiations: seq[PostulateInstantiation] = @[]
   var seenInstantiationKeys = initHashSet[string]()
   var refNames409 = initTable[int, string]()
@@ -5576,7 +5618,7 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
       reprProcName: inst.reprProcName))
   var cgBlock = compileBlockProcs(codegenDefs, checkedGlobals, baseDir, src,
     cgLocFile, cgUserLines, runtimeTypes, postulateReprs, allDefs,
-    adapterSpecs, crossBlockExports)
+    adapterSpecs, crossBlockExports, withheldReprNames522)
 
   # Issue #408: publish this block's compiled import-origin definitions
   # into the cross-block registry for later blocks in this compilation.
@@ -5605,6 +5647,11 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
       for p in info.postulatesUsed:
         if p in boundPostulateNames: hitsBound = true; break
       if hitsBound:
+        # Issue #522: the proc is emitted but not shared — its
+        # deterministic name is taken for the rest of this compilation,
+        # so a later block compiling the same definition locally
+        # disambiguates instead of colliding on it.
+        withheldReprNames522.incl(reprProc)
         reprProc = ""
         sigSummary = ""
         var entry = cgBlock.report.getOrDefault(d.name)
@@ -5723,6 +5770,41 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
       if entry.tier == cgtRepr:
         echo "[eponym codegen] " & binding.postulateName &
           ": Phase 2 representation backend — " & entry.reason
+
+  # Issue #522: record this block's emitted postulate forwarders, and
+  # warn when a postulate is bound to a different host procedure than
+  # an earlier block's. (Outside the eponymCodegenReport gate: the
+  # recording drives forwarder-name disambiguation for later blocks, and
+  # the warning is the issue's acceptance criterion.) A binding is
+  # per-block — the Eponym signature may be shared (e.g. through an
+  # imported .ep file) but each block pairs it with its own host
+  # implementation — so compiled definitions that (transitively) use the
+  # postulate cannot be shared across blocks with different bindings.
+  # The warning names the postulate and both host procedures so the reuse
+  # restriction is explicit instead of something the Nim programmer must
+  # infer from source order.
+  for binding in postulateReprs:
+    let entry = cgBlock.report.getOrDefault(binding.postulateName)
+    if entry.tier != cgtRepr: continue
+    let hostRepr = repr(binding.implementation)
+    for prev in postulateForwarderBlocks.getOrDefault(binding.postulateName):
+      if prev.hostRepr != hostRepr:
+        warning("eponymBlock: postulate '" & binding.postulateName &
+          "' is bound here to '" & hostRepr & "', but an earlier " &
+          "eponymBlock in this module bound it to '" & prev.hostRepr &
+          "'. Postulate bindings are per-block: the Eponym signature " &
+          "may be shared (for example through an imported .ep file), " &
+          "but each block pairs it with its own host implementation, " &
+          "so compiled definitions that (transitively) use '" &
+          binding.postulateName & "' cannot be shared across blocks " &
+          "with different bindings. This block emits its own forwarder " &
+          "'" & binding.forwarderName & "' and compiles its own " &
+          "representation-tier code; moving the blocks changes what " &
+          "the cross-block registry can reuse.", body)
+        break
+    postulateForwarderBlocks.mgetOrPut(binding.postulateName, @[]).add(
+      (blockSeq: adapterBlockSeq, hostRepr: hostRepr,
+       forwarderName: binding.forwarderName))
 
   result = newStmtList()
   let dirLit = newLit(baseDir)

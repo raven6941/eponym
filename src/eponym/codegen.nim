@@ -3173,9 +3173,13 @@ proc cgReprRecordProjection(defName: string, env: seq[NimNode],
 
 proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
                         locFile: string, locLine: int,
-                        failureReason: var string): NimNode =
+                        failureReason: var string,
+                        reprName: string = ""): NimNode =
   ## Compile one definition to
   ## `proc eponymCompiledRepr_<name>(p1: int, ..., pn: seq[int]): ...`.
+  ## `reprName` overrides the emitted proc name (issue #522:
+  ## block-disambiguated when an earlier block emitted but withheld the
+  ## deterministic name); empty keeps `eponymCompiledRepr_<name>`.
   ## Returns nil when the definition is outside the representation fragment
   ## (caller keeps the Phase 1 backend). q0 binders have environment
   ## placeholders but no Nim formal parameters.
@@ -3321,7 +3325,8 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
     else:
       formal.add(newIdentDefs(psym, paramTypes[i], newEmptyNode()))
   var procNode = newNimNode(nnkProcDef)
-  procNode.add(newTree(nnkPostfix, ident"*", ident(cgReprName(d.name))))
+  let emitName = if reprName.len > 0: reprName else: cgReprName(d.name)
+  procNode.add(newTree(nnkPostfix, ident"*", ident(emitName)))
   procNode.add(newEmptyNode())
   procNode.add(newEmptyNode())
   procNode.add(formal)
@@ -3344,7 +3349,7 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
                               locFile: string, locLine: int,
                               failureReason: var string): NimNode =
   ## Emit a representation-tier forwarder for a host-bound postulate:
-  ## `proc eponymCompiledRepr_<name>*(p1: T1, ...): R = hostImpl(p1, ...)`.
+  ## `proc <binding.forwarderName>*(p1: T1, ...): R = hostImpl(p1, ...)`.
   ## The boundary is the identity (issue #401): every formal and the
   ## result are already the host representations, so the host procedure is
   ## called directly with no `Value` allocated and no codec run. A `Sig`
@@ -3383,7 +3388,7 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
   var call = newCall(copyNimTree(binding.implementation))
   for s in argSyms: call.add(s)
   var procNode = newNimNode(nnkProcDef)
-  procNode.add(newTree(nnkPostfix, ident"*", ident(cgReprName(postulateName))))
+  procNode.add(newTree(nnkPostfix, ident"*", ident(binding.forwarderName)))
   procNode.add(newEmptyNode())
   procNode.add(newEmptyNode())
   procNode.add(formal)
@@ -3438,7 +3443,9 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
                         rawValueAdapters: seq[RawValueAdapterSpec] = @[],
                         crossBlockImports:
                           Table[string, CrossBlockExport] =
-                          initTable[string, CrossBlockExport]()):
+                          initTable[string, CrossBlockExport](),
+                        withheldReprNames: HashSet[string] =
+                          initHashSet[string]()):
     tuple[procs: seq[NimNode], compiled: Table[string, string],
           compiledRepr: Table[string, string],
           reprTypes: Table[string, seq[ReprType]],
@@ -3460,9 +3467,10 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   ## representations. Definitions outside any representation keep the
   ## Phase 1 Value backend.
   ## `postulateReprs` (issue #401) are the block's host-bound postulates;
-  ## each representable one gets an `eponymCompiledRepr_<name>` forwarder
-  ## calling the host procedure directly, so in-body calls from repr-tier
-  ## definitions never touch the interpreter.
+  ## each representable one gets a forwarder calling the host procedure
+  ## directly (issue #522: block-disambiguated name when an earlier block
+  ## already emitted one for the same postulate), so in-body calls from
+  ## repr-tier definitions never touch the interpreter.
   ## `rawValueAdapters` (issue #409) are the statically-known
   ## instantiations of `bindPostulateValue`-bound postulates; each gets a
   ## typed adapter proc called directly by matching Value-tier call sites.
@@ -3472,6 +3480,13 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   ## keyed by `loc.source & "\x00" & name`. An import-origin definition
   ## with a registry hit is reused via direct calls — no local emission —
   ## and published in `exportInfo` for the macro to register.
+  ## `withheldReprNames` (issue #522) are `eponymCompiledRepr_<name>` proc
+  ## names an earlier eponymBlock in this compilation emitted but withheld
+  ## from the registry (their transitive closure references a postulate
+  ## bound in that block, so the compiled code cannot be shared). An
+  ## import-origin definition compiled locally here that would reuse one
+  ## of those names gets a disambiguated name instead of a Nim
+  ## redefinition error.
   var ctx = buildCodegenCtx(globals, baseDir, src, runtimeTypes, allDefs)
   # Issue #408: resolve cross-block reuse before any emission. A registry
   # hit pre-assigns the emitted proc names on the callee's ref, so callers
@@ -3814,10 +3829,11 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
   # already-emitted caller referencing a missing proc.
   #
   # Issue #401: postulate forwarders come first. A bound postulate whose
-  # type is fully within the representation fragment gets an
-  # `eponymCompiledRepr_<name>` forwarder calling the host procedure
-  # directly; in-body calls from repr-tier definitions then avoid the
-  # interpreter entirely. Postulates without a representable type (or
+  # type is fully within the representation fragment gets a forwarder
+  # calling the host procedure directly (issue #522: the name is
+  # block-disambiguated when an earlier block already emitted one for the
+  # same postulate); in-body calls from repr-tier definitions then avoid
+  # the interpreter entirely. Postulates without a representable type (or
   # without a binding) keep the Phase 1 backend.
   var reprBodies: seq[NimNode] = @[]
   var reprFailures = initTable[string, string]()
@@ -3836,7 +3852,9 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
         tier: cgtValue,
         reason: "Phase 2 unavailable: " & failureReason, slowPaths: @[])
     else:
-      let fwdName = cgReprName(binding.postulateName)
+      # Issue #522: the forwarder name is block-disambiguated by the macro
+      # when an earlier block already emitted one for this postulate.
+      let fwdName = binding.forwarderName
       # The forwarder just succeeded, so the signature is representable.
       let sig = ctx.reprSigOfType(entry.ty)
       ctx.reprProcs[refId] = (name: fwdName, arity: sig.len - 1, sig: sig)
@@ -3847,6 +3865,10 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
         reason: "Phase 2 representation-tier host forwarder emitted (" &
           reprSigSummary(sig) & ")",
         slowPaths: @[])
+  # Issue #522: seed the taken-name set with repr proc names earlier
+  # blocks emitted but withheld from the cross-block registry, so local
+  # emission below disambiguates instead of colliding on them.
+  var takenReprNames = withheldReprNames
   for name in order:
     var d: ElabDef
     for cand in defs:
@@ -3860,17 +3882,29 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     except CgUnsupported as e:
       reprFailures[name] = e.msg
       continue
-    ctx.reprProcs[refId] = (name: cgReprName(name), arity: sig.len - 1,
+    # Issue #522: an import-origin definition compiled locally here (no
+    # registry reuse — reused defs are marked emitted and never reach this
+    # loop) must not collide with a same-named repr proc an earlier block
+    # emitted but withheld from export. `takenRepr` also guards against
+    # colliding with a name this block already emitted above.
+    var reprName = cgReprName(name)
+    if d.loc.source.len > 0 and not d.loc.source.startsWith("<eponymBlock>") and
+        reprName in takenReprNames:
+      var n = 2
+      while reprName & "_" & $n in takenReprNames: inc n
+      reprName = reprName & "_" & $n
+    takenReprNames.incl(reprName)
+    ctx.reprProcs[refId] = (name: reprName, arity: sig.len - 1,
                              sig: sig)
     var failureReason = ""
     let procNode = compileDefProcRepr(d, ctx, locFile,
-      userLines.getOrDefault(name, 1), failureReason)
+      userLines.getOrDefault(name, 1), failureReason, reprName)
     if procNode.isNil:
       reprFailures[name] = failureReason
       ctx.reprProcs.del(refId)
     else:
       reprBodies.add(procNode)
-      result.compiledRepr[name] = cgReprName(name)
+      result.compiledRepr[name] = reprName
       result.reprTypes[name] = sig
   # Summarize the best emitted tier and why the next tier was unavailable.
   for d in defs:

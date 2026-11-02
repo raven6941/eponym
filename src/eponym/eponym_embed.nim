@@ -58,13 +58,19 @@ type
   PostulateReprBinding* = object
     ## Issue #401: a postulate bound to a host procedure, for direct
     ## representation-tier calls. The repr backend emits a forwarder
-    ## `eponymCompiledRepr_<name>` that calls the host implementation with
+    ## named `forwarderName` that calls the host implementation with
     ## host-typed arguments — no `Value` layer, no interpreter. Only
     ## bindings whose postulate type is fully within the representation
     ## fragment get a forwarder; the rest keep the Phase 1 backend.
+    ## Issue #522: the forwarder bakes the block's host implementation,
+    ## so it is block-scoped, not shared cross-block: the first
+    ## eponymBlock in a compilation to emit a forwarder for a postulate
+    ## keeps `eponymCompiledRepr_<name>`; later blocks get a
+    ## block-disambiguated name.
     postulateName*: string
     implementation*: NimNode  ## the bound host procedure
     argCount*: int  ## host-procedure value arguments (excluding the result)
+    forwarderName*: string  ## emitted forwarder proc name (issue #522)
 
 proc hostIntUnary*(implementation: proc(x: int): int): Value
 proc hostIntToNat*(implementation: proc(x: int): int,

@@ -1,0 +1,7 @@
+# Fixture for issue #522: an imported postulate that two eponymBlocks bind
+# to different host procedures. `applyOp`'s transitive closure references
+# the bound postulate, so its representation tier cannot be shared
+# cross-block; each block compiles its own forwarder and its own copy.
+postulate(Int, Univ)
+postulate(op, Int -> Int -> Int)
+proc applyOp (x : Int) (y : Int) : Int = op x y

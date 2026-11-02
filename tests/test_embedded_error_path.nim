@@ -235,6 +235,18 @@ for expected in [
       expected):
     inc failed
 
+# Issue #522: two blocks binding the same imported postulate differently
+# must compile (each block gets its own forwarder) and the compiler must
+# explain the per-block binding / reuse restriction in one diagnostic.
+for expected in [
+    "postulate 'op' is bound here to 'hostMul'",
+    "Postulate bindings are per-block",
+    "cannot be shared across blocks with different bindings"]:
+  if not checkWarningFixture(
+      "tests/fixtures/embedded_warn_crossblock_postulate_binding.nim",
+      expected):
+    inc failed
+
 if failed > 0:
   echo failed, " error-path fixture(s) misbehaved"
   quit(1)
