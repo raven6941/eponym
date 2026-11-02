@@ -5621,8 +5621,18 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
       # A postulate bound via bindPostulate* has its host procedure;
       # a type postulate with a runtimeType mapping has its host
       # representation. Only term postulates with neither are "unbound".
-      if p notin boundPostulateNames and p notin typeBoundNames:
-        unboundPostulates.incl(p)
+      if p in boundPostulateNames or p in typeBoundNames: continue
+      # A postulate whose type is Univ (or a Pi ending in Univ) is a TYPE
+      # postulate: its missing half is a runtimeType mapping, not a host
+      # procedure — the generic message (not the bindPostulate advice)
+      # applies there.
+      if p in checkedGlobals:
+        var pty = checkedGlobals[p].ty
+        while not pty.isNil and pty.kind == tPi:
+          pty = pty.scope.bdy
+        if not pty.isNil and pty.kind == tType:
+          continue
+      unboundPostulates.incl(p)
     for d in codegenDefs:
       let codegen = cgBlock.report.getOrDefault(d.name)
       if d.name notin cgBlock.compiledRepr:
