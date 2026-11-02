@@ -18,9 +18,15 @@ type
   UsageCount* = enum
     ucZero, ucOnce, ucMany
   UsageProfile* = set[UsageCount]
+  ConservativeReason* = enum
+    crNone, crIncompleteEliminator, crUnsupportedRecursiveField,
+    crNonLambdaMotive, crTemplateShape, crNoBaseCase, crSelfRecursiveHead,
+    crCapturedStrictArg, crErasedExpansion
   UsageSummary = object
     profile: UsageProfile
     hasErasedUse: bool
+    hasConservativeUse: bool
+    conservativeReason: ConservativeReason
 
 proc usageThen*(left, right: UsageProfile): UsageProfile =
   ## Sequential composition: every left path is followed by every right path.
@@ -57,9 +63,58 @@ proc usageProfileDescription*(profile: UsageProfile): string =
       counts.add(if count == ucMany: "2+" else: $ord(count))
     counts.join(" or ")
 
+proc conservativeReasonDescription*(reason: ConservativeReason): string =
+  case reason
+  of crNone: "an unknown conservative usage"
+  of crIncompleteEliminator: "an elimination whose cases the checker cannot establish are complete"
+  of crUnsupportedRecursiveField: "an elimination whose recursive fields the checker does not summarize"
+  of crNonLambdaMotive: "an indexed elimination with a non-ground motive"
+  of crTemplateShape: "a user-written case template"
+  of crNoBaseCase: "a recursive elimination with no recognizable base case"
+  of crSelfRecursiveHead: "a self-recursive definition"
+  of crCapturedStrictArg: "a strict argument captured by an unsupported elimination"
+  of crErasedExpansion: "an erased-argument use whose runtime effect the checker expands conservatively"
+
+proc linearityDiagnostic*(name: string, profile: UsageProfile,
+                          conservative: bool,
+                          reason: ConservativeReason): string =
+  let shape = conservativeReasonDescription(reason)
+  if profile == {ucMany}:
+    return "linear variable '" & name & "' used 2 times (expected exactly once): use the variable exactly once in the body"
+  if conservative and profile.contains(ucOnce) and profile.card > 1:
+    "linear variable '" & name & "' — the checker cannot establish " &
+      "exactly-once use for " & shape & "; this may be a checker limitation " &
+      "rather than a program error (see docs/known-limitations.md)"
+  elif conservative and profile.card > 1:
+    "linear variable '" & name & "' — the checker knows this use is not exactly once for " &
+      shape & ", but cannot establish whether the variable is unused or used multiple " &
+      "times; this may be a checker limitation (see docs/known-limitations.md)"
+  elif profile.card > 1:
+    "linear variable '" & name & "' used " & usageProfileDescription(profile) &
+      " time(s) on different runtime paths (the program violates linearity; " &
+      "expected exactly once on every runtime path)"
+  elif profile == {ucZero}:
+    "linear variable '" & name & "' not used (expected exactly once): a linear binder must be used exactly once in the body"
+  else:
+    "linear variable '" & name & "' used " & usageProfileDescription(profile) &
+      " times (expected exactly once): use the variable exactly once in the body"
+
+proc erasedUsageDiagnostic*(name: string, profile: UsageProfile,
+                            conservative: bool,
+                            reason: ConservativeReason): string =
+  if conservative and profile != {ucZero} and profile.contains(ucZero):
+    return "erased variable '" & name & "' — the checker cannot establish erasure for " &
+      conservativeReasonDescription(reason) & "; this may be a checker limitation " &
+      "rather than a program error (see docs/known-limitations.md)"
+  "erased variable '" & name & "' used " & usageProfileDescription(profile) &
+    " time(s) in term position: erased (quantity-0) variables may only be used in types"
+
 proc usageThen(left, right: UsageSummary): UsageSummary =
   UsageSummary(profile: usageThen(left.profile, right.profile),
-               hasErasedUse: left.hasErasedUse or right.hasErasedUse)
+               hasErasedUse: left.hasErasedUse or right.hasErasedUse,
+               hasConservativeUse: left.hasConservativeUse or right.hasConservativeUse,
+               conservativeReason: if left.conservativeReason != crNone:
+                 left.conservativeReason else: right.conservativeReason)
 
 type UsageChoiceExpansion = object
   found: bool
@@ -68,6 +123,7 @@ type UsageChoiceExpansion = object
   branches: seq[Term]
   recursiveCounts: seq[int]
   unsupportedChoice: bool
+  conservativeReason: ConservativeReason
 
 proc flattenApps(t: Term): tuple[head: Term, args: seq[Term]]
 
@@ -196,12 +252,14 @@ proc flattenApps(t: Term): tuple[head: Term, args: seq[Term]] =
       result.args.add(revArgs[i])
 
 proc keepConservativeElimUse(choice: var UsageChoiceExpansion,
-                             args: seq[Term], conditionIndex: int) =
+                             args: seq[Term], conditionIndex: int,
+                             reason: ConservativeReason) =
   ## Even when recursive branch behavior is outside our summary, a complete
   ## registered eliminator consumes its scrutinee exactly once. Preserve that
   ## fact and remember the other arguments so any captured use remains
   ## conservative.
   choice.unsupportedChoice = true
+  choice.conservativeReason = reason
   choice.condition = args[conditionIndex]
   for i, arg in args:
     if i != conditionIndex: choice.strictArgs.add(arg)
@@ -227,6 +285,7 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
       if head.refVal.syn.isNil or head.refVal.syn == head: return
       if termContainsRef(head.refVal.syn, head.refId):
         result.unsupportedChoice = true
+        result.conservativeReason = crSelfRecursiveHead
         return
       let expanded = flattenApps(head.refVal.syn)
       head = expanded.head
@@ -248,6 +307,7 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
     if rule.nargs < 2 or args.len < rule.nargs or
         rule.cases.len == 0 or not redRuleIsComplete(head):
       result.unsupportedChoice = true
+      result.conservativeReason = crIncompleteEliminator
       return
     let arities = redRuleCaseArities(head)
     var hasRecursiveCases = false
@@ -255,12 +315,13 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
       if redRuleCaseRecursiveFields(head, ctorId).len > 0:
         hasRecursiveCases = true
         if not redRuleCaseRecursiveSupported(head, ctorId):
-          result.keepConservativeElimUse(args, rule.nargs - 1)
+          result.keepConservativeElimUse(args, rule.nargs - 1,
+            crUnsupportedRecursiveField)
           return
     if hasRecursiveCases:
       let motiveIndex = rule.nParams
       if motiveIndex >= rule.nargs - 1 or args[motiveIndex].kind != tLam:
-        result.keepConservativeElimUse(args, rule.nargs - 1)
+        result.keepConservativeElimUse(args, rule.nargs - 1, crNonLambdaMotive)
         return
     var selectedArgs: seq[int] = @[]
     var branchArgIndexes: seq[int] = @[]
@@ -274,11 +335,13 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
            not redRuleCaseRecursiveSupported(head, ctorId)) or
           branchTemplate.isNil:
         result.unsupportedChoice = true
+        result.conservativeReason = crTemplateShape
         return
       let (methodHead, fieldArgs) = flattenApps(branchTemplate)
       if methodHead.kind != tV or
           fieldArgs.len != arity + recursiveFields.len:
         result.unsupportedChoice = true
+        result.conservativeReason = crTemplateShape
         return
       # Generated case templates apply the corresponding method to each
       # constructor field in declaration order, inserting its recursive
@@ -289,24 +352,29 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
         let fieldArg = fieldArgs[argIndex]
         if fieldArg.kind != tV or fieldArg.idx != arity - 1 - fieldIndex:
           result.unsupportedChoice = true
+          result.conservativeReason = crTemplateShape
           return
         inc argIndex
         if fieldIndex in recursiveFields:
           if not isGeneratedRecursiveCall(fieldArgs[argIndex], head, rule,
                                           arity, fieldArg):
             result.unsupportedChoice = true
+            result.conservativeReason = crTemplateShape
             return
           inc argIndex
       if argIndex != fieldArgs.len:
         result.unsupportedChoice = true
+        result.conservativeReason = crTemplateShape
         return
       let methodSlot = methodHead.idx - arity
       let elimArgIndex = rule.nargs - 2 - methodSlot
       if elimArgIndex < 0 or elimArgIndex >= rule.nargs - 1:
         result.unsupportedChoice = true
+        result.conservativeReason = crTemplateShape
         return
       if elimArgIndex in allMethodArgs:
         result.unsupportedChoice = true
+        result.conservativeReason = crTemplateShape
         return
       allMethodArgs.add(elimArgIndex)
       if args[elimArgIndex].kind == tLam:
@@ -319,10 +387,12 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
         branchArgIndexes.add(-1)
       else:
         result.unsupportedChoice = true
+        result.conservativeReason = crTemplateShape
         return
       recursiveCounts.add(recursiveFields.len)
     if allMethodArgs.len != rule.cases.len:
       result.unsupportedChoice = true
+      result.conservativeReason = crTemplateShape
       return
 
     if hasRecursiveCases:
@@ -335,13 +405,14 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
         # linear Vec value: rejecting its one scrutinee use merely because the
         # dependent motive is outside the recursive summary would regress
         # valid explicitly-linear programs.
-        result.keepConservativeElimUse(args, rule.nargs - 1)
+        result.keepConservativeElimUse(args, rule.nargs - 1, crNonLambdaMotive)
         return
     var hasBaseCase = false
     for count in recursiveCounts:
       if count == 0: hasBaseCase = true
     if not hasBaseCase:
       result.unsupportedChoice = true
+      result.conservativeReason = crNoBaseCase
       return
 
     result.found = true
@@ -364,6 +435,7 @@ proc expandBranchEliminator(t: Term): UsageChoiceExpansion =
             not termContainsRef(caseTm, head.refId):
           result.unsupportedChoice = true
           result.found = false
+          result.conservativeReason = crTemplateShape
           return
     return
 
@@ -418,7 +490,9 @@ proc hasRepeatedProjectedPath(t: Term, target, depth: int): bool =
   for count in counts.values:
     if count > 1: return true
 
-proc varUsageProfile*(tm: Term): UsageProfile =
+proc usageAnalysis*(tm: Term): tuple[profile: UsageProfile,
+                                     conservative: bool,
+                                     reason: ConservativeReason] =
   ## Possible saturated free-use counts for de Bruijn index 0 in term
   ## positions. `tm` is the body of a lambda; index 0 denotes that binder.
   ## Carry erased-argument use through the same walk so inference does not
@@ -438,6 +512,8 @@ proc varUsageProfile*(tm: Term): UsageProfile =
           strictUsage = usageThen(strictUsage, go(arg, depth, scaledOnly, skipProj))
         var branchProfiles: seq[UsageProfile] = @[]
         var branchHasErasedUse = false
+        var branchHasConservativeUse = false
+        var branchReason = crNone
         for branch in choice.branches:
           if branch.isNil:
             branchProfiles.add({ucZero})
@@ -446,6 +522,10 @@ proc varUsageProfile*(tm: Term): UsageProfile =
             branchProfiles.add(branchUsage.profile)
             branchHasErasedUse = branchHasErasedUse or
               branchUsage.hasErasedUse
+            branchHasConservativeUse = branchHasConservativeUse or
+              branchUsage.hasConservativeUse
+            if branchReason == crNone:
+              branchReason = branchUsage.conservativeReason
         let caseProfile = recursiveUsageChoice(branchProfiles,
           choice.recursiveCounts)
         if caseProfile == {}:
@@ -456,6 +536,14 @@ proc varUsageProfile*(tm: Term): UsageProfile =
             usageThen(strictUsage.profile, conditionUsage.profile), caseProfile)
           result.hasErasedUse = strictUsage.hasErasedUse or
             conditionUsage.hasErasedUse or branchHasErasedUse
+          result.hasConservativeUse = strictUsage.hasConservativeUse or
+            conditionUsage.hasConservativeUse or branchHasConservativeUse
+          result.conservativeReason = if strictUsage.conservativeReason != crNone:
+            strictUsage.conservativeReason
+          elif conditionUsage.conservativeReason != crNone:
+            conditionUsage.conservativeReason
+          elif branchReason != crNone: branchReason
+          else: choice.conservativeReason
       elif t.fn.kind == tLam and t.arg.kind == tLam:
         # Generated Nim `if` lowers through the polymorphic `ifThenElse`
         # definition, whose two value arguments are lambda thunks. Applying
@@ -465,6 +553,9 @@ proc varUsageProfile*(tm: Term): UsageProfile =
         let right = go(t.arg.scope.bdy, depth + 1, scaledOnly, skipProj)
         result.profile = usageChoice([left.profile, right.profile])
         result.hasErasedUse = left.hasErasedUse or right.hasErasedUse
+        result.hasConservativeUse = left.hasConservativeUse or right.hasConservativeUse
+        result.conservativeReason = if left.conservativeReason != crNone:
+          left.conservativeReason else: right.conservativeReason
       elif choice.unsupportedChoice:
         if not choice.condition.isNil:
           result = go(choice.condition, depth, scaledOnly, skipProj)
@@ -475,8 +566,13 @@ proc varUsageProfile*(tm: Term): UsageProfile =
           if capturedByUnknownCase:
             result.profile = usageThen(result.profile,
               {ucZero, ucOnce, ucMany})
+            result.hasConservativeUse = true
+            result.conservativeReason = if choice.conservativeReason == crNone:
+              crCapturedStrictArg else: choice.conservativeReason
         elif containsVarAt(t, 0, depth):
           result.profile = {ucZero, ucOnce, ucMany}
+          result.hasConservativeUse = true
+          result.conservativeReason = choice.conservativeReason
         else:
           result.profile = {ucZero}
       else:
@@ -588,19 +684,43 @@ proc varUsageProfile*(tm: Term): UsageProfile =
       # use of an unrelated (e.g. pure) let-bound value.
       result.hasErasedUse = valSummary.hasErasedUse or
         bodySummary.hasErasedUse
+      result.hasConservativeUse = valSummary.hasConservativeUse or
+        bodySummary.hasConservativeUse or totalSummary.hasConservativeUse or
+        nonProjSummary.hasConservativeUse or totalSummary.hasErasedUse or
+        nonProjSummary.hasErasedUse
+      result.conservativeReason = if valSummary.conservativeReason != crNone:
+        valSummary.conservativeReason
+      elif bodySummary.conservativeReason != crNone:
+        bodySummary.conservativeReason
+      elif totalSummary.conservativeReason != crNone:
+        totalSummary.conservativeReason
+      elif nonProjSummary.conservativeReason != crNone:
+        nonProjSummary.conservativeReason
+      elif totalSummary.hasErasedUse or nonProjSummary.hasErasedUse:
+        crErasedExpansion
+      else: crNone
     of tPrim:
       result.profile = {ucZero}  # annotation only; primOp carries no terms
     of tR, tC, tType, tMeta, tInt, tNatLit, tNatSing:
       result.profile = {ucZero}
-  if tm.isNil: return {ucZero}
+  if tm.isNil:
+    result.profile = {ucZero}
+    return
   let summary = go(tm, 0, false, false)
-  result = summary.profile
-  if result != {ucZero} and summary.hasErasedUse:
+  result.profile = summary.profile
+  result.conservative = summary.hasConservativeUse
+  result.reason = summary.conservativeReason
+  if result.profile != {ucZero} and summary.hasErasedUse:
     # Keep inference conservative across nested applications and pairs. The
     # occurrence may be structurally separate from the runtime use, so a
     # local per-application adjustment would miss expressions such as
     # `pair (drop x) x`.
-    result = {ucZero, ucOnce, ucMany}
+    result.profile = {ucZero, ucOnce, ucMany}
+    result.conservative = true
+    if result.reason == crNone: result.reason = crErasedExpansion
+
+proc varUsageProfile*(tm: Term): UsageProfile =
+  usageAnalysis(tm).profile
 
 proc countVarUses*(tm: Term): int =
   ## Exact syntactic count retained for existing callers and diagnostics.
@@ -708,31 +828,17 @@ proc checkUsage*(tm: Term, allowOpenHoles = false): void =
         # states (including linear and erased Pi binders); strict elaboration
         # rechecks the binder after the hole is filled.
         if allowOpenHoles and hasUnresolvedMetas(t.scope.bdy): return
-        let profile = varUsageProfile(t.scope.bdy)
-        let n = usageCountSummary(profile)
+        let analysis = usageAnalysis(t.scope.bdy)
+        let profile = analysis.profile
         case t.qty
         of q1:
-          if profile == {ucZero}:
-            raise newException(UsageError,
-              "linear variable '" & t.scope.adv &
-              "' not used (expected exactly once): a linear binder must be " &
-              "used exactly once in the body")
-          elif profile == {ucMany}:
-            raise newException(UsageError,
-              "linear variable '" & t.scope.adv & "' used " & $n &
-              " times (expected exactly once): use the variable exactly " &
-              "once in the body")
-          elif not satisfiesQuantity(profile, q1):
-            raise newException(UsageError,
-              "linear variable '" & t.scope.adv & "' used " &
-              usageProfileDescription(profile) &
-              " time(s) (expected exactly once on every runtime path)")
+          if not satisfiesQuantity(profile, q1):
+            raise newException(UsageError, linearityDiagnostic(t.scope.adv,
+              profile, analysis.conservative, analysis.reason))
         of q0:
           if not satisfiesQuantity(profile, q0):
-            raise newException(UsageError,
-              "erased variable '" & t.scope.adv &
-              "' used in term position: erased (quantity-0) variables may " &
-              "only be used in types")
+            raise newException(UsageError, erasedUsageDiagnostic(t.scope.adv,
+              profile, analysis.conservative, analysis.reason))
         of qOmega: discard
 
       proc go(t: Term) =

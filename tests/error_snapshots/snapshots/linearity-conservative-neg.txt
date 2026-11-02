@@ -1,0 +1,1 @@
+line 6, col 1: linear variable 'xs' — the checker cannot establish exactly-once use for an elimination whose recursive fields the checker does not summarize; this may be a checker limitation rather than a program error (see docs/known-limitations.md)

@@ -1,0 +1,6 @@
+# Genuine linearity violation: the linear value is used on every path twice.
+import "../../../lib/nat.ep"
+import "../../../lib/linear.ep"
+
+proc badDoubleUse (1 j : Job freshP) : Sig(x: Job sentP, Job sentP) =
+  (sendJ zero j, sendJ (suc zero) j)

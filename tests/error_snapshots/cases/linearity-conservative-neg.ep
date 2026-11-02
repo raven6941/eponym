@@ -1,0 +1,12 @@
+# The dependent recursive elimination has a non-ground motive. The usage
+# checker deliberately cannot summarize all recursive closure invocations.
+import "../../../lib/nat.ep"
+import "../../../lib/vec.ep"
+
+proc badConservative {n : Nat} (1 xs : Vec Nat n) : Vec Nat n =
+  vecElim Nat
+    (lam(i: Nat) => lam(v: Vec Nat i) => Vec Nat n)
+    xs
+    (lam(i: Nat) => lam(x: Nat) => lam(t: Vec Nat i) =>
+      lam(ih: Vec Nat n) => xs)
+    n xs

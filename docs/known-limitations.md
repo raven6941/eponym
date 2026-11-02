@@ -22,6 +22,23 @@ future work.
 this page in the same PR when it changes runtime behavior, tiering, or
 wrapper/codec coverage. Re-sync passes are not deferred "for later". -->
 
+## Conservative QTT usage diagnostics (#521)
+
+The quantity checker is path-sensitive for ordinary applications and the
+generated first-order eliminators it can summarize. Some shapes remain
+conservative: indexed recursive families with non-ground motives,
+recursive fields it cannot summarize, higher-order recursive fields,
+closure-valued motives, incomplete or unknown eliminators, self-recursive
+heads, and user-written case templates. Erased-argument expansion can also
+admit uncertainty when an erased use is structurally mixed with a runtime
+use.
+
+When one of these shapes prevents the checker from proving exactly-once use,
+the diagnostic says that it “cannot establish” linearity, names the shape,
+and points here. This means the rejection may be a checker limitation rather
+than a semantic linearity violation. A diagnostic that reports a definite
+zero, multiple uses, or incompatible runtime paths remains a program error.
+
 Eponym checks a small dependent language embedded in Nim. It is useful when
 you want a compile-time guarantee about a protocol, shape, or resource use;
 it does not turn an `eponymBlock` into an ordinary Nim procedure body. This

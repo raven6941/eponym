@@ -1557,29 +1557,17 @@ proc enforceQtyCount(q: Quantity, body: Term, loc: Loc, name: string,
   if q == qOmega: return
   let zb = zonk(ms, body)
   if hasUnresolvedMetas(zb): return
-  let profile = varUsageProfile(zb)
-  let n = usageCountSummary(profile)
+  let analysis = usageAnalysis(zb)
+  let profile = analysis.profile
   case q
   of q0:
     if not satisfiesQuantity(profile, q0):
-      raise elabErr(loc, "erased variable '" & name & "' used " &
-        usageProfileDescription(profile) &
-        " time(s) in term position: erased (quantity-0) variables may only " &
-        "be used in types")
+      raise elabErr(loc, erasedUsageDiagnostic(name, profile,
+        analysis.conservative, analysis.reason))
   of q1:
-    if profile == {ucZero}:
-      raise elabErr(loc, "linear variable '" & name &
-        "' not used (expected exactly once): a linear binder must be used " &
-        "exactly once in the body")
-    elif profile == {ucMany}:
-      raise elabErr(loc, "linear variable '" & name & "' used " & $n &
-        " times (expected exactly once): use the variable exactly once in " &
-        "the body")
-    elif not satisfiesQuantity(profile, q1):
-      raise elabErr(loc, "linear variable '" & name & "' used " &
-        usageProfileDescription(profile) &
-        " time(s) (expected exactly once): use the variable exactly once " &
-        "on every runtime path in the body")
+    if not satisfiesQuantity(profile, q1):
+      raise elabErr(loc, linearityDiagnostic(name, profile,
+        analysis.conservative, analysis.reason))
   of qOmega: discard
 
 proc enforceBinderQty(qty: Qty, body: Term, loc: Loc, name: string,
