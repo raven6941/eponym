@@ -3784,6 +3784,41 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
       if useRepr and not nimTypeMatchesRepr(resultType, wantTypes[^1]):
         useRepr = false
   if requireCompiled and not useRepr:
+    # Issue #515: a `[n: Nat]`-style static binder used as a runtime value is
+    # the classic `[n]`/`(n)` confusion. The wrapper declares the binder
+    # `static[int]` (resp. `static[bool]`/`static[mapped]`), but a
+    # computationally relevant binder (quantity != 0) survives as a runtime
+    # slot in the compiled representation, so the identity boundary can never
+    # align the two. Explain the static/runtime distinction instead of the
+    # generic representation mismatch.
+    if slotAlignmentMatches:
+      for i in 0 ..< generic.genericNames.len:
+        let isStaticKind = generic.genericNatArgs[i] or
+          generic.genericBoolArgs[i] or generic.genericIntArgs[i] or
+          not generic.genericMappedTypes[i].isNil
+        if not isStaticKind: continue
+        if i >= piRuntimeSlots.len or not piRuntimeSlots[i]: continue
+        let bname = $generic.genericNames[i]
+        let (bracket, nimStatic) =
+          if generic.genericNatArgs[i]: ("[" & bname & ": Nat]", "static[int]")
+          elif generic.genericIntArgs[i]: ("[" & bname & ": Int]", "static[int]")
+          elif generic.genericBoolArgs[i]: ("[" & bname & ": Bool]", "static[bool]")
+          else: ("[" & bname & ": <mapped>]", "static[" &
+            $generic.genericMappedNimTypes[i] & "]")
+        error("eponymBlock: definition '" & defName & "' treats its static " &
+          "parameter '" & bname & "' as a runtime value. '" & bracket &
+          "' declares a compile-time parameter -- the generated wrapper takes '" &
+          bname & "' as Nim '" & nimStatic & "' -- but '" & bname &
+          "' is used computationally, so the compiled body needs it as a " &
+          "runtime value and the two cannot be reconciled at the boundary. " &
+          "Use '(" & bname & ": " &
+          (if generic.genericNatArgs[i]: "Nat"
+           elif generic.genericIntArgs[i]: "Int"
+           elif generic.genericBoolArgs[i]: "Bool"
+           else: "<mapped>") &
+          ")' for an ordinary runtime parameter, or keep '" & bname &
+          "' computationally irrelevant (type-level only) so it erases " &
+          "(quantity 0) from the compiled body", decl)
     error("eponymBlock requireCompiled: definition '" & defName &
       "' was checked successfully, but no supported Nim runtime representation " &
       "matches its compiled representation", decl)

@@ -203,7 +203,9 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_named_argument_missing.nim",
      "missing required argument for 'right'"),
     ("tests/fixtures/typed_adapter_err_nonstatic.nim",
-     "bindPostulateValue 'debugEcho' applied at a non-static type")]:
+     "bindPostulateValue 'debugEcho' applied at a non-static type"),
+    ("tests/fixtures/embedded_err_static_runtime_confusion.nim",
+     "treats its static parameter 'n' as a runtime value")]:
   if not checkFixture(path, expected):
     inc failed
 

@@ -70,6 +70,19 @@ shapes now report their Nim AST kind and suggest expressing the operation in
 Eponym syntax or moving host code outside the block and binding it as a
 postulate. String literals, for example, are not Eponym string values.
 
+## Static binders are compile-time parameters (#515)
+
+`[n: Nat]` in a proc signature declares a *compile-time* parameter: the
+generated wrapper takes it as Nim `static[int]` (likewise `[b: Bool]` as
+`static[bool]`, `[i: Int]` as `static[int]`). An ordinary `(n: Nat)` value
+parameter is a runtime value. The two look close but have different
+consequences for the generated signature: a static parameter must be known at
+compile time at every call site, and it must stay computationally irrelevant
+inside the definition (a binder used only in types is quantity-0 and erases
+from the compiled body). Using a static binder as a runtime value in the body
+is rejected with a diagnostic naming the confusion and suggesting `(n: Nat)`
+instead.
+
 ## `Nat` and `Int` conversions are explicit
 
 `Nat` and primitive `Int` are distinct Eponym types. A `Nat` is not silently
