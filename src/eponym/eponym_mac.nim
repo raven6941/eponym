@@ -572,6 +572,26 @@ template convFail(msg: string, n: NimNode, strict: bool) =
   else:
     raise newException(ValueError, msg)
 
+proc noMutationDiagnostic(n: NimNode): string =
+  ## Issue #513: the phase-boundary surprise — a Nim programmer reaches for
+  ## `var` or assignment, but the block body is translated to an Eponym
+  ## term, and Eponym terms have no mutable variables: every binding is
+  ## single-assignment. Say what was attempted and what replaces it, in one
+  ## diagnostic.
+  let what = if n.kind == nnkVarSection: "a `var` declaration"
+             else: "an assignment"
+  var name = ""
+  if n.kind == nnkVarSection and n.len > 0 and n[0].len > 0 and
+     n[0][0].kind in {nnkIdent, nnkSym}:
+    name = " (`" & $n[0][0] & "`)"
+  "eponymBlock: " & what & name &
+    " has no meaning inside the block — the block body is translated to an " &
+    "Eponym term, and Eponym terms have no mutable variables: every binding " &
+    "is single-assignment. Use `let x = ... in ...` instead (an update step " &
+    "becomes a new let-rebinding of x), express an updating loop as an " &
+    "explicit recursive helper, or move the stateful code outside the block " &
+    "and expose its result through a bound postulate"
+
 proc nimCommandLamToEponym(n: NimNode, strict = true): string =
   ## Convert Nim's command-form lambda (`lam x. body`) to Eponym arrow
   ## syntax. Nim represents a nested chain such as `lam x. lam y. body`
@@ -689,6 +709,11 @@ proc nimExprToEponym(n: NimNode, strict = true): string =
           if isNatBinding or isLegacyNatExpr(def[2]):
             scopedNatNames.incl(name)
           lets.add((name, tyAnn, val))
+      elif stmt.kind in {nnkVarSection, nnkAsgn}:
+        # Issue #513: `var` and assignment are the phase-boundary surprise —
+        # name the conceptual mistake directly rather than falling through
+        # to "proc body must be lets followed by single expr".
+        convFail(noMutationDiagnostic(stmt), stmt, strict)
       else:
         # Final expression (or single expression)
         if finalExpr.kind != nnkEmpty:
@@ -832,6 +857,11 @@ proc nimExprToEponym(n: NimNode, strict = true): string =
       "(" & nimExprToEponym(n[0][0], strict) & " : " & nimTypeToEponym(n[0][1]) & ")"
     else:
       "(" & n.mapIt(nimExprToEponym(it, strict)).join(", ") & ")"
+  of nnkVarSection, nnkAsgn:
+    # Issue #513: `var` / assignment in expression or top-level block
+    # position (the proc-body statement list intercepts these earlier for
+    # precise line info) — same conceptual diagnostic.
+    convFail(noMutationDiagnostic(n), n, strict)
   of nnkStrLit, nnkTripleStrLit:
     # Issue #512: the classic surprise — a Nim programmer writes `"hello"`
     # expecting a string value, but Eponym has no string literal syntax.

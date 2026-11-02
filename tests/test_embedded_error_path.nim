@@ -194,6 +194,8 @@ for (path, expected) in [
      "unsupported pure operator 'div'"),
     ("tests/fixtures/embedded_err_unsupported_string_literal.nim",
      "is not an Eponym `String` value"),
+    ("tests/fixtures/embedded_err_var_mutation.nim",
+     "has no meaning inside the block"),
     ("tests/fixtures/embedded_err_if_missing_else.nim",
      "requires a condition and an else branch"),
     ("tests/fixtures/embedded_err_named_argument_unknown.nim",
