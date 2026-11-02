@@ -39,6 +39,10 @@ identical.
 
 ### The Nim boundary
 
+Choosing which mechanism below to reach for: the
+[decision tree](boundary-decision-tree.md) walks the options top-down, one
+question at a time.
+
 Nim syntax is the *surface notation* for Eponym declarations inside the
 block; it does not make the block a normal Nim procedure body. The macro
 does not evaluate arbitrary Nim expressions, resolve Nim symbols, or inline

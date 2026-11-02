@@ -95,7 +95,10 @@ eponymBlock:
   execute arbitrary Nim code. The current accepted forms and the proposed
   pure-Nim-subset experiment are described in the
   [surface-syntax reference](docs/surface-syntax-reference.md) and
-  [experiment note](docs/pure-nim-subset-experiment.md).
+  [experiment note](docs/pure-nim-subset-experiment.md). When a definition
+  must cross into Nim (or a Nim value or operation into checked code), the
+  [boundary decision tree](docs/boundary-decision-tree.md) walks the
+  available mechanisms top-down.
 - `Univ` is the universe; `?n` introduces named holes and `_` a fresh hole or discard; call syntax for declarations
   (`postulate(Int, Univ)`); `proc` not `def`; `=` not `:=` — it reads
   as Nim, and the elaborator typechecks it at compile time.
