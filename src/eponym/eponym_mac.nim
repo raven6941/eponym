@@ -3613,8 +3613,9 @@ proc unreconstructableRuntimeWrapper(defName: string,
   # Issue #478: see unsupportedRuntimeWrapper's gateMessage.
   let message = if gateMessage.len > 0: newLit(gateMessage)
     else: newLit("eponymBlock wrapper '" & defName &
-    "': cannot reconstruct a supported Nim signature from the checked " &
-    "Eponym type; add an explicit Nim proc signature or use runtimeValue(" &
+    "' checked successfully, but no supported Nim runtime representation " &
+    "exists; cannot reconstruct a supported Nim signature from the checked " &
+    "Eponym type. Add an explicit Nim proc signature or use runtimeValue(" &
     defName & ")")
   result = quote do:
     template `name`*(args: varargs[untyped]): untyped =
@@ -3748,8 +3749,10 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     # when the macro-time source telescope cannot be aligned exactly with
     # the checked Pi telescope used by generated code.
     if requireCompiled:
-      error("eponymBlock requireCompiled: Nim wrapper arguments for '" &
-        defName & "' do not align with its checked Pi telescope", decl)
+      error("eponymBlock requireCompiled: definition '" & defName &
+        "' was checked successfully, but no supported Nim runtime " &
+        "representation has wrapper arguments that align with its checked " &
+        "type", decl)
     compiledName = ""
   # Issue #330: when the definition has a representation-specialized proc
   # and the wrapper boundary is the identity (every formal and the result
@@ -3781,8 +3784,9 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
       if useRepr and not nimTypeMatchesRepr(resultType, wantTypes[^1]):
         useRepr = false
   if requireCompiled and not useRepr:
-    error("eponymBlock requireCompiled: Nim wrapper representation for '" &
-      defName & "' does not match its compiled representation", decl)
+    error("eponymBlock requireCompiled: definition '" & defName &
+      "' was checked successfully, but no supported Nim runtime representation " &
+      "matches its compiled representation", decl)
   if useRepr:
     if piRuntimeSlots.len != generic.genericNames.len + argSyms.len:
       useRepr = false
@@ -5424,8 +5428,15 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
     for d in codegenDefs:
       let codegen = cgBlock.report.getOrDefault(d.name)
       if d.name notin cgBlock.compiledRepr:
-        error("eponymBlock requireCompiled: definition '" & d.name &
-          "' has no representation-compiled body: " & codegen.reason, body)
+        error("eponymBlock: definition '" & d.name &
+          "' checked successfully, but checking is not code generation: no " &
+          "supported Nim runtime representation exists for a callable Nim proc. " &
+          "The representation is unavailable because: " & codegen.reason &
+          ". Add a runtimeType mapping for an opaque postulated type or a " &
+          "runtimeCodec boundary codec, use {.stagedType.} for type-structure " &
+          "computation such as an indexed type whose representation depends on " &
+          "a runtime index, or mark the definition compileTimeOnly(name) if it " &
+          "is compile-time only.", body)
       if codegen.slowPaths.len > 0:
         error("eponymBlock requireCompiled: definition '" & d.name &
           "' calls definitions outside the compiled block: " &
@@ -5511,8 +5522,9 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
       # checked Pi type and feed it through the same codec generator.
       procDecl = importedRuntimeProcDecl(d, checkedGlobals)
     if requireCompiled and procDecl.isNil:
-      error("eponymBlock requireCompiled: cannot generate a typed Nim wrapper " &
-        "for '" & d.name & "'", body)
+      error("eponymBlock: definition '" & d.name &
+        "' checked successfully, but no supported Nim runtime representation " &
+        "can generate a typed Nim wrapper for a callable Nim proc", body)
     # Issue #478: a gated def gets exactly one surface — a use-gated
     # wrapper carrying its declared signature — and no other wrapper
     # (typed, dynamic, or runtimeValue), so no callable path bypasses
