@@ -578,6 +578,14 @@ diagnostic naming this phase boundary instead of only a bare "unbound variable"
 error. Declare a postulate and use `bindPostulate` to make the host procedure
 available to checked Eponym code.
 
+Since issue #513, a `var` declaration or assignment inside `eponymBlock`
+likewise produces a diagnostic naming the phase boundary: the block body is
+translated to an Eponym term, and Eponym terms have no mutable variables —
+every binding is single-assignment. Use `let x = ... in ...` instead (an
+update step becomes a new let-rebinding of `x`), express an updating loop as
+an explicit recursive helper, or move the stateful code outside the block and
+expose its result through a bound postulate.
+
 Ordinary `bindPostulate` bindings expect Nim value parameters. When an
 existing Nim adapter accepts a `var` parameter, use the explicit
 `bindPostulateMutable` form. It decodes each argument into a mutable local,
