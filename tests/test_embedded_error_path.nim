@@ -207,7 +207,13 @@ for (path, expected) in [
     ("tests/fixtures/typed_adapter_err_nonstatic.nim",
      "bindPostulateValue 'debugEcho' applied at a non-static type"),
     ("tests/fixtures/embedded_err_static_runtime_confusion.nim",
-     "treats its static parameter 'n' as a runtime value")]:
+     "treats its static parameter 'n' as a runtime value"),
+    # Issue #518: unbound postulate names the postulate and explains the
+    # host-binding requirement.
+    ("tests/fixtures/embedded_err_unbound_postulate.nim",
+     "postulate 'hostOp', which has no host implementation"),
+    ("tests/fixtures/embedded_err_unbound_postulate.nim",
+     "must be paired with a host procedure in the same block")]:
   if not checkFixture(path, expected):
     inc failed
 
