@@ -148,6 +148,11 @@ losing type checking, but cannot normalize or prove facts about its result.
 
 ## Checked definitions need a runtime path
 
+When strict codegen rejects a checked definition, the diagnostic now explains
+that checking succeeded but no supported Nim runtime representation exists for
+a callable proc, and points to `runtimeType`/`runtimeCodec`, `{.stagedType.}`,
+or `compileTimeOnly(name)` as the relevant next step.
+
 Eponym checks definitions at compile time. A checked definition is callable
 from Nim only when its generated wrapper can convert arguments and results to
 runtime values. Common runtime representations include:
