@@ -126,9 +126,9 @@ proc indexedBranchCapture (n : Nat) (xs : Vec Int n)
 """), repoRoot, "<indexed-q1-branch-capture>")
 except ElabError as e:
   indexedBranchCaptureRejected =
-    "linear variable 'value' used 0 or 1 or 2+ time(s)" in e.msg
+    "cannot establish exactly-once use" in e.msg
 expect(indexedBranchCaptureRejected,
-  "indexed recursive branch captures stay conservative for q1 checking")
+  "indexed recursive branch captures report the checker cannot establish q1 usage")
 
 var branchDrv = initModuleDriver()
 discard branchDrv.elabFile(repoRoot / "lib/bool.ep")
@@ -261,9 +261,9 @@ proc capturesLinearValue(xs : Chain) (1 value : Int) : Pi(unit: unitTy, Int) =
 """), repoRoot, "<recursive-q1-closure-motive>")
 except ElabError as e:
   closureMotiveRejected =
-    "linear variable 'value' used 0 or 1 or 2+ time(s)" in e.msg
+    "cannot establish exactly-once use" in e.msg
 expect(closureMotiveRejected,
-  "recursive path analysis stays conservative for closure-valued motives")
+  "recursive path analysis reports it cannot establish q1 usage for closure-valued motives")
 
 var multiRecursiveRejected = false
 var binaryTreeDrv = initModuleDriver()

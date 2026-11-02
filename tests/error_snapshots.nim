@@ -62,6 +62,8 @@ const cases: seq[Case] = @[
   ("tests/error_snapshots/cases/unit-ty-vs-int-neg.ep", "literals: unit value where an integer is expected (issue #458, single-syntax spelling)"),
   ("tests/error_snapshots/cases/unit-type-vs-int-neg.ep", "literals: unit type where an integer is expected (issue #458 follow-up, pkUnitTy note)"),
   ("tests/error_snapshots/cases/lit-nat-inferred-vs-int-neg.ep", "literals: inferred-Nat literal vs expected Int suggests natToInt (issue #514)"),
+  ("tests/error_snapshots/cases/linearity-double-use-neg.ep", "quantity: genuine linearity violation"),
+  ("tests/error_snapshots/cases/linearity-conservative-neg.ep", "quantity: checker cannot establish linearity for indexed recursive motive"),
 ]
 
 const snapDir = "tests/error_snapshots/snapshots"

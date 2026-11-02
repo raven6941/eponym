@@ -1,1 +1,1 @@
-line 12, col 1: linear variable 'ch' used 1 or 2+ time(s) (expected exactly once): use the variable exactly once on every runtime path in the body
+line 12, col 1: linear variable 'ch' used 1 or 2+ time(s) on different runtime paths (the program violates linearity; expected exactly once on every runtime path)
