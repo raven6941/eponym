@@ -4589,6 +4589,57 @@ proc computeGated(defs: seq[ElabDef], checkedGlobals: Globals,
       "' and is itself gated (" & cause & "); " & expl & "; " & remedy
   (gated, reasons)
 
+proc unboundPostulateRoots(defName: string, unbound: HashSet[string],
+                           allDefs: seq[ElabDef],
+                           checkedGlobals: Globals): seq[string] =
+  ## Issue #518: the declared postulates (with no host binding) that
+  ## `defName` references, directly or through other definitions. The
+  ## closure follows body (term) references only, like computeGated —
+  ## a postulate mentioned only in a type position never needs a runtime
+  ## representation, so it cannot be the reason compilation fails.
+  var refToName = initTable[int, string]()
+  for name, g in checkedGlobals:
+    if not g.tm.isNil and g.tm.kind == tR:
+      refToName[g.tm.refId] = name
+  var callees = initTable[string, seq[string]]()
+  for d in allDefs:
+    var refs: HashSet[int]
+    collectTermRefIds(d.tmTm, refs)
+    for r in refs:
+      if r in refToName:
+        callees.mgetOrPut(d.name, @[]).add(refToName[r])
+  var seen = initHashSet[string]()
+  var queue = @[defName]
+  seen.incl(defName)
+  while queue.len > 0:
+    let cur = queue.pop()
+    for c in callees.getOrDefault(cur, @[]):
+      if c notin seen:
+        seen.incl(c)
+        if c in unbound and c notin result:
+          result.add(c)
+        queue.add(c)
+  result = sorted(result)
+
+proc unboundDirectly(defName: string, roots: seq[string],
+                     allDefs: seq[ElabDef],
+                     checkedGlobals: Globals): bool =
+  ## Issue #518: does `defName`'s own body reference any of `roots`
+  ## directly (vs only through other definitions)?
+  var rootIds = initHashSet[int]()
+  for r in roots:
+    if r in checkedGlobals:
+      let g = checkedGlobals[r]
+      if not g.tm.isNil and g.tm.kind == tR:
+        rootIds.incl(g.tm.refId)
+  for d in allDefs:
+    if d.name != defName: continue
+    var refs: HashSet[int]
+    collectTermRefIds(d.tmTm, refs)
+    for r in refs:
+      if r in rootIds: return true
+  false
+
 proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
   ## Elaborate a block of Nim-syntax Eponym definitions (no """).
   ## Uses call syntax: proc f(x: Int): Int = ..., postulate(I, Univ),
@@ -5551,9 +5602,57 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
                        sigSummary: sigSummary)
 
   if requireCompiled:
+    # Issue #518: name the real conceptual mistake when the failing
+    # definition (transitively) uses a postulate that was never host-bound.
+    # A Nim programmer may not realize the Eponym signature is only half
+    # of the contract: somebody must supply the host implementation via
+    # bindPostulate (or the value/mutable variants) before the definition
+    # can be used at runtime.
+    var declaredPostulates = initHashSet[string]()
+    for st in body:
+      if st.kind == nnkCall and st[0].kind == nnkIdent and
+          $st[0] == "postulate" and st.len == 3 and st[1].kind == nnkIdent:
+        declaredPostulates.incl($st[1])
+    var unboundPostulates = initHashSet[string]()
+    var typeBoundNames = initHashSet[string]()
+    for rt in runtimeTypes:
+      typeBoundNames.incl(rt.eponymName)
+    for p in declaredPostulates:
+      # A postulate bound via bindPostulate* has its host procedure;
+      # a type postulate with a runtimeType mapping has its host
+      # representation. Only term postulates with neither are "unbound".
+      if p in boundPostulateNames or p in typeBoundNames: continue
+      # A postulate whose type is Univ (or a Pi ending in Univ) is a TYPE
+      # postulate: its missing half is a runtimeType mapping, not a host
+      # procedure — the generic message (not the bindPostulate advice)
+      # applies there.
+      if p in checkedGlobals:
+        var pty = checkedGlobals[p].ty
+        while not pty.isNil and pty.kind == tPi:
+          pty = pty.scope.bdy
+        if not pty.isNil and pty.kind == tType:
+          continue
+      unboundPostulates.incl(p)
     for d in codegenDefs:
       let codegen = cgBlock.report.getOrDefault(d.name)
       if d.name notin cgBlock.compiledRepr:
+        let roots = unboundPostulateRoots(d.name, unboundPostulates,
+          allDefs, checkedGlobals)
+        if roots.len > 0:
+          let plural = roots.len > 1
+          let plist = roots.mapIt("'" & it & "'").join(", ")
+          let usedHow = if unboundDirectly(d.name, roots, allDefs,
+            checkedGlobals): "uses" else: "transitively uses"
+          error("eponymBlock: definition '" & d.name &
+            "' cannot be compiled because it " & usedHow & " postulate " &
+            plist & ", which ha" & (if plural: "ve" else: "s") &
+            " no host implementation. A postulate is only half of the contract: " &
+            "its Eponym signature must be paired with a host procedure in the same " &
+            "block — e.g. bindPostulate(" & roots[0] &
+            ", hostProc[, EponymType...]), bindPostulateValue(" & roots[0] &
+            ", hostValue), or bindPostulateMutable(" & roots[0] &
+            ", hostProc, EponymArg, EponymResult) — before any definition using it " &
+            "can be used at runtime.", body)
         error("eponymBlock: definition '" & d.name &
           "' checked successfully, but checking is not code generation: no " &
           "supported Nim runtime representation exists for a callable Nim proc. " &
