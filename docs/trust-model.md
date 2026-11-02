@@ -281,6 +281,12 @@ dependent `Sig` compiled to a host tuple is sound exactly when its component
 mappings are index-independent in this sense; a `Vec` length index mentioning
 the bound Sigma value is honestly rejected instead of silently erased.
 
+When this mapping is declared, the compiler warns at the declaration that the
+family index is erased. The checked distinction between values such as
+`Channel(0)` and `Channel(1)` is compile-time only: the host value cannot be
+inspected to recover its index or dispatch on it at runtime. Treat the mapping
+as Eponym's trusted assertion that the representation is index-independent.
+
 The runtime units example uses this rule for a nominal indexed family
 `Qty : Vec Int 3 -> Univ`, mapped to `float64` for every dimension. Eponym
 still checks dimension equality in `Qty d`; the runtime mapping erases `d`.

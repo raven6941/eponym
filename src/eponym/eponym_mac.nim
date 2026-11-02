@@ -1584,6 +1584,25 @@ proc hostRuntimeTypes*(body: NimNode, checkedGlobals: Globals,
       if name in seen:
         error("duplicate runtime type mapping for '" & name & "'", st)
       seen.incl(name)
+      # Issue #517: an opaque mapping for an indexed family deliberately
+      # erases the family index from the host representation. Make that
+      # trust boundary visible at the declaration, but keep structural
+      # mappings (and non-indexed opaque types) quiet.
+      if (not isVector and not isList and not isOption and not isVariant and
+          not isCodec and name in checkedGlobals and
+          not checkedGlobals[name].ty.isNil and
+          checkedGlobals[name].ty.kind == tPi and
+          (not isDerive or st.len == 3)):
+        let hostTypeName = $st[2]
+        let mappingForm = if isDerive: "runtimeDerive" else: "runtimeType"
+        warning("eponymBlock: " & mappingForm & "(" & name & ", " &
+          hostTypeName & ") erases the family index: values of " & name &
+          "(i) for any index i are the same Nim type " & hostTypeName &
+          ". The checked distinction between indices is compile-time only " &
+          "— a host value does not remember which index it was, so do not " &
+          "assume a runtime value remembers its index; no runtime dispatch " &
+          "on the index is possible. This mapping is Eponym's trusted " &
+          "assertion that the representation is index-independent.", st)
       if isDerive:
         # Issue #402: derive the mapping from the checked type structure.
         # The two-arg form (slice 4) declares the host type for an opaque
