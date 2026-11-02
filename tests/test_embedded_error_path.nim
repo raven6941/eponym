@@ -226,6 +226,15 @@ for (path, expected) in [
   if not checkWarningFixture(path, expected):
     inc failed
 
+# Issue #517: indexed opaque runtime mappings must explain their erased index.
+for expected in [
+    "erases the family index",
+    "compile-time only"]:
+  if not checkWarningFixture(
+      "tests/fixtures/embedded_warn_indexed_runtimetype_erasure.nim",
+      expected):
+    inc failed
+
 if failed > 0:
   echo failed, " error-path fixture(s) misbehaved"
   quit(1)
