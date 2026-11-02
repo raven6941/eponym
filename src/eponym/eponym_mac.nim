@@ -832,6 +832,25 @@ proc nimExprToEponym(n: NimNode, strict = true): string =
       "(" & nimExprToEponym(n[0][0], strict) & " : " & nimTypeToEponym(n[0][1]) & ")"
     else:
       "(" & n.mapIt(nimExprToEponym(it, strict)).join(", ") & ")"
+  of nnkStrLit, nnkTripleStrLit:
+    # Issue #512: the classic surprise — a Nim programmer writes `"hello"`
+    # expecting a string value, but Eponym has no string literal syntax.
+    # `String` (lib/text.ep) is an opaque host type: its values are
+    # constructed in Nim and cross the boundary through the runtime mapping,
+    # and string operations are host-bound postulates. Say what the literal
+    # is (a Nim string literal) and the two ways to get the value in.
+    let lit = n.strVal
+    let shown = if lit.len <= 24: lit
+                else: lit[0 ..< 21] & "..."
+    convFail("eponymBlock: string literal '\"" & shown &
+      "\"' is not an Eponym `String` value. This is a Nim string literal, " &
+      "but Eponym has no string literal syntax: `String` (from lib/text.ep) " &
+      "is an opaque host type — string values are constructed in Nim and " &
+      "cross the boundary through the runtime mapping " &
+      "(`runtimeType(String, string)`), and string operations are host-bound " &
+      "postulates. Move the literal outside the block and expose it through " &
+      "a bound postulate, or pass it as a `string` argument of the checked " &
+      "wrapper and work with it as `String` inside the block", n, strict)
   else:
     convFail("eponymBlock: unsupported Nim expression shape '" & $n.kind &
       "'; express the operation in supported Eponym syntax, or move the Nim " &
