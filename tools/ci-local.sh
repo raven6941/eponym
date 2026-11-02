@@ -169,6 +169,8 @@ run_step nim c -r $NC --hints:off $P "tests/run_examples.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_imported_source_locations.nim"
 # Error-message snapshots (issue #34)
 run_step nim c -r $NC --hints:off $P "tests/error_snapshots.nim"
+# Boundary preview snapshots (issue #523)
+run_step nim c -r $NC --hints:off $P "tests/boundary_preview_snapshots.nim"
 # Elaboration trace (issue #83)
 run_step nim c -r $NC --hints:off $P "tests/test_elab_trace.nim"
 # REPL scripted session (issue #50)

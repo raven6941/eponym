@@ -4806,6 +4806,7 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
   # Issue #524: the pre-#524 `{.runtimeType.}` pragma spelling is a hard
   # error with a migration hint, not a silent no-op.
   var stagedTypeNames = initHashSet[string]()
+  var boundaryPreviewNames = initHashSet[string]()
   for st in body:
     if st.kind == nnkProcDef:
       if hasOldRuntimeTypePragma(st):
@@ -4814,6 +4815,10 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
           "mapping is unchanged", st[4])
       if hasStagedTypePragma(st):
         stagedTypeNames.incl($st[0])
+      if st[4].kind == nnkPragma:
+        for pragma in st[4]:
+          if pragma.kind in {nnkIdent, nnkSym} and $pragma == "boundaryPreview":
+            boundaryPreviewNames.incl($st[0])
   for i in 0 ..< defs.len:
     if defs[i].name in stagedTypeNames:
       defs[i].stagedType = true
@@ -5619,6 +5624,18 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
   var cgBlock = compileBlockProcs(codegenDefs, checkedGlobals, baseDir, src,
     cgLocFile, cgUserLines, runtimeTypes, postulateReprs, allDefs,
     adapterSpecs, crossBlockExports, withheldReprNames522)
+
+  # Issue #523: preview is a read-only diagnostic.  It is deliberately
+  # emitted after the normal codegen decision, so it cannot affect emitted
+  # code, tier selection, or whether the block succeeds.
+  for d in defs:
+    if d.name notin boundaryPreviewNames: continue
+    let entry = cgBlock.report.getOrDefault(d.name,
+      CodegenReportEntry(tier: cgtInterpreter,
+        reason: "definition was outside the generated runtime closure",
+        slowPaths: @[]))
+    echo boundaryPreviewReport(d, checkedGlobals, baseDir, src, runtimeTypes,
+      entry.tier, entry.reason, allDefs)
 
   # Issue #408: publish this block's compiled import-origin definitions
   # into the cross-block registry for later blocks in this compilation.

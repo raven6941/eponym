@@ -1,0 +1,4 @@
+postulate(Int, Univ)
+postulate(Nat, Univ)
+postulate(Vec, Pi(A: Univ, Pi(n: Nat, Univ)))
+proc f (2 n: Nat) (values: Vec Int n) : Vec Int n = values

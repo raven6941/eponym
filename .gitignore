@@ -17,6 +17,11 @@ tests/**
 !tests/error_snapshots/**/*.ep
 !tests/error_snapshots/**/*.txt
 !tests/error_snapshots/**/*.md
+# Boundary-preview snapshot corpus (issue #523): fixtures, blessed snapshots,
+# and corpus docs are sources, not build outputs.
+!tests/boundary_preview_snapshots/**/*.ep
+!tests/boundary_preview_snapshots/**/*.txt
+!tests/boundary_preview_snapshots/**/*.md
 bench/**
 !bench/**/
 !bench/**/*.nim

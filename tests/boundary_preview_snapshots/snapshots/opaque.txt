@@ -1,0 +1,12 @@
+Definition keep
+Eponym:
+  (x : Box) -> Box
+Nim boundary:
+  proc keep(x: BoxHost): BoxHost
+runtime checks:
+  none (no additional generated entry checks)
+notes:
+  q0 binders are erased and have no Nim formal.
+  Nat uses int; Vec A n uses seq[int] and an O(1) entry length check.
+  Sig maps to a host tuple; opaque families use their declared host type.
+  compilation tier: representation (Phase 2 representation code emitted ((BoxHost (opaque)) -> BoxHost (opaque))).

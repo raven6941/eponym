@@ -1,0 +1,12 @@
+Definition apply
+Eponym:
+  (f : (x : Int) -> Int) -> (x : Int) -> Int
+Nim boundary:
+  proc apply(f: (int) -> int {.closure.}, x: int): int
+runtime checks:
+  none (no additional generated entry checks)
+notes:
+  q0 binders are erased and have no Nim formal.
+  Nat uses int; Vec A n uses seq[int] and an O(1) entry length check.
+  Sig maps to a host tuple; opaque families use their declared host type.
+  compilation tier: representation (Phase 2 representation code emitted (((int) -> int {.closure.} (function), int) -> int)).
