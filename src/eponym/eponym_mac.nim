@@ -2065,6 +2065,13 @@ proc trustBoundaryReportLines(bindings: seq[HostPostulateBinding],
       result.add("runtimeCodec(" & mapping.eponymName & ", " &
         mapping.nimType.repr & "): custom encoder/decoder behavior " &
         "is trusted")
+    elif mapping.isPlainIntMapping:
+      # Issue #545: built-in scalar representations (Nat/Int -> int) are
+      # identity value-type representations — aliasing and lifetime rules
+      # are not meaningful for them, so they get the narrower promise.
+      result.add("runtimeType(" & mapping.eponymName & ", " &
+        mapping.nimType.repr & "): identity int representation; " &
+        "the Eponym/Nim correspondence is trusted")
     elif not mapping.isRuntimeVector and not mapping.isRuntimeList and
         not mapping.isRuntimeOption and not mapping.isRuntimeVariant:
       result.add("runtimeType(" & mapping.eponymName & ", " &

@@ -7,7 +7,7 @@ runtime checks:
   none (no additional generated entry checks)
 Trust:
   bindPostulate(step, hostStep): the Nim adapter behavior is trusted; its signature is checked
-  runtimeType(Nat, int): Nim/Eponym type correspondence is trusted; host identity, aliasing, and lifetime rules remain with the caller
+  runtimeType(Nat, int): identity int representation; the Eponym/Nim correspondence is trusted
 notes:
   q0 binders are erased and have no Nim formal.
   Nat uses int; Vec A n uses seq[int] and an O(1) entry length check.

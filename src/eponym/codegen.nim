@@ -693,6 +693,36 @@ proc collectReferencedRefIds*(t: Term): seq[int] =
   for id in ids.keys:
     result.add(id)
 
+# Mapping classifiers are defined here (moved 2026-11-03, issue #545)
+# so that definitionTrustLines can use them.
+proc isPlainIntMapping*(m: HostRuntimeType): bool =
+  ## True when the mapping is a plain `runtimeType ... -> int` (not a
+  ## vector/list/option/variant/codec mapping): the host representation
+  ## is exactly Nim `int` with the identity boundary conversion.
+  not m.isRuntimeVector and not m.isRuntimeList and
+    not m.isRuntimeOption and not m.isRuntimeVariant and
+    not m.isRuntimeCodec and
+    m.nimType.kind in {nnkIdent, nnkSym} and $m.nimType == "int"
+
+proc isTypeVariableMapping*(m: HostRuntimeType): bool =
+  ## True for `runtimeType(T, T)`-style mappings whose host type is a bare
+  ## type variable rather than a concrete host type: there is no identity
+  ## representation to compile against.
+  m.nimType.kind in {nnkIdent, nnkSym} and $m.nimType == m.eponymName
+
+proc isOpaqueIdentityMapping*(m: HostRuntimeType): bool =
+  ## True when the mapping declares a concrete host type used as-is, with
+  ## no conversion: a plain `runtimeType` that is not an int mapping, not a
+  ## vector/list/option/variant/codec mapping, not a type variable, and not
+  ## carrying a trusted record codec (the codec defines the boundary
+  ## semantics, including dependent-index checks, so the mapping is not an
+  ## identity representation). Issue #401: these become the `repOpaque`
+  ## representation kind.
+  not m.isRuntimeVector and not m.isRuntimeList and
+    not m.isRuntimeOption and not m.isRuntimeVariant and
+    not m.isRuntimeCodec and not m.isPlainIntMapping and
+    not m.isTypeVariableMapping and not m.hasRecordCodec
+
 proc definitionTrustLines*(d: ElabDef, globals: Globals, allDefs: seq[ElabDef],
     declaredPostulates: HashSet[string], postulateTrust: Table[string, string],
     runtimeTypes: seq[HostRuntimeType],
@@ -738,6 +768,13 @@ proc definitionTrustLines*(d: ElabDef, globals: Globals, allDefs: seq[ElabDef],
     if mapping.isRuntimeCodec:
       mapped.add("runtimeCodec(" & mapping.eponymName & ", " &
         mapping.nimType.repr & "): custom encoder/decoder behavior is trusted")
+    elif mapping.isPlainIntMapping:
+      # Issue #545: built-in scalar representations (Nat/Int -> int) are
+      # identity value-type representations — aliasing and lifetime rules
+      # are not meaningful for them, so they get the narrower promise.
+      mapped.add("runtimeType(" & mapping.eponymName & ", " &
+        mapping.nimType.repr & "): identity int representation; " &
+        "the Eponym/Nim correspondence is trusted")
     elif not mapping.isRuntimeVector and not mapping.isRuntimeList and
         not mapping.isRuntimeOption and not mapping.isRuntimeVariant:
       mapped.add("runtimeType(" & mapping.eponymName & ", " &
@@ -1203,34 +1240,6 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
 proc cgReprName*(defName: string): string =
   ## The emitted proc name for a representation-specialized definition.
   "eponymCompiledRepr_" & defName
-
-proc isPlainIntMapping*(m: HostRuntimeType): bool =
-  ## True when the mapping is a plain `runtimeType ... -> int` (not a
-  ## vector/list/option/variant/codec mapping): the host representation
-  ## is exactly Nim `int` with the identity boundary conversion.
-  not m.isRuntimeVector and not m.isRuntimeList and
-    not m.isRuntimeOption and not m.isRuntimeVariant and
-    not m.isRuntimeCodec and
-    m.nimType.kind in {nnkIdent, nnkSym} and $m.nimType == "int"
-
-proc isTypeVariableMapping*(m: HostRuntimeType): bool =
-  ## True for `runtimeType(T, T)`-style mappings whose host type is a bare
-  ## type variable rather than a concrete host type: there is no identity
-  ## representation to compile against.
-  m.nimType.kind in {nnkIdent, nnkSym} and $m.nimType == m.eponymName
-
-proc isOpaqueIdentityMapping*(m: HostRuntimeType): bool =
-  ## True when the mapping declares a concrete host type used as-is, with
-  ## no conversion: a plain `runtimeType` that is not an int mapping, not a
-  ## vector/list/option/variant/codec mapping, not a type variable, and not
-  ## carrying a trusted record codec (the codec defines the boundary
-  ## semantics, including dependent-index checks, so the mapping is not an
-  ## identity representation). Issue #401: these become the `repOpaque`
-  ## representation kind.
-  not m.isRuntimeVector and not m.isRuntimeList and
-    not m.isRuntimeOption and not m.isRuntimeVariant and
-    not m.isRuntimeCodec and not m.isPlainIntMapping and
-    not m.isTypeVariableMapping and not m.hasRecordCodec
 
 proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
   ## The representation kind for a type/family refId. Raises CgUnsupported
