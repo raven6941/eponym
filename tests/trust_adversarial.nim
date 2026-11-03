@@ -1,10 +1,10 @@
 ## Issue #544: adversarial trust-attribution regression tests.
 ##
 ## Each channel probes whether `definitionTrustLines` (codegen.nim) reports
-## trust honestly. Channels 1, 3, 4 assert the report IS complete.
-## Channel 2 documents a known limitation (syntactic type-name collection):
-## the test asserts the current behavior so the limitation cannot regress
-## silently; see the follow-up issue for the reduction-aware fix.
+## trust honestly. All four channels assert the report IS complete.
+## Channel 2 (issue #546): the type-name collection whittles type-level
+## applications to their whnf heads, so a family application reducing to a
+## mapped type is reported.
 import std/[macros, os, sets, tables]
 import eponym_embed
 import elab
@@ -67,18 +67,18 @@ proc runChecks(): bool {.compileTime.} =
     trustFor(imported, "g", initHashSet[string](), initTable[string, string](), @[]),
     @[externalLine], @[]) and result
 
-  # Channel 2: type-level family application. KNOWN LIMITATION: the mapping
-  # check is syntactic (it sees `F`, not the `Nat` that `F i` reduces to),
-  # so the Nat mapping is absent. `i` is declared here to isolate the
-  # mapping question from the cross-block postulate question.
+  # Channel 2: type-level family application. Issue #546: the mapping
+  # check whittles `F i` to its whnf head (`Nat`), so the Nat mapping is
+  # reported. `i` is declared here to isolate the mapping question from
+  # the cross-block postulate question.
   let typeLevel = elabCheckDirStateAll(readFile(probeDir / "type_level.ep"), probeDir)
   let natMapping = @[HostRuntimeType(eponymName: "Nat", nimType: ident"int")]
   var declaredI = initHashSet[string]()
   declaredI.incl("i")
   let natLine = "runtimeType(Nat, int): identity int representation; the Eponym/Nim correspondence is trusted"
-  result = check("channel 2: type-level computation (known limitation)",
+  result = check("channel 2: type-level computation reports the mapping",
     trustFor(typeLevel, "g", declaredI, initTable[string, string](), natMapping),
-    @[], @[natLine]) and result
+    @[natLine], @[]) and result
 
   # Channel 3: callbacks. Both the higher-order postulate and the postulate
   # passed as callback must be reported.
