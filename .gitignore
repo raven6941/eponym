@@ -22,6 +22,8 @@ tests/**
 !tests/boundary_preview_snapshots/**/*.ep
 !tests/boundary_preview_snapshots/**/*.txt
 !tests/boundary_preview_snapshots/**/*.md
+# Trust-adversarial probe corpus (issue #544): fixtures are sources.
+!tests/trust_adversarial/**/*.ep
 bench/**
 !bench/**/
 !bench/**/*.nim

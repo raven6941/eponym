@@ -723,6 +723,16 @@ proc isOpaqueIdentityMapping*(m: HostRuntimeType): bool =
     not m.isRuntimeCodec and not m.isPlainIntMapping and
     not m.isTypeVariableMapping and not m.hasRecordCodec
 
+proc isTypeFormerTy(ty: Term): bool =
+  ## True when ty is a universe or a Pi spine ending in a universe: the
+  ## postulate declares a type (Nat, Vec, ...), not a term-level trust
+  ## boundary. Issue #544: cross-block reporting only names term-level
+  ## postulates, so imported type formers are not misreported as trust.
+  var t = ty
+  while not t.isNil and t.kind == tPi:
+    t = t.scope.bdy
+  not t.isNil and t.kind == tType
+
 proc definitionTrustLines*(d: ElabDef, globals: Globals, allDefs: seq[ElabDef],
     declaredPostulates: HashSet[string], postulateTrust: Table[string, string],
     runtimeTypes: seq[HostRuntimeType],
@@ -741,6 +751,7 @@ proc definitionTrustLines*(d: ElabDef, globals: Globals, allDefs: seq[ElabDef],
       if refId in refToName:
         callees.mgetOrPut(definition.name, @[]).add(refToName[refId])
   var seen = initHashSet[string]()
+  var via = initTable[string, string]()
   var queue = @[d.name]
   seen.incl(d.name)
   var reachable: seq[string] = @[]
@@ -749,6 +760,7 @@ proc definitionTrustLines*(d: ElabDef, globals: Globals, allDefs: seq[ElabDef],
     for callee in callees.getOrDefault(current, @[]):
       if callee in seen: continue
       seen.incl(callee)
+      via[callee] = current
       queue.add(callee)
       if callee in declaredPostulates:
         reachable.add(callee)
@@ -756,6 +768,19 @@ proc definitionTrustLines*(d: ElabDef, globals: Globals, allDefs: seq[ElabDef],
   for name in reachable:
     if name in postulateTrust:
       result.add(postulateTrust[name])
+  # Issue #544: a reachable postulate not declared in this block is a
+  # cross-block trust boundary (its binding lives in the defining block,
+  # so this block has no trust line for it). Report it honestly rather
+  # than staying silent; type formers are not trust boundaries.
+  var external: seq[string] = @[]
+  for name in via.keys:
+    if name in declaredPostulates: continue
+    if name notin globals or not globals[name].isPostulate: continue
+    if isTypeFormerTy(globals[name].ty): continue
+    external.add("postulate " & name & ": trust boundary declared in " &
+      "another block (reached through " & via[name] & ")")
+  external.sort()
+  result.add(external)
 
   var typeNames = initHashSet[string]()
   var typeRefs = initTable[int, bool]()
