@@ -6,8 +6,8 @@ Nim boundary:
 runtime checks:
   values.len == n
 Trust:
-  runtimeType(Int, int): Nim/Eponym type correspondence is trusted; host identity, aliasing, and lifetime rules remain with the caller
-  runtimeType(Nat, int): Nim/Eponym type correspondence is trusted; host identity, aliasing, and lifetime rules remain with the caller
+  runtimeType(Int, int): identity int representation; the Eponym/Nim correspondence is trusted
+  runtimeType(Nat, int): identity int representation; the Eponym/Nim correspondence is trusted
 notes:
   q0 binders are erased and have no Nim formal.
   Nat uses int; Vec A n uses seq[int] and an O(1) entry length check.
