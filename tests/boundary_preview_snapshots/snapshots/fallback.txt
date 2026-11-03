@@ -5,6 +5,8 @@ Nim boundary:
   unavailable (Value tier; Phase 2 unavailable: non-atomic binder domain (type has no runtime representation mapping))
 runtime checks:
   none (no additional generated entry checks)
+Trust:
+  none
 notes:
   q0 binders are erased and have no Nim formal.
   Nat uses int; Vec A n uses seq[int] and an O(1) entry length check.

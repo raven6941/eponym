@@ -2025,32 +2025,40 @@ proc bindingIsReferenced(body: NimNode, postulateName: string,
     if checkedDefReferences(definition, refId): return true
   false
 
+proc postulateTrustLine(binding: HostPostulateBinding): string =
+  var form = "bindPostulate"
+  var promise = "the Nim adapter behavior is trusted; " &
+    "its signature is checked"
+  if binding.rawValue:
+    form = "bindPostulateValue"
+    promise = "the raw RuntimeValue adapter behavior and interpretation are trusted"
+  elif binding.pairResult:
+    form = if binding.trustedPairIndex:
+      "bindPostulatePairTrusted" else: "bindPostulatePair"
+    if binding.trustedPairIndex:
+      promise = "the host result's dependent Sigma index relationship is trusted"
+    else:
+      promise = "the generated non-dependent pair codec checks field types; " &
+        "adapter behavior is trusted"
+  elif binding.mutableArgs:
+    form = "bindPostulateMutable"
+    promise = "the adapter mutates decoded local var arguments and returns " &
+      "their encoded result; host effects and aliases are trusted"
+  form & "(" & binding.postulateName & ", " & binding.implementation.repr &
+    "): " & promise
+
+proc declaredPostulateNames(body: NimNode): HashSet[string] =
+  for st in body:
+    if st.kind == nnkCall and st[0].kind == nnkIdent and
+        $st[0] == "postulate" and st.len == 3 and st[1].kind == nnkIdent:
+      result.incl($st[1])
+
 proc trustBoundaryReportLines(bindings: seq[HostPostulateBinding],
     mappings: seq[HostRuntimeType], trustedPairs, trustedRecords: HashSet[string]):
     seq[string] =
   ## Human-readable inventory of explicit block-level host trust boundaries.
   for binding in bindings:
-    var form = "bindPostulate"
-    var promise = "the Nim adapter behavior is trusted; " &
-      "its signature is checked"
-    if binding.rawValue:
-      form = "bindPostulateValue"
-      promise = "the raw RuntimeValue adapter behavior and " &
-        "interpretation are trusted"
-    elif binding.pairResult:
-      form = if binding.trustedPairIndex:
-        "bindPostulatePairTrusted" else: "bindPostulatePair"
-      if binding.trustedPairIndex:
-        promise = "the host result's dependent Sigma index relationship is trusted"
-      else:
-        promise = "the generated non-dependent pair codec checks field " &
-          "types; adapter behavior is trusted"
-    elif binding.mutableArgs:
-      form = "bindPostulateMutable"
-      promise = "the adapter mutates decoded local var arguments and returns " &
-        "their encoded result; host effects and aliases are trusted"
-    result.add(form & "(" & binding.postulateName & ", " &
-      binding.implementation.repr & "): " & promise)
+    result.add(postulateTrustLine(binding))
 
   for mapping in mappings:
     if mapping.isRuntimeCodec:
@@ -5634,8 +5642,14 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
       CodegenReportEntry(tier: cgtInterpreter,
         reason: "definition was outside the generated runtime closure",
         slowPaths: @[]))
+    var postulateTrust = initTable[string, string]()
+    for binding in bindings:
+      postulateTrust[binding.postulateName] = postulateTrustLine(binding)
+    let trustLines = definitionTrustLines(d, checkedGlobals, allDefs,
+      declaredPostulateNames(body), postulateTrust, runtimeTypes,
+      trustedRuntimePairs, trustedRuntimeRecords)
     echo boundaryPreviewReport(d, checkedGlobals, baseDir, src, runtimeTypes,
-      entry.tier, entry.reason, allDefs)
+      entry.tier, entry.reason, allDefs, trustLines)
 
   # Issue #408: publish this block's compiled import-origin definitions
   # into the cross-block registry for later blocks in this compilation.
@@ -5691,11 +5705,7 @@ proc eponymBlockExpansion(body: NimNode, strictRuntime: bool): NimNode =
     # of the contract: somebody must supply the host implementation via
     # bindPostulate (or the value/mutable variants) before the definition
     # can be used at runtime.
-    var declaredPostulates = initHashSet[string]()
-    for st in body:
-      if st.kind == nnkCall and st[0].kind == nnkIdent and
-          $st[0] == "postulate" and st.len == 3 and st[1].kind == nnkIdent:
-        declaredPostulates.incl($st[1])
+    let declaredPostulates = declaredPostulateNames(body)
     var unboundPostulates = initHashSet[string]()
     var typeBoundNames = initHashSet[string]()
     for rt in runtimeTypes:

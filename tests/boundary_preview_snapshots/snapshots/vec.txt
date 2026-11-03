@@ -5,6 +5,9 @@ Nim boundary:
   proc f(n: int, values: seq[int]): seq[int]
 runtime checks:
   values.len == n
+Trust:
+  runtimeType(Int, int): Nim/Eponym type correspondence is trusted; host identity, aliasing, and lifetime rules remain with the caller
+  runtimeType(Nat, int): Nim/Eponym type correspondence is trusted; host identity, aliasing, and lifetime rules remain with the caller
 notes:
   q0 binders are erased and have no Nim formal.
   Nat uses int; Vec A n uses seq[int] and an O(1) entry length check.

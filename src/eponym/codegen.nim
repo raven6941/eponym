@@ -693,6 +693,74 @@ proc collectReferencedRefIds*(t: Term): seq[int] =
   for id in ids.keys:
     result.add(id)
 
+proc definitionTrustLines*(d: ElabDef, globals: Globals, allDefs: seq[ElabDef],
+    declaredPostulates: HashSet[string], postulateTrust: Table[string, string],
+    runtimeTypes: seq[HostRuntimeType],
+    trustedPairs, trustedRecords: HashSet[string]): seq[string] =
+  ## Return the explicit host trust boundaries reachable from one definition.
+  var refToName = initTable[int, string]()
+  for name, g in globals:
+    if not g.tm.isNil and g.tm.kind == tR:
+      refToName[g.tm.refId] = name
+
+  var callees = initTable[string, seq[string]]()
+  for definition in allDefs:
+    var refs = initTable[int, bool]()
+    collectRefIds(definition.tmTm, refs)
+    for refId in refs.keys:
+      if refId in refToName:
+        callees.mgetOrPut(definition.name, @[]).add(refToName[refId])
+  var seen = initHashSet[string]()
+  var queue = @[d.name]
+  seen.incl(d.name)
+  var reachable: seq[string] = @[]
+  while queue.len > 0:
+    let current = queue.pop()
+    for callee in callees.getOrDefault(current, @[]):
+      if callee in seen: continue
+      seen.incl(callee)
+      queue.add(callee)
+      if callee in declaredPostulates:
+        reachable.add(callee)
+  reachable.sort()
+  for name in reachable:
+    if name in postulateTrust:
+      result.add(postulateTrust[name])
+
+  var typeNames = initHashSet[string]()
+  var typeRefs = initTable[int, bool]()
+  collectRefIds(d.tyTm, typeRefs)
+  for refId in typeRefs.keys:
+    if refId in refToName: typeNames.incl(refToName[refId])
+  var mapped: seq[string] = @[]
+  for mapping in runtimeTypes:
+    if mapping.eponymName notin typeNames: continue
+    if mapping.isRuntimeCodec:
+      mapped.add("runtimeCodec(" & mapping.eponymName & ", " &
+        mapping.nimType.repr & "): custom encoder/decoder behavior is trusted")
+    elif not mapping.isRuntimeVector and not mapping.isRuntimeList and
+        not mapping.isRuntimeOption and not mapping.isRuntimeVariant:
+      mapped.add("runtimeType(" & mapping.eponymName & ", " &
+        mapping.nimType.repr & "): Nim/Eponym type correspondence is trusted; " &
+        "host identity, aliasing, and lifetime rules remain with the caller")
+  mapped.sort()
+  result.add(mapped)
+
+  var pairNames: seq[string] = @[]
+  for name in typeNames:
+    if name in trustedPairs: pairNames.add(name)
+  pairNames.sort()
+  for name in pairNames:
+    result.add("runtimePairTrusted(" & name & "): typed wrappers trust " &
+      "dependent Sigma index relationships not reconstructed by codecs")
+  var recordNames: seq[string] = @[]
+  for name in typeNames:
+    if name in trustedRecords: recordNames.add(name)
+  recordNames.sort()
+  for name in recordNames:
+    result.add("runtimeRecordTrusted(" & name & "): typed wrappers trust " &
+      "dependent record relationships not checked by field codecs")
+
 proc collectRuntimeRefIds(t: Term, acc: var Table[int, bool]) =
   ## Collect every `tR` refId occurring in a *runtime term position* of an
   ## erased term. Binder domains, `let` types, pair type annotations, and
@@ -1598,7 +1666,8 @@ proc boundaryTerm(t: Term, ctx: Ctx, refNames: Table[int, string],
 
 proc boundaryPreviewReport*(d: ElabDef, globals: Globals, baseDir, src: string,
                             runtimeTypes: seq[HostRuntimeType], tier: CodegenTier,
-                            reason: string, allDefs: seq[ElabDef] = @[]): string =
+                            reason: string, allDefs: seq[ElabDef] = @[],
+                            trustLines: seq[string] = @[]): string =
   ## Compute the diagnostic from the same representation classifier used by
   ## emission.  In particular, checks are only listed for top-level Vec
   ## parameters, matching compileDefProcRepr's vecChecks prologue.
@@ -1656,6 +1725,9 @@ proc boundaryPreviewReport*(d: ElabDef, globals: Globals, baseDir, src: string,
       ty = ty.scope.bdy
   if checks.len == 0: reportText.add("  none (no additional generated entry checks)\n")
   else: reportText.add(checks.join("\n") & "\n")
+  reportText.add("Trust:\n")
+  if trustLines.len == 0: reportText.add("  none\n")
+  else: reportText.add(trustLines.mapIt("  " & it).join("\n") & "\n")
   reportText.add("notes:\n")
   reportText.add("  q0 binders are erased and have no Nim formal.\n")
   reportText.add("  Nat uses int; Vec A n uses seq[int] and an O(1) entry length check.\n")
