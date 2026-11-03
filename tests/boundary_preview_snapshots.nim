@@ -1,7 +1,7 @@
 ## Issue #523: the boundary preview is tested as a report, not by compiling
 ## generated fixture code.  This keeps the diagnostic deterministic and makes
 ## fallback reasons visible in the blessed UX.
-import std/[os, tables, macros, strutils]
+import std/[os, tables, macros, strutils, sets]
 import eponym_embed
 import elab
 import codegen
@@ -48,8 +48,16 @@ macro reportFor(file: static[string], defName: static[string]): untyped =
     CodegenReportEntry(tier: cgtInterpreter,
       reason: "definition was outside the generated runtime closure",
       slowPaths: @[]))
+  var declared = initHashSet[string]()
+  var postulateTrust = initTable[string, string]()
+  if defName == "use":
+    declared.incl("step")
+    postulateTrust["step"] = "bindPostulate(step, hostStep): the Nim adapter behavior is trusted; " &
+      "its signature is checked"
+  let trustLines = definitionTrustLines(d, checked.globals, checked.allDefs,
+    declared, postulateTrust, reps, initHashSet[string](), initHashSet[string]())
   newLit(boundaryPreviewReport(d, checked.globals, "", src, reps, entry.tier,
-    entry.reason, checked.allDefs))
+    entry.reason, checked.allDefs, trustLines))
 
 const reportVec = reportFor("tests/boundary_preview_snapshots/cases/vec.ep", "f")
 const reportSig = reportFor("tests/boundary_preview_snapshots/cases/sig.ep", "pack")
