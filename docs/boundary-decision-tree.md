@@ -12,10 +12,12 @@ documents the pieces; this page is the entry point, not the reference.
 
 **0. Which direction does the value move?**
 
-- Checked Eponym definition → called from ordinary Nim: nothing to choose.
-  Every checked `proc` gets a generated Nim wrapper (direct host code or a
-  `Value`-boxed wrapper, per the representation backend); name it on the
-  Nim side and call it. Question 1 covers the opt-out.
+- Checked Eponym definition → called from ordinary Nim: Eponym attempts to
+  generate a direct Nim wrapper. If its type has a supported runtime
+  representation, call the generated proc normally. If not, compilation
+  reports that the definition checked successfully but has no callable Nim
+  representation; use an appropriate mapping/codec or mark it
+  `compileTimeOnly`.
 - Ordinary Nim → checked Eponym code, or a shared type crossing both ways:
   continue below.
 
@@ -84,7 +86,8 @@ opt-ins)
 How to tell: the arrow points the other way from question 0 — the
 *implementation* lives in Nim and checked code *calls* it. The Eponym
 signature is checked against the Nim proc's type; the body's behavior is
-trusted. A reachable postulate with no binding fails at the call site.
+trusted. A reachable runtime postulate with no host binding is rejected
+with a diagnostic naming the missing binding.
 
 **6. Does the runtime type itself depend on a runtime index?**
 
