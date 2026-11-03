@@ -1,0 +1,5 @@
+postulate(Nat, Univ)
+postulate(T, Univ)
+postulate(Vec, Pi(A: Univ, Pi(n: Nat, Univ)))
+postulate(t, T)
+proc g (2 n: Nat) (v: Vec T n) : T = t

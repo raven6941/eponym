@@ -1,0 +1,4 @@
+postulate(Nat, Univ)
+postulate(F, Pi(n: Nat, Univ))
+postulate(i, Nat)
+proc g (x: F i) : F i = x

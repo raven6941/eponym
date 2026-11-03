@@ -121,6 +121,9 @@ type
     isElim*: bool                 # Experiment 4: declared with 'elim'
     elimNargs*: int               # Experiment 4: eliminator arity (incl. scrutinee)
     isDataConstructor*: bool     # constructed data values are valid runtime results
+    isPostulate*: bool            # Issue #544: declared with 'postulate'
+                                 # (not 'elim'); used by definitionTrustLines
+                                 # to spot cross-block trust boundaries
     peg*: Ability                # Issue #177: the signature's peg ([?aN]
                                  # freshened per signature, generalized;
                                  # nil for interface markers)
@@ -2628,7 +2631,7 @@ proc elabPostulateDecl(name: string, ty: PreTerm, loc: Loc,
     else: newPostulateRef(supply, tyV)
   if name == "Int": markQttGroundType(tm)
   globals[name] = GEntry(tm: tm, ty: tyT, isElim: isElim, elimNargs: nargs,
-                         peg: ab)
+                         isPostulate: not isElim, peg: ab)
   ms.refNames[tm.refId] = name  # Issue #139: name-resolving pretty-printer
 
 proc flattenAppSpine(pre: PreTerm): seq[PreTerm] =

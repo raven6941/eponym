@@ -1,0 +1,4 @@
+postulate(Nat, Univ)
+postulate(apply, Pi(f: Pi(x: Nat, Nat), Pi(n: Nat, Nat)))
+postulate(q, Pi(x: Nat, Nat))
+proc g (n: Nat) : Nat = apply q n
