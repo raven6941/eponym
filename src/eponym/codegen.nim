@@ -693,6 +693,64 @@ proc collectReferencedRefIds*(t: Term): seq[int] =
   for id in ids.keys:
     result.add(id)
 
+proc hasTVar(t: Term): bool =
+  ## True when `t` contains a de Bruijn variable (`tV`): the term is open
+  ## and cannot be evaluated in an empty environment.
+  if t.isNil: return false
+  case t.kind
+  of tV: return true
+  of tR: return false
+  of tPi, tSi, tLam:
+    return hasTVar(t.dom) or hasTVar(t.scope.bdy)
+  of tPair:
+    return hasTVar(t.pFst) or hasTVar(t.pSnd)
+  of tApp:
+    return hasTVar(t.fn) or hasTVar(t.arg)
+  of tFst, tSnd, tAbsurd:
+    return hasTVar(t.sub)
+  of tLet:
+    return hasTVar(t.letVal) or hasTVar(t.letTy) or hasTVar(t.letScope.bdy)
+  of tPrim:
+    return hasTVar(t.primTy)
+  else: return false
+
+proc collectRefIdsWhittled(t: Term, acc: var Table[int, bool]) =
+  ## Collect every `tR` refId occurring in `t`, plus the whnf heads of
+  ## type-level applications. Issue #546: a signature mentioning `F i`
+  ## where the family `F` reduces to a mapped type (e.g. `Nat`) must report
+  ## the mapping, so we evaluate each application and record the head of
+  ## its weak-head normal form when it is a reference. Evaluation failures
+  ## (open terms, stuck postulates) fall back to the syntactic collection.
+  if t.isNil: return
+  case t.kind
+  of tR:
+    acc[t.refId] = true
+  of tApp:
+    collectRefIdsWhittled(t.fn, acc)
+    collectRefIdsWhittled(t.arg, acc)
+    if not hasTVar(t):
+      try:
+        let v = eval(t, @[])
+        if v.whnf.kind == wRef:
+          acc[whnfRefId(v)] = true
+      except CatchableError:
+        discard
+  of tPi, tSi, tLam:
+    collectRefIdsWhittled(t.dom, acc)
+    collectRefIdsWhittled(t.scope.bdy, acc)
+  of tPair:
+    collectRefIdsWhittled(t.pFst, acc)
+    collectRefIdsWhittled(t.pSnd, acc)
+  of tFst, tSnd, tAbsurd:
+    collectRefIdsWhittled(t.sub, acc)
+  of tLet:
+    collectRefIdsWhittled(t.letVal, acc)
+    collectRefIdsWhittled(t.letTy, acc)
+    collectRefIdsWhittled(t.letScope.bdy, acc)
+  of tPrim:
+    collectRefIdsWhittled(t.primTy, acc)
+  else: discard
+
 # Mapping classifiers are defined here (moved 2026-11-03, issue #545)
 # so that definitionTrustLines can use them.
 proc isPlainIntMapping*(m: HostRuntimeType): bool =
@@ -784,7 +842,7 @@ proc definitionTrustLines*(d: ElabDef, globals: Globals, allDefs: seq[ElabDef],
 
   var typeNames = initHashSet[string]()
   var typeRefs = initTable[int, bool]()
-  collectRefIds(d.tyTm, typeRefs)
+  collectRefIdsWhittled(d.tyTm, typeRefs)
   for refId in typeRefs.keys:
     if refId in refToName: typeNames.incl(refToName[refId])
   var mapped: seq[string] = @[]
