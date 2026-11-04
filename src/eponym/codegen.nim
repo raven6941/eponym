@@ -790,6 +790,16 @@ proc isPlainIntMapping*(m: HostRuntimeType): bool =
     not m.isRuntimeCodec and
     m.nimType.kind in {nnkIdent, nnkSym} and $m.nimType == "int"
 
+proc isBuiltinIntMapping*(m: HostRuntimeType): bool =
+  ## True when the mapping is a built-in type (`Nat`/`Int`/`Bool`) with a
+  ## plain `int` representation. Issue #551: a user-defined opaque type
+  ## mapped to `int` is a user assertion, not a built-in guarantee, so it
+  ## must not get the narrow built-in trust wording -- it falls through to
+  ## the opaque wording with the aliasing/lifetime caveat. (Codegen keeps
+  ## using `isPlainIntMapping`: a user assertion of `int` representation
+  ## is still honored as `repInt`.)
+  m.isPlainIntMapping and m.eponymName in ["Nat", "Int", "Bool"]
+
 proc isTypeVariableMapping*(m: HostRuntimeType): bool =
   ## True for `runtimeType(T, T)`-style mappings whose host type is a bare
   ## type variable rather than a concrete host type: there is no identity
@@ -879,10 +889,13 @@ proc definitionTrustLines*(d: ElabDef, globals: Globals, allDefs: seq[ElabDef],
     if mapping.isRuntimeCodec:
       mapped.add("runtimeCodec(" & mapping.eponymName & ", " &
         mapping.nimType.repr & "): custom encoder/decoder behavior is trusted")
-    elif mapping.isPlainIntMapping:
+    elif mapping.isBuiltinIntMapping:
       # Issue #545: built-in scalar representations (Nat/Int -> int) are
       # identity value-type representations — aliasing and lifetime rules
       # are not meaningful for them, so they get the narrower promise.
+      # Issue #551: user-defined opaque types mapped to int are user
+      # assertions, not built-in guarantees, so they use the opaque
+      # wording below.
       mapped.add("runtimeType(" & mapping.eponymName & ", " &
         mapping.nimType.repr & "): identity int representation; " &
         "the Eponym/Nim correspondence is trusted")
