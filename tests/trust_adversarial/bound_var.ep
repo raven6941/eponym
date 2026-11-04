@@ -1,0 +1,9 @@
+postulate(Nat, Univ)
+postulate(Bool, Univ)
+proc F (b: Bool) : Univ = Nat
+proc g (b: Bool) (x: F b) : F b = x
+proc F2 (A: Univ) : Univ = A
+proc g2 (A: Univ) (x: F2 A) : F2 A = x
+proc constNat (b: Bool) : Univ = Nat
+proc F3 (b: Bool) : Univ = constNat b
+proc g3 (b: Bool) (x: F3 b) : F3 b = x

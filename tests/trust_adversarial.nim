@@ -1,10 +1,15 @@
 ## Issue #544: adversarial trust-attribution regression tests.
 ##
 ## Each channel probes whether `definitionTrustLines` (codegen.nim) reports
-## trust honestly. All four channels assert the report IS complete.
+## trust honestly. All five channels assert the report IS complete.
 ## Channel 2 (issue #546): the type-name collection whittles type-level
 ## applications to their whnf heads, so a family application reducing to a
 ## mapped type is reported.
+## Channel 5 (issue #550): the same whittling works when the application
+## mentions a bound variable -- the closed head is applied to a fresh
+## neutral, so `F b` with `F = λb. Nat` still reports the Nat mapping,
+## while `F2 A` with `F2 = λA. A` stays stuck on the neutral and reports
+## nothing.
 import std/[macros, os, sets, tables]
 import eponym_embed
 import elab
@@ -104,6 +109,26 @@ proc runChecks(): bool {.compileTime.} =
   result = check("channel 4: nested codec is reported",
     trustFor(codec, "g", declaredT, initTable[string, string](), codecMapping),
     @["runtimeCodec(T, TCodec): custom encoder/decoder behavior is trusted"], @[]) and result
+
+  # Channel 5: bound variable in a type-level application. Issue #550: the
+  # head `F` is closed, so it is evaluated and applied to a fresh neutral;
+  # `F b` with `F = λb. Nat` reduces to `Nat` and the mapping is reported.
+  # `F2 A` with `F2 = λA. A` reduces to the neutral itself, whose refId
+  # (-1) never names a definition, so nothing is reported. `F3 b` reduces
+  # through `constNat` to `Nat` (multi-hop), and is reported too.
+  let boundVar = elabCheckDirStateAll(readFile(probeDir / "bound_var.ep"), probeDir)
+  result = check("channel 5: bound-var family application reports the mapping",
+    trustFor(boundVar, "g", initHashSet[string](), initTable[string, string](), natMapping),
+    @[natLine], @[]) and result
+  let g2lines = trustFor(boundVar, "g2", initHashSet[string](), initTable[string, string](), natMapping)
+  if g2lines.len != 0:
+    echo "FAIL: channel 5: identity family should report no trust lines, got: " & $g2lines
+    result = false
+  else:
+    echo "ok: channel 5: identity family reports nothing"
+  result = check("channel 5: multi-hop family application reports the mapping",
+    trustFor(boundVar, "g3", initHashSet[string](), initTable[string, string](), natMapping),
+    @[natLine], @[]) and result
 
 macro runProbes(): untyped =
   let ok = runChecks()
