@@ -130,6 +130,26 @@ proc runChecks(): bool {.compileTime.} =
     trustFor(boundVar, "g3", initHashSet[string](), initTable[string, string](), natMapping),
     @[natLine], @[]) and result
 
+  # Channel 6 (issue #551): a user-defined opaque type mapped to `int`
+  # must not get the built-in narrow wording. `MyOpaqueType -> int` is a
+  # user assertion, so it gets the opaque wording with the
+  # aliasing/lifetime caveat; `Nat -> int` keeps the built-in promise.
+  let opaqueInt = elabCheckDirStateAll(readFile(probeDir / "opaque_int.ep"), probeDir)
+  let opaqueIntMapping = @[HostRuntimeType(eponymName: "MyOpaqueType",
+    nimType: ident"int")]
+  let opaqueLine = "runtimeType(MyOpaqueType, int): Nim/Eponym type correspondence is trusted; " &
+    "host identity, aliasing, and lifetime rules remain with the caller"
+  let builtinLine = "runtimeType(MyOpaqueType, int): identity int representation; " &
+    "the Eponym/Nim correspondence is trusted"
+  result = check("channel 6: opaque-to-int gets the opaque wording",
+    trustFor(opaqueInt, "h", initHashSet[string](), initTable[string, string](),
+      opaqueIntMapping),
+    @[opaqueLine], @[builtinLine]) and result
+  result = check("channel 6: Nat keeps the built-in wording",
+    trustFor(opaqueInt, "n", initHashSet[string](), initTable[string, string](),
+      natMapping),
+    @[natLine], @[]) and result
+
 macro runProbes(): untyped =
   let ok = runChecks()
   if not ok:

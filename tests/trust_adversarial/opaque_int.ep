@@ -1,0 +1,4 @@
+postulate(MyOpaqueType, Univ)
+postulate(Nat, Univ)
+proc h (x: MyOpaqueType) : MyOpaqueType = x
+proc n (x: Nat) : Nat = x
