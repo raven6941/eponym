@@ -721,6 +721,13 @@ proc collectRefIdsWhittled(t: Term, acc: var Table[int, bool]) =
   ## the mapping, so we evaluate each application and record the head of
   ## its weak-head normal form when it is a reference. Evaluation failures
   ## (open terms, stuck postulates) fall back to the syntactic collection.
+  ## Issue #550: when the application mentions a bound variable, the
+  ## empty-environment evaluator cannot run (`tV` raises `IndexDefect`,
+  ## which is not a `CatchableError`). Peel the application spine instead:
+  ## when the head is closed, evaluate it and apply one fresh neutral per
+  ## syntactic argument. Heads that reduce independently of their arguments
+  ## (e.g. `F b` with `F = λb. Nat`) then report their reduction-reachable
+  ## mapping; heads stuck on the neutral contribute nothing.
   if t.isNil: return
   case t.kind
   of tR:
@@ -735,6 +742,27 @@ proc collectRefIdsWhittled(t: Term, acc: var Table[int, bool]) =
           acc[whnfRefId(v)] = true
       except CatchableError:
         discard
+    else:
+      var head = t
+      var nargs = 0
+      while not head.isNil and head.kind == tApp:
+        head = head.fn
+        inc nargs
+      if not head.isNil and not hasTVar(head):
+        try:
+          var hv = eval(head, @[])
+          var i = 0
+          while hv.whnf.kind == wLam and i < nargs:
+            # neutralVar: a stuck reference head whose negative refId never
+            # names a real definition, so it can never be mistaken for a
+            # mapped type. (Issue #550: reduce a closed family head applied
+            # to bound variables.)
+            hv = whnfScopeApply(hv, neutralVar(0))
+            inc i
+          if hv.whnf.kind == wRef and whnfRefId(hv) >= 0:
+            acc[whnfRefId(hv)] = true
+        except CatchableError:
+          discard
   of tPi, tSi, tLam:
     collectRefIdsWhittled(t.dom, acc)
     collectRefIdsWhittled(t.scope.bdy, acc)
