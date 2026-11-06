@@ -51,13 +51,13 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
     // For now, we rely on the caller to check.
     const lenses: vscode.CodeLens[] = [];
     try {
-      const text = doc.getText();
+      const text = sourceTextWithoutExpandedView(doc);
       const goalMap = this.goals.get(doc.uri.toString()) ?? new Map();
       // Use the same marker parser as cursor lookup and source splicing.
       const nodes = shedBlocks(text).flatMap((block) => block.sheds);
       for (const node of nodes) {
         const name = node.name;
-        const start = doc.positionAt(node.start);
+        const start = documentPositionForSourceOffset(doc, node.start);
         const line = doc.lineAt(start.line);
         const goal = goalMap.get(name) ?? "";
         const title = goal ? `shed ${name} : ${goal}` : `shed ${name}`;
@@ -66,7 +66,7 @@ export class ShedCodeLensProvider implements vscode.CodeLensProvider {
             title,
             command: "eponym.expandShed",
             tooltip: `Show 2D shed layout for ${name}`,
-            arguments: [node.start],
+            arguments: [doc.offsetAt(start)],
           })
         );
       }
@@ -207,7 +207,9 @@ export async function expandShed(
   // CodeLens clicks pass the shed marker's offset (clicking doesn't move the
   // cursor); the Ctrl+Shift+S keybinding passes none, so fall back to cursor.
   const cursorOff = atOffset ?? doc.offsetAt(editor.selection.active);
-  const at = shedAtCursor(doc.getText(), cursorOff);
+  const sourceText = sourceTextWithoutExpandedView(doc);
+  const sourceOffset = sourceOffsetForDocumentOffset(doc, cursorOff);
+  const at = sourceOffset === null ? null : shedAtCursor(sourceText, sourceOffset);
   log("[eponym] expandShed: shedAtCursor -> " + (at ? at.name : "none"));
   if (!at) {
     vscode.window.showInformationMessage("Eponym: cursor is not on a shed");
@@ -306,4 +308,44 @@ export function sourceTextWithoutExpandedView(doc: vscode.TextDocument): string 
   const lines = text.split(doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n");
   lines.splice(expanded.anchorLine + 1, expanded.viewLineCount);
   return lines.join(doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n");
+}
+
+/** Translate an editor offset to the corresponding offset in projected source.
+ * Returns null when the cursor itself is inside the temporary inline view. */
+export function sourceOffsetForDocumentOffset(
+  doc: vscode.TextDocument,
+  offset: number
+): number | null {
+  if (!expanded || expanded.docUri !== doc.uri.toString()) return offset;
+  const pos = doc.positionAt(offset);
+  const firstPreviewLine = expanded.anchorLine + 1;
+  const firstSourceLineAfterPreview = firstPreviewLine + expanded.viewLineCount;
+  if (pos.line >= firstPreviewLine && pos.line < firstSourceLineAfterPreview) return null;
+  if (pos.line >= firstSourceLineAfterPreview) {
+    const eol = doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n";
+    const lines = sourceTextWithoutExpandedView(doc).split(eol);
+    const sourceLine = pos.line - expanded.viewLineCount;
+    let sourceOffset = 0;
+    for (let i = 0; i < sourceLine; i++) sourceOffset += lines[i].length + eol.length;
+    return sourceOffset + pos.character;
+  }
+  return offset;
+}
+
+/** Map a projected source offset to its visible editor position. */
+export function documentPositionForSourceOffset(
+  doc: vscode.TextDocument,
+  sourceOffset: number
+): vscode.Position {
+  if (!expanded || expanded.docUri !== doc.uri.toString()) return doc.positionAt(sourceOffset);
+  const text = sourceTextWithoutExpandedView(doc);
+  const prefix = text.slice(0, sourceOffset);
+  const eol = doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n";
+  const parts = prefix.split(eol);
+  const sourceLine = parts.length - 1;
+  const character = parts[parts.length - 1].length;
+  const visibleLine = sourceLine > expanded.anchorLine
+    ? sourceLine + expanded.viewLineCount
+    : sourceLine;
+  return new vscode.Position(visibleLine, character);
 }
