@@ -13,7 +13,7 @@ const Module = require("module");
 const path = require("path");
 const { makeMockVscode } = require("./mock-vscode");
 
-function loadInlineShed(mock) {
+function loadInlineShed(mock, realSidecar = false) {
   const origRequire = Module.prototype.require;
   Module.prototype.require = function (id) {
     if (id === "vscode") return mock.vscode;
@@ -21,7 +21,7 @@ function loadInlineShed(mock) {
     if (id === "./inlineRender")
       return { renderInlineShed: () => Array(11).fill("boxline").join("\n") };
     if (id === "./sidecar")
-      return {
+      return realSidecar ? require("../out/sidecar") : {
         shedAtCursor: () => ({ name: "shuffleBody", start: 0, end: 10 }),
         shedBlocks: (text) => {
           const start = text.indexOf("![shuffleBody]");
@@ -168,7 +168,43 @@ async function testDoubleExpandIdempotent() {
   console.log("ok: double expand is idempotent");
 }
 
+async function testCanExpandLaterShedWhilePreviewOpen() {
+  const mock = makeMockVscode();
+  const lines = [
+    "eponymBlock:",
+    "  proc first(): Nat = ![first]",
+    "  proc second(): Nat = ![second]",
+    "",
+  ];
+  const doc = mock.makeDocument(lines);
+  const editor = mock.makeEditor(doc);
+  editor.selection.active = new mock.vscode.Position(1, lines[1].indexOf("![first]") + 4);
+  mock.vscode.window.activeTextEditor = editor;
+  const inlineShed = loadInlineShed(mock, true);
+  const getClient = async () => ({ shedLayout: async () => ({ box: {} }) });
+
+  await inlineShed.expandShed(editor, getClient, { showButtons: true });
+  assert.strictEqual(inlineShed.currentExpanded()?.shedName, "first");
+
+  // The preview rows are inserted between the two source markers.
+  editor.selection.active = new mock.vscode.Position(
+    13, lines[2].indexOf("![second]") + 4
+  );
+  const projected = inlineShed.sourceTextWithoutExpandedView(doc);
+  const second = require("../out/sidecar").shedBlocks(projected)[0].sheds[1];
+  const visibleMarker = inlineShed.documentPositionForSourceOffset(doc, second.start);
+  assert.strictEqual(
+    inlineShed.sourceOffsetForDocumentOffset(doc, doc.offsetAt(visibleMarker)), second.start,
+    "CodeLens offsets round-trip across the temporary preview rows"
+  );
+  await inlineShed.expandShed(editor, getClient, { showButtons: true });
+  assert.strictEqual(inlineShed.currentExpanded()?.shedName, "second");
+  assert.ok(doc.getText().includes("![second]"));
+  console.log("ok: later shed expands while an earlier inline preview is open");
+}
+
 (async () => {
+  await testCanExpandLaterShedWhilePreviewOpen();
   await testExpandInsertsBox();
   await testCursorInsideKeepsBox();
   await testCursorOutsideCollapses();
