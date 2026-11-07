@@ -197,6 +197,7 @@ run_step sh tests/test_trust_report.sh
 run_step nim c -r $NC --hints:off $P "tests/trust_adversarial.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_convex_opt_runtime.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_convex_opt_vec_runtime.nim"
+run_step nim c -r $NC --hints:off $P "tests/test_logistic_lbfgs.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_paxos_session_runtime.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_borrow_runtime.nim"
 run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_nat_binding_identity.nim"
