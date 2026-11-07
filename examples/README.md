@@ -133,12 +133,25 @@ for verified components inside a larger Nim application.
   logistic regression (`vLogSum` of an affine residual — convexity via
   the softplus composition rule, non-obvious unlike least squares),
   plus a two-variable objective with different dimensions and a
-  portfolio risk term (`quadForm` with a PSD side condition). The Nim
-  driver interprets the exact checked logistic objective, including its
-  concrete matrix and label vector, and derives a finite-difference gradient
-  from it. Dimension
+  portfolio risk term (`quadForm` with a PSD side condition). The file
+  only checks the problem: everything is `compileTimeOnly` since the
+  strict default (#490) removed the interpreting driver. The running
+  version is `logistic_lbfgs.nim` below. Dimension
   mismatches and non-DCP vector products (`vMul`) are compile-time
   errors (see 18a/18b/18c above).
+- **logistic_lbfgs.nim** — Checked logistic regression, run end to end
+  (Issue #555): the `convex_opt_vec.nim` DCP fragment restated for the
+  single logistic problem, so the file compiles only because the `Convex`
+  certificate checks; the objective and gradient cross the boundary as
+  bound host operations (`VectorData[n]` weights — `Vec Float n` has no
+  boundary representation yet, see issue #556) and drive one generic
+  LBFGS over `seq[float]`, with an `array[N, float]` instantiation in
+  the test and a plain-Nim baseline for comparison. Small problem
+  converges to the analytic optimum (0.5, 0.5); large problem (m=500,
+  n=50) reaches |grad| < 1e-8 on both paths. Trusted: the host
+  objective/gradient implement the checked term, the LBFGS numerics,
+  and the dataset shape check — the certified problem and the host
+  objective are the same by construction, not by a runtime value.
 - **qtt_borrow.nim** — QTT borrow checking as an embedded DSL (Issue
   #122): a unique borrow of a buffer, scoped by `withBorrow` (bracket
   semantics — the linear resource is fully consumed, so it cannot leak).
