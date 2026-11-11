@@ -2,18 +2,19 @@
 ##
 ## Checked: the logistic objective is accepted only after the DCP Convex
 ## certificate is elaborated at compile time; dimensions occur in the
-## certified term (`Mat[m, n]`, `VectorData[m]`, `VectorData[n]` indices)
+## certified term (`Mat[m, n]`, `VectorData[m]`, `Vec[Float, n]` indices)
 ## and in the checked wrapper types at literal m, n.  Trusted: the host
 ## objective and gradient implement that same `lrTerm`, LBFGS and
 ## line-search numerics, and the dataset shape check at the boundary.  The
 ## certified problem and host objective are the same by construction, not
 ## by passing a term at runtime: the term has no runtime representation.
 ##
-## The weight vector crosses as `VectorData[n]`, NOT as `Vec Float n`:
-## the repr tier's collections are int-fragment-only (`checkIntElem` in
-## codegen.nim), so `Vec Float n` has no boundary representation — see
-## issue #556. `VectorData[n]` still carries the dimension in the checked
-## wrapper types; lengths are validated at the boundary by `checkShapes`.
+## The weight vector crosses as `Vec[Float, n]` (repr tier `seq[float]`,
+## issue #556): the data vector `b` stays `VectorData[m]` because it is
+## data in the certified term (`vData` takes `VectorData[m]`), while the
+## weights are the variable being optimized. Lengths are validated at the
+## boundary by `checkShapes` and by the repr tier's per-parameter entry
+## check on `Vec` arguments.
 ##
 ## The DCP rules below are the trimmed vector fragment from convex_opt_vec.nim
 ## (Issue #110).  The checked entry points use literal dimensions because the
@@ -95,23 +96,29 @@ eponymBlock:
   runtimeType(VectorData, FVec)
   runtimeVector(Vec)
 
-  postulate(logisticLossSmall, Mat[4, 2] -> VectorData[4] -> VectorData[2] -> Float)
-  postulate(logisticGradSmall, Mat[4, 2] -> VectorData[4] -> VectorData[2] -> VectorData[2])
-  postulate(logisticLossLarge, Mat[500, 50] -> VectorData[500] -> VectorData[50] -> Float)
-  postulate(logisticGradLarge, Mat[500, 50] -> VectorData[500] -> VectorData[50] -> VectorData[50])
-  bindPostulate(logisticLossSmall, hostLogisticLoss, Mat, VectorData, VectorData, Float)
-  bindPostulate(logisticGradSmall, hostLogisticGrad, Mat, VectorData, VectorData, VectorData)
-  bindPostulate(logisticLossLarge, hostLogisticLoss, Mat, VectorData, VectorData, Float)
-  bindPostulate(logisticGradLarge, hostLogisticGrad, Mat, VectorData, VectorData, VectorData)
+  postulate(logisticLossSmall, Mat[4, 2] -> VectorData[4] -> Vec[Float, 2] -> Float)
+  postulate(logisticGradSmall, Mat[4, 2] -> VectorData[4] -> Vec[Float, 2] -> Vec[Float, 2])
+  postulate(logisticLossLarge, Mat[500, 50] -> VectorData[500] -> Vec[Float, 50] -> Float)
+  postulate(logisticGradLarge, Mat[500, 50] -> VectorData[500] -> Vec[Float, 50] -> Vec[Float, 50])
+  bindPostulate(logisticLossSmall, hostLogisticLoss, Mat, VectorData, Vec, Float)
+  bindPostulate(logisticGradSmall, hostLogisticGrad, Mat, VectorData, Vec, Vec)
+  bindPostulate(logisticLossLarge, hostLogisticLoss, Mat, VectorData, Vec, Float)
+  bindPostulate(logisticGradLarge, hostLogisticGrad, Mat, VectorData, Vec, Vec)
 
-  proc logisticLossAtSmall(a: Mat[4, 2], b: VectorData[4], w: VectorData[2]): Float =
+  proc logisticLossAtSmall(a: Mat[4, 2], b: VectorData[4], w: Vec[Float, 2]): Float =
     logisticLossSmall(a, b, w)
-  proc logisticGradAtSmall(a: Mat[4, 2], b: VectorData[4], w: VectorData[2]): VectorData[2] =
+  proc logisticGradAtSmall(a: Mat[4, 2], b: VectorData[4], w: Vec[Float, 2]): Vec[Float, 2] =
     logisticGradSmall(a, b, w)
-  proc logisticLossAtLarge(a: Mat[500, 50], b: VectorData[500], w: VectorData[50]): Float =
+  proc logisticLossAtLarge(a: Mat[500, 50], b: VectorData[500], w: Vec[Float, 50]): Float =
     logisticLossLarge(a, b, w)
-  proc logisticGradAtLarge(a: Mat[500, 50], b: VectorData[500], w: VectorData[50]): VectorData[50] =
+  proc logisticGradAtLarge(a: Mat[500, 50], b: VectorData[500], w: Vec[Float, 50]): Vec[Float, 50] =
     logisticGradLarge(a, b, w)
+
+  # The weights are real Vecs, not the opaque VectorData family: cons
+  # typechecks on them here and would not for VectorData. This proc is
+  # the load-bearing check for that (see tests/test_logistic_lbfgs.nim).
+  proc wPrependOne(w: Vec[Float, 2]): Vec[Float, 3] =
+    cons[Float, 2](1.0, w)
 
 type LbfgsResult*[V] = object
   weights*: V
