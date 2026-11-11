@@ -245,6 +245,7 @@ type
       ## `compilePostulateProcRepr`), so in-body calls to bound postulates
       ## become direct calls.
     reprPostulateQtys*: Table[int, seq[Quantity]]
+    reprPostulateIndexPositions*: Table[int, seq[bool]]
       ## Issue #401: postulate refId -> Pi-binder quantities for postulate
       ## forwarders, so call sites skip q0 arguments exactly like the
       ## `cgkDefn` path skips them via `piQuantities`.
@@ -298,6 +299,50 @@ proc countPiBinders(ty: Term): int =
     inc result
     t = t.scope.bdy
 
+proc codegenMentionsBound(ty: Term, depth = 0): bool =
+  if ty.isNil: return false
+  case ty.kind
+  of tV: ty.idx == depth
+  of tPi, tSi, tLam:
+    codegenMentionsBound(ty.dom, depth) or
+      codegenMentionsBound(ty.scope.bdy, depth + 1)
+  of tApp:
+    codegenMentionsBound(ty.fn, depth) or codegenMentionsBound(ty.arg, depth)
+  of tPair:
+    codegenMentionsBound(ty.pFst, depth) or codegenMentionsBound(ty.pSnd, depth) or
+      codegenMentionsBound(ty.pScope.bdy, depth + 1)
+  of tFst, tSnd, tAbsurd: codegenMentionsBound(ty.sub, depth)
+  of tLet: codegenMentionsBound(ty.letVal, depth) or codegenMentionsBound(ty.letTy, depth)
+  else: false
+
+proc postulateIndexPositions(globals: Globals, ty: Term,
+                             expectedArgCount: int): seq[bool] =
+  ## Per-Pi-binder flags: leading primitive binders used later, dropped
+  ## only while the spine still has more binders than the binding
+  ## declares as value arguments. The count guard is the same one as
+  ## `stripLeadingIndexBinders` in eponym_embed — without it, a primitive
+  ## *value* argument that is also used later (e.g. `powQ`'s exponent
+  ## `n: Int`, used in `scaleDim n d`) would be dropped from the host
+  ## call. Once a binder fails any condition the leading run ends: all
+  ## later binders are value binders.
+  var rest = ty
+  var remainingBinders = countPiBinders(ty)
+  while not rest.isNil and rest.kind == tPi:
+    let primitive = rest.dom.kind == tR and
+      ["Nat", "Int", "Bool"].anyIt(it in globals and
+        not globals[it].tm.isNil and globals[it].tm.kind == tR and
+        globals[it].tm.refId == rest.dom.refId)
+    let isIndex = primitive and remainingBinders > expectedArgCount and
+      codegenMentionsBound(rest.scope.bdy)
+    result.add(isIndex)
+    if not isIndex:
+      break
+    rest = rest.scope.bdy
+    dec remainingBinders
+  while not rest.isNil and rest.kind == tPi:
+    result.add(false)
+    rest = rest.scope.bdy
+
 proc piQuantities(ty: Term): seq[Quantity] =
   ## Quantities of a checked Pi telescope, outermost first.
   var t = ty
@@ -346,6 +391,7 @@ proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
     reps: initTable[int, HostRuntimeType](),
     reprProcs: initTable[int, tuple[name: string, arity: int, sig: seq[ReprType]]](),
     reprPostulateQtys: initTable[int, seq[Quantity]](),
+    reprPostulateIndexPositions: initTable[int, seq[bool]](),
     postulateAdapters: initTable[int, seq[PostulateAdapter]](),
     postulateReprAdapters: initTable[int, seq[ReprPostulateAdapter]]())
   var refIdToName = initTable[int, string]()
@@ -2185,8 +2231,13 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       var args: seq[NimNode] = @[]
       var argIdx = 0
       var sigPos = 0
-      for qty in qtys:
+      let indexPositions = ctx.reprPostulateIndexPositions.getOrDefault(
+        head.refId, @[])
+      for binderPos, qty in qtys:
         if argIdx >= appArgs.len: break
+        if binderPos < indexPositions.len and indexPositions[binderPos]:
+          inc argIdx
+          continue
         if qty != q0:
           if sigPos < calleeSig.len - 1:
             let formalRt = calleeSig[sigPos]
@@ -3719,6 +3770,7 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
 proc compilePostulateProcRepr(postulateName: string, ty: Term,
                               binding: PostulateReprBinding,
                               ctx: var CodegenCtx,
+                              globals: Globals,
                               locFile: string, locLine: int,
                               failureReason: var string): NimNode =
   ## Emit a representation-tier forwarder for a host-bound postulate:
@@ -3732,11 +3784,20 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
   ## fragment, or when the representable arity disagrees with the binding's
   ## declared argument count (callers then keep the Phase 1 backend).
   ## Quantity-0 binders have no Nim formal parameters.
-  let sig =
+  let fullSig =
     try: ctx.reprSigOfType(ty)
     except CgUnsupported as e:
       failureReason = e.msg
       return nil
+  let indexPositions = postulateIndexPositions(globals, ty,
+    binding.argCount)
+  var sig: seq[ReprType] = @[]
+  var fullArg = 0
+  for rt in fullSig[0 ..< fullSig.len - 1]:
+    if fullArg >= indexPositions.len or not indexPositions[fullArg]:
+      sig.add(rt)
+    inc fullArg
+  sig.add(fullSig[^1])
   if sig.len - 1 != binding.argCount:
     failureReason = "postulate '" & postulateName & "' has " &
       $(sig.len - 1) & " representable arguments but its host binding " &
@@ -3747,7 +3808,11 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
   var argSyms: seq[NimNode] = @[]
   # Issue #413: quantities of the non-erased binders, outermost first,
   # aligned with the sig positions (reprSigOfType drops q0 binders).
-  let argQtys = piQuantities(ty).filterIt(it != q0)
+  var argQtys: seq[Quantity] = @[]
+  let fullQtys = piQuantities(ty)
+  for i, qty in fullQtys:
+    if qty != q0 and (i >= indexPositions.len or not indexPositions[i]):
+      argQtys.add(qty)
   for i, rt in sig[0 ..< sig.len - 1]:
     let psym = genSym(nskParam, "cgReprPostArg" & $argSyms.len)
     let rtNim = nimReprType(rt)
@@ -4218,7 +4283,7 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     if refId notin ctx.refs or ctx.refs[refId].kind != cgkPostulate: continue
     var failureReason = ""
     let procNode = compilePostulateProcRepr(binding.postulateName, entry.ty,
-      binding, ctx, locFile, userLines.getOrDefault(binding.postulateName, 1),
+      binding, ctx, globals, locFile, userLines.getOrDefault(binding.postulateName, 1),
       failureReason)
     if procNode.isNil:
       result.report[binding.postulateName] = CodegenReportEntry(
@@ -4229,9 +4294,16 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       # when an earlier block already emitted one for this postulate.
       let fwdName = binding.forwarderName
       # The forwarder just succeeded, so the signature is representable.
-      let sig = ctx.reprSigOfType(entry.ty)
+      let fullSig = ctx.reprSigOfType(entry.ty)
+      let indexPositions = postulateIndexPositions(globals, entry.ty,
+        binding.argCount)
+      var sig: seq[ReprType] = @[]
+      for i, rt in fullSig[0 ..< fullSig.len - 1]:
+        if i >= indexPositions.len or not indexPositions[i]: sig.add(rt)
+      sig.add(fullSig[^1])
       ctx.reprProcs[refId] = (name: fwdName, arity: sig.len - 1, sig: sig)
       ctx.reprPostulateQtys[refId] = piQuantities(entry.ty)
+      ctx.reprPostulateIndexPositions[refId] = indexPositions
       reprBodies.add(procNode)
       result.report[binding.postulateName] = CodegenReportEntry(
         tier: cgtRepr,

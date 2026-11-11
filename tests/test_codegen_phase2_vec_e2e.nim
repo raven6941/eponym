@@ -19,6 +19,18 @@ import eponym_mac
 
 proc hostFloatZero(_: int): float = 0.0
 proc hostFloatAdd(a, b: float): float = a + b
+proc hostSumVec(xs: seq[float]): float =
+  for x in xs: result += x
+type FMat = seq[seq[float]]
+type FVec = seq[float]
+proc hostGenericLoss(a: FMat, b, w: seq[float]): float =
+  for row in a:
+    for x in row: result += x
+  for x in b: result += x
+  for x in w: result += x
+proc hostGenericGrad(a: FMat, b, w: seq[float]): seq[float] =
+  result = newSeq[float](w.len)
+  for i in 0 ..< result.len: result[i] = b[i] + w[i] + a[0][i]
 
 eponymBlock:
   import "../lib/nat.ep"
@@ -34,6 +46,23 @@ eponymBlock:
   bindPostulate(floatZero, hostFloatZero, Int, Float)
   postulate(floatAdd, Float -> Float -> Float)
   bindPostulate(floatAdd, hostFloatAdd, Float, Float, Float)
+  postulate(sumVec, Pi(n: Nat, Vec[Float, n] -> Float))
+  bindPostulate(sumVec, hostSumVec, Vec, Float)
+  proc wGenericSum(n: Nat, xs: Vec[Float, n]): Float = sumVec(n, xs)
+  postulate(Mat, Nat -> Nat -> Univ)
+  postulate(VectorData, Nat -> Univ)
+  runtimeType(Mat, FMat)
+  runtimeType(VectorData, FVec)
+  postulate(genericLoss, Pi(m: Nat, n: Nat, Mat[m, n] -> VectorData[m] ->
+    Vec[Float, n] -> Float))
+  postulate(genericGrad, Pi(m: Nat, n: Nat, Mat[m, n] -> VectorData[m] ->
+    Vec[Float, n] -> Vec[Float, n]))
+  bindPostulate(genericLoss, hostGenericLoss, Mat, VectorData, Vec, Float)
+  bindPostulate(genericGrad, hostGenericGrad, Mat, VectorData, Vec, Vec)
+  proc wGenericLoss(m, n: Nat, a: Mat[m, n], b: VectorData[m],
+      w: Vec[Float, n]): Float = genericLoss(m, n, a, b, w)
+  proc wGenericGrad(m, n: Nat, a: Mat[m, n], b: VectorData[m],
+      w: Vec[Float, n]): Vec[Float, n] = genericGrad(m, n, a, b, w)
   proc wVSum(n: Nat, xs: Vec[Float, n]): Float =
     vecElim[Float](lam(i: Nat) => lam(v: Vec[Float, i]) => Float,
       floatZero(0),
@@ -63,4 +92,26 @@ when isMainModule:
   except ValueError:
     raised = true
   expect(raised, "e2e wrapper preserves the Float Vec entry check")
+  expect(abs(wGenericSum(2, @[1.25, 2.75]) - 4.0) < 1e-12,
+    "generic postulate sumVec works at length 2")
+  expect(abs(wGenericSum(1, @[4.5]) - 4.5) < 1e-12,
+    "generic postulate sumVec works at length 1")
+  raised = false
+  try:
+    discard wGenericSum(3, @[1.25, 2.75])
+  except ValueError:
+    raised = true
+  expect(raised, "generic postulate sumVec preserves the Vec entry check")
+  let mat2 = @[@[1.0, 2.0], @[3.0, 4.0]]
+  let b2 = @[5.0, 6.0]
+  let w2 = @[7.0, 8.0]
+  expect(abs(wGenericLoss(2, 2, mat2, b2, w2) - 36.0) < 1e-12,
+    "generic multi-argument loss works at 2x2")
+  expect(wGenericGrad(2, 2, mat2, b2, w2) == @[13.0, 16.0],
+    "generic multi-argument gradient works at 2x2")
+  let mat1 = @[@[2.0]]
+  expect(abs(wGenericLoss(1, 1, mat1, @[3.0], @[4.0]) - 9.0) < 1e-12,
+    "generic multi-argument loss works at 1x1")
+  expect(wGenericGrad(1, 1, mat1, @[3.0], @[4.0]) == @[9.0],
+    "generic multi-argument gradient works at 1x1")
   echo "all Phase 2 Vec end-to-end wrapper checks passed"
