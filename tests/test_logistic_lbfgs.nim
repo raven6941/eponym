@@ -26,6 +26,16 @@ static:
         [g[0], g[1]]))
 
 when isMainModule:
+  # The weights are real Vecs: the identity map runs through the checked
+  # `vecElim` definition, and the entry check rejects a wrong length.
+  let mapped = logistic.mapWeights(2, @[0.25, -0.75])
+  doAssert mapped == @[0.25, -0.75]
+  var raised = false
+  try:
+    discard logistic.mapWeights(3, @[0.25, -0.75])
+  except ValueError:
+    raised = true
+  doAssert raised
   let checked = logistic.runCheckedSmall()
   let plain = logistic.runPlainSmall()
   let arr = logistic.runArraySmall()
