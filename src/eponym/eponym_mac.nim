@@ -2458,7 +2458,8 @@ proc rawValueCallbackType(n: NimNode): NimNode =
 
 proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
                     records: seq[HostRecord],
-                    allowDependentSigma = false): NimNode =
+                    allowDependentSigma = false,
+                    allowArray = false): NimNode =
   let procParts = runtimeProcParts(n)
   if not procParts.resultType.isNil:
     if hasRawValuePragma(n): return rawValueCallbackType(n)
@@ -2503,10 +2504,21 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
     if mapping.isRuntimeVector:
       let vector = runtimeVectorComponents(n, mapping.eponymName)
       if not vector.elementType.isNil:
-        if runtimeNatIndexExpr(vector.length).isNil: return nil
+        # A literal-length `Vec` maps to a fixed Nim array only when
+        # `allowArray` (a top-level parameter position — the wrapper
+        # side of the codegen `reprTypeOf` discipline). Everywhere else
+        # the value is constructed by generated or host code that builds
+        # sequences, so it stays `seq`.
+        let expectedLength = runtimeNatIndexExpr(vector.length)
+        if expectedLength.isNil: return nil
         let elementType = runtimeNimType(vector.elementType, mappings,
           records, allowDependentSigma)
         if elementType.isNil: return nil
+        if allowArray and expectedLength.kind in {nnkIntLit, nnkInt8Lit,
+            nnkInt16Lit, nnkInt32Lit, nnkInt64Lit,
+            nnkUIntLit..nnkUInt64Lit}:
+          return newTree(nnkBracketExpr, ident"array", expectedLength,
+            elementType)
         return newTree(nnkBracketExpr, ident"seq", elementType)
     elif mapping.isRuntimeList:
       let listElement = runtimeListElementType(n, mapping.eponymName)
@@ -3798,7 +3810,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     let p = params[i]
     if p.kind != nnkIdentDefs: return nil
     let argType = runtimeNimType(p[^2], codecMappings, records,
-                                 allowDependentSigma)
+                                 allowDependentSigma, allowArray = true)
     if argType.isNil: return nil
     for j in 0 ..< p.len - 2:
       let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]

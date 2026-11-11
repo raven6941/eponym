@@ -64,6 +64,7 @@ type
   ReprKind* = enum
     repInt  # Eponym type mapped to Nim `int` via plain runtimeType
     repSeq  # `Vec`/`List` family mapped to Nim `seq[element]`
+    repArray  # literal-length `Vec` family mapped to Nim `array[n, element]`
     repOption  # `Option` family mapped to Nim `Option[element]`
     repOpaque  # Issue #401: any other concrete `runtimeType` mapping is an
       # identity representation over its declared host type. Covers atomic
@@ -97,7 +98,8 @@ type
     kind*: ReprKind
     isVector*: bool  # for repSeq: from runtimeVector (length-indexed)
     index*: Term  # for repSeq+isVector: the length index term
-    elem*: ref ReprType  # for repSeq/repOption: the element representation
+    arrayLen*: int  # for repArray: the literal length
+    elem*: ref ReprType  # for repSeq/repArray/repOption: the element representation
     hostType*: NimNode  # for repOpaque: the declared Nim type AST
     sigmaFields*: seq[ReprType]  # for repSigma: the component reprs
     funcDom*: ref ReprType  # for repFunc: the domain representation
@@ -1430,7 +1432,7 @@ proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
   raise newException(CgUnsupported,
     "runtime representation outside the fragment")
 
-proc reprTypeOf(ctx: CodegenCtx, t: Term): ReprType
+proc reprTypeOf(ctx: CodegenCtx, t: Term, allowArray = false): ReprType
 
 proc collectionElemRepr(ctx: CodegenCtx, t: Term, what = "collection"): ReprType =
   ## Collection elements may be scalar int or opaque host values. Composite
@@ -1480,6 +1482,8 @@ proc reprTypeLiveMentionsMarker(rt: ReprType, markerRefId: int): bool =
   case rt.kind
   of repSeq:
     rt.isVector and reprTypeMentionsMarker(rt.index, markerRefId)
+  of repArray:
+    false
   of repSigma:
     rt.sigmaFields.anyIt(reprTypeLiveMentionsMarker(it, markerRefId))
   of repFunc:
@@ -1492,7 +1496,7 @@ const sigmaMarkerRefId = -401
   ## a `tSi` codomain for representation selection (issue #401). `subst`
   ## leaves `tR` nodes alone, so the marker is never shifted or dropped.
 
-proc reprTypeOf(ctx: CodegenCtx, t: Term): ReprType =
+proc reprTypeOf(ctx: CodegenCtx, t: Term, allowArray = false): ReprType =
   ## The host representation of a binder domain or result type: an atomic
   ## `tR` in the int fragment, a fully-applied `Vec`/`List`/`Option`
   ## family over int elements, a concrete `runtimeType` mapping used as an
@@ -1501,6 +1505,13 @@ proc reprTypeOf(ctx: CodegenCtx, t: Term): ReprType =
   ## Raises CgUnsupported otherwise. The check is structural only:
   ## length-index terms are validated when compiled (entry check), never
   ## here.
+  ## `allowArray` is true only for a top-level parameter domain
+  ## (reprSigOfType): a literal-length `Vec` there crosses as a fixed
+  ## Nim array, supplied from outside. Everywhere else — results,
+  ## `Sig` components, nested positions — a literal `Vec` stays `seq`,
+  ## because the value is constructed by generated or host code that
+  ## builds sequences, and the array contract would break it
+  ## (sensor_fusion `mkVec3`, units `runParseUnit`).
   if t.isNil:
     raise newException(CgUnsupported, "nil type")
   if t.kind == tR:
@@ -1567,6 +1578,9 @@ proc reprTypeOf(ctx: CodegenCtx, t: Term): ReprType =
         raise newException(CgUnsupported,
           "Vec application has " & $appArgs.len & " args, needs 2")
       let elem = ctx.collectionElemRepr(appArgs[0], "Vec")
+      if allowArray and appArgs[1].kind == tNatLit:
+        return ReprType(kind: repArray, arrayLen: appArgs[1].natLitVal,
+                        elem: boxRepr(elem))
       return ReprType(kind: repSeq, isVector: true, index: appArgs[1],
                       elem: boxRepr(elem))
     if m.isRuntimeList:
@@ -1598,6 +1612,8 @@ proc nimReprType*(rt: ReprType): NimNode =
   case rt.kind
   of repInt: ident"int"
   of repSeq: newTree(nnkBracketExpr, ident"seq", nimReprType(rt.elem[]))
+  of repArray: newTree(nnkBracketExpr, ident"array", newLit(rt.arrayLen),
+                       nimReprType(rt.elem[]))
   of repOption: newTree(nnkBracketExpr, ident"Option", nimReprType(rt.elem[]))
   of repOpaque: copyNimTree(rt.hostType)
   of repSigma:
@@ -1656,6 +1672,7 @@ proc reprTypeName*(rt: ReprType): string =
   case rt.kind
   of repInt: "int"
   of repSeq: "seq[" & reprTypeName(rt.elem[]) & "]"
+  of repArray: "array[" & $rt.arrayLen & ", " & reprTypeName(rt.elem[]) & "]"
   of repOption: "Option[" & reprTypeName(rt.elem[]) & "]"
   of repOpaque: nimTypeName(rt.hostType)
   of repSigma: "(" & rt.sigmaFields.mapIt(reprTypeName(it)).join(", ") & ")"
@@ -1721,6 +1738,13 @@ proc nimTypeMatchesRepr*(n: NimNode, rt: ReprType): bool =
     n.kind == nnkBracketExpr and n.len == 2 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] == "seq" and
       nimTypeMatchesRepr(n[1], rt.elem[])
+  of repArray:
+    n.kind == nnkBracketExpr and n.len == 3 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "array" and
+      n[1].kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
+        nnkInt64Lit, nnkUIntLit..nnkUInt64Lit} and
+      n[1].intVal == rt.arrayLen and
+      nimTypeMatchesRepr(n[2], rt.elem[])
   of repOption:
     n.kind == nnkBracketExpr and n.len == 2 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Option" and
@@ -1769,7 +1793,7 @@ proc reprSigOfType*(ctx: CodegenCtx, ty: Term): seq[ReprType] =
       # keeps the established "non-atomic binder domain" diagnostic.
       # Issue #401: chain the underlying reason instead of discarding it,
       # so the report names the real cause.
-      try: result.add(ctx.reprTypeOf(t.dom))
+      try: result.add(ctx.reprTypeOf(t.dom, allowArray = true))
       except CgUnsupported as e:
         raise newException(CgUnsupported,
           "non-atomic binder domain (" & e.msg & ")")
@@ -1919,7 +1943,7 @@ proc boundaryPreviewReport*(d: ElabDef, globals: Globals, baseDir, src: string,
   else: reportText.add(trustLines.mapIt("  " & it).join("\n") & "\n")
   reportText.add("notes:\n")
   reportText.add("  q0 binders are erased and have no Nim formal.\n")
-  reportText.add("  Nat uses int; Vec A n uses seq[A] and an O(1) entry length check.\n")
+  reportText.add("  Nat uses int; variable Vec A n uses seq[A] and an O(1) entry length check; literal Vec A 3 as a parameter uses array[3, A].\n")
   reportText.add("  Sig maps to a host tuple; opaque families use their declared host type.\n")
   reportText.add("  compilation tier: " & tierName & " (" & reason & ").\n")
   reportText
@@ -2100,6 +2124,7 @@ proc sameReprType(a, b: ReprType): bool =
   case a.kind
   of repInt: true
   of repSeq: a.isVector == b.isVector and sameReprType(a.elem[], b.elem[])
+  of repArray: a.arrayLen == b.arrayLen and sameReprType(a.elem[], b.elem[])
   of repOption: sameReprType(a.elem[], b.elem[])
   of repOpaque: sameNimTypeName(a.hostType, b.hostType)
   of repSigma:
@@ -3777,8 +3802,11 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
   ## `proc <binding.forwarderName>*(p1: T1, ...): R = hostImpl(p1, ...)`.
   ## The boundary is the identity (issue #401): every formal and the
   ## result are already the host representations, so the host procedure is
-  ## called directly with no `Value` allocated and no codec run. A `Sig`
-  ## result is the host tuple the bound procedure returns.
+  ## called directly with no `Value` allocated and no codec run — except
+  ## a literal-length `Vec` parameter, which crosses to the forwarder as
+  ## a fixed array and is converted back to a sequence (`@p`) for the
+  ## host procedure, whose contract is the sequence representation.
+  ## A `Sig` result is the host tuple the bound procedure returns.
   ##
   ## Returns nil when the postulate's type is outside the representation
   ## fragment, or when the representable arity disagrees with the binding's
@@ -3824,7 +3852,13 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
     formal.add(newIdentDefs(psym, ftype, newEmptyNode()))
     argSyms.add(psym)
   var call = newCall(copyNimTree(binding.implementation))
-  for s in argSyms: call.add(s)
+  for i, s in argSyms:
+    if sig[i].kind == repArray:
+      # A literal-length `Vec` parameter arrives as a fixed array, but
+      # the host procedure is written against the sequence contract.
+      call.add(newTree(nnkPrefix, ident"@", s))
+    else:
+      call.add(s)
   var procNode = newNimNode(nnkProcDef)
   procNode.add(newTree(nnkPostfix, ident"*", ident(binding.forwarderName)))
   procNode.add(newEmptyNode())

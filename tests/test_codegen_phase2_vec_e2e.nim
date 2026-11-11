@@ -68,6 +68,11 @@ eponymBlock:
       floatZero(0),
       lam(i: Nat) => lam(x: Float) => lam(xs2: Vec[Float, i]) =>
         lam(ih: Float) => floatAdd(x, ih), n, xs)
+  proc wVSum3(xs: Vec[Float, 3]): Float =
+    vecElim[Float](lam(i: Nat) => lam(v: Vec[Float, i]) => Float,
+      floatZero(0),
+      lam(i: Nat) => lam(x: Float) => lam(xs2: Vec[Float, i]) =>
+        lam(ih: Float) => floatAdd(x, ih), 3, xs)
 
 proc expect(ok: bool, message: string) =
   if not ok:
@@ -86,6 +91,9 @@ when isMainModule:
   expect(raised, "e2e wrapper preserves the Vec entry check")
   expect(abs(wVSum(2, @[1.25, 2.75]) - 4.0) < 1e-12,
     "e2e wrapper crosses Vec Float as seq[float] and computes a sum")
+  expect(abs(wVSum3([1.25, 2.75, 0.0]) - 4.0) < 1e-12,
+    "e2e wrapper crosses literal Vec Float as array[3, float] and computes a sum")
+  doAssert not compiles(wVSum3([1.25, 2.75]))
   raised = false
   try:
     discard wVSum(3, @[1.25, 2.75])
