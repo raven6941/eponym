@@ -3,7 +3,7 @@
 ## Checked: the logistic objective is accepted only after the DCP Convex
 ## certificate is elaborated at compile time; dimensions occur in the
 ## certified term (`Mat[m, n]`, `VectorData[m]`, `Vec[Float, n]` indices)
-## and in the checked wrapper types at literal m, n.  Trusted: the host
+## and in the checked wrapper types at generic m, n.  Trusted: the host
 ## objective and gradient implement that same `lrTerm`, LBFGS and
 ## line-search numerics, and the dataset shape check at the boundary.  The
 ## certified problem and host objective are the same by construction, not
@@ -17,9 +17,9 @@
 ## check on `Vec` arguments.
 ##
 ## The DCP rules below are the trimmed vector fragment from convex_opt_vec.nim
-## (Issue #110).  The checked entry points use literal dimensions because the
-## current opaque adapter cannot bind a postulate whose Pi binders are used as
-## indices; LBFGS itself remains generic over seq and sized Nim arrays.
+## (Issue #110). The weights cross as `Vec[Float, n]` (repr tier `seq[float]`,
+## #556) at generic dimensions through adapter #560. The data vector `b`
+## stays `VectorData[m]` because it is data in the certified term.
 
 import std/[math, times, random, algorithm]
 import eponym_mac
@@ -96,35 +96,39 @@ eponymBlock:
   runtimeType(VectorData, FVec)
   runtimeVector(Vec)
 
-  postulate(logisticLossSmall, Mat[4, 2] -> VectorData[4] -> Vec[Float, 2] -> Float)
-  postulate(logisticGradSmall, Mat[4, 2] -> VectorData[4] -> Vec[Float, 2] -> Vec[Float, 2])
-  postulate(logisticLossLarge, Mat[500, 50] -> VectorData[500] -> Vec[Float, 50] -> Float)
-  postulate(logisticGradLarge, Mat[500, 50] -> VectorData[500] -> Vec[Float, 50] -> Vec[Float, 50])
-  bindPostulate(logisticLossSmall, hostLogisticLoss, Mat, VectorData, Vec, Float)
-  bindPostulate(logisticGradSmall, hostLogisticGrad, Mat, VectorData, Vec, Vec)
-  bindPostulate(logisticLossLarge, hostLogisticLoss, Mat, VectorData, Vec, Float)
-  bindPostulate(logisticGradLarge, hostLogisticGrad, Mat, VectorData, Vec, Vec)
+  postulate(logisticLoss, Pi(m: Nat, n: Nat, Mat[m, n] -> VectorData[m] ->
+    Vec[Float, n] -> Float))
+  postulate(logisticGrad, Pi(m: Nat, n: Nat, Mat[m, n] -> VectorData[m] ->
+    Vec[Float, n] -> Vec[Float, n]))
+  bindPostulate(logisticLoss, hostLogisticLoss, Mat, VectorData, Vec, Float)
+  bindPostulate(logisticGrad, hostLogisticGrad, Mat, VectorData, Vec, Vec)
 
-  proc logisticLossAtSmall(a: Mat[4, 2], b: VectorData[4], w: Vec[Float, 2]): Float =
-    logisticLossSmall(a, b, w)
-  proc logisticGradAtSmall(a: Mat[4, 2], b: VectorData[4], w: Vec[Float, 2]): Vec[Float, 2] =
-    logisticGradSmall(a, b, w)
-  proc logisticLossAtLarge(a: Mat[500, 50], b: VectorData[500], w: Vec[Float, 50]): Float =
-    logisticLossLarge(a, b, w)
-  proc logisticGradAtLarge(a: Mat[500, 50], b: VectorData[500], w: Vec[Float, 50]): Vec[Float, 50] =
-    logisticGradLarge(a, b, w)
+  proc logisticLossAt(m, n: Nat, a: Mat[m, n], b: VectorData[m],
+      w: Vec[Float, n]): Float = logisticLoss(m, n, a, b, w)
+  proc logisticGradAt(m, n: Nat, a: Mat[m, n], b: VectorData[m],
+      w: Vec[Float, n]): Vec[Float, n] = logisticGrad(m, n, a, b, w)
 
-  # The weights are real Vecs, not the opaque VectorData family: cons
-  # typechecks on them here and would not for VectorData. This proc is
-  # the load-bearing check for that (see tests/test_logistic_lbfgs.nim).
-  proc wPrependOne(w: Vec[Float, 2]): Vec[Float, 3] =
-    cons[Float, 2](1.0, w)
+  # Mapping the identity over a vector is the identity — but only a real
+  # Vec admits the eliminator: this would not typecheck for VectorData.
+  # Written inline (not via the lib's `vmap`), whose higher-order body
+  # has no runtime representation; the inline `vecElim` form does, as in
+  # tests/test_codegen_phase2_vec_e2e.nim's `wVMapDouble`.
+  proc wIdMap(n: Nat, w: Vec[Float, n]): Vec[Float, n] =
+    vecElim[Float](lam(i: Nat) => lam(v: Vec[Float, i]) => Vec[Float, i],
+      vecnil[Float](),
+      lam(i: Nat) => lam(x: Float) => lam(xs2: Vec[Float, i]) =>
+        lam(ih: Vec[Float, i]) => cons[Float, i](x, ih), n, w)
 
 type LbfgsResult*[V] = object
   weights*: V
   iterations*: int
   loss*: float
   gradNorm*: float
+
+# The checked identity map over the weights, exposed at the boundary:
+# `w` crosses as a real Vec (seq[float]) and the entry check validates
+# its length against `n`.
+proc mapWeights*(n: int, w: FVec): FVec = wIdMap(n, w)
 
 proc dot[V](a, b: V): float =
   for i in 0 ..< a.len: result += a[i] * b[i]
@@ -213,8 +217,8 @@ let smallB*: FVec = @[1.0, 0.0, 0.5, -0.5]
 
 proc runCheckedSmall*(): LbfgsResult[FVec] =
   let z = @[0.0, 0.0]
-  lbfgs(z, proc(x: FVec): float = logisticLossAtSmall(smallA, smallB, x),
-    proc(x: FVec): FVec = logisticGradAtSmall(smallA, smallB, x))
+  lbfgs(z, proc(x: FVec): float = logisticLossAt(4, 2, smallA, smallB, x),
+    proc(x: FVec): FVec = logisticGradAt(4, 2, smallA, smallB, x))
 proc runPlainSmall*(): LbfgsResult[FVec] =
   let z = @[0.0, 0.0]
   lbfgs(z, proc(x: FVec): float = hostLogisticLoss(smallA, smallB, x),
@@ -240,8 +244,8 @@ proc makeLarge*(): tuple[a: FMat, b: FVec] =
 
 proc runCheckedLarge*(a: FMat, b: FVec): LbfgsResult[FVec] =
   let z = newSeq[float](50)
-  lbfgs(z, proc(x: FVec): float = logisticLossAtLarge(a, b, x),
-    proc(x: FVec): FVec = logisticGradAtLarge(a, b, x))
+  lbfgs(z, proc(x: FVec): float = logisticLossAt(500, 50, a, b, x),
+    proc(x: FVec): FVec = logisticGradAt(500, 50, a, b, x))
 proc runPlainLarge*(a: FMat, b: FVec): LbfgsResult[FVec] =
   let z = newSeq[float](50)
   lbfgs(z, proc(x: FVec): float = hostLogisticLoss(a, b, x),
