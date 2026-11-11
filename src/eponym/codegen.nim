@@ -315,14 +315,32 @@ proc codegenMentionsBound(ty: Term, depth = 0): bool =
   of tLet: codegenMentionsBound(ty.letVal, depth) or codegenMentionsBound(ty.letTy, depth)
   else: false
 
-proc postulateIndexPositions(globals: Globals, ty: Term): seq[bool] =
+proc postulateIndexPositions(globals: Globals, ty: Term,
+                             expectedArgCount: int): seq[bool] =
+  ## Per-Pi-binder flags: leading primitive binders used later, dropped
+  ## only while the spine still has more binders than the binding
+  ## declares as value arguments. The count guard is the same one as
+  ## `stripLeadingIndexBinders` in eponym_embed — without it, a primitive
+  ## *value* argument that is also used later (e.g. `powQ`'s exponent
+  ## `n: Int`, used in `scaleDim n d`) would be dropped from the host
+  ## call. Once a binder fails any condition the leading run ends: all
+  ## later binders are value binders.
   var rest = ty
+  var remainingBinders = countPiBinders(ty)
   while not rest.isNil and rest.kind == tPi:
     let primitive = rest.dom.kind == tR and
       ["Nat", "Int", "Bool"].anyIt(it in globals and
         not globals[it].tm.isNil and globals[it].tm.kind == tR and
         globals[it].tm.refId == rest.dom.refId)
-    result.add(primitive and codegenMentionsBound(rest.scope.bdy))
+    let isIndex = primitive and remainingBinders > expectedArgCount and
+      codegenMentionsBound(rest.scope.bdy)
+    result.add(isIndex)
+    if not isIndex:
+      break
+    rest = rest.scope.bdy
+    dec remainingBinders
+  while not rest.isNil and rest.kind == tPi:
+    result.add(false)
     rest = rest.scope.bdy
 
 proc piQuantities(ty: Term): seq[Quantity] =
@@ -3771,7 +3789,8 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
     except CgUnsupported as e:
       failureReason = e.msg
       return nil
-  let indexPositions = postulateIndexPositions(globals, ty)
+  let indexPositions = postulateIndexPositions(globals, ty,
+    binding.argCount)
   var sig: seq[ReprType] = @[]
   var fullArg = 0
   for rt in fullSig[0 ..< fullSig.len - 1]:
@@ -4276,7 +4295,8 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       let fwdName = binding.forwarderName
       # The forwarder just succeeded, so the signature is representable.
       let fullSig = ctx.reprSigOfType(entry.ty)
-      let indexPositions = postulateIndexPositions(globals, entry.ty)
+      let indexPositions = postulateIndexPositions(globals, entry.ty,
+        binding.argCount)
       var sig: seq[ReprType] = @[]
       for i, rt in fullSig[0 ..< fullSig.len - 1]:
         if i >= indexPositions.len or not indexPositions[i]: sig.add(rt)
