@@ -194,6 +194,47 @@ proc opaqueTypeHeadId(ty: Term): int
 proc canonicalNatConstructorIds(globals: Globals):
     tuple[zeroId, sucId: int, valid: bool]
 
+proc mentionsBoundIndex(ty: Term, depth = 0): bool =
+  ## Whether the outermost binder is used in `ty`. De Bruijn indices make
+  ## this independent of the display name, and the depth adjustment keeps
+  ## occurrences under nested binders distinct from the outer binder.
+  if ty.isNil: return false
+  case ty.kind
+  of tV:
+    ty.idx == depth
+  of tPi, tSi, tLam:
+    mentionsBoundIndex(ty.dom, depth) or
+      mentionsBoundIndex(ty.scope.bdy, depth + 1)
+  of tApp:
+    mentionsBoundIndex(ty.fn, depth) or mentionsBoundIndex(ty.arg, depth)
+  of tPair:
+    mentionsBoundIndex(ty.pFst, depth) or mentionsBoundIndex(ty.pSnd, depth) or
+      mentionsBoundIndex(ty.pScope.bdy, depth + 1)
+  of tFst, tSnd, tAbsurd:
+    mentionsBoundIndex(ty.sub, depth)
+  of tLet:
+    mentionsBoundIndex(ty.letVal, depth) or mentionsBoundIndex(ty.letTy, depth)
+  else:
+    false
+
+proc isIndexBinderDomain(globals: Globals, ty: Term): bool =
+  if ty.isNil or ty.kind != tR: return false
+  for name in ["Nat", "Int", "Bool"]:
+    if name in globals and not globals[name].tm.isNil and
+        globals[name].tm.kind == tR and globals[name].tm.refId == ty.refId:
+      return true
+  false
+
+proc stripLeadingIndexBinders*(globals: Globals, ty: Term): Term =
+  ## Strip only primitive binders that are actually used by a later domain or
+  ## result. A plain `Nat -> ...` value argument remains a value argument;
+  ## `Pi(n: Nat, Vec[A, n] -> ...)` is the index binder shape.
+  result = ty
+  while not result.isNil and result.kind == tPi and
+      isIndexBinderDomain(globals, result.dom) and
+      mentionsBoundIndex(result.scope.bdy):
+    result = result.scope.bdy
+
 proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
     argTypeNames: openArray[string], firstTypeName, secondTypeName: string,
     allowDependentIndex = false) =
@@ -219,7 +260,7 @@ proc validateHostSigmaAdapterType*(globals: Globals, postulateName: string,
         "structured adapter type is not a declared Eponym type: " & typeName)
   let expectedFirstId = globals[firstTypeName].tm.refId
   let expectedSecondId = globals[secondTypeName].tm.refId
-  var current = entry.ty
+  var current = stripLeadingIndexBinders(globals, entry.ty)
   var validArguments = true
   for argTypeName in argTypeNames:
     if current.isNil or current.kind != tPi or current.impl or
@@ -598,7 +639,7 @@ proc validateHostMappedNaryType*(globals: Globals, postulateName: string,
       raise newException(ValueError,
         "typed n-ary adapter type is not a declared Eponym type: " & typeName)
     expectedIds.add(globals[typeName].tm.refId)
-  var current = entry.ty
+  var current = stripLeadingIndexBinders(globals, entry.ty)
   for i in 0 ..< typeNames.len - 1:
     if current.isNil or current.kind != tPi or current.impl or
         current.qty == q0 or opaqueTypeHeadId(current.dom) != expectedIds[i]:
@@ -648,7 +689,7 @@ proc validateHostIntUnaryType*(globals: Globals, postulateName: string) =
     raise newException(ValueError,
       "cannot bind Int adapter without an Eponym Int declaration")
   let intId = globals["Int"].tm.refId
-  let ty = entry.ty
+  let ty = stripLeadingIndexBinders(globals, entry.ty)
   if ty.kind != tPi or ty.impl or ty.qty == q0 or ty.dom.kind != tR or
       ty.dom.refId != intId or ty.scope.bdy.kind != tR or
       ty.scope.bdy.refId != intId:
@@ -667,7 +708,7 @@ proc validateHostIntToNatType*(globals: Globals, postulateName: string) =
   if "Int" notin globals or "Nat" notin globals:
     raise newException(ValueError,
       "Int -> Nat adapter requires Eponym Int and Nat declarations")
-  let ty = entry.ty
+  let ty = stripLeadingIndexBinders(globals, entry.ty)
   let intType = globals["Int"].tm
   let natType = globals["Nat"].tm
   if ty.isNil or intType.isNil or natType.isNil or
@@ -695,7 +736,7 @@ proc validateHostOpaqueUnaryType*(globals: Globals,
   if entry.tm.isNil or entry.tm.kind != tR or entry.tm.refIsDefn:
     raise newException(ValueError,
       "runtime binding target is not a postulate: " & postulateName)
-  let ty = entry.ty
+  let ty = stripLeadingIndexBinders(globals, entry.ty)
   let domainId = if ty.kind == tPi: opaqueTypeHeadId(ty.dom) else: -1
   let resultId = if ty.kind == tPi: opaqueTypeHeadId(ty.scope.bdy) else: -1
   if ty.kind != tPi or ty.impl or ty.qty == q0 or domainId < 0 or
@@ -717,7 +758,7 @@ proc validateHostOpaqueMapUnaryType*(globals: Globals, postulateName,
       "runtime binding target is not a postulate: " & postulateName)
   let argId = opaqueTypeId(globals, argTypeName, postulateName)
   let resultId = opaqueTypeId(globals, resultTypeName, postulateName)
-  let ty = entry.ty
+  let ty = stripLeadingIndexBinders(globals, entry.ty)
   if ty.kind != tPi or ty.impl or ty.qty == q0 or
       opaqueTypeHeadId(ty.dom) != argId or
       opaqueTypeHeadId(ty.scope.bdy) != resultId:
@@ -793,9 +834,10 @@ proc validateHostOpaqueNatUnaryType*(globals: Globals, postulateName,
       "runtime binding target is not a postulate: " & postulateName)
   let opaqueId = opaqueTypeId(globals, opaqueType, postulateName)
   let natId = if "Nat" in globals: globals["Nat"].tm.refId else: -1
-  if entry.ty.kind != tPi or entry.ty.impl or entry.ty.qty == q0 or
-      opaqueTypeHeadId(entry.ty.dom) != opaqueId or
-      entry.ty.scope.bdy.kind != tR or entry.ty.scope.bdy.refId != natId:
+  let ty = stripLeadingIndexBinders(globals, entry.ty)
+  if ty.kind != tPi or ty.impl or ty.qty == q0 or
+      opaqueTypeHeadId(ty.dom) != opaqueId or
+      ty.scope.bdy.kind != tR or ty.scope.bdy.refId != natId:
     raise newException(ValueError,
       "opaque Nat adapter requires postulate '" & postulateName & "' to have type " &
       opaqueType & " -> Nat")
@@ -811,7 +853,7 @@ proc validateHostNatOpaqueBinaryType*(globals: Globals, postulateName,
   let argId = opaqueTypeId(globals, opaqueArgType, postulateName)
   let resultId = opaqueTypeId(globals, opaqueResultType, postulateName)
   let natId = if "Nat" in globals: globals["Nat"].tm.refId else: -1
-  let outer = entry.ty
+  let outer = stripLeadingIndexBinders(globals, entry.ty)
   let inner = if outer.kind == tPi: outer.scope.bdy else: nil
   if outer.kind != tPi or outer.impl or outer.qty == q0 or
       outer.dom.kind != tR or outer.dom.refId != natId or inner.isNil or
@@ -867,7 +909,7 @@ proc validateHostOpaqueBinaryType*(globals: Globals, postulateName,
   let firstId = opaqueTypeId(globals, firstTypeName, postulateName)
   let secondId = opaqueTypeId(globals, secondTypeName, postulateName)
   let resultId = opaqueTypeId(globals, resultTypeName, postulateName)
-  let outer = entry.ty
+  let outer = stripLeadingIndexBinders(globals, entry.ty)
   if outer.kind != tPi or outer.impl or outer.qty == q0 or
       opaqueTypeHeadId(outer.dom) != firstId:
     raise newException(ValueError,
@@ -896,7 +938,7 @@ proc validateHostOpaqueTernaryType*(globals: Globals, postulateName,
   let secondId = opaqueTypeId(globals, secondTypeName, postulateName)
   let thirdId = opaqueTypeId(globals, thirdTypeName, postulateName)
   let resultId = opaqueTypeId(globals, resultTypeName, postulateName)
-  let outer = entry.ty
+  let outer = stripLeadingIndexBinders(globals, entry.ty)
   let middle = if outer.kind == tPi: outer.scope.bdy else: nil
   let inner = if not middle.isNil and middle.kind == tPi:
     middle.scope.bdy
@@ -928,7 +970,7 @@ proc validateHostOpaqueQuaternaryType*(globals: Globals, postulateName,
     opaqueTypeId(globals, thirdTypeName, postulateName),
     opaqueTypeId(globals, fourthTypeName, postulateName),
     opaqueTypeId(globals, resultTypeName, postulateName)]
-  var current = entry.ty
+  var current = stripLeadingIndexBinders(globals, entry.ty)
   for i in 0 ..< 4:
     if current.isNil or current.kind != tPi or current.impl or
         current.qty == q0 or opaqueTypeHeadId(current.dom) != ids[i]:
@@ -959,7 +1001,7 @@ proc validateHostOpaqueQuinaryType*(globals: Globals, postulateName,
   var ids: array[6, int]
   for i, typeName in names:
     ids[i] = opaqueTypeId(globals, typeName, postulateName)
-  var current = entry.ty
+  var current = stripLeadingIndexBinders(globals, entry.ty)
   for i in 0 ..< 5:
     if current.isNil or current.kind != tPi or current.impl or
         current.qty == q0 or opaqueTypeHeadId(current.dom) != ids[i]:

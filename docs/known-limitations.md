@@ -206,6 +206,17 @@ requires runtime-computed type structure, which strict codegen does not
 support. `runtimeValue`-generated dynamic siblings and raw `RuntimeValue`
 wrappers are rejected inside `eponymBlock`.
 
+Bound host postulates may now have leading dependent `Nat`, `Int`, or `Bool`
+index binders when those binders are used by later indexed arguments. The
+bindPostulate adapter drops those index values at the host-procedure boundary,
+while retaining them for dependent codec checks; for example,
+`Pi(n: Nat, Vec[Float, n] -> Float)` binds to a host procedure taking only
+`seq[float]`. The index binder must be dependency-visible in the checked type;
+an independent primitive argument remains an ordinary host argument. Raw
+`bindPostulateValue` adapters remain the escape hatch for contracts whose host
+implementation needs to inspect every runtime Value, and arbitrary computed
+type-level Nim structure remains unsupported.
+
 Dependent Sigma binders and results are supported only when their components
 have representations the backend can select while erasing the dependent
 index; when no direct representation exists, the containing runtime
