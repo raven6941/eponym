@@ -63,8 +63,8 @@ import usage_check  # countVarUses for the #413 chain-lift linearity check
 type
   ReprKind* = enum
     repInt  # Eponym type mapped to Nim `int` via plain runtimeType
-    repSeq  # `Vec`/`List` family mapped to Nim `seq[int]`
-    repOption  # `Option` family mapped to Nim `Option[int]`
+    repSeq  # `Vec`/`List` family mapped to Nim `seq[element]`
+    repOption  # `Option` family mapped to Nim `Option[element]`
     repOpaque  # Issue #401: any other concrete `runtimeType` mapping is an
       # identity representation over its declared host type. Covers atomic
       # postulated types (`Promise` -> `PaxosPromise`) and applied families
@@ -97,6 +97,7 @@ type
     kind*: ReprKind
     isVector*: bool  # for repSeq: from runtimeVector (length-indexed)
     index*: Term  # for repSeq+isVector: the length index term
+    elem*: ref ReprType  # for repSeq/repOption: the element representation
     hostType*: NimNode  # for repOpaque: the declared Nim type AST
     sigmaFields*: seq[ReprType]  # for repSigma: the component reprs
     funcDom*: ref ReprType  # for repFunc: the domain representation
@@ -1354,11 +1355,11 @@ proc compileDefProc*(d: ElabDef, ctx: var CodegenCtx,
 # constructors (`zero`/`suc`, `true`/`false`) as int literals/arithmetic,
 # and match-compiled eliminators (`natElim` as an iterative fold,
 # `boolElim` as a conditional).
-# v3 adds `Vec`/`List` as `seq[int]` and `Option` as `Option[int]`:
+# v3 adds `Vec`/`List` as `seq[element]` and `Option` as `Option[element]`:
 # the canonical constructors (`nil`/`cons`, `none`/`some`) build host
 # collections, and match-compiled eliminators (`vecElim`/`listElim` as
-# folds, `optionElim` as a conditional) consume them. Element types must
-# themselves be in the int fragment; anything else falls back to Phase 1.
+# folds, `optionElim` as a conditional) consume them. Scalar int and opaque
+# host elements are supported; composite elements fall back to Phase 1.
 # ---------------------------------------------------------------------------
 
 proc cgReprName*(defName: string): string =
@@ -1383,11 +1384,19 @@ proc reprKindOf(ctx: CodegenCtx, refId: int): ReprKind =
   raise newException(CgUnsupported,
     "runtime representation outside the fragment")
 
-proc checkIntElem(ctx: CodegenCtx, t: Term) =
-  ## v3 scope: collection element types must be in the int fragment.
-  if t.isNil or t.kind != tR or ctx.reprKindOf(t.refId) != repInt:
+proc reprTypeOf(ctx: CodegenCtx, t: Term): ReprType
+
+proc collectionElemRepr(ctx: CodegenCtx, t: Term, what = "collection"): ReprType =
+  ## Collection elements may be scalar int or opaque host values. Composite
+  ## elements remain outside the repr tier until their codecs and operations
+  ## are audited end to end.
+  if t.isNil:
     raise newException(CgUnsupported,
-      "collection element type outside the int fragment")
+      what & " element type outside the representation fragment")
+  result = ctx.reprTypeOf(t)
+  if result.kind notin {repInt, repOpaque}:
+    raise newException(CgUnsupported,
+      what & " element type outside the scalar representation fragment")
 
 proc reprTypeMentionsMarker(t: Term, markerRefId: int): bool =
   ## Does the marker reference survive anywhere in `t`? Used to detect a
@@ -1511,20 +1520,21 @@ proc reprTypeOf(ctx: CodegenCtx, t: Term): ReprType =
       if appArgs.len != 2:
         raise newException(CgUnsupported,
           "Vec application has " & $appArgs.len & " args, needs 2")
-      ctx.checkIntElem(appArgs[0])
-      return ReprType(kind: repSeq, isVector: true, index: appArgs[1])
+      let elem = ctx.collectionElemRepr(appArgs[0], "Vec")
+      return ReprType(kind: repSeq, isVector: true, index: appArgs[1],
+                      elem: boxRepr(elem))
     if m.isRuntimeList:
       if appArgs.len != 1:
         raise newException(CgUnsupported,
           "List application has " & $appArgs.len & " args, needs 1")
-      ctx.checkIntElem(appArgs[0])
-      return ReprType(kind: repSeq, isVector: false)
+      let elem = ctx.collectionElemRepr(appArgs[0], "List")
+      return ReprType(kind: repSeq, isVector: false, elem: boxRepr(elem))
     if m.isRuntimeOption:
       if appArgs.len != 1:
         raise newException(CgUnsupported,
           "Option application has " & $appArgs.len & " args, needs 1")
-      ctx.checkIntElem(appArgs[0])
-      return ReprType(kind: repOption)
+      let elem = ctx.collectionElemRepr(appArgs[0], "Option")
+      return ReprType(kind: repOption, elem: boxRepr(elem))
     if m.isOpaqueIdentityMapping:
       # Issue #401: an applied family with a concrete `runtimeType`
       # mapping denotes the declared host type for every index tuple —
@@ -1541,8 +1551,8 @@ proc nimReprType*(rt: ReprType): NimNode =
   ## The Nim type AST for one representation-typed signature position.
   case rt.kind
   of repInt: ident"int"
-  of repSeq: newTree(nnkBracketExpr, ident"seq", ident"int")
-  of repOption: newTree(nnkBracketExpr, ident"Option", ident"int")
+  of repSeq: newTree(nnkBracketExpr, ident"seq", nimReprType(rt.elem[]))
+  of repOption: newTree(nnkBracketExpr, ident"Option", nimReprType(rt.elem[]))
   of repOpaque: copyNimTree(rt.hostType)
   of repSigma:
     # The host tuple of the component representations. `nnkTupleConstr`
@@ -1599,8 +1609,8 @@ proc reprTypeName*(rt: ReprType): string =
   ## tuple.
   case rt.kind
   of repInt: "int"
-  of repSeq: "seq[int]"
-  of repOption: "Option[int]"
+  of repSeq: "seq[" & reprTypeName(rt.elem[]) & "]"
+  of repOption: "Option[" & reprTypeName(rt.elem[]) & "]"
   of repOpaque: nimTypeName(rt.hostType)
   of repSigma: "(" & rt.sigmaFields.mapIt(reprTypeName(it)).join(", ") & ")"
   of repFunc:
@@ -1664,11 +1674,11 @@ proc nimTypeMatchesRepr*(n: NimNode, rt: ReprType): bool =
   of repSeq:
     n.kind == nnkBracketExpr and n.len == 2 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] == "seq" and
-      n[1].kind in {nnkIdent, nnkSym} and $n[1] == "int"
+      nimTypeMatchesRepr(n[1], rt.elem[])
   of repOption:
     n.kind == nnkBracketExpr and n.len == 2 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Option" and
-      n[1].kind in {nnkIdent, nnkSym} and $n[1] == "int"
+      nimTypeMatchesRepr(n[1], rt.elem[])
   of repOpaque:
     sameNimTypeName(n, rt.hostType)
   of repSigma:
@@ -1863,7 +1873,7 @@ proc boundaryPreviewReport*(d: ElabDef, globals: Globals, baseDir, src: string,
   else: reportText.add(trustLines.mapIt("  " & it).join("\n") & "\n")
   reportText.add("notes:\n")
   reportText.add("  q0 binders are erased and have no Nim formal.\n")
-  reportText.add("  Nat uses int; Vec A n uses seq[int] and an O(1) entry length check.\n")
+  reportText.add("  Nat uses int; Vec A n uses seq[A] and an O(1) entry length check.\n")
   reportText.add("  Sig maps to a host tuple; opaque families use their declared host type.\n")
   reportText.add("  compilation tier: " & tierName & " (" & reason & ").\n")
   reportText
@@ -2043,8 +2053,8 @@ proc sameReprType(a, b: ReprType): bool =
   if a.kind != b.kind: return false
   case a.kind
   of repInt: true
-  of repSeq: a.isVector == b.isVector
-  of repOption: true
+  of repSeq: a.isVector == b.isVector and sameReprType(a.elem[], b.elem[])
+  of repOption: sameReprType(a.elem[], b.elem[])
   of repOpaque: sameNimTypeName(a.hostType, b.hostType)
   of repSigma:
     a.sigmaFields.len == b.sigmaFields.len and
@@ -2323,14 +2333,17 @@ proc checkElimCases(r: CgRef, elimName: string, arities: openArray[int],
         "' has unexpected case arity " & $cs.ctorArity)
     remaining.del(i)
 
-proc checkSeqElemArg(ctx: CodegenCtx, appArgs: seq[Term], elimName: string) =
-  ## v3: the eliminator's family-parameter argument must be an int-mapped
-  ## element type. It is never evaluated (a type argument), but the check
-  ## pins the compiled loop to `seq[int]`/`Option[int]`.
-  if appArgs.len == 0 or appArgs[0].isNil or appArgs[0].kind != tR or
-      ctx.reprKindOf(appArgs[0].refId) != repInt:
+proc checkSeqElemArg(ctx: CodegenCtx, appArgs: seq[Term], elimName: string): ReprType =
+  ## The eliminator's family parameter is a scalar repr element. Composite
+  ## elements stay on the Value backend until their full loop surface is
+  ## supported.
+  if appArgs.len == 0:
     raise newException(CgUnsupported, "eliminator '" & elimName &
-      "' element type outside the int fragment")
+      "' has no element type")
+  try:
+    result = ctx.collectionElemRepr(appArgs[0], "eliminator '" & elimName & "'")
+  except CgUnsupported as e:
+    raise newException(CgUnsupported, e.msg)
 
 proc motiveCodomain(motive: Term): Term =
   ## Peel the motive's lambdas to its codomain type. A non-lambda motive
@@ -2474,7 +2487,7 @@ proc dpsFilterShape(ctx: CodegenCtx, body: Term):
     return
   result = (cond, head)
 
-proc cgDpsFoldBlock(xsCode, nilCode, headCode: NimNode,
+proc cgDpsFoldBlock(xsCode, nilCode, headCode, elemType: NimNode,
                     kSym, xSym, iSym: NimNode): NimNode =
   ## #331 destination-passing fold over `xsCode` (a `seq[int]` expression):
   ## allocate one destination of `xs.len + acc0.len`, copy the initial
@@ -2493,8 +2506,8 @@ proc cgDpsFoldBlock(xsCode, nilCode, headCode: NimNode,
   stmts.add(newLetStmt(acc0Sym, nilCode))
   stmts.add(newLetStmt(mSym, newCall(bindSym"len", xsSym)))
   stmts.add(newVarStmt(dstSym,
-    newTree(nnkCall,
-      newTree(nnkBracketExpr, ident"newSeq", ident"int"),
+      newTree(nnkCall,
+      newTree(nnkBracketExpr, ident"newSeq", elemType),
       newTree(nnkInfix, ident"+", mSym,
         newCall(bindSym"len", acc0Sym)))))
   var copyBody = newStmtList()
@@ -2527,7 +2540,7 @@ proc cgDpsFoldBlock(xsCode, nilCode, headCode: NimNode,
   blk.add(stmts)
   blk
 
-proc cgDpsFilterBlock(xsCode, nilCode, condCode, headCode: NimNode,
+proc cgDpsFilterBlock(xsCode, nilCode, condCode, headCode, elemType: NimNode,
                       kSym, xSym, iSym: NimNode): NimNode =
   ## #331 destination-passing fold for the conditional-cons (filter) shape:
   ## the result length is not known statically, so the destination is
@@ -2557,8 +2570,8 @@ proc cgDpsFilterBlock(xsCode, nilCode, condCode, headCode: NimNode,
   stmts.add(newLetStmt(acc0Sym, nilCode))
   stmts.add(newLetStmt(mSym, newCall(bindSym"len", xsSym)))
   stmts.add(newVarStmt(dstSym,
-    newTree(nnkCall,
-      newTree(nnkBracketExpr, ident"newSeq", ident"int"),
+      newTree(nnkCall,
+      newTree(nnkBracketExpr, ident"newSeq", elemType),
       newTree(nnkInfix, ident"+", mSym,
         newCall(bindSym"len", acc0Sym)))))
   stmts.add(newVarStmt(wSym, newLit(0)))
@@ -2632,7 +2645,8 @@ proc cgReprListElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   ## only read, so both transforms are sound for any `ih` quantity (not
   ## gated on linearity).
   checkElimCases(r, "listElim", [0, 2], nParams = 1)
-  ctx.checkSeqElemArg(appArgs, "listElim")
+  let elemRt = ctx.checkSeqElemArg(appArgs, "listElim")
+  let elemType = nimReprType(elemRt)
   ctx.checkMotiveKind(r, appArgs, 1)
   let consLam = appArgs[3]
   if consLam.kind != tLam or consLam.scope.bdy.kind != tLam or
@@ -2641,10 +2655,9 @@ proc cgReprListElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
       "listElim cons case is not a syntactic triple lambda")
   let tlLam = consLam.scope.bdy
   let ihLam = tlLam.scope.bdy
-  if consLam.dom.isNil or consLam.dom.kind != tR or
-      ctx.reprKindOf(consLam.dom.refId) != repInt:
+  if consLam.dom.isNil or not sameReprType(ctx.reprTypeOf(consLam.dom), elemRt):
     raise newException(CgUnsupported,
-      "listElim element domain outside the int fragment")
+      "listElim element domain outside the scalar representation fragment")
   let nilCode = cgRepr(ctx, appArgs[2], env)
   let xsCode = cgRepr(ctx, appArgs[4], env)
   let xsSym = genSym(nskLet, "cgListXs")
@@ -2658,7 +2671,7 @@ proc cgReprListElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
     # by the shape check (the empty nodes are never referenced), V2 = x.
     let headCode = cgRepr(ctx, dpsHead,
       @[newEmptyNode(), newEmptyNode(), xSym] & env)
-    cgDpsFoldBlock(xsCode, nilCode, headCode, kSym, xSym, nil)
+    cgDpsFoldBlock(xsCode, nilCode, headCode, elemType, kSym, xSym, nil)
   else:
     let (filtCond, filtHead) = dpsFilterShape(ctx, ihLam.scope.bdy)
     if not filtHead.isNil:
@@ -2668,7 +2681,7 @@ proc cgReprListElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
         @[newEmptyNode(), newEmptyNode(), xSym] & env)
       let headCode = cgRepr(ctx, filtHead,
         @[newEmptyNode(), newEmptyNode(), xSym] & env)
-      cgDpsFilterBlock(xsCode, nilCode, condCode, headCode, kSym, xSym, nil)
+      cgDpsFilterBlock(xsCode, nilCode, condCode, headCode, elemType, kSym, xSym, nil)
     else:
       # de Bruijn: V0 = ih (innermost), V1 = tl, V2 = x; env
       # innermost-first.
@@ -2725,7 +2738,8 @@ proc cgReprVecElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   ## destination is fresh and the initial accumulator is only read, so both
   ## transforms are sound for any `ih` quantity (not gated on linearity).
   checkElimCases(r, "vecElim", [0, 3], nParams = 1)
-  ctx.checkSeqElemArg(appArgs, "vecElim")
+  let elemRt = ctx.checkSeqElemArg(appArgs, "vecElim")
+  let elemType = nimReprType(elemRt)
   ctx.checkMotiveKind(r, appArgs, 1)
   let consLam = appArgs[3]
   if consLam.kind != tLam or consLam.scope.bdy.kind != tLam or
@@ -2737,10 +2751,12 @@ proc cgReprVecElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   let xsLam = xLam.scope.bdy
   let ihLam = xsLam.scope.bdy
   for (lam, what) in [(consLam, "index"), (xLam, "element")]:
-    if lam.dom.isNil or lam.dom.kind != tR or
-        ctx.reprKindOf(lam.dom.refId) != repInt:
+    if lam.dom.isNil or
+        (what == "element" and not sameReprType(ctx.reprTypeOf(lam.dom), elemRt)) or
+        (what == "index" and (lam.dom.kind != tR or
+          ctx.reprKindOf(lam.dom.refId) != repInt)):
       raise newException(CgUnsupported,
-        "vecElim " & what & " domain outside the int fragment")
+        "vecElim " & what & " domain outside the scalar representation fragment")
   let nilCode = cgRepr(ctx, appArgs[2], env)
   let xsCode = cgRepr(ctx, appArgs[5], env)
   let xsSym = genSym(nskLet, "cgVecXs")
@@ -2756,7 +2772,7 @@ proc cgReprVecElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
     # V2 = x, V3 = i.
     let headCode = cgRepr(ctx, dpsHead,
       @[newEmptyNode(), newEmptyNode(), xSym, iSym] & env)
-    cgDpsFoldBlock(xsCode, nilCode, headCode, kSym, xSym, iSym)
+    cgDpsFoldBlock(xsCode, nilCode, headCode, elemType, kSym, xSym, iSym)
   else:
     let (filtCond, filtHead) = dpsFilterShape(ctx, ihLam.scope.bdy)
     if not filtHead.isNil:
@@ -2766,7 +2782,7 @@ proc cgReprVecElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
         @[newEmptyNode(), newEmptyNode(), xSym, iSym] & env)
       let headCode = cgRepr(ctx, filtHead,
         @[newEmptyNode(), newEmptyNode(), xSym, iSym] & env)
-      cgDpsFilterBlock(xsCode, nilCode, condCode, headCode, kSym, xSym, iSym)
+      cgDpsFilterBlock(xsCode, nilCode, condCode, headCode, elemType, kSym, xSym, iSym)
     else:
       # de Bruijn: V0 = ih, V1 = xs2, V2 = x, V3 = i; env innermost-first.
       let bodyCode = cgRepr(ctx, ihLam.scope.bdy,
@@ -2807,16 +2823,16 @@ proc cgReprOptionElim(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   ## none-branch diverges the eliminator on both sides); the motive is
   ## skipped, as for `boolElim`.
   checkElimCases(r, "optionElim", [0, 1], nParams = 1)
-  ctx.checkSeqElemArg(appArgs, "optionElim")
+  let elemRt = ctx.checkSeqElemArg(appArgs, "optionElim")
   ctx.checkMotiveKind(r, appArgs, 1)
   let someLam = appArgs[3]
   if someLam.kind != tLam:
     raise newException(CgUnsupported,
       "optionElim some case is not a syntactic lambda")
-  if someLam.dom.isNil or someLam.dom.kind != tR or
-      ctx.reprKindOf(someLam.dom.refId) != repInt:
+  if someLam.dom.isNil or
+      not sameReprType(ctx.reprTypeOf(someLam.dom), elemRt):
     raise newException(CgUnsupported,
-      "optionElim value domain outside the int fragment")
+      "optionElim value domain outside the scalar representation fragment")
   let noneCode = cgRepr(ctx, appArgs[2], env)
   let oCode = cgRepr(ctx, appArgs[4], env)
   let noneSym = genSym(nskLet, "cgOptNone")
@@ -2996,18 +3012,31 @@ proc cgReprElimClosure(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
   else:
     raise newException(CgUnsupported, "eliminator '" & r.name &
       "' has no representation-tier closure schema (falls back)")
-  if appArgs.len < minProvided:
-    raise newException(CgUnsupported, "eliminator '" & r.name &
-      "' partially applied without its " & missingCaseName &
-      ": representation-tier closures inline case bodies, so a missing " &
-      missingCaseName & " is outside the fragment (falls back)")
   # The closure result representation comes from the motive's codomain,
   # exactly as checkMotiveKind establishes it for the saturated path.
+  # Computed here because the optionElim override below needs it: its
+  # noneC parameter is the result value, not the element.
   let resRt =
     try: ctx.reprTypeOf(motiveCodomain(appArgs[motiveIdx]))
     except CgUnsupported as e:
       raise newException(CgUnsupported, "eliminator '" & r.name &
         "' closure result outside the representation fragment: " & e.msg)
+  if r.name in ["optionElim", "listElim", "vecElim"]:
+    let elemType = nimReprType(ctx.checkSeqElemArg(appArgs, r.name))
+    if r.name == "optionElim":
+      paramTypes[2] = nimReprType(resRt)
+      paramTypes[4] = newTree(nnkBracketExpr, ident"Option", elemType)
+    elif r.name == "listElim":
+      paramTypes[2] = newTree(nnkBracketExpr, ident"seq", elemType)
+      paramTypes[4] = paramTypes[2]
+    else:
+      paramTypes[2] = newTree(nnkBracketExpr, ident"seq", elemType)
+      paramTypes[5] = paramTypes[2]
+  if appArgs.len < minProvided:
+    raise newException(CgUnsupported, "eliminator '" & r.name &
+      "' partially applied without its " & missingCaseName &
+      ": representation-tier closures inline case bodies, so a missing " &
+      missingCaseName & " is outside the fragment (falls back)")
   # Missing non-skipped positions become proc parameters (arg order);
   # provided value positions are let-bound at creation (arg order).
   var missingPos: seq[int] = @[]
@@ -3146,7 +3175,8 @@ proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
         raise newException(CgUnsupported,
           "nil applied to " & $appArgs.len & " args, needs 1")
       newTree(nnkCall,
-        newTree(nnkBracketExpr, ident"newSeq", ident"int"))
+      newTree(nnkBracketExpr, ident"newSeq",
+        nimReprType(ctx.collectionElemRepr(appArgs[0], m.eponymName))))
     of "cons":
       let (xArg, xsArg) =
         if m.isRuntimeVector:
@@ -3171,7 +3201,8 @@ proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
       if appArgs.len != 1:
         raise newException(CgUnsupported,
           "none applied to " & $appArgs.len & " args, needs 1")
-      newCall(ident"none", ident"int")
+      newCall(ident"none",
+        nimReprType(ctx.collectionElemRepr(appArgs[0], m.eponymName)))
     of "some":
       if appArgs.len != 2:
         raise newException(CgUnsupported,

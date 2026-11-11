@@ -192,9 +192,11 @@ runtime values. Common runtime representations include:
 - non-dependent `Sig` pairs, named records, and the standard `Vec`, `List`,
   and `Option` types.
 
-For example, `runtimeVector(Vec)` maps `Vec[Int, n]` to `seq[int]` and checks
-that the sequence length matches `n`. Nested vectors and vectors of mapped
-opaque values work when their element type has a codec. Dynamic generic value
+For example, `runtimeVector(Vec)` maps `Vec[Int, n]` to `seq[int]` and
+`Vec[Float, n]` to `seq[float]`, checking that the sequence length matches `n`.
+Vectors and lists of mapped opaque scalar values work when their element type
+has a codec. Nested vectors and other composite collection elements remain
+outside the direct representation tier. Dynamic generic value
 binders also support `Vec`, non-dependent `Sig`, `List`, and `Option` when the
 corresponding codecs are registered.
 For a Nat index known at runtime, pass it as an ordinary function argument
@@ -253,7 +255,8 @@ compiled to direct Nim representation code and its typed wrapper is direct
 too. Unsupported definitions never fall back to the interpreter or `Value`
 runtime. `requireCompiled()` remains accepted as a redundant compatibility
 marker. The backend supports
-`int`, `seq[int]` (`Vec`/`List`), and `Option[int]` representations, plus —
+`int`, `seq[element]` (`Vec`/`List`), and `Option[element]` representations
+for scalar int and opaque host elements, plus —
 since #401 — opaque identity representations and dependent `Sig` tuples:
 
 ```nim
@@ -275,7 +278,7 @@ type is outside the representation fragment until the backend can emit the
 codec conversion directly.) An applied family with such a mapping
 (`Chan s`, `AcceptMsg n`) denotes the one declared host type for every index
 tuple — the indices are dropped from the host signature, exactly as
-`Vec A n` maps to one `seq[int]`. Declaring one host type for a whole family
+`Vec A n` maps to one `seq[element]`. Declaring one host type for a whole family
 asserts the host layout is index-independent; the checker cannot verify host
 layout, so this is trusted (see the trust model). A dependent
 `Sig(x: A, B)` over representable components maps to the host tuple of the
@@ -740,8 +743,8 @@ in-fragment definitions run compiled `eponymCompiled_<name>` procs (Phase 1
 `Value` backend) or, when their signature maps to plain host types,
 `eponymCompiledRepr_<name>` procs (Phase 2 representation tier, emitting
 direct host code such as Nim arithmetic). The repr tier currently covers the
-scalar fragment (`Int`/`Nat`/`Bool`) plus `Vec`/`List` over int-fragment
-elements (as `seq[int]`) and `Option` (as `Option[int]`). Eliminators compile to
+scalar fragment (`Int`/`Nat`/`Bool`) plus `Vec`/`List` over scalar int or opaque
+elements (as `seq[element]`) and `Option` (as `Option[element]`). Eliminators compile to
 sequence folds or `isSome` branches; each `Vec A n` parameter gets an entry
 length check that raises `ValueError` on mismatch, preserving the interpreter
 codec's loud failure. In the Phase 1 `Value` backend, a partially-applied or
