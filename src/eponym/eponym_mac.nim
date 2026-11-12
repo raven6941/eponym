@@ -3798,37 +3798,49 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   let params = decl[3]
   if params.len == 0 or params[0].kind == nnkEmpty:
     return nil
-  let resultType = runtimeNimType(params[0], codecMappings, records,
-                                  allowDependentSigma, allowArray = true)
-  if resultType.isNil: return nil
+  let reprResultType = runtimeNimType(params[0], codecMappings, records,
+                                      allowDependentSigma, allowArray = true)
+  let valueResultType = runtimeNimType(params[0], codecMappings, records,
+                                       allowDependentSigma, allowArray = false)
+  if reprResultType.isNil or valueResultType.isNil: return nil
 
-  var formal = newNimNode(nnkFormalParams)
-  formal.add(ident("int"))
+  var valueFormal = newNimNode(nnkFormalParams)
+  valueFormal.add(copyNimTree(valueResultType))
+  var reprFormal = newNimNode(nnkFormalParams)
+  reprFormal.add(copyNimTree(reprResultType))
   var argSyms: seq[NimNode] = @[]
   var argNames: seq[string] = @[]
   var argEponymTypes: seq[NimNode] = @[]
   var argNimTypes: seq[NimNode] = @[]
+  var reprArgNimTypes: seq[NimNode] = @[]
   for i in 1 ..< params.len:
     let p = params[i]
     if p.kind != nnkIdentDefs: return nil
-    let argType = runtimeNimType(p[^2], codecMappings, records,
-                                 allowDependentSigma, allowArray = true)
-    if argType.isNil: return nil
+    let reprArgType = runtimeNimType(p[^2], codecMappings, records,
+                                     allowDependentSigma, allowArray = true)
+    let valueArgType = runtimeNimType(p[^2], codecMappings, records,
+                                      allowDependentSigma, allowArray = false)
+    if reprArgType.isNil or valueArgType.isNil: return nil
     for j in 0 ..< p.len - 2:
       let argName = if p[j].kind == nnkPragmaExpr: p[j][0] else: p[j]
       let argSym = genSym(nskParam, $argName)
-      let formalType = if callbackCanDeferGenericInference(params, i,
+      let valueFormalType = if callbackCanDeferGenericInference(params, i,
           generic.typeNames): ident"auto"
-        else: argType
+        else: valueArgType
+      let reprFormalType = if callbackCanDeferGenericInference(params, i,
+          generic.typeNames): ident"auto"
+        else: reprArgType
       let defaultValue = if p[^1].kind == nnkEmpty: newEmptyNode()
                          else: copyNimTree(p[^1])
-      formal.add(newIdentDefs(argSym, formalType, defaultValue))
+      valueFormal.add(newIdentDefs(argSym, valueFormalType,
+        copyNimTree(defaultValue)))
+      reprFormal.add(newIdentDefs(copyNimTree(argSym), reprFormalType,
+        defaultValue))
       argSyms.add(argSym)
       argNames.add($argName)
       argEponymTypes.add(p[^2])
-      argNimTypes.add(argType)
-
-  formal[0] = resultType
+      argNimTypes.add(valueArgType)
+      reprArgNimTypes.add(reprArgType)
 
   let dirLit = newLit(baseDir)
   let srcLit = newLit(src)
@@ -3911,11 +3923,15 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
     if wantTypes.len != runtimeTypes.len + 1:
       useRepr = false
     else:
-      for i, at in runtimeTypes:
-        if not nimTypeMatchesRepr(at, wantTypes[i]):
+      var wantArg = 0
+      for i in 0 ..< argNimTypes.len:
+        let slot = generic.genericNames.len + i
+        if slot >= piRuntimeSlots.len or not piRuntimeSlots[slot]: continue
+        if not nimTypeMatchesRepr(reprArgNimTypes[i], wantTypes[wantArg]):
           useRepr = false
           break
-      if useRepr and not nimTypeMatchesRepr(resultType, wantTypes[^1]):
+        inc wantArg
+      if useRepr and not nimTypeMatchesRepr(reprFormal[0], wantTypes[^1]):
         useRepr = false
   if requireCompiled and not useRepr:
     # Issue #515: a `[n: Nat]`-style static binder used as a runtime value is
@@ -3969,7 +3985,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
       result.add(newTree(nnkPostfix, ident("*"), ident(defName)))
       result.add(newEmptyNode())
       result.add(generic.genericParams)
-      result.add(formal)
+      result.add(reprFormal)
       result.add(newEmptyNode())
       result.add(newEmptyNode())
       result.add(reprCall)
@@ -3988,7 +4004,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   else:
     wrapperBody.add(newLetStmt(runtimeValue,
       newCall(bindSym"callValueFuncDir", callArgs)))
-  let resultExpr = runtimeValueConversionExpr(params[0], resultType,
+  let resultExpr = runtimeValueConversionExpr(params[0], valueResultType,
     runtimeValue, false, codecMappings, records, globalsSym,
     allowDependentSigma, wrapperIndexOverrides)
   if resultExpr.isNil: return nil
@@ -3998,7 +4014,7 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   result.add(newTree(nnkPostfix, ident("*"), ident(defName)))
   result.add(newEmptyNode())
   result.add(generic.genericParams)
-  result.add(formal)
+  result.add(valueFormal)
   result.add(newEmptyNode())
   result.add(newEmptyNode())
   result.add(wrapperBody)
