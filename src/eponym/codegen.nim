@@ -1794,24 +1794,33 @@ proc nimTypeMatchesRepr*(n: NimNode, rt: ReprType): bool =
       if p.kind in {nnkIdent, nnkSym} and $p == "closure": return true
     false
 
+proc annotateArrayNames(rt: var ReprType, binderPos: int)
+
 proc reprSigOfType*(ctx: CodegenCtx, ty: Term): seq[ReprType] =
   ## Representation types of a Pi telescope's binder domains (outermost
   ## first), followed by the result type. Quantity-0 binders are erased
   ## from the host signature. Raises CgUnsupported when anything else is
   ## outside the fragment.
   var t = ty
+  var pos = 0
   while t != nil and t.kind == tPi:
     if t.qty != q0:
       # Issue #386: a binder domain outside the representation fragment
       # keeps the established "non-atomic binder domain" diagnostic.
       # Issue #401: chain the underlying reason instead of discarding it,
       # so the report names the real cause.
-      try: result.add(ctx.reprTypeOf(t.dom, allowArray = true))
+      try:
+        var rt = ctx.reprTypeOf(t.dom, allowArray = true)
+        annotateArrayNames(rt, pos)
+        result.add(rt)
       except CgUnsupported as e:
         raise newException(CgUnsupported,
           "non-atomic binder domain (" & e.msg & ")")
+    inc pos
     t = t.scope.bdy
-  result.add(ctx.reprTypeOf(t, allowArray = true))
+  var res = ctx.reprTypeOf(t, allowArray = true)
+  annotateArrayNames(res, pos)
+  result.add(res)
 
 proc termUsesBinder(t: Term, target: int, depth = 0): bool =
   ## Conservative free-variable occurrence test for a binder in a checked
@@ -1941,9 +1950,15 @@ proc reprSigWithArrayNames(ctx: CodegenCtx, ty: Term): seq[ReprType] =
   var pos = 0
   while cur != nil and cur.kind == tPi:
     if cur.qty != q0:
-      var rt = ctx.reprTypeOf(cur.dom, allowArray = true)
-      annotateArrayNames(rt, pos)
-      result.add(rt)
+      # Issue #386: keep the established "non-atomic binder domain"
+      # diagnostic (see reprSigOfType).
+      try:
+        var rt = ctx.reprTypeOf(cur.dom, allowArray = true)
+        annotateArrayNames(rt, pos)
+        result.add(rt)
+      except CgUnsupported as e:
+        raise newException(CgUnsupported,
+          "non-atomic binder domain (" & e.msg & ")")
     inc pos
     cur = cur.scope.bdy
   var rt = ctx.reprTypeOf(cur, allowArray = true)
@@ -2109,21 +2124,40 @@ proc boundaryPreviewReport*(d: ElabDef, globals: Globals, baseDir, src: string,
     of cgtInterpreter: "interpreter"
   reportText.add("Nim boundary:\n")
   var sig: seq[ReprType] = @[]
+  var staticPositions: seq[bool] = @[]
   var representable = true
-  try: sig = ctx.reprSig(d)
+  # The preview must show the signature emission actually uses: pure
+  # length binders are static generic parameters (not runtime formals)
+  # and symbolic array lengths carry their static names. The plain
+  # telescope signature would render an empty `array[, T]` and list a
+  # static binder as an `int` formal.
+  try:
+    let info = ctx.compiledReprInfo(d)
+    sig = info.sig
+    staticPositions = info.staticPositions
   except CgUnsupported: representable = false
   if tier == cgtRepr and representable:
     var formal: seq[string] = @[]
     var ty = d.tyTm
     var si = 0
+    var binderPos = 0
     while ty.kind == tPi:
       if ty.qty != q0:
-        formal.add((if ty.scope.adv == "_": "arg" & $formal.len else: ty.scope.adv) &
-          ": " & reprTypeName(sig[si]))
-        inc si
+        if binderPos >= staticPositions.len or
+            not staticPositions[binderPos]:
+          formal.add((if ty.scope.adv == "_": "arg" & $formal.len else: ty.scope.adv) &
+            ": " & reprTypeName(sig[si]))
+          inc si
       ty = ty.scope.bdy
-    reportText.add("  proc " & d.name & "(" & formal.join(", ") & "): " &
-      reprTypeName(sig[^1]) & "\n")
+      inc binderPos
+    var genericPart = ""
+    for i, isStatic in staticPositions:
+      if isStatic:
+        genericPart.add(if genericPart.len == 0: "[" else: ", ")
+        genericPart.add("eponymN" & $i & ": static[int]")
+    if genericPart.len > 0: genericPart.add("]")
+    reportText.add("  proc " & d.name & genericPart & "(" &
+      formal.join(", ") & "): " & reprTypeName(sig[^1]) & "\n")
   else:
     reportText.add("  unavailable (" & tierName & " tier; " & reason & ")\n")
   reportText.add("runtime checks:\n")
@@ -2131,17 +2165,21 @@ proc boundaryPreviewReport*(d: ElabDef, globals: Globals, baseDir, src: string,
   if tier == cgtRepr and representable:
     var ty = d.tyTm
     var si = 0
+    var binderPos = 0
     var prior: Ctx = @[]
     while ty.kind == tPi:
       if ty.qty != q0:
-        let rt = sig[si]
-        if rt.kind == repSeq and rt.isVector:
-          let pn = if ty.scope.adv == "_": "arg" & $si else: ty.scope.adv
-          checks.add("  " & pn & ".len == " & boundaryTerm(rt.index, prior,
-            names, initTable[string, seq[string]]()))
+        if binderPos >= staticPositions.len or
+            not staticPositions[binderPos]:
+          let rt = sig[si]
+          if rt.kind == repSeq and rt.isVector:
+            let pn = if ty.scope.adv == "_": "arg" & $si else: ty.scope.adv
+            checks.add("  " & pn & ".len == " & boundaryTerm(rt.index, prior,
+              names, initTable[string, seq[string]]()))
+          inc si
         prior = @[CtxEntry(name: ty.scope.adv, ty: ty.dom, qty: ty.qty)] & prior
-        inc si
       ty = ty.scope.bdy
+      inc binderPos
   if checks.len == 0: reportText.add("  none (no additional generated entry checks)\n")
   else: reportText.add(checks.join("\n") & "\n")
   reportText.add("Trust:\n")

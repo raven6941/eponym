@@ -2,9 +2,9 @@ Definition f
 Eponym:
   (n : Nat) -> (values : Vec Int n) -> Vec Int n
 Nim boundary:
-  proc f(n: int, values: seq[int]): seq[int]
+  proc f[eponymN0: static[int]](values: array[eponymN0, int]): array[eponymN0, int]
 runtime checks:
-  values.len == n
+  none (no additional generated entry checks)
 Trust:
   runtimeType(Int, int): identity int representation; the Eponym/Nim correspondence is trusted
   runtimeType(Nat, int): identity int representation; the Eponym/Nim correspondence is trusted
@@ -12,4 +12,4 @@ notes:
   q0 binders are erased and have no Nim formal.
   Nat uses int; variable Vec A n uses seq[A] and an O(1) entry length check; literal Vec A 3 uses array[3, A] in params, results, and Sigma fields when built coherently.
   Sig maps to a host tuple; opaque families use their declared host type.
-  compilation tier: representation (Phase 2 representation code emitted ((int, seq[int]) -> seq[int])).
+  compilation tier: representation (Phase 2 representation code emitted ((array[eponymN0, int]) -> array[eponymN0, int])).
