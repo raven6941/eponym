@@ -4029,6 +4029,67 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
           ")' for an ordinary runtime parameter, or keep '" & bname &
           "' computationally irrelevant (type-level only) so it erases " &
           "(quantity 0) from the compiled body", decl)
+    # Mirror of #515 (issue #564 Step 2): a `(n: Nat)`-style runtime-declared
+    # binder that only appears in Vec length positions compiles as a static
+    # parameter, so the compiled proc takes an array over it while the
+    # wrapper declared a seq. The mismatch shows up positionally: a declared
+    # runtime formal whose type disagrees with the compiled formal, where the
+    # compiled formal is (or contains) a symbolic array. Name the binder from
+    # that array's length (`eponymN<i>` indexes the Pi telescope, which
+    # wrapperValueNames lists in order).
+    proc staticBinderPos(rt: ReprType): int =
+      case rt.kind
+      of repArray:
+        if rt.arrayLen < 0 and rt.arrayLenName.startsWith("eponymN"):
+          try:
+            let pos = parseInt(rt.arrayLenName[7 .. ^1])
+            if pos >= 0 and pos < wrapperValueNames.len: return pos
+          except ValueError: discard
+        -1
+      of repSigma:
+        for f in rt.sigmaFields:
+          let p = staticBinderPos(f)
+          if p >= 0: return p
+        -1
+      of repFunc:
+        let p = staticBinderPos(rt.funcDom[])
+        if p >= 0: return p
+        staticBinderPos(rt.funcCod[])
+      of repSeq, repOption:
+        staticBinderPos(rt.elem[])
+      else: -1
+    if slotAlignmentMatches and compiledReprName.len > 0:
+      let wantTypes = compiledReprTypes.getOrDefault(defName, @[])
+      var wantArg = 0
+      var staticPos = -1
+      for i in 0 ..< argNimTypes.len:
+        let slot = generic.genericNames.len + i
+        if slot >= piRuntimeSlots.len or not piRuntimeSlots[slot]: continue
+        if wantArg >= wantTypes.len - 1: break
+        if not nimTypeMatchesRepr(reprArgNimTypes[i], wantTypes[wantArg]):
+          staticPos = staticBinderPos(wantTypes[wantArg])
+          break
+        inc wantArg
+      if staticPos < 0 and wantTypes.len > 0 and
+          not nimTypeMatchesRepr(reprFormal[0], wantTypes[^1]):
+        staticPos = staticBinderPos(wantTypes[^1])
+      if staticPos >= 0:
+        let staticName = wrapperValueNames[staticPos]
+        var bracketHint = ""
+        let argIdx = staticPos - generic.genericNames.len
+        if argIdx >= 0 and argIdx < argEponymTypes.len:
+          let tyNode = argEponymTypes[argIdx]
+          if tyNode.kind in {nnkIdent, nnkSym}:
+            bracketHint = " (e.g. '[" & staticName & ": " & $tyNode & "]')"
+        error("eponymBlock: definition '" & defName & "' declares '" &
+          staticName & "' as a runtime parameter, but '" & staticName &
+          "' only appears in Vec length positions, so it compiled as a " &
+          "static parameter -- the compiled proc takes an array over '" &
+          staticName & "' while the wrapper declared a seq, and the two " &
+          "cannot be reconciled at the boundary. Declare '" &
+          staticName & "' as a static parameter with square brackets" &
+          bracketHint & ", or use '" & staticName &
+          "' computationally so it stays a runtime value", decl)
     error("eponymBlock requireCompiled: definition '" & defName &
       "' was checked successfully, but no supported Nim runtime representation " &
       "matches its compiled representation", decl)
