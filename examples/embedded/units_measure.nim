@@ -10,15 +10,15 @@
 import std/math
 import eponym_mac
 
-proc hostAddQ(d: seq[int], a, b: float64): float64 = a + b
-proc hostMulQ(d1, d2: seq[int], a, b: float64): float64 = a * b
-proc hostDivQ(d1, d2: seq[int], a, b: float64): float64 = a / b
-proc hostPowQ(n: int, d: seq[int], x: float64): float64 = pow(x, float64(n))
+proc hostAddQ(d: array[0..2, int], a, b: float64): float64 = a + b
+proc hostMulQ(d1, d2: array[0..2, int], a, b: float64): float64 = a * b
+proc hostDivQ(d1, d2: array[0..2, int], a, b: float64): float64 = a / b
+proc hostPowQ(n: int, d: array[0..2, int], x: float64): float64 = pow(x, float64(n))
 
-proc hostParseUnit(text: string): tuple[dimensions: seq[int], scale: float64] =
+proc hostParseUnit(text: string): tuple[dimensions: array[0..2, int], scale: float64] =
   case text
-  of "lb*s": (@[1, 1, -1], 4.4482216152605) # lbf-second, normalized to N*s
-  of "N*s": (@[1, 1, -1], 1.0)
+  of "lb*s": ([1, 1, -1], 4.4482216152605) # lbf-second, normalized to N*s
+  of "N*s": ([1, 1, -1], 1.0)
   else: raise newException(ValueError, "unknown unit: " & text)
 
 proc hostKilometers(value: float64): float64 = value * 1000.0
@@ -69,16 +69,16 @@ when isMainModule:
   # Convert a real scaled unit and exercise both positive and negative powers.
   doAssert runKilometers(1.25) == 1250.0
   doAssert runAddLengths(2.0, 3.0) == 5.0
-  doAssert runPowQ(-1, @[0, 0, 1], 2.0) == 0.5
+  doAssert runPowQ(-1, [0, 0, 1], 2.0) == 0.5
 
   # Runtime values use the same checked algebra as their type indices.
-  let speed = runDivQ(@[0, 1, 0], @[0, 0, 1], 100.0, 20.0)
-  let area = runMulQ(@[0, 1, 0], @[0, 1, 0], 2.0, 3.0)
+  let speed = runDivQ([0, 1, 0], [0, 0, 1], 100.0, 20.0)
+  let area = runMulQ([0, 1, 0], [0, 1, 0], 2.0, 3.0)
   doAssert speed == 5.0
   doAssert area == 6.0
 
-  let lengthTimesLength = runDimensionSum(@[0, 1, 0], @[0, 1, 0])
-  let lengthOverTime = runDimensionDifference(@[0, 1, 0], @[0, 0, 1])
+  let lengthTimesLength = runDimensionSum([0, 1, 0], [0, 1, 0])
+  let lengthOverTime = runDimensionDifference([0, 1, 0], [0, 0, 1])
   doAssert lengthTimesLength == [0, 2, 0]
   doAssert lengthOverTime == [0, 1, -1]
 

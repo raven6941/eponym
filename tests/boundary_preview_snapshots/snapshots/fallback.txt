@@ -9,6 +9,6 @@ Trust:
   none
 notes:
   q0 binders are erased and have no Nim formal.
-  Nat uses int; variable Vec A n uses seq[A] and an O(1) entry length check; literal Vec A 3 as a parameter uses array[3, A].
+  Nat uses int; variable Vec A n uses seq[A] and an O(1) entry length check; literal Vec A 3 uses array[3, A] in params, results, and Sigma fields when built coherently.
   Sig maps to a host tuple; opaque families use their declared host type.
   compilation tier: Value (Phase 2 unavailable: non-atomic binder domain (type has no runtime representation mapping)).

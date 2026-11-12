@@ -195,24 +195,21 @@ runtime values. Common runtime representations include:
 For example, `runtimeVector(Vec)` maps variable-length `Vec[Int, n]` to
 `seq[int]` and `Vec[Float, n]` to `seq[float]`, checking that the sequence
 length matches `n`. When a `Vec` length is a literal known at compile time,
-the representation backend maps it to a fixed Nim array — but only in a
-top-level parameter position: `Vec[Float, 3]` as a def parameter crosses
-the boundary as `array[3, float]`, so Nim's type system enforces the
-length. A literal `Vec` in a result position, a `Sig` component, or any
-other nested position stays `seq`, because the value there is constructed
-by generated or host code that builds sequences: a `Vec[Int, 3]` result
-built with `cons` (sensor_fusion `mkVec3`) and a `Sig` carrying
-`Vec[Int, 3]` produced by a host function (units `runParseUnit`) both
-need the sequence representation. This literal-array path is per parameter
-and works coherently for all-literal signatures; Nim does not implicitly
-pass an `array[3, float]` where a variable-length `seq[float]` parameter
-is expected. A literal `Vec` constructed inside a definition (for example
-by `cons`) is a sequence, and cannot be passed where an array parameter
-is expected — only values that arrive as parameters cross as arrays, and
-a postulate forwarder converts an array parameter back to a sequence for
-its host procedure. Static-generic array lengths and array construction
-for a `Vec` result are not covered by this step; those remain outside the
-current representation tier.
+the representation backend maps it to a fixed Nim array in first-order
+parameters, results, and `Sig` fields: `Vec[Float, 3]` crosses as
+`array[3, float]`, so Nim's type system enforces the length. Such values
+must be supplied by an array parameter, built by a direct `cons` chain with
+literal indices, or returned by a host procedure whose declaration uses the
+array type. The host procedure at a postulate boundary is called directly;
+its declared type is the contract. There are no O(n) seq-to-array or
+array-to-seq coercions at any boundary.
+
+`vecElim` remains variable-length code: its literal-Vec results stay `seq`
+and cannot cross as arrays. A standalone `nil` at a literal Vec type is not
+supported (the polymorphic `nil` has no length information); direct `cons`
+with index zero is supported because it never indexes its tail. Nested
+function types/callbacks remain seq-based. Static-generic array lengths and
+other composite collection elements remain outside this representation tier.
 Vectors and lists of mapped opaque scalar values work when their element type
 has a codec. Nested vectors and other composite collection elements remain
 outside the direct representation tier. Dynamic generic value

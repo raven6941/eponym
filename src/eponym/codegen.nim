@@ -1505,13 +1505,10 @@ proc reprTypeOf(ctx: CodegenCtx, t: Term, allowArray = false): ReprType =
   ## Raises CgUnsupported otherwise. The check is structural only:
   ## length-index terms are validated when compiled (entry check), never
   ## here.
-  ## `allowArray` is true only for a top-level parameter domain
-  ## (reprSigOfType): a literal-length `Vec` there crosses as a fixed
-  ## Nim array, supplied from outside. Everywhere else — results,
-  ## `Sig` components, nested positions — a literal `Vec` stays `seq`,
-  ## because the value is constructed by generated or host code that
-  ## builds sequences, and the array contract would break it
-  ## (sensor_fusion `mkVec3`, units `runParseUnit`).
+  ## `allowArray` is true at a representation boundary: top-level Pi
+  ## domains/results and Sigma components. A literal-length `Vec` there
+  ## crosses as a fixed Nim array. Nested function types keep the default
+  ## false, so callbacks remain seq-based.
   if t.isNil:
     raise newException(CgUnsupported, "nil type")
   if t.kind == tR:
@@ -1530,10 +1527,10 @@ proc reprTypeOf(ctx: CodegenCtx, t: Term, allowArray = false): ReprType =
     # positions (opaque families) — a live index (a `Vec` length) mentioning
     # the bound value has no host denotation without a runtime check the
     # tuple boundary cannot express, so it is honestly rejected.
-    let first = ctx.reprTypeOf(t.dom)
+    let first = ctx.reprTypeOf(t.dom, allowArray)
     let marker = Term(kind: tR, refId: sigmaMarkerRefId)
     let opened = subst(t.scope.bdy, 0, marker)
-    let second = ctx.reprTypeOf(opened)
+    let second = ctx.reprTypeOf(opened, allowArray)
     if reprTypeLiveMentionsMarker(second, sigmaMarkerRefId):
       raise newException(CgUnsupported,
         "Sigma codomain mentions the bound value in a live index position")
@@ -1798,7 +1795,7 @@ proc reprSigOfType*(ctx: CodegenCtx, ty: Term): seq[ReprType] =
         raise newException(CgUnsupported,
           "non-atomic binder domain (" & e.msg & ")")
     t = t.scope.bdy
-  result.add(ctx.reprTypeOf(t))
+  result.add(ctx.reprTypeOf(t, allowArray = true))
 
 proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprType] =
   ## Representation types of the def's Pi-binder domains (outermost
@@ -1943,7 +1940,7 @@ proc boundaryPreviewReport*(d: ElabDef, globals: Globals, baseDir, src: string,
   else: reportText.add(trustLines.mapIt("  " & it).join("\n") & "\n")
   reportText.add("notes:\n")
   reportText.add("  q0 binders are erased and have no Nim formal.\n")
-  reportText.add("  Nat uses int; variable Vec A n uses seq[A] and an O(1) entry length check; literal Vec A 3 as a parameter uses array[3, A].\n")
+  reportText.add("  Nat uses int; variable Vec A n uses seq[A] and an O(1) entry length check; literal Vec A 3 uses array[3, A] in params, results, and Sigma fields when built coherently.\n")
   reportText.add("  Sig maps to a host tuple; opaque families use their declared host type.\n")
   reportText.add("  compilation tier: " & tierName & " (" & reason & ").\n")
   reportText
@@ -3267,7 +3264,27 @@ proc cgReprCtor(ctx: var CodegenCtx, r: CgRef, appArgs: seq[Term],
           (appArgs[1], appArgs[2])
       let xCode = cgRepr(ctx, xArg, env)
       let xsCode = cgRepr(ctx, xsArg, env)
-      newTree(nnkInfix, ident"&", bracketOf(@[xCode]), xsCode)
+      if m.isRuntimeVector and appArgs[1].kind == tNatLit:
+        # A literal index fixes the result length. Bind the tail first so it
+        # is evaluated even for k=0, then construct an array from elements;
+        # Nim has no array overload for `&`. Indexing works for either seq or
+        # array tails, which keeps this robust inside vecElim-generated code.
+        let k = appArgs[1].natLitVal
+        let tailSym = genSym(nskLet, "cgVecConsTail")
+        var elems: seq[NimNode] = @[xCode]
+        for i in 0 ..< k:
+          elems.add(newTree(nnkBracketExpr, tailSym, newLit(i)))
+        var stmts = newStmtList()
+        stmts.add(newLetStmt(tailSym, xsCode))
+        stmts.add(newNimNode(nnkBracket))
+        for elem in elems:
+          stmts[^1].add(elem)
+        var blk = newNimNode(nnkBlockStmt)
+        blk.add(newEmptyNode())
+        blk.add(stmts)
+        blk
+      else:
+        newTree(nnkInfix, ident"&", bracketOf(@[xCode]), xsCode)
     else:
       raise newException(CgUnsupported, "constructor '" & r.name &
         "' of '" & m.eponymName & "' outside the representation fragment")
@@ -3804,8 +3821,8 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
   ## result are already the host representations, so the host procedure is
   ## called directly with no `Value` allocated and no codec run — except
   ## a literal-length `Vec` parameter, which crosses to the forwarder as
-  ## a fixed array and is converted back to a sequence (`@p`) for the
-  ## host procedure, whose contract is the sequence representation.
+  ## a fixed array and is passed directly to the host procedure. The host
+  ## declaration is the contract at this identity boundary.
   ## A `Sig` result is the host tuple the bound procedure returns.
   ##
   ## Returns nil when the postulate's type is outside the representation
@@ -3852,13 +3869,8 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
     formal.add(newIdentDefs(psym, ftype, newEmptyNode()))
     argSyms.add(psym)
   var call = newCall(copyNimTree(binding.implementation))
-  for i, s in argSyms:
-    if sig[i].kind == repArray:
-      # A literal-length `Vec` parameter arrives as a fixed array, but
-      # the host procedure is written against the sequence contract.
-      call.add(newTree(nnkPrefix, ident"@", s))
-    else:
-      call.add(s)
+  for s in argSyms:
+    call.add(s)
   var procNode = newNimNode(nnkProcDef)
   procNode.add(newTree(nnkPostfix, ident"*", ident(binding.forwarderName)))
   procNode.add(newEmptyNode())
