@@ -2021,13 +2021,6 @@ proc compiledReprInfo(ctx: CodegenCtx, d: ElabDef): tuple[
     if isStatic and ("eponymN" & $i) notin referenced:
       result.staticPositions[i] = false
 
-proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprType] =
-  ## Representation types of the def's Pi-binder domains (outermost
-  ## first), followed by the result type. Quantity-0 binders are erased
-  ## from the host signature. Raises CgUnsupported when anything else is
-  ## outside the fragment.
-  ctx.reprSigOfType(d.tyTm)
-
 proc boundaryTerm(t: Term, ctx: Ctx, refNames: Table[int, string],
                   records: Table[string, seq[string]],
                   fallbackNames: seq[string] = @[], depth: int = 0): string =
@@ -2681,7 +2674,7 @@ proc checkMotiveKind(ctx: CodegenCtx, r: CgRef, appArgs: seq[Term],
                      motiveIdx: int) =
   ## The eliminator's result must denote a representation in the fragment:
   ## establish it structurally from the motive's codomain, mirroring
-  ## reprSig's result-type check on definitions.
+  ## reprSigOfType's result-type check on definitions.
   let cod = motiveCodomain(appArgs[motiveIdx])
   if cod.isNil:
     raise newException(CgUnsupported, "eliminator '" & r.name &
