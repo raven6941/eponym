@@ -185,7 +185,7 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_require_compiled_unsupported.nim",
      "checked successfully, but checking is not code generation"),
     ("tests/fixtures/embedded_err_require_compiled_erased_vec_index.nim",
-     "checked successfully, but checking is not code generation"),
+     "only appears in Vec length positions, so it compiled as a static parameter"),
     ("tests/fixtures/embedded_err_require_compiled_dynamic.nim",
      "eponymBlock requireCompiled does not emit runtimeValue wrappers"),
     ("tests/fixtures/embedded_err_staged_type_staging.nim",

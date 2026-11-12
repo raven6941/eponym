@@ -64,7 +64,7 @@ type
   ReprKind* = enum
     repInt  # Eponym type mapped to Nim `int` via plain runtimeType
     repSeq  # `Vec`/`List` family mapped to Nim `seq[element]`
-    repArray  # literal-length `Vec` family mapped to Nim `array[n, element]`
+    repArray  # fixed/symbolic-length `Vec` family mapped to Nim `array[n, element]`
     repOption  # `Option` family mapped to Nim `Option[element]`
     repOpaque  # Issue #401: any other concrete `runtimeType` mapping is an
       # identity representation over its declared host type. Covers atomic
@@ -98,7 +98,9 @@ type
     kind*: ReprKind
     isVector*: bool  # for repSeq: from runtimeVector (length-indexed)
     index*: Term  # for repSeq+isVector: the length index term
-    arrayLen*: int  # for repArray: the literal length
+    arrayLen*: int  # for repArray: the literal length, or -1 when symbolic
+    arrayLenName*: string  # for symbolic repArray: the emitted static param
+    arrayLenTerm*: Term  # for symbolic repArray: the source length term
     elem*: ref ReprType  # for repSeq/repArray/repOption: the element representation
     hostType*: NimNode  # for repOpaque: the declared Nim type AST
     sigmaFields*: seq[ReprType]  # for repSigma: the component reprs
@@ -239,7 +241,9 @@ type
       ## representations (seq, Option, opaque Nim types) instead of Values;
       ## definitions whose types have no entry keep the Phase 1 Value backend.
     reprProcs*: Table[int, tuple[name: string, arity: int,
-                                 sig: seq[ReprType]]]
+                                 sig: seq[ReprType],
+                                 genericParams: NimNode,
+                                 staticPositions: seq[bool]]]
       ## Issue #330 repr tier: def refId -> (emitted proc name, int arity)
       ## for definitions compiled against host representations directly.
       ## Pre-assigned before compiling a body so recursion resolves.
@@ -391,7 +395,9 @@ proc buildCodegenCtx*(globals: Globals, baseDir, src: string,
     inlineGenericDefs: initTable[int, ElabDef](),
     usedElims: initTable[int, bool](),
     reps: initTable[int, HostRuntimeType](),
-    reprProcs: initTable[int, tuple[name: string, arity: int, sig: seq[ReprType]]](),
+    reprProcs: initTable[int, tuple[name: string, arity: int, sig: seq[ReprType],
+                                    genericParams: NimNode,
+                                    staticPositions: seq[bool]]](),
     reprPostulateQtys: initTable[int, seq[Quantity]](),
     reprPostulateIndexPositions: initTable[int, seq[bool]](),
     postulateAdapters: initTable[int, seq[PostulateAdapter]](),
@@ -1195,7 +1201,9 @@ proc detectBadElims(ctx: var CodegenCtx) =
       var dryCtx = CodegenCtx(refs: ctx.refs, baseDir: "", src: "",
         badElims: ctx.badElims, usedElims: initTable[int, bool](),
         reps: ctx.reps,
-        reprProcs: initTable[int, tuple[name: string, arity: int, sig: seq[ReprType]]]())
+        reprProcs: initTable[int, tuple[name: string, arity: int, sig: seq[ReprType],
+                                        genericParams: NimNode,
+                                        staticPositions: seq[bool]]]())
       try:
         for _, cs in r.cases.pairs:
           if cs.ctorArity < 0:
@@ -1578,6 +1586,9 @@ proc reprTypeOf(ctx: CodegenCtx, t: Term, allowArray = false): ReprType =
       if allowArray and appArgs[1].kind == tNatLit:
         return ReprType(kind: repArray, arrayLen: appArgs[1].natLitVal,
                         elem: boxRepr(elem))
+      if allowArray and appArgs[1].kind == tV:
+        return ReprType(kind: repArray, arrayLen: -1,
+                        arrayLenTerm: appArgs[1], elem: boxRepr(elem))
       return ReprType(kind: repSeq, isVector: true, index: appArgs[1],
                       elem: boxRepr(elem))
     if m.isRuntimeList:
@@ -1609,7 +1620,9 @@ proc nimReprType*(rt: ReprType): NimNode =
   case rt.kind
   of repInt: ident"int"
   of repSeq: newTree(nnkBracketExpr, ident"seq", nimReprType(rt.elem[]))
-  of repArray: newTree(nnkBracketExpr, ident"array", newLit(rt.arrayLen),
+  of repArray: newTree(nnkBracketExpr, ident"array",
+                       if rt.arrayLen >= 0: newLit(rt.arrayLen)
+                       else: ident(rt.arrayLenName),
                        nimReprType(rt.elem[]))
   of repOption: newTree(nnkBracketExpr, ident"Option", nimReprType(rt.elem[]))
   of repOpaque: copyNimTree(rt.hostType)
@@ -1669,7 +1682,9 @@ proc reprTypeName*(rt: ReprType): string =
   case rt.kind
   of repInt: "int"
   of repSeq: "seq[" & reprTypeName(rt.elem[]) & "]"
-  of repArray: "array[" & $rt.arrayLen & ", " & reprTypeName(rt.elem[]) & "]"
+  of repArray:
+    "array[" & (if rt.arrayLen >= 0: $rt.arrayLen else: rt.arrayLenName) &
+      ", " & reprTypeName(rt.elem[]) & "]"
   of repOption: "Option[" & reprTypeName(rt.elem[]) & "]"
   of repOpaque: nimTypeName(rt.hostType)
   of repSigma: "(" & rt.sigmaFields.mapIt(reprTypeName(it)).join(", ") & ")"
@@ -1738,9 +1753,10 @@ proc nimTypeMatchesRepr*(n: NimNode, rt: ReprType): bool =
   of repArray:
     n.kind == nnkBracketExpr and n.len == 3 and
       n[0].kind in {nnkIdent, nnkSym} and $n[0] == "array" and
-      n[1].kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit, nnkInt32Lit,
-        nnkInt64Lit, nnkUIntLit..nnkUInt64Lit} and
-      n[1].intVal == rt.arrayLen and
+      ((rt.arrayLen >= 0 and n[1].kind in {nnkIntLit, nnkInt8Lit, nnkInt16Lit,
+        nnkInt32Lit, nnkInt64Lit, nnkUIntLit..nnkUInt64Lit} and
+        n[1].intVal == rt.arrayLen) or
+       (rt.arrayLen < 0 and n[1].kind in {nnkIdent, nnkSym})) and
       nimTypeMatchesRepr(n[2], rt.elem[])
   of repOption:
     n.kind == nnkBracketExpr and n.len == 2 and
@@ -1778,31 +1794,232 @@ proc nimTypeMatchesRepr*(n: NimNode, rt: ReprType): bool =
       if p.kind in {nnkIdent, nnkSym} and $p == "closure": return true
     false
 
+proc annotateArrayNames(rt: var ReprType, binderPos: int)
+
 proc reprSigOfType*(ctx: CodegenCtx, ty: Term): seq[ReprType] =
   ## Representation types of a Pi telescope's binder domains (outermost
   ## first), followed by the result type. Quantity-0 binders are erased
   ## from the host signature. Raises CgUnsupported when anything else is
   ## outside the fragment.
   var t = ty
+  var pos = 0
   while t != nil and t.kind == tPi:
     if t.qty != q0:
       # Issue #386: a binder domain outside the representation fragment
       # keeps the established "non-atomic binder domain" diagnostic.
       # Issue #401: chain the underlying reason instead of discarding it,
       # so the report names the real cause.
-      try: result.add(ctx.reprTypeOf(t.dom, allowArray = true))
+      try:
+        var rt = ctx.reprTypeOf(t.dom, allowArray = true)
+        annotateArrayNames(rt, pos)
+        result.add(rt)
       except CgUnsupported as e:
         raise newException(CgUnsupported,
           "non-atomic binder domain (" & e.msg & ")")
+    inc pos
     t = t.scope.bdy
-  result.add(ctx.reprTypeOf(t, allowArray = true))
+  var res = ctx.reprTypeOf(t, allowArray = true)
+  annotateArrayNames(res, pos)
+  result.add(res)
 
-proc reprSig(ctx: CodegenCtx, d: ElabDef): seq[ReprType] =
-  ## Representation types of the def's Pi-binder domains (outermost
-  ## first), followed by the result type. Quantity-0 binders are erased
-  ## from the host signature. Raises CgUnsupported when anything else is
-  ## outside the fragment.
-  ctx.reprSigOfType(d.tyTm)
+proc termUsesBinder(t: Term, target: int, depth = 0): bool =
+  ## Conservative free-variable occurrence test for a binder in a checked
+  ## body. `target` is the binder's index from the body's outermost frame.
+  if t.isNil: return false
+  case t.kind
+  of tV: t.idx == target + depth
+  of tPi, tSi:
+    termUsesBinder(t.dom, target, depth) or
+      termUsesBinder(t.scope.bdy, target, depth + 1)
+  of tLam:
+    # Lambda-domain types are the checked signature, not computational uses
+    # of the parameter; the signature is analyzed separately below.
+    termUsesBinder(t.scope.bdy, target, depth + 1)
+  of tPair:
+    termUsesBinder(t.pFst, target, depth) or
+      termUsesBinder(t.pSnd, target, depth) or
+      termUsesBinder(t.pScope.bdy, target, depth + 1)
+  of tApp:
+    termUsesBinder(t.fn, target, depth) or termUsesBinder(t.arg, target, depth)
+  of tFst, tSnd, tAbsurd: termUsesBinder(t.sub, target, depth)
+  of tLet:
+    termUsesBinder(t.letVal, target, depth) or
+      termUsesBinder(t.letTy, target, depth) or
+      termUsesBinder(t.letScope.bdy, target, depth + 1)
+  of tMeta: t.metaSpine.anyIt(termUsesBinder(it, target, depth))
+  of tPrim: termUsesBinder(t.primTy, target, depth)
+  else: false
+
+proc termHasVecLengthBinder(ctx: CodegenCtx, t: Term,
+                            target: int, depth = 0): bool =
+  if t.isNil: return false
+  if t.kind == tApp:
+    var args: seq[Term] = @[]
+    var h = t
+    while h.kind == tApp:
+      args.add(h.arg)
+      h = h.fn
+    if h.kind == tR and h.refId in ctx.reps and
+        ctx.reps[h.refId].isRuntimeVector and args.len == 2 and
+        args[0].kind == tV and args[0].idx == target + depth:
+      return true
+    if termHasVecLengthBinder(ctx, t.fn, target, depth) or
+        termHasVecLengthBinder(ctx, t.arg, target, depth): return true
+    return false
+  case t.kind
+  of tPi, tSi, tLam:
+    termHasVecLengthBinder(ctx, t.dom, target, depth) or
+      termHasVecLengthBinder(ctx, t.scope.bdy, target, depth + 1)
+  of tPair:
+    termHasVecLengthBinder(ctx, t.pFst, target, depth) or
+      termHasVecLengthBinder(ctx, t.pSnd, target, depth) or
+      termHasVecLengthBinder(ctx, t.pScope.bdy, target, depth + 1)
+  of tFst, tSnd, tAbsurd: termHasVecLengthBinder(ctx, t.sub, target, depth)
+  of tLet:
+    termHasVecLengthBinder(ctx, t.letVal, target, depth) or
+      termHasVecLengthBinder(ctx, t.letTy, target, depth) or
+      termHasVecLengthBinder(ctx, t.letScope.bdy, target, depth + 1)
+  of tMeta: t.metaSpine.anyIt(termHasVecLengthBinder(ctx, it, target, depth))
+  of tPrim: termHasVecLengthBinder(ctx, t.primTy, target, depth)
+  else: false
+
+proc pureLengthBinders(ctx: CodegenCtx, ty, body: Term): seq[bool] =
+  ## A Nat Pi binder is pure-length when it is used as a `Vec` length in
+  ## the type and never as a runtime value in the body. `body` must already
+  ## be q0-erased: index arguments such as the `[n]` in
+  ## `genericVecId[n](xs)` are erased before codegen, so they are not
+  ## computational uses of the binder — a generic def can call another
+  ## generic def with the same length. Both helpers count enclosing
+  ## binders in `depth`, so a binder `i` (outermost-first) is seen at
+  ## `target = -i - 1` from outside its telescope.
+  var binders: seq[Term] = @[]
+  var cur = ty
+  while cur != nil and cur.kind == tPi:
+    binders.add(cur.dom)
+    cur = cur.scope.bdy
+  result = newSeq[bool](binders.len)
+  for i, dom in binders:
+    if dom.isNil or dom.kind != tR or dom.refId notin ctx.refs or
+        ctx.refs[dom.refId].name != "Nat": continue
+    if not termHasVecLengthBinder(ctx, ty, -i - 1): continue
+    if termUsesBinder(body, -i - 1): continue
+    result[i] = true
+
+proc annotateArrayNames(rt: var ReprType, binderPos: int) =
+  case rt.kind
+  of repArray:
+    if rt.arrayLen < 0 and not rt.arrayLenTerm.isNil and
+        rt.arrayLenTerm.kind == tV:
+      let binder = binderPos - 1 - rt.arrayLenTerm.idx
+      rt.arrayLenName = "eponymN" & $binder
+  of repSigma:
+    for f in rt.sigmaFields.mitems: annotateArrayNames(f, binderPos)
+  of repFunc:
+    annotateArrayNames(rt.funcDom[], binderPos)
+    annotateArrayNames(rt.funcCod[], binderPos)
+  of repSeq, repOption:
+    annotateArrayNames(rt.elem[], binderPos)
+  else: discard
+
+proc demoteNonStaticArrays(rt: var ReprType, binderPos: int,
+                           staticPositions: seq[bool]) =
+  case rt.kind
+  of repArray:
+    if rt.arrayLen < 0 and not rt.arrayLenTerm.isNil and
+        rt.arrayLenTerm.kind == tV:
+      let binder = binderPos - 1 - rt.arrayLenTerm.idx
+      # An array over a non-static binder has no declared static
+      # parameter to name its length: demote it to `seq` with the
+      # runtime length check, whatever the other binders do.
+      if binder < 0 or binder >= staticPositions.len or
+          not staticPositions[binder]:
+        rt = ReprType(kind: repSeq, isVector: true,
+                      index: rt.arrayLenTerm, elem: rt.elem)
+  of repSigma:
+    for f in rt.sigmaFields.mitems:
+      demoteNonStaticArrays(f, binderPos, staticPositions)
+  of repFunc:
+    demoteNonStaticArrays(rt.funcDom[], binderPos, staticPositions)
+    demoteNonStaticArrays(rt.funcCod[], binderPos, staticPositions)
+  of repSeq, repOption:
+    demoteNonStaticArrays(rt.elem[], binderPos, staticPositions)
+  else: discard
+
+proc reprSigWithArrayNames(ctx: CodegenCtx, ty: Term): seq[ReprType] =
+  var cur = ty
+  var pos = 0
+  while cur != nil and cur.kind == tPi:
+    if cur.qty != q0:
+      # Issue #386: keep the established "non-atomic binder domain"
+      # diagnostic (see reprSigOfType).
+      try:
+        var rt = ctx.reprTypeOf(cur.dom, allowArray = true)
+        annotateArrayNames(rt, pos)
+        result.add(rt)
+      except CgUnsupported as e:
+        raise newException(CgUnsupported,
+          "non-atomic binder domain (" & e.msg & ")")
+    inc pos
+    cur = cur.scope.bdy
+  var rt = ctx.reprTypeOf(cur, allowArray = true)
+  annotateArrayNames(rt, pos)
+  result.add(rt)
+
+proc compiledReprInfo(ctx: CodegenCtx, d: ElabDef): tuple[
+    sig: seq[ReprType], staticPositions: seq[bool], erasedBody: Term] =
+  ## Erases q0/index arguments first and returns the erased body:
+  ## `pureLengthBinders` must see the body codegen sees, and
+  ## `compileDefProcRepr` reuses this erasure instead of erasing again.
+  try:
+    var preserveQ0Apps = initHashSet[int]()
+    for refId in ctx.inlineGenericDefs.keys:
+      preserveQ0Apps.incl(refId)
+    result.erasedBody = eraseQ0ArgumentsPreserving(d.tmTm, preserveQ0Apps)
+  except ValueError as e:
+    raise newException(CgUnsupported, "quantity erasure failed: " & e.msg)
+  result.staticPositions = pureLengthBinders(ctx, d.tyTm, result.erasedBody)
+  var full = ctx.reprSigWithArrayNames(d.tyTm)
+  var cur = d.tyTm
+  var fullIdx = 0
+  var binderPos = 0
+  while cur != nil and cur.kind == tPi:
+    if cur.qty != q0:
+      demoteNonStaticArrays(full[fullIdx], binderPos,
+        result.staticPositions)
+      if binderPos >= result.staticPositions.len or
+          not result.staticPositions[binderPos]:
+        result.sig.add(full[fullIdx])
+      inc fullIdx
+    inc binderPos
+    cur = cur.scope.bdy
+  demoteNonStaticArrays(full[^1], binderPos, result.staticPositions)
+  result.sig.add(full[^1])
+  # A pure binder whose only `Vec` occurrences sit in q0-erased
+  # parameters leaves no array in the signature: keeping its static
+  # parameter would emit a generic no caller can instantiate (nothing
+  # in the signature names it). Drop such binders from the static set;
+  # their erased length arguments are still consumed positionally by
+  # callers, and no signature element can reference a dropped binder
+  # (every array in the signature names a kept one).
+  var referenced: HashSet[string] = initHashSet[string]()
+  proc collectArrayNames(rt: ReprType) =
+    case rt.kind
+    of repArray:
+      if rt.arrayLen < 0 and rt.arrayLenName.len > 0:
+        referenced.incl(rt.arrayLenName)
+    of repSigma:
+      for f in rt.sigmaFields: collectArrayNames(f)
+    of repFunc:
+      collectArrayNames(rt.funcDom[])
+      collectArrayNames(rt.funcCod[])
+    of repSeq, repOption:
+      collectArrayNames(rt.elem[])
+    else: discard
+  for rt in result.sig:
+    collectArrayNames(rt)
+  for i, isStatic in result.staticPositions:
+    if isStatic and ("eponymN" & $i) notin referenced:
+      result.staticPositions[i] = false
 
 proc boundaryTerm(t: Term, ctx: Ctx, refNames: Table[int, string],
                   records: Table[string, seq[string]],
@@ -1900,21 +2117,40 @@ proc boundaryPreviewReport*(d: ElabDef, globals: Globals, baseDir, src: string,
     of cgtInterpreter: "interpreter"
   reportText.add("Nim boundary:\n")
   var sig: seq[ReprType] = @[]
+  var staticPositions: seq[bool] = @[]
   var representable = true
-  try: sig = ctx.reprSig(d)
+  # The preview must show the signature emission actually uses: pure
+  # length binders are static generic parameters (not runtime formals)
+  # and symbolic array lengths carry their static names. The plain
+  # telescope signature would render an empty `array[, T]` and list a
+  # static binder as an `int` formal.
+  try:
+    let info = ctx.compiledReprInfo(d)
+    sig = info.sig
+    staticPositions = info.staticPositions
   except CgUnsupported: representable = false
   if tier == cgtRepr and representable:
     var formal: seq[string] = @[]
     var ty = d.tyTm
     var si = 0
+    var binderPos = 0
     while ty.kind == tPi:
       if ty.qty != q0:
-        formal.add((if ty.scope.adv == "_": "arg" & $formal.len else: ty.scope.adv) &
-          ": " & reprTypeName(sig[si]))
-        inc si
+        if binderPos >= staticPositions.len or
+            not staticPositions[binderPos]:
+          formal.add((if ty.scope.adv == "_": "arg" & $formal.len else: ty.scope.adv) &
+            ": " & reprTypeName(sig[si]))
+          inc si
       ty = ty.scope.bdy
-    reportText.add("  proc " & d.name & "(" & formal.join(", ") & "): " &
-      reprTypeName(sig[^1]) & "\n")
+      inc binderPos
+    var genericPart = ""
+    for i, isStatic in staticPositions:
+      if isStatic:
+        genericPart.add(if genericPart.len == 0: "[" else: ", ")
+        genericPart.add("eponymN" & $i & ": static[int]")
+    if genericPart.len > 0: genericPart.add("]")
+    reportText.add("  proc " & d.name & genericPart & "(" &
+      formal.join(", ") & "): " & reprTypeName(sig[^1]) & "\n")
   else:
     reportText.add("  unavailable (" & tierName & " tier; " & reason & ")\n")
   reportText.add("runtime checks:\n")
@@ -1922,17 +2158,21 @@ proc boundaryPreviewReport*(d: ElabDef, globals: Globals, baseDir, src: string,
   if tier == cgtRepr and representable:
     var ty = d.tyTm
     var si = 0
+    var binderPos = 0
     var prior: Ctx = @[]
     while ty.kind == tPi:
       if ty.qty != q0:
-        let rt = sig[si]
-        if rt.kind == repSeq and rt.isVector:
-          let pn = if ty.scope.adv == "_": "arg" & $si else: ty.scope.adv
-          checks.add("  " & pn & ".len == " & boundaryTerm(rt.index, prior,
-            names, initTable[string, seq[string]]()))
+        if binderPos >= staticPositions.len or
+            not staticPositions[binderPos]:
+          let rt = sig[si]
+          if rt.kind == repSeq and rt.isVector:
+            let pn = if ty.scope.adv == "_": "arg" & $si else: ty.scope.adv
+            checks.add("  " & pn & ".len == " & boundaryTerm(rt.index, prior,
+              names, initTable[string, seq[string]]()))
+          inc si
         prior = @[CtxEntry(name: ty.scope.adv, ty: ty.dom, qty: ty.qty)] & prior
-        inc si
       ty = ty.scope.bdy
+      inc binderPos
   if checks.len == 0: reportText.add("  none (no additional generated entry checks)\n")
   else: reportText.add(checks.join("\n") & "\n")
   reportText.add("Trust:\n")
@@ -2255,8 +2495,12 @@ proc cgReprApp(ctx: var CodegenCtx, t: Term, env: seq[NimNode]): NimNode =
       var sigPos = 0
       let indexPositions = ctx.reprPostulateIndexPositions.getOrDefault(
         head.refId, @[])
+      let staticPositions = ctx.reprProcs[head.refId].staticPositions
       for binderPos, qty in qtys:
         if argIdx >= appArgs.len: break
+        if binderPos < staticPositions.len and staticPositions[binderPos]:
+          inc argIdx
+          continue
         if binderPos < indexPositions.len and indexPositions[binderPos]:
           inc argIdx
           continue
@@ -2430,7 +2674,7 @@ proc checkMotiveKind(ctx: CodegenCtx, r: CgRef, appArgs: seq[Term],
                      motiveIdx: int) =
   ## The eliminator's result must denote a representation in the fragment:
   ## establish it structurally from the motive's codomain, mirroring
-  ## reprSig's result-type check on definitions.
+  ## reprSigOfType's result-type check on definitions.
   let cod = motiveCodomain(appArgs[motiveIdx])
   if cod.isNil:
     raise newException(CgUnsupported, "eliminator '" & r.name &
@@ -3659,21 +3903,14 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
   if d.tmTm.isNil or d.tyTm.isNil:
     failureReason = "definition has no checked body or type"
     return nil
-  let sig =
-    try: ctx.reprSig(d)
+  let reprInfo =
+    try: ctx.compiledReprInfo(d)
     except CgUnsupported as e:
       failureReason = e.msg
       return nil
-  let erased =
-    try:
-      var preserveQ0Apps = initHashSet[int]()
-      for refId in ctx.inlineGenericDefs.keys:
-        preserveQ0Apps.incl(refId)
-      eraseQ0ArgumentsPreserving(d.tmTm, preserveQ0Apps)
-    except ValueError as e:
-      failureReason = "quantity erasure failed: " & e.msg
-      return nil
-  var body = erased
+  let sig = reprInfo.sig
+  let staticPositions = reprInfo.staticPositions
+  var body = reprInfo.erasedBody
   var params: seq[NimNode] = @[]
   var paramTypes: seq[NimNode] = @[]
   var paramQtys: seq[Quantity] = @[]
@@ -3687,6 +3924,7 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
                            preEnv: seq[NimNode]]] = @[]
   var sigIdx = 0
   var ty = d.tyTm
+  var binderPos = 0
   while ty != nil and ty.kind == tPi:
     if body.isNil or body.kind != tLam or body.qty != ty.qty:
       failureReason = "checked lambda structure does not match its Pi type"
@@ -3695,6 +3933,16 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
       envOuterToInner.add(newLit(0))
       qtyOuterToInner.add(q0)
     else:
+      let isStatic = binderPos < staticPositions.len and
+        staticPositions[binderPos]
+      if isStatic:
+        let nname = ident("eponymN" & $binderPos)
+        envOuterToInner.add(nname)
+        qtyOuterToInner.add(ty.qty)
+        body = body.scope.bdy
+        ty = ty.scope.bdy
+        inc binderPos
+        continue
       if sigIdx >= sig.len - 1:
         failureReason = "Phase 2 requires atomic mapped representation domains"
         return nil
@@ -3725,6 +3973,7 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
       qtyOuterToInner.add(ty.qty)
     body = body.scope.bdy
     ty = ty.scope.bdy
+    inc binderPos
   if sigIdx != sig.len - 1:
     return nil
   if body.isNil or body.kind == tLam:
@@ -3794,7 +4043,12 @@ proc compileDefProcRepr(d: ElabDef, ctx: var CodegenCtx,
   let emitName = if reprName.len > 0: reprName else: cgReprName(d.name)
   procNode.add(newTree(nnkPostfix, ident"*", ident(emitName)))
   procNode.add(newEmptyNode())
-  procNode.add(newEmptyNode())
+  var genericParams = newNimNode(nnkGenericParams)
+  for i, isStatic in staticPositions:
+    if isStatic:
+      genericParams.add(newIdentDefs(ident("eponymN" & $i),
+        newTree(nnkBracketExpr, ident"static", ident"int"), newEmptyNode()))
+  procNode.add(if genericParams.len > 0: genericParams else: newEmptyNode())
   procNode.add(formal)
   procNode.add(newEmptyNode())
   procNode.add(newEmptyNode())
@@ -3829,11 +4083,22 @@ proc compilePostulateProcRepr(postulateName: string, ty: Term,
   ## fragment, or when the representable arity disagrees with the binding's
   ## declared argument count (callers then keep the Phase 1 backend).
   ## Quantity-0 binders have no Nim formal parameters.
-  let fullSig =
+  var fullSig =
     try: ctx.reprSigOfType(ty)
     except CgUnsupported as e:
       failureReason = e.msg
       return nil
+  let postStatic = newSeq[bool](piQuantities(ty).len)
+  var postBinderPos = 0
+  var postSigIdx = 0
+  var postTy = ty
+  while postTy != nil and postTy.kind == tPi:
+    if postTy.qty != q0:
+      demoteNonStaticArrays(fullSig[postSigIdx], postBinderPos, postStatic)
+      inc postSigIdx
+    inc postBinderPos
+    postTy = postTy.scope.bdy
+  demoteNonStaticArrays(fullSig[^1], postBinderPos, postStatic)
   let indexPositions = postulateIndexPositions(globals, ty,
     binding.argCount)
   var sig: seq[ReprType] = @[]
@@ -4008,15 +4273,17 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       if e.reprProc != "":
         var sig: seq[ReprType] = @[]
         var sigOk = true
-        try: sig = ctx.reprSig(d)
+        try: sig = ctx.compiledReprInfo(d).sig
         except CgUnsupported as ex:
           sigOk = false
           reusedReprNote[r.name] = "repr tier not reused: callee type not " &
             "representable in this block (" & ex.msg & ")"
         if sigOk:
           if reprSigSummary(sig) == e.sigSummary:
+            let info = ctx.compiledReprInfo(d)
             ctx.reprProcs[refId] = (name: e.reprProc, arity: sig.len - 1,
-                                    sig: sig)
+                                    sig: sig, genericParams: newEmptyNode(),
+                                    staticPositions: info.staticPositions)
             reusedSig[r.name] = sig
             reprReused = true
           else:
@@ -4347,7 +4614,9 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       for i, rt in fullSig[0 ..< fullSig.len - 1]:
         if i >= indexPositions.len or not indexPositions[i]: sig.add(rt)
       sig.add(fullSig[^1])
-      ctx.reprProcs[refId] = (name: fwdName, arity: sig.len - 1, sig: sig)
+      ctx.reprProcs[refId] = (name: fwdName, arity: sig.len - 1, sig: sig,
+                              genericParams: newEmptyNode(),
+                              staticPositions: newSeq[bool](piQuantities(entry.ty).len))
       ctx.reprPostulateQtys[refId] = piQuantities(entry.ty)
       ctx.reprPostulateIndexPositions[refId] = indexPositions
       reprBodies.add(procNode)
@@ -4368,8 +4637,11 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
     if refId < 0:
       continue
     var sig: seq[ReprType]
+    var staticPositions: seq[bool]
     try:
-      sig = ctx.reprSig(d)
+      let info = ctx.compiledReprInfo(d)
+      sig = info.sig
+      staticPositions = info.staticPositions
     except CgUnsupported as e:
       reprFailures[name] = e.msg
       continue
@@ -4385,8 +4657,16 @@ proc compileBlockProcs*(defs: seq[ElabDef], globals: Globals,
       while reprName & "_" & $n in takenReprNames: inc n
       reprName = reprName & "_" & $n
     takenReprNames.incl(reprName)
+    var genericParams = newNimNode(nnkGenericParams)
+    for i, isStatic in staticPositions:
+      if isStatic:
+        genericParams.add(newIdentDefs(ident("eponymN" & $i),
+          newTree(nnkBracketExpr, ident"static", ident"int"), newEmptyNode()))
     ctx.reprProcs[refId] = (name: reprName, arity: sig.len - 1,
-                             sig: sig)
+                             sig: sig,
+                             genericParams: if genericParams.len > 0:
+                               genericParams else: newEmptyNode(),
+                             staticPositions: staticPositions)
     var failureReason = ""
     let procNode = compileDefProcRepr(d, ctx, locFile,
       userLines.getOrDefault(name, 1), failureReason, reprName)

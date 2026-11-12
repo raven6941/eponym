@@ -59,6 +59,11 @@ eponymBlock:
   postulate(sumVec, Pi(n: Nat, Vec[Float, n] -> Float))
   bindPostulate(sumVec, hostSumVec, Vec, Float)
   proc wGenericSum(n: Nat, xs: Vec[Float, n]): Float = sumVec(n, xs)
+  proc genericVecId[n: Nat](xs: Vec[Float, n]): Vec[Float, n] = xs
+  proc genericVecDouble[n: Nat](xs: Vec[Float, n]): Vec[Float, n] =
+    genericVecId[n](xs)
+  proc mixedSum[n: Nat](m: Nat, xs: Vec[Float, m],
+      ys: Vec[Float, n]): Float = sumVec(m, xs)
   postulate(Mat, Nat -> Nat -> Univ)
   postulate(VectorData, Nat -> Univ)
   runtimeType(Mat, FMat)
@@ -120,6 +125,24 @@ when isMainModule:
     "generic postulate sumVec works at length 2")
   expect(abs(wGenericSum(1, @[4.5]) - 4.5) < 1e-12,
     "generic postulate sumVec works at length 1")
+  expect(genericVecId[2]([1.25, 2.75]) == [1.25, 2.75],
+    "pure length generic definition crosses as array at length 2")
+  expect(genericVecId[3]([1.0, 2.0, 3.0]) == [1.0, 2.0, 3.0],
+    "one emitted generic definition serves a second array length")
+  expect(genericVecDouble[2]([1.25, 2.75]) == [1.25, 2.75],
+    "generic def calls a generic def with the same length at 2")
+  expect(genericVecDouble[3]([1.0, 2.0, 3.0]) == [1.0, 2.0, 3.0],
+    "generic def calls a generic def with the same length at 3")
+  expect(abs(mixedSum[3](2, @[1.0, 2.0], [1.0, 2.0, 3.0]) - 3.0) < 1e-12,
+    "mixed binders: seq length checked, static array length accepted")
+  raised = false
+  try:
+    discard mixedSum[3](3, @[1.0, 2.0], [1.0, 2.0, 3.0])
+  except ValueError:
+    raised = true
+  expect(raised,
+    "mixed binders preserve the seq entry check on the runtime length")
+  doAssert not compiles(genericVecId[2]([1.25, 2.75, 3.0]))
   raised = false
   try:
     discard wGenericSum(3, @[1.25, 2.75])

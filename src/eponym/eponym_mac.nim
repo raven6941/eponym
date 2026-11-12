@@ -1978,6 +1978,27 @@ proc mentionsName(node: NimNode, name: string): bool =
     if mentionsName(child, name):
       return true
 
+proc mentionsNameOutsideIndexArgs(node: NimNode, name: string): bool =
+  ## Like `mentionsName`, but an occurrence inside the square brackets of
+  ## a generic instantiation call — `genericVecId[n](xs)` — is an index
+  ## argument, erased before codegen, not a computational use of the
+  ## binder. A bare index expression such as `xs[n]` is still a use:
+  ## only brackets serving as a call's callee are skipped.
+  if node.kind == nnkCall and node.len > 0 and
+      node[0].kind == nnkBracketExpr:
+    if mentionsNameOutsideIndexArgs(node[0][0], name):
+      return true
+    for i in 1 ..< node.len:
+      if mentionsNameOutsideIndexArgs(node[i], name):
+        return true
+    return false
+  if node.kind in {nnkIdent, nnkSym} and $node == name:
+    return true
+  for child in node:
+    if mentionsNameOutsideIndexArgs(child, name):
+      return true
+  false
+
 proc bindingIsReferenced(body: NimNode, postulateName: string): bool =
   ## A binding is useful only if some checked proc body calls its postulate.
   ## This deliberately checks direct references; call-graph reachability is a
@@ -2558,6 +2579,7 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
       if record.isVariant:
         if record.hasDependentField or record.constructors.len == 0:
           return nil
+
         for mapping in mappings:
           if mapping.eponymName == $head:
             return mapping.nimType
@@ -2585,6 +2607,36 @@ proc runtimeNimType(n: NimNode, mappings: seq[HostRuntimeType],
         if mapping.eponymName == $head:
           return mapping.nimType
   nil
+
+proc containsStaticVecLength(n: NimNode, names: seq[string]): bool =
+  if n.isNil: return false
+  let vector = runtimeVectorComponents(n, "Vec")
+  if not vector.elementType.isNil and vector.length.kind in {nnkIdent, nnkSym} and
+      $vector.length in names:
+    return true
+  if n.kind == nnkBracketExpr and n.len == 3 and
+      n[0].kind in {nnkIdent, nnkSym} and $n[0] == "Vec" and
+      n[2].kind in {nnkIdent, nnkSym} and $n[2] in names:
+    return true
+  for child in n:
+    if containsStaticVecLength(child, names): return true
+  false
+
+proc runtimeNimTypeStaticArrays(n: NimNode, mappings: seq[HostRuntimeType],
+                                records: seq[HostRecord],
+                                names: seq[string]): NimNode =
+  ## Wrapper-side counterpart of the repr tier's pure-length analysis. Only
+  ## top-level types call this helper; nested Pi/callback positions retain
+  ## runtimeNimType's seq fallback.
+  if n.isNil: return nil
+  let vector = runtimeVectorComponents(n, "Vec")
+  if not vector.elementType.isNil and vector.length.kind in {nnkIdent, nnkSym} and
+      $vector.length in names:
+    let elem = runtimeNimType(vector.elementType, mappings, records,
+      allowDependentSigma = false, allowArray = false)
+    if elem.isNil: return nil
+    return newTree(nnkBracketExpr, ident"array", copyNimTree(vector.length), elem)
+  runtimeNimType(n, mappings, records, allowArray = true)
 
 proc hasCodecBackedDynamicValueBinder(decl: NimNode,
     mappings: seq[HostRuntimeType], records: seq[HostRecord]): bool =
@@ -3798,8 +3850,16 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   let params = decl[3]
   if params.len == 0 or params[0].kind == nnkEmpty:
     return nil
-  let reprResultType = runtimeNimType(params[0], codecMappings, records,
-                                      allowDependentSigma, allowArray = true)
+  var pureLengthNames: seq[string] = @[]
+  for i, gname in generic.genericNames:
+    let name = $gname
+    if i < generic.genericNatArgs.len and generic.genericNatArgs[i] and
+        containsStaticVecLength(params, @[name]) and
+        (decl.len <= 6 or
+          not mentionsNameOutsideIndexArgs(decl[6], name)):
+      pureLengthNames.add(name)
+  let reprResultType = runtimeNimTypeStaticArrays(params[0], codecMappings,
+                                      records, pureLengthNames)
   let valueResultType = runtimeNimType(params[0], codecMappings, records,
                                        allowDependentSigma, allowArray = false)
   if reprResultType.isNil or valueResultType.isNil: return nil
@@ -3816,8 +3876,8 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
   for i in 1 ..< params.len:
     let p = params[i]
     if p.kind != nnkIdentDefs: return nil
-    let reprArgType = runtimeNimType(p[^2], codecMappings, records,
-                                     allowDependentSigma, allowArray = true)
+    let reprArgType = runtimeNimTypeStaticArrays(p[^2], codecMappings, records,
+                                                 pureLengthNames)
     let valueArgType = runtimeNimType(p[^2], codecMappings, records,
                                       allowDependentSigma, allowArray = false)
     if reprArgType.isNil or valueArgType.isNil: return nil
@@ -3969,6 +4029,67 @@ proc typedRuntimeWrapper(decl: NimNode, baseDir, src, defName: string,
           ")' for an ordinary runtime parameter, or keep '" & bname &
           "' computationally irrelevant (type-level only) so it erases " &
           "(quantity 0) from the compiled body", decl)
+    # Mirror of #515 (issue #564 Step 2): a `(n: Nat)`-style runtime-declared
+    # binder that only appears in Vec length positions compiles as a static
+    # parameter, so the compiled proc takes an array over it while the
+    # wrapper declared a seq. The mismatch shows up positionally: a declared
+    # runtime formal whose type disagrees with the compiled formal, where the
+    # compiled formal is (or contains) a symbolic array. Name the binder from
+    # that array's length (`eponymN<i>` indexes the Pi telescope, which
+    # wrapperValueNames lists in order).
+    proc staticBinderPos(rt: ReprType): int =
+      case rt.kind
+      of repArray:
+        if rt.arrayLen < 0 and rt.arrayLenName.startsWith("eponymN"):
+          try:
+            let pos = parseInt(rt.arrayLenName[7 .. ^1])
+            if pos >= 0 and pos < wrapperValueNames.len: return pos
+          except ValueError: discard
+        -1
+      of repSigma:
+        for f in rt.sigmaFields:
+          let p = staticBinderPos(f)
+          if p >= 0: return p
+        -1
+      of repFunc:
+        let p = staticBinderPos(rt.funcDom[])
+        if p >= 0: return p
+        staticBinderPos(rt.funcCod[])
+      of repSeq, repOption:
+        staticBinderPos(rt.elem[])
+      else: -1
+    if slotAlignmentMatches and compiledReprName.len > 0:
+      let wantTypes = compiledReprTypes.getOrDefault(defName, @[])
+      var wantArg = 0
+      var staticPos = -1
+      for i in 0 ..< argNimTypes.len:
+        let slot = generic.genericNames.len + i
+        if slot >= piRuntimeSlots.len or not piRuntimeSlots[slot]: continue
+        if wantArg >= wantTypes.len - 1: break
+        if not nimTypeMatchesRepr(reprArgNimTypes[i], wantTypes[wantArg]):
+          staticPos = staticBinderPos(wantTypes[wantArg])
+          break
+        inc wantArg
+      if staticPos < 0 and wantTypes.len > 0 and
+          not nimTypeMatchesRepr(reprFormal[0], wantTypes[^1]):
+        staticPos = staticBinderPos(wantTypes[^1])
+      if staticPos >= 0:
+        let staticName = wrapperValueNames[staticPos]
+        var bracketHint = ""
+        let argIdx = staticPos - generic.genericNames.len
+        if argIdx >= 0 and argIdx < argEponymTypes.len:
+          let tyNode = argEponymTypes[argIdx]
+          if tyNode.kind in {nnkIdent, nnkSym}:
+            bracketHint = " (e.g. '[" & staticName & ": " & $tyNode & "]')"
+        error("eponymBlock: definition '" & defName & "' declares '" &
+          staticName & "' as a runtime parameter, but '" & staticName &
+          "' only appears in Vec length positions, so it compiled as a " &
+          "static parameter -- the compiled proc takes an array over '" &
+          staticName & "' while the wrapper declared a seq, and the two " &
+          "cannot be reconciled at the boundary. Declare '" &
+          staticName & "' as a static parameter with square brackets" &
+          bracketHint & ", or use '" & staticName &
+          "' computationally so it stays a runtime value", decl)
     error("eponymBlock requireCompiled: definition '" & defName &
       "' was checked successfully, but no supported Nim runtime representation " &
       "matches its compiled representation", decl)
