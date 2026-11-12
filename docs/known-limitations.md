@@ -208,8 +208,20 @@ array-to-seq coercions at any boundary.
 and cannot cross as arrays. A standalone `nil` at a literal Vec type is not
 supported (the polymorphic `nil` has no length information); direct `cons`
 with index zero is supported because it never indexes its tail. Nested
-function types/callbacks remain seq-based. Static-generic array lengths and
-other composite collection elements remain outside this representation tier.
+function types/callbacks remain seq-based. Other composite collection
+elements remain outside this representation tier.
+
+Variable-length `Vec` construction inside a compiled body (cons chains,
+`vecElim` cons branches, and folds that produce a variable-length result) is
+still sequence-based in this step. No sequence/array coercion is inserted at
+the boundary; use a host array-producing postulate or a fixed literal length
+until the construction backend is implemented. Pure length binders on
+first-order definitions are supported as Nim `static[int]` generic
+parameters; host-bound postulate forwarders still follow the host procedure's
+declared sequence/array type. A generic definition may call another generic
+definition with the same length; a length binder used as a runtime value
+stays a runtime parameter with the sequence representation and its entry
+length check.
 Vectors and lists of mapped opaque scalar values work when their element type
 has a codec. Nested vectors and other composite collection elements remain
 outside the direct representation tier. Dynamic generic value
