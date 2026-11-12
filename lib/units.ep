@@ -13,9 +13,6 @@ import "text.ep"
 # quantity to Float and make incompatible dimensions convertible.
 postulate(Qty, Vec Int 3 -> Univ)
 
-proc scaleDim (n : Int) (d : Vec Int 3) : Vec Int 3 =
-  vmap Int Int 3 (lam(x: Int) => mulInt n x) d
-
 proc lengthDim : Vec Int 3 =
   cons Int 2 0 (cons Int 1 1 (cons Int 0 0 (nil Int)))
 
@@ -32,6 +29,12 @@ proc unpackDim3 (xs : Vec Int 3) : Sig(a: Int, Sig(b: Int, Int)) =
     (lam(i: Nat) => lam(x: Int) => lam(tail: Vec Int i) =>
       lam(ih: Sig(a: Int, Sig(b: Int, Int))) => (x, (fst ih, fst (snd ih))))
     3 xs
+
+proc scaleDim (n : Int) (d : Vec Int 3) : Vec Int 3 =
+  let p = unpackDim3 d in
+  cons Int 2 (mulInt n (fst p))
+    (cons Int 1 (mulInt n (fst (snd p)))
+      (cons Int 0 (mulInt n (snd (snd p))) (nil Int)))
 
 proc addDim (d1 : Vec Int 3) (d2 : Vec Int 3) : Vec Int 3 =
   let p = unpackDim3 d1 in

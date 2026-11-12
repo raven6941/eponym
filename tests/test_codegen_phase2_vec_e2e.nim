@@ -21,6 +21,8 @@ proc hostFloatZero(_: int): float = 0.0
 proc hostFloatAdd(a, b: float): float = a + b
 proc hostSumVec(xs: seq[float]): float =
   for x in xs: result += x
+proc hostAddQ(a, b: array[0..2, int]): array[0..2, int] =
+  [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 type FMat = seq[seq[float]]
 type FVec = seq[float]
 proc hostGenericLoss(a: FMat, b, w: seq[float]): float =
@@ -41,6 +43,14 @@ eponymBlock:
   runtimeType(Int, int)
   runtimeType(Nat, int)
   runtimeVector(Vec)
+  proc literalVec3(a: Int, b: Int, c: Int): Vec[Int, 3] =
+    cons[Int, 2](a, cons[Int, 1](b, cons[Int, 0](c, vecnil[Int]())))
+  proc literalVecFlow(a: Int, b: Int, c: Int): Vec[Int, 3] =
+    literalVec3(a, b, c)
+  postulate(addQ, Vec[Int, 3] -> Vec[Int, 3] -> Vec[Int, 3])
+  bindPostulate(addQ, hostAddQ, Vec, Vec, Vec)
+  proc wAddQ(a: Vec[Int, 3], b: Vec[Int, 3]): Vec[Int, 3] =
+    addQ(a, b)
   proc wVMapDouble(n: Nat, xs: Vec[Int, n]): Vec[Int, n] = vecElim[Int](lam(i: Nat) => lam(v: Vec[Int, i]) => Vec[Int, i], vecnil[Int](), lam(i: Nat) => lam(x: Int) => lam(xs2: Vec[Int, i]) => lam(ih: Vec[Int, i]) => cons[Int, i](addInt(x, x), ih), n, xs)
   postulate(floatZero, Int -> Float)
   bindPostulate(floatZero, hostFloatZero, Int, Float)
@@ -68,6 +78,11 @@ eponymBlock:
       floatZero(0),
       lam(i: Nat) => lam(x: Float) => lam(xs2: Vec[Float, i]) =>
         lam(ih: Float) => floatAdd(x, ih), n, xs)
+  proc wVSum3(xs: Vec[Float, 3]): Float =
+    vecElim[Float](lam(i: Nat) => lam(v: Vec[Float, i]) => Float,
+      floatZero(0),
+      lam(i: Nat) => lam(x: Float) => lam(xs2: Vec[Float, i]) =>
+        lam(ih: Float) => floatAdd(x, ih), 3, xs)
 
 proc expect(ok: bool, message: string) =
   if not ok:
@@ -86,6 +101,15 @@ when isMainModule:
   expect(raised, "e2e wrapper preserves the Vec entry check")
   expect(abs(wVSum(2, @[1.25, 2.75]) - 4.0) < 1e-12,
     "e2e wrapper crosses Vec Float as seq[float] and computes a sum")
+  expect(abs(wVSum3([1.25, 2.75, 0.0]) - 4.0) < 1e-12,
+    "e2e wrapper crosses literal Vec Float as array[3, float] and computes a sum")
+  doAssert not compiles(wVSum3([1.25, 2.75]))
+  expect(literalVec3(1, 2, 3) == [1, 2, 3],
+    "direct-cons literal Vec result crosses as array[3, int]")
+  expect(literalVecFlow(4, 5, 6) == [4, 5, 6],
+    "def-to-def literal Vec result flow stays array-coherent")
+  expect(wAddQ([1, 2, 3], [4, 5, 6]) == [5, 7, 9],
+    "postulate forwarder passes literal Vec arrays without coercion")
   raised = false
   try:
     discard wVSum(3, @[1.25, 2.75])

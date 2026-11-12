@@ -192,8 +192,24 @@ runtime values. Common runtime representations include:
 - non-dependent `Sig` pairs, named records, and the standard `Vec`, `List`,
   and `Option` types.
 
-For example, `runtimeVector(Vec)` maps `Vec[Int, n]` to `seq[int]` and
-`Vec[Float, n]` to `seq[float]`, checking that the sequence length matches `n`.
+For example, `runtimeVector(Vec)` maps variable-length `Vec[Int, n]` to
+`seq[int]` and `Vec[Float, n]` to `seq[float]`, checking that the sequence
+length matches `n`. When a `Vec` length is a literal known at compile time,
+the representation backend maps it to a fixed Nim array in first-order
+parameters, results, and `Sig` fields: `Vec[Float, 3]` crosses as
+`array[3, float]`, so Nim's type system enforces the length. Such values
+must be supplied by an array parameter, built by a direct `cons` chain with
+literal indices, or returned by a host procedure whose declaration uses the
+array type. The host procedure at a postulate boundary is called directly;
+its declared type is the contract. There are no O(n) seq-to-array or
+array-to-seq coercions at any boundary.
+
+`vecElim` remains variable-length code: its literal-Vec results stay `seq`
+and cannot cross as arrays. A standalone `nil` at a literal Vec type is not
+supported (the polymorphic `nil` has no length information); direct `cons`
+with index zero is supported because it never indexes its tail. Nested
+function types/callbacks remain seq-based. Static-generic array lengths and
+other composite collection elements remain outside this representation tier.
 Vectors and lists of mapped opaque scalar values work when their element type
 has a codec. Nested vectors and other composite collection elements remain
 outside the direct representation tier. Dynamic generic value

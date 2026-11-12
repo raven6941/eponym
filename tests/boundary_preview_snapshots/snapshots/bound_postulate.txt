@@ -10,6 +10,6 @@ Trust:
   runtimeType(Nat, int): identity int representation; the Eponym/Nim correspondence is trusted
 notes:
   q0 binders are erased and have no Nim formal.
-  Nat uses int; Vec A n uses seq[A] and an O(1) entry length check.
+  Nat uses int; variable Vec A n uses seq[A] and an O(1) entry length check; literal Vec A 3 uses array[3, A] in params, results, and Sigma fields when built coherently.
   Sig maps to a host tuple; opaque families use their declared host type.
   compilation tier: representation (Phase 2 representation code emitted ((int) -> int)).
