@@ -213,6 +213,8 @@ run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_run
 run_step nim c -r $NC --hints:off $P "tests/test_session_tcp_bindings.nim"
 # Embedded error paths (issue #199)
 run_step nim c -r $NC --hints:off $P "tests/test_embedded_error_path.nim"
+# Bayesian-quadrature bound proof and host numerical cross-check (#567)
+run_step nim c -r $NC --hints:off $P "tests/test_bq_bound.nim"
 # Staging soundness fuzz (issue #29, fixed seed; experimental paths)
 run_step nim c -r $NC --hints:off $XP "tests/fuzz_soundness.nim" -- --seed 424242 -n 1000
 # Egraph property tests (issue #163, fixed seed)
