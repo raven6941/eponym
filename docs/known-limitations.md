@@ -176,6 +176,14 @@ signature is checked against its codec, but the adapter's behavior is
 trusted. Checked code can call a string comparison or Float operation without
 losing type checking, but cannot normalize or prove facts about its result.
 
+## Bayesian-quadrature proof boundary (#567)
+
+The demonstrated Bayesian-quadrature identity and Cauchy–Schwarz bound live
+at the same Float trust boundary: dimensions and equality composition are
+checked by Eponym, while Float arithmetic, RKHS operations, Cauchy–Schwarz,
+and the residual-representer analytic bridge are postulated or host-bound.
+The embedded example is [tests/test_bq_bound.nim](../tests/test_bq_bound.nim).
+
 ## Checked definitions need a runtime path
 
 When strict codegen rejects a checked definition, the diagnostic now explains

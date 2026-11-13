@@ -213,7 +213,11 @@ for (path, expected) in [
     ("tests/fixtures/embedded_err_unbound_postulate.nim",
      "postulate 'hostOp', which has no host implementation"),
     ("tests/fixtures/embedded_err_unbound_postulate.nim",
-     "must be paired with a host procedure in the same block")]:
+     "must be paired with a host procedure in the same block"),
+    # Issue #567: a wrong-dimension matVec application must fail with a
+    # clean elaboration error (Vec Float 3 vs Vec Float 2).
+    ("tests/fixtures/embedded_err_bq_wrong_dimension.nim",
+     "eponymBlock elaboration error")]:
   if not checkFixture(path, expected):
     inc failed
 
