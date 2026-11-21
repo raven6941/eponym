@@ -181,7 +181,10 @@ losing type checking, but cannot normalize or prove facts about its result.
 The demonstrated Bayesian-quadrature identity and Cauchy–Schwarz bound live
 at the same Float trust boundary: dimensions and equality composition are
 checked by Eponym, while Float arithmetic, RKHS operations, Cauchy–Schwarz,
-and the residual-representer analytic bridge are postulated or host-bound.
+the residual-representer analytic bridge, and Float inequalities are
+postulated or host-bound. The abstract `Le` family and its generic order
+rules are shared by `lib/order.ep`; moving the inequality postulates there
+does not change the trust boundary.
 The embedded example is [tests/test_bq_bound.nim](../tests/test_bq_bound.nim).
 
 ## Checked definitions need a runtime path

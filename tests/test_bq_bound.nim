@@ -92,6 +92,7 @@ eponymBlock:
   import "../lib/vec.ep"
   import "../lib/float.ep"
   import "../lib/eq.ep"
+  import "../lib/order.ep"
   postulate(Int, Univ)
   runtimeType(Float, float)
   runtimeType(Int, int)
@@ -107,7 +108,6 @@ eponymBlock:
   bindPostulate(absFloat, hostAbsF, Float, Float)
   postulate(mulF, Float -> Float -> Float)
   bindPostulate(mulF, hostMulF, Float, Float, Float)
-  postulate(Le, Float -> Float -> Univ)
   postulate(dot, Pi(n: Nat, Vec[Float, n] -> Vec[Float, n] -> Float))
   bindPostulate(dot, hostDot, Vec, Vec, Float)
   postulate(matVec, Pi(n: Nat, Mat[n, n] -> Vec[Float, n] -> Vec[Float, n]))
@@ -131,12 +131,9 @@ eponymBlock:
         dot(n, w, matVec(n, K, w)))] ->
     Eq[Float, rkhsNorm(n, r), sigma]))
   postulate(cauchySchwarz, Pi(n: Nat, f: Vec[Float, n], r: Vec[Float, n],
-    Le(absFloat(rkhsInner(n, f, r)),
-      mulF(rkhsNorm(n, f), rkhsNorm(n, r)))))
-  postulate(leCongRight, Pi(x: Float, y: Float, z: Float,
-    Eq[Float, y, z] -> Le(x, y) -> Le(x, z)))
-  postulate(leCongLeft, Pi(x: Float, y: Float, z: Float,
-    Eq[Float, x, y] -> Le(y, z) -> Le(x, z)))
+    Le[Float, absFloat(rkhsInner(n, f, r)),
+      mulF(rkhsNorm(n, f), rkhsNorm(n, r))])
+  )
   # Lemma 1: dot w (K w) = dot w z, by congruence over kwEq.
   proc lemmaDotKw(n: Nat, K: Mat[n, n], z: Vec[Float, n],
       w: Vec[Float, n]):
@@ -191,10 +188,10 @@ eponymBlock:
       integral: Float, quadrature: Float,
       residualRep: Eq[Float, absFloat(subF(integral, quadrature)),
         absFloat(rkhsInner(n, f, r))]):
-      Le(absFloat(subF(integral, quadrature)), mulF(rkhsNorm(n, f), sigma)) =
-    leCongLeft(absFloat(subF(integral, quadrature)),
+      Le[Float, absFloat(subF(integral, quadrature)), mulF(rkhsNorm(n, f), sigma)] =
+    leCongLeft[Float](absFloat(subF(integral, quadrature)),
       absFloat(rkhsInner(n, f, r)), mulF(rkhsNorm(n, f), sigma), residualRep,
-      leCongRight(absFloat(rkhsInner(n, f, r)),
+      leCongRight[Float](absFloat(rkhsInner(n, f, r)),
       mulF(rkhsNorm(n, f), rkhsNorm(n, r)),
       mulF(rkhsNorm(n, f), sigma),
       cong[Float, Float](
