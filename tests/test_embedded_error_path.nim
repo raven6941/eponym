@@ -86,6 +86,7 @@ var failed = 0
 for path in ["tests/fixtures/embedded_err_unbound.nim",
              "tests/fixtures/embedded_err_mismatch.nim",
              "tests/fixtures/embedded_err_singleton_mismatch.nim",
+             "tests/fixtures/embedded_err_calc_mismatch.nim",
              "tests/fixtures/embedded_err_implicit_nat_to_int.nim",
              "tests/fixtures/embedded_err_scalar_type_mismatch.nim"]:
   if not checkFixture(path):
