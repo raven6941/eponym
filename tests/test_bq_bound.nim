@@ -92,6 +92,7 @@ eponymBlock:
   import "../lib/vec.ep"
   import "../lib/float.ep"
   import "../lib/eq.ep"
+  import "../lib/calc.ep"
   import "../lib/order.ep"
   postulate(Int, Univ)
   runtimeType(Float, float)
@@ -170,19 +171,16 @@ eponymBlock:
       Eq[Float, subF(kappa, dot(n, w, matVec(n, K, w))),
         addF(subF(subF(kappa, dot(n, w, z)), dot(n, w, z)),
           dot(n, w, matVec(n, K, w)))] =
-    trans[Float](
+    calc3[Float](
       subF(kappa, dot(n, w, matVec(n, K, w))),
       subF(kappa, dot(n, w, z)),
       addF(subF(subF(kappa, dot(n, w, z)), dot(n, w, z)),
+        dot(n, w, z)),
+      addF(subF(subF(kappa, dot(n, w, z)), dot(n, w, z)),
         dot(n, w, matVec(n, K, w))),
       lemmaSub(n, K, z, kappa, w),
-      trans[Float](
-        subF(kappa, dot(n, w, z)),
-        addF(subF(subF(kappa, dot(n, w, z)), dot(n, w, z)), dot(n, w, z)),
-        addF(subF(subF(kappa, dot(n, w, z)), dot(n, w, z)),
-          dot(n, w, matVec(n, K, w))),
-        ringCancelF(kappa, dot(n, w, z)),
-        lemmaAdd(n, K, z, kappa, w)))
+      ringCancelF(kappa, dot(n, w, z)),
+      lemmaAdd(n, K, z, kappa, w))
   proc bqBound(n: Nat, K: Mat[n, n], z: Vec[Float, n], kappa: Float,
       w: Vec[Float, n], f: Vec[Float, n], r: Vec[Float, n], sigma: Float,
       integral: Float, quadrature: Float,

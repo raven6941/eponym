@@ -1,0 +1,19 @@
+# Eponym common library: flat equality chains (issue #569, phase 2).
+#
+# These combinators keep long equational proofs as a sequence of named,
+# independently elaborated lemma procedures instead of one large nested
+# trans/cong term, avoiding the VM interpretation limit that motivated #567.
+# This phase is pure composition over Eq; `by ring` is out of scope.
+import "eq.ep"
+
+proc calc2 (A : Univ) (x: A) (y: A) (z: A)
+    (p: Eq A x y) (q: Eq A y z): Eq A x z =
+  trans[A](x, y, z, p, q)
+
+proc calc3 (A : Univ) (x: A) (y: A) (z: A) (w: A)
+    (p: Eq A x y) (q: Eq A y z) (r: Eq A z w): Eq A x w =
+  trans[A](x, y, w, p, calc2[A](y, z, w, q, r))
+
+proc calc4 (A : Univ) (x: A) (y: A) (z: A) (w: A) (v: A)
+    (p: Eq A x y) (q: Eq A y z) (r: Eq A z w) (s: Eq A w v): Eq A x v =
+  trans[A](x, y, v, p, calc3[A](y, z, w, v, q, r, s))

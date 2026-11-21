@@ -45,6 +45,7 @@ chain. `tests/run_examples.nim` elaborates every file with
   intToNatHost, Int, Nat)`. The provided Nim adapter rejects negative inputs.
 - **eq.ep** — propositional equality: `Eq` (indexed family), `refl`,
   `cong`, `sym`, `trans`.
+- **calc.ep** — flat `Eq` chains: `calc2`, `calc3`, and `calc4`.
 - **order.ep** — abstract host-order family `Le` and its postulated rules:
   reflexivity, transitivity, antisymmetry, congruence, and `leOfEq`.
 - **bool.ep** — `Bool`, `not`/`and`/`or`; lemma `notNot`.
