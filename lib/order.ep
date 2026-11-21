@@ -1,0 +1,21 @@
+# Eponym common library: host-order relation (issue #569).
+# The surface parser requires at least one data constructor
+# (parseData: "data declaration needs at least one constructor"), so the
+# intended zero-constructor family is represented by its equivalent
+# abstract postulate. Le is abstract; its inhabitants and rules are
+# supplied as host axioms.
+import "eq.ep"
+
+postulate(Le, Pi(A: Univ, A -> A -> Univ))
+
+postulate(leRefl, Pi(A: Univ, Pi(x: A, Le[A, x, x])))
+postulate(leTrans, Pi(A: Univ, Pi(x: A, Pi(y: A, Pi(z: A,
+  Le[A, x, y] -> Le[A, y, z] -> Le[A, x, z])))))
+postulate(leAntisym, Pi(A: Univ, Pi(x: A, Pi(y: A,
+  Le[A, x, y] -> Le[A, y, x] -> Eq A x y))))
+postulate(leCongLeft, Pi(A: Univ, Pi(x: A, Pi(y: A, Pi(z: A,
+  Eq A x y -> Le[A, y, z] -> Le[A, x, z])))))
+postulate(leCongRight, Pi(A: Univ, Pi(x: A, Pi(y: A, Pi(z: A,
+  Eq A y z -> Le[A, x, y] -> Le[A, x, z])))))
+postulate(leOfEq, Pi(A: Univ, Pi(x: A, Pi(y: A,
+  Eq A x y -> Le[A, x, y]))))

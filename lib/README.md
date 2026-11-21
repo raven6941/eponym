@@ -45,6 +45,8 @@ chain. `tests/run_examples.nim` elaborates every file with
   intToNatHost, Int, Nat)`. The provided Nim adapter rejects negative inputs.
 - **eq.ep** — propositional equality: `Eq` (indexed family), `refl`,
   `cong`, `sym`, `trans`.
+- **order.ep** — abstract host-order family `Le` and its postulated rules:
+  reflexivity, transitivity, antisymmetry, congruence, and `leOfEq`.
 - **bool.ep** — `Bool`, `not`/`and`/`or`; lemma `notNot`.
 - **debug.ep** — type-preserving `debugEcho[A]` postulate for explicit
   runtime tracing. Bind it to `debugEchoRuntimeValue` or a custom adapter;
