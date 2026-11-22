@@ -215,6 +215,10 @@ run_step nim c -r $NC --hints:off $P "tests/test_session_tcp_bindings.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_embedded_error_path.nim"
 # Bayesian-quadrature bound proof and host numerical cross-check (#567)
 run_step nim c -r $NC --hints:off $P "tests/test_bq_bound.nim"
+# CG-as-Bayesian-inference proof and numerical cross-check (#569, Phase 3)
+# The (B) assembly needs raised VM fuel (elaboration + usage check share one
+# budget; see docs/known-limitations.md CG section).
+run_step nim c -r $NC --hints:off --maxCallDepthVM:30000 --maxLoopIterationsVM:1000000000 $P "tests/test_cg_bound.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_calc.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_order.nim"
 # Staging soundness fuzz (issue #29, fixed seed; experimental paths)
