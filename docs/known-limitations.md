@@ -187,6 +187,34 @@ rules are shared by `lib/order.ep`; moving the inequality postulates there
 does not change the trust boundary.
 The embedded example is [tests/test_bq_bound.nim](../tests/test_bq_bound.nim).
 
+## CG Bayesian-inference proof boundary (#569, Phase 3)
+
+The CG proof checks dimensions and equality composition, while Gaussian
+conditioning, matrix arithmetic, and symmetric-Kronecker projection rules
+remain postulated/model facts or host-bound Float operations. The sequential
+versus batch result is deliberately only the M = 2 instance of Lemma 3.2;
+this is not a general-M induction. The (B) proof takes two named
+hypotheses: the conjugacy Gram off-diagonal (c₁ᵀy₂ = 0) and the
+cross-symmetry d₁ᵀy₂ = d₂ᵀy₁ (the sequential side's outer(c₂,c₁) cross
+term carries the first scalar, the batch double sum's (2,1) term the
+second). The `halfF` postulate (the value ½) is unbound and part of the
+trust boundary: it is used only in compileTimeOnly proof types. Equation (4.14) is checked as a posterior
+variance identity, not as a deterministic error bound: the calibration ratios
+printed by the host cross-check are empirical and carry no assertion that the
+one-standard-deviation bars contain the true error. The host arbitration also
+records whether the direct Kronecker covariance agrees with the paper's
+printed x-form or with the algebraically derived b-form; the checked closed
+form follows that result rather than assuming the printed form. The embedded
+example is [tests/test_cg_bound.nim](../tests/test_cg_bound.nim).
+The direct computation confirms the b-form (direct-vs-b-form is about 1e-16,
+while direct-vs-x-form is about 2.7), so the checked (4.14) Eq uses the b-form;
+the paper's printed x-form is not reproduced as stated.
+The (B) proof is large enough that elaboration needs raised VM fuel:
+`--maxCallDepthVM:30000 --maxLoopIterationsVM:1000000000` on the
+`test_cg_bound` invocation in `tools/ci-local.sh`. These are compiler fuel
+knobs, not a proof shortcut: elaboration and the QTT usage check still run
+to completion.
+
 ## Checked definitions need a runtime path
 
 When strict codegen rejects a checked definition, the diagnostic now explains
