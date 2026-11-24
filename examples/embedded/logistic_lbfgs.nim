@@ -6,8 +6,12 @@
 ## and in the checked wrapper types at generic m, n.  Trusted: the host
 ## objective and gradient implement that same `lrTerm`, LBFGS and
 ## line-search numerics, and the dataset shape check at the boundary.  The
-## certified problem and host objective are the same by construction, not
-## by passing a term at runtime: the term has no runtime representation.
+## certified problem and host objective agree only by that trusted
+## construction, not by passing a term at runtime: the certified term
+## itself (`lrTerm`/`lrCert`/`lrProb`, all `compileTimeOnly`) has no
+## runtime representation, so the DCP certificate does not prove the host
+## loss/gradient compute it. The weights, by contrast, do cross the
+## boundary — as `Vec[Float, n]` (see below).
 ##
 ## The weight vector crosses as `Vec[Float, n]` (repr tier `seq[float]`,
 ## issue #556): the data vector `b` stays `VectorData[m]` because it is

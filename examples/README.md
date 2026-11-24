@@ -142,16 +142,21 @@ for verified components inside a larger Nim application.
 - **logistic_lbfgs.nim** — Checked logistic regression, run end to end
   (Issue #555): the `convex_opt_vec.nim` DCP fragment restated for the
   single logistic problem, so the file compiles only because the `Convex`
-  certificate checks; the objective and gradient cross the boundary as
-  bound host operations (`VectorData[n]` weights — `Vec Float n` has no
-  boundary representation yet, see issue #556) and drive one generic
-  LBFGS over `seq[float]`, with an `array[N, float]` instantiation in
-  the test and a plain-Nim baseline for comparison. Small problem
-  converges to the analytic optimum (0.5, 0.5); large problem (m=500,
-  n=50) reaches |grad| < 1e-8 on both paths. Trusted: the host
-  objective/gradient implement the checked term, the LBFGS numerics,
-  and the dataset shape check — the certified problem and the host
-  objective are the same by construction, not by a runtime value.
+  certificate checks. The data matrix `A : Mat[m, n]` and data vector
+  `b : VectorData[m]` cross as host `seq`s, while the weights cross as
+  `Vec[Float, n]` (repr tier `seq[float]`, #556) at generic dimensions
+  via the #560 adapter; the bound `logisticLoss`/`logisticGrad`
+  postulates drive one generic LBFGS over `seq[float]`, with an
+  `array[N, float]` instantiation in the test and a plain-Nim baseline
+  for comparison. A checked `vecElim` identity map over the weights
+  (`wIdMap`) runs through the boundary with a per-parameter length
+  check. Small problem converges to the analytic optimum (0.5, 0.5);
+  large problem (m=500, n=50) reaches |grad| < 1e-8 on both paths.
+  Trusted: the host objective/gradient implement the checked term, the
+  LBFGS numerics, and the dataset shape check — the DCP certificate
+  does not prove the host loss/gradient compute the certified
+  expression; that correspondence is trusted, not established by a
+  runtime value.
 - **qtt_borrow.nim** — QTT borrow checking as an embedded DSL (Issue
   #122): a unique borrow of a buffer, scoped by `withBorrow` (bracket
   semantics — the linear resource is fully consumed, so it cannot leak).

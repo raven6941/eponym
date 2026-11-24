@@ -193,6 +193,9 @@ run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_emb
 run_step nim c -r $NC --hints:off $P -d:eponymRuntimeBridgeTests "tests/test_runtime_value_bridge.nim"
 # Per-block trust boundary report (#374)
 run_step sh tests/test_trust_report.sh
+# Docs consistency: "current limitation" claims citing an issue must point
+# at an open issue (issue #573; tools/check-doc-limitations.py).
+run_step python3 tools/check-doc-limitations.py
 # Adversarial trust-attribution regression tests (#544, #546, #550)
 run_step nim c -r $NC --hints:off $P "tests/trust_adversarial.nim"
 run_step nim c -r $NC --hints:off $P "tests/test_convex_opt_runtime.nim"
