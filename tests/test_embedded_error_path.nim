@@ -254,6 +254,13 @@ for expected in [
       expected):
     inc failed
 
+# Issue #574: the checked logistic AST (indexed VExpr/CExpr data) has no
+# runtime representation, so a callable wrapper over the checked objective
+# must fail in strict codegen. Blocker reproducer for the #574 spike.
+if not checkFixture("tests/fixtures/embedded_err_574_logistic_checked_ast.nim",
+    "checked successfully, but checking is not code generation"):
+  inc failed
+
 if failed > 0:
   echo failed, " error-path fixture(s) misbehaved"
   quit(1)
