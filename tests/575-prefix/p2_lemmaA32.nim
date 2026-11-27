@@ -1,0 +1,604 @@
+## CG-as-Bayesian-inference proof smoke test for #569, Phase 3.
+## (A) is Corollary 2.4 at M = 1.  (B) is Lemma 3.2 at M = 2 only.
+## (B) takes two named hypotheses: conjugacy (c1^T y2 = 0, gramOffDiag)
+## and cross-symmetry (d1^T y2 = d2^T y1, crossSym); lemmaB is
+## sequential2 = batch2, assembled from lemmaA31/lemmaA32, distribU1/U2,
+## single/double scalar bridges, and the regroup procs.
+## The 4.14 object checked below is a variance identity, not a bound.
+## Elaboration needs raised VM fuel: --maxCallDepthVM:30000
+## --maxLoopIterationsVM:1000000000 (see tools/ci-local.sh).
+## halfF (the value 1/2) is an unbound postulate, part of the trust
+## boundary; used only in compileTimeOnly proof types.
+import eponym_mac
+import math
+
+type FMat = seq[seq[float]]
+proc hMul(a,b: float): float = a*b
+proc hDiv(a,b: float): float = a/b
+proc hRecip(a: float): float = 1.0/a
+proc hSub(a,b: float): float = a-b
+proc hSubV(a,b: seq[float]): seq[float] =
+  result = newSeq[float](a.len)
+  for i in 0..<a.len: result[i] = a[i]-b[i]
+proc addv(a,b: seq[float]): seq[float] =
+  result = newSeq[float](a.len)
+  for i in 0..<a.len: result[i] = a[i]+b[i]
+proc subv(a,b: seq[float]): seq[float] =
+  result = newSeq[float](a.len)
+  for i in 0..<a.len: result[i] = a[i]-b[i]
+proc sv(c: float, a: seq[float]): seq[float] =
+  result = newSeq[float](a.len)
+  for i in 0..<a.len: result[i] = c*a[i]
+proc hOuter(a,b: seq[float]): FMat =
+  result = newSeq[seq[float]](a.len)
+  for i in 0..<a.len:
+    result[i] = newSeq[float](b.len)
+    for j in 0..<b.len: result[i][j] = a[i]*b[j]
+proc hTranspose(a: FMat): FMat =
+  result = newSeq[seq[float]](a[0].len)
+  for i in 0..<a[0].len:
+    result[i] = newSeq[float](a.len)
+    for j in 0..<a.len: result[i][j] = a[j][i]
+proc hMatAdd(a,b: FMat): FMat =
+  result = newSeq[seq[float]](a.len)
+  for i in 0..<a.len:
+    result[i] = newSeq[float](a[i].len)
+    for j in 0..<a[i].len: result[i][j] = a[i][j]+b[i][j]
+proc hMatSub(a,b: FMat): FMat =
+  result = newSeq[seq[float]](a.len)
+  for i in 0..<a.len:
+    result[i] = newSeq[float](a[i].len)
+    for j in 0..<a[i].len: result[i][j] = a[i][j]-b[i][j]
+proc hScal(a: float; b: FMat): FMat =
+  result = newSeq[seq[float]](b.len)
+  for i in 0..<b.len:
+    result[i] = newSeq[float](b[i].len)
+    for j in 0..<b[i].len: result[i][j] = a*b[i][j]
+proc hDot(a,b: seq[float]): float =
+  for i in 0..<a.len: result += a[i]*b[i]
+proc hVec(a: FMat; x: seq[float]): seq[float] =
+  result = newSeq[float](a.len)
+  for i in 0..<a.len:
+    for j in 0..<x.len: result[i] += a[i][j]*x[j]
+
+eponymBlock:
+  import "../lib/nat.ep"
+  import "../lib/vec.ep"
+  import "../lib/float.ep"
+  import "../lib/eq.ep"
+  import "../lib/calc.ep"
+  postulate(Int, Univ)
+  runtimeType(Float, float)
+  runtimeType(Int, int)
+  runtimeType(Nat, int)
+  runtimeVector(Vec)
+  postulate(Mat, Nat -> Nat -> Univ)
+  runtimeType(Mat, FMat)
+  postulate(mulF, Float -> Float -> Float)
+  bindPostulate(mulF, hMul, Float, Float, Float)
+  postulate(subF, Float -> Float -> Float)
+  bindPostulate(subF, hSub, Float, Float, Float)
+  postulate(divF, Float -> Float -> Float)
+  bindPostulate(divF, hDiv, Float, Float, Float)
+  postulate(recipF, Float -> Float)
+  bindPostulate(recipF, hRecip, Float, Float)
+  postulate(dot, Pi(n: Nat, Vec[Float,n] -> Vec[Float,n] -> Float))
+  bindPostulate(dot, hDot, Vec, Vec, Float)
+  postulate(matVec, Pi(n: Nat, Mat[n,n] -> Vec[Float,n] -> Vec[Float,n]))
+  bindPostulate(matVec, hVec, Mat, Vec, Vec)
+  postulate(outer, Pi(n: Nat, Vec[Float,n] -> Vec[Float,n] -> Mat[n,n]))
+  bindPostulate(outer, hOuter, Vec, Vec, Mat)
+  postulate(transpose, Pi(n: Nat, Mat[n,n] -> Mat[n,n]))
+  bindPostulate(transpose, hTranspose, Mat, Mat)
+  postulate(matAdd, Pi(n: Nat, Mat[n,n] -> Mat[n,n] -> Mat[n,n]))
+  bindPostulate(matAdd, hMatAdd, Mat, Mat, Mat)
+  postulate(matSub, Pi(n: Nat, Mat[n,n] -> Mat[n,n] -> Mat[n,n]))
+  bindPostulate(matSub, hMatSub, Mat, Mat, Mat)
+  postulate(scalMat, Pi(n: Nat, Float -> Mat[n,n] -> Mat[n,n]))
+  bindPostulate(scalMat, hScal, Float, Mat, Mat)
+  postulate(halfF, Float)
+  postulate(zeroF, Float)
+
+  # These are algebraic/model facts, not the identities under test.
+  postulate(matVecWSym, Pi(n: Nat, W: Mat[n,n], y: Vec[Float,n],
+    Eq[Vec[Float,n], matVec(n, transpose(n, W), y), matVec(n,W,y)]))
+  postulate(dotSymW, Pi(n: Nat, W: Mat[n,n], y: Vec[Float,n],
+    Eq[Float, dot(n,matVec(n,W,y),y), dot(n,y,matVec(n,W,y))]))
+  postulate(solCov, Pi(n: Nat, Mat[n,n] -> Vec[Float,n] -> Mat[n,n]))
+  postulate(kronProj, Pi(n: Nat, W: Mat[n,n], y: Vec[Float,n], Mat[n,n]))
+  postulate(projectionRule, Pi(n: Nat, W: Mat[n,n], y: Vec[Float,n],
+    Eq[Mat[n,n], solCov(n,W,y), kronProj(n,W,y)]))
+  postulate(symKronAction, Pi(n: Nat, W: Mat[n,n], y: Vec[Float,n],
+    Eq[Mat[n,n], kronProj(n,W,y),
+      scalMat(n, halfF, matAdd(n, scalMat(n, dot(n,y,matVec(n,W,y)), W),
+        outer(n, matVec(n,W,y), matVec(n,W,y))))]))
+  postulate(matSubVec, Pi(n: Nat, Vec[Float,n] -> Vec[Float,n] -> Vec[Float,n]))
+  bindPostulate(matSubVec, hSubV, Vec, Vec, Vec)
+  postulate(vecAdd, Pi(n: Nat, Vec[Float,n] -> Vec[Float,n] -> Vec[Float,n]))
+  bindPostulate(vecAdd, addv, Vec, Vec, Vec)
+  postulate(scalVec, Pi(n: Nat, Float -> Vec[Float,n] -> Vec[Float,n]))
+  bindPostulate(scalVec, sv, Float, Vec, Vec)
+  proc dennis(n: Nat, H: Mat[n,n], s: Vec[Float,n], y: Vec[Float,n],
+      c: Vec[Float,n]): Mat[n,n] =
+      matAdd(n, H, matSub(n,
+      matAdd(n, scalMat(n, recipF(dot(n,c,y)), outer(n, matSubVec(n,s,matVec(n,H,y)), c)),
+        scalMat(n, recipF(dot(n,c,y)), outer(n, c, matSubVec(n,s,matVec(n,H,y))))),
+      scalMat(n, divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),
+        mulF(dot(n,c,y),dot(n,c,y))), outer(n,c,c))))
+  proc postMean(n: Nat, H: Mat[n,n], W: Mat[n,n], s: Vec[Float,n], y: Vec[Float,n]): Mat[n,n] =
+    matAdd(n, H, matSub(n,
+      matAdd(n, scalMat(n, recipF(dot(n,y,matVec(n,W,y))),
+        outer(n, matSubVec(n,s,matVec(n,H,y)), matVec(n,transpose(n, W),y))),
+        scalMat(n, recipF(dot(n,y,matVec(n,W,y))),
+          outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),
+      scalMat(n, divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),
+        mulF(dot(n,y,matVec(n,W,y)),dot(n,y,matVec(n,W,y)))),
+        outer(n,matVec(n,W,y),matVec(n,transpose(n,W),y)))))
+  postulate(gramOffDiag, Pi(n: Nat, W: Mat[n,n], y1: Vec[Float,n], y2: Vec[Float,n],
+    Eq[Float, dot(n,matVec(n,W,y1),y2), zeroF]))
+  # (B) single-step algebra (postulated, same trust class as matVecWSym).
+  postulate(zeroVec, Pi(n: Nat, Vec[Float,n]))
+  postulate(matVecAdd, Pi(n: Nat, A: Mat[n,n], B: Mat[n,n], y: Vec[Float,n],
+    Eq[Vec[Float,n], matVec(n, matAdd(n,A,B), y),
+      vecAdd(n, matVec(n,A,y), matVec(n,B,y))]))
+  postulate(matVecSub, Pi(n: Nat, A: Mat[n,n], B: Mat[n,n], y: Vec[Float,n],
+    Eq[Vec[Float,n], matVec(n, matSub(n,A,B), y),
+      matSubVec(n, matVec(n,A,y), matVec(n,B,y))]))
+  postulate(matVecScal, Pi(n: Nat, a: Float, A: Mat[n,n], y: Vec[Float,n],
+    Eq[Vec[Float,n], matVec(n, scalMat(n,a,A), y), scalVec(n, a, matVec(n,A,y))]))
+  postulate(matVecOuter, Pi(n: Nat, u: Vec[Float,n], v: Vec[Float,n], y: Vec[Float,n],
+    Eq[Vec[Float,n], matVec(n, outer(n,u,v), y), scalVec(n, dot(n,v,y), u)]))
+  postulate(dotSub, Pi(n: Nat, u: Vec[Float,n], v: Vec[Float,n], y: Vec[Float,n],
+    Eq[Float, dot(n, matSubVec(n,u,v), y), subF(dot(n,u,y), dot(n,v,y))]))
+  postulate(dotScal, Pi(n: Nat, a: Float, u: Vec[Float,n], y: Vec[Float,n],
+    Eq[Float, dot(n, scalVec(n,a,u), y), mulF(a, dot(n,u,y))]))
+  postulate(dotSym, Pi(n: Nat, u: Vec[Float,n], v: Vec[Float,n],
+    Eq[Float, dot(n,u,v), dot(n,v,u)]))
+  postulate(mulFZero, Pi(a: Float, Eq[Float, mulF(a, zeroF), zeroF]))
+  postulate(subFZero, Pi(a: Float, Eq[Float, subF(a, zeroF), a]))
+  postulate(mulFRecipDiv, Pi(a: Float, b: Float,
+    Eq[Float, mulF(recipF(a), b), divF(b, a)]))
+  postulate(vecAddZero, Pi(n: Nat, u: Vec[Float,n],
+    Eq[Vec[Float,n], vecAdd(n, u, zeroVec(n)), u]))
+  postulate(vecAddZeroL, Pi(n: Nat, u: Vec[Float,n],
+    Eq[Vec[Float,n], vecAdd(n, zeroVec(n), u), u]))
+  postulate(vecSubZero, Pi(n: Nat, u: Vec[Float,n],
+    Eq[Vec[Float,n], matSubVec(n, u, zeroVec(n)), u]))
+  postulate(scalVecZero, Pi(n: Nat, u: Vec[Float,n],
+    Eq[Vec[Float,n], scalVec(n, zeroF, u), zeroVec(n)]))
+  postulate(scalVecComp, Pi(n: Nat, a: Float, b: Float, u: Vec[Float,n],
+    Eq[Vec[Float,n], scalVec(n, a, scalVec(n, b, u)), scalVec(n, mulF(a,b), u)]))
+  postulate(matSubVecAdd, Pi(n: Nat, s: Vec[Float,n], u: Vec[Float,n], v: Vec[Float,n],
+    Eq[Vec[Float,n], matSubVec(n, s, vecAdd(n,u,v)),
+      matSubVec(n, matSubVec(n,s,u), v)]))
+  postulate(outerSubL, Pi(n: Nat, u: Vec[Float,n], v: Vec[Float,n], w: Vec[Float,n],
+    Eq[Mat[n,n], outer(n, matSubVec(n,u,v), w),
+      matSub(n, outer(n,u,w), outer(n,v,w))]))
+  postulate(outerSubR, Pi(n: Nat, u: Vec[Float,n], v: Vec[Float,n], w: Vec[Float,n],
+    Eq[Mat[n,n], outer(n, u, matSubVec(n,v,w)),
+      matSub(n, outer(n,u,v), outer(n,u,w))]))
+  postulate(outerScalL, Pi(n: Nat, a: Float, u: Vec[Float,n], v: Vec[Float,n],
+    Eq[Mat[n,n], outer(n, scalVec(n,a,u), v), scalMat(n, a, outer(n,u,v))]))
+  postulate(outerScalR, Pi(n: Nat, a: Float, u: Vec[Float,n], v: Vec[Float,n],
+    Eq[Mat[n,n], outer(n, u, scalVec(n,a,v)), scalMat(n, a, outer(n,u,v))]))
+  # (B) assembly algebra: single-step distribution / regrouping.
+  postulate(scalMatSub, Pi(n: Nat, a: Float, A: Mat[n,n], B: Mat[n,n],
+    Eq[Mat[n,n], scalMat(n,a,matSub(n,A,B)),
+      matSub(n,scalMat(n,a,A),scalMat(n,a,B))]))
+  postulate(scalMatComp, Pi(n: Nat, a: Float, b: Float, A: Mat[n,n],
+    Eq[Mat[n,n], scalMat(n,a,scalMat(n,b,A)), scalMat(n,mulF(a,b),A)]))
+  postulate(scalMatAdd, Pi(n: Nat, a: Float, A: Mat[n,n], B: Mat[n,n],
+    Eq[Mat[n,n], scalMat(n,a,matAdd(n,A,B)),
+      matAdd(n,scalMat(n,a,A),scalMat(n,a,B))]))
+  postulate(mulFRecipDiv2, Pi(a: Float, b: Float, c: Float,
+    Eq[Float, mulF(recipF(a),divF(b,c)), divF(b,mulF(c,a))]))
+  postulate(mulFComm, Pi(a: Float, b: Float, Eq[Float, mulF(a,b), mulF(b,a)]))
+  postulate(matAddAssoc, Pi(n: Nat, A: Mat[n,n], B: Mat[n,n], C: Mat[n,n],
+    Eq[Mat[n,n], matAdd(n,matAdd(n,A,B),C), matAdd(n,A,matAdd(n,B,C))]))
+  postulate(matAddComm, Pi(n: Nat, A: Mat[n,n], B: Mat[n,n],
+    Eq[Mat[n,n], matAdd(n,A,B), matAdd(n,B,A)]))
+  postulate(matSubAdd, Pi(n: Nat, A: Mat[n,n], B: Mat[n,n], C: Mat[n,n],
+    Eq[Mat[n,n], matSub(n,matAdd(n,A,B),C), matAdd(n,matSub(n,A,C),B)]))
+  postulate(matAddSub, Pi(n: Nat, A: Mat[n,n], B: Mat[n,n], C: Mat[n,n],
+    Eq[Mat[n,n], matAdd(n,A,matSub(n,B,C)), matSub(n,matAdd(n,A,B),C)]))
+  postulate(matSubSub, Pi(n: Nat, A: Mat[n,n], B: Mat[n,n], C: Mat[n,n],
+    Eq[Mat[n,n], matSub(n,matSub(n,A,B),C), matSub(n,A,matAdd(n,B,C))]))
+  # xHat is computed by the host cross-check; it is not a checked primitive.
+
+  proc resid(n: Nat, H: Mat[n,n], s: Vec[Float,n], y: Vec[Float,n]): Vec[Float,n] =
+    matSubVec(n,s,matVec(n,H,y))
+  proc dennisStep(n: Nat, H: Mat[n,n], W: Mat[n,n], s: Vec[Float,n], y: Vec[Float,n]): Mat[n,n] =
+    dennis(n,H,s,y,matVec(n,W,y))
+  proc sequential2(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n], s2: Vec[Float,n], y2: Vec[Float,n]): Mat[n,n] =
+    dennisStep(n,dennisStep(n,H,W,s1,y1),W,s2,y2)
+  proc batchSingle(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n], s2: Vec[Float,n], y2: Vec[Float,n]): Mat[n,n] =
+    matAdd(n,scalMat(n,recipF(dot(n,y1,matVec(n,W,y1))),matAdd(n,outer(n,resid(n,H,s1,y1),matVec(n,W,y1)),outer(n,matVec(n,W,y1),resid(n,H,s1,y1)))),scalMat(n,recipF(dot(n,y2,matVec(n,W,y2))),matAdd(n,outer(n,resid(n,H,s2,y2),matVec(n,W,y2)),outer(n,matVec(n,W,y2),resid(n,H,s2,y2)))))
+  proc batchDouble(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n], s2: Vec[Float,n], y2: Vec[Float,n]): Mat[n,n] =
+    matAdd(n,matAdd(n,scalMat(n,divF(dot(n,resid(n,H,s1,y1),y1),mulF(dot(n,y1,matVec(n,W,y1)),dot(n,y1,matVec(n,W,y1)))),outer(n,matVec(n,W,y1),matVec(n,W,y1))),scalMat(n,divF(dot(n,resid(n,H,s1,y1),y2),mulF(dot(n,y1,matVec(n,W,y1)),dot(n,y2,matVec(n,W,y2)))),outer(n,matVec(n,W,y1),matVec(n,W,y2)))),matAdd(n,scalMat(n,divF(dot(n,resid(n,H,s2,y2),y1),mulF(dot(n,y2,matVec(n,W,y2)),dot(n,y1,matVec(n,W,y1)))),outer(n,matVec(n,W,y2),matVec(n,W,y1))),scalMat(n,divF(dot(n,resid(n,H,s2,y2),y2),mulF(dot(n,y2,matVec(n,W,y2)),dot(n,y2,matVec(n,W,y2)))),outer(n,matVec(n,W,y2),matVec(n,W,y2)))))
+  proc batch2(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n], s2: Vec[Float,n], y2: Vec[Float,n]): Mat[n,n] =
+    matAdd(n,H,matSub(n,batchSingle(n,H,W,s1,y1,s2,y2),batchDouble(n,H,W,s1,y1,s2,y2)))
+
+  proc term1Eq(n: Nat, H: Mat[n,n], W: Mat[n,n], s: Vec[Float,n], y: Vec[Float,n]):
+      Eq[Mat[n,n], scalMat(n,recipF(dot(n,matVec(n,W,y),y)),
+        outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,W,y))),
+        scalMat(n,recipF(dot(n,y,matVec(n,W,y))),
+        outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,transpose(n,W),y)))] =
+    calc2[Mat[n,n]](
+      scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,W,y))),
+      scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,W,y))),
+      scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,transpose(n,W),y))),
+      cong[Float,Mat[n,n]](lam(q: Float) => scalMat(n,recipF(q),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,W,y))),
+        dot(n,matVec(n,W,y),y),dot(n,y,matVec(n,W,y)),dotSymW(n,W,y)),
+      cong[Vec[Float,n],Mat[n,n]](lam(q: Vec[Float,n]) => scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),q)),
+        matVec(n,W,y),matVec(n,transpose(n,W),y),sym[Vec[Float,n]](matVec(n,transpose(n,W),y),matVec(n,W,y),matVecWSym(n,W,y))))
+  proc term2Eq(n: Nat, H: Mat[n,n], W: Mat[n,n], s: Vec[Float,n], y: Vec[Float,n]):
+      Eq[Mat[n,n], scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y)))),
+        scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))] =
+    cong[Float,Mat[n,n]](lam(q: Float) => scalMat(n,recipF(q),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y)))),
+      dot(n,matVec(n,W,y),y),dot(n,y,matVec(n,W,y)),dotSymW(n,W,y))
+  proc term3Eq(n: Nat, H: Mat[n,n], W: Mat[n,n], s: Vec[Float,n], y: Vec[Float,n]):
+      Eq[Mat[n,n], scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y))),
+        scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,y,matVec(n,W,y)),dot(n,y,matVec(n,W,y)))),outer(n,matVec(n,W,y),matVec(n,transpose(n,W),y)))] =
+    calc2[Mat[n,n]](
+      scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y))),
+      scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,y,matVec(n,W,y)),dot(n,y,matVec(n,W,y)))),outer(n,matVec(n,W,y),matVec(n,W,y))),
+      scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,y,matVec(n,W,y)),dot(n,y,matVec(n,W,y)))),outer(n,matVec(n,W,y),matVec(n,transpose(n,W),y))),
+      cong[Float,Mat[n,n]](lam(q: Float) => scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(q,q)),outer(n,matVec(n,W,y),matVec(n,W,y))),
+        dot(n,matVec(n,W,y),y),dot(n,y,matVec(n,W,y)),dotSymW(n,W,y)),
+      cong[Vec[Float,n],Mat[n,n]](lam(q: Vec[Float,n]) => scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,y,matVec(n,W,y)),dot(n,y,matVec(n,W,y)))),outer(n,matVec(n,W,y),q)),
+        matVec(n,W,y),matVec(n,transpose(n,W),y),sym[Vec[Float,n]](matVec(n,transpose(n,W),y),matVec(n,W,y),matVecWSym(n,W,y))))
+  proc corollaryInner(n: Nat, H: Mat[n,n], W: Mat[n,n], s: Vec[Float,n], y: Vec[Float,n]):
+      Eq[Mat[n,n],
+        matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,W,y))),scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y))))),
+        matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,transpose(n,W),y))),scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,y,matVec(n,W,y)),dot(n,y,matVec(n,W,y)))),outer(n,matVec(n,W,y),matVec(n,transpose(n,W),y)))))] =
+    calc3[Mat[n,n]](
+      matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,W,y))),scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y))))),
+      matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,transpose(n,W),y))),scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y))))),
+      matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,transpose(n,W),y))),scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y))))),
+      matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,transpose(n,W),y))),scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,y,matVec(n,W,y)),dot(n,y,matVec(n,W,y)))),outer(n,matVec(n,W,y),matVec(n,transpose(n,W),y))))),
+      cong[Mat[n,n],Mat[n,n]](lam(t: Mat[n,n]) => matAdd(n,H,matSub(n,matAdd(n,t,scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y))))), scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,W,y))), scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,transpose(n,W),y))), term1Eq(n,H,W,s,y)),
+      cong[Mat[n,n],Mat[n,n]](lam(t: Mat[n,n]) => matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,transpose(n,W),y))),t),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y))))), scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y)))), scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y)))), term2Eq(n,H,W,s,y)),
+      cong[Mat[n,n],Mat[n,n]](lam(t: Mat[n,n]) => matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,transpose(n,W),y))),scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),t)), scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y))), scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,y,matVec(n,W,y)),dot(n,y,matVec(n,W,y)))),outer(n,matVec(n,W,y),matVec(n,transpose(n,W),y))), term3Eq(n,H,W,s,y)))
+  proc corollary(n: Nat, H: Mat[n,n], W: Mat[n,n], s: Vec[Float,n], y: Vec[Float,n]):
+      Eq[Mat[n,n], dennis(n,H,s,y,matVec(n,W,y)), postMean(n,H,W,s,y)] =
+    calc3[Mat[n,n]](dennis(n,H,s,y,matVec(n,W,y)),
+      matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,W,y))),scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y))))),
+      matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,transpose(n,W),y))),scalMat(n,recipF(dot(n,y,matVec(n,W,y))),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,y,matVec(n,W,y)),dot(n,y,matVec(n,W,y)))),outer(n,matVec(n,W,y),matVec(n,transpose(n,W),y))))),
+      postMean(n,H,W,s,y),
+      refl[Mat[n,n]](matAdd(n,H,matSub(n,matAdd(n,scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matSubVec(n,s,matVec(n,H,y)),matVec(n,W,y))),scalMat(n,recipF(dot(n,matVec(n,W,y),y)),outer(n,matVec(n,W,y),matSubVec(n,s,matVec(n,H,y))))),scalMat(n,divF(dot(n,y,matSubVec(n,s,matVec(n,H,y))),mulF(dot(n,matVec(n,W,y),y),dot(n,matVec(n,W,y),y))),outer(n,matVec(n,W,y),matVec(n,W,y)))))),
+      corollaryInner(n,H,W,s,y),
+      refl[Mat[n,n]](postMean(n,H,W,s,y)))
+
+  # Step-1 Dennis terms, named so (B) calc points stay short (the
+  # elaborator's VM depth/iteration limits blow up on the fully expanded
+  # nests). Scalars are in dennis form: dot(n,c1,y1), c first.
+  proc term1(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n]): Mat[n,n] =
+    scalMat(n,recipF(dot(n,matVec(n,W,y1),y1)),
+      outer(n,resid(n,H,s1,y1),matVec(n,W,y1)))
+  proc term2(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n]): Mat[n,n] =
+    scalMat(n,recipF(dot(n,matVec(n,W,y1),y1)),
+      outer(n,matVec(n,W,y1),resid(n,H,s1,y1)))
+  proc term3(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n]): Mat[n,n] =
+    scalMat(n,divF(dot(n,y1,resid(n,H,s1,y1)),
+      mulF(dot(n,matVec(n,W,y1),y1),dot(n,matVec(n,W,y1),y1))),
+      outer(n,matVec(n,W,y1),matVec(n,W,y1)))
+  proc matVecOuterScal(n: Nat, a: Float, u: Vec[Float,n], v: Vec[Float,n], y: Vec[Float,n]):
+      Eq[Vec[Float,n], matVec(n, scalMat(n,a,outer(n,u,v)), y),
+        scalVec(n, a, scalVec(n, dot(n,v,y), u))] =
+    calc2[Vec[Float,n]](matVec(n, scalMat(n,a,outer(n,u,v)), y),
+      scalVec(n, a, matVec(n, outer(n,u,v), y)),
+      scalVec(n, a, scalVec(n, dot(n,v,y), u)),
+      matVecScal(n, a, outer(n,u,v), y),
+      cong[Vec[Float,n],Vec[Float,n]](lam(q: Vec[Float,n]) => scalVec(n, a, q),
+        matVec(n, outer(n,u,v), y), scalVec(n, dot(n,v,y), u), matVecOuter(n,u,v,y)))
+  proc scalVecVanish(n: Nat, a: Float, u: Vec[Float,n]):
+      Eq[Vec[Float,n], scalVec(n, a, scalVec(n, zeroF, u)), zeroVec(n)] =
+    calc2[Vec[Float,n]](scalVec(n, a, scalVec(n, zeroF, u)),
+      scalVec(n, mulF(a, zeroF), u),
+      zeroVec(n),
+      scalVecComp(n, a, zeroF, u),
+      trans[Vec[Float,n]](scalVec(n, mulF(a, zeroF), u), scalVec(n, zeroF, u), zeroVec(n),
+        cong[Float,Vec[Float,n]](lam(q: Float) => scalVec(n, q, u),
+          mulF(a, zeroF), zeroF, mulFZero(a)),
+        scalVecZero(n, u)))
+  proc matVecT1Zero(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n],
+      s2: Vec[Float,n], y2: Vec[Float,n],
+      h: Eq[Float,dot(n,matVec(n,W,y1),y2),zeroF]):
+      Eq[Vec[Float,n], matVec(n, term1(n,H,W,s1,y1), y2), zeroVec(n)] =
+    calc3[Vec[Float,n]](
+      matVec(n, term1(n,H,W,s1,y1), y2),
+      scalVec(n, recipF(dot(n,matVec(n,W,y1),y1)),
+        scalVec(n, dot(n,matVec(n,W,y1),y2), resid(n,H,s1,y1))),
+      scalVec(n, recipF(dot(n,matVec(n,W,y1),y1)),
+        scalVec(n, zeroF, resid(n,H,s1,y1))),
+      zeroVec(n),
+      matVecOuterScal(n, recipF(dot(n,matVec(n,W,y1),y1)),
+        resid(n,H,s1,y1), matVec(n,W,y1), y2),
+      cong[Float,Vec[Float,n]](lam(q: Float) => scalVec(n, recipF(dot(n,matVec(n,W,y1),y1)),
+          scalVec(n, q, resid(n,H,s1,y1))),
+        dot(n,matVec(n,W,y1),y2), zeroF, h),
+      scalVecVanish(n, recipF(dot(n,matVec(n,W,y1),y1)), resid(n,H,s1,y1)))
+  proc matVecT3Zero(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n],
+      s2: Vec[Float,n], y2: Vec[Float,n],
+      h: Eq[Float,dot(n,matVec(n,W,y1),y2),zeroF]):
+      Eq[Vec[Float,n], matVec(n, term3(n,H,W,s1,y1), y2), zeroVec(n)] =
+    calc3[Vec[Float,n]](
+      matVec(n, term3(n,H,W,s1,y1), y2),
+      scalVec(n, divF(dot(n,y1,resid(n,H,s1,y1)),
+        mulF(dot(n,matVec(n,W,y1),y1),dot(n,matVec(n,W,y1),y1))),
+        scalVec(n, dot(n,matVec(n,W,y1),y2), matVec(n,W,y1))),
+      scalVec(n, divF(dot(n,y1,resid(n,H,s1,y1)),
+        mulF(dot(n,matVec(n,W,y1),y1),dot(n,matVec(n,W,y1),y1))),
+        scalVec(n, zeroF, matVec(n,W,y1))),
+      zeroVec(n),
+      matVecOuterScal(n, divF(dot(n,y1,resid(n,H,s1,y1)),
+        mulF(dot(n,matVec(n,W,y1),y1),dot(n,matVec(n,W,y1),y1))),
+        matVec(n,W,y1), matVec(n,W,y1), y2),
+      cong[Float,Vec[Float,n]](lam(q: Float) => scalVec(n, divF(dot(n,y1,resid(n,H,s1,y1)),
+          mulF(dot(n,matVec(n,W,y1),y1),dot(n,matVec(n,W,y1),y1))),
+          scalVec(n, q, matVec(n,W,y1))),
+        dot(n,matVec(n,W,y1),y2), zeroF, h),
+      scalVecVanish(n, divF(dot(n,y1,resid(n,H,s1,y1)),
+        mulF(dot(n,matVec(n,W,y1),y1),dot(n,matVec(n,W,y1),y1))),
+        matVec(n,W,y1)))
+  proc matVecT2Form(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n],
+      s2: Vec[Float,n], y2: Vec[Float,n]):
+      Eq[Vec[Float,n], matVec(n, term2(n,H,W,s1,y1), y2),
+        scalVec(n, divF(dot(n,resid(n,H,s1,y1),y2),
+          dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))] =
+    calc3[Vec[Float,n]](
+      matVec(n, term2(n,H,W,s1,y1), y2),
+      scalVec(n, recipF(dot(n,matVec(n,W,y1),y1)),
+        scalVec(n, dot(n,resid(n,H,s1,y1),y2), matVec(n,W,y1))),
+      scalVec(n, mulF(recipF(dot(n,matVec(n,W,y1),y1)),
+        dot(n,resid(n,H,s1,y1),y2)), matVec(n,W,y1)),
+      scalVec(n, divF(dot(n,resid(n,H,s1,y1),y2),
+        dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)),
+      matVecOuterScal(n, recipF(dot(n,matVec(n,W,y1),y1)),
+        matVec(n,W,y1), resid(n,H,s1,y1), y2),
+      scalVecComp(n, recipF(dot(n,matVec(n,W,y1),y1)),
+        dot(n,resid(n,H,s1,y1),y2), matVec(n,W,y1)),
+      cong[Float,Vec[Float,n]](lam(q: Float) => scalVec(n, q, matVec(n,W,y1)),
+        mulF(recipF(dot(n,matVec(n,W,y1),y1)), dot(n,resid(n,H,s1,y1),y2)),
+        divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)),
+        mulFRecipDiv(dot(n,matVec(n,W,y1),y1), dot(n,resid(n,H,s1,y1),y2))))
+
+  proc matVecH1Expand(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n],
+      s2: Vec[Float,n], y2: Vec[Float,n]):
+      Eq[Vec[Float,n], matVec(n, dennisStep(n,H,W,s1,y1), y2),
+        vecAdd(n, matVec(n,H,y2), matSubVec(n,
+          vecAdd(n, matVec(n,term1(n,H,W,s1,y1),y2), matVec(n,term2(n,H,W,s1,y1),y2)),
+          matVec(n,term3(n,H,W,s1,y1),y2)))] =
+    calc3[Vec[Float,n]](
+      matVec(n, dennisStep(n,H,W,s1,y1), y2),
+      vecAdd(n, matVec(n,H,y2),
+        matVec(n, matSub(n,matAdd(n,term1(n,H,W,s1,y1),term2(n,H,W,s1,y1)),
+          term3(n,H,W,s1,y1)), y2)),
+      vecAdd(n, matVec(n,H,y2), matSubVec(n,
+        matVec(n,matAdd(n,term1(n,H,W,s1,y1),term2(n,H,W,s1,y1)),y2),
+        matVec(n,term3(n,H,W,s1,y1),y2))),
+      vecAdd(n, matVec(n,H,y2), matSubVec(n,
+        vecAdd(n, matVec(n,term1(n,H,W,s1,y1),y2), matVec(n,term2(n,H,W,s1,y1),y2)),
+        matVec(n,term3(n,H,W,s1,y1),y2))),
+      matVecAdd(n, H,
+        matSub(n,matAdd(n,term1(n,H,W,s1,y1),term2(n,H,W,s1,y1)),
+          term3(n,H,W,s1,y1)), y2),
+      cong[Vec[Float,n],Vec[Float,n]](lam(q: Vec[Float,n]) => vecAdd(n, matVec(n,H,y2), q),
+        matVec(n, matSub(n,matAdd(n,term1(n,H,W,s1,y1),term2(n,H,W,s1,y1)),
+          term3(n,H,W,s1,y1)), y2),
+        matSubVec(n,
+          matVec(n,matAdd(n,term1(n,H,W,s1,y1),term2(n,H,W,s1,y1)),y2),
+          matVec(n,term3(n,H,W,s1,y1),y2)),
+        matVecSub(n,matAdd(n,term1(n,H,W,s1,y1),term2(n,H,W,s1,y1)),
+          term3(n,H,W,s1,y1), y2)),
+      cong[Vec[Float,n],Vec[Float,n]](lam(q: Vec[Float,n]) => vecAdd(n, matVec(n,H,y2),
+          matSubVec(n, q, matVec(n,term3(n,H,W,s1,y1),y2))),
+        matVec(n,matAdd(n,term1(n,H,W,s1,y1),term2(n,H,W,s1,y1)),y2),
+        vecAdd(n, matVec(n,term1(n,H,W,s1,y1),y2), matVec(n,term2(n,H,W,s1,y1),y2)),
+        matVecAdd(n,term1(n,H,W,s1,y1),term2(n,H,W,s1,y1),y2)))
+  proc matVecH1Clean(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n],
+      s2: Vec[Float,n], y2: Vec[Float,n],
+      h: Eq[Float,dot(n,matVec(n,W,y1),y2),zeroF]):
+      Eq[Vec[Float,n],
+        vecAdd(n, matVec(n,H,y2), matSubVec(n,
+          vecAdd(n, matVec(n,term1(n,H,W,s1,y1),y2), matVec(n,term2(n,H,W,s1,y1),y2)),
+          matVec(n,term3(n,H,W,s1,y1),y2))),
+        vecAdd(n, matVec(n,H,y2), scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)))] =
+    calc4[Vec[Float,n]](
+      vecAdd(n, matVec(n,H,y2), matSubVec(n,
+        vecAdd(n, matVec(n,term1(n,H,W,s1,y1),y2), matVec(n,term2(n,H,W,s1,y1),y2)),
+        matVec(n,term3(n,H,W,s1,y1),y2))),
+      vecAdd(n, matVec(n,H,y2), matSubVec(n,
+        vecAdd(n, zeroVec(n), matVec(n,term2(n,H,W,s1,y1),y2)),
+        matVec(n,term3(n,H,W,s1,y1),y2))),
+      vecAdd(n, matVec(n,H,y2), matSubVec(n,
+        vecAdd(n, zeroVec(n), scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+        matVec(n,term3(n,H,W,s1,y1),y2))),
+      vecAdd(n, matVec(n,H,y2), matSubVec(n,
+        vecAdd(n, zeroVec(n), scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+        zeroVec(n))),
+      vecAdd(n, matVec(n,H,y2), scalVec(n,
+        divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+      cong[Vec[Float,n],Vec[Float,n]](lam(q: Vec[Float,n]) => vecAdd(n, matVec(n,H,y2),
+          matSubVec(n, vecAdd(n, q, matVec(n,term2(n,H,W,s1,y1),y2)),
+            matVec(n,term3(n,H,W,s1,y1),y2))),
+        matVec(n,term1(n,H,W,s1,y1),y2), zeroVec(n),
+        matVecT1Zero(n,H,W,s1,y1,s2,y2,h)),
+      cong[Vec[Float,n],Vec[Float,n]](lam(q: Vec[Float,n]) => vecAdd(n, matVec(n,H,y2),
+          matSubVec(n, vecAdd(n, zeroVec(n), q),
+            matVec(n,term3(n,H,W,s1,y1),y2))),
+        matVec(n,term2(n,H,W,s1,y1),y2), scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)),
+        matVecT2Form(n,H,W,s1,y1,s2,y2)),
+      cong[Vec[Float,n],Vec[Float,n]](lam(q: Vec[Float,n]) => vecAdd(n, matVec(n,H,y2),
+          matSubVec(n, vecAdd(n, zeroVec(n), scalVec(n,
+            divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))), q)),
+        matVec(n,term3(n,H,W,s1,y1),y2), zeroVec(n),
+        matVecT3Zero(n,H,W,s1,y1,s2,y2,h)),
+      cong[Vec[Float,n],Vec[Float,n]](lam(q: Vec[Float,n]) => vecAdd(n, matVec(n,H,y2), q),
+        matSubVec(n, vecAdd(n, zeroVec(n), scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+          zeroVec(n)),
+        scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)),
+        trans[Vec[Float,n]](
+          matSubVec(n, vecAdd(n, zeroVec(n), scalVec(n,
+            divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+            zeroVec(n)),
+          matSubVec(n, scalVec(n,
+            divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)),
+            zeroVec(n)),
+          scalVec(n,
+            divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)),
+          cong[Vec[Float,n],Vec[Float,n]](lam(q: Vec[Float,n]) => matSubVec(n, q, zeroVec(n)),
+            vecAdd(n, zeroVec(n), scalVec(n,
+              divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+            scalVec(n,
+              divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)),
+            vecAddZeroL(n, scalVec(n,
+              divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)))),
+          vecSubZero(n, scalVec(n,
+            divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))))))
+  proc matVecH1Form(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n],
+      s2: Vec[Float,n], y2: Vec[Float,n],
+      h: Eq[Float,dot(n,matVec(n,W,y1),y2),zeroF]):
+      Eq[Vec[Float,n], matVec(n, dennisStep(n,H,W,s1,y1), y2),
+        vecAdd(n, matVec(n,H,y2), scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)))] =
+    calc2[Vec[Float,n]](matVec(n, dennisStep(n,H,W,s1,y1), y2),
+      vecAdd(n, matVec(n,H,y2), matSubVec(n,
+        vecAdd(n, matVec(n,term1(n,H,W,s1,y1),y2), matVec(n,term2(n,H,W,s1,y1),y2)),
+        matVec(n,term3(n,H,W,s1,y1),y2))),
+      vecAdd(n, matVec(n,H,y2), scalVec(n,
+        divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+      matVecH1Expand(n,H,W,s1,y1,s2,y2),
+      matVecH1Clean(n,H,W,s1,y1,s2,y2,h))
+
+  proc lemmaA31(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n],
+      s2: Vec[Float,n], y2: Vec[Float,n],
+      h: Eq[Float,dot(n,matVec(n,W,y1),y2),zeroF]):
+      Eq[Vec[Float,n], resid(n,dennisStep(n,H,W,s1,y1),s2,y2),
+        matSubVec(n, resid(n,H,s2,y2), scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)))] =
+    calc3[Vec[Float,n]](
+      matSubVec(n, s2, matVec(n, dennisStep(n,H,W,s1,y1), y2)),
+      matSubVec(n, s2, vecAdd(n, matVec(n,H,y2), scalVec(n,
+        divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)))),
+      matSubVec(n, matSubVec(n, s2, matVec(n,H,y2)), scalVec(n,
+        divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+      matSubVec(n, resid(n,H,s2,y2), scalVec(n,
+        divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+      cong[Vec[Float,n],Vec[Float,n]](lam(q: Vec[Float,n]) => matSubVec(n, s2, q),
+        matVec(n, dennisStep(n,H,W,s1,y1), y2),
+        vecAdd(n, matVec(n,H,y2), scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+        matVecH1Form(n,H,W,s1,y1,s2,y2,h)),
+      matSubVecAdd(n, s2, matVec(n,H,y2), scalVec(n,
+        divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+      refl[Vec[Float,n]](matSubVec(n, resid(n,H,s2,y2), scalVec(n,
+        divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)))))
+  proc lemmaA32a(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n],
+      s2: Vec[Float,n], y2: Vec[Float,n],
+      h: Eq[Float,dot(n,matVec(n,W,y1),y2),zeroF]):
+      Eq[Float, dot(n,y2,resid(n,dennisStep(n,H,W,s1,y1),s2,y2)),
+        subF(dot(n,resid(n,H,s2,y2),y2),
+          dot(n,scalVec(n,
+            divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)), y2))] =
+    calc3[Float](
+      dot(n,y2,resid(n,dennisStep(n,H,W,s1,y1),s2,y2)),
+      dot(n,resid(n,dennisStep(n,H,W,s1,y1),s2,y2),y2),
+      dot(n,matSubVec(n,resid(n,H,s2,y2),scalVec(n,
+        divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),y2),
+      subF(dot(n,resid(n,H,s2,y2),y2),
+        dot(n,scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)), y2)),
+      dotSym(n,y2,resid(n,dennisStep(n,H,W,s1,y1),s2,y2)),
+      cong[Vec[Float,n],Float](lam(q: Vec[Float,n]) => dot(n,q,y2),
+        resid(n,dennisStep(n,H,W,s1,y1),s2,y2),
+        matSubVec(n,resid(n,H,s2,y2),scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1))),
+        lemmaA31(n,H,W,s1,y1,s2,y2,h)),
+      dotSub(n,resid(n,H,s2,y2),scalVec(n,
+        divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)),y2))
+  proc lemmaA32b(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n],
+      s2: Vec[Float,n], y2: Vec[Float,n],
+      h: Eq[Float,dot(n,matVec(n,W,y1),y2),zeroF]):
+      Eq[Float,
+        subF(dot(n,resid(n,H,s2,y2),y2),
+          dot(n,scalVec(n,
+            divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)), y2)),
+        dot(n,resid(n,H,s2,y2),y2)] =
+    calc4[Float](
+      subF(dot(n,resid(n,H,s2,y2),y2),
+        dot(n,scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)), y2)),
+      subF(dot(n,resid(n,H,s2,y2),y2),
+        mulF(divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)),
+          dot(n,matVec(n,W,y1),y2))),
+      subF(dot(n,resid(n,H,s2,y2),y2),
+        mulF(divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), zeroF)),
+      subF(dot(n,resid(n,H,s2,y2),y2), zeroF),
+      dot(n,resid(n,H,s2,y2),y2),
+      cong[Float,Float](lam(q: Float) => subF(dot(n,resid(n,H,s2,y2),y2), q),
+        dot(n,scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)), y2),
+        mulF(divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)),
+          dot(n,matVec(n,W,y1),y2)),
+        dotScal(n,divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)),
+          matVec(n,W,y1), y2)),
+      cong[Float,Float](lam(q: Float) => subF(dot(n,resid(n,H,s2,y2),y2),
+          mulF(divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), q)),
+        dot(n,matVec(n,W,y1),y2), zeroF, h),
+      cong[Float,Float](lam(q: Float) => subF(dot(n,resid(n,H,s2,y2),y2), q),
+        mulF(divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), zeroF),
+        zeroF, mulFZero(divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)))),
+      subFZero(dot(n,resid(n,H,s2,y2),y2)))
+  proc lemmaA32(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n], y1: Vec[Float,n],
+      s2: Vec[Float,n], y2: Vec[Float,n], h: Eq[Float,dot(n,matVec(n,W,y1),y2),zeroF]):
+      Eq[Float, dot(n,y2,resid(n,dennisStep(n,H,W,s1,y1),s2,y2)),
+        dot(n,y2,resid(n,H,s2,y2))] =
+    calc3[Float](
+      dot(n,y2,resid(n,dennisStep(n,H,W,s1,y1),s2,y2)),
+      subF(dot(n,resid(n,H,s2,y2),y2),
+        dot(n,scalVec(n,
+          divF(dot(n,resid(n,H,s1,y1),y2), dot(n,matVec(n,W,y1),y1)), matVec(n,W,y1)), y2)),
+      dot(n,resid(n,H,s2,y2),y2),
+      dot(n,y2,resid(n,H,s2,y2)),
+      lemmaA32a(n,H,W,s1,y1,s2,y2,h),
+      lemmaA32b(n,H,W,s1,y1,s2,y2,h),
+      dotSym(n,resid(n,H,s2,y2),y2))
+  postulate(crossSym, Pi(n: Nat, H: Mat[n,n], W: Mat[n,n], s1: Vec[Float,n],
+    y1: Vec[Float,n], s2: Vec[Float,n], y2: Vec[Float,n],
+    Eq[Float, dot(n,resid(n,H,s1,y1),y2), dot(n,resid(n,H,s2,y2),y1)]))
+
+  compileTimeOnly(dennis)
+  compileTimeOnly(postMean)
+  compileTimeOnly(resid)
+  compileTimeOnly(dennisStep)
+  compileTimeOnly(sequential2)
+  compileTimeOnly(batchSingle)
+  compileTimeOnly(batchDouble)
+  compileTimeOnly(batch2)
+  compileTimeOnly(term1Eq)
+  compileTimeOnly(term2Eq)
+  compileTimeOnly(term3Eq)
+  compileTimeOnly(corollaryInner)
+  compileTimeOnly(corollary)
+  compileTimeOnly(term1)
+  compileTimeOnly(term2)
+  compileTimeOnly(term3)
+  compileTimeOnly(matVecOuterScal)
+  compileTimeOnly(scalVecVanish)
+  compileTimeOnly(matVecT1Zero)
+  compileTimeOnly(matVecT3Zero)
+  compileTimeOnly(matVecT2Form)
+  compileTimeOnly(matVecH1Expand)
+  compileTimeOnly(matVecH1Clean)
+  compileTimeOnly(matVecH1Form)
+  compileTimeOnly(lemmaA31)
+  compileTimeOnly(lemmaA32a)
+  compileTimeOnly(lemmaA32b)
+  compileTimeOnly(lemmaA32)
